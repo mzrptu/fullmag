@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package fullmag.control.v1;
+
+message SubmitJobRequest {
+  string problem_name = 1;
+  string execution_mode = 2;
+  string backend_target = 3;
+  string artifact_uri = 4;
+}
+
+message SubmitJobResponse {
+  string job_id = 1;
+}
+
+message JobStatus {
+  string job_id = 1;
+  string state = 2;
+  string worker_kind = 3;
+}

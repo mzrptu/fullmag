@@ -1,0 +1,37 @@
+problem "dw_track" {
+  mode = "strict"
+  backend = "auto"
+
+  geometry = import("track.step")
+
+  material "Py" {
+    Ms = 800e3
+    A = 13e-12
+    alpha = 0.01
+    Ku1 = 0.5e6
+    anisU = vector(0, 0, 1)
+  }
+
+  region "track" {
+    shape = geometry
+    material = "Py"
+  }
+
+  energy {
+    exchange()
+    demag()
+    dmi(type = "interfacial", D = 3e-3)
+    zeeman(B = vector(0, 0, 0.1))
+  }
+
+  dynamics {
+    llg()
+    t_end = 10e-9
+    dt = adaptive
+  }
+
+  outputs {
+    save field("m") every 10e-12
+    save scalar("E_total") every 10e-12
+  }
+}

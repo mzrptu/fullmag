@@ -1,6 +1,11 @@
+> [!IMPORTANT]
+> **Decyzja projektowa: skrypty symulacyjne w Pythonie (OOP)**
+>
+> Wzorem mumax+ warstwa skryptowa jest realizowana jako **pakiet Pythonowy** (`fullmag`). Użytkownik pisze obiektowy kod Python, który buduje `ProblemIR` bezpośrednio — nie ma osobnego DSL ani parsera. Dzięki temu skrypty mogą korzystać z pełnego ekosystemu Pythona (numpy, scipy, matplotlib, pętle, parametryczne swepy, klasy pomocnicze itd.).
+
 Tak — i to jest bardzo dobry kierunek. Najważniejsza decyzja brzmi jednak tak: **wspólny interfejs ma opisywać problem fizyczny, a nie siatkę**. To jest dokładnie lekcja z Ubermag: problem jest definiowany ponad backendami, a wykonanie delegowane do konkretnego kalkulatora; jednocześnie ich własna dokumentacja uczciwie pokazuje, że wspólny interfejs nie oznacza pełnej zgodności każdej funkcji między backendami. ([ubermag.github.io][1])
 
-Mój werdykt technologiczny byłby taki: **Next.js na froncie, Rust jako control-plane + parser + IR + scheduler + runner, C++/CUDA jako warstwa obliczeniowa, własny backend FDM oraz backend FEM oparty o MFEM + libCEED + hypre**. MFEM pasuje tu bardzo dobrze, bo ma GPU support, pracuje z hypre i mocno stawia na partial assembly ważne dla GPU; libCEED daje do tego model operatorów/QFunction i backendy CUDA/HIP/SYCL. Z istniejących solverów najbardziej sensownie jest kopiować nie tyle kod, co wzorce: z MuMax3 prosty workflow i FDM, z MuMax+ separację extensible core od interfejsu, z BORIS myślenie multiphysics i ścieżkę do multi-GPU. ([GitHub][2])
+Mój werdykt technologiczny byłby taki: **Next.js na froncie, Rust jako control-plane + IR + scheduler + runner, C++/CUDA jako warstwa obliczeniowa, własny backend FDM oraz backend FEM oparty o MFEM + libCEED + hypre**. Warstwa skryptowa to **pakiet Python (`fullmag`)**, który buduje `ProblemIR` i komunikuje się z Rust control-plane przez serializację (JSON/protobuf). MFEM pasuje tu bardzo dobrze, bo ma GPU support, pracuje z hypre i mocno stawia na partial assembly ważne dla GPU; libCEED daje do tego model operatorów/QFunction i backendy CUDA/HIP/SYCL. Z istniejących solverów najbardziej sensownie jest kopiować nie tyle kod, co wzorce: z MuMax3 prosty workflow i FDM, z MuMax+ separację extensible core od interfejsu **oraz Pythonowy interfejs skryptowy**, z BORIS myślenie multiphysics i ścieżkę do multi-GPU. ([GitHub][2])
 
 ### Go czy Rust?
 
@@ -26,13 +31,15 @@ deal.II jest mocne, ale dziś idzie w stronę Kokkos jako GPU portability layer;
 Next.js UI / CLI / API clients
             │
             ▼
-   Script DSL + Visual Editor
+   Python OOP Scripts (pakiet fullmag)
+   + Visual Editor (formularzowy)
             │
             ▼
-      Parser + Type Checker
+     ← budowany bezpośrednio przez Python API →
             │
             ▼
      Canonical Problem IR
+     (walidacja: pydantic + Rust deserializacja)
             │
             ▼
   Planner + Capability Checker
@@ -51,8 +58,8 @@ Next.js UI / CLI / API clients
 
 ### Najważniejsza zasada
 
-**Nie projektuj API typu „ustaw komórkę (i,j,k)” jako części wspólnego DSL.**
-To zabija FEM. Wspólny DSL ma operować na:
+**Nie projektuj API typu „ustaw komórkę (i,j,k)” jako części wspólnego interfejsu Python.**
+To zabija FEM. Wspólny Python API ma operować na:
 
 * geometrii,
 * regionach,
@@ -70,7 +77,7 @@ Czyli użytkownik opisuje fizykę i geometrię, a dopiero backend robi:
 
 ### To, co warto skopiować z istniejących projektów
 
-Z **Ubermag** brałbym ideę backend-neutral DSL.
+Z **Ubermag** brałbym ideę backend-neutral interfejsu (u nas: Python API).
 Z **MuMax3** brałbym lekkość workflow, batch/CLI/server i szybkość FDM; ich moduły zawierają nawet `mumax3-server` jako cluster/web workflow.
 Z **MuMax+** brałbym architekturę „napisane od zera, extensible core, C++/CUDA + wyższy interfejs”, a nie dokładne wnętrzności MuMax3.
 Z **BORIS** brałbym myślenie o multiphysics i to, że rozwój do multi-GPU nie musi zrywać warstwy skryptowej. Przy okazji: publiczny Boris2 ma już ~164k non-trivial LOC, więc v1 trzeba brutalnie ciąć. ([ubermag.github.io][1])
@@ -79,9 +86,12 @@ Z **BORIS** brałbym myślenie o multiphysics i to, że rozwój do multi-GPU nie
 
 ## Jak bym to zaprojektował
 
-### 1. Jedna warstwa skryptowa, ale z trzema trybami
+### 1. Jedna warstwa skryptowa w Pythonie, ale z trzema trybami
 
-Wspólny DSL powinien mieć trzy tryby pracy:
+> [!IMPORTANT]
+> Warstwa skryptowa to **pakiet Python `fullmag`**, nie własny DSL. Użytkownik pisze standardowy Python z obiektowym API (wzorem mumax+). Pakiet buduje `ProblemIR` i serializuje go do Rust control-plane.
+
+Python API powinien mieć trzy tryby pracy:
 
 * **strict** — tylko wspólny podzbiór FDM/FEM; gwarancja, że ten sam skrypt uruchomi się na obu backendach,
 * **extended** — wolno używać rozszerzeń backendowych,
@@ -163,7 +173,7 @@ Na poziomie architektury każdy term energii powinien być osobnym fragmentem op
 
 Twoja realna innowacja nie powinna brzmieć „mam dwa backendy”, tylko:
 
-> **mam jeden physics IR, jeden DSL, wspólne outputy i trzeci tryb hybrydowy, który łączy zalety FEM i FDM**
+> **mam jeden physics IR, jeden Python API, wspólne outputy i trzeci tryb hybrydowy, który łączy zalety FEM i FDM**
 
 Najbardziej sensowna wersja hybrydy na start:
 
@@ -192,7 +202,7 @@ Frontend nie powinien zawierać logiki fizycznej. Ma być **control room**:
 * porównywarka FDM vs FEM,
 * dashboard klastrów/GPU.
 
-Bardzo dobry wzorzec: **tekstowy DSL + formularze + oba zapisują ten sam ProblemIR**.
+Bardzo dobry wzorzec: **skrypt Python + formularze + oba zapisują ten sam ProblemIR**.
 
 ### Backend aplikacyjny
 
@@ -240,57 +250,69 @@ MFEM/hypre/libCEED/CUDA typy chowasz całkowicie po stronie natywnej.
 
 ---
 
-## Szkic DSL
+## Szkic Python API (zamiast DSL)
+
+> [!IMPORTANT]
+> Skrypty symulacyjne piszemy w **Pythonie** z obiektowym API — wzorem mumax+. Nie tworzymy własnego DSL.
 
 Tak bym to widział:
 
-```text
-problem "dw_track" {
-  mode = "strict"
-  backend = "auto"      // auto | fdm | fem | hybrid
+```python
+import fullmag as fm
 
-  geometry = import("track.step")
+problem = fm.Problem("dw_track", mode="strict", backend="auto")
 
-  material "Py" {
-    Ms = 800e3
-    A  = 13e-12
-    alpha = 0.01
-    Ku1 = 0.5e6
-    anisU = vector(0, 0, 1)
-  }
+# Geometria
+problem.geometry = fm.Import("track.step")
 
-  region "track" {
-    shape = geometry
-    material = "Py"
-  }
+# Material
+py = fm.Material("Py",
+    Ms=800e3,
+    A=13e-12,
+    alpha=0.01,
+    Ku1=0.5e6,
+    anisU=(0, 0, 1),
+)
 
-  energy {
-    exchange()
-    demag()
-    dmi(type="interfacial", D=3e-3)
-    zeeman(B=vector(0,0,0.1))
-  }
+# Region
+problem.add_region(fm.Region("track", shape=problem.geometry, material=py))
 
-  dynamics {
-    llg()
-    t_end = 10e-9
-    dt = adaptive
-  }
+# Energia
+problem.energy += [
+    fm.Exchange(),
+    fm.Demag(),
+    fm.DMI(type="interfacial", D=3e-3),
+    fm.Zeeman(B=(0, 0, 0.1)),
+]
 
-  discretization {
-    fdm { cell = [2e-9, 2e-9, 1e-9] }
-    fem { order = 1, hmax = 2e-9 }
-    hybrid { demag = "fft_aux_grid" }
-  }
+# Dynamika
+problem.dynamics = fm.LLG(t_end=10e-9, dt="adaptive")
 
-  outputs {
-    save field("m") every 10e-12
-    save scalar("E_total") every 10e-12
-  }
-}
+# Dyskretyzacja
+problem.discretization = fm.Discretization(
+    fdm=fm.FDMHint(cell=(2e-9, 2e-9, 1e-9)),
+    fem=fm.FEMHint(order=1, hmax=2e-9),
+    hybrid=fm.HybridHint(demag="fft_aux_grid"),
+)
+
+# Outputy
+problem.outputs += [
+    fm.SaveField("m", every=10e-12),
+    fm.SaveScalar("E_total", every=10e-12),
+]
+
+# Uruchomienie
+problem.run()
 ```
 
-Klucz: zmiana `backend = "fdm"` na `"fem"` lub `"hybrid"` nie zmienia fizyki, tylko sposób dyskretyzacji.
+**Zalety Pythona zamiast własnego DSL:**
+- Pętle, warunki, funkcje — bez reimplementacji,
+- Łatwe parametryczne swepy (`for` loop),
+- Integracja z numpy/scipy/matplotlib,
+- Pydantic do walidacji + type hints,
+- Jupyter notebooks do eksperymentowania.
+
+Klucz: zmiana `backend="fdm"` na `"fem"` lub `"hybrid"` nie zmienia fizyki, tylko sposób dyskretyzacji.
 
 ---
 
@@ -301,11 +323,12 @@ Klucz: zmiana `backend = "fdm"` na `"fem"` lub `"hybrid"` nie zmienia fizyki, ty
 1. **Zamrożenie zakresu v1 fizyki.**
    Na start: ferromagnetyczne LLG, exchange, anisotropy, demag, Zeeman, DMI, podstawowe STT/SOT. AFM i magnetoelasticity dopiero później.
 
-2. **Zdefiniowanie wspólnej semantyki DSL.**
+2. **Zdefiniowanie wspólnej semantyki Python API.**
    Spisz, co znaczy „ten sam problem” niezależnie od backendu.
 
 3. **Ustalenie jednostek i konwencji współrzędnych.**
    SI everywhere, jeden origin convention, jedna semantyka regionów.
+   > Jednostki i konwencje muszą być spójne z Python API (`fullmag` pakiet).
 
 4. **Projekt `ProblemIR`.**
    Wersjonowany, typowany, serializowalny.
@@ -319,13 +342,14 @@ Klucz: zmiana `backend = "fdm"` na `"fem"` lub `"hybrid"` nie zmienia fizyki, ty
 ### Faza B — repo i core
 
 7. **Monorepo i build orchestration.**
-   Cargo workspace + CMake dla native libs + pnpm dla web.
+   Cargo workspace + CMake dla native libs + pnpm dla web + **`packages/fullmag-py`** (pakiet Python).
 
-8. **Parser, linter i formatter DSL.**
-   Nie tylko parser — od razu walidacja i sensowne błędy.
+8. **Python API (pakiet `fullmag`).**
+   Obiektowy interfejs do definiowania problemów, walidacja przez pydantic/type hints, serializacja `ProblemIR` do JSON/protobuf.
+   > ~~Zamiast parsera DSL~~ — skrypty to standardowy Python.
 
-9. **Type checker i semantic validator.**
-   Sprawdza jednostki, zgodność regionów, poprawność energii, legalność backendu.
+9. **Semantic validator (Rust-side).**
+   Sprawdza jednostki, zgodność regionów, poprawność energii, legalność backendu — po deserializacji IR przesłanego z Pythona.
 
 10. **CLI runner lokalny.**
     Jeden binarny entrypoint do uruchamiania jobów bez frontendu.
@@ -348,7 +372,7 @@ Klucz: zmiana `backend = "fdm"` na `"fem"` lub `"hybrid"` nie zmienia fizyki, ty
     Postgres dla metadata, MinIO/S3 dla danych ciężkich.
 
 16. **Next.js editor.**
-    Monaco editor, walidacja, templates, syntax help.
+    Monaco editor z podświetlaniem Pythona, walidacja, templates, syntax help. Skrypty to pliki `.py` korzystające z pakietu `fullmag`.
 
 17. **Dashboard jobów.**
     Queue, running, failed, finished, GPU assignment.
@@ -450,7 +474,7 @@ Klucz: zmiana `backend = "fdm"` na `"fem"` lub `"hybrid"` nie zmienia fizyki, ty
 
 **v1 robiłbym tak:**
 
-* jeden wspólny DSL,
+* jeden wspólny **Python API** (pakiet `fullmag`),
 * Rust core,
 * FDM gotowy produkcyjnie,
 * FEM gotowy dla sensownego podzbioru problemów,
@@ -467,9 +491,9 @@ Klucz: zmiana `backend = "fdm"` na `"fem"` lub `"hybrid"` nie zmienia fizyki, ty
 
 Najbardziej wartościowy produktowo komunikat dla tego solvera to nie „mamy FEM i FDM”, tylko:
 
-> **„Opisujesz jeden problem fizyczny, a silnik uruchamia go w FDM, FEM albo hybrydzie — z tą samą warstwą skryptową, wspólnymi outputami i walidowaną zgodnością semantyczną.”**
+> **„Piszesz obiektowy skrypt Python, opisujesz jeden problem fizyczny, a silnik uruchamia go w FDM, FEM albo hybrydzie — z tą samą warstwą skryptową, wspólnymi outputami i walidowaną zgodnością semantyczną.”**
 
-W następnym kroku rozpiszę etap 1-6 do poziomu konkretnych modułów repo, interfejsów Rust/C++ i pierwszego MVP parsera.
+W następnym kroku rozpiszę etap 1-6 do poziomu konkretnych modułów repo, interfejsów Rust/C++/Python i pierwszego MVP pakietu `fullmag`.
 
 [1]: https://ubermag.github.io/ "https://ubermag.github.io/"
 [2]: https://github.com/CEED/MFEM "https://github.com/CEED/MFEM"

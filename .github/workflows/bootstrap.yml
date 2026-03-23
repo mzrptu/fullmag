@@ -1,0 +1,22 @@
+name: bootstrap
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  bootstrap-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build dev image
+        run: docker compose build dev
+
+      - name: Cargo check in container
+        run: docker compose run --rm --no-deps dev cargo check --workspace
+
+      - name: Typecheck web in container
+        run: docker compose run --rm --no-deps dev bash -lc "pnpm install --dir apps/web && pnpm --dir apps/web typecheck"

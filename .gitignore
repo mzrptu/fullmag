@@ -1,0 +1,63 @@
+# === Build artifacts ===
+target/
+dist/
+build/
+*.o
+*.so
+*.a
+*.dylib
+
+# === Rust ===
+Cargo.lock
+# Keep Cargo.lock for binaries, uncomment if this is a library:
+# Cargo.lock
+
+# === Node / pnpm ===
+node_modules/
+.pnpm-store/
+.next/
+*.tsbuildinfo
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+*.whl
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# === Environment & secrets ===
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Logs ===
+*.log
+
+# === Data & artifacts ===
+artifacts/
+data/
+tmp/
+coverage/
+
+# === CUDA ===
+*.cubin
+*.fatbin
+*.ptx
