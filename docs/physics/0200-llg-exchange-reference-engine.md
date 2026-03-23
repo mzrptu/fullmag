@@ -209,7 +209,10 @@ Reference-engine-only grid shape and field storage stay below the IR boundary fo
 - unit test that explicit stepping preserves `|m| = 1` after normalization,
 - unit test that exchange energy does not increase for a damped relaxation step with sufficiently
   small `dt`,
-- CLI smoke/demo for a tiny deterministic exchange-only run.
+- CLI smoke/demo for a tiny deterministic exchange-only run,
+- application smoke path:
+  - `fullmag examples/exchange_relax.py --until 2e-9`
+  - this is the first honest user-facing execution entrypoint for the reference engine.
 
 ## 6. Completeness checklist
 
@@ -235,6 +238,10 @@ backend.
 - No demag, DMI, anisotropy, Zeeman, torque terms, or thermal noise.
 - No FEM or hybrid execution path.
 - The current artifact layer is JSON/CSV only; HDF5/VTK/XDMF export is future work.
+- The current application smoke path is still headless; the live browser control room launched
+  from `fullmag script.py` is planned but not implemented yet.
+- The production CUDA FDM backend is not implemented yet; the current public executable path still
+  uses the CPU reference runner.
 
 ## 8. References
 

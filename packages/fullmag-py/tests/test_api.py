@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import textwrap
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import fullmag as fm
+from fullmag.runtime import cli as runtime_cli
 
 
 class ProblemApiTests(unittest.TestCase):
@@ -150,6 +155,129 @@ class ProblemApiTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "fixed_timestep"):
             fm.LLG(fixed_timestep=0.0)
+
+    def test_cli_runs_script_and_preserves_script_provenance(self) -> None:
+        script = """
+        import fullmag as fm
+
+        def build():
+            geom = fm.Box(size=(100e-9, 20e-9, 5e-9), name="track")
+            material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.1)
+            magnet = fm.Ferromagnet(
+                name="track",
+                geometry=geom,
+                material=material,
+                m0=fm.init.uniform((1.0, 0.0, 0.0)),
+            )
+            return fm.Problem(
+                name="cli_problem",
+                magnets=[magnet],
+                energy=[fm.Exchange()],
+                dynamics=fm.LLG(),
+                outputs=[fm.SaveField("m", every=1e-12)],
+                discretization=fm.DiscretizationHints(
+                    fdm=fm.FDM(cell=(5e-9, 5e-9, 5e-9)),
+                ),
+            )
+        """
+
+        captured: dict[str, object] = {}
+
+        def fake_run_problem_json(ir, until_seconds, output_dir):
+            captured["ir"] = ir
+            captured["until_seconds"] = until_seconds
+            captured["output_dir"] = output_dir
+            return {
+                "status": "completed",
+                "steps": [
+                    {
+                        "step": 0,
+                        "time": 1e-12,
+                        "dt": 1e-12,
+                        "e_ex": 3.14e-20,
+                        "max_dm_dt": 0.0,
+                        "max_h_eff": 1.23,
+                        "wall_time_ns": 42,
+                    }
+                ],
+                "final_magnetization": [[1.0, 0.0, 0.0]],
+            }
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_cli.py"
+            output_dir = Path(tmp_dir) / "artifacts"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+
+            stdout = io.StringIO()
+            with patch(
+                "fullmag.runtime.cli.run_problem_json",
+                side_effect=fake_run_problem_json,
+            ), contextlib.redirect_stdout(stdout):
+                exit_code = runtime_cli.main(
+                    [
+                        str(path),
+                        "--until",
+                        "1e-12",
+                        "--backend",
+                        "fdm",
+                        "--mode",
+                        "strict",
+                        "--precision",
+                        "double",
+                        "--output-dir",
+                        str(output_dir),
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["until_seconds"], 1e-12)
+        self.assertEqual(captured["output_dir"], str(output_dir))
+        self.assertEqual(captured["ir"]["problem_meta"]["entrypoint_kind"], "build")
+        self.assertIn("def build()", captured["ir"]["problem_meta"]["script_source"])
+        self.assertIn("fullmag run summary", stdout.getvalue())
+        self.assertIn("backend=fdm", stdout.getvalue())
+
+    def test_cli_json_mode_prints_machine_readable_summary(self) -> None:
+        script = """
+        import fullmag as fm
+
+        geom = fm.Box(size=(100e-9, 20e-9, 5e-9), name="track")
+        material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.1)
+        magnet = fm.Ferromagnet(name="track", geometry=geom, material=material)
+        problem = fm.Problem(
+            name="json_problem",
+            magnets=[magnet],
+            energy=[fm.Exchange()],
+            dynamics=fm.LLG(),
+            outputs=[fm.SaveField("m", every=1e-12)],
+            discretization=fm.DiscretizationHints(
+                fdm=fm.FDM(cell=(5e-9, 5e-9, 5e-9)),
+            ),
+        )
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_json.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+
+            stdout = io.StringIO()
+            with patch(
+                "fullmag.runtime.cli.run_problem_json",
+                return_value={
+                    "status": "completed",
+                    "steps": [],
+                    "final_magnetization": None,
+                },
+            ), contextlib.redirect_stdout(stdout):
+                exit_code = runtime_cli.main(
+                    [str(path), "--until", "1e-12", "--json"]
+                )
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["problem_name"], "json_problem")
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["precision"], "double")
 
 
 if __name__ == "__main__":

@@ -562,6 +562,7 @@ As of this revision, the application is in an early but coherent bootstrap state
 Publicly executable today:
 
 - Python-authored problem definition,
+- Python package entrypoint for script-driven runs,
 - `ProblemIR` serialization,
 - Rust validation/planning,
 - narrow FDM execution slice:

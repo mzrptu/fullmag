@@ -5,6 +5,7 @@
 - Last updated: 2026-03-23
 - Parent architecture spec: `docs/specs/exchange-only-full-solver-architecture-v1.md`
 - Related bootstrap plan: `docs/plans/active/phase-0-1-implementation-plan.md`
+- Detailed implementation playbook: `docs/plans/active/phase-2-gpu-fdm-implementation-playbook.md`
 - Related physics notes:
   - `docs/physics/0200-llg-exchange-reference-engine.md`
   - `docs/physics/0300-gpu-fdm-precision-and-calibration.md`
@@ -20,6 +21,27 @@ The bottleneck is now clear:
 > precision and trustworthy equivalence to the CPU reference.
 
 This plan exists to make that migration explicit, sequenced, and testable.
+
+## 1.1 Current status checkpoint
+
+Phase 2 is **not completed**.
+
+Current honest state:
+
+- Stage 2A is materially complete:
+  - precision is part of Python API,
+  - precision is part of `ProblemIR`,
+  - planner preserves precision into `FdmPlanIR`,
+  - the CPU reference path rejects unsupported `single` honestly.
+- Stages 2B through 2G are still outstanding:
+  - there is no `native/fdm-cuda/` production backend yet,
+  - there is no CUDA runner dispatch path yet,
+  - there is no GPU parity/calibration harness yet,
+  - `Simulation.run()` still executes the CPU reference path only.
+
+So the answer to "is Phase 2 GPU FDM fully realized?" is:
+
+> **No. The policy and precision contract are in place, but the actual CUDA backend has not landed yet.**
 
 ## 2. Non-negotiable rules
 

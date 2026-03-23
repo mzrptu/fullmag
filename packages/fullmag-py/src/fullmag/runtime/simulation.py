@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Sequence
 
 from fullmag._core import run_problem_json
@@ -106,26 +106,43 @@ class Simulation:
                 ],
             )
 
-        # Parse the run result
-        step_stats = [
-            StepStats(
-                step=s["step"],
-                time=s["time"],
-                dt=s["dt"],
-                e_ex=s["e_ex"],
-                max_dm_dt=s["max_dm_dt"],
-                max_h_eff=s["max_h_eff"],
-                wall_time_ns=s["wall_time_ns"],
-            )
-            for s in run_result.get("steps", [])
-        ]
-
-        return Result(
-            status=run_result.get("status", "completed"),
+        return result_from_run_payload(
+            run_result,
             backend=self.backend,
             mode=self.mode,
             precision=self.precision,
-            steps=step_stats,
-            final_magnetization=run_result.get("final_magnetization"),
             output_dir=output_dir or "run_output",
         )
+
+
+def result_from_run_payload(
+    run_result: dict[str, Any],
+    *,
+    backend: BackendTarget,
+    mode: ExecutionMode,
+    precision: ExecutionPrecision,
+    output_dir: str | None,
+) -> Result:
+    """Convert a native runner payload into a public runtime Result."""
+    step_stats = [
+        StepStats(
+            step=s["step"],
+            time=s["time"],
+            dt=s["dt"],
+            e_ex=s["e_ex"],
+            max_dm_dt=s["max_dm_dt"],
+            max_h_eff=s["max_h_eff"],
+            wall_time_ns=s["wall_time_ns"],
+        )
+        for s in run_result.get("steps", [])
+    ]
+
+    return Result(
+        status=run_result.get("status", "completed"),
+        backend=backend,
+        mode=mode,
+        precision=precision,
+        steps=step_stats,
+        final_magnetization=run_result.get("final_magnetization"),
+        output_dir=output_dir,
+    )

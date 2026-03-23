@@ -1,16 +1,38 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { ThemeProvider } from '../components/theme';
+import { AppLayout } from '../components/layout';
 
 export const metadata: Metadata = {
-  title: 'Fullmag',
-  description: 'Physics-first micromagnetics platform for FDM, FEM, and hybrid execution.',
+  title: 'Fullmag — Control Room',
+  description:
+    'Physics-first micromagnetics platform for FDM, FEM, and hybrid execution.',
+  icons: {
+    icon: '/favicon.ico',
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link
+          rel="preconnect"
+          href="https://fonts.gstatic.com"
+          crossOrigin="anonymous"
+        />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body>
+        <ThemeProvider>
+          <AppLayout>{children}</AppLayout>
+        </ThemeProvider>
+      </body>
     </html>
   );
 }

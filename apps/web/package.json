@@ -2,7 +2,7 @@
   "name": "@fullmag/web",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0 --port 3000",
+    "dev": "next dev --hostname 0.0.0.0 --port 3001",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit"

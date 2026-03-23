@@ -6,6 +6,7 @@
 - Related active plans:
   - `docs/plans/active/phase-0-1-implementation-plan.md`
   - `docs/plans/active/phase-2-gpu-fdm-calibrated-rollout.md`
+  - `docs/plans/active/phase-2-gpu-fdm-implementation-playbook.md`
 - Related physics notes:
   - `docs/physics/0150-exchange-only-geometry-and-magnetization-bootstrap.md`
   - `docs/physics/0200-llg-exchange-reference-engine.md`
@@ -72,6 +73,26 @@ The current **public-executable** path is:
 This is real progress.
 It means the old assumption that Phase 1 was merely planning-only is now obsolete.
 
+### 3.2A First application smoke path
+
+The first honest application-level smoke target is now:
+
+```text
+fullmag examples/exchange_relax.py --until 2e-9
+```
+
+Meaning:
+
+- the Python package provides the user-facing entrypoint,
+- the script is loaded through the canonical Python authoring path,
+- `ProblemIR` is built with real script provenance,
+- the narrow executable FDM slice runs end-to-end,
+- artifacts are written to disk,
+- the user gets a direct summary of final status and energy.
+
+This is still a headless execution path.
+The live browser control room remains a planned next product step, not current reality.
+
 ### 3.3 What remains semantic-only or partial
 
 The following are still not fully executable:
@@ -109,6 +130,24 @@ This priority is captured in:
 
 - `docs/plans/active/phase-2-gpu-fdm-calibrated-rollout.md`
 - `docs/physics/0300-gpu-fdm-precision-and-calibration.md`
+
+## 4.2 Honest answer on Phase 2 completion
+
+Phase 2 GPU FDM/CUDA is **not** fully realized.
+
+What exists:
+
+- precision policy and propagation,
+- CPU reference calibration baseline,
+- documentation and rollout plan.
+
+What does not yet exist:
+
+- `native/fdm-cuda/` production backend,
+- CUDA kernel implementation,
+- Rust runner dispatch into CUDA,
+- GPU calibration/parity harness,
+- public GPU-backed `Simulation.run()` path.
 
 ## 5. Decision on plan archival
 

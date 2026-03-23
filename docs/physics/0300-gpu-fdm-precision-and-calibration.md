@@ -4,7 +4,7 @@
 - Owners: Fullmag core
 - Last updated: 2026-03-23
 - Related ADRs: `docs/adr/0001-physics-first-python-api.md`
-- Related specs: `docs/specs/problem-ir-v0.md`, `docs/specs/capability-matrix-v0.md`, `docs/specs/exchange-only-full-solver-architecture-v1.md`, `docs/plans/active/phase-2-gpu-fdm-calibrated-rollout.md`
+- Related specs: `docs/specs/problem-ir-v0.md`, `docs/specs/capability-matrix-v0.md`, `docs/specs/exchange-only-full-solver-architecture-v1.md`, `docs/plans/active/phase-2-gpu-fdm-calibrated-rollout.md`, `docs/plans/active/phase-2-gpu-fdm-implementation-playbook.md`
 
 ## 1. Problem statement
 
@@ -251,6 +251,8 @@ precision mode, not an equivalent `fp64` implementation.
 - Public `mixed` precision is intentionally deferred.
 - Precision-specific performance claims must not be made before Nsight-backed profiling exists.
 - Precision policy for FEM and hybrid backends is deferred until those backends exist.
+- The current detailed execution handoff for Phase 2 implementation lives in:
+  - `docs/plans/active/phase-2-gpu-fdm-implementation-playbook.md`
 
 ## 8. References
 

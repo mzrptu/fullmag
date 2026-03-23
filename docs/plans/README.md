@@ -2,6 +2,10 @@
 
 This directory keeps **implementation plans** separate from **long-lived specs**.
 
+Before reading plans, check the specs index:
+
+- `docs/specs/README.md`
+
 ## Directory policy
 
 - `docs/specs/`
