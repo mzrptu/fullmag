@@ -13,6 +13,13 @@
 
 using namespace fullmag::fdm;
 
+// Forward declarations from .cu files — must be in correct namespace
+namespace fullmag { namespace fdm {
+extern void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stats);
+extern void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stats);
+extern void set_cuda_error(Context &ctx, const char *operation, cudaError_t err);
+} }
+
 /* ── Availability ── */
 
 int fullmag_fdm_is_available(void) {
@@ -103,19 +110,14 @@ int fullmag_fdm_backend_step(
     auto *ctx = reinterpret_cast<Context *>(handle);
 
     if (ctx->precision == FULLMAG_FDM_PRECISION_DOUBLE) {
-        // Declared in llg_fp64.cu
-        extern void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stats);
         launch_heun_step_fp64(*ctx, dt_seconds, out_stats);
     } else {
-        // Declared in llg_fp32.cu
-        extern void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stats);
         launch_heun_step_fp32(*ctx, dt_seconds, out_stats);
     }
 
     // Check for CUDA errors
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
-        extern void set_cuda_error(Context &ctx, const char *op, cudaError_t err);
         set_cuda_error(*ctx, "heun_step", err);
         return FULLMAG_FDM_ERR_CUDA;
     }

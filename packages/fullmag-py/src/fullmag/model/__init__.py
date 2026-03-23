@@ -5,6 +5,7 @@ from .geometry import Box, Cylinder, ImportedGeometry
 from .outputs import SaveField, SaveScalar
 from .problem import BackendTarget, ExecutionMode, ExecutionPrecision, Problem
 from .structure import Ferromagnet, Material, Region
+from .study import TimeEvolution
 
 __all__ = [
     "BackendTarget",
@@ -27,5 +28,6 @@ __all__ = [
     "Region",
     "SaveField",
     "SaveScalar",
+    "TimeEvolution",
     "Zeeman",
 ]

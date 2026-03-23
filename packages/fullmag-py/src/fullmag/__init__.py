@@ -22,6 +22,7 @@ from .model import (
     Region,
     SaveField,
     SaveScalar,
+    TimeEvolution,
     Zeeman,
 )
 from .runtime import BackendTarget, Result, Simulation, load_problem_from_script
@@ -49,6 +50,7 @@ __all__ = [
     "SaveField",
     "SaveScalar",
     "Simulation",
+    "TimeEvolution",
     "Zeeman",
     "init",
     "load_problem_from_script",

@@ -241,7 +241,7 @@ int main() {
         double dx_ = std::fabs(m_gpu_flat[3*i+0] - m_cpu[i].x);
         double dy_ = std::fabs(m_gpu_flat[3*i+1] - m_cpu[i].y);
         double dz_ = std::fabs(m_gpu_flat[3*i+2] - m_cpu[i].z);
-        double d = std::max({dx_, dy_, dz_});
+        double d = std::max(dx_, std::max(dy_, dz_));
         if (d > max_m_diff) max_m_diff = d;
     }
     std::printf("  max |m_cpu - m_gpu| component diff: %.6e\n", max_m_diff);

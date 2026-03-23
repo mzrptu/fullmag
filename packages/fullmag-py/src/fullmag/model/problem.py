@@ -11,6 +11,7 @@ from fullmag.model.dynamics import LLG
 from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Zeeman
 from fullmag.model.outputs import SaveField, SaveScalar
 from fullmag.model.structure import Ferromagnet, Material, Region
+from fullmag.model.study import TimeEvolution
 
 IR_VERSION = "0.2.0"
 API_VERSION = "0.2.0"
@@ -44,8 +45,9 @@ class Problem:
     name: str
     magnets: Sequence[Ferromagnet]
     energy: Sequence[EnergyTerm]
-    dynamics: LLG
-    outputs: Sequence[OutputSpec]
+    study: TimeEvolution | None = None
+    dynamics: LLG | None = None
+    outputs: Sequence[OutputSpec] | None = None
     discretization: DiscretizationHints | None = None
     description: str | None = None
     runtime_metadata: dict[str, object] = field(default_factory=dict)
@@ -56,8 +58,9 @@ class Problem:
             raise ValueError("Problem requires at least one magnet")
         if not self.energy:
             raise ValueError("Problem requires at least one energy term")
-        if not self.outputs:
-            raise ValueError("Problem requires at least one output")
+
+        normalized_study = self._normalize_study()
+        object.__setattr__(self, "study", normalized_study)
 
         ensure_unique_names((magnet.name for magnet in self.magnets), "magnet names")
         self._validate_material_consistency()
@@ -98,8 +101,7 @@ class Problem:
             "materials": [material.to_ir() for material in materials],
             "magnets": [magnet.to_ir() for magnet in self.magnets],
             "energy_terms": [term.to_ir() for term in self.energy],
-            "dynamics": self.dynamics.to_ir(),
-            "sampling": {"outputs": [output.to_ir() for output in self.outputs]},
+            "study": self.study.to_ir(),
             "backend_policy": {
                 "requested_backend": requested_backend.value,
                 "execution_precision": execution_precision.value,
@@ -107,6 +109,19 @@ class Problem:
             },
             "validation_profile": {"execution_mode": execution_mode.value},
         }
+
+    def _normalize_study(self) -> TimeEvolution:
+        if self.study is not None and (self.dynamics is not None or self.outputs is not None):
+            raise ValueError(
+                "Problem accepts either study=... or the legacy dynamics=... and outputs=... shape, not both"
+            )
+        if self.study is not None:
+            return self.study
+        if self.dynamics is None:
+            raise ValueError("Problem requires study=... or legacy dynamics=...")
+        if not self.outputs:
+            raise ValueError("Problem requires study outputs or legacy outputs=...")
+        return TimeEvolution(dynamics=self.dynamics, outputs=self.outputs)
 
     def _collect_geometries(self) -> list[object]:
         geometries: list[object] = []
