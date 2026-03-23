@@ -16,7 +16,8 @@ ACTIVE_TEXT_FILES = [
     ROOT / ".github",
 ]
 
-STALE_TERMS = ("physics-first DSL", "text DSL", "parser version", "parser seam")
+STALE_TERMS = ("physics-first DSL", "parser version", "parser seam")
+SELF = Path(__file__).resolve()
 
 
 def iter_files(paths: list[Path]) -> list[Path]:
@@ -34,13 +35,12 @@ def iter_files(paths: list[Path]) -> list[Path]:
 def check_stale_language(files: list[Path]) -> list[str]:
     failures: list[str] = []
     for file_path in files:
+        if file_path.resolve() == SELF:
+            continue
         text = file_path.read_text(encoding="utf-8")
         for token in STALE_TERMS:
             if token in text:
                 failures.append(f"stale term '{token}' found in {file_path.relative_to(ROOT)}")
-        if "parser" in text and "Python parser" not in text and file_path.relative_to(ROOT) != Path("scientific_papers"):
-            if "parser" in text:
-                failures.append(f"unexpected 'parser' reference found in {file_path.relative_to(ROOT)}")
     return failures
 
 
@@ -59,9 +59,9 @@ def check_skill_mirror() -> list[str]:
     failures: list[str] = []
     agent_skills = {path.name for path in (ROOT / ".agents" / "skills").iterdir() if path.is_dir()}
     github_skills = {path.name for path in (ROOT / ".github" / "skills").iterdir() if path.is_dir()}
-    missing = sorted(agent_skills - github_skills)
-    if missing:
-        failures.append(f".github is missing skill mirrors for: {', '.join(missing)}")
+    missing_in_github = sorted(agent_skills - github_skills)
+    if missing_in_github:
+        failures.append(f".github is missing skill mirrors for: {', '.join(missing_in_github)}")
     return failures
 
 

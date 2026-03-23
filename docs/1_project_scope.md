@@ -138,9 +138,14 @@ The web app should eventually handle:
 - job submission,
 - logs,
 - artifacts,
-- backend comparison.
+- backend comparison,
+- **auto-generated documentation** from `docs/physics/` notes.
 
 It must not become a second source of solver semantics.
+
+### Auto-documentation pipeline
+
+`docs/physics/` notes are the single source of truth for physics documentation. The frontend should automatically render them into user-facing reference pages. This means every new physics feature documented through the `physics-publication` skill automatically becomes visible in the web UI without extra writing effort.
 
 ## Foundation milestone scope
 
@@ -151,3 +156,4 @@ Before deep backend work, the repository must keep these foundations stable:
 3. Physics-first documentation is a hard gate.
 4. Skills, prompts, README, AGENTS, CLI, and web copy are aligned.
 5. Containerized verification covers Rust, Python, repo consistency, and smoke flow.
+6. `docs/physics/` notes feed into auto-generated frontend documentation.

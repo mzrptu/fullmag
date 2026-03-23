@@ -2,19 +2,19 @@
 
 ## Purpose
 
-Niezbywalna bramka jakości przed implementacją fizyki/numeryki.
+Mandatory gate before implementing any physics-facing or numerics-facing change.
 
 ## Steps
 
-1. Zidentyfikuj temat (np. exchange, DMI, demag, mesh).
-2. Uruchom skill `physics-publication`.
-3. Sprawdź kompletność dokumentu względem `docs/physics/TEMPLATE.md`.
-4. Uruchom skill `problem-ir-design`.
-5. Uruchom skill `capability-matrix-check`.
-6. Dopiero potem rozpocznij implementację.
+1. Identify the feature or semantic change.
+2. Run `physics-publication`.
+3. Check the note against `docs/physics/TEMPLATE.md`.
+4. Run `problem-ir-design`.
+5. Run `capability-matrix-check`.
+6. Only then begin implementation work.
 
 ## Exit criteria
 
-- dokument fizyczny istnieje i jest kompletny,
-- wpływ na IR i capability matrix jest jawny,
-- jest plan walidacji.
+- the physics note exists and is complete,
+- Python API and `ProblemIR` impact are explicit,
+- capability and validation implications are explicit.

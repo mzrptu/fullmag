@@ -2,17 +2,17 @@
 
 ## Purpose
 
-Sprawdzić, czy wdrożona funkcja jest fizycznie i architektonicznie domknięta.
+Review whether a physics-facing feature is complete enough to merge.
 
 ## Review protocol
 
-1. Czy dokument w `docs/physics/` istnieje przed kodem?
-2. Czy równania, założenia i jednostki są kompletne?
-3. Czy Python API + `ProblemIR` + planner + capability matrix są spójne?
-4. Czy backendy mają jasno opisane różnice semantyczne?
-5. Czy wyniki walidacji i tolerancje są zapisane?
+1. Does the corresponding `docs/physics/` note exist?
+2. Are equations, symbols, SI units, and assumptions complete?
+3. Are Python API, `ProblemIR`, planner, and capability updates aligned?
+4. Are FDM, FEM, and hybrid differences explicit?
+5. Are validation status, observables, and deferred work recorded?
 
 ## Verdict
 
-- `GO` — gotowe do merge
-- `BLOCK` — braki dokumentacji fizycznej lub walidacji
+- `GO` — ready to merge
+- `BLOCK` — documentation or validation is incomplete

@@ -48,6 +48,17 @@ The shared problem lowers into explicitly coupled representations where some ope
 - Python objects serialize directly into `ProblemIR`.
 - Rust validates and plans canonical IR; it does not infer intent from Python source text.
 - `strict`, `extended`, and `hybrid` are explicit validation and planning states.
+- The preferred script contract is `build() -> Problem`; a top-level `problem` object is accepted as a compatibility entrypoint.
+- `ProblemMeta` must capture Python-facing provenance: `script_language`, `script_source`, `script_api_version`, `serializer_version`, `entrypoint_kind`, and `source_hash`.
+- The Rust/Python seam is private. Public classes stay pure Python, while `_fullmag_core` is reserved for validation and runner bindings only.
+
+## 4.1 Bootstrap decisions frozen in this milestone
+
+- The canonical public surface is split into `model` and `runtime`.
+- Shared `model` objects are `Problem`, `ImportedGeometry`, `Material`, `Region`, `Ferromagnet`, energy terms, `LLG`, outputs, and discretization hints.
+- Shared `runtime` objects are `Simulation`, backend target selection, execution mode selection, and result handles.
+- Planning-only smoke coverage must pass for `fdm/strict`, `fem/strict`, and `hybrid/hybrid`.
+- Any change to the shared physics-facing surface must ship with a same-diff update under `docs/physics/`.
 
 ## 5. Validation strategy
 
@@ -73,3 +84,4 @@ The shared problem lowers into explicitly coupled representations where some ope
 
 - The current runtime is planning-only.
 - Backend execution depth is intentionally deferred until the shared semantics are stable.
+- The private PyO3 module is a seam, not yet the full hosted execution stack.

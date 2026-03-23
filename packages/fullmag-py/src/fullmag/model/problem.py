@@ -55,7 +55,9 @@ class Problem:
             raise ValueError("Problem requires at least one output")
 
         ensure_unique_names((magnet.name for magnet in self.magnets), "magnet names")
-        ensure_unique_names((magnet.material.name for magnet in self.magnets), "material names")
+        self._validate_material_consistency()
+        self._validate_geometry_consistency()
+        self._validate_region_consistency()
 
     def to_ir(
         self,
@@ -109,6 +111,17 @@ class Problem:
                 seen.add(name)
         return imports
 
+    def _validate_geometry_consistency(self) -> None:
+        seen: dict[str, tuple[str, str]] = {}
+        for magnet in self.magnets:
+            geometry = magnet.geometry
+            signature = (geometry.source, geometry.to_ir()["format"])
+            if geometry.geometry_name in seen and seen[geometry.geometry_name] != signature:
+                raise ValueError(
+                    f"geometry '{geometry.geometry_name}' is defined with conflicting sources"
+                )
+            seen[geometry.geometry_name] = signature
+
     def _collect_materials(self) -> list[Material]:
         materials: list[Material] = []
         seen: set[str] = set()
@@ -117,6 +130,16 @@ class Problem:
                 materials.append(magnet.material)
                 seen.add(magnet.material.name)
         return materials
+
+    def _validate_material_consistency(self) -> None:
+        seen: dict[str, dict[str, object]] = {}
+        for magnet in self.magnets:
+            material_ir = magnet.material.to_ir()
+            if magnet.material.name in seen and seen[magnet.material.name] != material_ir:
+                raise ValueError(
+                    f"material '{magnet.material.name}' is defined multiple times with different values"
+                )
+            seen[magnet.material.name] = material_ir
 
     def _collect_regions(self) -> list[Region]:
         regions: list[Region] = []
@@ -130,3 +153,14 @@ class Problem:
                 regions.append(region)
                 seen.add(region.name)
         return regions
+
+    def _validate_region_consistency(self) -> None:
+        seen: dict[str, str] = {}
+        for magnet in self.magnets:
+            region_name = magnet.region_name
+            geometry_name = magnet.geometry.geometry_name
+            if region_name in seen and seen[region_name] != geometry_name:
+                raise ValueError(
+                    f"region '{region_name}' is bound to conflicting geometries"
+                )
+            seen[region_name] = geometry_name

@@ -44,7 +44,8 @@ async fn healthz() -> Json<HealthResponse> {
 
 async fn vision() -> Json<VisionResponse> {
     Json(VisionResponse {
-        north_star: "Describe one physical problem and execute it through FDM, FEM, or hybrid plans.",
+        north_star:
+            "Describe one physical problem and execute it through FDM, FEM, or hybrid plans.",
         modes: ["strict", "extended", "hybrid"],
     })
 }

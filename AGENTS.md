@@ -37,6 +37,7 @@ If the note does not exist or is incomplete, the task is not ready for implement
 5. Rust remains the control plane: validation, normalization, planning, runner, API, provenance.
 6. Native compute stays behind stable C ABI boundaries.
 7. Containerized workflows are the default verification path.
+8. `docs/physics/` notes are auto-rendered into frontend documentation — writing physics docs is writing user docs.
 
 ## Repo map
 

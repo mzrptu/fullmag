@@ -1,12 +1,14 @@
 # Fullmag agent runtime assets
 
-Ten katalog zawiera zasoby agentowe używane przez workflowy i skille w trybie `.agents/*`.
+`.agents/` is the canonical source for Fullmag workflows and skills.
 
-## Zasada nadrzędna
+## Primary rule
 
-Każda praca nad fizyką/numeryką przechodzi przez workflow `physics-first-gate`.
+Any physics-facing work must pass the `physics-first-gate` workflow before implementation.
 
-## Struktura
+## Structure
 
-- `workflows/` — gotowe sekwencje działań agentowych
-- `skills/` — skille domenowe (`SKILL.md`)
+- `skills/` — canonical agent skills
+- `workflows/` — canonical agent workflows
+
+`.github/` mirrors these rules for GitHub and Copilot entrypoints.

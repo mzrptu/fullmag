@@ -11,6 +11,7 @@ For every proposed change, check:
 - whether a corresponding `docs/physics/` note exists,
 - whether the equations, assumptions, units, and approximations are explicit,
 - whether Python API, `ProblemIR`, planner, capability matrix, and backends are all considered,
+- whether Python-built IR and Rust-side validation remain aligned,
 - whether validation is concrete enough,
 - whether the feature is safe for MVP or should be deferred.
 

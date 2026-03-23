@@ -1,44 +1,39 @@
 ---
 name: physics-publication
-description: "Use when implementing or modifying any physics/numerics feature in Fullmag. Create or update docs/physics notes in scientific-publication style before code changes."
+description: "Use when adding or modifying any Fullmag physics or numerics feature. Create or update a publication-style note in docs/physics before writing code."
 ---
 
 # Physics publication skill
 
 ## Goal
 
-Wymusić regułę: **najpierw fizyka, potem implementacja**.
+Enforce the project rule: physics first, implementation second.
 
 ## When to trigger
 
-- Adding a new energy term, dynamics model, or numerical method
-- Modifying equations, discretization, or boundary conditions
-- Changing physical assumptions or units
+- adding a new energy term, dynamics model, or numerical method,
+- changing equations, assumptions, or units,
+- changing backend interpretation or validation scope,
+- changing shared problem semantics for physics-facing features.
 
 ## Required outputs
 
-1. Dokument `docs/physics/<topic>.md` — użyj szablonu z `templates/physics-note.md`
-2. Równania, symbole, jednostki SI i założenia
-3. Interpretacja FDM/FEM/hybrid
-4. Wpływ na Python API (`fullmag` pakiet) — jakie klasy trzeba dodać/zmienić
-5. Wpływ na `ProblemIR`, planner i capability matrix
-6. Plan walidacji i kryteria kompletności
-7. Lista ograniczeń i rzeczy odłożonych
-
-## Template
-
-Szablon dokumentu fizycznego: [templates/physics-note.md](templates/physics-note.md)
-
-Skopiuj go do `docs/physics/<topic>.md` i wypełnij.
+1. A `docs/physics/<topic>.md` note based on `docs/physics/TEMPLATE.md`
+2. Governing equations, symbols, SI units, assumptions, and approximations
+3. Explicit FDM, FEM, and hybrid interpretation
+4. Python API and `ProblemIR` impact
+5. Planner and capability-matrix impact
+6. Validation strategy, observables, and tolerances
+7. Completeness checklist and deferred work
 
 ## Blocker policy
 
-Jeśli brak kompletnej dokumentacji fizycznej, implementacja jest blokowana.
-Nie pisz kodu (kerneli CUDA, operatorów FEM, klas Python API) dopóki dokument nie przejdzie review.
+If the note is missing or incomplete, implementation is blocked.
 
 ## Cascade
 
-Po zakończeniu tego skilla, uruchom kolejno:
-1. `problem-ir-design` — zaprojektuj typy IR
-2. `python-api-class` — dodaj klasy do pakietu `fullmag`
-3. `capability-matrix-check` — zaktualizuj macierz
+After this skill completes, run:
+
+1. `problem-ir-design`
+2. `python-api-class`
+3. `capability-matrix-check`

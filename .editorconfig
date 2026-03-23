@@ -11,5 +11,8 @@ trim_trailing_whitespace = true
 [Makefile]
 indent_style = tab
 
+[*.py]
+indent_size = 4
+
 [*.{rs,c,h,cpp,proto}]
 indent_size = 4

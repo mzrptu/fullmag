@@ -86,7 +86,10 @@ pub enum EnergyTermIR {
         #[serde(rename = "D")]
         d: f64,
     },
-    Zeeman { #[serde(rename = "B")] b: [f64; 3] },
+    Zeeman {
+        #[serde(rename = "B")]
+        b: [f64; 3],
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -290,7 +293,10 @@ impl ProblemIR {
         }
 
         validate_unique_names(
-            self.geometry.imports.iter().map(|geometry| geometry.name.as_str()),
+            self.geometry
+                .imports
+                .iter()
+                .map(|geometry| geometry.name.as_str()),
             "geometry imports",
             &mut errors,
         );
@@ -310,9 +316,16 @@ impl ProblemIR {
             &mut errors,
         );
 
-        let region_names: BTreeSet<&str> = self.regions.iter().map(|region| region.name.as_str()).collect();
-        let material_names: BTreeSet<&str> =
-            self.materials.iter().map(|material| material.name.as_str()).collect();
+        let region_names: BTreeSet<&str> = self
+            .regions
+            .iter()
+            .map(|region| region.name.as_str())
+            .collect();
+        let material_names: BTreeSet<&str> = self
+            .materials
+            .iter()
+            .map(|material| material.name.as_str())
+            .collect();
 
         for magnet in &self.magnets {
             if !region_names.contains(magnet.region.as_str()) {
@@ -460,7 +473,10 @@ mod tests {
         let decoded: ProblemIR =
             serde_json::from_str(&json).expect("bootstrap example should deserialize");
         assert_eq!(decoded.problem_meta.script_language, "python");
-        assert_eq!(decoded.validation_profile.execution_mode, ExecutionMode::Strict);
+        assert_eq!(
+            decoded.validation_profile.execution_mode,
+            ExecutionMode::Strict
+        );
     }
 
     #[test]
@@ -474,10 +490,13 @@ mod tests {
         let mut ir = ProblemIR::bootstrap_example();
         ir.validation_profile.execution_mode = ExecutionMode::Hybrid;
 
-        let errors = ir.validate().expect_err("hybrid mode without hybrid backend must fail");
+        let errors = ir
+            .validate()
+            .expect_err("hybrid mode without hybrid backend must fail");
         assert!(errors
             .iter()
-            .any(|error| error.contains("execution_mode='hybrid' requires requested_backend='hybrid'")));
+            .any(|error| error
+                .contains("execution_mode='hybrid' requires requested_backend='hybrid'")));
     }
 
     #[test]

@@ -18,8 +18,13 @@ PHYSICS_DOC_PREFIX = "docs/physics/"
 
 
 def changed_files(base: str, head: str) -> list[str]:
+    diff_range = ["git", "-c", f"safe.directory={ROOT}", "diff", "--name-only"]
+    if head == "WORKTREE":
+        diff_range.append(base)
+    else:
+        diff_range.append(f"{base}..{head}")
     result = subprocess.run(
-        ["git", "diff", "--name-only", f"{base}..{head}"],
+        diff_range,
         cwd=ROOT,
         check=True,
         capture_output=True,

@@ -1,56 +1,32 @@
 ---
 name: python-api-class
-description: "Use when adding or modifying a user-facing class in the fullmag Python package (e.g. new energy term, material, region, output type)."
+description: "Use when adding or modifying a public class in the fullmag embedded Python DSL."
 ---
 
 # Python API class skill
 
 ## Goal
 
-Zapewnić spójność: `docs/physics/` → Python API (`fullmag`) → `ProblemIR` (Rust) → capability matrix.
+Keep the chain coherent:
+
+`docs/physics -> fullmag Python API -> ProblemIR -> planner/capability matrix`
 
 ## Preconditions
 
-- Dokumentacja fizyczna w `docs/physics/` jest kompletna (skill: `physics-publication`).
-- Typy `ProblemIR` są zaprojektowane (skill: `problem-ir-design`).
-
-## When to trigger
-
-- Adding a new class: `fm.Exchange()`, `fm.DMI()`, `fm.SOT()`, etc.
-- Modifying constructor parameters or validation rules
-- Adding new output types, discretization hints, or dynamics models
+- The relevant `docs/physics/` note exists.
+- The corresponding `ProblemIR` change is designed.
 
 ## Checklist
 
-1. **Klasa Python** w `packages/fullmag-py/fullmag/`:
-   - Pydantic model lub dataclass z type hints
-   - Walidacja parametrów (jednostki, zakresy, wymagane pola)
-   - Metoda `to_ir()` → serializacja do odpowiedniego typu IR
-   - Docstring z opisem i przykładem użycia
+1. Add or update the public class in `packages/fullmag-py/src/fullmag/`
+2. Validate parameters and preserve type hints
+3. Provide `to_ir()` or equivalent canonical serialization
+4. Export the class from the public `fullmag` namespace
+5. Add or update tests
+6. Add or update an example when the public surface changes
 
-2. **Rejestracja w `__init__.py`**:
-   - Eksport klasy w `fullmag` namespace (`import fullmag as fm; fm.NewClass(...)`)
+## Naming rules
 
-3. **Testy**:
-   - Unit test: tworzenie obiektu, walidacja, serializacja do IR
-   - Round-trip test: Python → IR JSON → Rust deserializacja (jeśli Rust jest gotowy)
-
-4. **Przykład**:
-   - Dodaj/zaktualizuj przykład w `examples/` pokazujący użycie nowej klasy
-
-## Naming conventions
-
-- Klasy PascalCase: `Exchange`, `DMI`, `Zeeman`, `LLG`
-- Parametry snake_case: `t_end`, `anisU`
-- Nazwy zgodne z `ProblemIR` (Rust): `fm.Exchange()` ↔ `ExchangeIR`
-
-## Key files
-
-- Python package: `packages/fullmag-py/fullmag/`
-- Examples: `examples/`
-- IR types: `crates/fullmag-ir/src/`
-- Physics docs: `docs/physics/`
-
-## Cascade
-
-Po zakończeniu → uruchom `capability-matrix-check`.
+- Classes: PascalCase
+- Parameters: snake_case
+- Public names should map cleanly onto IR terms and physics notes

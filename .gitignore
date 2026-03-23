@@ -8,9 +8,7 @@ build/
 *.dylib
 
 # === Rust ===
-Cargo.lock
-# Keep Cargo.lock for binaries, uncomment if this is a library:
-# Cargo.lock
+# Cargo.lock is tracked — this monorepo contains binary crates.
 
 # === Node / pnpm ===
 node_modules/

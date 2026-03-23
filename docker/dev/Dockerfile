@@ -16,9 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     npm \
     pkg-config \
     python3 \
+    python3-dev \
     python3-pip \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
+RUN git config --global --add safe.directory /workspace
 RUN npm install -g pnpm@10.8.1
 
 WORKDIR /workspace

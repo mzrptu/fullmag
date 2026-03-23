@@ -2,19 +2,20 @@
 
 ## Purpose
 
-Dostarczyć funkcję od fizyki do kodu bez utraty spójności między warstwami.
+Deliver a Fullmag feature without letting physics, API semantics, IR, and planning drift apart.
 
 ## Steps
 
 1. `physics-first-gate`
-2. Zmiany w Python API / `ProblemIR`
-3. Planner + capability matrix
-4. Backend implementation (FDM/FEM/hybrid)
-5. Walidacja i benchmarki
-6. Aktualizacja `docs/physics/` o wyniki i ograniczenia
+2. Python API work
+3. `ProblemIR` and validation work
+4. planner and capability work
+5. backend work
+6. validation and smoke coverage
+7. update `docs/physics/` with results and deferred work
 
 ## Exit criteria
 
-- zgodność semantyczna utrzymana,
-- walidacja udokumentowana,
-- kompletność odnotowana w dokumentacji fizycznej.
+- semantics remain aligned across the stack,
+- validation is documented,
+- deferred work is explicit.

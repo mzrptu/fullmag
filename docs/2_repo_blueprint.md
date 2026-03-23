@@ -47,4 +47,5 @@ Bootstrap MVP classes:
 - Python describes physics and configuration, never backend storage layout.
 - `ProblemIR` is the execution contract, not the Python source text.
 - Any physics-facing change must carry a `docs/physics/` update.
+- `docs/physics/` notes are auto-rendered into frontend documentation — no separate doc-writing step.
 - `.agents` is canonical for skills and workflows; `.github` mirrors it.

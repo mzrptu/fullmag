@@ -39,7 +39,7 @@ jobs:
         run: docker compose run --rm --no-deps dev bash -lc "pnpm install --dir apps/web && pnpm --dir apps/web typecheck"
 
       - name: Install Python package and run tests
-        run: docker compose run --rm --no-deps dev bash -lc "python3 -m pip install -e packages/fullmag-py && python3 -m unittest discover -s packages/fullmag-py/tests -v"
+        run: docker compose run --rm --no-deps dev bash -lc "python3 -m venv .venv && . .venv/bin/activate && pip install -e packages/fullmag-py && python -m unittest discover -s packages/fullmag-py/tests -v"
 
       - name: Repository consistency checks
         run: docker compose run --rm --no-deps dev python3 scripts/check_repo_consistency.py
@@ -48,4 +48,4 @@ jobs:
         run: docker compose run --rm --no-deps dev python3 scripts/check_physics_docs_gate.py --base "${{ steps.diff.outputs.base }}" --head "${{ steps.diff.outputs.head }}"
 
       - name: Python IR smoke test
-        run: docker compose run --rm --no-deps dev bash -lc "python3 -m pip install -e packages/fullmag-py && cargo build -p fullmag-cli && python3 scripts/run_python_ir_smoke.py --cli target/debug/fullmag-cli"
+        run: docker compose run --rm --no-deps dev bash -lc "python3 -m venv .venv && . .venv/bin/activate && pip install -e packages/fullmag-py && /usr/local/cargo/bin/cargo build -p fullmag-cli && python scripts/run_python_ir_smoke.py --cli target/debug/fullmag-cli"

@@ -10,7 +10,8 @@ Priorities:
 - favor clear scaffolding over premature depth;
 - wire new modules back to docs and specs;
 - keep builds and dev flows container-friendly;
-- avoid introducing backend commitments that belong to later spikes.
+- avoid introducing backend commitments that belong to later spikes;
+- keep `.agents` canonical and `.github` mirrored.
 
 For every task, state:
 - what was added,

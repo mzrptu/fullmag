@@ -57,29 +57,41 @@ This is still a foundation milestone. It is intentionally planning-first, not so
 
 ## Quick start
 
-### 1. Bring up the dev container
+### 1. Set up environment
+
+```bash
+cp .env.example .env
+# Edit .env and set POSTGRES_PASSWORD, MINIO_ROOT_USER, MINIO_ROOT_PASSWORD
+```
+
+### 2. Bring up the dev container
 
 ```bash
 make up
 make shell
 ```
 
-### 2. Verify the bootstrap in the container
+### 3. Verify the bootstrap in the container
 
 ```bash
 cargo check --workspace
 cargo test --workspace
-python3 -m pip install -e packages/fullmag-py
-python3 -m unittest discover -s packages/fullmag-py/tests -v
+/usr/local/cargo/bin/cargo build -p fullmag-cli
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e packages/fullmag-py
+python -m unittest discover -s packages/fullmag-py/tests -v
 python3 scripts/check_repo_consistency.py
-python3 scripts/run_python_ir_smoke.py --cli target/debug/fullmag-cli
+python scripts/run_python_ir_smoke.py --cli target/debug/fullmag-cli
 ```
 
-### 3. Inspect the canonical example
+### 4. Inspect the canonical example
 
 ```bash
-python3 -m pip install -e packages/fullmag-py
-python3 - <<'PY'
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e packages/fullmag-py
+python - <<'PY'
 from fullmag import load_problem_from_script
 loaded = load_problem_from_script("examples/dw_track.py")
 print(loaded.problem.to_ir())
@@ -103,3 +115,4 @@ PY
 3. Grow capability checks before backend feature sprawl.
 4. Add planning-depth smoke coverage before solver-depth implementation.
 5. Maintain the physics-first publication workflow as a hard gate.
+6. Auto-render `docs/physics/` notes into frontend documentation pages.

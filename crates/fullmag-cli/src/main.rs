@@ -15,7 +15,9 @@ struct Cli {
 enum Command {
     Doctor,
     ExampleIr,
-    ValidateJson { path: PathBuf },
+    ValidateJson {
+        path: PathBuf,
+    },
     PlanJson {
         path: PathBuf,
         #[arg(long)]
@@ -66,7 +68,9 @@ fn main() -> Result<()> {
         Command::PlanJson { path, backend } => {
             let ir = read_ir(&path)?;
             validate_ir(&ir)?;
-            let plan = ir.plan_for(backend.map(BackendTarget::from)).map_err(join_errors)?;
+            let plan = ir
+                .plan_for(backend.map(BackendTarget::from))
+                .map_err(join_errors)?;
             println!("{}", serde_json::to_string_pretty(&plan)?);
         }
     }
