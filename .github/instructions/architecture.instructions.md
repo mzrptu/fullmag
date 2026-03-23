@@ -11,3 +11,4 @@ description: "Use when working anywhere in Fullmag to preserve the embedded Pyth
 - Treat `docs/physics/` as mandatory pre-implementation documentation for physics and numerics work.
 - Keep provenance and reproducibility first-class in `ProblemMeta`.
 - If a feature is backend-specific, surface it through capability checks or explicit `extended` mode.
+- **Keep source files under ~1000 lines.** Split large modules into focused submodules instead of growing monolithic files.

@@ -10,3 +10,4 @@ description: "Use when editing Rust files in Fullmag. Keep Rust as the typed con
 - Make invalid states hard to represent.
 - Favor `Result`-based APIs with helpful error messages over panics.
 - Keep public interfaces ready for CLI, API, and worker reuse.
+- **Keep `.rs` files under ~1000 lines.** Split large modules into submodules with `mod` re-exports. A crate with one monolithic `lib.rs` is a code smell.

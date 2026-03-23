@@ -2,6 +2,7 @@
 
 - Status: draft
 - Last updated: 2026-03-23
+- Revision: 1.1 — corrections from repo audit
 - Owners: Fullmag core
 - Related physics notes:
   - `docs/physics/0050-shared-problem-semantics-and-embedded-python-api.md`
@@ -39,6 +40,12 @@ This is not a temporary toy roadmap.
 It is the architectural blueprint for building a solver that is already shaped like the final product,
 while keeping the first physics term limited to exchange.
 
+> **Current bootstrap state.**
+> The repository already contains a working reference exchange-only CPU engine
+> (`crates/fullmag-engine`) with Heun stepping, exchange field, exchange energy, LLG RHS,
+> unit-norm preservation, and four reference tests.
+> This plan extends and hardens that engine into a full-stack product.
+
 ## 2. North-Star Outcome
 
 The target outcome of this plan is:
@@ -73,7 +80,7 @@ The goal is one micromagnetic product with two discretization engines under a co
 ### 3.2 Explicitly out of scope for this release
 
 - Demagnetization.
-- DMI.
+- DMI (although `InterfacialDMI` exists in the Python API scaffold, it is not in scope for the exchange-only solver).
 - Anisotropy.
 - Zeeman field.
 - Spin torques.
@@ -232,9 +239,9 @@ They are necessary to make validation and unit tests easy, deterministic, and ba
 Uniform `m0` is not enough for a useful exchange-only solver.
 The first full release should support:
 
-- `uniform(vector)`
-- `random(seed)`
-- `callable` or sampled initializer on physical coordinates
+- `uniform(vector)` — **already implemented** in Python (`fullmag.init.uniform`) and Rust IR (`InitialMagnetizationIR::Uniform`)
+- `random(seed)` — requires new Python class and new IR variant (`InitialMagnetizationIR::RandomSeeded`)
+- `callable` or sampled initializer on physical coordinates — requires new Python class and new IR variant (`InitialMagnetizationIR::SampledField`)
 - backend-neutral table/sample representation in lowered execution plans
 
 The public API may accept Python callables, but they must be sampled during lowering.
@@ -506,6 +513,10 @@ The CUDA backend should use SoA buffers.
 
 ### 12.5 Exchange operator
 
+> **Current state.** `fullmag-engine` already implements the FDM exchange operator as a
+> 6-point Laplacian stencil with Neumann boundary conditions (via `saturating_sub` / `min(n-1)`).
+> The implementation is correct and tested, but not yet behind a trait-based term interface.
+
 The FDM exchange operator should be abstracted behind a term interface:
 
 - `prepare(plan)`
@@ -517,6 +528,11 @@ Even though exchange is the only term now, the interface must already be additiv
 
 ### 12.6 Time integrator
 
+> **Current state.** `fullmag-engine` already implements a Heun stepper with post-step
+> renormalization. The `dt` is passed per-step externally; there is no adaptive timestep control yet.
+> `LlgConfig` stores `gyromagnetic_ratio` and `integrator` but not `fixed_timestep` —
+> that field belongs in the runner/plan layer, not the stepper itself.
+
 For exchange-only v1:
 
 - reference integrator: Heun
@@ -524,6 +540,11 @@ For exchange-only v1:
 
 The runner must not hardcode exchange into the time-stepping loop.
 It should query the active term set for `H_eff`.
+
+> **Design note.** The `LLG.fixed_timestep` field in the Python API is a *hint* for the runner,
+> not a stepper-internal detail. The runner should interpret it as:
+> - `None` → runner picks dt (adaptive or default heuristic)
+> - `Some(dt)` → runner calls stepper with exactly this dt each step
 
 ### 12.7 CUDA production path
 
@@ -546,7 +567,7 @@ For exchange-only v1, no cuFFT is required.
 
 ### 12.8 FDM backend milestones
 
-1. CPU reference voxelized exchange-only path.
+1. CPU reference voxelized exchange-only path. **(partially done — engine exists, no voxelizer yet)**
 2. CUDA field storage and exchange kernel parity.
 3. CUDA Heun parity against CPU reference.
 4. Artifact parity between CPU and CUDA.
@@ -585,6 +606,11 @@ The first full FEM solver should support:
 
 Direct mesh import is important because it lets us finish the solver architecture before we finish
 industrial-grade CAD meshing.
+
+> **Prerequisite: FEM toolchain images.**
+> Before Phase 5 can begin, the project must have container images with MFEM, libCEED, and hypre
+> pre-built. This is a non-trivial infrastructure task and should be scoped as a prerequisite
+> deliverable (see Phase 4.5 below).
 
 ### 13.4 FE spaces
 
@@ -768,16 +794,24 @@ We should maintain at least:
 - `fem-dev` image
 - later combined CI or production images if justified
 
+### 17.4 Auto-documentation policy
+
+`docs/physics/` notes are the single source of truth for physics documentation.
+The frontend should auto-render them into user-facing reference pages.
+Every new physics feature documented through the `physics-publication` skill
+automatically becomes visible in the web UI without extra writing effort.
+
 ## 18. Implementation Phases
 
 ### Phase 0: Freeze exchange-only shared semantics
 
 Deliverables:
 
-- geometry primitive policy
-- `m0` policy
-- `LLG` parameter policy
-- output naming policy
+- geometry primitive policy (Box, Cylinder, ImportedGeometry)
+- `m0` policy (uniform, random, callable)
+- `LLG` parameter policy (integrator enum, timestep hint semantics)
+- **boundary condition policy** for exchange (Neumann ∂m/∂n=0 as default)
+- output naming policy (m, H_ex, E_ex, solver_dt, step, time)
 - comparison tolerances policy
 
 ### Phase 1: Strengthen Python API and IR
@@ -816,6 +850,15 @@ Deliverables:
 - CUDA exchange operator
 - CUDA Heun stepping
 - FDM artifacts
+
+### Phase 4.5: FEM toolchain infrastructure
+
+Deliverables:
+
+- `fem-dev` Docker image with MFEM + libCEED + hypre pre-built
+- native build system for FEM backend in `native/backends/fem_mfem/`
+- C ABI stub that compiles against the image
+- smoke test that loads and runs a trivial MFEM program
 
 ### Phase 5: Complete FEM backend
 

@@ -7,3 +7,4 @@
 - Before implementing any physics or numerics feature, create or update a publication-style note in `docs/physics/`.
 - Use `docs/physics/TEMPLATE.md` as the canonical template.
 - Assume container-first verification through `docker compose` and `Makefile`.
+- **Keep source files under ~1000 lines.** Split growing modules into focused submodules rather than creating monolithic files.

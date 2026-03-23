@@ -38,6 +38,7 @@ If the note does not exist or is incomplete, the task is not ready for implement
 6. Native compute stays behind stable C ABI boundaries.
 7. Containerized workflows are the default verification path.
 8. `docs/physics/` notes are auto-rendered into frontend documentation — writing physics docs is writing user docs.
+9. **No single source file should exceed ~1000 lines.** When a module grows past this threshold, split it into focused submodules. Monolithic files are harder to review, test, and maintain. Prefer many small, well-named files over few large ones.
 
 ## Repo map
 
@@ -82,3 +83,4 @@ If the note does not exist or is incomplete, the task is not ready for implement
 - Physics-facing changes include a corresponding `docs/physics/` update.
 - README, AGENTS, skills, prompts, and web/CLI copy stay aligned.
 - Containerized checks cover Rust, Python, repo consistency, and smoke flow.
+- No source file exceeds ~500 lines; large modules are split into focused submodules.
