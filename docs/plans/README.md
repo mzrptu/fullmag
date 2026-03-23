@@ -92,6 +92,8 @@ Minimum expected structure:
 
 - `active/implementation-status-and-next-plans-2026-03-23.md`
   - current-state audit and sequencing document
+- `active/report-alignment-audit-2026-03-24.md`
+  - audit of an external repo-state report against the current local worktree
 - `active/frontend-architecture.md`
   - control-room and session-driven frontend implementation plan
 - `completed/phase-0-1-implementation-plan.md`

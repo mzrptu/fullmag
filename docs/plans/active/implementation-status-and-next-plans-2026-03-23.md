@@ -5,6 +5,7 @@
 - Parent target architecture: `docs/specs/fullmag-application-architecture-v2.md`
 - Related active plans:
   - `docs/plans/active/frontend-architecture.md`
+  - `docs/plans/active/report-alignment-audit-2026-03-24.md`
   - `docs/plans/completed/phase-0-1-implementation-plan.md`
   - `docs/plans/active/phase-2-gpu-fdm-calibrated-rollout.md`
   - `docs/plans/active/phase-2-gpu-fdm-implementation-playbook.md`
