@@ -4,25 +4,34 @@
 
 The capability matrix answers two questions before execution:
 
-1. Is a problem legal for a chosen backend?
-2. If it is legal, what planner strategy should be used?
+1. Is a Python-authored `ProblemIR` legal for the requested backend and mode?
+2. If it is legal, what planning path should be selected?
 
-## Initial matrix dimensions
+## Current bootstrap policy
 
-- execution mode: `strict`, `extended`, `hybrid`
-- backend target: `fdm`, `fem`, `hybrid`
-- geometry support level
-- energy term support level
-- dynamics support level
-- boundary condition support level
-- output support level
+- `strict` means backend-neutral semantics only.
+- `extended` is reserved for future backend-specific features.
+- `hybrid` is explicit and requires both hybrid mode and hybrid backend.
 
-## Early policy
+## Bootstrap matrix
 
-- `strict` only permits features shared semantically between FDM and FEM.
-- `extended` permits backend-only features when requested explicitly.
-- `hybrid` requires declared projection/coupling support and should fail fast when unavailable.
+| Feature | FDM | FEM | Hybrid | Modes | Notes |
+|---------|-----|-----|--------|-------|-------|
+| Imported geometry reference | planned | planned | planned | strict, extended, hybrid | Shared semantics only |
+| Material constants (`Ms`, `A`, `alpha`, `Ku1`, `anisU`) | planned | planned | planned | strict, extended, hybrid | Serialized in canonical IR |
+| Ferromagnet + uniform `m0` | planned | planned | planned | strict, extended, hybrid | Shared bootstrap surface |
+| `Exchange` | planned | planned | planned | strict, extended, hybrid | Treated as backend-neutral MVP term |
+| `Demag` | planned | planned | planned | strict, extended, hybrid | Planned, not numerically implemented |
+| `InterfacialDMI` | planned | planned | planned | strict, extended, hybrid | Planned, not numerically implemented |
+| `Zeeman` | planned | planned | planned | strict, extended, hybrid | Planned, not numerically implemented |
+| `LLG` | planned | planned | planned | strict, extended, hybrid | Planner-level bootstrap only |
+| Field/scalar outputs | planned | planned | planned | strict, extended, hybrid | Canonical output naming only |
+| FDM hints | planned | n/a | planned | strict, extended | Shared hints, backend-specific use later |
+| FEM hints | n/a | planned | planned | strict, extended | Shared hints, backend-specific use later |
+| Hybrid hints | n/a | n/a | planned | hybrid | Requires hybrid mode and backend |
 
-## Validation note
+## Early planner rules
 
-Borrow the lesson from Ubermag compatibility tables: shared front-end semantics do not imply equal feature depth on every backend, so support levels must be explicit and queryable.
+- `backend="auto"` resolves to `fdm` for `strict` and `extended` during bootstrap planning.
+- `backend="auto"` does not resolve hybrid implicitly.
+- Hybrid planning is a deliberate opt-in, not a fallback.

@@ -1,29 +1,50 @@
 # Repo blueprint
 
-> [!IMPORTANT]
-> **Skrypty symulacyjne w Pythonie (OOP)** — wzorem mumax+ warstwa skryptowa to pakiet Python `fullmag`.
-> Nie ma własnego DSL ani parsera. Użytkownik pisze obiektowy Python, który buduje `ProblemIR`.
+## Authoring model
+
+Fullmag uses an embedded Python DSL as the only public scripting surface.
+There is no separate text DSL, no AST parsing phase, and no source-code inference.
+
+The canonical bootstrap flow is:
+
+1. Author a Python script or notebook with `import fullmag as fm`.
+2. Build a declarative object graph describing the physical problem.
+3. Serialize that object graph into canonical `ProblemIR`.
+4. Deserialize and validate the IR in Rust.
+5. Run capability checks and lower into an execution-plan summary.
+6. Dispatch to FDM, FEM, or hybrid backends later in the stack.
 
 ## Top-level layout
 
-- `apps/web` — Next.js control room for editing problems, launching jobs, and browsing artifacts.
-- `packages/fullmag-py` — **pakiet Python (`fullmag`)**: obiektowy interfejs do definiowania problemów symulacyjnych, walidacja (pydantic), serializacja `ProblemIR`.
-- `crates/fullmag-ir` — canonical domain model and serializable IR.
-- `crates/fullmag-cli` — local CLI for validation, planning, and development workflows.
-- `crates/fullmag-api` — HTTP entrypoint for the control plane.
-- `native/` — C ABI and backend implementations for FDM/FEM/hybrid compute work.
-- `proto/` — API and worker contracts.
-- `docs/` — scope, ADRs, specifications, physics notes, and future implementation plans.
-- `docs/physics` — obowiązkowa dokumentacja naukowa dla każdej implementowanej funkcji fizycznej lub numerycznej.
+- `packages/fullmag-py` — public embedded Python DSL and runtime helpers.
+- `crates/fullmag-ir` — typed canonical IR plus validation and planning summaries.
+- `crates/fullmag-cli` — bootstrap CLI for validating and planning Python-built IR.
+- `crates/fullmag-api` — control-plane HTTP API.
+- `crates/fullmag-py-core` — private PyO3 bridge for Python/Rust validation helpers.
+- `apps/web` — script editor, jobs, logs, and artifact UI.
+- `native/` — backend ABI and native implementation seams.
+- `docs/specs` — canonical architecture and IR specs.
+- `docs/physics` — publication-style physics documentation and validation notes.
 
-## Near-term MVP flow
+## Python package split
 
-1. Author or edit a problem spec **jako skrypt Pythonowy** (`import fullmag as fm`).
-2. Najpierw opisz nową fizykę lub numerykę w `docs/physics/` jak notatkę naukową.
-3. Python API buduje i waliduje `ProblemIR` (pydantic + type hints).
-4. Serializacja IR (JSON/protobuf) do Rust control-plane.
-5. Validate against execution mode and backend capabilities (Rust-side).
-6. Lower to an execution plan.
-7. Dispatch to a backend worker.
-8. Persist artifacts and provenance.
-9. Inspect results in web UI.
+The Python package is intentionally split into:
+
+- `fullmag.model` — declarative problem description
+- `fullmag.runtime` — loading, simulation, result, and runner helpers
+
+Bootstrap MVP classes:
+
+- model: `Problem`, `ImportedGeometry`, `Material`, `Region`, `Ferromagnet`
+- energy: `Exchange`, `Demag`, `InterfacialDMI`, `Zeeman`
+- dynamics: `LLG`
+- outputs: `SaveField`, `SaveScalar`
+- hints: `DiscretizationHints`, `FDM`, `FEM`, `Hybrid`
+- runtime: `Simulation`, `Result`, `BackendTarget`, `ExecutionMode`
+
+## Guardrails
+
+- Python describes physics and configuration, never backend storage layout.
+- `ProblemIR` is the execution contract, not the Python source text.
+- Any physics-facing change must carry a `docs/physics/` update.
+- `.agents` is canonical for skills and workflows; `.github` mirrors it.

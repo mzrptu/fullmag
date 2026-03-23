@@ -12,7 +12,7 @@
 
 ### 2.1 Governing equations
 
-### 2.2 Symbols and units
+### 2.2 Symbols and SI units
 
 ### 2.3 Assumptions and approximations
 
@@ -30,9 +30,7 @@
 
 ### 4.2 ProblemIR representation
 
-### 4.3 Capability matrix impact
-
-### 4.4 Execution-plan implications
+### 4.3 Planner and capability-matrix impact
 
 ## 5. Validation strategy
 

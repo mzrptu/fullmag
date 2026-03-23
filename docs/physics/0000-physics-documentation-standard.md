@@ -5,65 +5,60 @@
 
 ## Mission
 
-Każdy dokument w `docs/physics/` ma być napisany tak, jakby miał stać się częścią suplementu do publikacji naukowej albo wewnętrznego technical note dla solvera.
+Every note in `docs/physics/` should read like an internal publication note or the seed of a future scientific supplement.
 
 ## Required sections
 
-Każdy nowy temat powinien zawierać przynajmniej:
+Every new topic must contain at least:
 
 1. **Problem statement**
-   - Co modelujemy?
-   - Dlaczego to jest potrzebne?
-   - Jaki fragment fizyki lub numeryki to reprezentuje?
+   - What is being modeled?
+   - Why is it needed?
+   - What physical or numerical scope does it cover?
 
 2. **Physical model**
-   - równania,
-   - definicje symboli,
-   - jednostki SI,
-   - założenia i przybliżenia.
+   - governing equations,
+   - symbol definitions,
+   - SI units,
+   - assumptions and approximations.
 
 3. **Numerical interpretation**
-   - jak model przechodzi do FDM,
-   - jak model przechodzi do FEM,
-   - co oznacza w trybie hybrid,
-   - jakie są różnice semantyczne między backendami.
+   - FDM interpretation,
+   - FEM interpretation,
+   - hybrid interpretation,
+   - semantic differences between backends.
 
-4. **IR and API impact**
-   - jakie obiekty Python API są potrzebne,
-   - jakie pola trafiają do `ProblemIR`,
-   - jakie capability checks są wymagane,
-   - jaki plan wykonania ma powstać.
+4. **API and IR impact**
+   - Python API objects,
+   - `ProblemIR` fields,
+   - planner impact,
+   - capability-matrix impact.
 
 5. **Validation strategy**
-   - benchmarki analityczne,
-   - benchmarki numeryczne,
-   - porównania cross-backend,
-   - tolerancje i obserwable.
+   - analytical checks,
+   - cross-backend checks,
+   - regression cases,
+   - observables and tolerances.
 
 6. **Completeness checklist**
    - Python API,
    - `ProblemIR`,
    - planner,
    - capability matrix,
-   - FDM,
-   - FEM,
-   - hybrid,
+   - FDM backend,
+   - FEM backend,
+   - hybrid backend,
    - outputs,
    - tests,
-   - docs.
+   - documentation.
 
 7. **Known limits and deferred work**
-   - co nie działa,
-   - co jest ograniczone,
-   - co świadomie odkładamy.
 
 ## Quality bar
 
-Dokument ma pozwalać odpowiedzieć na pytania:
+A note is complete only when it lets a reviewer answer:
 
-- czy implementujemy właściwą fizykę,
-- czy implementujemy ją spójnie we wszystkich warstwach systemu,
-- czy wiemy jak to zwalidować,
-- czy znamy granice modelu.
-
-Jeżeli odpowiedź brzmi „nie”, dokument jest niekompletny.
+- Are we implementing the right physics?
+- Are we implementing it consistently across the stack?
+- Do we know how to validate it?
+- Do we understand what is intentionally out of scope?

@@ -1,140 +1,105 @@
 # Fullmag
 
-Fullmag to nowy silnik micromagnetics budowany wokół jednej zasady:
+Fullmag is a micromagnetics platform built around one contract:
 
-> **wspólny interfejs opisuje problem fizyczny, nie siatkę numeryczną**
+> the shared interface describes a physical problem, not a numerical mesh layout
 
-Repo zostało zainicjowane jako **container-first monorepo** dla architektury:
+The public authoring surface is an embedded, declarative Python DSL in `packages/fullmag-py`.
+Users write ordinary Python scripts and notebooks, but those objects serialize into a canonical `ProblemIR` that Rust validates, normalizes, and lowers into backend-specific plans.
 
-- **Python (`fullmag`)** — obiektowy interfejs do definiowania problemów,
-- **Rust** — control-plane, `ProblemIR`, planner, API, scheduler, runner, provenance,
-- **Next.js** — control room dla użytkownika,
-- **C++/CUDA** — backendy obliczeniowe i wydajne kernelle,
-- **MFEM + libCEED + hypre** — planowana ścieżka FEM,
-- **FDM / FEM / hybrid** — trzy tryby wykonania nad jedną semantyką problemu.
+## Architecture
 
-## Dlaczego ten projekt istnieje
+- `packages/fullmag-py` — embedded Python DSL and runtime scaffolding
+- `crates/fullmag-ir` — typed `ProblemIR`, validation, and planning summaries
+- `crates/fullmag-cli` — local validation and planning CLI
+- `crates/fullmag-api` — control-plane HTTP API
+- `crates/fullmag-py-core` — private PyO3 bridge for Python/Rust integration
+- `apps/web` — Next.js control room
+- `native/` — native FDM/FEM/hybrid backend seams behind C ABI
+- `docs/` — specs, ADRs, and publication-style physics notes
 
-Fullmag ma umożliwić opisanie **jednego problemu fizycznego**, a następnie uruchomienie go przez backend:
-
-- `fdm`,
-- `fem`,
-- `hybrid`.
-
-Wspólny Python API `fullmag` i `ProblemIR` opisują:
-
-- geometrię,
-- regiony,
-- materiały,
-- termy energii,
-- dynamikę,
-- pobudzenia,
-- outputy,
-- politykę backendu i walidacji.
-
-Nie opisują natomiast indeksów komórek, layoutu pamięci ani szczegółów FEM/FDM. Te rzeczy są odpowiedzialnością planera i backendów.
-
-## Aktualny stan bootstrapu
-
-Na starcie repo zawiera:
-
-- scaffold monorepo dla Rust + web + native,
-- zalążek obowiązkowej dokumentacji fizycznej w `docs/physics/`,
-- draft `ProblemIR`,
-- minimalne `CLI` i `API` w Ruście,
-- pierwszy layout aplikacji Next.js,
-- kontrakt C ABI dla backendów natywnych,
-- dokumenty architektoniczne i ADR-y,
-- instrukcje dla Copilota, agentów, promptów i skills,
-- kontenerowy workflow deweloperski.
-
-To jest celowo **solidny szkielet**, a nie jeszcze pełny solver. Najpierw granice, potem głębokość. Architektura lubi być rozpieszczona od początku.
-
-## Struktura repo
+## Execution chain
 
 ```text
-apps/web                 Next.js control room
-packages/fullmag-py      Python API do budowania problemów
-crates/fullmag-ir        canonical ProblemIR i typy domenowe
-crates/fullmag-cli       lokalne narzędzia developerskie
-crates/fullmag-api       HTTP API control-plane
-native/                  backendy natywne i C ABI
-proto/                   kontrakty usług / workerów
-docs/                    scope, ADR-y, specyfikacje, physics notes
-.github/                 instrukcje, agenci, skills, prompty, CI
-docker/                  obrazy developerskie
-examples/                przykładowe problemy / wejścia robocze
+Python script / notebook
+        |
+        v
+embedded Python DSL (fullmag)
+        |
+        v
+Python-built ProblemIR
+        |
+        v
+Rust validation + normalization + planning
+        |
+        +--> FDM backend
+        +--> FEM backend
+        +--> Hybrid backend
 ```
 
-## Złota zasada projektu
+## Golden rule
 
-Przed implementacją każdej nowej fizyki lub numeryki tworzymy dokument w `docs/physics/`.
+Before implementing any new physics or numerics feature, create or update a publication-style note in `docs/physics/`.
+The note must cover equations, symbols, SI units, assumptions, backend interpretation, `ProblemIR` impact, validation strategy, completeness, and deferred work.
 
-To nie jest sugestia. To jest warunek wejścia do implementacji.
+## Current bootstrap state
 
-Dokument ma opisywać model fizyczny jak notatkę lub publikację naukową: równania, założenia, jednostki, interpretację FDM/FEM/hybrid, wpływ na Python API i `ProblemIR`, strategię walidacji oraz kryteria kompletności w całej aplikacji.
+The repository now includes:
 
-## Szybki start
+- a real Python package scaffold in `packages/fullmag-py`,
+- typed `ProblemIR` sections in Rust,
+- CLI commands for JSON validation and planning summaries,
+- a canonical Python example in `examples/dw_track.py`,
+- mirrored agent instructions between `.agents` and `.github`,
+- repo consistency checks and a hard `docs/physics` gate in CI.
 
-### 1. Uzupełnij zmienne środowiskowe
+This is still a foundation milestone. It is intentionally planning-first, not solver-depth-first.
 
-Repo zawiera już `.env` z placeholderami, bo `compose.yaml` ich wymaga:
+## Quick start
 
-- `POSTGRES_PASSWORD`
-- `MINIO_ROOT_USER`
-- `MINIO_ROOT_PASSWORD`
-- `RUST_LOG`
+### 1. Bring up the dev container
 
-### 2. Uruchom środowisko developerskie
-
-Opcjonalne komendy:
-
-```text
+```bash
 make up
 make shell
 ```
 
-Po wejściu do kontenera możesz uruchamiać Rust i web bez brudzenia hosta.
+### 2. Verify the bootstrap in the container
 
-### 3. Sprawdź bootstrap
-
-Opcjonalne komendy:
-
-```text
+```bash
 cargo check --workspace
-cargo run -p fullmag-cli -- doctor
-cargo run -p fullmag-cli -- example-ir
+cargo test --workspace
+python3 -m pip install -e packages/fullmag-py
+python3 -m unittest discover -s packages/fullmag-py/tests -v
+python3 scripts/check_repo_consistency.py
+python3 scripts/run_python_ir_smoke.py --cli target/debug/fullmag-cli
 ```
 
-## Dokumenty, które warto przeczytać najpierw
+### 3. Inspect the canonical example
 
-- `docs/1_project_scope.md` — główna wizja projektu,
-- `docs/2_repo_blueprint.md` — mapa repo i przepływ MVP,
-- `docs/physics/README.md` — zasady dokumentacji fizycznej,
-- `docs/physics/0000-physics-documentation-standard.md` — standard pisania physics notes,
-- `docs/specs/problem-ir-v0.md` — draft canonical `ProblemIR`,
-- `docs/specs/capability-matrix-v0.md` — założenia capability matrix,
-- `docs/adr/0001-physics-first-dsl.md` — wspólny Python API opisuje fizykę,
-- `docs/adr/0002-container-first-monorepo.md` — monorepo i kontenery.
+```bash
+python3 -m pip install -e packages/fullmag-py
+python3 - <<'PY'
+from fullmag import load_problem_from_script
+loaded = load_problem_from_script("examples/dw_track.py")
+print(loaded.problem.to_ir())
+PY
+```
 
-## Najbliższe kroki
+## Key documents
 
-1. Rozwinąć Python API `fullmag` i `ProblemIR` do wersji implementacyjnej.
-2. Dodać semantic validator i planner seam.
-3. Zaimplementować pierwszy `ExecutionPlan` i capability checks.
-4. Uruchomić produkcyjny szkielet backendu FDM.
-5. Rozbudować web do edycji problemu i przeglądu jobów.
+- `docs/1_project_scope.md`
+- `docs/2_repo_blueprint.md`
+- `docs/adr/0001-physics-first-python-api.md`
+- `docs/specs/problem-ir-v0.md`
+- `docs/specs/capability-matrix-v0.md`
+- `docs/physics/README.md`
+- `docs/physics/0000-physics-documentation-standard.md`
 
-## Zasady projektowe
+## Near-term priorities
 
-- **physics-first Python API**,
-- **physics notes before code**,
-- **typed IR before planner magic**,
-- **backend capability matrix from day one**,
-- **container-first dev flow**,
-- **C ABI at Rust/native boundary**,
-- **docs and code evolve together**.
-
-## Status
-
-Bootstrapped on 2026-03-23.
+1. Expand the Python DSL and keep it backend-neutral.
+2. Keep `ProblemIR` typed and planner-ready.
+3. Grow capability checks before backend feature sprawl.
+4. Add planning-depth smoke coverage before solver-depth implementation.
+5. Maintain the physics-first publication workflow as a hard gate.

@@ -1,50 +1,40 @@
 # Physics documentation
 
-Ten katalog jest **obowiązkowym dziennikiem naukowym projektu**.
+`docs/physics/` is the mandatory publication-style record of Fullmag's physical and numerical scope.
 
-## Złota zasada
+## Golden rule
 
-Każda nowa funkcja fizyczna, numeryczna lub walidacyjna musi być tutaj opisana **zanim** przejdzie do implementacji. Dotyczy to m.in.:
+Before implementing any new physics or numerics feature, create or update a note in this directory.
 
-- geometrii i mesh pipeline,
-- exchange,
-- anisotropy,
-- demag,
-- DMI,
-- Zeeman,
-- STT/SOT,
-- time integration,
-- projection mesh↔grid,
-- warunków brzegowych,
-- artifact semantics,
-- benchmarków i walidacji.
+That note must describe:
 
-## Cel
+- problem statement and motivation,
+- governing equations, symbols, and SI units,
+- assumptions and approximations,
+- FDM, FEM, and hybrid interpretation,
+- Python API and `ProblemIR` impact,
+- planner and capability-matrix impact,
+- validation strategy,
+- completeness across the stack,
+- deferred work.
 
-Budujemy dokumentację tak, aby mogła ewoluować w stronę:
+## Why this exists
 
-- wewnętrznej dokumentacji architektoniczno-fizycznej,
-- suplementów do publikacji naukowych,
-- materiałów walidacyjnych dla backendów FDM/FEM/hybrid,
-- źródła prawdy dla agentów i implementerów.
+This directory is intended to evolve into:
 
-## Minimalny workflow
+- internal technical notes,
+- reproducibility and validation records,
+- publication supplements,
+- the canonical physics reference for human contributors and coding agents.
 
-1. Zidentyfikuj nową funkcję fizyczną lub numeryczną.
-2. Utwórz dokument w `docs/physics/` na bazie szablonu.
-3. Opisz równania, założenia, jednostki, zakres obowiązywania i walidację.
-4. Sprawdź wpływ na Python API, `ProblemIR`, planner, capability matrix i backendy.
-5. Dopiero wtedy przejdź do implementacji.
-6. Po implementacji uzupełnij dokument o status, wyniki walidacji i ograniczenia.
+## Naming convention
 
-## Konwencja nazewnictwa
-
-Zalecany format:
+Recommended filenames:
 
 - `0000-physics-documentation-standard.md`
+- `0050-shared-problem-semantics-and-embedded-python-api.md`
 - `0100-mesh-and-region-discretization.md`
 - `0200-exchange.md`
-- `0210-dmi-interfacial.md`
 - `0300-demagnetization.md`
 
-Numeracja ma pomagać w porządku merytorycznym, nie w biurokracji.
+The numbering is semantic, not bureaucratic.

@@ -3,6 +3,7 @@ members = [
   "crates/fullmag-api",
   "crates/fullmag-cli",
   "crates/fullmag-ir",
+  "crates/fullmag-py-core",
 ]
 resolver = "2"
 
@@ -20,3 +21,4 @@ serde_json = "1.0"
 tokio = { version = "1.45", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+pyo3 = { version = "0.23", features = ["macros", "abi3-py310"] }

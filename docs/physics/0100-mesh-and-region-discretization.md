@@ -5,52 +5,56 @@
 
 ## 1. Problem statement
 
-Mesh, voxelization, region tagging i mapowanie materiałów są pierwszym miejscem, gdzie wspólny opis fizyki spotyka konkretną reprezentację numeryczną. Ten etap wymaga szczególnej ostrożności, bo łatwo tu przemycić backend-specific semantics do warstwy wspólnej.
+Geometry imports, region tagging, and material assignment are the first point where backend-neutral physics semantics meet backend-specific numerical representation.
+This layer must remain neutral in the shared Python API while still supporting voxelization, meshing, and mesh-grid projection later in the pipeline.
 
 ## 2. Physical model
 
-Geometria i regiony nie są samodzielnym członem energii, ale definiują domenę, na której pola i materiały mają znaczenie fizyczne. Region tagging wpływa na poprawność parametrów materiałowych, energii międzyobszarowych i warunków brzegowych.
+Geometry and regions define the spatial domain on which fields, materials, and energies are meaningful.
+They are not energy terms by themselves, but errors here invalidate material assignment, interface semantics, and backend comparisons.
 
 ## 3. Numerical interpretation
 
 ### 3.1 FDM
 
-Geometria jest voxelizowana na regularny grid, a regiony stają się maskami komórkowymi.
+Imported geometry is voxelized onto a regular grid, and regions become masks over cells.
 
 ### 3.2 FEM
 
-Geometria jest meshowana, a regiony są odwzorowane jako znaczniki domeny / atrybuty elementów.
+Imported geometry is meshed, and regions become domain markers over elements or mesh attributes.
 
 ### 3.3 Hybrid
 
-Potrzebne są jawne operatory projekcji oraz zachowanie zgodności semantycznej regionów między mesh i auxiliary grid.
+Hybrid execution needs explicit projection semantics between FEM mesh representation and auxiliary Cartesian grids used by selected operators.
 
 ## 4. API, IR, and planner impact
 
-- Python API musi rozdzielać geometrię, region i materiał.
-- `ProblemIR` musi przechowywać referencje geometrii i przypisania regionów bez narzucania siatki.
-- Planner decyduje o voxelization/meshing/projection.
+- The Python API must keep `ImportedGeometry`, `Region`, `Material`, and `Ferromagnet` distinct.
+- `ProblemIR` stores geometry references and named region bindings without forcing a grid or element layout.
+- The planner owns voxelization, meshing, and projection decisions.
 
 ## 5. Validation strategy
 
-- proste geometrie analityczne,
-- testy spójności objętości i region fractions,
-- porównanie region assignment między backendami.
+- analytical geometry sanity checks,
+- region-volume consistency checks,
+- geometry-import fidelity checks,
+- cross-backend region assignment comparisons.
 
 ## 6. Completeness checklist
 
-- [ ] Python API
-- [ ] ProblemIR
-- [ ] Planner
-- [ ] Capability matrix
+- [x] Python API
+- [x] ProblemIR
+- [x] Planner-facing structure
+- [x] Capability matrix
 - [ ] FDM backend
 - [ ] FEM backend
 - [ ] Hybrid backend
 - [ ] Outputs / observables
 - [ ] Tests / benchmarks
-- [ ] Documentation
+- [x] Documentation
 
 ## 7. Known limits and deferred work
 
-- import STEP/STL/MSH nie jest jeszcze zaimplementowany,
-- nie określono jeszcze zasad mesh repair ani curved geometry fidelity.
+- No production geometry import or mesh repair pipeline exists yet.
+- Curved-geometry fidelity and tolerance policy are still deferred.
+- This note documents semantic intent only; numerical implementation remains future work.

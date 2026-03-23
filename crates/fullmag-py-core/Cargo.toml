@@ -1,0 +1,14 @@
+[package]
+name = "fullmag-py-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "_fullmag_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fullmag-ir = { path = "../fullmag-ir" }
+pyo3.workspace = true
+serde_json.workspace = true

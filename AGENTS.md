@@ -2,54 +2,59 @@
 
 ## North star
 
-Fullmag opisuje **problem fizyczny**, a nie reprezentację numeryczną. Każda zmiana musi utrzymywać ten kontrakt.
+Fullmag describes a physical micromagnetic problem, not a numerical storage layout.
+Every change must preserve that contract across Python API, `ProblemIR`, planning, and backend execution.
+
+## Canonical instruction sources
+
+- `.agents/` is the canonical source for Fullmag agent workflows and skills.
+- `.github/` mirrors the same rules for GitHub and Copilot surfaces.
+- `docs/physics/TEMPLATE.md` is the only canonical template for publication-style physics notes.
 
 ## Golden rule: physics before implementation
 
-To jest zasada **niepomijalna**.
+This rule is non-negotiable.
 
-Każdy etap wdrożenia fizyki lub numeryki — np. mesh, exchange, demag, DMI, anisotropy, time integration, coupling, boundary conditions, sampling, walidacja — **musi najpierw dostać dokument fizyczny** w `docs/physics/` napisany w stylu notatki/publikacji naukowej.
+Before implementing any physics or numerical feature, create or update a publication-style note in `docs/physics/` covering:
 
-Ten dokument musi opisywać co najmniej:
+1. problem statement and physical motivation,
+2. governing equations, symbols, SI units, and assumptions,
+3. FDM, FEM, and hybrid interpretation,
+4. Python API and `ProblemIR` impact,
+5. planner and capability-matrix impact,
+6. validation strategy and observables,
+7. completeness checklist across the stack,
+8. known limits and deferred work.
 
-1. problem fizyczny i jego znaczenie,
-2. równania, założenia i konwencje,
-3. jednostki oraz zakres obowiązywania modelu,
-4. relację do `ProblemIR`, plannerów i backendów,
-5. kryteria kompletności implementacji w całej aplikacji,
-6. plan walidacji numerycznej i/lub analitycznej,
-7. ograniczenia, ryzyka i rzeczy odłożone.
-
-**Dopiero po takim opisie wolno wdrażać kod.** Jeśli dokumentacja fizyczna nie istnieje albo jest niekompletna, zadanie nie jest gotowe do implementacji.
+If the note does not exist or is incomplete, the task is not ready for implementation.
 
 ## Architectural guardrails
 
-1. Wspólna warstwa DSL i `ProblemIR` nie może eksponować indeksów komórek, layoutu gridu ani szczegółów FEM.
-2. Tryby `strict`, `extended`, `hybrid` muszą być jawne w semantyce i dokumentacji.
-3. Rust jest control-plane: parser, IR, planner, API, scheduler, runner, provenance.
-4. C++/CUDA pozostaje warstwą obliczeniową; interfejs do Rust przechodzi przez stabilne C ABI.
-5. Kontenery są domyślną drogą uruchamiania i budowania projektu.
-6. ADR-y i specyfikacje są częścią kodu: przy zmianie architektury aktualizuj dokumentację wraz z implementacją.
-7. Każda funkcja fizyczna musi mieć ślad w `docs/physics/` zanim trafi do kodu produkcyjnego.
+1. The only public scripting surface is the embedded Python DSL in `packages/fullmag-py`.
+2. Python scripts build object graphs and canonical `ProblemIR`; Rust validates, normalizes, and plans that IR.
+3. The shared API must never expose grid indices, GPU array internals, or FEM-only implementation details.
+4. `strict`, `extended`, and `hybrid` are first-class execution semantics from day one.
+5. Rust remains the control plane: validation, normalization, planning, runner, API, provenance.
+6. Native compute stays behind stable C ABI boundaries.
+7. Containerized workflows are the default verification path.
 
 ## Repo map
 
-- `crates/fullmag-ir` — canonical problem model i typy domenowe.
-- `crates/fullmag-cli` — lokalny runner i narzędzia developerskie.
+- `packages/fullmag-py` — public embedded Python DSL and runtime scaffolding.
+- `crates/fullmag-ir` — typed canonical `ProblemIR`, validation, and planning summaries.
+- `crates/fullmag-cli` — bootstrap CLI for IR validation and planning.
 - `crates/fullmag-api` — control-plane HTTP API.
-- `apps/web` — Next.js control room.
-- `native/` — backendy natywne i C ABI.
-- `proto/` — kontrakty między usługami.
-- `docs/adr` — decyzje architektoniczne.
-- `docs/specs` — specyfikacje semantyczne i IR.
-- `docs/physics` — dokumentacja fizyczna pisana jak publikacje/notatki naukowe dla każdego etapu wdrożenia.
-- `.agents/skills` — runtime skille agentowe (`SKILL.md`) dla workflowów implementacyjnych.
-- `.agents/workflows` — sekwencje pracy agentów (physics gate, feature delivery, completeness review).
+- `crates/fullmag-py-core` — private PyO3 bridge for Python/Rust integration.
+- `apps/web` — Next.js control room for scripts, jobs, and artifacts.
+- `native/` — native backends and C ABI.
+- `docs/specs` — canonical architecture and IR specs.
+- `docs/physics` — publication-style physics documentation and validation notes.
+- `.agents/skills` — canonical agent skills.
+- `.agents/workflows` — canonical agent workflows.
 
-## Definition of done for early changes
+## Definition of done for foundation changes
 
-- Zmiana ma jasny wpływ na architekturę lub MVP.
-- Jest zgodna z zasadą physics-first DSL.
-- Ma kompletny dokument fizyczny w `docs/physics/`, jeśli dotyczy modelu, dyskretyzacji lub walidacji fizyki.
-- Daje się uruchomić albo zweryfikować w środowisku kontenerowym.
-- Dokumentacja nie zostaje z tyłu.
+- The change strengthens the embedded Python DSL or typed IR boundary.
+- Physics-facing changes include a corresponding `docs/physics/` update.
+- README, AGENTS, skills, prompts, and web/CLI copy stay aligned.
+- Containerized checks cover Rust, Python, repo consistency, and smoke flow.
