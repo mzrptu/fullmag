@@ -61,6 +61,10 @@ with
 \frac{2 A}{\mu_0 M_s} \nabla^2 \mathbf{m}.
 \]
 
+> **Boris equivalence.** Boris operates on dimensional magnetisation `M = Ms m [A/m]` and writes
+> `H_ex = (2A / μ₀Ms²) ∇²M`.  Substituting `M = Ms m` recovers our formula exactly.
+> The two representations are identical; only the state variable convention differs.
+
 The corresponding exchange energy density is
 
 \[
@@ -111,8 +115,15 @@ For each cell, the Laplacian is approximated with second-order central differenc
 \frac{\mathbf{m}_{i,j,k+1} - 2 \mathbf{m}_{i,j,k} + \mathbf{m}_{i,j,k-1}}{\Delta z^2}.
 \]
 
-At external boundaries, the first slice uses mirrored ghost values, equivalent to a homogeneous
-Neumann boundary condition `\partial_n m = 0`.
+At external boundaries, the first slice uses **replicated boundary values** as ghost cells
+(`m[-1] = m[0]` at the left face, etc.).  This sets the exchange flux through each boundary face
+to zero — the physical homogeneous Neumann condition `\partial_n m = 0` that follows from Brown's
+variational boundary condition for exchange.  Note: this is `m[-1] = m[0]` (plateau extension),
+*not* the symmetric mirror `m[-1] = m[1]`, which would incorrectly double the boundary contribution.
+
+This is equivalent to the `delsq_neu` operator used by Boris: both compute
+`(m[+1] - m[0]) / dx²` at the left boundary cell instead of the interior stencil
+`(m[+1] - 2m[0] + m[-1]) / dx²`.
 
 Time integration uses explicit Heun:
 
@@ -244,6 +255,14 @@ backend.
   from `fullmag script.py` is planned but not implemented yet.
 - The production CUDA FDM backend is not implemented yet; the current public executable path still
   uses the CPU reference runner.
+- **High-temperature corrections (sLLB)**: Boris adds a `∇²m − m∇²(|m|²)/(2|m|²)` surface-normal
+  correction when `T > 0 && T_Curie > 0`; our reference engine is deterministic (0 K) only.
+  This is deferred to Phase 2+ (stochastic LLG / finite-temperature).
+- **AFM and multi-sublattice exchange**: Boris supports two-sublattice antiferromagnets with
+  symmetric, antisymmetric, and interlattice exchange terms.  Our engine supports single-sublattice
+  FM only.  Deferred.
+- **Multi-mesh exchange coupling**: Boris supports inter-mesh exchange at shared region boundaries.
+  Deferred.
 
 ## 8. References
 

@@ -117,6 +117,9 @@ def build_summary(*, script_path: str, problem_name: str, result) -> dict[str, o
         "total_steps": len(result.steps),
         "final_time": final_step.time if final_step is not None else None,
         "final_E_ex": final_step.e_ex if final_step is not None else None,
+        "final_E_demag": final_step.e_demag if final_step is not None else None,
+        "final_E_ext": final_step.e_ext if final_step is not None else None,
+        "final_E_total": final_step.e_total if final_step is not None else None,
         "output_dir": result.output_dir,
         "notes": list(result.notes),
     }
@@ -136,6 +139,12 @@ def print_human_summary(summary: dict[str, object]) -> None:
         print(f"- final_time: {summary['final_time']:.6e} s")
     if summary["final_E_ex"] is not None:
         print(f"- final_E_ex: {summary['final_E_ex']:.6e} J")
+    if summary["final_E_demag"] is not None:
+        print(f"- final_E_demag: {summary['final_E_demag']:.6e} J")
+    if summary["final_E_ext"] is not None:
+        print(f"- final_E_ext: {summary['final_E_ext']:.6e} J")
+    if summary["final_E_total"] is not None:
+        print(f"- final_E_total: {summary['final_E_total']:.6e} J")
     if summary["output_dir"]:
         print(f"- output_dir: {summary['output_dir']}")
     for note in summary["notes"]:

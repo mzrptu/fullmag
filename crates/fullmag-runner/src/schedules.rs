@@ -23,7 +23,18 @@ pub(crate) fn collect_scalar_schedules(
             every_seconds,
         } = output
         {
-            if !matches!(name.as_str(), "E_ex" | "time" | "step" | "solver_dt") {
+            if !matches!(
+                name.as_str(),
+                "E_ex"
+                    | "E_demag"
+                    | "E_ext"
+                    | "E_total"
+                    | "time"
+                    | "step"
+                    | "solver_dt"
+                    | "max_dm_dt"
+                    | "max_h_eff"
+            ) {
                 return Err(RunError {
                     message: format!("scalar output '{}' is not executable in Phase 1", name),
                 });
@@ -48,7 +59,7 @@ pub(crate) fn collect_field_schedules(
             every_seconds,
         } = output
         {
-            if !matches!(name.as_str(), "m" | "H_ex") {
+            if !matches!(name.as_str(), "m" | "H_ex" | "H_demag" | "H_ext" | "H_eff") {
                 return Err(RunError {
                     message: format!("field output '{}' is not executable in Phase 1", name),
                 });

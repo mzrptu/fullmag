@@ -1,0 +1,113 @@
+.uiButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.5rem;
+  padding: 0 0.95rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-1);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition:
+    transform var(--duration-fast) var(--easing-default),
+    background var(--duration-fast) var(--easing-default),
+    border-color var(--duration-fast) var(--easing-default),
+    box-shadow var(--duration-fast) var(--easing-default),
+    color var(--duration-fast) var(--easing-default);
+}
+
+.uiButton:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.uiButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.uiButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.sm {
+  min-height: 2.1rem;
+  padding-inline: 0.8rem;
+  font-size: 0.85rem;
+}
+
+/* ── Solid ── */
+.solid {
+  background: var(--surface-3);
+  border-color: transparent;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.solid[data-tone='accent'],
+.solid[data-tone='success'] {
+  background: linear-gradient(135deg, var(--am-accent), var(--accent-strong));
+  color: #08101d;
+}
+
+.solid[data-tone='info'] {
+  background: linear-gradient(135deg, var(--am-info), #5f87ff);
+  color: #08101d;
+}
+
+.solid[data-tone='warn'] {
+  background: linear-gradient(135deg, var(--am-warn), #f39b3d);
+  color: #201305;
+}
+
+.solid[data-tone='danger'] {
+  background: linear-gradient(135deg, var(--am-danger), #ff5d78);
+  color: #22080b;
+}
+
+/* ── Outline ── */
+.outline {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-2);
+}
+
+.outline:hover:not(:disabled),
+.ghost:hover:not(:disabled),
+.subtle:hover:not(:disabled) {
+  border-color: var(--border-interactive);
+  background: rgba(107, 167, 255, 0.08);
+  color: var(--text-1);
+}
+
+.outline[data-tone='accent'],
+.ghost[data-tone='accent'] {
+  color: var(--am-accent);
+}
+
+.outline[data-tone='warn'],
+.ghost[data-tone='warn'] {
+  color: var(--am-warn);
+}
+
+.outline[data-tone='danger'],
+.ghost[data-tone='danger'] {
+  color: var(--am-danger);
+}
+
+/* ── Ghost ── */
+.ghost {
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+/* ── Subtle ── */
+.subtle {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(255, 255, 255, 0.04);
+  color: var(--text-2);
+}

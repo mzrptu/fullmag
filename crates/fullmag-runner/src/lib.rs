@@ -98,6 +98,9 @@ pub fn run_problem_with_callback(
         time: 0.0,
         dt: 0.0,
         e_ex: 0.0,
+        e_demag: 0.0,
+        e_ext: 0.0,
+        e_total: 0.0,
         max_dm_dt: 0.0,
         max_h_eff: 0.0,
         wall_time_ns: 0,
@@ -152,6 +155,9 @@ mod tests {
             exchange_bc: ExchangeBoundaryCondition::Neumann,
             integrator: IntegratorChoice::Heun,
             fixed_timestep: Some(1e-14),
+            enable_exchange: true,
+            enable_demag: false,
+            external_field: None,
         }
     }
 

@@ -1,3 +1,5 @@
+use rustfft::num_complex::Complex;
+use rustfft::FftPlanner;
 use std::error::Error;
 use std::f64::consts::PI;
 use std::fmt;
@@ -140,6 +142,23 @@ impl LlgConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EffectiveFieldTerms {
+    pub exchange: bool,
+    pub demag: bool,
+    pub external_field: Option<Vector3>,
+}
+
+impl Default for EffectiveFieldTerms {
+    fn default() -> Self {
+        Self {
+            exchange: true,
+            demag: false,
+            external_field: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExchangeLlgState {
     grid: GridShape,
@@ -182,6 +201,24 @@ impl ExchangeLlgState {
 pub struct StepReport {
     pub time_seconds: f64,
     pub exchange_energy_joules: f64,
+    pub demag_energy_joules: f64,
+    pub external_energy_joules: f64,
+    pub total_energy_joules: f64,
+    pub max_effective_field_amplitude: f64,
+    pub max_rhs_amplitude: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectiveFieldObservables {
+    pub magnetization: Vec<Vector3>,
+    pub exchange_field: Vec<Vector3>,
+    pub demag_field: Vec<Vector3>,
+    pub external_field: Vec<Vector3>,
+    pub effective_field: Vec<Vector3>,
+    pub exchange_energy_joules: f64,
+    pub demag_energy_joules: f64,
+    pub external_energy_joules: f64,
+    pub total_energy_joules: f64,
     pub max_effective_field_amplitude: f64,
     pub max_rhs_amplitude: f64,
 }
@@ -192,6 +229,7 @@ pub struct ExchangeLlgProblem {
     pub cell_size: CellSize,
     pub material: MaterialParameters,
     pub dynamics: LlgConfig,
+    pub terms: EffectiveFieldTerms,
 }
 
 impl ExchangeLlgProblem {
@@ -201,11 +239,22 @@ impl ExchangeLlgProblem {
         material: MaterialParameters,
         dynamics: LlgConfig,
     ) -> Self {
+        Self::with_terms(grid, cell_size, material, dynamics, EffectiveFieldTerms::default())
+    }
+
+    pub fn with_terms(
+        grid: GridShape,
+        cell_size: CellSize,
+        material: MaterialParameters,
+        dynamics: LlgConfig,
+        terms: EffectiveFieldTerms,
+    ) -> Self {
         Self {
             grid,
             cell_size,
             material,
             dynamics,
+            terms,
         }
     }
 
@@ -219,23 +268,49 @@ impl ExchangeLlgProblem {
 
     pub fn exchange_field(&self, state: &ExchangeLlgState) -> Result<Vec<Vector3>> {
         self.ensure_state_matches_grid(state)?;
-        Ok(self.exchange_field_from_vectors(state.magnetization()))
+        Ok(if self.terms.exchange {
+            self.exchange_field_from_vectors(state.magnetization())
+        } else {
+            zero_vectors(self.grid.cell_count())
+        })
+    }
+
+    pub fn demag_field(&self, state: &ExchangeLlgState) -> Result<Vec<Vector3>> {
+        self.ensure_state_matches_grid(state)?;
+        Ok(if self.terms.demag {
+            self.demag_field_from_vectors(state.magnetization())
+        } else {
+            zero_vectors(self.grid.cell_count())
+        })
+    }
+
+    pub fn external_field(&self, state: &ExchangeLlgState) -> Result<Vec<Vector3>> {
+        self.ensure_state_matches_grid(state)?;
+        Ok(self.external_field_vectors())
+    }
+
+    pub fn effective_field(&self, state: &ExchangeLlgState) -> Result<Vec<Vector3>> {
+        self.ensure_state_matches_grid(state)?;
+        Ok(self.effective_field_from_vectors(state.magnetization()))
     }
 
     pub fn llg_rhs(&self, state: &ExchangeLlgState) -> Result<Vec<Vector3>> {
         self.ensure_state_matches_grid(state)?;
-        let fields = self.exchange_field_from_vectors(state.magnetization());
-        Ok(state
-            .magnetization()
-            .iter()
-            .zip(fields.iter())
-            .map(|(m, h)| self.llg_rhs_from_field(*m, *h))
-            .collect())
+        Ok(self.llg_rhs_from_vectors(state.magnetization()))
     }
 
     pub fn exchange_energy(&self, state: &ExchangeLlgState) -> Result<f64> {
         self.ensure_state_matches_grid(state)?;
-        Ok(self.exchange_energy_from_vectors(state.magnetization()))
+        Ok(if self.terms.exchange {
+            self.exchange_energy_from_vectors(state.magnetization())
+        } else {
+            0.0
+        })
+    }
+
+    pub fn observe(&self, state: &ExchangeLlgState) -> Result<EffectiveFieldObservables> {
+        self.ensure_state_matches_grid(state)?;
+        Ok(self.observe_vectors(state.magnetization()))
     }
 
     pub fn step(&self, state: &mut ExchangeLlgState, dt: f64) -> Result<StepReport> {
@@ -269,14 +344,16 @@ impl ExchangeLlgProblem {
         state.magnetization = corrected;
         state.time_seconds += dt;
 
-        let field = self.exchange_field_from_vectors(state.magnetization());
-        let rhs = self.llg_rhs_from_vectors(state.magnetization());
+        let observables = self.observe_vectors(state.magnetization());
 
         Ok(StepReport {
             time_seconds: state.time_seconds,
-            exchange_energy_joules: self.exchange_energy_from_vectors(state.magnetization()),
-            max_effective_field_amplitude: max_norm(&field),
-            max_rhs_amplitude: max_norm(&rhs),
+            exchange_energy_joules: observables.exchange_energy_joules,
+            demag_energy_joules: observables.demag_energy_joules,
+            external_energy_joules: observables.external_energy_joules,
+            total_energy_joules: observables.total_energy_joules,
+            max_effective_field_amplitude: observables.max_effective_field_amplitude,
+            max_rhs_amplitude: observables.max_rhs_amplitude,
         })
     }
 
@@ -287,6 +364,58 @@ impl ExchangeLlgProblem {
             ));
         }
         Ok(())
+    }
+
+    fn observe_vectors(&self, magnetization: &[Vector3]) -> EffectiveFieldObservables {
+        let exchange_field = if self.terms.exchange {
+            self.exchange_field_from_vectors(magnetization)
+        } else {
+            zero_vectors(self.grid.cell_count())
+        };
+        let demag_field = if self.terms.demag {
+            self.demag_field_from_vectors(magnetization)
+        } else {
+            zero_vectors(self.grid.cell_count())
+        };
+        let external_field = self.external_field_vectors();
+        let effective_field = combine_fields(&exchange_field, &demag_field, &external_field);
+        let rhs = magnetization
+            .iter()
+            .zip(effective_field.iter())
+            .map(|(m, h)| self.llg_rhs_from_field(*m, *h))
+            .collect::<Vec<_>>();
+
+        let exchange_energy_joules = if self.terms.exchange {
+            self.exchange_energy_from_vectors(magnetization)
+        } else {
+            0.0
+        };
+        let demag_energy_joules = if self.terms.demag {
+            self.demag_energy_from_fields(magnetization, &demag_field)
+        } else {
+            0.0
+        };
+        let external_energy_joules = if self.terms.external_field.is_some() {
+            self.external_energy_from_fields(magnetization, &external_field)
+        } else {
+            0.0
+        };
+        let total_energy_joules =
+            exchange_energy_joules + demag_energy_joules + external_energy_joules;
+
+        EffectiveFieldObservables {
+            magnetization: magnetization.to_vec(),
+            exchange_field,
+            demag_field,
+            external_field,
+            effective_field: effective_field.clone(),
+            exchange_energy_joules,
+            demag_energy_joules,
+            external_energy_joules,
+            total_energy_joules,
+            max_effective_field_amplitude: max_norm(&effective_field),
+            max_rhs_amplitude: max_norm(&rhs),
+        }
     }
 
     fn exchange_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
@@ -330,8 +459,108 @@ impl ExchangeLlgProblem {
         field
     }
 
+    fn demag_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
+        let px = self.grid.nx * 2;
+        let py = self.grid.ny * 2;
+        let pz = self.grid.nz * 2;
+        let padded_len = px * py * pz;
+
+        let mut mx = vec![Complex::new(0.0, 0.0); padded_len];
+        let mut my = vec![Complex::new(0.0, 0.0); padded_len];
+        let mut mz = vec![Complex::new(0.0, 0.0); padded_len];
+
+        for z in 0..self.grid.nz {
+            for y in 0..self.grid.ny {
+                for x in 0..self.grid.nx {
+                    let src_index = self.grid.index(x, y, z);
+                    let dst_index = padded_index(px, py, x, y, z);
+                    let moment = scale(
+                        magnetization[src_index],
+                        self.material.saturation_magnetisation,
+                    );
+                    mx[dst_index] = Complex::new(moment[0], 0.0);
+                    my[dst_index] = Complex::new(moment[1], 0.0);
+                    mz[dst_index] = Complex::new(moment[2], 0.0);
+                }
+            }
+        }
+
+        fft3_in_place(&mut mx, px, py, pz, false);
+        fft3_in_place(&mut my, px, py, pz, false);
+        fft3_in_place(&mut mz, px, py, pz, false);
+
+        let lx = px as f64 * self.cell_size.dx;
+        let ly = py as f64 * self.cell_size.dy;
+        let lz = pz as f64 * self.cell_size.dz;
+
+        let mut hx = vec![Complex::new(0.0, 0.0); padded_len];
+        let mut hy = vec![Complex::new(0.0, 0.0); padded_len];
+        let mut hz = vec![Complex::new(0.0, 0.0); padded_len];
+
+        for z in 0..pz {
+            let kz = 2.0 * PI * frequency_index(z, pz) as f64 / lz;
+            for y in 0..py {
+                let ky = 2.0 * PI * frequency_index(y, py) as f64 / ly;
+                for x in 0..px {
+                    let kx = 2.0 * PI * frequency_index(x, px) as f64 / lx;
+                    let k2 = kx * kx + ky * ky + kz * kz;
+                    if k2 == 0.0 {
+                        continue;
+                    }
+
+                    let index = padded_index(px, py, x, y, z);
+                    let kdotm = mx[index] * kx + my[index] * ky + mz[index] * kz;
+                    hx[index] = -kdotm * (kx / k2);
+                    hy[index] = -kdotm * (ky / k2);
+                    hz[index] = -kdotm * (kz / k2);
+                }
+            }
+        }
+
+        fft3_in_place(&mut hx, px, py, pz, true);
+        fft3_in_place(&mut hy, px, py, pz, true);
+        fft3_in_place(&mut hz, px, py, pz, true);
+
+        let normalisation = 1.0 / padded_len as f64;
+        let mut field = vec![[0.0, 0.0, 0.0]; self.grid.cell_count()];
+        for z in 0..self.grid.nz {
+            for y in 0..self.grid.ny {
+                for x in 0..self.grid.nx {
+                    let src_index = padded_index(px, py, x, y, z);
+                    let dst_index = self.grid.index(x, y, z);
+                    field[dst_index] = [
+                        hx[src_index].re * normalisation,
+                        hy[src_index].re * normalisation,
+                        hz[src_index].re * normalisation,
+                    ];
+                }
+            }
+        }
+
+        field
+    }
+
+    fn external_field_vectors(&self) -> Vec<Vector3> {
+        vec![self.terms.external_field.unwrap_or([0.0, 0.0, 0.0]); self.grid.cell_count()]
+    }
+
+    fn effective_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
+        let exchange_field = if self.terms.exchange {
+            self.exchange_field_from_vectors(magnetization)
+        } else {
+            zero_vectors(self.grid.cell_count())
+        };
+        let demag_field = if self.terms.demag {
+            self.demag_field_from_vectors(magnetization)
+        } else {
+            zero_vectors(self.grid.cell_count())
+        };
+        let external_field = self.external_field_vectors();
+        combine_fields(&exchange_field, &demag_field, &external_field)
+    }
+
     fn llg_rhs_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
-        let field = self.exchange_field_from_vectors(magnetization);
+        let field = self.effective_field_from_vectors(magnetization);
         magnetization
             .iter()
             .zip(field.iter())
@@ -384,6 +613,39 @@ impl ExchangeLlgProblem {
 
         energy
     }
+
+    fn demag_energy_from_fields(&self, magnetization: &[Vector3], demag_field: &[Vector3]) -> f64 {
+        let cell_volume = self.cell_size.volume();
+        magnetization
+            .iter()
+            .zip(demag_field.iter())
+            .map(|(m, h)| {
+                -0.5
+                    * MU0
+                    * self.material.saturation_magnetisation
+                    * dot(*m, *h)
+                    * cell_volume
+            })
+            .sum()
+    }
+
+    fn external_energy_from_fields(
+        &self,
+        magnetization: &[Vector3],
+        external_field: &[Vector3],
+    ) -> f64 {
+        let cell_volume = self.cell_size.volume();
+        magnetization
+            .iter()
+            .zip(external_field.iter())
+            .map(|(m, h)| {
+                -MU0
+                    * self.material.saturation_magnetisation
+                    * dot(*m, *h)
+                    * cell_volume
+            })
+            .sum()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -414,6 +676,9 @@ pub fn run_reference_exchange_demo(steps: usize, dt: f64) -> Result<ReferenceDem
     let mut last_report = StepReport {
         time_seconds: 0.0,
         exchange_energy_joules: initial_exchange_energy_joules,
+        demag_energy_joules: 0.0,
+        external_energy_joules: 0.0,
+        total_energy_joules: initial_exchange_energy_joules,
         max_effective_field_amplitude: 0.0,
         max_rhs_amplitude: 0.0,
     };
@@ -432,6 +697,92 @@ pub fn run_reference_exchange_demo(steps: usize, dt: f64) -> Result<ReferenceDem
         max_effective_field_amplitude: last_report.max_effective_field_amplitude,
         max_rhs_amplitude: last_report.max_rhs_amplitude,
     })
+}
+
+fn fft3_in_place(
+    data: &mut [Complex<f64>],
+    nx: usize,
+    ny: usize,
+    nz: usize,
+    inverse: bool,
+) {
+    let mut planner = FftPlanner::<f64>::new();
+    let fft_x = if inverse {
+        planner.plan_fft_inverse(nx)
+    } else {
+        planner.plan_fft_forward(nx)
+    };
+    let fft_y = if inverse {
+        planner.plan_fft_inverse(ny)
+    } else {
+        planner.plan_fft_forward(ny)
+    };
+    let fft_z = if inverse {
+        planner.plan_fft_inverse(nz)
+    } else {
+        planner.plan_fft_forward(nz)
+    };
+
+    for z in 0..nz {
+        for y in 0..ny {
+            let start = padded_index(nx, ny, 0, y, z);
+            fft_x.process(&mut data[start..start + nx]);
+        }
+    }
+
+    let mut line_y = vec![Complex::new(0.0, 0.0); ny];
+    for z in 0..nz {
+        for x in 0..nx {
+            for y in 0..ny {
+                line_y[y] = data[padded_index(nx, ny, x, y, z)];
+            }
+            fft_y.process(&mut line_y);
+            for y in 0..ny {
+                data[padded_index(nx, ny, x, y, z)] = line_y[y];
+            }
+        }
+    }
+
+    let mut line_z = vec![Complex::new(0.0, 0.0); nz];
+    for y in 0..ny {
+        for x in 0..nx {
+            for z in 0..nz {
+                line_z[z] = data[padded_index(nx, ny, x, y, z)];
+            }
+            fft_z.process(&mut line_z);
+            for z in 0..nz {
+                data[padded_index(nx, ny, x, y, z)] = line_z[z];
+            }
+        }
+    }
+}
+
+fn padded_index(nx: usize, ny: usize, x: usize, y: usize, z: usize) -> usize {
+    x + nx * (y + ny * z)
+}
+
+fn frequency_index(index: usize, n: usize) -> isize {
+    if index <= n / 2 {
+        index as isize
+    } else {
+        index as isize - n as isize
+    }
+}
+
+fn zero_vectors(len: usize) -> Vec<Vector3> {
+    vec![[0.0, 0.0, 0.0]; len]
+}
+
+fn combine_fields(
+    exchange_field: &[Vector3],
+    demag_field: &[Vector3],
+    external_field: &[Vector3],
+) -> Vec<Vector3> {
+    exchange_field
+        .iter()
+        .zip(demag_field.iter().zip(external_field.iter()))
+        .map(|(h_ex, (h_demag, h_ext))| add(add(*h_ex, *h_demag), *h_ext))
+        .collect()
 }
 
 fn normalized(vector: Vector3) -> Result<Vector3> {
@@ -494,6 +845,36 @@ mod tests {
             CellSize::new(1.0, 1.0, 1.0).expect("valid cell size"),
             MaterialParameters::new(1.0, 0.5 * MU0, alpha).expect("valid material"),
             LlgConfig::new(gamma, TimeIntegrator::Heun).expect("valid llg config"),
+        )
+    }
+
+    fn zeeman_problem(field: Vector3) -> ExchangeLlgProblem {
+        let grid = GridShape::new(2, 1, 1).expect("valid grid");
+        ExchangeLlgProblem::with_terms(
+            grid,
+            CellSize::new(1.0, 1.0, 1.0).expect("valid cell size"),
+            MaterialParameters::new(1.0, 0.5 * MU0, 0.5).expect("valid material"),
+            LlgConfig::new(1.0, TimeIntegrator::Heun).expect("valid llg config"),
+            EffectiveFieldTerms {
+                exchange: false,
+                demag: false,
+                external_field: Some(field),
+            },
+        )
+    }
+
+    fn demag_problem(nx: usize, ny: usize, nz: usize) -> ExchangeLlgProblem {
+        let grid = GridShape::new(nx, ny, nz).expect("valid grid");
+        ExchangeLlgProblem::with_terms(
+            grid,
+            CellSize::new(1.0, 1.0, 0.2).expect("valid cell size"),
+            MaterialParameters::new(1.0, 0.5 * MU0, 0.1).expect("valid material"),
+            LlgConfig::new(1.0, TimeIntegrator::Heun).expect("valid llg config"),
+            EffectiveFieldTerms {
+                exchange: false,
+                demag: true,
+                external_field: None,
+            },
         )
     }
 
@@ -577,13 +958,53 @@ mod tests {
         for _ in 0..10 {
             problem.step(&mut state, 1e-3).expect("step should succeed");
         }
-        let final_energy = problem
-            .exchange_energy(&state)
-            .expect("energy should evaluate");
+        let final_energy = problem.observe(&state).expect("observables").total_energy_joules;
 
         assert!(
             final_energy < initial_energy,
             "expected damped exchange relaxation to reduce energy, initial={initial_energy}, final={final_energy}"
+        );
+    }
+
+    #[test]
+    fn zeeman_only_relaxation_reduces_external_energy() {
+        let problem = zeeman_problem([0.0, 0.0, 1.0]);
+        let mut state = problem
+            .new_state(vec![[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+            .expect("state should build");
+
+        let initial_energy = problem.observe(&state).expect("observables").external_energy_joules;
+        for _ in 0..100 {
+            problem.step(&mut state, 5e-3).expect("step should succeed");
+        }
+        let final_observables = problem.observe(&state).expect("observables");
+
+        assert!(
+            final_observables.external_energy_joules < initial_energy,
+            "expected external energy to decrease under damping"
+        );
+        assert!(
+            state.magnetization()[0][2] > 0.1,
+            "magnetization should tilt toward the external field"
+        );
+    }
+
+    #[test]
+    fn thin_film_out_of_plane_demag_energy_exceeds_in_plane_energy() {
+        let problem = demag_problem(4, 4, 1);
+        let out_of_plane = problem
+            .uniform_state([0.0, 0.0, 1.0])
+            .expect("state should build");
+        let in_plane = problem
+            .uniform_state([1.0, 0.0, 0.0])
+            .expect("state should build");
+
+        let e_out = problem.observe(&out_of_plane).expect("observables").demag_energy_joules;
+        let e_in = problem.observe(&in_plane).expect("observables").demag_energy_joules;
+
+        assert!(
+            e_out > e_in,
+            "thin-film demag should penalise out-of-plane magnetization more strongly, out={e_out}, in={e_in}"
         );
     }
 }

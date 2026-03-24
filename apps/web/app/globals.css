@@ -5,6 +5,8 @@
    Theme: data-theme="dark" (default) | data-theme="light"
    ============================================================ */
 
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
 /* ----- 1. Design Tokens ----- */
 
 :root {
@@ -67,6 +69,46 @@
 
   /* Breakpoints (reference only, used in media queries) */
   /* --bp-sm: 640px; --bp-md: 768px; --bp-lg: 1024px; --bp-xl: 1280px; */
+
+  /* ─── Amumax-ported tokens ─── */
+  --surface-1: #0f1728;
+  --surface-2: #141f33;
+  --surface-3: #1b2840;
+  --surface-glass: rgba(15, 23, 40, 0.84);
+
+  --border-interactive: #4d739e;
+
+  --text-1: #edf3fb;
+  --text-2: #a7bad3;
+  --text-3: #6b7f9f;
+
+  --accent-strong: #38b2a2;
+  --am-accent: #57c8b6;
+  --am-info: #6ba7ff;
+  --am-warn: #f2b45a;
+  --am-danger: #ff7c7c;
+  --am-success: #68d39a;
+
+  --shadow-soft: 0 18px 44px rgba(2, 8, 20, 0.42);
+  --shadow-panel: 0 22px 58px rgba(2, 8, 20, 0.55);
+  --focus-ring: 0 0 0 1px var(--bg-root), 0 0 0 3px rgba(87, 200, 182, 0.35);
+
+  --radius-pill: 999px;
+
+  --duration-instant: 100ms;
+  --easing-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --easing-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-overlay: 100;
+  --z-popout: 1000;
+  --z-modal: 2000;
+  --z-toast: 3000;
+
+  --canvas-min-height: 25rem;
+  --panel-gap: 1rem;
+  --terminal-height: 22rem;
 }
 
 /* ----- 2. Theme: Dark (default) ----- */

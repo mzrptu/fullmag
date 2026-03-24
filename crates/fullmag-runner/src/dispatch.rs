@@ -66,7 +66,14 @@ pub(crate) fn execute_fdm(
         FdmEngine::CpuReference => {
             cpu_reference::execute_reference_fdm(plan, until_seconds, outputs)
         }
-        FdmEngine::CudaFdm => execute_cuda_fdm(plan, until_seconds, outputs),
+        FdmEngine::CudaFdm => {
+            if plan_requires_cpu_reference(plan, outputs) {
+                return handle_unsupported_cuda_plan(plan, outputs, || {
+                    cpu_reference::execute_reference_fdm(plan, until_seconds, outputs)
+                });
+            }
+            execute_cuda_fdm(plan, until_seconds, outputs)
+        }
     }
 }
 
@@ -90,6 +97,18 @@ pub(crate) fn execute_fdm_with_callback(
             on_step,
         ),
         FdmEngine::CudaFdm => {
+            if plan_requires_cpu_reference(plan, outputs) {
+                return handle_unsupported_cuda_plan(plan, outputs, || {
+                    cpu_reference::execute_reference_fdm_with_callback(
+                        plan,
+                        until_seconds,
+                        outputs,
+                        grid,
+                        field_every_n,
+                        on_step,
+                    )
+                });
+            }
             let executed = execute_cuda_fdm(plan, until_seconds, outputs)?;
             let emit_every = field_every_n.max(1);
             for stats in &executed.result.steps {
@@ -115,6 +134,34 @@ pub(crate) fn execute_fdm_with_callback(
             Ok(executed)
         }
     }
+}
+
+fn plan_requires_cpu_reference(plan: &FdmPlanIR, outputs: &[OutputIR]) -> bool {
+    plan.enable_demag
+        || plan.external_field.is_some()
+        || outputs.iter().any(|output| match output {
+            OutputIR::Field { name, .. } => matches!(name.as_str(), "H_demag" | "H_ext" | "H_eff"),
+            OutputIR::Scalar { name, .. } => matches!(name.as_str(), "E_demag" | "E_ext" | "E_total"),
+        })
+}
+
+fn handle_unsupported_cuda_plan<T>(
+    plan: &FdmPlanIR,
+    outputs: &[OutputIR],
+    fallback: impl FnOnce() -> Result<T, RunError>,
+) -> Result<T, RunError> {
+    let policy = std::env::var("FULLMAG_FDM_EXECUTION").unwrap_or_else(|_| "auto".into());
+    if policy == "cuda" {
+        return Err(RunError {
+            message: format!(
+                "CUDA FDM backend does not yet support the requested plan (enable_demag={}, external_field={}, outputs={:?})",
+                plan.enable_demag,
+                plan.external_field.is_some(),
+                outputs
+            ),
+        });
+    }
+    fallback()
 }
 
 #[cfg(feature = "cuda")]

@@ -34,12 +34,23 @@ pub(crate) fn write_artifacts(
 
     let csv_path = output_dir.join("scalars.csv");
     let mut csv_file = fs::File::create(&csv_path)?;
-    writeln!(csv_file, "step,time,solver_dt,E_ex")?;
+    writeln!(
+        csv_file,
+        "step,time,solver_dt,E_ex,E_demag,E_ext,E_total,max_dm_dt,max_h_eff"
+    )?;
     for step in &executed.result.steps {
         writeln!(
             csv_file,
-            "{},{:.15e},{:.15e},{:.15e}",
-            step.step, step.time, step.dt, step.e_ex
+            "{},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e}",
+            step.step,
+            step.time,
+            step.dt,
+            step.e_ex,
+            step.e_demag,
+            step.e_ext,
+            step.e_total,
+            step.max_dm_dt,
+            step.max_h_eff
         )?;
     }
 
@@ -60,6 +71,9 @@ pub(crate) fn write_artifacts(
         time: 0.0,
         dt: 0.0,
         e_ex: 0.0,
+        e_demag: 0.0,
+        e_ext: 0.0,
+        e_total: 0.0,
         max_dm_dt: 0.0,
         max_h_eff: 0.0,
         wall_time_ns: 0,
@@ -145,7 +159,7 @@ fn field_layout(plan: &fullmag_ir::ExecutionPlanIR) -> serde_json::Value {
 pub(crate) fn field_unit(observable: &str) -> &'static str {
     match observable {
         "m" => "dimensionless",
-        "H_ex" => "A/m",
+        "H_ex" | "H_demag" | "H_ext" | "H_eff" => "A/m",
         other => panic!("unsupported observable '{}'", other),
     }
 }

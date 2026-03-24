@@ -1,409 +1,403 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import ScalarPlot from "../plots/ScalarPlot";
+import { useEffect, useMemo, useState } from "react";
+import { useSessionStream } from "../../lib/useSessionStream";
+import Header from "../ui/Header";
+import ConsolePanel from "../panels/ConsolePanel";
+import SolverPanel from "../panels/SolverPanel";
+import MeshPanel from "../panels/MeshPanel";
+import MetricsPanel from "../panels/MetricsPanel";
 import MagnetizationSlice2D from "../preview/MagnetizationSlice2D";
 import MagnetizationView3D from "../preview/MagnetizationView3D";
+import Panel from "../ui/Panel";
+import SegmentedControl from "../ui/SegmentedControl";
+import StatusBadge from "../ui/StatusBadge";
+import EmptyState from "../ui/EmptyState";
+import SelectField from "../ui/SelectField";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8080";
+interface RunControlRoomProps {
+  sessionId: string;
+}
 
-type SessionManifest = {
-  session_id: string;
-  run_id: string;
-  status: string;
-  script_path: string;
-  problem_name: string;
-  requested_backend: string;
-  execution_mode: string;
-  precision: string;
-  artifact_dir: string;
-  started_at_unix_ms: number;
-  finished_at_unix_ms: number;
-  plan_summary: unknown;
+type ViewportMode = "2D" | "3D";
+type VectorComponent = "x" | "y" | "z" | "magnitude";
+type SlicePlane = "xy" | "xz" | "yz";
+
+const COMPONENT_OPTIONS = [
+  { value: "magnitude", label: "|v|" },
+  { value: "x", label: "x" },
+  { value: "y", label: "y" },
+  { value: "z", label: "z" },
+];
+
+const PLANE_OPTIONS = [
+  { value: "xy", label: "XY" },
+  { value: "xz", label: "XZ" },
+  { value: "yz", label: "YZ" },
+];
+
+const SCALAR_FIELDS: Record<string, keyof NonNullable<ReturnType<typeof useSessionStream>["state"]>["scalar_rows"][number]> = {
+  E_ex: "e_ex",
+  E_demag: "e_demag",
+  E_ext: "e_ext",
+  E_total: "e_total",
 };
 
-type RunManifest = {
-  run_id: string;
-  session_id: string;
-  status: string;
-  total_steps: number;
-  final_time: number | null;
-  final_e_ex: number | null;
-  artifact_dir: string;
-};
+export default function RunControlRoom({ sessionId }: RunControlRoomProps) {
+  const { state, connection, error } = useSessionStream(sessionId);
+  const [viewMode, setViewMode] = useState<ViewportMode>("3D");
+  const [component, setComponent] = useState<VectorComponent>("magnitude");
+  const [plane, setPlane] = useState<SlicePlane>("xy");
+  const [sliceIndex, setSliceIndex] = useState(0);
+  const [selectedQuantity, setSelectedQuantity] = useState("m");
 
-type ScalarRow = {
-  step: number;
-  time: number;
-  solver_dt: number;
-  e_ex: number;
-};
+  const session = state?.session;
+  const run = state?.run;
+  const liveState = state?.live_state;
+  const grid = (liveState?.grid ?? state?.latest_fields.grid ?? [0, 0, 0]) as [
+    number,
+    number,
+    number,
+  ];
 
-type StepStats = {
-  step: number;
-  time: number;
-  dt: number;
-  e_ex: number;
-  max_dm_dt: number;
-  max_h_eff: number;
-  wall_time_ns: number;
-};
+  const quantityOptions = useMemo(
+    () =>
+      (state?.quantities ?? [])
+        .filter((quantity) => quantity.available)
+        .map((quantity) => ({
+          value: quantity.id,
+          label: `${quantity.label} (${quantity.unit})`,
+        })),
+    [state?.quantities],
+  );
 
-type LiveState = {
-  status: string;
-  updated_at_unix_ms: number;
-  latest_step: StepStats & {
-    grid: [number, number, number];
-    magnetization?: number[];
-    finished: boolean;
-  };
-};
-
-type FieldSnapshot = {
-  layout: {
-    backend: string;
-    grid_cells?: [number, number, number];
-    cell_size?: [number, number, number];
-  };
-  observable: string;
-  step: number;
-  time: number;
-  solver_dt: number;
-  provenance: Record<string, unknown>;
-  values: [number, number, number][];
-};
-
-type ArtifactEntry = {
-  path: string;
-  kind: string;
-};
-
-type SessionStateResponse = {
-  session: SessionManifest;
-  run?: RunManifest | null;
-  live_state?: LiveState | null;
-  metadata?: Record<string, unknown> | null;
-  scalar_rows: ScalarRow[];
-  latest_fields: {
-    m?: FieldSnapshot | null;
-    h_ex?: FieldSnapshot | null;
-  };
-  artifacts: ArtifactEntry[];
-};
-
-export default function RunControlRoom({ sessionId }: { sessionId: string }) {
-  const [state, setState] = useState<SessionStateResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchState = useCallback(async () => {
-    try {
-      const response = await fetch(`${API_BASE}/v1/sessions/${sessionId}/state`, {
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `HTTP ${response.status}`);
-      }
-      const payload = (await response.json()) as SessionStateResponse;
-      setState(payload);
-      setError(null);
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : String(nextError));
+  useEffect(() => {
+    if (!quantityOptions.length) {
+      return;
     }
-  }, [sessionId]);
+    if (!quantityOptions.some((option) => option.value === selectedQuantity)) {
+      setSelectedQuantity(quantityOptions[0].value);
+    }
+  }, [quantityOptions, selectedQuantity]);
 
-  useEffect(() => {
-    void fetchState();
-  }, [fetchState]);
+  const quantityDescriptor = useMemo(
+    () => state?.quantities.find((quantity) => quantity.id === selectedQuantity) ?? null,
+    [selectedQuantity, state?.quantities],
+  );
 
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      void fetchState();
-    }, 1500);
-    return () => window.clearInterval(id);
-  }, [fetchState]);
+  const fieldMap = useMemo(
+    () => ({
+      m: liveState?.magnetization ?? state?.latest_fields.m ?? null,
+      H_ex: state?.latest_fields.h_ex ?? null,
+      H_demag: state?.latest_fields.h_demag ?? null,
+      H_ext: state?.latest_fields.h_ext ?? null,
+      H_eff: state?.latest_fields.h_eff ?? null,
+    }),
+    [
+      liveState?.magnetization,
+      state?.latest_fields.h_demag,
+      state?.latest_fields.h_eff,
+      state?.latest_fields.h_ex,
+      state?.latest_fields.h_ext,
+      state?.latest_fields.m,
+    ],
+  );
 
-  const chartSteps = useMemo<StepStats[]>(() => {
+  const selectedVectors = useMemo(() => {
+    const values = fieldMap[selectedQuantity as keyof typeof fieldMap] ?? null;
+    return values ? new Float64Array(values) : null;
+  }, [fieldMap, selectedQuantity]);
+
+  const scalarRows = state?.scalar_rows ?? [];
+  const selectedScalarValue = useMemo(() => {
+    const scalarKey = SCALAR_FIELDS[selectedQuantity];
+    if (!scalarKey) {
+      return null;
+    }
+    const lastRow = scalarRows[scalarRows.length - 1];
+    return lastRow ? lastRow[scalarKey] : null;
+  }, [scalarRows, selectedQuantity]);
+
+  const events = useMemo(() => {
     if (!state) {
       return [];
     }
-    if (state.scalar_rows.length > 0) {
-      return state.scalar_rows.map((row) => ({
-        step: row.step,
-        time: row.time,
-        dt: row.solver_dt,
-        e_ex: row.e_ex,
-        max_dm_dt: 0,
-        max_h_eff: 0,
-        wall_time_ns: 0,
-      }));
+    const derived = [
+      { kind: "session_started", session_id: state.session.session_id },
+      {
+        kind:
+          state.session.status === "running"
+            ? "run_progress"
+            : state.session.status === "failed"
+              ? "run_failed"
+              : "run_completed",
+        step: state.run?.total_steps ?? state.live_state?.step ?? 0,
+        time: state.run?.final_time ?? state.live_state?.time ?? 0,
+      },
+    ];
+    if (state.live_state?.step) {
+      derived.push({
+        kind: "run_progress",
+        step: state.live_state.step,
+        time: state.live_state.time,
+      });
     }
-    if (state.live_state) {
-      return [state.live_state.latest_step];
-    }
-    return [];
+    return derived;
   }, [state]);
 
-  const latestField = state?.latest_fields.m ?? null;
-  const liveMagnetization = state?.live_state?.latest_step.magnetization;
-  const grid =
-    state?.live_state?.latest_step.grid ??
-    latestField?.layout.grid_cells ??
-    ([0, 0, 0] as [number, number, number]);
-  const magnetization = useMemo(() => {
-    if (liveMagnetization && liveMagnetization.length > 0) {
-      return new Float64Array(liveMagnetization);
-    }
-    if (latestField?.values) {
-      return new Float64Array(latestField.values.flat());
-    }
-    return null;
-  }, [latestField, liveMagnetization]);
+  const elapsedMs = session
+    ? session.finished_at_unix_ms - session.started_at_unix_ms
+    : 0;
 
-  const status = state?.session.status ?? "loading";
-  const lastStep =
-    state?.live_state?.latest_step ??
-    (chartSteps.length > 0 ? chartSteps[chartSteps.length - 1] : null);
-  const provenance = latestField?.provenance ?? state?.metadata?.execution_provenance ?? null;
+  const cellSize = useMemo(() => {
+    const summary = session?.plan_summary as Record<string, unknown> | undefined;
+    const raw = summary?.cell_size_m;
+    return Array.isArray(raw) ? (raw as number[]) : undefined;
+  }, [session?.plan_summary]);
+
+  const maxSliceCount = useMemo(() => {
+    if (plane === "xy") return Math.max(1, grid[2]);
+    if (plane === "xz") return Math.max(1, grid[1]);
+    return Math.max(1, grid[0]);
+  }, [grid, plane]);
+
+  useEffect(() => {
+    if (sliceIndex >= maxSliceCount) {
+      setSliceIndex(Math.max(0, maxSliceCount - 1));
+    }
+  }, [maxSliceCount, sliceIndex]);
+
+  if (!state) {
+    return (
+      <div className="app-shell" style={{ padding: "1rem" }}>
+        <EmptyState
+          title={error ? "Connection Error" : "Connecting…"}
+          description={error ?? `Connecting to session ${sessionId}…`}
+          tone={error ? "danger" : "info"}
+        />
+      </div>
+    );
+  }
+
+  const isVectorQuantity = quantityDescriptor?.kind === "vector_field";
 
   return (
-    <>
-      <div className="page-header">
-        <h1 className="page-title">Run {sessionId}</h1>
-        <p className="page-subtitle">
-          Session-backed exchange-only control room for the current bootstrap shell
-        </p>
-      </div>
+    <div
+      className="app-shell"
+      style={{
+        position: "relative",
+        display: "flex",
+        minHeight: "100vh",
+        flexDirection: "column",
+        padding: "1rem",
+        gap: "1rem",
+        background:
+          "radial-gradient(circle at top left, rgba(107,167,255,0.14), transparent 32%), radial-gradient(circle at right 14%, rgba(87,200,182,0.1), transparent 24%), linear-gradient(180deg, #060d18 0%, #08101d 44%, #07101c 100%)",
+        fontFamily: "'IBM Plex Sans', 'Segoe UI', sans-serif",
+        color: "var(--text-1)",
+        fontSize: "15px",
+      }}
+    >
+      <Header
+        status={session?.status ?? ""}
+        scriptPath={session?.script_path ?? ""}
+        problemName={session?.problem_name ?? ""}
+        connection={connection}
+      />
 
-      <div className="metric-grid">
-        <MetricCard label="Status" value={status} accent={statusAccent(status)} />
-        <MetricCard
-          label="Backend"
-          value={state?.session.requested_backend ?? "—"}
-          accent="info"
-        />
-        <MetricCard
-          label="Mode"
-          value={state?.session.execution_mode ?? "—"}
-          accent="info"
-        />
-        <MetricCard
-          label="Precision"
-          value={state?.session.precision ?? "—"}
-          accent="success"
-        />
-      </div>
-
-      <section style={{ marginTop: "var(--sp-6)" }}>
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">Run Summary</h2>
-              <p className="card-subtitle">
-                Live session status plus the latest scalar diagnostics
-              </p>
-            </div>
-          </div>
-          <div className="card-body">
-            {error && (
-              <p style={{ color: "var(--error)", marginBottom: "var(--sp-3)" }}>{error}</p>
-            )}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: "var(--sp-4)",
-              }}
-            >
-              <InfoLine label="Problem" value={state?.session.problem_name ?? "—"} />
-              <InfoLine label="Script" value={state?.session.script_path ?? "—"} />
-              <InfoLine
-                label="Total steps"
-                value={String(state?.run?.total_steps ?? lastStep?.step ?? 0)}
-              />
-              <InfoLine
-                label="Latest time"
-                value={lastStep ? `${lastStep.time.toExponential(4)} s` : "—"}
-              />
-              <InfoLine
-                label="Latest E_ex"
-                value={lastStep ? `${lastStep.e_ex.toExponential(4)} J` : "—"}
-              />
-              <InfoLine
-                label="Artifacts"
-                value={String(state?.artifacts.length ?? 0)}
-              />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section
+      <div
+        className="workspace"
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-          gap: "var(--sp-6)",
-          marginTop: "var(--sp-6)",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "var(--panel-gap)",
         }}
       >
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">2D Slice</h2>
-              <p className="card-subtitle">In-plane magnetization preview</p>
-            </div>
-          </div>
-          <div className="card-body">
-            {magnetization ? (
-              <MagnetizationSlice2D grid={grid} magnetization={magnetization} />
-            ) : (
-              <EmptyPanel message="Waiting for the first magnetization snapshot..." />
-            )}
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">3D Magnetization</h2>
-              <p className="card-subtitle">FDM grid preview of the latest m field</p>
-            </div>
-          </div>
-          <div className="card-body">
-            {magnetization ? (
-              <MagnetizationView3D grid={grid} magnetization={magnetization} />
-            ) : (
-              <EmptyPanel message="Waiting for the first magnetization snapshot..." />
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section style={{ marginTop: "var(--sp-6)" }}>
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">Scalars</h2>
-              <p className="card-subtitle">Exchange energy history from live or finalized artifacts</p>
-            </div>
-          </div>
-          <div className="card-body">
-            {chartSteps.length > 0 ? (
-              <ScalarPlot steps={chartSteps} yField="e_ex" />
-            ) : (
-              <EmptyPanel message="Scalar history will appear as soon as the run publishes data." />
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-          gap: "var(--sp-6)",
-          marginTop: "var(--sp-6)",
-        }}
-      >
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">Artifacts</h2>
-              <p className="card-subtitle">Files currently visible for this session</p>
-            </div>
-          </div>
-          <div className="card-body">
-            {state?.artifacts.length ? (
-              <ul
+        <div style={{ gridColumn: "1 / -1" }}>
+          <Panel
+            title="Preview"
+            subtitle="Visualization-first control room. Choose the quantity you want to inspect."
+            panelId="preview"
+            eyebrow="Visualization"
+            tone="info"
+            actions={
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <StatusBadge
+                  label={quantityDescriptor?.label ?? "Awaiting data"}
+                  tone={isVectorQuantity ? "info" : "default"}
+                />
+                <SegmentedControl
+                  value={viewMode}
+                  options={[
+                    { value: "3D", label: "3D" },
+                    { value: "2D", label: "2D" },
+                  ]}
+                  onchange={(value) => setViewMode(value as ViewportMode)}
+                />
+              </div>
+            }
+          >
+            <div style={{ display: "grid", gap: "0.9rem" }}>
+              <div
                 style={{
-                  margin: 0,
-                  paddingLeft: "1.1rem",
                   display: "grid",
-                  gap: "var(--sp-2)",
-                  color: "var(--text-muted)",
+                  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                  gap: "0.75rem",
                 }}
               >
-                {state.artifacts.map((artifact) => (
-                  <li key={artifact.path}>
-                    <code>{artifact.path}</code> <span>({artifact.kind})</span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <EmptyPanel message="Artifacts will appear after the first files are materialized." />
-            )}
-          </div>
-        </div>
+                <SelectField
+                  label="Quantity"
+                  value={selectedQuantity}
+                  options={quantityOptions.length ? quantityOptions : [{ value: "m", label: "Magnetization" }]}
+                  onchange={(value) => setSelectedQuantity(value)}
+                />
+                <SelectField
+                  label="Component"
+                  value={component}
+                  options={COMPONENT_OPTIONS}
+                  onchange={(value) => setComponent(value as VectorComponent)}
+                />
+                <SelectField
+                  label="Plane"
+                  value={plane}
+                  options={PLANE_OPTIONS}
+                  onchange={(value) => setPlane(value as SlicePlane)}
+                />
+                <SelectField
+                  label="Slice"
+                  value={sliceIndex}
+                  options={Array.from({ length: maxSliceCount }, (_, index) => ({
+                    value: String(index),
+                    label: `${index + 1}`,
+                  }))}
+                  onchange={(value) => setSliceIndex(Number(value))}
+                />
+              </div>
 
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">Provenance</h2>
-              <p className="card-subtitle">Execution metadata for reproducibility</p>
+              <div
+                style={{
+                  position: "relative",
+                  minHeight: "var(--canvas-min-height)",
+                  borderRadius: "var(--radius-lg)",
+                  border: "1px solid var(--border-subtle)",
+                  background:
+                    "linear-gradient(180deg, rgba(6,10,18,0.98), rgba(7,10,17,0.98))",
+                  overflow: "hidden",
+                }}
+              >
+                {!isVectorQuantity ? (
+                  <div style={{ padding: "1.25rem" }}>
+                    <EmptyState
+                      title={quantityDescriptor?.label ?? "Scalar quantity"}
+                      description={
+                        selectedScalarValue !== null
+                          ? `Latest value: ${selectedScalarValue.toExponential(4)} ${quantityDescriptor?.unit ?? ""}`
+                          : "This quantity is scalar-only. Use the Scalars panel below for the time trace."
+                      }
+                      tone="info"
+                    />
+                  </div>
+                ) : !selectedVectors ? (
+                  <div style={{ padding: "1.25rem" }}>
+                    <EmptyState
+                      title="No preview data yet"
+                      description="This quantity has not been published by the runner yet."
+                      tone="info"
+                    />
+                  </div>
+                ) : viewMode === "3D" ? (
+                  <MagnetizationView3D
+                    grid={grid}
+                    vectors={selectedVectors}
+                    fieldLabel={quantityDescriptor?.label ?? selectedQuantity}
+                  />
+                ) : (
+                  <MagnetizationSlice2D
+                    grid={grid}
+                    vectors={selectedVectors}
+                    quantityLabel={quantityDescriptor?.label ?? selectedQuantity}
+                    component={component}
+                    plane={plane}
+                    sliceIndex={sliceIndex}
+                  />
+                )}
+              </div>
             </div>
-          </div>
-          <div className="card-body">
-            <pre
-              style={{
-                margin: 0,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                fontSize: "var(--text-sm)",
-                color: "var(--text-muted)",
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              {JSON.stringify(provenance ?? state?.metadata ?? {}, null, 2)}
-            </pre>
-          </div>
+          </Panel>
         </div>
-      </section>
-    </>
-  );
-}
 
-function EmptyPanel({ message }: { message: string }) {
-  return <p style={{ color: "var(--text-muted)", margin: 0 }}>{message}</p>;
-}
+        <div>
+          <ConsolePanel events={events} connection={connection} />
+        </div>
+        <div>
+          <SolverPanel
+            status={session?.status ?? ""}
+            totalSteps={run?.total_steps ?? liveState?.step ?? 0}
+            time={run?.final_time ?? liveState?.time ?? null}
+            dt={liveState?.dt ?? 0}
+            eEx={run?.final_e_ex ?? liveState?.e_ex ?? null}
+            eTotal={run?.final_e_total ?? liveState?.e_total ?? null}
+            backend={session?.requested_backend ?? ""}
+            mode={session?.execution_mode ?? ""}
+            precision={session?.precision ?? ""}
+          />
+        </div>
 
-function InfoLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="metric-label">{label}</div>
-      <div style={{ color: "var(--text-primary)", fontSize: "var(--text-sm)" }}>{value}</div>
-    </div>
-  );
-}
+        <div>
+          <MeshPanel grid={grid} cellSize={cellSize} />
+        </div>
+        <div>
+          <Panel
+            title="Scalars"
+            subtitle="Time-series of active energies and diagnostics."
+            panelId="scalars"
+            eyebrow="Analysis"
+          >
+            {scalarRows.length > 0 ? (
+              <div
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "0.82rem",
+                  color: "var(--text-2)",
+                  maxHeight: "var(--terminal-height)",
+                  overflow: "auto",
+                }}
+              >
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>Step</th>
+                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>Time</th>
+                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>E_ex</th>
+                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>E_demag</th>
+                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>E_ext</th>
+                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>E_total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scalarRows.slice(-20).map((row) => (
+                      <tr key={`${row.step}-${row.time}`} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.step}</td>
+                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.time.toExponential(3)}</td>
+                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.e_ex.toExponential(3)}</td>
+                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.e_demag.toExponential(3)}</td>
+                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.e_ext.toExponential(3)}</td>
+                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.e_total.toExponential(3)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState title="No scalar data yet" tone="info" compact />
+            )}
+          </Panel>
+        </div>
 
-function MetricCard({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent?: "success" | "error" | "warning" | "info";
-}) {
-  const accentColor = accent ? `var(--${accent})` : "var(--text-primary)";
-  return (
-    <div className="card metric-card">
-      <div className="metric-label">{label}</div>
-      <div className="metric-value" style={{ color: accentColor }}>
-        {value}
+        <div style={{ gridColumn: "1 / -1" }}>
+          <MetricsPanel totalSteps={run?.total_steps ?? liveState?.step ?? 0} elapsedMs={elapsedMs} />
+        </div>
       </div>
     </div>
   );
-}
-
-function statusAccent(status: string): "success" | "error" | "warning" | "info" {
-  if (status === "completed") {
-    return "success";
-  }
-  if (status === "failed") {
-    return "error";
-  }
-  if (status === "running") {
-    return "warning";
-  }
-  return "info";
 }

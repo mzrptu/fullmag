@@ -49,6 +49,8 @@ struct ScriptCli {
     headless: bool,
     #[arg(long)]
     json: bool,
+    #[arg(long, help = "Port for the control room frontend (auto-selects 3000-3010 if omitted)")]
+    web_port: Option<u16>,
 }
 
 #[derive(Subcommand)]
@@ -115,6 +117,9 @@ struct ScriptRunSummary {
     total_steps: usize,
     final_time: Option<f64>,
     final_e_ex: Option<f64>,
+    final_e_demag: Option<f64>,
+    final_e_ext: Option<f64>,
+    final_e_total: Option<f64>,
     artifact_dir: String,
     session_dir: String,
 }
@@ -143,6 +148,9 @@ struct RunManifest {
     total_steps: usize,
     final_time: Option<f64>,
     final_e_ex: Option<f64>,
+    final_e_demag: Option<f64>,
+    final_e_ext: Option<f64>,
+    final_e_total: Option<f64>,
     artifact_dir: String,
 }
 
@@ -159,6 +167,9 @@ struct LiveStepView {
     time: f64,
     dt: f64,
     e_ex: f64,
+    e_demag: f64,
+    e_ext: f64,
+    e_total: f64,
     max_dm_dt: f64,
     max_h_eff: f64,
     wall_time_ns: u64,
@@ -263,6 +274,7 @@ fn main() -> Result<()> {
                     "status": result.status,
                     "total_steps": result.steps.len(),
                     "final_energy": result.steps.last().map(|s| s.e_ex),
+                    "final_total_energy": result.steps.last().map(|s| s.e_total),
                     "output_dir": output_dir.display().to_string(),
                 }))?
             );
@@ -407,13 +419,16 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             total_steps: 0,
             final_time: None,
             final_e_ex: None,
+            final_e_demag: None,
+            final_e_ext: None,
+            final_e_total: None,
             artifact_dir: artifact_dir.display().to_string(),
         },
     )?;
     initialise_live_scalars(&live_scalars_path)?;
 
     if !args.headless {
-        if let Err(error) = spawn_control_room(&session_id) {
+        if let Err(error) = spawn_control_room(&session_id, args.web_port) {
             eprintln!(
                 "warning: failed to auto-start control room for session {}: {}",
                 session_id, error
@@ -448,6 +463,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             "step": update.stats.step,
                             "time": update.stats.time,
                             "e_ex": update.stats.e_ex,
+                            "e_demag": update.stats.e_demag,
+                            "e_ext": update.stats.e_ext,
+                            "e_total": update.stats.e_total,
                             "finished": update.finished,
                         }),
                     );
@@ -467,6 +485,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     total_steps: 0,
                     final_time: None,
                     final_e_ex: None,
+                    final_e_demag: None,
+                    final_e_ext: None,
+                    final_e_total: None,
                     artifact_dir: artifact_dir.display().to_string(),
                 },
             );
@@ -529,6 +550,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         total_steps: result.steps.len(),
         final_time: result.steps.last().map(|step| step.time),
         final_e_ex: result.steps.last().map(|step| step.e_ex),
+        final_e_demag: result.steps.last().map(|step| step.e_demag),
+        final_e_ext: result.steps.last().map(|step| step.e_ext),
+        final_e_total: result.steps.last().map(|step| step.e_total),
         artifact_dir: artifact_dir.display().to_string(),
         session_dir: session_dir.display().to_string(),
     };
@@ -559,6 +583,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             total_steps: summary.total_steps,
             final_time: summary.final_time,
             final_e_ex: summary.final_e_ex,
+            final_e_demag: summary.final_e_demag,
+            final_e_ext: summary.final_e_ext,
+            final_e_total: summary.final_e_total,
             artifact_dir: summary.artifact_dir.clone(),
         },
     )?;
@@ -605,6 +632,15 @@ fn print_script_summary(summary: &ScriptRunSummary) {
     }
     if let Some(final_e_ex) = summary.final_e_ex {
         println!("- final_E_ex: {:.6e} J", final_e_ex);
+    }
+    if let Some(final_e_demag) = summary.final_e_demag {
+        println!("- final_E_demag: {:.6e} J", final_e_demag);
+    }
+    if let Some(final_e_ext) = summary.final_e_ext {
+        println!("- final_E_ext: {:.6e} J", final_e_ext);
+    }
+    if let Some(final_e_total) = summary.final_e_total {
+        println!("- final_E_total: {:.6e} J", final_e_total);
     }
     println!("- artifact_dir: {}", summary.artifact_dir);
     println!("- session_dir: {}", summary.session_dir);
@@ -688,22 +724,162 @@ fn run_python_helper(args: &[String]) -> Result<std::process::Output> {
     ))
 }
 
-fn spawn_control_room(session_id: &str) -> Result<()> {
-    let script = repo_root().join("scripts").join("dev-control-room.sh");
-    if !script.exists() {
-        bail!("missing control-room bootstrap script at {}", script.display());
+fn spawn_control_room(session_id: &str, requested_port: Option<u16>) -> Result<()> {
+    let root = repo_root();
+    let log_dir = root.join(".fullmag").join("logs");
+    let url_file = root.join(".fullmag").join("control-room-url.txt");
+    fs::create_dir_all(&log_dir)?;
+
+    // 1. Start fullmag-api if not already running on port 8080
+    if !port_is_listening(8080) {
+        eprintln!("  starting fullmag-api on :8080 ...");
+        let api_log = fs::File::create(log_dir.join("fullmag-api.log"))
+            .context("failed to create api log")?;
+        let api_err = api_log.try_clone()?;
+
+        let self_exe = std::env::current_exe().unwrap_or_default();
+        let sibling_api = self_exe.with_file_name("fullmag-api");
+
+        if sibling_api.exists() {
+            ProcessCommand::new(&sibling_api)
+                .current_dir(&root)
+                .stdin(Stdio::null())
+                .stdout(api_log)
+                .stderr(api_err)
+                .spawn()
+                .context("failed to spawn fullmag-api binary")?;
+        } else {
+            ProcessCommand::new("cargo")
+                .args(["run", "-p", "fullmag-api"])
+                .current_dir(&root)
+                .stdin(Stdio::null())
+                .stdout(api_log)
+                .stderr(api_err)
+                .spawn()
+                .context("failed to spawn fullmag-api via cargo")?;
+        }
+
+        for _ in 0..100 {
+            if port_is_listening(8080) { break; }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    } else {
+        eprintln!("  reusing fullmag-api on :8080");
     }
 
-    ProcessCommand::new(script)
-        .arg(session_id)
-        .current_dir(repo_root())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("failed to spawn control-room bootstrap")?;
+    // 2. Resolve frontend port
+    let web_port = resolve_web_port(requested_port, &url_file)?;
+    let web_dir = root.join("apps").join("web");
+
+    if !port_is_listening(web_port) && web_dir.exists() {
+        eprintln!("  starting control room frontend on :{} ...", web_port);
+        let web_log = fs::File::create(log_dir.join("control-room.log"))
+            .context("failed to create frontend log")?;
+        let web_err = web_log.try_clone()?;
+
+        ProcessCommand::new("npx")
+            .args(["next", "dev", "--port", &web_port.to_string()])
+            .current_dir(&web_dir)
+            .stdin(Stdio::null())
+            .stdout(web_log)
+            .stderr(web_err)
+            .spawn()
+            .context("failed to spawn frontend dev server")?;
+
+        // Persist the URL for next invocations
+        let _ = fs::write(&url_file, format!("http://127.0.0.1:{}", web_port));
+
+        for _ in 0..300 {
+            if port_is_listening(web_port) { break; }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    } else if port_is_listening(web_port) {
+        eprintln!("  reusing control room on :{}", web_port);
+    }
+
+    // 3. Open browser
+    let url = format!("http://127.0.0.1:{}/runs/{}", web_port, session_id);
+    eprintln!("  control room: {}", url);
+
+    if let Ok(opener) = which_opener() {
+        let _ = ProcessCommand::new(opener)
+            .arg(&url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
 
     Ok(())
+}
+
+/// Pick a frontend port: explicit flag > stored URL > probe existing > first free > bail.
+fn resolve_web_port(requested: Option<u16>, url_file: &Path) -> Result<u16> {
+    const CANDIDATE_PORTS: &[u16] = &[3000, 3001, 3002, 3003, 3004, 3005, 3010];
+
+    // Explicit --web-port wins
+    if let Some(port) = requested {
+        return Ok(port);
+    }
+
+    // Check stored URL from previous run
+    if let Ok(stored) = fs::read_to_string(url_file) {
+        let stored = stored.trim();
+        if let Some(port_str) = stored.rsplit(':').next() {
+            if let Ok(port) = port_str.parse::<u16>() {
+                if port_is_listening(port) {
+                    return Ok(port); // reuse existing
+                }
+                if port_is_bindable(port) {
+                    return Ok(port); // reuse same port (server died)
+                }
+            }
+        }
+    }
+
+    // Probe for an existing fullmag frontend
+    for &port in CANDIDATE_PORTS {
+        if port_is_listening(port) {
+            return Ok(port);
+        }
+    }
+
+    // Find first free port
+    for &port in CANDIDATE_PORTS {
+        if port_is_bindable(port) {
+            return Ok(port);
+        }
+    }
+
+    bail!("no free port found in {:?}", CANDIDATE_PORTS)
+}
+
+fn port_is_listening(port: u16) -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        std::time::Duration::from_millis(200),
+    )
+    .is_ok()
+}
+
+fn port_is_bindable(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+fn which_opener() -> Result<String> {
+    for cmd in ["xdg-open", "open", "wslview"] {
+        if ProcessCommand::new("which")
+            .arg(cmd)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return Ok(cmd.to_string());
+        }
+    }
+    bail!("no browser opener found")
 }
 
 fn pause_after_run(session_id: &str, headless: bool) -> Result<()> {
@@ -754,7 +930,10 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 fn initialise_live_scalars(path: &Path) -> Result<()> {
     let mut file =
         fs::File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
-    writeln!(file, "step,time,solver_dt,E_ex")
+    writeln!(
+        file,
+        "step,time,solver_dt,E_ex,E_demag,E_ext,E_total,max_dm_dt,max_h_eff"
+    )
         .with_context(|| format!("failed to initialize {}", path.display()))
 }
 
@@ -766,8 +945,16 @@ fn append_live_scalar_row(path: &Path, update: &fullmag_runner::StepUpdate) -> R
         .with_context(|| format!("failed to open {}", path.display()))?;
     writeln!(
         file,
-        "{},{:.15e},{:.15e},{:.15e}",
-        update.stats.step, update.stats.time, update.stats.dt, update.stats.e_ex
+        "{},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e}",
+        update.stats.step,
+        update.stats.time,
+        update.stats.dt,
+        update.stats.e_ex,
+        update.stats.e_demag,
+        update.stats.e_ext,
+        update.stats.e_total,
+        update.stats.max_dm_dt,
+        update.stats.max_h_eff
     )
     .with_context(|| format!("failed to append {}", path.display()))
 }
@@ -787,6 +974,9 @@ fn update_live_state(path: &Path, update: &fullmag_runner::StepUpdate) -> Result
                 time: update.stats.time,
                 dt: update.stats.dt,
                 e_ex: update.stats.e_ex,
+                e_demag: update.stats.e_demag,
+                e_ext: update.stats.e_ext,
+                e_total: update.stats.e_total,
                 max_dm_dt: update.stats.max_dm_dt,
                 max_h_eff: update.stats.max_h_eff,
                 wall_time_ns: update.stats.wall_time_ns,
@@ -818,6 +1008,9 @@ fn update_running_run_manifest(
             total_steps: update.stats.step as usize,
             final_time: Some(update.stats.time),
             final_e_ex: Some(update.stats.e_ex),
+            final_e_demag: Some(update.stats.e_demag),
+            final_e_ext: Some(update.stats.e_ext),
+            final_e_total: Some(update.stats.e_total),
             artifact_dir: artifact_dir.display().to_string(),
         },
     )

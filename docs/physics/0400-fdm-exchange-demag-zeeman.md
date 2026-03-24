@@ -24,18 +24,18 @@ for the three most important micromagnetic field contributions in the Fullmag FD
 - demagnetization,
 - external (Zeeman) field.
 
-The purpose of this note is to freeze the *physical and numerical contract* before Fullmag expands
-beyond the current exchange-only executable slice.
+The purpose of this note is to freeze the *physical and numerical contract* as Fullmag expands
+beyond the original exchange-only executable slice.
 
 At the time of writing:
 
 - shared semantics already include `Exchange`, `Demag`, and `Zeeman`,
-- the public executable path is still the narrow exchange-only FDM reference engine,
-- the GPU FDM rollout is already structured around a CUDA path with explicit precision policy.
+- the public-executable CPU/FDM reference path now supports these three terms in executable
+  combinations,
+- the GPU FDM rollout is still structured around a later CUDA path with explicit precision policy.
 
-This note therefore does **not** describe fully implemented product behavior yet.
-It defines how these three interactions **must** be implemented in the FDM backend so that later
-CUDA work, output naming, and cross-backend comparison remain physically consistent.
+This note therefore describes the now-active CPU reference contract and the constraints that the
+later CUDA backend must preserve.
 
 ## 2. Physical model
 
@@ -705,8 +705,8 @@ be upgraded from semantic/shared status into executable backend support.
 
 ## 7. Known limits and deferred work
 
-- The current public executable FDM path is still exchange-only.
-- The current repo does not yet expose production demag or Zeeman execution.
+- The current public executable FDM path exposes demag and Zeeman through the CPU reference engine,
+  not yet through the native CUDA backend.
 - Periodic demag, multilayer demag, and nonuniform FFT variants are deferred.
 - Interface-specific exchange terms beyond ordinary material jumps are deferred.
 - Public mixed precision is deferred.

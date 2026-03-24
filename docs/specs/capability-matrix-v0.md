@@ -30,18 +30,18 @@ Every feature carries one of three statuses:
 | `Box` geometry | ✅ exec | planned | planned | **public-executable** (FDM) | Box→grid lowering in `fullmag-plan` |
 | `Cylinder` geometry | planned | planned | planned | semantic-only | Requires voxelizer for FDM execution |
 | Imported geometry ref | planned | planned | planned | semantic-only | Requires voxelizer/mesher pipeline |
-| Material constants (`Ms`, `A`, `alpha`) | ✅ exec | planned | planned | **public-executable** (FDM) | Used by runner for exchange-only |
+| Material constants (`Ms`, `A`, `alpha`) | ✅ exec | planned | planned | **public-executable** (FDM) | Used by the CPU reference FDM runner |
 | Material constants (`Ku1`, `anisU`) | planned | planned | planned | semantic-only | Anisotropy not in exchange-only scope |
 | Ferromagnet + uniform `m0` | ✅ exec | planned | planned | **public-executable** (FDM) | Lowered to per-cell vectors by planner |
 | Ferromagnet + random `m0` | ✅ exec | planned | planned | **public-executable** (FDM) | Deterministic xorshift64 RNG in planner |
 | `Exchange` | ✅ exec | planned | planned | **public-executable** (FDM) | CPU 6-point stencil in `fullmag-engine` |
-| `Demag` | planned | planned | planned | semantic-only | Not numerically implemented |
+| `Demag` | ✅ exec | planned | planned | **public-executable** (FDM) | CPU bootstrap spectral demag on zero-padded grid; CUDA path still deferred |
 | `InterfacialDMI` | planned | planned | planned | semantic-only | Not numerically implemented |
-| `Zeeman` | planned | planned | planned | semantic-only | Not numerically implemented |
+| `Zeeman` | ✅ exec | planned | planned | **public-executable** (FDM) | Public API still authors `B`; planner normalizes to `H_ext` in A/m |
 | `LLG` (Heun) | ✅ exec | planned | planned | **public-executable** (FDM) | Heun stepper in `fullmag-engine` |
 | Execution precision `double` | ✅ exec | planned | planned | **public-executable** (FDM) | Current CPU reference precision and calibration baseline |
 | Execution precision `single` | planned | planned | planned | semantic-only | Defined in Python API and `ProblemIR`; reserved for Phase 2 CUDA FDM |
-| Field/scalar outputs (`m`, `H_ex`, `E_ex`) | ✅ exec | planned | planned | **public-executable** (FDM) | Artifacts: `metadata.json`, `scalars.csv`, `m_initial.json`, `m_final.json`, `fields/m/`, `fields/H_ex/` |
+| Field/scalar outputs (`m`, `H_ex`, `H_demag`, `H_ext`, `H_eff`, `E_ex`, `E_demag`, `E_ext`, `E_total`) | ✅ exec | planned | planned | **public-executable** (FDM) | Artifacts: `metadata.json`, expanded `scalars.csv`, and per-field snapshots under `fields/` |
 | FDM hints | ✅ exec | n/a | planned | **public-executable** | Cell size → grid dims in planner |
 | FEM hints | n/a | planned | planned | semantic-only | FEM execution deferred to Phase 2 |
 | Hybrid hints | n/a | n/a | planned | semantic-only | Requires hybrid mode and backend |

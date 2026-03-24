@@ -9,7 +9,8 @@ import { TrackballControls } from "three/examples/jsm/controls/TrackballControls
 // ─── Types (mirroring amumax preview3D.ts) ──────────────────────────
 interface Props {
   grid: [number, number, number];
-  magnetization: Float64Array | null;
+  vectors: Float64Array | null;
+  fieldLabel?: string;
 }
 
 export type QualityLevel = "low" | "high" | "ultra";
@@ -188,7 +189,7 @@ interface Settings {
 // ═══════════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════════
-export default function MagnetizationView3D({ grid, magnetization }: Props) {
+export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vector Field" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [expanded, setExpanded] = useState(false);
@@ -350,7 +351,7 @@ export default function MagnetizationView3D({ grid, magnetization }: Props) {
 
   // ─── Update mesh (1:1 from amumax updateGlyphMesh + updateVoxelMesh) ──
   useEffect(() => {
-    if (!sceneRef.current || !magnetization) return;
+    if (!sceneRef.current || !vectors) return;
     const { mesh, currentMode } = sceneRef.current;
     const [nx, ny, nz] = grid;
     const { sampling, voxelColorMode, voxelGap, voxelThreshold, topoEnabled, topoComponent, topoMultiplier } = settings;
@@ -363,6 +364,16 @@ export default function MagnetizationView3D({ grid, magnetization }: Props) {
     if (!instanceColor) return;
     const colors = instanceColor.array as Float32Array;
 
+    let maxMagnitude = 0;
+    for (let idx = 0; idx < vectors.length; idx += 3) {
+      const mx = vectors[idx];
+      const my = vectors[idx + 1];
+      const mz = vectors[idx + 2];
+      const mag = Math.sqrt(mx * mx + my * my + mz * mz);
+      maxMagnitude = Math.max(maxMagnitude, mag);
+    }
+    const normalizationMagnitude = Math.max(maxMagnitude, 1e-30);
+
     let visible = 0;
     let idx = 0;
 
@@ -370,9 +381,9 @@ export default function MagnetizationView3D({ grid, magnetization }: Props) {
       for (let iy = 0; iy < ny; iy++) {
         for (let ix = 0; ix < nx; ix++) {
           const base = idx * 3;
-          const mx = magnetization[base];
-          const my = magnetization[base + 1];
-          const mz = magnetization[base + 2];
+          const mx = vectors[base];
+          const my = vectors[base + 1];
+          const mz = vectors[base + 2];
 
           // Sampling check (amumax isSampledPosition)
           const sampled =
@@ -380,6 +391,8 @@ export default function MagnetizationView3D({ grid, magnetization }: Props) {
             (ix % step === 0 && iy % step === 0 && (nz <= 1 || iz % step === 0));
 
           const mag = Math.sqrt(mx * mx + my * my + mz * mz);
+          const normalizedStrength = Math.min(1, mag / normalizationMagnitude);
+          const strengthScale = 0.18 + 0.82 * Math.sqrt(normalizedStrength);
 
           if (isVoxel) {
             // ─── Voxel mode (amumax updateVoxelMesh) ────────
@@ -390,12 +403,13 @@ export default function MagnetizationView3D({ grid, magnetization }: Props) {
 
             // Position: sim-Y → world-Z, sim-Z → world-Y (amumax convention)
             let worldY = iz;
-            let vH = depthScale;
+            let vH = depthScale * strengthScale;
+            const voxelScale = baseScale * strengthScale;
 
             if (topoEnabled && isVisible) {
               const compVal = componentValue(mx, my, mz, topoComponent);
               const displacement = compVal * topoMultiplier;
-              const topo = resolveVoxelTopography(iz, depthScale, displacement);
+              const topo = resolveVoxelTopography(iz, vH, displacement);
               worldY = topo.centerZ;
               vH = topo.depthScale;
             }
@@ -407,7 +421,7 @@ export default function MagnetizationView3D({ grid, magnetization }: Props) {
               _dummy.scale.set(0, 0, 0);
             } else {
               visible++;
-              _dummy.scale.set(baseScale, vH, baseScale);
+              _dummy.scale.set(voxelScale, vH, voxelScale);
             }
 
             applyVoxelColor(mx, my, mz, voxelColorMode, _color);
@@ -423,9 +437,15 @@ export default function MagnetizationView3D({ grid, magnetization }: Props) {
               _dummy.quaternion.identity();
             } else {
               visible++;
-              _dummy.scale.set(1, 1, 1);
+              const glyphScale = 0.22 + 1.1 * Math.sqrt(normalizedStrength);
+              _dummy.scale.set(glyphScale, glyphScale, glyphScale);
               // Direction: sim-Y → world-Z, sim-Z → world-Y (amumax setWorldDirectionFromSimulation)
-              _tempVec.set(mx, mz, my).normalize();
+              _tempVec.set(mx, mz, my);
+              if (_tempVec.lengthSq() > 1e-30) {
+                _tempVec.normalize();
+              } else {
+                _tempVec.set(0, 1, 0);
+              }
               _dummy.quaternion.setFromUnitVectors(_defaultUp, _tempVec);
             }
 
@@ -452,7 +472,7 @@ export default function MagnetizationView3D({ grid, magnetization }: Props) {
       (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity = settings.voxelOpacity;
       mesh.material.needsUpdate = true;
     }
-  }, [magnetization, grid, settings]);
+  }, [vectors, grid, settings]);
 
   // ─── Reset camera (amumax resetCamera) ────────────────────────────
   const resetCamera = () => {
@@ -636,7 +656,7 @@ export default function MagnetizationView3D({ grid, magnetization }: Props) {
           background: "rgba(12,18,31,0.7)", padding: "4px 8px",
           borderRadius: 6, backdropFilter: "blur(8px)",
         }}>
-          {visibleCount.toLocaleString()} cells
+          {fieldLabel} · {visibleCount.toLocaleString()} cells
         </div>
       )}
 

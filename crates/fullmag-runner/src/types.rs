@@ -25,6 +25,9 @@ pub struct StepStats {
     pub time: f64,
     pub dt: f64,
     pub e_ex: f64,
+    pub e_demag: f64,
+    pub e_ext: f64,
+    pub e_total: f64,
     pub max_dm_dt: f64,
     pub max_h_eff: f64,
     pub wall_time_ns: u64,
@@ -114,7 +117,13 @@ pub(crate) struct FieldSnapshot {
 pub(crate) struct StateObservables {
     pub magnetization: Vec<[f64; 3]>,
     pub exchange_field: Vec<[f64; 3]>,
+    pub demag_field: Vec<[f64; 3]>,
+    pub external_field: Vec<[f64; 3]>,
+    pub effective_field: Vec<[f64; 3]>,
     pub exchange_energy: f64,
+    pub demag_energy: f64,
+    pub external_energy: f64,
+    pub total_energy: f64,
     pub max_dm_dt: f64,
     pub max_h_eff: f64,
 }

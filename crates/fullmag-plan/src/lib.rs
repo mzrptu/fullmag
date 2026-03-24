@@ -1,6 +1,7 @@
 //! Execution planning: lowers `ProblemIR` into backend-specific `ExecutionPlanIR`.
 //!
-//! Phase 1 scope: only `Box + Exchange + fdm/strict` is a legal executable path.
+//! Phase 1 scope: `Box + (Exchange | Demag | Zeeman combinations) + fdm/strict`
+//! is the legal executable path.
 //! Everything else is rejected with an honest error.
 
 use fullmag_ir::{
@@ -11,6 +12,8 @@ use fullmag_ir::{
 };
 use std::collections::BTreeSet;
 use std::fmt;
+
+const MU0: f64 = 4.0 * std::f64::consts::PI * 1e-7;
 
 #[derive(Debug)]
 pub struct PlanError {
@@ -30,7 +33,7 @@ impl std::error::Error for PlanError {}
 
 /// Plans a `ProblemIR` into an `ExecutionPlanIR`.
 ///
-/// Phase 1 only supports: Box geometry + Exchange + fdm/strict + Heun.
+/// Phase 1 only supports: Box geometry + executable FDM interaction subset + fdm/strict + Heun.
 /// Returns a detailed error for anything outside this subset.
 pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
     // 1. Validate IR first
@@ -60,20 +63,43 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         errors.push("only execution_mode='strict' is executable in Phase 1".to_string());
     }
 
-    // 4. Check energy terms — only Exchange is executable
-    if problem.energy_terms.len() != 1 {
-        errors.push(format!(
-            "Phase 1 supports exactly one energy term (Exchange), found {}",
-            problem.energy_terms.len()
-        ));
-    }
+    // 4. Check energy terms — executable subset is Exchange / Demag / Zeeman
+    let mut enable_exchange = false;
+    let mut enable_demag = false;
+    let mut external_field = None;
     for term in &problem.energy_terms {
-        if !matches!(term, fullmag_ir::EnergyTermIR::Exchange) {
-            errors.push(format!(
-                "energy term '{:?}' is semantic-only in Phase 1; only Exchange is executable",
-                term
-            ));
+        match term {
+            fullmag_ir::EnergyTermIR::Exchange => {
+                if enable_exchange {
+                    errors.push("Exchange is declared more than once".to_string());
+                }
+                enable_exchange = true;
+            }
+            fullmag_ir::EnergyTermIR::Demag => {
+                if enable_demag {
+                    errors.push("Demag is declared more than once".to_string());
+                }
+                enable_demag = true;
+            }
+            fullmag_ir::EnergyTermIR::Zeeman { b } => {
+                if external_field.is_some() {
+                    errors.push("Zeeman is declared more than once".to_string());
+                }
+                external_field = Some([b[0] / MU0, b[1] / MU0, b[2] / MU0]);
+            }
+            other => {
+                errors.push(format!(
+                    "energy term '{:?}' is semantic-only in the current FDM executable path",
+                    other
+                ));
+            }
         }
+    }
+    if !(enable_exchange || enable_demag || external_field.is_some()) {
+        errors.push(
+            "the current executable FDM path requires at least one of Exchange, Demag, or Zeeman"
+                .to_string(),
+        );
     }
 
     // 5. Check geometry — only Box is executable
@@ -115,7 +141,13 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         ));
     }
 
-    validate_executable_outputs(&problem.study.sampling().outputs, &mut errors);
+    validate_executable_outputs(
+        &problem.study.sampling().outputs,
+        enable_exchange,
+        enable_demag,
+        external_field.is_some(),
+        &mut errors,
+    );
     if problem.backend_policy.execution_precision != ExecutionPrecision::Double {
         errors.push(
             "execution_precision='single' is reserved for the Phase 2 CUDA path; the current CPU reference runner supports only 'double'"
@@ -194,6 +226,9 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
             exchange_stiffness: material.exchange_stiffness,
             damping: material.damping,
         },
+        enable_exchange,
+        enable_demag,
+        external_field,
         gyromagnetic_ratio,
         precision: problem.backend_policy.execution_precision,
         exchange_bc: ExchangeBoundaryCondition::Neumann,
@@ -219,14 +254,36 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
                     "Box geometry lowered to {}x{}x{} grid",
                     grid_cells[0], grid_cells[1], grid_cells[2]
                 ),
+                format!(
+                    "active terms: exchange={}, demag={}, zeeman={}",
+                    enable_exchange,
+                    enable_demag,
+                    external_field.is_some()
+                ),
             ],
         },
     })
 }
 
-fn validate_executable_outputs(outputs: &[OutputIR], errors: &mut Vec<String>) {
-    let allowed_fields = ["m", "H_ex"];
-    let allowed_scalars = ["E_ex", "time", "step", "solver_dt"];
+fn validate_executable_outputs(
+    outputs: &[OutputIR],
+    enable_exchange: bool,
+    enable_demag: bool,
+    enable_zeeman: bool,
+    errors: &mut Vec<String>,
+) {
+    let allowed_fields = ["m", "H_ex", "H_demag", "H_ext", "H_eff"];
+    let allowed_scalars = [
+        "E_ex",
+        "E_demag",
+        "E_ext",
+        "E_total",
+        "time",
+        "step",
+        "solver_dt",
+        "max_dm_dt",
+        "max_h_eff",
+    ];
     let mut seen = BTreeSet::new();
 
     for output in outputs {
@@ -234,9 +291,15 @@ fn validate_executable_outputs(outputs: &[OutputIR], errors: &mut Vec<String>) {
             OutputIR::Field { name, .. } => {
                 if !allowed_fields.contains(&name.as_str()) {
                     errors.push(format!(
-                        "field output '{}' is not executable in Phase 1; allowed fields are m and H_ex",
+                        "field output '{}' is not executable in the current FDM path; allowed fields are m, H_ex, H_demag, H_ext, and H_eff",
                         name
                     ));
+                } else if name == "H_ex" && !enable_exchange {
+                    errors.push("field output 'H_ex' requires Exchange()".to_string());
+                } else if name == "H_demag" && !enable_demag {
+                    errors.push("field output 'H_demag' requires Demag()".to_string());
+                } else if name == "H_ext" && !enable_zeeman {
+                    errors.push("field output 'H_ext' requires Zeeman(...)".to_string());
                 }
                 if !seen.insert(format!("field:{name}")) {
                     errors.push(format!(
@@ -248,9 +311,15 @@ fn validate_executable_outputs(outputs: &[OutputIR], errors: &mut Vec<String>) {
             OutputIR::Scalar { name, .. } => {
                 if !allowed_scalars.contains(&name.as_str()) {
                     errors.push(format!(
-                        "scalar output '{}' is not executable in Phase 1; allowed scalars are E_ex, time, step, and solver_dt",
+                        "scalar output '{}' is not executable in the current FDM path; allowed scalars are E_ex, E_demag, E_ext, E_total, time, step, solver_dt, max_dm_dt, and max_h_eff",
                         name
                     ));
+                } else if name == "E_ex" && !enable_exchange {
+                    errors.push("scalar output 'E_ex' requires Exchange()".to_string());
+                } else if name == "E_demag" && !enable_demag {
+                    errors.push("scalar output 'E_demag' requires Demag()".to_string());
+                } else if name == "E_ext" && !enable_zeeman {
+                    errors.push("scalar output 'E_ext' requires Zeeman(...)".to_string());
                 }
                 if !seen.insert(format!("scalar:{name}")) {
                     errors.push(format!(
@@ -320,11 +389,11 @@ mod tests {
     }
 
     #[test]
-    fn non_exchange_term_is_rejected() {
+    fn unsupported_term_is_rejected() {
         let mut ir = ProblemIR::bootstrap_example();
-        ir.energy_terms = vec![fullmag_ir::EnergyTermIR::Demag];
+        ir.energy_terms = vec![fullmag_ir::EnergyTermIR::InterfacialDmi { d: 3e-3 }];
 
-        let err = plan(&ir).expect_err("demag should be rejected");
+        let err = plan(&ir).expect_err("DMI should be rejected");
         assert!(err.reasons.iter().any(|r| r.contains("semantic-only")));
     }
 
@@ -353,11 +422,11 @@ mod tests {
     }
 
     #[test]
-    fn non_canonical_output_is_rejected_for_execution() {
+    fn inactive_term_output_is_rejected_for_execution() {
         let mut ir = ProblemIR::bootstrap_example();
         let mut outputs = ir.study.sampling().outputs.clone();
-        outputs.push(OutputIR::Scalar {
-            name: "E_total".to_string(),
+        outputs.push(OutputIR::Field {
+            name: "H_demag".to_string(),
             every_seconds: 1e-12,
         });
         ir.study = fullmag_ir::StudyIR::TimeEvolution {
@@ -365,11 +434,11 @@ mod tests {
             sampling: fullmag_ir::SamplingIR { outputs },
         };
 
-        let err = plan(&ir).expect_err("non-canonical phase 1 output should be rejected");
+        let err = plan(&ir).expect_err("output requiring inactive term should be rejected");
         assert!(err
             .reasons
             .iter()
-            .any(|reason| reason.contains("not executable in Phase 1")));
+            .any(|reason| reason.contains("requires Demag()")));
     }
 
     #[test]

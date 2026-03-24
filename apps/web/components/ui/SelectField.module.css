@@ -1,0 +1,49 @@
+.uiSelect {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  min-height: 2.85rem;
+  padding: 0 0.9rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.03);
+  transition:
+    border-color var(--duration-fast) var(--easing-default),
+    box-shadow var(--duration-fast) var(--easing-default);
+}
+
+.control:focus-within {
+  border-color: var(--border-interactive);
+  box-shadow: var(--focus-ring);
+}
+
+.control select {
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text-1);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.control select option {
+  background: var(--surface-2);
+  color: var(--text-1);
+}

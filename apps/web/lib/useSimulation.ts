@@ -7,6 +7,9 @@ export interface StepStats {
   time: number;
   dt: number;
   e_ex: number;
+  e_demag: number;
+  e_ext: number;
+  e_total: number;
   max_dm_dt: number;
   max_h_eff: number;
   wall_time_ns: number;

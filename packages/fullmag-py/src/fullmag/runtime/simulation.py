@@ -15,6 +15,9 @@ class StepStats:
     time: float
     dt: float
     e_ex: float
+    e_demag: float
+    e_ext: float
+    e_total: float
     max_dm_dt: float
     max_h_eff: float
     wall_time_ns: int
@@ -72,7 +75,8 @@ class Simulation:
     def run(self, *, until: float | None = None, output_dir: str | None = None) -> Result:
         """Run the simulation through the reference engine.
 
-        For Phase 1, only Exchange + Box + fdm/strict is executable.
+        For Phase 1, the executable FDM subset supports Box + LLG with
+        Exchange / Demag / Zeeman combinations on the CPU reference path.
         Everything else returns an honest error message.
 
         Args:
@@ -130,6 +134,9 @@ def result_from_run_payload(
             time=s["time"],
             dt=s["dt"],
             e_ex=s["e_ex"],
+            e_demag=s.get("e_demag", 0.0),
+            e_ext=s.get("e_ext", 0.0),
+            e_total=s.get("e_total", s["e_ex"]),
             max_dm_dt=s["max_dm_dt"],
             max_h_eff=s["max_h_eff"],
             wall_time_ns=s["wall_time_ns"],

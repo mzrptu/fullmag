@@ -24,7 +24,7 @@ drifted.
 
 What exists today is still narrower than the desired product shell:
 
-- CPU/FDM reference execution exists for a narrow exchange-only slice,
+- CPU/FDM reference execution exists for a narrow `Exchange + Demag + Zeeman` slice,
 - the browser is still not a real live control room,
 - a bootstrap file-based session/run shell now exists,
 - launcher ownership is now implemented through the Rust host plus Python helper bridge,
@@ -209,11 +209,15 @@ From the user perspective, the same viewer surface should be able to switch betw
 - magnetization `m`,
 - effective field contributions such as:
   - `H_ex`
-  - later `H_demag`, `H_dmi`, `H_ani`, `H_zee`
+  - `H_demag`
+  - `H_ext`
+  - later `H_dmi`, `H_ani`
   - later `H_eff_total`
 - scalar and density quantities such as:
   - `E_ex`
-  - later `E_demag`, `E_dmi`, `E_ani`, `E_zee`, `E_total`
+  - `E_demag`
+  - `E_ext`
+  - later `E_dmi`, `E_ani`, `E_total`
 - later torque or auxiliary quantities such as:
   - `dm/dt`
   - current-related fields

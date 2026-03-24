@@ -51,6 +51,27 @@ raise SystemExit("no free control-room port found in 3000,3001,3002,3003,3004,30
 PY
 }
 
+port_is_bindable() {
+  python3 - "$1" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+sock = socket.socket()
+try:
+    sock.bind(("127.0.0.1", port))
+except OSError:
+    raise SystemExit(1)
+else:
+    raise SystemExit(0)
+finally:
+    try:
+        sock.close()
+    except OSError:
+        pass
+PY
+}
+
 discover_existing_web_url() {
   for port in 3000 3001 3002 3003 3004 3005 3010; do
     local candidate="http://${WEB_HOST}:${port}"
@@ -70,8 +91,19 @@ elif [[ -f "${CONTROL_ROOM_URL_FILE}" ]]; then
   if [[ -n "${WEB_URL_BASE}" ]] && curl -fsS "${WEB_URL_BASE}" >/dev/null 2>&1; then
     WEB_PORT="${WEB_URL_BASE##*:}"
   else
-    WEB_PORT="$(pick_web_port)"
-    WEB_URL_BASE="http://${WEB_HOST}:${WEB_PORT}"
+    if [[ -n "${WEB_URL_BASE}" ]]; then
+      STORED_PORT="${WEB_URL_BASE##*:}"
+      if port_is_bindable "${STORED_PORT}"; then
+        WEB_PORT="${STORED_PORT}"
+        WEB_URL_BASE="http://${WEB_HOST}:${WEB_PORT}"
+      else
+        WEB_PORT="$(pick_web_port)"
+        WEB_URL_BASE="http://${WEB_HOST}:${WEB_PORT}"
+      fi
+    else
+      WEB_PORT="$(pick_web_port)"
+      WEB_URL_BASE="http://${WEB_HOST}:${WEB_PORT}"
+    fi
   fi
 elif EXISTING_WEB_URL="$(discover_existing_web_url)"; then
   WEB_URL_BASE="${EXISTING_WEB_URL}"

@@ -1,16 +1,20 @@
+use async_stream::stream;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, State};
-use axum::http::{header, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::{
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -62,6 +66,9 @@ struct RunManifest {
     total_steps: usize,
     final_time: Option<f64>,
     final_e_ex: Option<f64>,
+    final_e_demag: Option<f64>,
+    final_e_ext: Option<f64>,
+    final_e_total: Option<f64>,
     artifact_dir: String,
 }
 
@@ -77,6 +84,11 @@ struct ScalarRow {
     time: f64,
     solver_dt: f64,
     e_ex: f64,
+    e_demag: f64,
+    e_ext: f64,
+    e_total: f64,
+    max_dm_dt: f64,
+    max_h_eff: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -92,6 +104,9 @@ struct StepUpdateView {
     time: f64,
     dt: f64,
     e_ex: f64,
+    e_demag: f64,
+    e_ext: f64,
+    e_total: f64,
     max_dm_dt: f64,
     max_h_eff: f64,
     wall_time_ns: u64,
@@ -108,14 +123,28 @@ struct SessionStateResponse {
     live_state: Option<LiveState>,
     metadata: Option<Value>,
     scalar_rows: Vec<ScalarRow>,
+    quantities: Vec<QuantityDescriptor>,
     latest_fields: LatestFields,
     artifacts: Vec<ArtifactEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct QuantityDescriptor {
+    id: String,
+    label: String,
+    kind: String,
+    unit: String,
+    location: String,
+    available: bool,
 }
 
 #[derive(Debug, Default, Serialize)]
 struct LatestFields {
     m: Option<Value>,
     h_ex: Option<Value>,
+    h_demag: Option<Value>,
+    h_ext: Option<Value>,
+    h_eff: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,12 +182,12 @@ async fn main() {
         .route("/healthz", get(healthz))
         .route("/v1/meta/vision", get(vision))
         .route("/v1/sessions", get(list_sessions))
-        .route("/v1/sessions/{session_id}", get(get_session))
-        .route("/v1/sessions/{session_id}/state", get(get_session_state))
-        .route("/v1/sessions/{session_id}/events", get(get_session_events))
+        .route("/v1/sessions/:session_id", get(get_session))
+        .route("/v1/sessions/:session_id/state", get(get_session_state))
+        .route("/v1/sessions/:session_id/events", get(get_session_events))
         .route("/v1/runs", get(list_runs))
-        .route("/v1/runs/{run_id}", get(get_run))
-        .route("/v1/runs/{run_id}/artifacts", get(list_run_artifacts))
+        .route("/v1/runs/:run_id", get(get_run))
+        .route("/v1/runs/:run_id/artifacts", get(list_run_artifacts))
         .route("/v1/docs/physics", get(list_physics_docs))
         .route("/v1/run", post(start_run))
         .route("/ws/live", get(ws_live))
@@ -288,53 +317,59 @@ async fn get_session_state(
     State(state): State<Arc<AppState>>,
     AxumPath(session_id): AxumPath<String>,
 ) -> Result<Json<SessionStateResponse>, ApiError> {
-    let session_dir = state.sessions_root.join(&session_id);
-    let session: SessionManifest = read_json_file(&session_dir.join("session.json"))?;
-    let run = read_optional_json_file::<RunManifest>(&session_dir.join("run.json"))?;
-    let artifact_dir = PathBuf::from(&session.artifact_dir);
-
-    let mut artifacts = Vec::new();
-    if artifact_dir.exists() {
-        collect_artifacts(&artifact_dir, &artifact_dir, &mut artifacts)?;
-    }
-
-    let metadata = read_optional_json_value(&artifact_dir.join("metadata.json"))?;
-    let scalar_rows = read_scalar_rows(&artifact_dir.join("scalars.csv"))?;
-    let live_state = read_optional_json_file::<LiveState>(&session_dir.join("live_state.json"))?;
-    let latest_fields = LatestFields {
-        m: read_latest_field_json(&artifact_dir, "m")?,
-        h_ex: read_latest_field_json(&artifact_dir, "H_ex")?,
-    };
-
-    Ok(Json(SessionStateResponse {
-        session,
-        run,
-        live_state,
-        metadata,
-        scalar_rows,
-        latest_fields,
-        artifacts,
-    }))
+    Ok(Json(load_session_state(&state.sessions_root, &session_id)?))
 }
 
 async fn get_session_events(
     State(state): State<Arc<AppState>>,
     AxumPath(session_id): AxumPath<String>,
-) -> Result<Response, ApiError> {
-    let path = state.sessions_root.join(&session_id).join("events.ndjson");
-    let text = std::fs::read_to_string(&path)
-        .map_err(|_| ApiError::not_found(format!("missing {}", path.display())))?;
-    let body = text
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| format!("data: {line}\n\n"))
-        .collect::<String>();
+) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    let session_dir = state.sessions_root.join(&session_id);
+    if !session_dir.exists() {
+        return Err(ApiError::not_found(format!(
+            "missing session directory {}",
+            session_dir.display()
+        )));
+    }
 
-    Ok((
-        [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
-        body,
-    )
-        .into_response())
+    let sessions_root = state.sessions_root.clone();
+    let stream = stream! {
+        let mut ticker = tokio::time::interval(Duration::from_millis(800));
+        let mut last_payload_json: Option<String> = None;
+
+        loop {
+            ticker.tick().await;
+
+            let payload = match load_session_state(&sessions_root, &session_id) {
+                Ok(payload) => payload,
+                Err(error) => {
+                    let json = serde_json::json!({ "error": error.message }).to_string();
+                    yield Ok(Event::default().event("session_error").data(json));
+                    break;
+                }
+            };
+
+            let json = match serde_json::to_string(&payload) {
+                Ok(json) => json,
+                Err(error) => {
+                    let json = serde_json::json!({ "error": error.to_string() }).to_string();
+                    yield Ok(Event::default().event("session_error").data(json));
+                    break;
+                }
+            };
+
+            if last_payload_json.as_deref() != Some(json.as_str()) {
+                last_payload_json = Some(json.clone());
+                yield Ok(Event::default().event("session_state").data(json));
+            }
+
+            if matches!(payload.session.status.as_str(), "completed" | "failed" | "cancelled") {
+                break;
+            }
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 async fn list_runs(State(state): State<Arc<AppState>>) -> Result<Json<Vec<RunManifest>>, ApiError> {
@@ -411,6 +446,42 @@ fn read_all_sessions(root: &Path) -> Result<Vec<SessionManifest>, ApiError> {
     sessions.sort_by_key(|session| session.started_at_unix_ms);
     sessions.reverse();
     Ok(sessions)
+}
+
+fn load_session_state(root: &Path, session_id: &str) -> Result<SessionStateResponse, ApiError> {
+    let session_dir = root.join(session_id);
+    let session: SessionManifest = read_json_file(&session_dir.join("session.json"))?;
+    let run = read_optional_json_file::<RunManifest>(&session_dir.join("run.json"))?;
+    let artifact_dir = PathBuf::from(&session.artifact_dir);
+
+    let mut artifacts = Vec::new();
+    if artifact_dir.exists() {
+        collect_artifacts(&artifact_dir, &artifact_dir, &mut artifacts)?;
+    }
+
+    let metadata = read_optional_json_value(&artifact_dir.join("metadata.json"))?;
+    let scalar_rows = read_scalar_rows(&artifact_dir.join("scalars.csv"))?;
+    let live_state = read_optional_json_file::<LiveState>(&session_dir.join("live_state.json"))?;
+    let latest_fields = LatestFields {
+        m: read_latest_field_json(&artifact_dir, "m")?,
+        h_ex: read_latest_field_json(&artifact_dir, "H_ex")?,
+        h_demag: read_latest_field_json(&artifact_dir, "H_demag")?,
+        h_ext: read_latest_field_json(&artifact_dir, "H_ext")?,
+        h_eff: read_latest_field_json(&artifact_dir, "H_eff")?,
+    };
+    let quantities =
+        build_quantities(&latest_fields, live_state.as_ref(), run.as_ref(), &scalar_rows);
+
+    Ok(SessionStateResponse {
+        session,
+        run,
+        live_state,
+        metadata,
+        scalar_rows,
+        quantities,
+        latest_fields,
+        artifacts,
+    })
 }
 
 fn find_run_file(root: &Path, run_id: &str) -> Result<PathBuf, ApiError> {
@@ -500,31 +571,41 @@ fn read_scalar_rows(path: &Path) -> Result<Vec<ScalarRow>, ApiError> {
     let text = std::fs::read_to_string(path)
         .map_err(|_| ApiError::not_found(format!("missing {}", path.display())))?;
     let mut rows = Vec::new();
+    let mut header = Vec::new();
     for (index, line) in text.lines().enumerate() {
-        if index == 0 || line.trim().is_empty() {
+        if line.trim().is_empty() {
             continue;
         }
-        let columns = line.split(',').collect::<Vec<_>>();
-        if columns.len() != 4 {
+        if index == 0 {
+            header = line.split(',').map(|value| value.trim().to_string()).collect();
+            continue;
+        }
+        let columns = line.split(',').map(str::trim).collect::<Vec<_>>();
+        if columns.len() != header.len() {
             return Err(ApiError::internal(format!(
                 "invalid scalar row {} in {}",
                 index + 1,
                 path.display()
             )));
         }
+        let parse_f64 = |name: &str| -> Result<f64, ApiError> {
+            let Some(position) = header.iter().position(|column| column == name) else {
+                return Ok(0.0);
+            };
+            columns[position].parse().map_err(|error| {
+                ApiError::internal(format!("invalid scalar {} in {}: {}", name, path.display(), error))
+            })
+        };
         rows.push(ScalarRow {
-            step: columns[0].parse().map_err(|error| {
-                ApiError::internal(format!("invalid scalar step in {}: {}", path.display(), error))
-            })?,
-            time: columns[1].parse().map_err(|error| {
-                ApiError::internal(format!("invalid scalar time in {}: {}", path.display(), error))
-            })?,
-            solver_dt: columns[2].parse().map_err(|error| {
-                ApiError::internal(format!("invalid scalar dt in {}: {}", path.display(), error))
-            })?,
-            e_ex: columns[3].parse().map_err(|error| {
-                ApiError::internal(format!("invalid scalar E_ex in {}: {}", path.display(), error))
-            })?,
+            step: parse_f64("step")? as u64,
+            time: parse_f64("time")?,
+            solver_dt: parse_f64("solver_dt")?,
+            e_ex: parse_f64("E_ex")?,
+            e_demag: parse_f64("E_demag")?,
+            e_ext: parse_f64("E_ext")?,
+            e_total: parse_f64("E_total")?,
+            max_dm_dt: parse_f64("max_dm_dt")?,
+            max_h_eff: parse_f64("max_h_eff")?,
         });
     }
     Ok(rows)
@@ -553,6 +634,95 @@ fn read_latest_field_json(artifact_dir: &Path, observable: &str) -> Result<Optio
         Some(path) => read_optional_json_value(&path),
         None => Ok(None),
     }
+}
+
+fn build_quantities(
+    latest_fields: &LatestFields,
+    live_state: Option<&LiveState>,
+    run: Option<&RunManifest>,
+    scalar_rows: &[ScalarRow],
+) -> Vec<QuantityDescriptor> {
+    let scalar_available = |run_value: Option<f64>| {
+        !scalar_rows.is_empty() || live_state.is_some() || run_value.is_some()
+    };
+
+    vec![
+        QuantityDescriptor {
+            id: "m".to_string(),
+            label: "Magnetization".to_string(),
+            kind: "vector_field".to_string(),
+            unit: "dimensionless".to_string(),
+            location: "cell".to_string(),
+            available: latest_fields.m.is_some()
+                || live_state
+                    .and_then(|state| state.latest_step.magnetization.as_ref())
+                    .is_some(),
+        },
+        QuantityDescriptor {
+            id: "H_ex".to_string(),
+            label: "Exchange Field".to_string(),
+            kind: "vector_field".to_string(),
+            unit: "A/m".to_string(),
+            location: "cell".to_string(),
+            available: latest_fields.h_ex.is_some(),
+        },
+        QuantityDescriptor {
+            id: "H_demag".to_string(),
+            label: "Demagnetization Field".to_string(),
+            kind: "vector_field".to_string(),
+            unit: "A/m".to_string(),
+            location: "cell".to_string(),
+            available: latest_fields.h_demag.is_some(),
+        },
+        QuantityDescriptor {
+            id: "H_ext".to_string(),
+            label: "External Field".to_string(),
+            kind: "vector_field".to_string(),
+            unit: "A/m".to_string(),
+            location: "cell".to_string(),
+            available: latest_fields.h_ext.is_some(),
+        },
+        QuantityDescriptor {
+            id: "H_eff".to_string(),
+            label: "Effective Field".to_string(),
+            kind: "vector_field".to_string(),
+            unit: "A/m".to_string(),
+            location: "cell".to_string(),
+            available: latest_fields.h_eff.is_some(),
+        },
+        QuantityDescriptor {
+            id: "E_ex".to_string(),
+            label: "Exchange Energy".to_string(),
+            kind: "global_scalar".to_string(),
+            unit: "J".to_string(),
+            location: "global".to_string(),
+            available: scalar_available(run.and_then(|manifest| manifest.final_e_ex)),
+        },
+        QuantityDescriptor {
+            id: "E_demag".to_string(),
+            label: "Demagnetization Energy".to_string(),
+            kind: "global_scalar".to_string(),
+            unit: "J".to_string(),
+            location: "global".to_string(),
+            available: scalar_available(run.and_then(|manifest| manifest.final_e_demag)),
+        },
+        QuantityDescriptor {
+            id: "E_ext".to_string(),
+            label: "External Energy".to_string(),
+            kind: "global_scalar".to_string(),
+            unit: "J".to_string(),
+            location: "global".to_string(),
+            available: scalar_available(run.and_then(|manifest| manifest.final_e_ext)),
+        },
+        QuantityDescriptor {
+            id: "E_total".to_string(),
+            label: "Total Energy".to_string(),
+            kind: "global_scalar".to_string(),
+            unit: "J".to_string(),
+            location: "global".to_string(),
+            available: scalar_available(run.and_then(|manifest| manifest.final_e_total)),
+        },
+    ]
 }
 
 fn repo_root() -> PathBuf {

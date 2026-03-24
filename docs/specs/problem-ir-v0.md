@@ -58,6 +58,15 @@ Current bootstrap coverage includes:
 - backend target and execution mode
 - execution precision policy
 
+Current public-executable FDM lowering supports:
+
+- `Box` geometry,
+- `LLG(heun)`,
+- `Exchange`, `Demag`, and `Zeeman` in executable combinations,
+- canonical field outputs `m`, `H_ex`, `H_demag`, `H_ext`, `H_eff`,
+- canonical scalar outputs `E_ex`, `E_demag`, `E_ext`, `E_total`, `time`, `step`, `solver_dt`,
+  `max_dm_dt`, and `max_h_eff`.
+
 Current limitation:
 
 - the bootstrap IR separates `RegionIR` and `MaterialIR`, but it does not yet contain the full

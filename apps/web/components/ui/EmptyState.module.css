@@ -1,0 +1,33 @@
+.uiEmpty {
+  display: grid;
+  place-items: center;
+  gap: 0.7rem;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.compact {
+  padding: 1.5rem;
+  gap: 0.5rem;
+}
+
+.uiEmpty h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.compact h3 {
+  font-size: 0.92rem;
+}
+
+.uiEmpty p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-2);
+  max-width: 28rem;
+}
