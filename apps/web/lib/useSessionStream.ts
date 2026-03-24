@@ -183,6 +183,10 @@ export function useSessionStream(sessionId: string): UseSessionStreamResult {
   const [connection, setConnection] = useState<ConnectionStatus>("connecting");
   const [error, setError] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  // Set to true once the session emits a finished=true state — stops reconnect loop.
+  const finishedRef = useRef(false);
+  // Debounce timer for "disconnected" — avoids "Offline" flash on transient drops.
+  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const connect = useCallback(() => {
     if (esRef.current) {
@@ -194,6 +198,11 @@ export function useSessionStream(sessionId: string): UseSessionStreamResult {
     esRef.current = es;
 
     es.onopen = () => {
+      // Cancel any pending "disconnected" flash and go straight to connected.
+      if (disconnectTimerRef.current !== null) {
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
       setConnection("connected");
       setError(null);
     };
@@ -201,7 +210,17 @@ export function useSessionStream(sessionId: string): UseSessionStreamResult {
     es.addEventListener("session_state", (event: MessageEvent) => {
       try {
         const raw = JSON.parse(event.data);
-        setState(normalizeSessionState(raw));
+        setState((prevState) => {
+          const nextState = normalizeSessionState(raw);
+          if (!nextState.fem_mesh && prevState?.fem_mesh) {
+            nextState.fem_mesh = prevState.fem_mesh;
+          }
+          // Mark as permanently finished so we stop reconnecting.
+          if (nextState.live_state?.finished) {
+            finishedRef.current = true;
+          }
+          return nextState;
+        });
       } catch (parseError) {
         console.warn("Failed to parse session_state event", parseError);
       }
@@ -217,8 +236,21 @@ export function useSessionStream(sessionId: string): UseSessionStreamResult {
     });
 
     es.onerror = () => {
-      setConnection("disconnected");
       es.close();
+
+      if (finishedRef.current) {
+        // Run is done — server closed the stream intentionally. Stay disconnected.
+        setConnection("disconnected");
+        return;
+      }
+
+      // Debounce: only show "Offline" if the reconnect doesn't succeed quickly.
+      // This prevents "Live → Offline → Live" flicker on transient drops.
+      disconnectTimerRef.current = setTimeout(() => {
+        disconnectTimerRef.current = null;
+        setConnection("disconnected");
+      }, 2000);
+
       setTimeout(() => {
         if (esRef.current === es) {
           setConnection("connecting");
@@ -235,6 +267,9 @@ export function useSessionStream(sessionId: string): UseSessionStreamResult {
       if (es) {
         es.close();
         esRef.current = null;
+      }
+      if (disconnectTimerRef.current !== null) {
+        clearTimeout(disconnectTimerRef.current);
       }
     };
   }, [connect]);

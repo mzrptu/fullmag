@@ -7,6 +7,7 @@ publish.workspace = true
 [features]
 default = []
 cuda = ["fullmag-runner/cuda"]
+fem-gpu = ["fullmag-runner/fem-gpu"]
 
 [[bin]]
 name = "fullmag"

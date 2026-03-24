@@ -85,4 +85,45 @@ class Cylinder:
         }
 
 
-Geometry: TypeAlias = ImportedGeometry | Box | Cylinder
+@dataclass(frozen=True, slots=True)
+class Difference:
+    """CSG Boolean difference: base geometry minus tool geometry.
+
+    Example: Box with a cylindrical hole::
+
+        body = fm.Difference(
+            base=fm.Box(size=(1e-6, 1e-6, 10e-9), name="layer"),
+            tool=fm.Cylinder(radius=50e-9, height=10e-9, name="hole"),
+            name="layer_with_hole",
+        )
+    """
+
+    base: "Geometry"
+    tool: "Geometry"
+    name: str = "difference"
+
+    def __init__(
+        self,
+        base: "Geometry",
+        tool: "Geometry",
+        name: str = "difference",
+    ) -> None:
+        object.__setattr__(self, "base", base)
+        object.__setattr__(self, "tool", tool)
+        object.__setattr__(self, "name", require_non_empty(name, "name"))
+
+    @property
+    def geometry_name(self) -> str:
+        return self.name
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "kind": "difference",
+            "base": self.base.to_ir(),
+            "tool": self.tool.to_ir(),
+        }
+
+
+Geometry: TypeAlias = ImportedGeometry | Box | Cylinder | Difference
+

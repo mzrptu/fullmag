@@ -467,7 +467,10 @@ impl FemLlgProblem {
             for local_index in 0..4 {
                 grad_u = add(
                     grad_u,
-                    scale(gradients[local_index], potential[element[local_index] as usize]),
+                    scale(
+                        gradients[local_index],
+                        potential[element[local_index] as usize],
+                    ),
                 );
             }
             let h_elem = scale(grad_u, -1.0);
@@ -493,7 +496,13 @@ impl FemLlgProblem {
         self.topology
             .magnetic_node_volumes
             .iter()
-            .map(|volume| if *volume > 0.0 { external } else { [0.0, 0.0, 0.0] })
+            .map(|volume| {
+                if *volume > 0.0 {
+                    external
+                } else {
+                    [0.0, 0.0, 0.0]
+                }
+            })
             .collect()
     }
 
@@ -628,7 +637,9 @@ fn dense_index(n: usize, row: usize, col: usize) -> usize {
 fn solve_dense_linear_system(matrix: &[f64], rhs: &[f64]) -> Result<Vec<f64>> {
     let n = rhs.len();
     if matrix.len() != n * n {
-        return Err(EngineError::new("dense linear system has inconsistent dimensions"));
+        return Err(EngineError::new(
+            "dense linear system has inconsistent dimensions",
+        ));
     }
     if n == 0 {
         return Ok(Vec::new());
@@ -692,7 +703,7 @@ fn max_norm(values: &[Vector3]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DEFAULT_GYROMAGNETIC_RATIO, EffectiveFieldTerms};
+    use crate::{EffectiveFieldTerms, DEFAULT_GYROMAGNETIC_RATIO};
 
     fn unit_tet_problem() -> FemLlgProblem {
         let mesh = MeshIR {
@@ -781,7 +792,11 @@ mod tests {
 
         let field = problem.exchange_field(&state).expect("exchange field");
         for value in field {
-            assert!(norm(value) < 1e-20, "uniform field should vanish, got {:?}", value);
+            assert!(
+                norm(value) < 1e-20,
+                "uniform field should vanish, got {:?}",
+                value
+            );
         }
     }
 
@@ -794,11 +809,17 @@ mod tests {
         let mut state = problem
             .new_state(vec![[1.0, 0.0, 0.0]; problem.topology.n_nodes])
             .expect("state");
-        let initial_energy = problem.observe(&state).expect("observables").external_energy_joules;
+        let initial_energy = problem
+            .observe(&state)
+            .expect("observables")
+            .external_energy_joules;
         for _ in 0..20 {
             problem.step(&mut state, 1e-13).expect("step");
         }
-        let final_energy = problem.observe(&state).expect("observables").external_energy_joules;
+        let final_energy = problem
+            .observe(&state)
+            .expect("observables")
+            .external_energy_joules;
         assert!(
             final_energy <= initial_energy,
             "external energy should decrease: {} -> {}",
@@ -818,11 +839,17 @@ mod tests {
                 [1.0, 0.0, 0.0],
             ])
             .expect("state");
-        let initial_energy = problem.observe(&state).expect("observables").exchange_energy_joules;
+        let initial_energy = problem
+            .observe(&state)
+            .expect("observables")
+            .exchange_energy_joules;
         for _ in 0..20 {
             problem.step(&mut state, 1e-13).expect("step");
         }
-        let final_energy = problem.observe(&state).expect("observables").exchange_energy_joules;
+        let final_energy = problem
+            .observe(&state)
+            .expect("observables")
+            .exchange_energy_joules;
         assert!(
             final_energy <= initial_energy,
             "exchange energy should decrease: {} -> {}",
@@ -852,8 +879,14 @@ mod tests {
             .new_state(vec![[1.0, 0.0, 0.0]; problem.topology.n_nodes])
             .expect("x state");
 
-        let z_energy = problem.observe(&z_state).expect("z observables").demag_energy_joules;
-        let x_energy = problem.observe(&x_state).expect("x observables").demag_energy_joules;
+        let z_energy = problem
+            .observe(&z_state)
+            .expect("z observables")
+            .demag_energy_joules;
+        let x_energy = problem
+            .observe(&x_state)
+            .expect("x observables")
+            .demag_energy_joules;
         assert!(
             z_energy > x_energy,
             "flat box should penalize out-of-plane state more strongly: {} <= {}",

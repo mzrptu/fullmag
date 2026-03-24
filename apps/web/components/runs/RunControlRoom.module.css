@@ -1,0 +1,467 @@
+/* ============================================================
+   RunControlRoom — Desktop-App IDE Layout
+   3-zone: top header | center viewport + right sidebar | bottom console
+   ============================================================ */
+
+.shell {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: 34px 1fr auto;
+  grid-template-columns: 1fr 320px;
+  grid-template-areas:
+    "header   header"
+    "viewport sidebar"
+    "console  console";
+  background: #060d18;
+  font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  color: var(--text-1, #edf3fb);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* ── Header ──────────────────────────────────────── */
+.header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.75rem;
+  background: hsla(220, 25%, 8%, 0.95);
+  border-bottom: 1px solid hsla(220, 20%, 20%, 0.5);
+  z-index: 10;
+  min-width: 0;
+}
+
+.headerBackBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: hsla(220, 20%, 15%, 0.6);
+  border: 1px solid hsla(220, 20%, 25%, 0.4);
+  color: var(--text-2, #a7bad3);
+  font-size: 0.8rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 80ms, color 80ms;
+  flex-shrink: 0;
+}
+
+.headerBackBtn:hover {
+  background: hsla(220, 20%, 20%, 0.8);
+  color: var(--text-1);
+}
+
+.headerTitle {
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.headerDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.headerDot[data-status="running"] {
+  background: #35b779;
+  box-shadow: 0 0 6px rgba(53, 183, 121, 0.5);
+}
+
+.headerDot[data-status="completed"] {
+  background: hsl(210, 70%, 60%);
+}
+
+.headerDot[data-status="failed"] {
+  background: #cf6256;
+}
+
+.headerDot[data-status="idle"] {
+  background: #64748b;
+}
+
+.headerMeta {
+  font-size: 0.68rem;
+  color: var(--text-3, #6b7f9f);
+  white-space: nowrap;
+}
+
+.headerSpacer { flex: 1; }
+
+.headerPill {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  background: hsla(210, 50%, 20%, 0.6);
+  color: hsl(210, 70%, 72%);
+  border: 1px solid hsla(210, 40%, 30%, 0.5);
+}
+
+/* ── View toggle in header ───────────────────────── */
+.headerToggle {
+  display: flex;
+  gap: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid hsla(220, 20%, 25%, 0.5);
+}
+
+.headerToggleBtn {
+  appearance: none;
+  border: none;
+  background: hsla(220, 20%, 12%, 0.8);
+  color: var(--text-3);
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+  transition: background 80ms, color 80ms;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.kbdHint {
+  font-size: 0.5rem;
+  font-weight: 600;
+  opacity: 0.45;
+  min-width: 0.6em;
+  text-align: center;
+}
+
+.headerToggleBtn:hover { color: var(--text-2); }
+
+.headerToggleBtn[data-active="true"] {
+  background: hsl(210, 60%, 25%);
+  color: hsl(210, 80%, 82%);
+}
+
+.headerToggleBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Viewport ────────────────────────────────────── */
+.viewport {
+  grid-area: viewport;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: #070b14;
+}
+
+.viewportBar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  background: hsla(220, 20%, 9%, 0.9);
+  border-bottom: 1px solid hsla(220, 20%, 18%, 0.5);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.viewportBarSelect {
+  appearance: none;
+  background: hsla(220, 20%, 14%, 0.8);
+  border: 1px solid hsla(220, 20%, 24%, 0.5);
+  border-radius: 4px;
+  color: var(--text-1);
+  font-size: 0.72rem;
+  font-family: inherit;
+  padding: 0.2rem 0.4rem;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.viewportBarSelect:focus {
+  outline: none;
+  border-color: hsl(210, 60%, 40%);
+}
+
+.viewportBarLabel {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+.viewportBarSep {
+  width: 1px;
+  height: 16px;
+  background: hsla(220, 20%, 25%, 0.4);
+  flex-shrink: 0;
+}
+
+.viewportCanvas {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.viewportOverlay {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.5rem;
+  display: flex;
+  gap: 0.6rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.65rem;
+  color: hsla(210, 30%, 70%, 0.6);
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* ── Right Sidebar ───────────────────────────────── */
+.sidebar {
+  grid-area: sidebar;
+  display: flex;
+  flex-direction: column;
+  background: hsla(220, 22%, 7%, 0.95);
+  border-left: 1px solid hsla(220, 20%, 18%, 0.5);
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb {
+  background: hsla(220, 20%, 30%, 0.4);
+  border-radius: 2px;
+}
+
+/* ── Bottom Console ──────────────────────────────── */
+.console {
+  grid-area: console;
+  height: 180px;
+  min-height: 28px;
+  max-height: 50vh;
+  border-top: 1px solid hsla(220, 20%, 20%, 0.5);
+  overflow: hidden;
+  resize: vertical;
+  position: relative;
+}
+
+.console[data-collapsed="true"] {
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  resize: none;
+}
+
+.consoleToggle {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  z-index: 10;
+  background: hsla(220, 20%, 14%, 0.7);
+  border: 1px solid hsla(220, 20%, 24%, 0.4);
+  border-radius: 3px;
+  color: var(--text-3);
+  font-size: 0.6rem;
+  cursor: pointer;
+  padding: 1px 5px;
+  line-height: 1;
+  transition: color 80ms;
+}
+
+.consoleToggle:hover {
+  color: var(--text-1);
+}
+
+/* ── Collapsible Section ─────────────────────────── */
+.section {
+  border-bottom: 1px solid hsla(220, 20%, 18%, 0.4);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  user-select: none;
+  background: hsla(220, 20%, 10%, 0.6);
+  transition: background 80ms;
+}
+
+.sectionHeader:hover {
+  background: hsla(220, 20%, 14%, 0.6);
+}
+
+.sectionChevron {
+  font-size: 0.6rem;
+  color: var(--text-3);
+  transition: transform 150ms;
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+}
+
+.sectionChevron[data-open="true"] {
+  transform: rotate(90deg);
+}
+
+.sectionTitle {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-2, #a7bad3);
+  flex: 1;
+  min-width: 0;
+}
+
+.sectionBadge {
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: var(--text-3);
+  font-family: var(--font-mono, monospace);
+}
+
+.sectionBody {
+  padding: 0.4rem 0.6rem 0.55rem;
+  overflow: hidden;
+}
+
+/* ── Sidebar field grid ──────────────────────────── */
+.fieldGrid {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.fieldGrid2 {
+  display: grid;
+  gap: 0.35rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.fieldGrid3 {
+  display: grid;
+  gap: 0.35rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.fieldCell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.fieldLabel {
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.fieldValue {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.76rem;
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+.fieldUnit {
+  font-size: 0.62rem;
+  color: var(--text-3);
+  font-weight: 400;
+  margin-left: 0.15rem;
+}
+
+/* ── Energy pills ────────────────────────────────── */
+.termPill {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  background: hsl(210, 60%, 25%);
+  color: hsl(210, 80%, 82%);
+  border: 1px solid hsl(210, 50%, 35%);
+}
+
+/* ── Stats table ─────────────────────────────────── */
+.statsTable {
+  display: grid;
+  grid-template-columns: 40px repeat(4, minmax(0, 1fr));
+  gap: 0.15rem 0.3rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.68rem;
+}
+
+.statsHeader {
+  font-size: 0.56rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  padding-bottom: 0.15rem;
+}
+
+.statsLabel {
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.statsValue {
+  color: var(--text-1);
+}
+
+/* ── Loading / error state ─────────────────────── */
+.loadingShell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #060d18;
+  color: var(--text-2);
+  font-size: 0.9rem;
+}
+
+/* ── Sidebar footer ───────────────────────────── */
+.sidebarFooter {
+  margin-top: auto;
+  padding: 0.5rem 0.6rem;
+  border-top: 1px solid hsla(220, 20%, 18%, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.footerRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.footerValue {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.65rem;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}

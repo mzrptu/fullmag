@@ -26,7 +26,7 @@ def build() -> fm.Problem:
         geometry=strip,
         material=mat,
         m0=fm.init.random(seed=42),
-    )
+    )make control-room-stop
 
     return fm.Problem(
         name="exchange_relax",

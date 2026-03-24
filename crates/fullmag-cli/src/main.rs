@@ -50,7 +50,10 @@ struct ScriptCli {
     headless: bool,
     #[arg(long)]
     json: bool,
-    #[arg(long, help = "Port for the control room frontend (auto-selects 3000-3010 if omitted)")]
+    #[arg(
+        long,
+        help = "Port for the control room frontend (auto-selects 3000-3010 if omitted)"
+    )]
     web_port: Option<u16>,
 }
 
@@ -365,8 +368,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
     let plan_summary = ir
         .plan_for(Some(args.backend.into()))
         .map_err(join_errors)?;
-    let execution_plan =
-        fullmag_plan::plan(&ir).map_err(|error| anyhow!(error.to_string()))?;
+    let execution_plan = fullmag_plan::plan(&ir).map_err(|error| anyhow!(error.to_string()))?;
     let session_manifest_path = session_dir.join("session.json");
     let run_manifest_path = session_dir.join("run.json");
     let live_state_path = session_dir.join("live_state.json");
@@ -441,8 +443,10 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
     }
 
     let field_every_n = 10;
-    let use_live_callback =
-        matches!(&execution_plan.backend_plan, BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_));
+    let use_live_callback = matches!(
+        &execution_plan.backend_plan,
+        BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_)
+    );
     let result = match if use_live_callback {
         fullmag_runner::run_problem_with_callback(
             &ir,
@@ -512,9 +516,24 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     status: "failed".to_string(),
                     script_path: script_path.display().to_string(),
                     problem_name: ir.problem_meta.name.clone(),
-                    requested_backend: args.backend.to_possible_value().unwrap().get_name().to_string(),
-                    execution_mode: args.mode.to_possible_value().unwrap().get_name().to_string(),
-                    precision: args.precision.to_possible_value().unwrap().get_name().to_string(),
+                    requested_backend: args
+                        .backend
+                        .to_possible_value()
+                        .unwrap()
+                        .get_name()
+                        .to_string(),
+                    execution_mode: args
+                        .mode
+                        .to_possible_value()
+                        .unwrap()
+                        .get_name()
+                        .to_string(),
+                    precision: args
+                        .precision
+                        .to_possible_value()
+                        .unwrap()
+                        .get_name()
+                        .to_string(),
                     artifact_dir: artifact_dir.display().to_string(),
                     started_at_unix_ms,
                     finished_at_unix_ms: failed_at_unix_ms,
@@ -788,7 +807,9 @@ fn spawn_control_room(session_id: &str, requested_port: Option<u16>) -> Result<(
         }
 
         for _ in 0..100 {
-            if port_is_listening(8080) { break; }
+            if port_is_listening(8080) {
+                break;
+            }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
     } else {
@@ -815,10 +836,12 @@ fn spawn_control_room(session_id: &str, requested_port: Option<u16>) -> Result<(
             .context("failed to spawn frontend dev server")?;
 
         // Persist the URL for next invocations
-        let _ = fs::write(&url_file, format!("http://127.0.0.1:{}", web_port));
+        let _ = fs::write(&url_file, format!("http://localhost:{}", web_port));
 
         for _ in 0..300 {
-            if port_is_listening(web_port) { break; }
+            if port_is_listening(web_port) {
+                break;
+            }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
     } else if port_is_listening(web_port) {
@@ -826,7 +849,7 @@ fn spawn_control_room(session_id: &str, requested_port: Option<u16>) -> Result<(
     }
 
     // 3. Open browser
-    let url = format!("http://127.0.0.1:{}/runs/{}", web_port, session_id);
+    let url = format!("http://localhost:{}/runs/{}", web_port, session_id);
     eprintln!("  control room: {}", url);
 
     if let Ok(opener) = which_opener() {
@@ -920,10 +943,7 @@ fn pause_after_run(session_id: &str, headless: bool) -> Result<()> {
     if headless {
         println!("- headless run finished; press Enter to exit the CLI");
     } else {
-        println!(
-            "- control room session: {}",
-            session_id
-        );
+        println!("- control room session: {}", session_id);
         println!("- press Enter to exit the CLI and leave background services running");
     }
 
@@ -962,7 +982,7 @@ fn initialise_live_scalars(path: &Path) -> Result<()> {
         file,
         "step,time,solver_dt,E_ex,E_demag,E_ext,E_total,max_dm_dt,max_h_eff"
     )
-        .with_context(|| format!("failed to initialize {}", path.display()))
+    .with_context(|| format!("failed to initialize {}", path.display()))
 }
 
 fn append_live_scalar_row(path: &Path, update: &fullmag_runner::StepUpdate) -> Result<()> {

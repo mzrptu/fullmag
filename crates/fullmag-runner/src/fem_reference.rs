@@ -164,7 +164,13 @@ fn execute_reference_fem_impl(
                 None
             };
             on_step(StepUpdate {
-                stats: make_step_stats(step_count, state.time_seconds, dt_step, wall_elapsed, &observables),
+                stats: make_step_stats(
+                    step_count,
+                    state.time_seconds,
+                    dt_step,
+                    wall_elapsed,
+                    &observables,
+                ),
                 grid: *grid,
                 fem_mesh: Some(crate::types::FemMeshPayload {
                     nodes: plan.mesh.nodes.clone(),
@@ -410,6 +416,7 @@ mod tests {
 
     fn make_test_plan(enable_demag: bool) -> FemPlanIR {
         FemPlanIR {
+            mesh_name: "unit_tet".to_string(),
             mesh_source: Some("meshes/unit_tet.msh".to_string()),
             mesh: MeshIR {
                 mesh_name: "unit_tet".to_string(),
@@ -463,7 +470,8 @@ mod tests {
     #[test]
     fn demag_outputs_are_nonzero_when_enabled() {
         let plan = make_test_plan(true);
-        let result = execute_reference_fem(&plan, 1e-12, &[]).expect("FEM demag run should succeed");
+        let result =
+            execute_reference_fem(&plan, 1e-12, &[]).expect("FEM demag run should succeed");
         assert_eq!(result.result.status, RunStatus::Completed);
         let last = result.result.steps.last().expect("at least one step");
         assert!(last.e_demag >= 0.0);

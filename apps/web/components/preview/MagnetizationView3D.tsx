@@ -344,7 +344,9 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
       }
       sceneRef.current = null;
     };
-  }, [grid, settings.quality, settings.renderMode, settings.brightness, settings.voxelOpacity]);
+  // Destructure to primitive deps — prevents full scene rebuild when parent passes a new
+  // array reference with the same values (e.g. on every SSE tick from useSessionStream).
+  }, [grid[0], grid[1], grid[2], settings.quality, settings.renderMode, settings.brightness, settings.voxelOpacity]);
 
   useEffect(() => {
     const cleanup = initScene();
@@ -491,7 +493,7 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
   };
 
   return (
-    <div style={{ position: "relative" }}>
+    <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%" }}>
       {/* ─── Floating Toolbar (1:1 from amumax Toolbar3D.svelte) ──── */}
       <div className={t.toolbar}>
         <button className={t.toggleBtn} onClick={() => setExpanded(!expanded)} title="3D Controls">⚙</button>
@@ -592,19 +594,13 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
         )}
       </div>
 
-      {/* ─── Visible count badge ──── */}
-      {visibleCount > 0 && (
-        <div className={t.statsPill}>
-          {settings.renderMode === "voxel" ? "Voxels" : "Arrows"}: {visibleCount.toLocaleString()}
-        </div>
-      )}
-
       {/* ─── Canvas ──── */}
       <div
         ref={containerRef}
         style={{
           width: "100%",
-          height: "500px",
+          flex: 1,
+          minHeight: 0,
           background: `#${BG_COLOR.toString(16).padStart(6, "0")}`,
         }}
       />

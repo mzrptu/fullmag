@@ -1,0 +1,102 @@
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS deps
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CMAKE_VERSION=3.30.5
+ENV HYPRE_REF=v2.32.0
+ENV LIBCEED_REF=v0.12.0
+ENV MFEM_REF=v4.7.0
+ENV INSTALL_PREFIX=/opt/fullmag-deps
+ENV PATH=${INSTALL_PREFIX}/bin:/root/.cargo/bin:$PATH
+ENV CMAKE_PREFIX_PATH=${INSTALL_PREFIX}:${CMAKE_PREFIX_PATH}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    build-essential \
+    ca-certificates \
+    curl \
+    gfortran \
+    git \
+    ninja-build \
+    pkg-config \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-venv \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir cmake==${CMAKE_VERSION}
+
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain nightly
+
+WORKDIR /tmp/build
+
+RUN git clone --depth 1 --branch ${HYPRE_REF} https://github.com/hypre-space/hypre.git
+RUN cd hypre/src && \
+    ./configure \
+      --prefix=${INSTALL_PREFIX} \
+      --with-cuda \
+      --enable-unified-memory \
+      --without-mpi && \
+    make -j"$(nproc)" && \
+    make install
+
+RUN git clone --depth 1 --branch ${LIBCEED_REF} https://github.com/CEED/libCEED.git
+RUN cmake -S /tmp/build/libCEED -B /tmp/build/libCEED/build \
+      -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} \
+      -DCEED_BACKEND_CUDA=ON && \
+    cmake --build /tmp/build/libCEED/build -j"$(nproc)" && \
+    cmake --install /tmp/build/libCEED/build
+
+RUN git clone --depth 1 --branch ${MFEM_REF} https://github.com/mfem/mfem.git
+RUN cmake -S /tmp/build/mfem -B /tmp/build/mfem/build \
+      -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} \
+      -DMFEM_USE_MPI=NO \
+      -DMFEM_USE_METIS=NO \
+      -DMFEM_USE_CUDA=YES \
+      -DMFEM_USE_CEED=YES \
+      -DMFEM_USE_HYPRE=YES \
+      -DHYPRE_DIR=${INSTALL_PREFIX} \
+      -DCEED_DIR=${INSTALL_PREFIX}/lib/cmake/ceed && \
+    cmake --build /tmp/build/mfem/build -j"$(nproc)" && \
+    cmake --install /tmp/build/mfem/build
+
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS fem-gpu-dev
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PNPM_HOME=/pnpm
+ENV INSTALL_PREFIX=/opt/fullmag-deps
+ENV PATH=/root/.cargo/bin:${PNPM_HOME}:${INSTALL_PREFIX}/bin:${PATH}
+ENV CMAKE_PREFIX_PATH=${INSTALL_PREFIX}:${CMAKE_PREFIX_PATH}
+ENV LD_LIBRARY_PATH=${INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    build-essential \
+    ca-certificates \
+    clang \
+    curl \
+    git \
+    nodejs \
+    npm \
+    pkg-config \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir cmake==3.30.5
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain nightly
+RUN npm install -g pnpm@10.8.1
+
+COPY --from=deps /opt/fullmag-deps /opt/fullmag-deps
+
+WORKDIR /workspace
+RUN git config --global --add safe.directory /workspace
+
+CMD ["sleep", "infinity"]

@@ -234,21 +234,31 @@ class Problem:
             from fullmag.meshing import realize_fem_mesh_asset
 
             for geometry in geometries:
-                mesh = realize_fem_mesh_asset(geometry, self.discretization.fem)
-                mesh_ir = mesh.to_ir(geometry.geometry_name)
-                is_valid = validate_mesh_ir(mesh_ir)
-                if is_valid is False:
-                    raise ValueError(f"generated mesh asset for '{geometry.geometry_name}' failed Rust validation")
                 mesh_source = self.discretization.fem.mesh
                 if mesh_source is None and isinstance(geometry, ImportedGeometry):
                     mesh_source = geometry.source
-                assets["fem_mesh_assets"].append(
-                    {
-                        "geometry_name": geometry.geometry_name,
-                        "mesh_source": mesh_source,
-                        "mesh": mesh_ir,
-                    }
-                )
+                if mesh_source is not None:
+                    assets["fem_mesh_assets"].append(
+                        {
+                            "geometry_name": geometry.geometry_name,
+                            "mesh_source": mesh_source,
+                        }
+                    )
+                else:
+                    mesh = realize_fem_mesh_asset(geometry, self.discretization.fem)
+                    mesh_ir = mesh.to_ir(geometry.geometry_name)
+                    is_valid = validate_mesh_ir(mesh_ir)
+                    if is_valid is False:
+                        raise ValueError(
+                            f"generated mesh asset for '{geometry.geometry_name}' failed Rust validation"
+                        )
+                    assets["fem_mesh_assets"].append(
+                        {
+                            "geometry_name": geometry.geometry_name,
+                            "mesh_source": mesh_source,
+                            "mesh": mesh_ir,
+                        }
+                    )
 
         if not assets["fdm_grid_assets"] and not assets["fem_mesh_assets"]:
             return None

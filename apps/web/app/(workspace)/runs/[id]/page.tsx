@@ -1,4 +1,4 @@
-import RunControlRoom from "../../../components/runs/RunControlRoom";
+import RunControlRoom from "../../../../components/runs/RunControlRoom";
 
 type RunDetailPageProps = {
   params: Promise<{ id: string }>;

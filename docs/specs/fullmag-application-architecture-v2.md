@@ -66,6 +66,72 @@ amumax/mmDisp-style workflows:
 - field snapshot browsing,
 - provenance and artifacts around that visual core.
 
+## 3.1 Official application packaging
+
+The official product must still feel like **one application** to the user.
+
+That does **not** mean every backend must be statically bundled into one giant executable.
+
+The canonical distribution model is:
+
+1. one user-visible launcher: `fullmag`
+2. one local browser control room
+3. managed backend runtimes behind that launcher
+
+### Linux user experience
+
+For Linux, the preferred packaging model is:
+
+- a host-side launcher package such as:
+  - `AppImage`, or
+  - native package (`.deb` / `.rpm`)
+- optional managed runtime packs for heavy backends
+
+The launcher owns:
+
+- CLI UX,
+- Python helper spawning,
+- local session manager,
+- local API server,
+- browser opening,
+- artifact/provenance directory layout,
+- runtime selection policy.
+
+### Runtime packaging split
+
+The runtime split should be:
+
+- light/runtime-stable paths may be bundled directly:
+  - Rust control plane
+  - Python helper bridge
+  - browser/control-room assets
+  - CPU reference backends
+- heavy/HPC paths should be shipped as managed runtimes:
+  - CUDA FDM runtime
+  - MFEM/libCEED/hypre FEM runtime
+
+In practice, this means:
+
+- the user still runs one command:
+  - `fullmag my_problem.py`
+- the launcher may under the hood:
+  - use bundled native libraries,
+  - start a managed OCI/container runtime,
+  - or select a preinstalled runtime pack
+
+### Why this split is canonical
+
+The FEM GPU stack is too heavy and too toolchain-sensitive to treat as a normal “single static
+desktop binary” target.
+
+The correct product boundary is therefore:
+
+- **one application contract**
+- **one launcher**
+- **possibly multiple managed runtimes**
+
+The user should not need to think in terms of MFEM, libCEED, hypre, CUDA images, or ABI seams.
+
 ---
 
 ## 4. The single most important architectural correction

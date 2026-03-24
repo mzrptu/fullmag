@@ -26,7 +26,12 @@ pub(crate) fn execute_reference_fdm(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_impl(plan, until_seconds, outputs, None::<(&[u32; 3], u64, &mut dyn FnMut(StepUpdate))>)
+    execute_reference_fdm_impl(
+        plan,
+        until_seconds,
+        outputs,
+        None::<(&[u32; 3], u64, &mut dyn FnMut(StepUpdate))>,
+    )
 }
 
 /// Execute FDM on CPU with a per-step callback for live streaming.
@@ -187,7 +192,13 @@ fn execute_reference_fdm_impl(
                 None
             };
             on_step(StepUpdate {
-                stats: make_step_stats(step_count, state.time_seconds, dt_step, wall_elapsed, &observables),
+                stats: make_step_stats(
+                    step_count,
+                    state.time_seconds,
+                    dt_step,
+                    wall_elapsed,
+                    &observables,
+                ),
                 grid: [live_grid[0], live_grid[1], live_grid[2]],
                 fem_mesh: None,
                 magnetization,
@@ -520,9 +531,10 @@ mod tests {
             ..make_test_plan()
         };
 
-        let base_result = execute_reference_fdm(&base_plan, 1e-14, &[]).expect("base run should succeed");
-        let stronger_result =
-            execute_reference_fdm(&stronger_exchange_plan, 1e-14, &[]).expect("scaled run should succeed");
+        let base_result =
+            execute_reference_fdm(&base_plan, 1e-14, &[]).expect("base run should succeed");
+        let stronger_result = execute_reference_fdm(&stronger_exchange_plan, 1e-14, &[])
+            .expect("scaled run should succeed");
 
         let base_initial = base_result.result.steps.first().unwrap().e_ex;
         let stronger_initial = stronger_result.result.steps.first().unwrap().e_ex;

@@ -24,4 +24,4 @@ endif()
 
 # ── Subdirectories ──
 add_subdirectory(backends/fdm)
-# add_subdirectory(backends/fem)  # FEM deferred
+add_subdirectory(backends/fem)

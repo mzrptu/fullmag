@@ -48,6 +48,8 @@ def infer_geometry_format(source: str) -> str:
         return "stl"
     if suffix == ".msh":
         return "msh"
+    if suffix == ".npz":
+        return "npz_asset"
     return "unknown"
 
 

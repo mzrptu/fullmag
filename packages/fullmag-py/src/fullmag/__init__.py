@@ -6,6 +6,7 @@ from .model import (
     Box,
     Cylinder,
     Demag,
+    Difference,
     DiscretizationHints,
     Exchange,
     ExecutionMode,
@@ -26,12 +27,14 @@ from .model import (
     Zeeman,
 )
 from .runtime import BackendTarget, Result, Simulation, load_problem_from_script
+from .meshing import MeshData, generate_mesh, export_geometry_to_stl as export_stl
 
 __all__ = [
     "BackendTarget",
     "Box",
     "Cylinder",
     "Demag",
+    "Difference",
     "DiscretizationHints",
     "Exchange",
     "ExecutionMode",
@@ -44,6 +47,7 @@ __all__ = [
     "InterfacialDMI",
     "LLG",
     "Material",
+    "MeshData",
     "Problem",
     "Region",
     "Result",
@@ -52,6 +56,8 @@ __all__ = [
     "Simulation",
     "TimeEvolution",
     "Zeeman",
+    "export_stl",
+    "generate_mesh",
     "init",
     "load_problem_from_script",
     "random",

@@ -12,6 +12,7 @@ mod cpu_reference;
 mod dispatch;
 mod fem_reference;
 mod native_fdm;
+mod native_fem;
 mod schedules;
 mod types;
 
@@ -40,7 +41,8 @@ pub fn run_problem(
             dispatch::execute_fdm(engine, fdm, until_seconds, &plan.output_plan.outputs)?
         }
         BackendPlanIR::Fem(fem) => {
-            fem_reference::execute_reference_fem(fem, until_seconds, &plan.output_plan.outputs)?
+            let engine = dispatch::resolve_fem_engine()?;
+            dispatch::execute_fem(engine, fem, until_seconds, &plan.output_plan.outputs)?
         }
     };
 
@@ -80,13 +82,17 @@ pub fn run_problem_with_callback(
                 &mut on_step,
             )?
         }
-        BackendPlanIR::Fem(fem) => fem_reference::execute_reference_fem_with_callback(
-            fem,
-            until_seconds,
-            &plan.output_plan.outputs,
-            field_every_n,
-            &mut on_step,
-        )?,
+        BackendPlanIR::Fem(fem) => {
+            let engine = dispatch::resolve_fem_engine()?;
+            dispatch::execute_fem_with_callback(
+                engine,
+                fem,
+                until_seconds,
+                &plan.output_plan.outputs,
+                field_every_n,
+                &mut on_step,
+            )?
+        }
     };
 
     if let Err(e) = artifacts::write_artifacts(output_dir, problem, &plan, &executed) {

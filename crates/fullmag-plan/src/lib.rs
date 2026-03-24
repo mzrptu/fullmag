@@ -9,11 +9,13 @@
 use fullmag_ir::{
     BackendPlanIR, BackendTarget, CommonPlanMeta, DiscretizationHintsIR, ExchangeBoundaryCondition,
     ExecutionMode, ExecutionPlanIR, ExecutionPrecision, FdmGridAssetIR, FdmMaterialIR, FdmPlanIR,
-    FemPlanIR, GeometryEntryIR, GridDimensions, InitialMagnetizationIR, IntegratorChoice, OutputIR,
-    OutputPlanIR, ProblemIR, ProvenancePlanIR, IR_VERSION,
+    FemPlanIR, GeometryEntryIR, GridDimensions, InitialMagnetizationIR, IntegratorChoice, MeshIR,
+    OutputIR, OutputPlanIR, ProblemIR, ProvenancePlanIR, IR_VERSION,
 };
 use std::collections::BTreeSet;
 use std::fmt;
+use std::fs;
+use std::path::Path;
 
 const MU0: f64 = 4.0 * std::f64::consts::PI * 1e-7;
 
@@ -126,23 +128,41 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
     }
     let geometry = &problem.geometry.entries[0];
     enum GeometryShape {
-        Box { size: [f64; 3] },
-        Cylinder { radius: f64, height: f64 },
-        Imported { source: String, format: String },
+        Box {
+            size: [f64; 3],
+        },
+        Cylinder {
+            radius: f64,
+            height: f64,
+        },
+        Imported {
+            source: String,
+            format: String,
+        },
+        Difference {
+            base: std::boxed::Box<GeometryShape>,
+            tool: std::boxed::Box<GeometryShape>,
+        },
     }
-    let shape = match geometry {
-        GeometryEntryIR::Box { size, .. } => GeometryShape::Box { size: *size },
-        GeometryEntryIR::Cylinder {
-            radius, height, ..
-        } => GeometryShape::Cylinder {
-            radius: *radius,
-            height: *height,
-        },
-        GeometryEntryIR::ImportedGeometry { source, format, .. } => GeometryShape::Imported {
-            source: source.clone(),
-            format: format.clone(),
-        },
-    };
+
+    fn ir_to_shape(entry: &GeometryEntryIR) -> GeometryShape {
+        match entry {
+            GeometryEntryIR::Box { size, .. } => GeometryShape::Box { size: *size },
+            GeometryEntryIR::Cylinder { radius, height, .. } => GeometryShape::Cylinder {
+                radius: *radius,
+                height: *height,
+            },
+            GeometryEntryIR::ImportedGeometry { source, format, .. } => GeometryShape::Imported {
+                source: source.clone(),
+                format: format.clone(),
+            },
+            GeometryEntryIR::Difference { base, tool, .. } => GeometryShape::Difference {
+                base: std::boxed::Box::new(ir_to_shape(base)),
+                tool: std::boxed::Box::new(ir_to_shape(tool)),
+            },
+        }
+    }
+    let shape = ir_to_shape(geometry);
 
     // 6. Check FDM hints exist
     let cell_size = match &problem.backend_policy.discretization_hints {
@@ -179,50 +199,91 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
     }
 
     // ---- lowering: geometry → grid + active_mask ----
-    let provided_grid_asset = problem
-        .geometry_assets
-        .as_ref()
-        .and_then(|assets| {
-            assets
-                .fdm_grid_assets
-                .iter()
-                .find(|asset| asset.geometry_name == geometry.name())
-        });
+    let provided_grid_asset = problem.geometry_assets.as_ref().and_then(|assets| {
+        assets
+            .fdm_grid_assets
+            .iter()
+            .find(|asset| asset.geometry_name == geometry.name())
+    });
 
-    let (bounding_size, active_mask, grid_cells, used_precomputed_asset) =
-        if let Some(asset) = provided_grid_asset {
-            validate_grid_asset_cell_size(asset, cell_size, &mut errors);
-            (
-                [
-                    asset.cells[0] as f64 * asset.cell_size[0],
-                    asset.cells[1] as f64 * asset.cell_size[1],
-                    asset.cells[2] as f64 * asset.cell_size[2],
-                ],
-                Some(asset.active_mask.clone()),
-                asset.cells,
-                true,
-            )
-        } else {
-            match &shape {
-                GeometryShape::Box { size } => {
-                    let grid_cells = [
-                        (size[0] / cell_size[0]).round().max(1.0) as u32,
-                        (size[1] / cell_size[1]).round().max(1.0) as u32,
-                        (size[2] / cell_size[2]).round().max(1.0) as u32,
-                    ];
-                    (*size, None, grid_cells, false)
+    let (bounding_size, active_mask, grid_cells, used_precomputed_asset) = if let Some(asset) =
+        provided_grid_asset
+    {
+        validate_grid_asset_cell_size(asset, cell_size, &mut errors);
+        (
+            [
+                asset.cells[0] as f64 * asset.cell_size[0],
+                asset.cells[1] as f64 * asset.cell_size[1],
+                asset.cells[2] as f64 * asset.cell_size[2],
+            ],
+            Some(asset.active_mask.clone()),
+            asset.cells,
+            true,
+        )
+    } else {
+        match &shape {
+            GeometryShape::Box { size } => {
+                let grid_cells = [
+                    (size[0] / cell_size[0]).round().max(1.0) as u32,
+                    (size[1] / cell_size[1]).round().max(1.0) as u32,
+                    (size[2] / cell_size[2]).round().max(1.0) as u32,
+                ];
+                (*size, None, grid_cells, false)
+            }
+            GeometryShape::Cylinder { radius, height } => {
+                let diameter = 2.0 * radius;
+                let bbox = [diameter, diameter, *height];
+                let nx = (bbox[0] / cell_size[0]).round().max(1.0) as u32;
+                let ny = (bbox[1] / cell_size[1]).round().max(1.0) as u32;
+                let nz = (bbox[2] / cell_size[2]).round().max(1.0) as u32;
+                let n = (nx * ny * nz) as usize;
+                let cx = nx as f64 * cell_size[0] * 0.5;
+                let cy = ny as f64 * cell_size[1] * 0.5;
+                let r2 = radius * radius;
+                let mut mask = vec![false; n];
+                for z in 0..nz {
+                    for y in 0..ny {
+                        for x in 0..nx {
+                            let px = (x as f64 + 0.5) * cell_size[0] - cx;
+                            let py = (y as f64 + 0.5) * cell_size[1] - cy;
+                            let idx = (x + nx * (y + ny * z)) as usize;
+                            mask[idx] = (px * px + py * py) <= r2;
+                        }
+                    }
                 }
-                GeometryShape::Cylinder { radius, height } => {
-                    let diameter = 2.0 * radius;
-                    let bbox = [diameter, diameter, *height];
-                    let nx = (bbox[0] / cell_size[0]).round().max(1.0) as u32;
-                    let ny = (bbox[1] / cell_size[1]).round().max(1.0) as u32;
-                    let nz = (bbox[2] / cell_size[2]).round().max(1.0) as u32;
-                    let n = (nx * ny * nz) as usize;
+                (bbox, Some(mask), [nx, ny, nz], false)
+            }
+            GeometryShape::Imported { source, format } => {
+                errors.push(format!(
+                        "geometry '{}' ({format}:{source}) requires a precomputed FDM grid asset; no voxelized active_mask was provided",
+                        geometry.name()
+                    ));
+                ([1.0, 1.0, 1.0], None, [1, 1, 1], false)
+            }
+            GeometryShape::Difference { ref base, ref tool } => {
+                // Compute bounding box from the base geometry
+                let bbox = match base.as_ref() {
+                    GeometryShape::Box { size } => *size,
+                    GeometryShape::Cylinder { radius, height } => {
+                        [2.0 * radius, 2.0 * radius, *height]
+                    }
+                    _ => {
+                        errors.push("CSG Difference: base must be a Box or Cylinder".to_string());
+                        [1.0, 1.0, 1.0]
+                    }
+                };
+                let nx = (bbox[0] / cell_size[0]).round().max(1.0) as u32;
+                let ny = (bbox[1] / cell_size[1]).round().max(1.0) as u32;
+                let nz = (bbox[2] / cell_size[2]).round().max(1.0) as u32;
+                let n = (nx * ny * nz) as usize;
+                let mut mask = vec![true; n];
+
+                // Base geometry mask: for Box, all cells are active (mask stays true).
+                // For Cylinder base, apply the cylinder mask.
+                if let GeometryShape::Cylinder { radius, .. } = base.as_ref() {
                     let cx = nx as f64 * cell_size[0] * 0.5;
                     let cy = ny as f64 * cell_size[1] * 0.5;
                     let r2 = radius * radius;
-                    let mut mask = vec![false; n];
                     for z in 0..nz {
                         for y in 0..ny {
                             for x in 0..nx {
@@ -233,17 +294,54 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
                             }
                         }
                     }
-                    (bbox, Some(mask), [nx, ny, nz], false)
                 }
-                GeometryShape::Imported { source, format } => {
-                    errors.push(format!(
-                        "geometry '{}' ({format}:{source}) requires a precomputed FDM grid asset; no voxelized active_mask was provided",
-                        geometry.name()
-                    ));
-                    ([1.0, 1.0, 1.0], None, [1, 1, 1], false)
+
+                // Subtract tool geometry
+                match tool.as_ref() {
+                    GeometryShape::Cylinder { radius, .. } => {
+                        let cx = nx as f64 * cell_size[0] * 0.5;
+                        let cy = ny as f64 * cell_size[1] * 0.5;
+                        let r2 = radius * radius;
+                        for z in 0..nz {
+                            for y in 0..ny {
+                                for x in 0..nx {
+                                    let px = (x as f64 + 0.5) * cell_size[0] - cx;
+                                    let py = (y as f64 + 0.5) * cell_size[1] - cy;
+                                    let idx = (x + nx * (y + ny * z)) as usize;
+                                    if (px * px + py * py) <= r2 {
+                                        mask[idx] = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    GeometryShape::Box { size: tool_size } => {
+                        let hx = tool_size[0] * 0.5;
+                        let hy = tool_size[1] * 0.5;
+                        let cx = nx as f64 * cell_size[0] * 0.5;
+                        let cy = ny as f64 * cell_size[1] * 0.5;
+                        for z in 0..nz {
+                            for y in 0..ny {
+                                for x in 0..nx {
+                                    let px = (x as f64 + 0.5) * cell_size[0] - cx;
+                                    let py = (y as f64 + 0.5) * cell_size[1] - cy;
+                                    let idx = (x + nx * (y + ny * z)) as usize;
+                                    if px.abs() <= hx && py.abs() <= hy {
+                                        mask[idx] = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        errors.push("CSG Difference: tool must be a Box or Cylinder".to_string());
+                    }
                 }
+
+                (bbox, Some(mask), [nx, ny, nz], false)
             }
-        };
+        }
+    };
 
     // Validate that the requested geometry is close to an integer multiple of cell size.
     // If the fractional part exceeds tolerance, the realized geometry deviates from the
@@ -307,7 +405,13 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         None => {
             if let Some(ref mask) = active_mask {
                 mask.iter()
-                    .map(|&active| if active { [1.0, 0.0, 0.0] } else { [0.0, 0.0, 0.0] })
+                    .map(|&active| {
+                        if active {
+                            [1.0, 0.0, 0.0]
+                        } else {
+                            [0.0, 0.0, 0.0]
+                        }
+                    })
                     .collect()
             } else {
                 vec![[1.0, 0.0, 0.0]; n_cells]
@@ -367,6 +471,10 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
             "Imported geometry ({format}) used precomputed FDM grid asset: {}x{}x{} cells, {}/{} active cells",
             grid_cells[0], grid_cells[1], grid_cells[2], active_count, n_cells
         ),
+        GeometryShape::Difference { .. } => format!(
+            "CSG Difference voxelized to {}x{}x{} grid, {}/{} active cells",
+            grid_cells[0], grid_cells[1], grid_cells[2], active_count, n_cells
+        ),
     };
 
     let fdm_plan = FdmPlanIR {
@@ -421,7 +529,10 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
     })
 }
 
-fn plan_fem(problem: &ProblemIR, resolved_backend: BackendTarget) -> Result<ExecutionPlanIR, PlanError> {
+fn plan_fem(
+    problem: &ProblemIR,
+    resolved_backend: BackendTarget,
+) -> Result<ExecutionPlanIR, PlanError> {
     let mut errors = Vec::new();
 
     if problem.geometry.entries.len() != 1 {
@@ -537,7 +648,22 @@ fn plan_fem(problem: &ProblemIR, resolved_backend: BackendTarget) -> Result<Exec
         );
     }
 
-    let n_nodes = mesh_asset.mesh.nodes.len();
+    let mesh = match (&mesh_asset.mesh, &mesh_asset.mesh_source) {
+        (Some(mesh), _) => mesh.clone(),
+        (None, Some(source)) => load_mesh_from_source(source).map_err(|message| PlanError {
+            reasons: vec![message],
+        })?,
+        (None, None) => {
+            return Err(PlanError {
+                reasons: vec![format!(
+                    "geometry '{}' requires a FEM mesh asset with inline mesh or mesh_source",
+                    geometry.name()
+                )],
+            })
+        }
+    };
+
+    let n_nodes = mesh.nodes.len();
     let initial_magnetization = match &magnet.initial_magnetization {
         Some(InitialMagnetizationIR::Uniform { value }) => vec![*value; n_nodes],
         Some(InitialMagnetizationIR::RandomSeeded { seed }) => {
@@ -548,7 +674,7 @@ fn plan_fem(problem: &ProblemIR, resolved_backend: BackendTarget) -> Result<Exec
                 errors.push(format!(
                     "sampled_field initial magnetization has {} vectors, but FEM mesh '{}' has {} nodes",
                     values.len(),
-                    mesh_asset.mesh.mesh_name,
+                    mesh.mesh_name,
                     n_nodes
                 ));
             }
@@ -585,10 +711,10 @@ fn plan_fem(problem: &ProblemIR, resolved_backend: BackendTarget) -> Result<Exec
         return Err(PlanError { reasons: errors });
     }
 
-    let mesh = mesh_asset.mesh;
     let n_elements = mesh.elements.len();
     let mesh_name = mesh.mesh_name.clone();
     let fem_plan = FemPlanIR {
+        mesh_name: mesh_name.clone(),
         mesh_source: mesh_asset.mesh_source,
         mesh,
         fe_order: fem_hints.order,
@@ -770,6 +896,36 @@ pub fn generate_random_unit_vectors(seed: u64, count: usize) -> Vec<[f64; 3]> {
     vectors
 }
 
+fn load_mesh_from_source(source: &str) -> Result<MeshIR, String> {
+    let path = Path::new(source);
+    let suffix = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    match suffix.as_str() {
+        "json" => {
+            let payload = fs::read_to_string(path)
+                .map_err(|err| format!("failed to read FEM mesh_source '{}': {}", source, err))?;
+            let mesh: MeshIR = serde_json::from_str(&payload)
+                .map_err(|err| format!("failed to parse FEM mesh_source '{}': {}", source, err))?;
+            mesh.validate().map_err(|errors| {
+                format!(
+                    "mesh_source '{}' is invalid: {}",
+                    source,
+                    errors.join("; ")
+                )
+            })?;
+            Ok(mesh)
+        }
+        other => Err(format!(
+            "unsupported FEM mesh_source format '{}'; current lazy FEM planner supports only .json mesh assets",
+            if other.is_empty() { "<none>" } else { other }
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -781,14 +937,14 @@ mod tests {
 
         match &plan.backend_plan {
             BackendPlanIR::Fdm(fdm) => {
-                // Box(200e-9, 20e-9, 5e-9) with cell(2e-9, 2e-9, 5e-9)
-                assert_eq!(fdm.grid.cells, [100, 10, 1]);
-                assert_eq!(fdm.cell_size, [2e-9, 2e-9, 5e-9]);
+                // Box(200e-9, 20e-9, 6e-9) with cell(2e-9, 2e-9, 2e-9)
+                assert_eq!(fdm.grid.cells, [100, 10, 3]);
+                assert_eq!(fdm.cell_size, [2e-9, 2e-9, 2e-9]);
                 assert_eq!(fdm.material.name, "Py");
                 assert_eq!(fdm.material.exchange_stiffness, 13e-12);
                 assert_eq!(fdm.gyromagnetic_ratio, 2.211e5);
                 assert_eq!(fdm.precision, ExecutionPrecision::Double);
-                assert_eq!(fdm.initial_magnetization.len(), (100 * 10 * 1) as usize);
+                assert_eq!(fdm.initial_magnetization.len(), (100 * 10 * 3) as usize);
             }
             _ => panic!("expected FDM plan"),
         }
@@ -833,8 +989,8 @@ mod tests {
             fdm_grid_assets: vec![fullmag_ir::FdmGridAssetIR {
                 geometry_name: "mesh".to_string(),
                 cells: [4, 2, 1],
-                cell_size: [2e-9, 2e-9, 5e-9],
-                origin: [-4e-9, -2e-9, -2.5e-9],
+                cell_size: [2e-9, 2e-9, 2e-9],
+                origin: [-4e-9, -2e-9, -1e-9],
                 active_mask: vec![true, true, true, true, false, false, false, false],
             }],
             fem_mesh_assets: vec![],
@@ -870,7 +1026,7 @@ mod tests {
             fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
                 geometry_name: "strip".to_string(),
                 mesh_source: Some("meshes/unit_tet.msh".to_string()),
-                mesh: fullmag_ir::MeshIR {
+                mesh: Some(fullmag_ir::MeshIR {
                     mesh_name: "strip".to_string(),
                     nodes: vec![
                         [0.0, 0.0, 0.0],
@@ -882,7 +1038,7 @@ mod tests {
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
-                },
+                }),
             }],
         });
 
@@ -897,6 +1053,62 @@ mod tests {
             }
             _ => panic!("expected FEM plan"),
         }
+    }
+
+    #[test]
+    fn fem_backend_with_mesh_source_json_plans_successfully() {
+        let mesh_path = std::env::temp_dir().join(format!(
+            "fullmag-plan-test-mesh-{}.json",
+            std::process::id()
+        ));
+        let mesh_json = serde_json::json!({
+            "mesh_name": "strip",
+            "nodes": [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0]
+            ],
+            "elements": [[0, 1, 2, 3]],
+            "element_markers": [1],
+            "boundary_faces": [[0, 1, 2]],
+            "boundary_markers": [1]
+        });
+        std::fs::write(&mesh_path, serde_json::to_string(&mesh_json).unwrap()).unwrap();
+
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.backend_policy.requested_backend = BackendTarget::Fem;
+        ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+            fdm: Some(fullmag_ir::FdmHintsIR {
+                cell: [2e-9, 2e-9, 5e-9],
+            }),
+            fem: Some(fullmag_ir::FemHintsIR {
+                order: 1,
+                hmax: 2e-9,
+                mesh: Some(mesh_path.display().to_string()),
+            }),
+            hybrid: None,
+        });
+        ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+            fdm_grid_assets: vec![],
+            fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
+                geometry_name: "strip".to_string(),
+                mesh_source: Some(mesh_path.display().to_string()),
+                mesh: None,
+            }],
+        });
+
+        let plan = plan(&ir).expect("FEM mesh_source JSON should produce a FemPlanIR");
+        match plan.backend_plan {
+            BackendPlanIR::Fem(fem) => {
+                assert_eq!(fem.mesh.mesh_name, "strip");
+                assert_eq!(fem.mesh.nodes.len(), 4);
+                assert_eq!(fem.mesh.elements.len(), 1);
+            }
+            _ => panic!("expected FEM plan"),
+        }
+
+        let _ = std::fs::remove_file(mesh_path);
     }
 
     #[test]

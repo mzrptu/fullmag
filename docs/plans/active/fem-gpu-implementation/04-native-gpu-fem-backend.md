@@ -5,6 +5,52 @@
 - Docelowy katalog: `native/backends/fem/`
 - Powiązane fizyka: `docs/physics/0410`, `0430`, `0490`
 
+## Status na 2026-03-24
+
+- `S4.0 scaffold` jest już w repo:
+  - `native/include/fullmag_fem.h`
+  - `native/backends/fem/` jako kompilowalny target `fullmag_fem`
+  - `crates/fullmag-fem-sys`
+  - `fullmag-runner` z `FULLMAG_FEM_EXECUTION=cpu|auto|gpu`
+- `S4.1 data-path scaffold` też jest już zrobiony:
+  - `fullmag_fem_backend_create(...)` waliduje plan i kopiuje mesh + `m0` do natywnego `FemContext`
+  - `fullmag_fem_backend_copy_field_f64(...)` działa dla `m`, `H_ex`, `H_demag`, `H_ext`, `H_eff`
+  - `fullmag_fem_backend_get_device_info(...)` zwraca prawdziwe metadata backendu/scaffoldu
+  - Rust ma testy `NativeFemBackend` potwierdzające create/copy/device-info seam
+- `S4.2 MFEM import seam` jest przygotowany:
+  - `native/backends/fem/CMakeLists.txt` umie wejść w `find_package(MFEM CONFIG REQUIRED)` przy `FULLMAG_USE_MFEM_STACK=ON`
+  - przy takim buildzie `create(...)` próbuje zbudować `mfem::Mesh`, `H1_FECollection` i `FiniteElementSpace`
+  - to nadal nie uruchamia jeszcze operatorów exchange/demag, ale zamyka pierwszy realny krok `MeshIR -> native MFEM objects`
+- `S4.3 exchange-operator seam` jest przygotowany:
+  - backend utrzymuje komponentowe bufory `m_x/m_y/m_z` i `GridFunction` dla magnetyzacji
+  - składany jest pierwszy assembled exchange path `DiffusionIntegrator + MassIntegrator`
+  - przy buildzie z MFEM `create(...)` próbuje policzyć początkowe `H_ex` i `H_eff`
+  - obecne ograniczenie: tylko siatka jednorodnie magnetyczna; multi-region / selective magnetic mask w native MFEM nie są jeszcze podpięte
+- `S4.4 exchange-only native step` jest już rozpisany w kodzie:
+  - przy buildzie z MFEM `fullmag_fem_backend_step(...)` wykonuje Heun dla `exchange-only`
+  - liczone są: `H_ex`, `H_eff`, `E_ex`, `E_ext`, `E_total`, `max|H_eff|`, `max|dm/dt|`
+  - nadal brak: demag, libCEED partial assembly, hypre, multi-region magnetic mask
+- `S4.5 guarded parity harness` jest już dopięty:
+  - `crates/fullmag-runner/src/native_fem.rs` ma test porównujący `native FEM exchange-only` z `CPU reference FEM`
+  - test uruchamia się tylko wtedy, gdy natywny backend został zbudowany z MFEM; na hostach bez MFEM kończy się uczciwym `skip`
+  - build natywnego FEM można teraz przełączyć przez `FULLMAG_USE_MFEM_STACK=ON`
+- Bez MFEM ten backend nadal uczciwie zwraca `unavailable`, a `auto` spada do CPU reference.
+- Od tego miejsca kolejne prace w S4 mają iść już przez istniejący ABI/FFI/dispatch seam, a nie przez dalsze planowanie „na sucho”.
+
+### Build notes
+
+- Host bez MFEM:
+  - `cargo +nightly test -p fullmag-runner --features fem-gpu native_fem`
+  - backend buduje scaffold i parity test kończy się `skip`
+- Host z MFEM:
+  - `FULLMAG_USE_MFEM_STACK=ON cargo +nightly test -p fullmag-runner --features fem-gpu native_fem -- --nocapture`
+  - jeśli MFEM jest instalowane poza standardowym prefixem, ustaw `CMAKE_PREFIX_PATH`
+- Repo-level container path:
+  - `make fem-gpu-build`
+  - `make fem-gpu-check`
+  - `make fem-gpu-test`
+  - `docker/fem-gpu/Dockerfile` jest teraz kanonicznym obrazem dev/test dla docelowego stacku `MFEM + libCEED + hypre + CUDA`
+
 ---
 
 ## 1. Cele etapu

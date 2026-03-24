@@ -9,7 +9,7 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
-from fullmag.model.geometry import Box, Cylinder, Geometry, ImportedGeometry
+from fullmag.model.geometry import Box, Cylinder, Difference, Geometry, ImportedGeometry
 
 
 def _import_gmsh() -> Any:
@@ -112,6 +112,30 @@ class MeshData:
             boundary_markers=self.boundary_markers,
         )
 
+    def export_stl(self, path: str | Path) -> Path:
+        """Export boundary surface as binary STL (zero dependencies)."""
+        import struct
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        n_faces = self.n_boundary_faces
+        with open(target, "wb") as fp:
+            fp.write(b"\0" * 80)  # header
+            fp.write(struct.pack("<I", n_faces))
+            for fi in range(n_faces):
+                v0, v1, v2 = self.nodes[self.boundary_faces[fi]]
+                e1 = v1 - v0
+                e2 = v2 - v0
+                normal = np.cross(e1, e2)
+                norm_len = np.linalg.norm(normal)
+                if norm_len > 0:
+                    normal /= norm_len
+                fp.write(struct.pack("<3f", *normal.astype(np.float32)))
+                fp.write(struct.pack("<3f", *v0.astype(np.float32)))
+                fp.write(struct.pack("<3f", *v1.astype(np.float32)))
+                fp.write(struct.pack("<3f", *v2.astype(np.float32)))
+                fp.write(struct.pack("<H", 0))  # attribute byte count
+        return target
+
     @classmethod
     def load(cls, path: str | Path) -> "MeshData":
         source = Path(path)
@@ -161,6 +185,8 @@ def generate_mesh(
             order=order,
             air_padding=air_padding,
         )
+    if isinstance(geometry, Difference):
+        return generate_difference_mesh(geometry, hmax=hmax, order=order)
     if isinstance(geometry, ImportedGeometry):
         return generate_mesh_from_file(geometry.source, hmax=hmax, order=order, air_padding=air_padding)
     raise TypeError(f"unsupported geometry type: {type(geometry)!r}")
@@ -213,6 +239,75 @@ def generate_cylinder_mesh(
         gmsh.finalize()
 
 
+def generate_difference_mesh(
+    geometry: Difference,
+    hmax: float,
+    order: int = 1,
+) -> MeshData:
+    """Mesh a CSG Difference via Gmsh OCC boolean cut.
+
+    OCC has numerical precision limits, so we scale geometry from SI metres
+    to micrometres (×1e6) for boolean ops, then scale nodes back (×1e-6).
+    """
+    SCALE = 1e6  # m → µm
+    gmsh = _import_gmsh()
+    gmsh.initialize()
+    try:
+        gmsh.model.add("fullmag_difference")
+        base_tags = _add_geometry_to_occ(gmsh, geometry.base, scale=SCALE)
+        tool_tags = _add_geometry_to_occ(gmsh, geometry.tool, scale=SCALE)
+        gmsh.model.occ.cut(base_tags, tool_tags)
+        gmsh.model.occ.synchronize()
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax * SCALE)
+        gmsh.option.setNumber("Mesh.ElementOrder", order)
+        gmsh.model.mesh.generate(3)
+        mesh = _extract_mesh_data(gmsh)
+        # Scale nodes back to SI metres
+        return MeshData(
+            nodes=mesh.nodes / SCALE,
+            elements=mesh.elements,
+            element_markers=mesh.element_markers,
+            boundary_faces=mesh.boundary_faces,
+            boundary_markers=mesh.boundary_markers,
+        )
+    finally:  # pragma: no branch
+        gmsh.finalize()
+
+
+def _add_geometry_to_occ(
+    gmsh: Any,
+    geometry: Geometry,
+    scale: float = 1.0,
+) -> list[tuple[int, int]]:
+    """Add a geometry primitive to the Gmsh OCC kernel.
+
+    Returns list of (dim, tag) tuples suitable for boolean operations.
+    Supports recursive Difference nesting.
+    All dimensions are multiplied by `scale` before passing to OCC.
+    """
+    if isinstance(geometry, Box):
+        sx, sy, sz = [d * scale for d in geometry.size]
+        tag = gmsh.model.occ.addBox(-sx / 2.0, -sy / 2.0, -sz / 2.0, sx, sy, sz)
+        return [(3, tag)]
+    if isinstance(geometry, Cylinder):
+        r = geometry.radius * scale
+        h = geometry.height * scale
+        tag = gmsh.model.occ.addCylinder(
+            0.0, 0.0, -h / 2.0,
+            0.0, 0.0, h,
+            r,
+        )
+        return [(3, tag)]
+    if isinstance(geometry, Difference):
+        base_tags = _add_geometry_to_occ(gmsh, geometry.base, scale=scale)
+        tool_tags = _add_geometry_to_occ(gmsh, geometry.tool, scale=scale)
+        result, _ = gmsh.model.occ.cut(base_tags, tool_tags)
+        return result
+    raise TypeError(
+        f"CSG operand must be Box, Cylinder, or Difference, got {type(geometry)!r}"
+    )
+
+
 def generate_mesh_from_file(
     source: str | Path,
     hmax: float,
@@ -221,7 +316,7 @@ def generate_mesh_from_file(
 ) -> MeshData:
     path = Path(source)
     suffix = path.suffix.lower()
-    if suffix == ".json":
+    if suffix in {".json", ".npz"}:
         return MeshData.load(path)
     if suffix in {".msh", ".vtk", ".vtu", ".xdmf"}:
         return _read_mesh_file(path)

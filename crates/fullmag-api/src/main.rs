@@ -2,20 +2,22 @@ use async_stream::stream;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use axum::{
     routing::{get, post},
     Json, Router,
 };
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
@@ -25,8 +27,8 @@ use fullmag_runner::{FemMeshPayload, StepUpdate};
 struct AppState {
     sessions_root: PathBuf,
     repo_root: PathBuf,
-    /// Broadcast channel for live step updates.
-    live_tx: broadcast::Sender<StepUpdate>,
+    /// Per-run broadcast channels for live step updates.
+    live_channels: Arc<RwLock<HashMap<String, broadcast::Sender<StepUpdate>>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -158,22 +160,72 @@ struct RunRequest {
     output_dir: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ImportSessionAssetRequest {
+    file_name: String,
+    content_base64: String,
+    target_realization: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionAssetImportResponse {
+    asset_id: String,
+    session_id: String,
+    stored_path: String,
+    target_realization: String,
+    summary: ImportedAssetSummary,
+}
+
+#[derive(Debug, Serialize)]
+struct ImportedAssetSummary {
+    file_name: String,
+    file_bytes: usize,
+    kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bounds: Option<BoundsSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    triangle_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    node_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    element_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    boundary_face_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BoundsSummary {
+    min: [f64; 3],
+    max: [f64; 3],
+    size: [f64; 3],
+}
+
 fn default_output_dir() -> String {
     ".fullmag/sessions/live/artifacts".to_string()
+}
+
+fn uuid_v4_hex() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let pid = std::process::id();
+    format!("{:016x}{:08x}", nanos, pid)
 }
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
-    let (live_tx, _) = broadcast::channel::<StepUpdate>(256);
-
     let state = Arc::new(AppState {
         sessions_root: std::env::var("FULLMAG_SESSIONS_ROOT")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(".fullmag/sessions")),
         repo_root: repo_root(),
-        live_tx,
+        live_channels: Arc::new(RwLock::new(HashMap::new())),
     });
 
     let cors = CorsLayer::new()
@@ -188,12 +240,16 @@ async fn main() {
         .route("/v1/sessions/:session_id", get(get_session))
         .route("/v1/sessions/:session_id/state", get(get_session_state))
         .route("/v1/sessions/:session_id/events", get(get_session_events))
+        .route(
+            "/v1/sessions/:session_id/assets/import",
+            post(import_session_asset),
+        )
         .route("/v1/runs", get(list_runs))
         .route("/v1/runs/:run_id", get(get_run))
         .route("/v1/runs/:run_id/artifacts", get(list_run_artifacts))
         .route("/v1/docs/physics", get(list_physics_docs))
         .route("/v1/run", post(start_run))
-        .route("/ws/live", get(ws_live))
+        .route("/ws/live/:run_id", get(ws_live))
         .layer(cors)
         .with_state(state);
 
@@ -234,9 +290,17 @@ async fn start_run(
     std::fs::create_dir_all(&output_dir)
         .map_err(|e| ApiError::internal(format!("failed to create output dir: {}", e)))?;
 
-    let tx = state.live_tx.clone();
+    let run_id = format!("run-{}", uuid_v4_hex());
+    let (tx, _) = broadcast::channel::<StepUpdate>(256);
+    {
+        let mut channels = state.live_channels.write().await;
+        channels.insert(run_id.clone(), tx.clone());
+    }
+
     let problem = req.problem;
     let until = req.until_seconds;
+    let channels = state.live_channels.clone();
+    let rid = run_id.clone();
 
     // Spawn runner in a blocking task (runner is synchronous)
     tokio::task::spawn_blocking(move || {
@@ -250,24 +314,42 @@ async fn start_run(
             },
         );
         match result {
-            Ok(_) => info!("run completed successfully"),
-            Err(e) => tracing::error!("run failed: {}", e),
+            Ok(_) => info!(run_id = %rid, "run completed successfully"),
+            Err(e) => tracing::error!(run_id = %rid, "run failed: {}", e),
         }
+        // Dropping tx closes the broadcast channel; subscribers will see Closed.
+        drop(tx);
+        // Schedule cleanup of the channel registry entry.
+        let handle = tokio::runtime::Handle::current();
+        handle.spawn(async move {
+            channels.write().await.remove(&rid);
+        });
     });
 
     Ok(Json(serde_json::json!({
         "status": "started",
-        "message": "simulation started, connect to /ws/live for updates"
+        "run_id": run_id,
+        "message": format!("simulation started, connect to /ws/live/{} for updates", run_id)
     })))
 }
 
-/// GET /ws/live — WebSocket endpoint for live step updates.
-async fn ws_live(State(state): State<Arc<AppState>>, ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws(socket, state))
+/// GET /ws/live/:run_id — WebSocket endpoint for live step updates.
+async fn ws_live(
+    State(state): State<Arc<AppState>>,
+    AxumPath(run_id): AxumPath<String>,
+    ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, ApiError> {
+    let channels = state.live_channels.read().await;
+    let tx = channels
+        .get(&run_id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found(format!("no active run with id '{}'", run_id)))?;
+    drop(channels);
+    Ok(ws.on_upgrade(move |socket| handle_ws(socket, tx)))
 }
 
-async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
-    let mut rx = state.live_tx.subscribe();
+async fn handle_ws(mut socket: WebSocket, tx: broadcast::Sender<StepUpdate>) {
+    let mut rx = tx.subscribe();
 
     loop {
         tokio::select! {
@@ -339,11 +421,12 @@ async fn get_session_events(
     let stream = stream! {
         let mut ticker = tokio::time::interval(Duration::from_millis(800));
         let mut last_payload_json: Option<String> = None;
+        let mut first = true;
 
         loop {
             ticker.tick().await;
 
-            let payload = match load_session_state(&sessions_root, &session_id) {
+            let mut payload = match load_session_state(&sessions_root, &session_id) {
                 Ok(payload) => payload,
                 Err(error) => {
                     let json = serde_json::json!({ "error": error.message }).to_string();
@@ -351,6 +434,15 @@ async fn get_session_events(
                     break;
                 }
             };
+
+            if !first {
+                payload.fem_mesh = None;
+            }
+            if let Some(ref mut live) = payload.live_state {
+                if !first {
+                    live.latest_step.fem_mesh = None;
+                }
+            }
 
             let json = match serde_json::to_string(&payload) {
                 Ok(json) => json,
@@ -366,6 +458,8 @@ async fn get_session_events(
                 yield Ok(Event::default().event("session_state").data(json));
             }
 
+            first = false;
+
             if matches!(payload.session.status.as_str(), "completed" | "failed" | "cancelled") {
                 break;
             }
@@ -373,6 +467,54 @@ async fn get_session_events(
     };
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+async fn import_session_asset(
+    State(state): State<Arc<AppState>>,
+    AxumPath(session_id): AxumPath<String>,
+    Json(req): Json<ImportSessionAssetRequest>,
+) -> Result<Json<SessionAssetImportResponse>, ApiError> {
+    let session_dir = state.sessions_root.join(&session_id);
+    if !session_dir.exists() {
+        return Err(ApiError::not_found(format!(
+            "missing session directory {}",
+            session_dir.display()
+        )));
+    }
+
+    let safe_file_name = sanitize_file_name(&req.file_name);
+    if safe_file_name.is_empty() {
+        return Err(ApiError::bad_request("file_name must not be empty"));
+    }
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&req.content_base64)
+        .map_err(|error| ApiError::bad_request(format!("invalid base64 payload: {}", error)))?;
+
+    let imports_dir = session_dir.join("imports");
+    std::fs::create_dir_all(&imports_dir)?;
+
+    let asset_id = format!("asset-{}", uuid_v4_hex());
+    let stored_name = format!("{}-{}", asset_id, safe_file_name);
+    let stored_path = imports_dir.join(&stored_name);
+    std::fs::write(&stored_path, &bytes)?;
+
+    let summary = summarize_uploaded_asset(&safe_file_name, &bytes)?;
+    let response = SessionAssetImportResponse {
+        asset_id: asset_id.clone(),
+        session_id: session_id.clone(),
+        stored_path: make_repo_relative(&state.repo_root, &stored_path),
+        target_realization: req.target_realization.clone(),
+        summary,
+    };
+
+    let manifest_path = imports_dir.join(format!("{}.asset.json", asset_id));
+    let manifest_text = serde_json::to_string_pretty(&response).map_err(|error| {
+        ApiError::internal(format!("failed to serialize asset manifest: {}", error))
+    })?;
+    std::fs::write(manifest_path, manifest_text)?;
+
+    Ok(Json(response))
 }
 
 async fn list_runs(State(state): State<Arc<AppState>>) -> Result<Json<Vec<RunManifest>>, ApiError> {
@@ -551,6 +693,273 @@ fn collect_artifacts(
     Ok(())
 }
 
+fn sanitize_file_name(file_name: &str) -> String {
+    Path::new(file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.replace(['/', '\\'], "_"))
+        .unwrap_or_default()
+}
+
+fn make_repo_relative(repo_root: &Path, path: &Path) -> String {
+    path.strip_prefix(repo_root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+fn summarize_uploaded_asset(
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<ImportedAssetSummary, ApiError> {
+    let lower = file_name.to_lowercase();
+    if lower.ends_with(".stl") {
+        return summarize_stl_asset(file_name, bytes);
+    }
+    if lower.ends_with(".mesh.json") || lower.ends_with(".json") {
+        return summarize_mesh_json_asset(file_name, bytes);
+    }
+    if lower.ends_with(".msh") {
+        return summarize_msh_asset(file_name, bytes);
+    }
+    if lower.ends_with(".vtk") || lower.ends_with(".vtu") || lower.ends_with(".xdmf") {
+        return Ok(ImportedAssetSummary {
+            file_name: file_name.to_string(),
+            file_bytes: bytes.len(),
+            kind: "mesh_exchange".to_string(),
+            bounds: None,
+            triangle_count: None,
+            node_count: None,
+            element_count: None,
+            boundary_face_count: None,
+            note: Some(
+                "Mesh exchange preview is stored on the backend, but topology summarization is deferred to the Python meshing pipeline.".to_string(),
+            ),
+        });
+    }
+    Ok(ImportedAssetSummary {
+        file_name: file_name.to_string(),
+        file_bytes: bytes.len(),
+        kind: "unknown".to_string(),
+        bounds: None,
+        triangle_count: None,
+        node_count: None,
+        element_count: None,
+        boundary_face_count: None,
+        note: Some(
+            "Backend stored the asset, but no preview parser is implemented for this format yet."
+                .to_string(),
+        ),
+    })
+}
+
+fn summarize_mesh_json_asset(
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<ImportedAssetSummary, ApiError> {
+    let payload: Value = serde_json::from_slice(bytes)
+        .map_err(|error| ApiError::bad_request(format!("invalid mesh JSON: {}", error)))?;
+    let nodes = payload
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ApiError::bad_request("mesh JSON must contain nodes"))?;
+    let elements = payload
+        .get("elements")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ApiError::bad_request("mesh JSON must contain elements"))?;
+    let boundary_faces = payload
+        .get("boundary_faces")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut points = Vec::new();
+    for node in nodes {
+        if let Some(point) = parse_point3_value(node) {
+            points.push(point);
+        }
+    }
+
+    Ok(ImportedAssetSummary {
+        file_name: file_name.to_string(),
+        file_bytes: bytes.len(),
+        kind: "tet_mesh".to_string(),
+        bounds: bounds_from_points(&points),
+        triangle_count: None,
+        node_count: Some(nodes.len()),
+        element_count: Some(elements.len()),
+        boundary_face_count: Some(boundary_faces.len()),
+        note: None,
+    })
+}
+
+fn summarize_msh_asset(file_name: &str, bytes: &[u8]) -> Result<ImportedAssetSummary, ApiError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| ApiError::bad_request(format!("invalid text MSH payload: {}", error)))?;
+    let lines = text.lines().collect::<Vec<_>>();
+    let mut node_count = None;
+    let mut element_count = None;
+    let mut note =
+        "Browser/API summary supports Gmsh ASCII v2 best; full topology parsing stays in the external meshing pipeline."
+            .to_string();
+
+    if let Some(position) = lines.iter().position(|line| line.trim() == "$Nodes") {
+        if let Some(value) = lines
+            .get(position + 1)
+            .and_then(|line| line.trim().parse::<usize>().ok())
+        {
+            node_count = Some(value);
+        }
+    }
+
+    if let Some(position) = lines.iter().position(|line| line.trim() == "$Elements") {
+        if let Some(value) = lines
+            .get(position + 1)
+            .and_then(|line| line.trim().parse::<usize>().ok())
+        {
+            element_count = Some(value);
+        }
+    }
+
+    if text.contains("$Entities") {
+        note = "Gmsh v4 detected. The backend stored the asset, but detailed preview still defers to Python + Gmsh.".to_string();
+    }
+
+    Ok(ImportedAssetSummary {
+        file_name: file_name.to_string(),
+        file_bytes: bytes.len(),
+        kind: "gmsh_mesh".to_string(),
+        bounds: None,
+        triangle_count: None,
+        node_count,
+        element_count,
+        boundary_face_count: None,
+        note: Some(note),
+    })
+}
+
+fn summarize_stl_asset(file_name: &str, bytes: &[u8]) -> Result<ImportedAssetSummary, ApiError> {
+    let summary = if let Some(binary) = summarize_binary_stl_asset(file_name, bytes)? {
+        binary
+    } else {
+        summarize_ascii_stl_asset(file_name, bytes)?
+    };
+    Ok(summary)
+}
+
+fn summarize_binary_stl_asset(
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<Option<ImportedAssetSummary>, ApiError> {
+    if bytes.len() < 84 {
+        return Ok(None);
+    }
+    let triangle_count = u32::from_le_bytes([bytes[80], bytes[81], bytes[82], bytes[83]]) as usize;
+    if 84 + triangle_count * 50 != bytes.len() {
+        return Ok(None);
+    }
+
+    let mut points = Vec::with_capacity(triangle_count * 3);
+    let mut offset = 84;
+    for _ in 0..triangle_count {
+        offset += 12;
+        for _ in 0..3 {
+            let x = f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as f64;
+            let y = f32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as f64;
+            let z = f32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap()) as f64;
+            points.push([x, y, z]);
+            offset += 12;
+        }
+        offset += 2;
+    }
+
+    Ok(Some(ImportedAssetSummary {
+        file_name: file_name.to_string(),
+        file_bytes: bytes.len(),
+        kind: "stl_surface".to_string(),
+        bounds: bounds_from_points(&points),
+        triangle_count: Some(triangle_count),
+        node_count: None,
+        element_count: None,
+        boundary_face_count: None,
+        note: None,
+    }))
+}
+
+fn summarize_ascii_stl_asset(
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<ImportedAssetSummary, ApiError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| ApiError::bad_request(format!("invalid ASCII STL payload: {}", error)))?;
+    let mut points = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("vertex ") {
+            continue;
+        }
+        let values = trimmed
+            .split_whitespace()
+            .skip(1)
+            .filter_map(|value| value.parse::<f64>().ok())
+            .collect::<Vec<_>>();
+        if values.len() == 3 {
+            points.push([values[0], values[1], values[2]]);
+        }
+    }
+
+    Ok(ImportedAssetSummary {
+        file_name: file_name.to_string(),
+        file_bytes: bytes.len(),
+        kind: "stl_surface".to_string(),
+        bounds: bounds_from_points(&points),
+        triangle_count: Some(points.len() / 3),
+        node_count: None,
+        element_count: None,
+        boundary_face_count: None,
+        note: None,
+    })
+}
+
+fn parse_point3_value(value: &Value) -> Option<[f64; 3]> {
+    let array = value.as_array()?;
+    if array.len() < 3 {
+        return None;
+    }
+    Some([array[0].as_f64()?, array[1].as_f64()?, array[2].as_f64()?])
+}
+
+fn bounds_from_points(points: &[[f64; 3]]) -> Option<BoundsSummary> {
+    let first = *points.first()?;
+    let mut min = first;
+    let mut max = first;
+    for [x, y, z] in points.iter().copied() {
+        if x < min[0] {
+            min[0] = x;
+        }
+        if y < min[1] {
+            min[1] = y;
+        }
+        if z < min[2] {
+            min[2] = z;
+        }
+        if x > max[0] {
+            max[0] = x;
+        }
+        if y > max[1] {
+            max[1] = y;
+        }
+        if z > max[2] {
+            max[2] = z;
+        }
+    }
+    Some(BoundsSummary {
+        min,
+        max,
+        size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
+    })
+}
+
 fn read_json_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, ApiError> {
     let text = std::fs::read_to_string(path)
         .map_err(|_| ApiError::not_found(format!("missing {}", path.display())))?;
@@ -559,7 +968,9 @@ fn read_json_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, ApiErr
     })
 }
 
-fn read_optional_json_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, ApiError> {
+fn read_optional_json_file<T: for<'de> Deserialize<'de>>(
+    path: &Path,
+) -> Result<Option<T>, ApiError> {
     if !path.exists() {
         return Ok(None);
     }
@@ -572,9 +983,9 @@ fn read_optional_json_value(path: &Path) -> Result<Option<Value>, ApiError> {
     }
     let text = std::fs::read_to_string(path)
         .map_err(|_| ApiError::not_found(format!("missing {}", path.display())))?;
-    serde_json::from_str(&text)
-        .map(Some)
-        .map_err(|error| ApiError::internal(format!("invalid JSON in {}: {}", path.display(), error)))
+    serde_json::from_str(&text).map(Some).map_err(|error| {
+        ApiError::internal(format!("invalid JSON in {}: {}", path.display(), error))
+    })
 }
 
 fn read_scalar_rows(path: &Path) -> Result<Vec<ScalarRow>, ApiError> {
@@ -591,7 +1002,10 @@ fn read_scalar_rows(path: &Path) -> Result<Vec<ScalarRow>, ApiError> {
             continue;
         }
         if index == 0 {
-            header = line.split(',').map(|value| value.trim().to_string()).collect();
+            header = line
+                .split(',')
+                .map(|value| value.trim().to_string())
+                .collect();
             continue;
         }
         let columns = line.split(',').map(str::trim).collect::<Vec<_>>();
@@ -607,7 +1021,12 @@ fn read_scalar_rows(path: &Path) -> Result<Vec<ScalarRow>, ApiError> {
                 return Ok(0.0);
             };
             columns[position].parse().map_err(|error| {
-                ApiError::internal(format!("invalid scalar {} in {}: {}", name, path.display(), error))
+                ApiError::internal(format!(
+                    "invalid scalar {} in {}: {}",
+                    name,
+                    path.display(),
+                    error
+                ))
             })
         };
         rows.push(ScalarRow {
@@ -625,7 +1044,10 @@ fn read_scalar_rows(path: &Path) -> Result<Vec<ScalarRow>, ApiError> {
     Ok(rows)
 }
 
-fn read_latest_field_json(artifact_dir: &Path, observable: &str) -> Result<Option<Value>, ApiError> {
+fn read_latest_field_json(
+    artifact_dir: &Path,
+    observable: &str,
+) -> Result<Option<Value>, ApiError> {
     let observable_dir = artifact_dir.join("fields").join(observable);
     if !observable_dir.exists() {
         return Ok(None);
@@ -768,6 +1190,13 @@ impl ApiError {
     fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
+
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
             message: message.into(),
         }
     }

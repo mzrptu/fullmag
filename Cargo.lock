@@ -346,6 +346,7 @@ version = "0.1.0"
 dependencies = [
  "async-stream",
  "axum",
+ "base64",
  "fullmag-ir",
  "fullmag-plan",
  "fullmag-runner",
@@ -386,6 +387,10 @@ name = "fullmag-fdm-sys"
 version = "0.1.0"
 
 [[package]]
+name = "fullmag-fem-sys"
+version = "0.1.0"
+
+[[package]]
 name = "fullmag-ir"
 version = "0.1.0"
 dependencies = [
@@ -418,6 +423,7 @@ version = "0.1.0"
 dependencies = [
  "fullmag-engine",
  "fullmag-fdm-sys",
+ "fullmag-fem-sys",
  "fullmag-ir",
  "fullmag-plan",
  "serde",

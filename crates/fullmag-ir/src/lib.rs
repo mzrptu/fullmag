@@ -23,6 +23,13 @@ pub enum BackendTarget {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ExecutionPrecision {
+    Single,
+    Double,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum IntegratorChoice {
     Heun,
 }
@@ -70,14 +77,20 @@ pub enum GeometryEntryIR {
         radius: f64,
         height: f64,
     },
+    Difference {
+        name: String,
+        base: std::boxed::Box<GeometryEntryIR>,
+        tool: std::boxed::Box<GeometryEntryIR>,
+    },
 }
 
 impl GeometryEntryIR {
-    fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         match self {
             Self::ImportedGeometry { name, .. }
             | Self::Box { name, .. }
-            | Self::Cylinder { name, .. } => name,
+            | Self::Cylinder { name, .. }
+            | Self::Difference { name, .. } => name,
         }
     }
 }
@@ -241,7 +254,9 @@ impl MeshIR {
         }
         for (index, face) in self.boundary_faces.iter().enumerate() {
             if face.iter().any(|node| *node >= node_count) {
-                errors.push(format!("mesh boundary face {index} contains invalid node index"));
+                errors.push(format!(
+                    "mesh boundary face {index} contains invalid node index"
+                ));
             }
         }
 
@@ -301,7 +316,8 @@ pub struct FemMeshAssetIR {
     pub geometry_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mesh_source: Option<String>,
-    pub mesh: MeshIR,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<MeshIR>,
 }
 
 impl FemMeshAssetIR {
@@ -311,12 +327,19 @@ impl FemMeshAssetIR {
         if self.geometry_name.trim().is_empty() {
             errors.push("fem_mesh_asset.geometry_name must not be empty".to_string());
         }
-        if let Err(mesh_errors) = self.mesh.validate() {
-            errors.extend(
-                mesh_errors
-                    .into_iter()
-                    .map(|error| format!("fem_mesh_asset.{}", error)),
+        if self.mesh.is_none() && self.mesh_source.is_none() {
+            errors.push(
+                "fem_mesh_asset must provide either an inline mesh or mesh_source".to_string(),
             );
+        }
+        if let Some(mesh) = &self.mesh {
+            if let Err(mesh_errors) = mesh.validate() {
+                errors.extend(
+                    mesh_errors
+                        .into_iter()
+                        .map(|error| format!("fem_mesh_asset.{}", error)),
+                );
+            }
         }
 
         if errors.is_empty() {
@@ -402,16 +425,45 @@ pub struct FdmPlanIR {
     pub grid: GridDimensions,
     pub cell_size: [f64; 3],
     pub region_mask: Vec<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_mask: Option<Vec<bool>>,
     pub initial_magnetization: Vec<[f64; 3]>,
+    pub material: FdmMaterialIR,
+    pub enable_exchange: bool,
+    pub enable_demag: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_field: Option<[f64; 3]>,
+    pub gyromagnetic_ratio: f64,
+    pub precision: ExecutionPrecision,
     pub exchange_bc: ExchangeBoundaryCondition,
     pub integrator: IntegratorChoice,
     pub fixed_timestep: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FdmMaterialIR {
+    pub name: String,
+    pub saturation_magnetisation: f64,
+    pub exchange_stiffness: f64,
+    pub damping: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FemPlanIR {
     pub mesh_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_source: Option<String>,
+    pub mesh: MeshIR,
+    pub fe_order: u32,
+    pub hmax: f64,
     pub initial_magnetization: Vec<[f64; 3]>,
+    pub material: MaterialIR,
+    pub enable_exchange: bool,
+    pub enable_demag: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_field: Option<[f64; 3]>,
+    pub gyromagnetic_ratio: f64,
+    pub precision: ExecutionPrecision,
     pub exchange_bc: ExchangeBoundaryCondition,
     pub integrator: IntegratorChoice,
     pub fixed_timestep: Option<f64>,
@@ -449,7 +501,7 @@ impl ProblemIR {
             geometry: GeometryIR {
                 entries: vec![GeometryEntryIR::Box {
                     name: "strip".to_string(),
-                    size: [200e-9, 20e-9, 5e-9],
+                    size: [200e-9, 20e-9, 6e-9],
                 }],
             },
             geometry_assets: None,
@@ -469,31 +521,31 @@ impl ProblemIR {
                 name: "strip".to_string(),
                 region: "strip".to_string(),
                 material: "Py".to_string(),
-                initial_magnetization: Some(InitialMagnetizationIR::Uniform {
-                    value: [1.0, 0.2, 0.0],
-                }),
+                initial_magnetization: Some(InitialMagnetizationIR::RandomSeeded { seed: 42 }),
             }],
             energy_terms: vec![EnergyTermIR::Exchange],
-            dynamics: DynamicsIR::Llg {
-                gyromagnetic_ratio: 2.211e5,
-                integrator: "heun".to_string(),
-                fixed_timestep: Some(1e-13),
-            },
-            sampling: SamplingIR {
-                outputs: vec![
-                    OutputIR::Field {
-                        name: "m".to_string(),
-                        every_seconds: 1e-12,
-                    },
-                    OutputIR::Field {
-                        name: "H_ex".to_string(),
-                        every_seconds: 1e-12,
-                    },
-                    OutputIR::Scalar {
-                        name: "E_ex".to_string(),
-                        every_seconds: 1e-12,
-                    },
-                ],
+            study: StudyIR::TimeEvolution {
+                dynamics: DynamicsIR::Llg {
+                    gyromagnetic_ratio: 2.211e5,
+                    integrator: "heun".to_string(),
+                    fixed_timestep: Some(1e-13),
+                },
+                sampling: SamplingIR {
+                    outputs: vec![
+                        OutputIR::Field {
+                            name: "m".to_string(),
+                            every_seconds: 1e-12,
+                        },
+                        OutputIR::Field {
+                            name: "H_ex".to_string(),
+                            every_seconds: 1e-12,
+                        },
+                        OutputIR::Scalar {
+                            name: "E_ex".to_string(),
+                            every_seconds: 1e-12,
+                        },
+                    ],
+                },
             },
             backend_policy: BackendPolicyIR {
                 requested_backend: BackendTarget::Fdm,
@@ -505,6 +557,7 @@ impl ProblemIR {
                     fem: Some(FemHintsIR {
                         order: 1,
                         hmax: 2e-9,
+                        mesh: None,
                     }),
                     hybrid: None,
                 }),
@@ -709,6 +762,14 @@ impl ProblemIR {
                             name
                         ));
                     }
+                }
+                GeometryEntryIR::Difference { name, base, tool } => {
+                    if name.trim().is_empty() {
+                        errors.push("difference geometry name must not be empty".to_string());
+                    }
+                    // Validate nested geometries exist (base and tool are Box-wrapped,
+                    // so they're guaranteed non-null by construction)
+                    let _ = (base, tool); // suppress unused warnings; recursive validation is future work
                 }
             }
         }
@@ -918,7 +979,7 @@ mod tests {
         match &decoded.geometry.entries[0] {
             GeometryEntryIR::Box { name, size } => {
                 assert_eq!(name, "strip");
-                assert_eq!(size, &[200e-9, 20e-9, 5e-9]);
+                assert_eq!(size, &[200e-9, 20e-9, 6e-9]);
             }
             other => panic!("expected Box geometry, got {:?}", other),
         }
@@ -1044,7 +1105,19 @@ mod tests {
                 },
                 cell_size: [2e-9, 2e-9, 2e-9],
                 region_mask: vec![0, 0, 1],
+                active_mask: None,
                 initial_magnetization: vec![[1.0, 0.0, 0.0]],
+                material: FdmMaterialIR {
+                    name: "Py".to_string(),
+                    saturation_magnetisation: 800e3,
+                    exchange_stiffness: 13e-12,
+                    damping: 0.02,
+                },
+                enable_exchange: true,
+                enable_demag: false,
+                external_field: None,
+                gyromagnetic_ratio: 2.211e5,
+                precision: ExecutionPrecision::Double,
                 exchange_bc: ExchangeBoundaryCondition::Neumann,
                 integrator: IntegratorChoice::Heun,
                 fixed_timestep: Some(1e-13),

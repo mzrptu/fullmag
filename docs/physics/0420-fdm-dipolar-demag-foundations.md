@@ -399,6 +399,48 @@ $$
 
 with analogous equations for $\widehat{H}_{y}$ and $\widehat{H}_{z}$.
 
+#### 3.1.4a Current implementation: spectral projection (interim)
+
+> **Status**: the `fullmag-engine` CPU reference uses a **spectral projection** demag operator,
+> not the full Newell tensor convolution described above.
+
+The current algorithm computes the demag field in Fourier space via the closed-form
+continuum projection:
+
+$$
+\widehat{\mathbf{H}}_{\mathrm{d}}(\mathbf{k})
+=
+-\frac{\mathbf{k}\,(\mathbf{k}\cdot\widehat{\mathbf{M}}(\mathbf{k}))}{|\mathbf{k}|^2},
+\qquad \mathbf{k}\neq 0,
+$$
+
+with $\widehat{\mathbf{H}}_{\mathrm{d}}(\mathbf{0})=0$.
+
+This is equivalent to solving $\Delta u = \nabla\cdot\mathbf{M}$ spectrally and taking
+$\mathbf{H}_{\mathrm{d}}=-\nabla u$, which is the exact continuum dipolar operator on a periodic
+domain.
+
+**Implementation steps** (in `fullmag-engine/src/lib.rs`, `demag_field_from_vectors_ws`):
+
+1. Zero-pad $\mathbf{M} = M_s \mathbf{m}$ into reusable workspace buffers of size $(2N_x, 2N_y, 2N_z)$.
+2. Forward FFT all three components using cached FFT plans (`FftWorkspace`).
+3. For each $\mathbf{k}$: compute $\mathbf{k}\cdot\widehat{\mathbf{M}}$, then
+   $\widehat{\mathbf{H}}_i = -(k_i / |\mathbf{k}|^2)\,(\mathbf{k}\cdot\widehat{\mathbf{M}})$.
+4. Inverse FFT the three field components.
+5. Normalize by $1/(P_x P_y P_z)$ and crop to the physical grid.
+
+**Trade-offs vs Newell tensor convolution**:
+
+- **Pro**: No kernel precomputation, simpler code, exact for the continuum operator.
+- **Con**: Does not capture cell-averaging effects; equivalent to point-sampling the continuum
+  field at grid points rather than averaging over finite cells. For coarse grids, the Newell
+  tensor gives more accurate near-field interactions.
+- **Con**: Assumes periodic zero-padded boundaries rather than truly cell-averaged open boundaries.
+
+For the current development stage, spectral projection provides correct physics and passes all
+validation tests (positive energy, thin-film shape anisotropy, relaxation energy decrease).
+The upgrade to Newell tensor convolution (§3.1.2) is planned as a future refinement.
+
 The standard open-boundary realization is zero-padding to at least
 
 $$
@@ -568,10 +610,12 @@ For calibrated FFT demag, tolerances should be defined against:
 
 ## 7. Known limits and deferred work
 
-- **Kernel implementation not yet written**: the Newell $f/g$ base functions and antidifference
-  kernel builder are documented here but not yet implemented in any Rust crate.
-  The `fullmag-engine` crate has only exchange+LLG; `Demag` remains `semantic-only` in
-  the capability matrix.
+- **Newell kernel not yet implemented**: the current `fullmag-engine` CPU reference uses the
+  spectral projection operator $H_k = -k(k \cdot M_k)/|k|^2$ (§3.1.4a).
+  This is exact for the continuum dipolar field but does not include cell-averaging corrections.
+  The Newell $f/g$ base functions and antidifference kernel builder (§3.1.2) are documented
+  above but not yet implemented in any Rust crate.
+  Upgrade to cell-averaged Newell tensor convolution is planned as a future refinement.
 - periodic demag is out of scope for this contract;
   the baseline is free-space/open-boundary demag,
 - nonuniform cell sizes are out of scope for the first FDM dipolar implementation,

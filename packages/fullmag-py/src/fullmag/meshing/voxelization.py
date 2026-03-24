@@ -138,9 +138,19 @@ def _voxelize_imported_geometry(
     cell_size: tuple[float, float, float],
 ) -> VoxelMaskData:
     path = Path(source)
+    if path.suffix.lower() == ".npz":
+        mask_data = VoxelMaskData.load(path)
+        if any(
+            not np.isclose(mask_data.cell_size[index], cell_size[index])
+            for index in range(3)
+        ):
+            raise ValueError(
+                "precomputed voxel mask cell size does not match requested FDM cell size"
+            )
+        return mask_data
     if path.suffix.lower() != ".stl":
         raise ValueError(
-            "initial imported-geometry voxelization scaffold supports only STL surface assets"
+            "initial imported-geometry voxelization scaffold supports only STL or precomputed .npz voxel assets"
         )
 
     dx, dy, dz = cell_size

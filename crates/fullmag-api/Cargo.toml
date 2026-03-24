@@ -7,10 +7,12 @@ publish.workspace = true
 [features]
 default = []
 cuda = ["fullmag-runner/cuda"]
+fem-gpu = ["fullmag-runner/fem-gpu"]
 
 [dependencies]
 async-stream = "0.3"
 axum.workspace = true
+base64 = "0.22"
 futures-core = "0.3"
 serde.workspace = true
 serde_json.workspace = true

@@ -5,7 +5,7 @@ from pathlib import Path
 import shutil
 from typing import Any
 
-from fullmag.model.geometry import Box, Cylinder, Geometry, ImportedGeometry
+from fullmag.model.geometry import Box, Cylinder, Difference, Geometry, ImportedGeometry
 
 
 def _import_trimesh() -> Any:
@@ -83,8 +83,39 @@ def export_geometry_to_stl(
             height=geometry.height,
             sections=cylinder_sections,
         )
+    elif isinstance(geometry, Difference):
+        base_mesh = _geometry_to_trimesh(geometry.base, trimesh, cylinder_sections)
+        tool_mesh = _geometry_to_trimesh(geometry.tool, trimesh, cylinder_sections)
+        try:
+            mesh = base_mesh.difference(tool_mesh)
+        except Exception:
+            # Fallback: generate via Gmsh and export boundary faces
+            from .gmsh_bridge import generate_difference_mesh
+            mesh_data = generate_difference_mesh(geometry, hmax=min(geometry.base.size) / 20.0 if isinstance(geometry.base, Box) else 5e-9)
+            return mesh_data.export_stl(target)
     else:
         raise TypeError(f"unsupported geometry type: {type(geometry)!r}")
 
     mesh.export(target)
     return target
+
+
+def _geometry_to_trimesh(
+    geometry: Geometry,
+    trimesh: Any,
+    cylinder_sections: int = 48,
+) -> Any:
+    """Convert a geometry primitive to a trimesh Trimesh object."""
+    if isinstance(geometry, Box):
+        return trimesh.creation.box(extents=geometry.size)
+    if isinstance(geometry, Cylinder):
+        return trimesh.creation.cylinder(
+            radius=geometry.radius,
+            height=geometry.height,
+            sections=cylinder_sections,
+        )
+    if isinstance(geometry, Difference):
+        base = _geometry_to_trimesh(geometry.base, trimesh, cylinder_sections)
+        tool = _geometry_to_trimesh(geometry.tool, trimesh, cylinder_sections)
+        return base.difference(tool)
+    raise TypeError(f"unsupported geometry for trimesh conversion: {type(geometry)!r}")

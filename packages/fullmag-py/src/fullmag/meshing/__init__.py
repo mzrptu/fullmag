@@ -5,6 +5,7 @@ from .gmsh_bridge import (
     MeshData,
     generate_box_mesh,
     generate_cylinder_mesh,
+    generate_difference_mesh,
     generate_mesh,
     generate_mesh_from_file,
 )

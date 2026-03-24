@@ -1,4 +1,5 @@
 pub mod fem;
+pub mod studies;
 
 use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
@@ -225,7 +226,9 @@ impl FftWorkspace {
     /// Zero out all six M/H frequency-domain buffers.
     fn clear_bufs(&mut self) {
         let zero = Complex::new(0.0, 0.0);
-        for v in self.buf_mx.iter_mut()
+        for v in self
+            .buf_mx
+            .iter_mut()
             .chain(self.buf_my.iter_mut())
             .chain(self.buf_mz.iter_mut())
             .chain(self.buf_hx.iter_mut())
@@ -239,38 +242,74 @@ impl FftWorkspace {
     /// Forward FFT on the three M-component buffers (buf_mx, buf_my, buf_mz).
     fn fft3_m_forward(&mut self) {
         fft3_core(
-            &mut self.buf_mx, self.px, self.py, self.pz,
-            &*self.fwd_x, &*self.fwd_y, &*self.fwd_z,
-            &mut self.line_y, &mut self.line_z,
+            &mut self.buf_mx,
+            self.px,
+            self.py,
+            self.pz,
+            &*self.fwd_x,
+            &*self.fwd_y,
+            &*self.fwd_z,
+            &mut self.line_y,
+            &mut self.line_z,
         );
         fft3_core(
-            &mut self.buf_my, self.px, self.py, self.pz,
-            &*self.fwd_x, &*self.fwd_y, &*self.fwd_z,
-            &mut self.line_y, &mut self.line_z,
+            &mut self.buf_my,
+            self.px,
+            self.py,
+            self.pz,
+            &*self.fwd_x,
+            &*self.fwd_y,
+            &*self.fwd_z,
+            &mut self.line_y,
+            &mut self.line_z,
         );
         fft3_core(
-            &mut self.buf_mz, self.px, self.py, self.pz,
-            &*self.fwd_x, &*self.fwd_y, &*self.fwd_z,
-            &mut self.line_y, &mut self.line_z,
+            &mut self.buf_mz,
+            self.px,
+            self.py,
+            self.pz,
+            &*self.fwd_x,
+            &*self.fwd_y,
+            &*self.fwd_z,
+            &mut self.line_y,
+            &mut self.line_z,
         );
     }
 
     /// Inverse FFT on the three H-component buffers (buf_hx, buf_hy, buf_hz).
     fn fft3_h_inverse(&mut self) {
         fft3_core(
-            &mut self.buf_hx, self.px, self.py, self.pz,
-            &*self.inv_x, &*self.inv_y, &*self.inv_z,
-            &mut self.line_y, &mut self.line_z,
+            &mut self.buf_hx,
+            self.px,
+            self.py,
+            self.pz,
+            &*self.inv_x,
+            &*self.inv_y,
+            &*self.inv_z,
+            &mut self.line_y,
+            &mut self.line_z,
         );
         fft3_core(
-            &mut self.buf_hy, self.px, self.py, self.pz,
-            &*self.inv_x, &*self.inv_y, &*self.inv_z,
-            &mut self.line_y, &mut self.line_z,
+            &mut self.buf_hy,
+            self.px,
+            self.py,
+            self.pz,
+            &*self.inv_x,
+            &*self.inv_y,
+            &*self.inv_z,
+            &mut self.line_y,
+            &mut self.line_z,
         );
         fft3_core(
-            &mut self.buf_hz, self.px, self.py, self.pz,
-            &*self.inv_x, &*self.inv_y, &*self.inv_z,
-            &mut self.line_y, &mut self.line_z,
+            &mut self.buf_hz,
+            self.px,
+            self.py,
+            self.pz,
+            &*self.inv_x,
+            &*self.inv_y,
+            &*self.inv_z,
+            &mut self.line_y,
+            &mut self.line_z,
         );
     }
 }
@@ -357,7 +396,13 @@ impl ExchangeLlgProblem {
         material: MaterialParameters,
         dynamics: LlgConfig,
     ) -> Self {
-        Self::with_terms(grid, cell_size, material, dynamics, EffectiveFieldTerms::default())
+        Self::with_terms(
+            grid,
+            cell_size,
+            material,
+            dynamics,
+            EffectiveFieldTerms::default(),
+        )
     }
 
     pub fn with_terms(
@@ -470,18 +515,37 @@ impl ExchangeLlgProblem {
         let predicted = {
             let compute = |i: usize| normalized(add(initial[i], scale(k1[i], dt)));
             #[cfg(feature = "parallel")]
-            { (0..initial.len()).into_par_iter().map(compute).collect::<Result<Vec<_>>>()? }
+            {
+                (0..initial.len())
+                    .into_par_iter()
+                    .map(compute)
+                    .collect::<Result<Vec<_>>>()?
+            }
             #[cfg(not(feature = "parallel"))]
-            { (0..initial.len()).map(compute).collect::<Result<Vec<_>>>()? }
+            {
+                (0..initial.len())
+                    .map(compute)
+                    .collect::<Result<Vec<_>>>()?
+            }
         };
 
         let k2 = self.llg_rhs_from_vectors_ws(&predicted, ws);
         let corrected = {
-            let compute = |i: usize| normalized(add(initial[i], scale(add(k1[i], k2[i]), 0.5 * dt)));
+            let compute =
+                |i: usize| normalized(add(initial[i], scale(add(k1[i], k2[i]), 0.5 * dt)));
             #[cfg(feature = "parallel")]
-            { (0..initial.len()).into_par_iter().map(compute).collect::<Result<Vec<_>>>()? }
+            {
+                (0..initial.len())
+                    .into_par_iter()
+                    .map(compute)
+                    .collect::<Result<Vec<_>>>()?
+            }
             #[cfg(not(feature = "parallel"))]
-            { (0..initial.len()).map(compute).collect::<Result<Vec<_>>>()? }
+            {
+                (0..initial.len())
+                    .map(compute)
+                    .collect::<Result<Vec<_>>>()?
+            }
         };
 
         state.magnetization = corrected;
@@ -535,13 +599,20 @@ impl ExchangeLlgProblem {
         let rhs = {
             let compute = |i: usize| self.llg_rhs_from_field(magnetization[i], effective_field[i]);
             #[cfg(feature = "parallel")]
-            { (0..magnetization.len()).into_par_iter().map(compute).collect::<Vec<_>>() }
+            {
+                (0..magnetization.len())
+                    .into_par_iter()
+                    .map(compute)
+                    .collect::<Vec<_>>()
+            }
             #[cfg(not(feature = "parallel"))]
-            { (0..magnetization.len()).map(compute).collect::<Vec<_>>() }
+            {
+                (0..magnetization.len()).map(compute).collect::<Vec<_>>()
+            }
         };
 
         let exchange_energy_joules = if self.terms.exchange {
-            self.exchange_energy_from_vectors(magnetization)
+            self.exchange_energy_from_field(magnetization, &exchange_field)
         } else {
             0.0
         };
@@ -600,20 +671,20 @@ impl ExchangeLlgProblem {
 
             let mut laplacian = [0.0, 0.0, 0.0];
             for component in 0..3 {
-                laplacian[component] = (x_plus[component] - 2.0 * center[component]
-                    + x_minus[component])
-                    / dx2
-                    + (y_plus[component] - 2.0 * center[component] + y_minus[component])
-                        / dy2
-                    + (z_plus[component] - 2.0 * center[component] + z_minus[component])
-                        / dz2;
+                laplacian[component] =
+                    (x_plus[component] - 2.0 * center[component] + x_minus[component]) / dx2
+                        + (y_plus[component] - 2.0 * center[component] + y_minus[component]) / dy2
+                        + (z_plus[component] - 2.0 * center[component] + z_minus[component]) / dz2;
             }
             scale(laplacian, prefactor)
         };
 
         #[cfg(feature = "parallel")]
         {
-            (0..grid.cell_count()).into_par_iter().map(compute_cell).collect()
+            (0..grid.cell_count())
+                .into_par_iter()
+                .map(compute_cell)
+                .collect()
         }
         #[cfg(not(feature = "parallel"))]
         {
@@ -673,7 +744,8 @@ impl ExchangeLlgProblem {
                     }
 
                     let index = padded_index(px, py, x, y, z);
-                    let kdotm = ws.buf_mx[index] * kx + ws.buf_my[index] * ky + ws.buf_mz[index] * kz;
+                    let kdotm =
+                        ws.buf_mx[index] * kx + ws.buf_my[index] * ky + ws.buf_mz[index] * kz;
                     ws.buf_hx[index] = -kdotm * (kx / k2);
                     ws.buf_hy[index] = -kdotm * (ky / k2);
                     ws.buf_hz[index] = -kdotm * (kz / k2);
@@ -787,7 +859,10 @@ impl ExchangeLlgProblem {
 
         #[cfg(feature = "parallel")]
         {
-            (0..grid.cell_count()).into_par_iter().map(compute_cell_energy).sum()
+            (0..grid.cell_count())
+                .into_par_iter()
+                .map(compute_cell_energy)
+                .sum()
         }
         #[cfg(not(feature = "parallel"))]
         {
@@ -795,14 +870,40 @@ impl ExchangeLlgProblem {
         }
     }
 
+    /// Compute exchange energy from already-available exchange field, avoiding second stencil pass.
+    /// E_ex = -(mu0 * Ms / 2) * sum(m · H_ex) * V_cell
+    fn exchange_energy_from_field(
+        &self,
+        magnetization: &[Vector3],
+        exchange_field: &[Vector3],
+    ) -> f64 {
+        let cell_volume = self.cell_size.volume();
+        let ms = self.material.saturation_magnetisation;
+        let compute =
+            |i: usize| -0.5 * MU0 * ms * dot(magnetization[i], exchange_field[i]) * cell_volume;
+        #[cfg(feature = "parallel")]
+        {
+            (0..magnetization.len()).into_par_iter().map(compute).sum()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            (0..magnetization.len()).map(compute).sum()
+        }
+    }
+
     fn demag_energy_from_fields(&self, magnetization: &[Vector3], demag_field: &[Vector3]) -> f64 {
         let cell_volume = self.cell_size.volume();
         let ms = self.material.saturation_magnetisation;
-        let compute = |i: usize| -0.5 * MU0 * ms * dot(magnetization[i], demag_field[i]) * cell_volume;
+        let compute =
+            |i: usize| -0.5 * MU0 * ms * dot(magnetization[i], demag_field[i]) * cell_volume;
         #[cfg(feature = "parallel")]
-        { (0..magnetization.len()).into_par_iter().map(compute).sum() }
+        {
+            (0..magnetization.len()).into_par_iter().map(compute).sum()
+        }
         #[cfg(not(feature = "parallel"))]
-        { (0..magnetization.len()).map(compute).sum() }
+        {
+            (0..magnetization.len()).map(compute).sum()
+        }
     }
 
     fn external_energy_from_fields(
@@ -814,9 +915,13 @@ impl ExchangeLlgProblem {
         let ms = self.material.saturation_magnetisation;
         let compute = |i: usize| -MU0 * ms * dot(magnetization[i], external_field[i]) * cell_volume;
         #[cfg(feature = "parallel")]
-        { (0..magnetization.len()).into_par_iter().map(compute).sum() }
+        {
+            (0..magnetization.len()).into_par_iter().map(compute).sum()
+        }
         #[cfg(not(feature = "parallel"))]
-        { (0..magnetization.len()).map(compute).sum() }
+        {
+            (0..magnetization.len()).map(compute).sum()
+        }
     }
 }
 
@@ -920,32 +1025,28 @@ fn fft3_core(
 }
 
 /// 3D FFT using cached workspace plans (avoids per-call FftPlanner).
-fn fft3_with_workspace(
-    data: &mut [Complex<f64>],
-    ws: &mut FftWorkspace,
-    inverse: bool,
-) {
+fn fft3_with_workspace(data: &mut [Complex<f64>], ws: &mut FftWorkspace, inverse: bool) {
     let (fft_x, fft_y, fft_z) = if inverse {
         (&*ws.inv_x, &*ws.inv_y, &*ws.inv_z)
     } else {
         (&*ws.fwd_x, &*ws.fwd_y, &*ws.fwd_z)
     };
     fft3_core(
-        data, ws.px, ws.py, ws.pz,
-        fft_x, fft_y, fft_z,
-        &mut ws.line_y, &mut ws.line_z,
+        data,
+        ws.px,
+        ws.py,
+        ws.pz,
+        fft_x,
+        fft_y,
+        fft_z,
+        &mut ws.line_y,
+        &mut ws.line_z,
     );
 }
 
 /// Legacy wrapper — creates workspace on the fly (used only in tests).
 #[allow(dead_code)]
-fn fft3_in_place(
-    data: &mut [Complex<f64>],
-    nx: usize,
-    ny: usize,
-    nz: usize,
-    inverse: bool,
-) {
+fn fft3_in_place(data: &mut [Complex<f64>], nx: usize, ny: usize, nz: usize, inverse: bool) {
     let mut ws = FftWorkspace::new(nx / 2, ny / 2, nz / 2);
     fft3_with_workspace(data, &mut ws, inverse);
 }
@@ -991,9 +1092,8 @@ fn combine_fields(
 fn normalized(vector: Vector3) -> Result<Vector3> {
     let norm = norm(vector);
     if norm <= 0.0 {
-        return Err(EngineError::new(
-            "magnetization vectors must have non-zero norm",
-        ));
+        // Inactive cell (masked out by active_mask) — preserve zero vector
+        return Ok([0.0, 0.0, 0.0]);
     }
     Ok(scale(vector, 1.0 / norm))
 }
@@ -1171,7 +1271,10 @@ mod tests {
         for _ in 0..10 {
             problem.step(&mut state, 1e-3).expect("step should succeed");
         }
-        let final_energy = problem.observe(&state).expect("observables").total_energy_joules;
+        let final_energy = problem
+            .observe(&state)
+            .expect("observables")
+            .total_energy_joules;
 
         assert!(
             final_energy < initial_energy,
@@ -1186,7 +1289,10 @@ mod tests {
             .new_state(vec![[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
             .expect("state should build");
 
-        let initial_energy = problem.observe(&state).expect("observables").external_energy_joules;
+        let initial_energy = problem
+            .observe(&state)
+            .expect("observables")
+            .external_energy_joules;
         for _ in 0..100 {
             problem.step(&mut state, 5e-3).expect("step should succeed");
         }
@@ -1212,8 +1318,14 @@ mod tests {
             .uniform_state([1.0, 0.0, 0.0])
             .expect("state should build");
 
-        let e_out = problem.observe(&out_of_plane).expect("observables").demag_energy_joules;
-        let e_in = problem.observe(&in_plane).expect("observables").demag_energy_joules;
+        let e_out = problem
+            .observe(&out_of_plane)
+            .expect("observables")
+            .demag_energy_joules;
+        let e_in = problem
+            .observe(&in_plane)
+            .expect("observables")
+            .demag_energy_joules;
 
         assert!(
             e_out > e_in,
@@ -1246,7 +1358,10 @@ mod tests {
             "demag energy must be non-negative, got {}",
             obs.demag_energy_joules
         );
-        assert!(obs.demag_energy_joules.is_finite(), "demag energy must be finite");
+        assert!(
+            obs.demag_energy_joules.is_finite(),
+            "demag energy must be finite"
+        );
     }
 
     #[test]
@@ -1266,21 +1381,29 @@ mod tests {
 
         // Start with slightly tilted m (pure z gives m×H=0, no dynamics)
         let n = grid.cell_count();
-        let tilted: Vec<Vector3> = (0..n).map(|_| {
-            let len = (0.01f64 * 0.01 + 0.01 * 0.01 + 1.0).sqrt();
-            [0.01 / len, 0.01 / len, 1.0 / len]
-        }).collect();
+        let tilted: Vec<Vector3> = (0..n)
+            .map(|_| {
+                let len = (0.01f64 * 0.01 + 0.01 * 0.01 + 1.0).sqrt();
+                [0.01 / len, 0.01 / len, 1.0 / len]
+            })
+            .collect();
         let mut state = problem.new_state(tilted).expect("state should build");
         let mut ws = problem.create_workspace();
 
-        let initial_energy = problem.observe(&state).expect("observables").total_energy_joules;
+        let initial_energy = problem
+            .observe(&state)
+            .expect("observables")
+            .total_energy_joules;
         let dt = 1e-14;
         for _ in 0..200 {
             problem
                 .step_with_workspace(&mut state, dt, &mut ws)
                 .expect("step should succeed");
         }
-        let final_energy = problem.observe(&state).expect("observables").total_energy_joules;
+        let final_energy = problem
+            .observe(&state)
+            .expect("observables")
+            .total_energy_joules;
 
         assert!(
             final_energy < initial_energy,
@@ -1291,15 +1414,22 @@ mod tests {
     #[test]
     fn workspace_demag_matches_standalone_demag() {
         let problem = demag_problem(4, 4, 2);
-        let state = problem.uniform_state([1.0, 0.0, 0.0]).expect("state should build");
+        let state = problem
+            .uniform_state([1.0, 0.0, 0.0])
+            .expect("state should build");
 
         // Compute via standalone call (creates workspace internally)
-        let field_direct = problem.demag_field(&state).expect("demag field should evaluate");
+        let field_direct = problem
+            .demag_field(&state)
+            .expect("demag field should evaluate");
         // Compute via workspace
         let mut ws = problem.create_workspace();
         let obs_ws = problem.observe(&state).expect("observables");
 
-        for (i, (direct, ws_val)) in field_direct.iter().zip(obs_ws.demag_field.iter()).enumerate()
+        for (i, (direct, ws_val)) in field_direct
+            .iter()
+            .zip(obs_ws.demag_field.iter())
+            .enumerate()
         {
             for c in 0..3 {
                 assert!(
@@ -1313,13 +1443,20 @@ mod tests {
     #[test]
     fn thin_film_in_plane_demag_energy_is_small() {
         let problem = demag_problem(8, 8, 1);
-        let state = problem.uniform_state([1.0, 0.0, 0.0]).expect("state should build");
+        let state = problem
+            .uniform_state([1.0, 0.0, 0.0])
+            .expect("state should build");
         let obs = problem.observe(&state).expect("observables");
 
         // In-plane uniform magnetization of a thin film should have near-zero demag energy
         // (relative to the out-of-plane case)
-        let out_of_plane = problem.uniform_state([0.0, 0.0, 1.0]).expect("state should build");
-        let e_out = problem.observe(&out_of_plane).expect("observables").demag_energy_joules;
+        let out_of_plane = problem
+            .uniform_state([0.0, 0.0, 1.0])
+            .expect("state should build");
+        let e_out = problem
+            .observe(&out_of_plane)
+            .expect("observables")
+            .demag_energy_joules;
 
         assert!(
             obs.demag_energy_joules < e_out * 0.5,

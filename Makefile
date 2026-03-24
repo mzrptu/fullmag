@@ -1,4 +1,4 @@
-.PHONY: up down shell fmt check cargo-check cargo-test web-install py-install py-test repo-check smoke install-cli show-cli-path control-room control-room-stop
+.PHONY: up down shell fmt check cargo-check cargo-test web-install py-install py-test repo-check smoke install-cli show-cli-path control-room control-room-stop fem-gpu-build fem-gpu-shell fem-gpu-check fem-gpu-test fem-gpu-native-test
 
 up:
 	docker compose up -d postgres minio nats dev
@@ -70,3 +70,18 @@ control-room:
 
 control-room-stop:
 	./scripts/stop-control-room.sh
+
+fem-gpu-build:
+	docker compose --profile fem-gpu build fem-gpu
+
+fem-gpu-shell:
+	docker compose --profile fem-gpu run --rm fem-gpu bash
+
+fem-gpu-check:
+	docker compose --profile fem-gpu run --rm --no-deps fem-gpu bash -lc "FULLMAG_USE_MFEM_STACK=ON cargo +nightly check -p fullmag-runner -p fullmag-cli -p fullmag-api --features 'fem-gpu cuda'"
+
+fem-gpu-test:
+	docker compose --profile fem-gpu run --rm --no-deps fem-gpu bash -lc "FULLMAG_USE_MFEM_STACK=ON cargo +nightly test -p fullmag-runner --features fem-gpu native_fem -- --nocapture"
+
+fem-gpu-native-test:
+	docker compose --profile fem-gpu run --rm --no-deps fem-gpu bash -lc "FULLMAG_USE_MFEM_STACK=ON cargo +nightly test -p fullmag-runner --features fem-gpu native_fem::tests::native_fem_exchange_only_matches_cpu_reference_when_mfem_stack_is_available -- --nocapture"

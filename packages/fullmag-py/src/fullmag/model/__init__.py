@@ -1,7 +1,7 @@
 from .discretization import DiscretizationHints, FDM, FEM, Hybrid
 from .dynamics import LLG
 from .energy import Demag, Exchange, InterfacialDMI, Zeeman
-from .geometry import Box, Cylinder, ImportedGeometry
+from .geometry import Box, Cylinder, Difference, ImportedGeometry
 from .outputs import SaveField, SaveScalar
 from .problem import BackendTarget, ExecutionMode, ExecutionPrecision, Problem
 from .structure import Ferromagnet, Material, Region
@@ -12,6 +12,7 @@ __all__ = [
     "Box",
     "Cylinder",
     "Demag",
+    "Difference",
     "DiscretizationHints",
     "Exchange",
     "ExecutionMode",

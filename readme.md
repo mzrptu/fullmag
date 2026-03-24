@@ -4,6 +4,16 @@ Fullmag is a micromagnetics platform built around one contract:
 
 > the shared interface describes a physical problem, not a numerical mesh layout
 
+Officially, the user-facing product is still intended to feel like **one application**:
+
+- one public launcher: `fullmag`
+- one local control room in the browser
+- managed compute runtimes under the hood
+
+For lightweight paths this can mean bundled binaries/libraries.
+For heavyweight GPU paths, especially FEM on `MFEM + libCEED + hypre`, the canonical direction is a
+managed runtime container rather than one giant monolithic executable.
+
 The public authoring surface is an embedded, declarative Python DSL in `packages/fullmag-py`.
 Users write ordinary Python scripts and notebooks, but those objects serialize into a canonical `ProblemIR` that Rust validates, normalizes, and lowers into backend-specific plans.
 
@@ -119,6 +129,24 @@ python scripts/run_python_ir_smoke.py --cli target/debug/fullmag
 /usr/local/cargo/bin/cargo run -p fullmag-cli --bin fullmag -- examples/exchange_relax.py --until 2e-9 --json
 /usr/local/cargo/bin/cargo run -p fullmag-cli --bin fullmag --features cuda -- examples/exchange_demag_zeeman.py --until 1e-11 --json
 ```
+
+### 3b. Build the production-style FEM GPU runtime container
+
+```bash
+make fem-gpu-build
+make fem-gpu-check
+make fem-gpu-test
+```
+
+This uses the dedicated `fem-gpu` container with:
+
+- CUDA toolkit
+- MFEM
+- libCEED
+- hypre
+- Rust nightly
+
+and builds the native FEM backend with `FULLMAG_USE_MFEM_STACK=ON`.
 
 ### 4. Install the local launcher on your PATH
 
