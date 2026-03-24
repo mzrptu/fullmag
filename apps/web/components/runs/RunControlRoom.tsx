@@ -317,6 +317,7 @@ export default function RunControlRoom({ sessionId }: RunControlRoomProps) {
                     grid={grid}
                     vectors={selectedVectors}
                     quantityLabel={quantityDescriptor?.label ?? selectedQuantity}
+                    quantityId={selectedQuantity}
                     component={component}
                     plane={plane}
                     sliceIndex={sliceIndex}

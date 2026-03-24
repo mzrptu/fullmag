@@ -7,7 +7,14 @@ name = "fullmag"
 version = "0.1.0"
 description = "Embedded Python DSL for the Fullmag micromagnetics platform."
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+meshing = [
+    "gmsh>=4.12",
+    "meshio>=5.3",
+    "trimesh>=4.2",
+]
 
 [project.scripts]
 fullmag-python = "fullmag.runtime.cli:main"

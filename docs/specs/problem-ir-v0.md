@@ -11,6 +11,7 @@ The source of truth is the serialized object graph, not Python source text.
 - `ir_version`
 - `ProblemMeta`
 - `GeometryIR`
+- `GeometryAssetsIR` (optional bootstrap carrier for precomputed mesh / grid realizations)
 - `RegionIR`
 - `MaterialIR`
 - `MagnetIR`
@@ -27,6 +28,8 @@ The source of truth is the serialized object graph, not Python source text.
 3. The IR is planner-ready: capability checks operate on canonical IR, not user syntax.
 4. Reproducibility metadata is first-class for Python-authored runs.
 5. `strict`, `extended`, and `hybrid` remain explicit in canonical validation state.
+6. When geometry realization must be precomputed outside Rust (for example Gmsh meshing or STL
+   voxelization), the canonical carrier is `geometry_assets`, not ad-hoc `runtime_metadata`.
 
 ## ProblemMeta
 
@@ -102,6 +105,43 @@ Validation rules:
 - geometry names must be unique across all entry kinds,
 - `Box.size` components must be positive,
 - `Cylinder.radius` and `Cylinder.height` must be positive.
+
+## `GeometryAssetsIR`
+
+`GeometryAssetsIR` is an optional bootstrap carrier for geometry realizations that are already
+constructed before planner lowering.
+
+Current variants:
+
+- `fdm_grid_assets`
+  - `geometry_name`
+  - `cells`
+  - `cell_size`
+  - `origin`
+  - `active_mask`
+- `fem_mesh_assets`
+  - `geometry_name`
+  - `mesh_source`
+  - `mesh: MeshIR`
+
+Semantics:
+
+- `GeometryIR` remains the backend-neutral physical description.
+- `GeometryAssetsIR` carries a realized numerical representation that can be consumed by a planner.
+- This is a bootstrap seam for the shared geometry asset pipeline; it does not replace the
+  canonical geometry semantics in `GeometryIR`.
+
+Current use:
+
+- FDM may consume a precomputed voxelized `active_mask` for imported or curved geometry.
+- FEM may consume a precomputed `MeshIR` produced by the external meshing stack.
+
+Validation rules:
+
+- every asset must reference an existing `geometry_name`,
+- at most one asset of each family may exist per geometry,
+- `fdm_grid_assets.active_mask.len()` must match `cells[0] * cells[1] * cells[2]`,
+- `MeshIR` must pass structural validation.
 
 ## `InitialMagnetizationIR`
 

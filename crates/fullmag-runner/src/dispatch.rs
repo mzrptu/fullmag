@@ -152,7 +152,8 @@ fn execute_cuda_fdm(
     let mut latest_stats: Option<StepStats> = None;
     let mut current_time = 0.0;
     while current_time < until_seconds {
-        let stats = backend.step(dt)?;
+        let dt_step = dt.min(until_seconds - current_time);
+        let stats = backend.step(dt_step)?;
         current_time = stats.time;
         latest_stats = Some(stats.clone());
         record_cuda_due_outputs(
@@ -191,6 +192,16 @@ fn execute_cuda_fdm(
             precision: match plan.precision {
                 fullmag_ir::ExecutionPrecision::Single => "single".to_string(),
                 fullmag_ir::ExecutionPrecision::Double => "double".to_string(),
+            },
+            demag_operator_kind: if plan.enable_demag {
+                Some("spectral_fft_open_boundary".to_string())
+            } else {
+                None
+            },
+            fft_backend: if plan.enable_demag {
+                Some("cuFFT".to_string())
+            } else {
+                None
             },
             device_name: Some(device_info.name),
             compute_capability: Some(device_info.compute_capability),

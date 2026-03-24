@@ -16,6 +16,22 @@ They are not energy terms by themselves, but errors here invalidate material ass
 
 ## 3. Numerical interpretation
 
+### 3.0 Shared geometry asset layer
+
+Before backend-specific lowering, Fullmag should treat imported or analytic geometry as a shared
+**geometry asset**, not yet as a grid or a mesh.
+
+This asset layer must support at least:
+
+- analytic primitives (`Box`, `Cylinder`),
+- imported surface/CAD assets (`STL`, `STEP`, ...),
+- backend-specific realization:
+  - tetrahedral mesh for FEM,
+  - voxelized `active_mask` on a Cartesian grid for FDM.
+
+`STL` is therefore an interoperability and surface-asset format, not the native execution format of
+either backend.
+
 ### 3.1 FDM
 
 Imported geometry is voxelized onto a regular grid, and regions become masks over cells.
@@ -48,7 +64,13 @@ Hybrid execution needs explicit projection semantics between FEM mesh representa
 ## 4. API, IR, and planner impact
 
 - The Python API must keep `ImportedGeometry`, `Region`, `Material`, and `Ferromagnet` distinct.
+- The Python-side geometry asset layer may use external tooling such as `trimesh`, `meshio`, and
+  `gmsh`, but the shared API still exposes only backend-neutral geometry objects.
 - `ProblemIR` stores geometry references and named region bindings without forcing a grid or element layout.
+- When geometry has already been realized before planner execution, `ProblemIR.geometry_assets`
+  carries the bootstrap numerical asset:
+  - voxelized `active_mask` for FDM,
+  - `MeshIR` for FEM.
 - The planner owns voxelization, meshing, and projection decisions.
 - The long-term architecture must keep region topology separate from continuous coefficient
   variation; this is now specified explicitly in

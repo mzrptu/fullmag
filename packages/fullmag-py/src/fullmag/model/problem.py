@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from hashlib import sha256
-from typing import Sequence
+from typing import Any, Sequence
 
 from fullmag._validation import ensure_unique_names, require_non_empty
 from fullmag.model.discretization import DiscretizationHints
@@ -80,6 +80,10 @@ class Problem:
         regions = self._collect_regions()
         geometries = self._collect_geometries()
         source_hash = sha256(script_source.encode("utf-8")).hexdigest() if script_source else None
+        geometry_assets = self._build_geometry_assets(
+            requested_backend=requested_backend,
+            geometries=geometries,
+        )
 
         return {
             "ir_version": IR_VERSION,
@@ -97,6 +101,7 @@ class Problem:
                 "seeds": [],
             },
             "geometry": {"entries": [geometry.to_ir() for geometry in geometries]},
+            "geometry_assets": geometry_assets,
             "regions": [region.to_ir() for region in regions],
             "materials": [material.to_ir() for material in materials],
             "magnets": [magnet.to_ir() for magnet in self.magnets],
@@ -186,3 +191,52 @@ class Problem:
                     f"region '{region_name}' is bound to conflicting geometries"
                 )
             seen[region_name] = geometry_name
+
+    def _build_geometry_assets(
+        self,
+        *,
+        requested_backend: BackendTarget,
+        geometries: Sequence[object],
+    ) -> dict[str, Any] | None:
+        if self.discretization is None:
+            return None
+
+        assets: dict[str, list[dict[str, object]]] = {
+            "fdm_grid_assets": [],
+            "fem_mesh_assets": [],
+        }
+
+        if self.discretization.fdm is not None:
+            from fullmag.model.geometry import Cylinder, ImportedGeometry
+            from fullmag.meshing import realize_fdm_grid_asset
+
+            for geometry in geometries:
+                if isinstance(geometry, (Cylinder, ImportedGeometry)):
+                    asset = realize_fdm_grid_asset(geometry, self.discretization.fdm)
+                    assets["fdm_grid_assets"].append(asset.to_ir(geometry.geometry_name))
+
+        if requested_backend == BackendTarget.FEM and self.discretization.fem is not None:
+            from fullmag._core import validate_mesh_ir
+            from fullmag.model.geometry import ImportedGeometry
+            from fullmag.meshing import realize_fem_mesh_asset
+
+            for geometry in geometries:
+                mesh = realize_fem_mesh_asset(geometry, self.discretization.fem)
+                mesh_ir = mesh.to_ir(geometry.geometry_name)
+                is_valid = validate_mesh_ir(mesh_ir)
+                if is_valid is False:
+                    raise ValueError(f"generated mesh asset for '{geometry.geometry_name}' failed Rust validation")
+                mesh_source = self.discretization.fem.mesh
+                if mesh_source is None and isinstance(geometry, ImportedGeometry):
+                    mesh_source = geometry.source
+                assets["fem_mesh_assets"].append(
+                    {
+                        "geometry_name": geometry.geometry_name,
+                        "mesh_source": mesh_source,
+                        "mesh": mesh_ir,
+                    }
+                )
+
+        if not assets["fdm_grid_assets"] and not assets["fem_mesh_assets"]:
+            return None
+        return assets

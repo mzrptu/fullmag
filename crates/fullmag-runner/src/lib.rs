@@ -103,6 +103,7 @@ pub fn run_problem_with_callback(
         e_total: 0.0,
         max_dm_dt: 0.0,
         max_h_eff: 0.0,
+        max_h_demag: 0.0,
         wall_time_ns: 0,
     });
     let final_m: Vec<f64> = executed
@@ -143,6 +144,7 @@ mod tests {
             grid: GridDimensions { cells: [4, 4, 1] },
             cell_size: [2e-9, 2e-9, 2e-9],
             region_mask: vec![0; 16],
+            active_mask: None,
             initial_magnetization: vec![[1.0, 0.0, 0.0]; 16],
             material: FdmMaterialIR {
                 name: "Py".to_string(),

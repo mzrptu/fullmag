@@ -204,6 +204,142 @@ pub struct FdmHintsIR {
 pub struct FemHintsIR {
     pub order: u32,
     pub hmax: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MeshIR {
+    pub mesh_name: String,
+    pub nodes: Vec<[f64; 3]>,
+    pub elements: Vec<[u32; 4]>,
+    pub element_markers: Vec<u32>,
+    pub boundary_faces: Vec<[u32; 3]>,
+    pub boundary_markers: Vec<u32>,
+}
+
+impl MeshIR {
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        if self.mesh_name.trim().is_empty() {
+            errors.push("mesh_name must not be empty".to_string());
+        }
+        if self.nodes.is_empty() {
+            errors.push("mesh.nodes must not be empty".to_string());
+        }
+        if self.elements.is_empty() {
+            errors.push("mesh.elements must not be empty".to_string());
+        }
+        if self.element_markers.len() != self.elements.len() {
+            errors.push("mesh.element_markers length must match mesh.elements length".to_string());
+        }
+        if self.boundary_markers.len() != self.boundary_faces.len() {
+            errors.push(
+                "mesh.boundary_markers length must match mesh.boundary_faces length".to_string(),
+            );
+        }
+
+        let node_count = self.nodes.len() as u32;
+        for (index, element) in self.elements.iter().enumerate() {
+            if element.iter().any(|node| *node >= node_count) {
+                errors.push(format!("mesh element {index} contains invalid node index"));
+            }
+        }
+        for (index, face) in self.boundary_faces.iter().enumerate() {
+            if face.iter().any(|node| *node >= node_count) {
+                errors.push(format!("mesh boundary face {index} contains invalid node index"));
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FdmGridAssetIR {
+    pub geometry_name: String,
+    pub cells: [u32; 3],
+    pub cell_size: [f64; 3],
+    pub origin: [f64; 3],
+    pub active_mask: Vec<bool>,
+}
+
+impl FdmGridAssetIR {
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        if self.geometry_name.trim().is_empty() {
+            errors.push("fdm_grid_asset.geometry_name must not be empty".to_string());
+        }
+        for (axis, value) in ["x", "y", "z"].iter().zip(self.cells.iter()) {
+            if *value == 0 {
+                errors.push(format!("fdm_grid_asset.cells[{axis}] must be > 0"));
+            }
+        }
+        for (axis, value) in ["x", "y", "z"].iter().zip(self.cell_size.iter()) {
+            if *value <= 0.0 {
+                errors.push(format!("fdm_grid_asset.cell_size[{axis}] must be positive"));
+            }
+        }
+
+        let expected = self.cells[0] as usize * self.cells[1] as usize * self.cells[2] as usize;
+        if self.active_mask.len() != expected {
+            errors.push(format!(
+                "fdm_grid_asset.active_mask length ({}) must match cells product ({expected})",
+                self.active_mask.len()
+            ));
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemMeshAssetIR {
+    pub geometry_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_source: Option<String>,
+    pub mesh: MeshIR,
+}
+
+impl FemMeshAssetIR {
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        if self.geometry_name.trim().is_empty() {
+            errors.push("fem_mesh_asset.geometry_name must not be empty".to_string());
+        }
+        if let Err(mesh_errors) = self.mesh.validate() {
+            errors.extend(
+                mesh_errors
+                    .into_iter()
+                    .map(|error| format!("fem_mesh_asset.{}", error)),
+            );
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct GeometryAssetsIR {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fdm_grid_assets: Vec<FdmGridAssetIR>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fem_mesh_assets: Vec<FemMeshAssetIR>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -221,6 +357,8 @@ pub struct ProblemIR {
     pub ir_version: String,
     pub problem_meta: ProblemMeta,
     pub geometry: GeometryIR,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_assets: Option<GeometryAssetsIR>,
     pub regions: Vec<RegionIR>,
     pub materials: Vec<MaterialIR>,
     pub magnets: Vec<MagnetIR>,
@@ -271,6 +409,10 @@ pub struct FdmPlanIR {
     pub grid: GridDimensions,
     pub cell_size: [f64; 3],
     pub region_mask: Vec<u32>,
+    /// Per-cell activity flag. `None` means all cells active (full grid).
+    /// `Some(mask)` with `mask[i] == false` marks cell `i` as outside the geometry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_mask: Option<Vec<bool>>,
     pub initial_magnetization: Vec<[f64; 3]>,
     pub material: FdmMaterialIR,
     pub enable_exchange: bool,
@@ -294,6 +436,12 @@ pub struct FdmMaterialIR {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FemPlanIR {
     pub mesh_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<MeshIR>,
+    pub fe_order: u32,
+    pub hmax: f64,
     pub initial_magnetization: Vec<[f64; 3]>,
     pub exchange_bc: ExchangeBoundaryCondition,
     pub integrator: IntegratorChoice,
@@ -333,6 +481,7 @@ impl ProblemIR {
                     size: [200e-9, 20e-9, 5e-9],
                 }],
             },
+            geometry_assets: None,
             regions: vec![RegionIR {
                 name: "strip".to_string(),
                 geometry: "strip".to_string(),
@@ -595,6 +744,46 @@ impl ProblemIR {
             .map(|material| material.name.as_str())
             .collect();
 
+        if let Some(geometry_assets) = &self.geometry_assets {
+            let mut seen_fdm_assets = BTreeSet::new();
+            for asset in &geometry_assets.fdm_grid_assets {
+                if !seen_fdm_assets.insert(asset.geometry_name.as_str()) {
+                    errors.push(format!(
+                        "fdm_grid_asset for geometry '{}' is declared more than once",
+                        asset.geometry_name
+                    ));
+                }
+                if !geometry_names.contains(asset.geometry_name.as_str()) {
+                    errors.push(format!(
+                        "fdm_grid_asset references missing geometry '{}'",
+                        asset.geometry_name
+                    ));
+                }
+                if let Err(asset_errors) = asset.validate() {
+                    errors.extend(asset_errors);
+                }
+            }
+
+            let mut seen_fem_assets = BTreeSet::new();
+            for asset in &geometry_assets.fem_mesh_assets {
+                if !seen_fem_assets.insert(asset.geometry_name.as_str()) {
+                    errors.push(format!(
+                        "fem_mesh_asset for geometry '{}' is declared more than once",
+                        asset.geometry_name
+                    ));
+                }
+                if !geometry_names.contains(asset.geometry_name.as_str()) {
+                    errors.push(format!(
+                        "fem_mesh_asset references missing geometry '{}'",
+                        asset.geometry_name
+                    ));
+                }
+                if let Err(asset_errors) = asset.validate() {
+                    errors.extend(asset_errors);
+                }
+            }
+        }
+
         for region in &self.regions {
             if !geometry_names.contains(region.geometry.as_str()) {
                 errors.push(format!(
@@ -663,6 +852,9 @@ impl ProblemIR {
                 }
                 if fem.hmax <= 0.0 {
                     errors.push("fem.hmax must be positive".to_string());
+                }
+                if fem.mesh.as_ref().is_some_and(|mesh| mesh.trim().is_empty()) {
+                    errors.push("fem.mesh must not be empty when provided".to_string());
                 }
             }
             if let Some(hybrid) = &hints.hybrid {
@@ -906,6 +1098,7 @@ mod tests {
                 },
                 cell_size: [2e-9, 2e-9, 2e-9],
                 region_mask: vec![0, 0, 1],
+                active_mask: None,
                 initial_magnetization: vec![[1.0, 0.0, 0.0]],
                 material: FdmMaterialIR {
                     name: "Py".to_string(),
@@ -918,6 +1111,9 @@ mod tests {
                 exchange_bc: ExchangeBoundaryCondition::Neumann,
                 integrator: IntegratorChoice::Heun,
                 fixed_timestep: Some(1e-13),
+                enable_exchange: true,
+                enable_demag: false,
+                external_field: None,
             }),
             output_plan: OutputPlanIR {
                 outputs: vec![OutputIR::Field {
@@ -955,5 +1151,67 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("must have positive every_seconds")));
+    }
+
+    #[test]
+    fn mesh_ir_validates_basic_unit_tet() {
+        let mesh = MeshIR {
+            mesh_name: "unit_tet".to_string(),
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            elements: vec![[0, 1, 2, 3]],
+            element_markers: vec![1],
+            boundary_faces: vec![[0, 1, 2]],
+            boundary_markers: vec![1],
+        };
+
+        assert!(mesh.validate().is_ok());
+    }
+
+    #[test]
+    fn fem_mesh_hint_must_not_be_empty() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.backend_policy.discretization_hints = Some(DiscretizationHintsIR {
+            fdm: Some(FdmHintsIR {
+                cell: [2e-9, 2e-9, 2e-9],
+            }),
+            fem: Some(FemHintsIR {
+                order: 1,
+                hmax: 2e-9,
+                mesh: Some("".to_string()),
+            }),
+            hybrid: None,
+        });
+
+        let errors = ir
+            .validate()
+            .expect_err("empty fem.mesh must fail validation");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("fem.mesh must not be empty")));
+    }
+
+    #[test]
+    fn fdm_grid_asset_mask_length_must_match_cells_product() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.geometry_assets = Some(GeometryAssetsIR {
+            fdm_grid_assets: vec![FdmGridAssetIR {
+                geometry_name: "strip".to_string(),
+                cells: [2, 2, 1],
+                cell_size: [2e-9, 2e-9, 5e-9],
+                origin: [0.0, 0.0, 0.0],
+                active_mask: vec![true; 3],
+            }],
+            fem_mesh_assets: vec![],
+        });
+
+        let errors = ir
+            .validate()
+            .expect_err("bad active_mask length must fail validation");
+        assert!(errors.iter().any(|error| error.contains("active_mask length")));
     }
 }

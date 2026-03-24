@@ -24,14 +24,21 @@ class FDM:
 class FEM:
     order: int
     hmax: float
+    mesh: str | None = None
 
     def __post_init__(self) -> None:
         if self.order < 1:
             raise ValueError("order must be >= 1")
         require_positive(self.hmax, "hmax")
+        if self.mesh is not None and not self.mesh.strip():
+            raise ValueError("mesh must not be empty when provided")
 
     def to_ir(self) -> dict[str, object]:
-        return {"order": self.order, "hmax": self.hmax}
+        return {
+            "order": self.order,
+            "hmax": self.hmax,
+            "mesh": self.mesh,
+        }
 
 
 @dataclass(frozen=True, slots=True)

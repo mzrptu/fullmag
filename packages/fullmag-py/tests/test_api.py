@@ -9,9 +9,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import numpy as np
+
 import fullmag as fm
 from fullmag.runtime import cli as runtime_cli
 from fullmag.runtime import helper as runtime_helper
+from fullmag.meshing.gmsh_bridge import MeshData
 
 
 class ProblemApiTests(unittest.TestCase):
@@ -119,6 +122,77 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(ir["backend_policy"]["requested_backend"], "hybrid")
         self.assertEqual(ir["backend_policy"]["execution_precision"], "single")
         self.assertEqual(ir["validation_profile"]["execution_mode"], "hybrid")
+
+    def test_fem_hint_accepts_optional_mesh_reference(self) -> None:
+        fem = fm.FEM(order=1, hmax=2e-9, mesh="meshes/sample.msh")
+
+        self.assertEqual(
+            fem.to_ir(),
+            {"order": 1, "hmax": 2e-9, "mesh": "meshes/sample.msh"},
+        )
+
+    def test_cylinder_problem_exports_fdm_grid_asset(self) -> None:
+        geometry = fm.Cylinder(radius=50e-9, height=20e-9, name="pillar")
+        material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
+        magnet = fm.Ferromagnet(name="pillar", geometry=geometry, material=material)
+        problem = fm.Problem(
+            name="pillar_problem",
+            magnets=[magnet],
+            energy=[fm.Exchange()],
+            study=fm.TimeEvolution(
+                dynamics=fm.LLG(),
+                outputs=[fm.SaveField("m", every=1e-12)],
+            ),
+            discretization=fm.DiscretizationHints(fdm=fm.FDM(cell=(5e-9, 5e-9, 5e-9))),
+        )
+
+        ir = problem.to_ir(requested_backend=fm.BackendTarget.FDM)
+        assets = ir["geometry_assets"]["fdm_grid_assets"]
+
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0]["geometry_name"], "pillar")
+        self.assertEqual(assets[0]["cell_size"], [5e-9, 5e-9, 5e-9])
+        self.assertLess(sum(assets[0]["active_mask"]), len(assets[0]["active_mask"]))
+
+    def test_fem_backend_exports_mesh_asset(self) -> None:
+        geometry = fm.Box(size=(10e-9, 10e-9, 10e-9), name="box")
+        material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
+        magnet = fm.Ferromagnet(name="box", geometry=geometry, material=material)
+        problem = fm.Problem(
+            name="mesh_problem",
+            magnets=[magnet],
+            energy=[fm.Exchange()],
+            study=fm.TimeEvolution(
+                dynamics=fm.LLG(),
+                outputs=[fm.SaveField("m", every=1e-12)],
+            ),
+            discretization=fm.DiscretizationHints(fem=fm.FEM(order=1, hmax=2e-9)),
+        )
+
+        mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            ),
+            elements=np.asarray([[0, 1, 2, 3]], dtype=np.int32),
+            element_markers=np.asarray([1], dtype=np.int32),
+            boundary_faces=np.asarray([[0, 1, 2]], dtype=np.int32),
+            boundary_markers=np.asarray([1], dtype=np.int32),
+        )
+
+        with patch("fullmag.meshing.realize_fem_mesh_asset", return_value=mesh), patch(
+            "fullmag._core.validate_mesh_ir", return_value=True
+        ):
+            ir = problem.to_ir(requested_backend=fm.BackendTarget.FEM)
+
+        assets = ir["geometry_assets"]["fem_mesh_assets"]
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0]["geometry_name"], "box")
+        self.assertEqual(assets[0]["mesh"]["mesh_name"], "box")
 
     def test_build_entrypoint_is_preferred(self) -> None:
         script = """

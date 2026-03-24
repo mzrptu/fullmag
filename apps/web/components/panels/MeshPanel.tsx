@@ -3,9 +3,28 @@
 import Panel from "../ui/Panel";
 import ReadonlyField from "../ui/ReadonlyField";
 
+/* ── FEM mesh info (from mesh builder / artifacts) ────────────────── */
+
+export interface FemMeshInfo {
+  nNodes: number;
+  nElements: number;
+  nBoundaryFaces: number;
+  totalVolume: number;
+  feOrder: number;
+  quality?: {
+    minAR: number;
+    maxAR: number;
+    meanAR: number;
+  };
+}
+
 interface MeshPanelProps {
-  grid: number[];   // [Nx, Ny, Nz]
-  cellSize?: number[]; // [dx, dy, dz] in meters — from plan_summary
+  /** FDM grid dimensions [Nx, Ny, Nz] */
+  grid?: number[];
+  /** FDM cell size [dx, dy, dz] in meters */
+  cellSize?: number[];
+  /** FEM mesh info — if present, FEM mode is used */
+  femInfo?: FemMeshInfo;
 }
 
 const SI_PREFIXES = [
@@ -30,80 +49,142 @@ function formatSI(meters: number): { value: string; unit: string } {
   return { value: (meters / last.divisor).toFixed(3), unit: last.unit };
 }
 
-export default function MeshPanel({ grid, cellSize }: MeshPanelProps) {
-  const [Nx, Ny, Nz] = grid.length >= 3 ? grid : [0, 0, 0];
-  const [dx, dy, dz] = cellSize && cellSize.length >= 3 ? cellSize : [0, 0, 0];
+function formatEng(v: number, p = 3): string {
+  if (v === 0) return "0";
+  const exp = Math.floor(Math.log10(Math.abs(v)));
+  if (exp >= -3 && exp <= 3) return v.toPrecision(p);
+  return v.toExponential(p - 1);
+}
 
-  const groups: [string, Array<{ label: string; value: string; unit: string }>][] = [
-    [
-      "Grid",
-      [
-        { label: "Nx", value: `${Nx}`, unit: "" },
-        { label: "Ny", value: `${Ny}`, unit: "" },
-        { label: "Nz", value: `${Nz}`, unit: "" },
-      ],
-    ],
-  ];
+/* ── Shared section renderer ──────────────────────────────────────── */
 
-  if (dx || dy || dz) {
-    groups.push([
-      "Cell size",
-      [
-        { label: "dx", ...formatSI(dx) },
-        { label: "dy", ...formatSI(dy) },
-        { label: "dz", ...formatSI(dz) },
-      ],
-    ]);
-    groups.push([
-      "Total size",
-      [
-        { label: "Tx", ...formatSI(Nx * dx) },
-        { label: "Ty", ...formatSI(Ny * dy) },
-        { label: "Tz", ...formatSI(Nz * dz) },
-      ],
-    ]);
-  }
+function Section({
+  title,
+  entries,
+}: {
+  title: string;
+  entries: { label: string; value: string; unit: string }[];
+}) {
+  return (
+    <div style={{ display: "grid", gap: "0.8rem" }}>
+      <header
+        style={{
+          fontSize: "0.76rem",
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: "0.12em",
+          color: "var(--text-3)",
+        }}
+      >
+        {title}
+      </header>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${Math.min(entries.length, 3)}, minmax(0, 1fr))`,
+          gap: "0.8rem",
+        }}
+      >
+        {entries.map((entry) => (
+          <ReadonlyField
+            key={entry.label}
+            label={entry.label}
+            value={entry.value}
+            unit={entry.unit}
+            mono
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Main Component ───────────────────────────────────────────────── */
+
+export default function MeshPanel({ grid, cellSize, femInfo }: MeshPanelProps) {
+  const isFem = !!femInfo;
 
   return (
     <Panel
       title="Mesh"
-      subtitle="Technical mesh facts."
+      subtitle={isFem ? "FEM tetrahedral mesh." : "FDM structured grid."}
       panelId="mesh"
-      eyebrow="Inspector"
+      eyebrow={isFem ? "FEM" : "FDM"}
     >
       <div style={{ display: "grid", gap: "1rem" }}>
-        {groups.map(([group, entries]) => (
-          <div key={group} style={{ display: "grid", gap: "0.8rem" }}>
-            <header
-              style={{
-                fontSize: "0.76rem",
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: "0.12em",
-                color: "var(--text-3)",
-              }}
-            >
-              {group}
-            </header>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                gap: "0.8rem",
-              }}
-            >
-              {entries.map((entry) => (
-                <ReadonlyField
-                  key={entry.label}
-                  label={entry.label}
-                  value={entry.value}
-                  unit={entry.unit}
-                  mono
-                />
-              ))}
-            </div>
-          </div>
-        ))}
+        {/* ── FEM mode ──────────────────────────── */}
+        {isFem && femInfo && (
+          <>
+            <Section
+              title="Topology"
+              entries={[
+                { label: "Nodes", value: femInfo.nNodes.toLocaleString(), unit: "" },
+                { label: "Elements", value: femInfo.nElements.toLocaleString(), unit: "" },
+                { label: "Boundary", value: femInfo.nBoundaryFaces.toLocaleString(), unit: "" },
+              ]}
+            />
+            <Section
+              title="Properties"
+              entries={[
+                { label: "Volume", value: formatEng(femInfo.totalVolume), unit: "m³" },
+                { label: "FE Order", value: `P${femInfo.feOrder}`, unit: "" },
+              ]}
+            />
+            {femInfo.quality && (
+              <Section
+                title="Quality"
+                entries={[
+                  { label: "Min AR", value: femInfo.quality.minAR.toFixed(2), unit: "" },
+                  { label: "Mean AR", value: femInfo.quality.meanAR.toFixed(2), unit: "" },
+                  { label: "Max AR", value: femInfo.quality.maxAR.toFixed(2), unit: "" },
+                ]}
+              />
+            )}
+          </>
+        )}
+
+        {/* ── FDM mode ──────────────────────────── */}
+        {!isFem && grid && (
+          <>
+            {(() => {
+              const [Nx, Ny, Nz] = grid.length >= 3 ? grid : [0, 0, 0];
+              const [dx, dy, dz] = cellSize && cellSize.length >= 3 ? cellSize : [0, 0, 0];
+
+              return (
+                <>
+                  <Section
+                    title="Grid"
+                    entries={[
+                      { label: "Nx", value: `${Nx}`, unit: "" },
+                      { label: "Ny", value: `${Ny}`, unit: "" },
+                      { label: "Nz", value: `${Nz}`, unit: "" },
+                    ]}
+                  />
+                  {(dx || dy || dz) && (
+                    <>
+                      <Section
+                        title="Cell size"
+                        entries={[
+                          { label: "dx", ...formatSI(dx) },
+                          { label: "dy", ...formatSI(dy) },
+                          { label: "dz", ...formatSI(dz) },
+                        ]}
+                      />
+                      <Section
+                        title="Total size"
+                        entries={[
+                          { label: "Tx", ...formatSI(Nx * dx) },
+                          { label: "Ty", ...formatSI(Ny * dy) },
+                          { label: "Tz", ...formatSI(Nz * dz) },
+                        ]}
+                      />
+                    </>
+                  )}
+                </>
+              );
+            })()}
+          </>
+        )}
       </div>
     </Panel>
   );

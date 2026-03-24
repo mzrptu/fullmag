@@ -30,6 +30,7 @@ pub struct StepStats {
     pub e_total: f64,
     pub max_dm_dt: f64,
     pub max_h_eff: f64,
+    pub max_h_demag: f64,
     pub wall_time_ns: u64,
 }
 
@@ -80,6 +81,12 @@ pub struct ExecutionProvenance {
     pub execution_engine: String,
     /// Numeric precision used: "double" or "single".
     pub precision: String,
+    /// Demag operator kind: "spectral_fft_open_boundary" or "tensor_fft_newell".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub demag_operator_kind: Option<String>,
+    /// FFT backend used: "rustfft" (CPU) or "cuFFT" (CUDA).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fft_backend: Option<String>,
     /// GPU device name, if applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_name: Option<String>,
@@ -126,4 +133,5 @@ pub(crate) struct StateObservables {
     pub total_energy: f64,
     pub max_dm_dt: f64,
     pub max_h_eff: f64,
+    pub max_h_demag: f64,
 }

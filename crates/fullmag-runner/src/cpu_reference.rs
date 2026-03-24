@@ -143,11 +143,17 @@ fn execute_reference_fdm_impl(
         )?;
     }
 
+    // --- Create FFT workspace once for the entire simulation ---
+    let mut fft_workspace = problem.create_workspace();
+
     while state.time_seconds < until_seconds {
+        let dt_step = dt.min(until_seconds - state.time_seconds);
         let wall_start = Instant::now();
-        problem.step(&mut state, dt).map_err(|e| RunError {
-            message: format!("Step {}: {}", step_count, e),
-        })?;
+        problem
+            .step_with_workspace(&mut state, dt_step, &mut fft_workspace)
+            .map_err(|e| RunError {
+                message: format!("Step {}: {}", step_count, e),
+            })?;
         let wall_elapsed = wall_start.elapsed().as_nanos() as u64;
         step_count += 1;
 
@@ -156,7 +162,7 @@ fn execute_reference_fdm_impl(
                 &problem,
                 &state,
                 step_count,
-                dt,
+                dt_step,
                 wall_elapsed,
                 &mut scalar_schedules,
                 &mut field_schedules,
@@ -181,7 +187,7 @@ fn execute_reference_fdm_impl(
                 None
             };
             on_step(StepUpdate {
-                stats: make_step_stats(step_count, state.time_seconds, dt, wall_elapsed, &observables),
+                stats: make_step_stats(step_count, state.time_seconds, dt_step, wall_elapsed, &observables),
                 grid: [live_grid[0], live_grid[1], live_grid[2]],
                 magnetization,
                 finished: false,
@@ -211,6 +217,16 @@ fn execute_reference_fdm_impl(
         provenance: ExecutionProvenance {
             execution_engine: "cpu_reference".to_string(),
             precision: "double".to_string(),
+            demag_operator_kind: if plan.enable_demag {
+                Some("spectral_fft_open_boundary".to_string())
+            } else {
+                None
+            },
+            fft_backend: if plan.enable_demag {
+                Some("rustfft".to_string())
+            } else {
+                None
+            },
             device_name: None,
             compute_capability: None,
             cuda_driver_version: None,
@@ -372,6 +388,7 @@ fn observe_state(
         total_energy: observables.total_energy_joules,
         max_dm_dt: observables.max_rhs_amplitude,
         max_h_eff: observables.max_effective_field_amplitude,
+        max_h_demag: observables.max_demag_field_amplitude,
     })
 }
 
@@ -392,6 +409,7 @@ fn make_step_stats(
         e_total: observables.total_energy,
         max_dm_dt: observables.max_dm_dt,
         max_h_eff: observables.max_h_eff,
+        max_h_demag: observables.max_h_demag,
         wall_time_ns,
     }
 }
@@ -428,6 +446,7 @@ mod tests {
             grid: GridDimensions { cells: [4, 4, 1] },
             cell_size: [2e-9, 2e-9, 2e-9],
             region_mask: vec![0; 16],
+            active_mask: None,
             initial_magnetization: vec![[1.0, 0.0, 0.0]; 16],
             material: FdmMaterialIR {
                 name: "Py".to_string(),

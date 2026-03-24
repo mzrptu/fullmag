@@ -1,0 +1,68 @@
+.container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 360px;
+  background: var(--surface-0, #0c121f);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.toolbar {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  display: flex;
+  gap: 0.4rem;
+  z-index: 10;
+}
+
+.toolBtn {
+  appearance: none;
+  border: 1px solid var(--border-1);
+  background: hsla(220 20% 12% / 0.85);
+  color: var(--text-2);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.25rem 0.6rem;
+  border-radius: 5px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background 120ms, color 120ms;
+}
+
+.toolBtn:hover {
+  background: hsla(220 20% 18% / 0.9);
+  color: var(--text-1);
+}
+
+.toolBtn[data-active="true"] {
+  background: hsl(210 60% 25%);
+  color: hsl(210 80% 80%);
+  border-color: hsl(210 50% 35%);
+}
+
+.info {
+  position: absolute;
+  bottom: 0.6rem;
+  left: 0.6rem;
+  font-size: 0.72rem;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  pointer-events: none;
+}
+
+.viewCubeWrapper {
+  position: absolute;
+  bottom: 0.6rem;
+  right: 0.6rem;
+  z-index: 10;
+}

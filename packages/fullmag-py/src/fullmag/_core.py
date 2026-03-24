@@ -21,6 +21,12 @@ def validate_ir(ir: dict[str, Any]) -> bool | None:
     return bool(_native_core.validate_ir_json(json.dumps(ir)))
 
 
+def validate_mesh_ir(mesh_ir: dict[str, Any]) -> bool | None:
+    if _native_core is None:
+        return None
+    return bool(_native_core.validate_mesh_ir_json(json.dumps(mesh_ir)))
+
+
 def run_problem_json(
     ir: dict[str, Any], until_seconds: float, output_dir: str | None = None
 ) -> dict[str, Any] | None:

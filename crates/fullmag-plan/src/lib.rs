@@ -1,14 +1,15 @@
 //! Execution planning: lowers `ProblemIR` into backend-specific `ExecutionPlanIR`.
 //!
-//! Phase 1 scope: `Box + (Exchange | Demag | Zeeman combinations) + fdm/strict`
+//! Phase 1 scope: `Box/Cylinder/(ImportedGeometry + precomputed grid asset) +
+//! (Exchange | Demag | Zeeman combinations) + fdm/strict`
 //! is the legal executable path.
 //! Everything else is rejected with an honest error.
 
 use fullmag_ir::{
     BackendPlanIR, BackendTarget, CommonPlanMeta, DiscretizationHintsIR, ExchangeBoundaryCondition,
-    ExecutionMode, ExecutionPlanIR, ExecutionPrecision, FdmMaterialIR, FdmPlanIR, GeometryEntryIR,
-    GridDimensions, InitialMagnetizationIR, IntegratorChoice, OutputIR, OutputPlanIR, ProblemIR,
-    ProvenancePlanIR, IR_VERSION,
+    ExecutionMode, ExecutionPlanIR, ExecutionPrecision, FdmGridAssetIR, FdmMaterialIR, FdmPlanIR,
+    GeometryEntryIR, GridDimensions, InitialMagnetizationIR, IntegratorChoice, OutputIR,
+    OutputPlanIR, ProblemIR, ProvenancePlanIR, IR_VERSION,
 };
 use std::collections::BTreeSet;
 use std::fmt;
@@ -33,7 +34,9 @@ impl std::error::Error for PlanError {}
 
 /// Plans a `ProblemIR` into an `ExecutionPlanIR`.
 ///
-/// Phase 1 only supports: Box geometry + executable FDM interaction subset + fdm/strict + Heun.
+/// Phase 1 only supports:
+/// `Box | Cylinder | ImportedGeometry + precomputed active_mask` + executable FDM
+/// interaction subset + `fdm/strict` + `Heun`.
 /// Returns a detailed error for anything outside this subset.
 pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
     // 1. Validate IR first
@@ -102,7 +105,7 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         );
     }
 
-    // 5. Check geometry — only Box is executable
+    // 5. Check geometry — Box and Cylinder are executable
     if problem.geometry.entries.len() != 1 {
         errors.push(format!(
             "Phase 1 supports exactly one geometry entry, found {}",
@@ -110,15 +113,23 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         ));
     }
     let geometry = &problem.geometry.entries[0];
-    let box_size = match geometry {
-        GeometryEntryIR::Box { size, .. } => *size,
-        other => {
-            errors.push(format!(
-                "geometry '{}' is not executable in Phase 1; only Box is supported",
-                other.name()
-            ));
-            [1.0, 1.0, 1.0] // placeholder
-        }
+    enum GeometryShape {
+        Box { size: [f64; 3] },
+        Cylinder { radius: f64, height: f64 },
+        Imported { source: String, format: String },
+    }
+    let shape = match geometry {
+        GeometryEntryIR::Box { size, .. } => GeometryShape::Box { size: *size },
+        GeometryEntryIR::Cylinder {
+            radius, height, ..
+        } => GeometryShape::Cylinder {
+            radius: *radius,
+            height: *height,
+        },
+        GeometryEntryIR::ImportedGeometry { source, format, .. } => GeometryShape::Imported {
+            source: source.clone(),
+            format: format.clone(),
+        },
     };
 
     // 6. Check FDM hints exist
@@ -159,12 +170,101 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         return Err(PlanError { reasons: errors });
     }
 
-    // ---- lowering: Box → grid ----
-    let grid_cells = [
-        (box_size[0] / cell_size[0]).round().max(1.0) as u32,
-        (box_size[1] / cell_size[1]).round().max(1.0) as u32,
-        (box_size[2] / cell_size[2]).round().max(1.0) as u32,
+    // ---- lowering: geometry → grid + active_mask ----
+    let provided_grid_asset = problem
+        .geometry_assets
+        .as_ref()
+        .and_then(|assets| {
+            assets
+                .fdm_grid_assets
+                .iter()
+                .find(|asset| asset.geometry_name == geometry.name())
+        });
+
+    let (bounding_size, active_mask, grid_cells, used_precomputed_asset) =
+        if let Some(asset) = provided_grid_asset {
+            validate_grid_asset_cell_size(asset, cell_size, &mut errors);
+            (
+                [
+                    asset.cells[0] as f64 * asset.cell_size[0],
+                    asset.cells[1] as f64 * asset.cell_size[1],
+                    asset.cells[2] as f64 * asset.cell_size[2],
+                ],
+                Some(asset.active_mask.clone()),
+                asset.cells,
+                true,
+            )
+        } else {
+            match &shape {
+                GeometryShape::Box { size } => {
+                    let grid_cells = [
+                        (size[0] / cell_size[0]).round().max(1.0) as u32,
+                        (size[1] / cell_size[1]).round().max(1.0) as u32,
+                        (size[2] / cell_size[2]).round().max(1.0) as u32,
+                    ];
+                    (*size, None, grid_cells, false)
+                }
+                GeometryShape::Cylinder { radius, height } => {
+                    let diameter = 2.0 * radius;
+                    let bbox = [diameter, diameter, *height];
+                    let nx = (bbox[0] / cell_size[0]).round().max(1.0) as u32;
+                    let ny = (bbox[1] / cell_size[1]).round().max(1.0) as u32;
+                    let nz = (bbox[2] / cell_size[2]).round().max(1.0) as u32;
+                    let n = (nx * ny * nz) as usize;
+                    let cx = nx as f64 * cell_size[0] * 0.5;
+                    let cy = ny as f64 * cell_size[1] * 0.5;
+                    let r2 = radius * radius;
+                    let mut mask = vec![false; n];
+                    for z in 0..nz {
+                        for y in 0..ny {
+                            for x in 0..nx {
+                                let px = (x as f64 + 0.5) * cell_size[0] - cx;
+                                let py = (y as f64 + 0.5) * cell_size[1] - cy;
+                                let idx = (x + nx * (y + ny * z)) as usize;
+                                mask[idx] = (px * px + py * py) <= r2;
+                            }
+                        }
+                    }
+                    (bbox, Some(mask), [nx, ny, nz], false)
+                }
+                GeometryShape::Imported { source, format } => {
+                    errors.push(format!(
+                        "geometry '{}' ({format}:{source}) requires a precomputed FDM grid asset; no voxelized active_mask was provided",
+                        geometry.name()
+                    ));
+                    ([1.0, 1.0, 1.0], None, [1, 1, 1], false)
+                }
+            }
+        };
+
+    // Validate that the requested geometry is close to an integer multiple of cell size.
+    // If the fractional part exceeds tolerance, the realized geometry deviates from the
+    // requested one which could silently change the physics.
+    let realized_size = [
+        grid_cells[0] as f64 * cell_size[0],
+        grid_cells[1] as f64 * cell_size[1],
+        grid_cells[2] as f64 * cell_size[2],
     ];
+    const GRID_TOLERANCE: f64 = 1e-6;
+    for (axis, (requested, realized)) in ["x", "y", "z"]
+        .iter()
+        .zip(bounding_size.iter().zip(realized_size.iter()))
+    {
+        let rel_err = (realized - requested).abs() / requested;
+        if rel_err > GRID_TOLERANCE {
+            errors.push(format!(
+                "geometry size along {} ({:.6e} m) is not an integer multiple of cell size ({:.6e} m); \
+                 realized grid would be {:.6e} m (relative error {:.2e}). \
+                 Adjust size or cell to be a clean multiple.",
+                axis, requested, cell_size[["x", "y", "z"].iter().position(|&a| a == *axis).unwrap()],
+                realized, rel_err
+            ));
+        }
+    }
+
+    if !errors.is_empty() {
+        return Err(PlanError { reasons: errors });
+    }
 
     let magnet = &problem.magnets[0];
     let material = problem
@@ -173,19 +273,37 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         .find(|m| m.name == magnet.material)
         .expect("validation should have caught missing material");
 
+    let n_cells = (grid_cells[0] * grid_cells[1] * grid_cells[2]) as usize;
     let initial_magnetization = match &magnet.initial_magnetization {
         Some(InitialMagnetizationIR::Uniform { value }) => {
-            let n = (grid_cells[0] * grid_cells[1] * grid_cells[2]) as usize;
-            vec![*value; n]
+            if let Some(ref mask) = active_mask {
+                mask.iter()
+                    .map(|&active| if active { *value } else { [0.0, 0.0, 0.0] })
+                    .collect()
+            } else {
+                vec![*value; n_cells]
+            }
         }
-        Some(InitialMagnetizationIR::RandomSeeded { seed }) => generate_random_unit_vectors(
-            *seed,
-            (grid_cells[0] * grid_cells[1] * grid_cells[2]) as usize,
-        ),
+        Some(InitialMagnetizationIR::RandomSeeded { seed }) => {
+            let mut vectors = generate_random_unit_vectors(*seed, n_cells);
+            if let Some(ref mask) = active_mask {
+                for (i, active) in mask.iter().enumerate() {
+                    if !active {
+                        vectors[i] = [0.0, 0.0, 0.0];
+                    }
+                }
+            }
+            vectors
+        }
         Some(InitialMagnetizationIR::SampledField { values }) => values.clone(),
         None => {
-            let n = (grid_cells[0] * grid_cells[1] * grid_cells[2]) as usize;
-            vec![[1.0, 0.0, 0.0]; n]
+            if let Some(ref mask) = active_mask {
+                mask.iter()
+                    .map(|&active| if active { [1.0, 0.0, 0.0] } else { [0.0, 0.0, 0.0] })
+                    .collect()
+            } else {
+                vec![[1.0, 0.0, 0.0]; n_cells]
+            }
         }
     };
 
@@ -197,7 +315,7 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
             } else {
                 return Err(PlanError {
                     reasons: vec![format!(
-                        "integrator '{}' is not supported in Phase 1; only 'heun' is available",
+                        "integrator '{}' is not supported; only 'heun' is available",
                         integrator
                     )],
                 });
@@ -215,10 +333,39 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         } => *gyromagnetic_ratio,
     };
 
+    let active_count = active_mask
+        .as_ref()
+        .map(|m| m.iter().filter(|&&v| v).count())
+        .unwrap_or(n_cells);
+
+    let geometry_label = match &shape {
+        GeometryShape::Box { .. } if used_precomputed_asset => format!(
+            "Box geometry used precomputed FDM grid asset: {}x{}x{} cells",
+            grid_cells[0], grid_cells[1], grid_cells[2]
+        ),
+        GeometryShape::Box { .. } => format!(
+            "Box geometry lowered to {}x{}x{} grid",
+            grid_cells[0], grid_cells[1], grid_cells[2]
+        ),
+        GeometryShape::Cylinder { radius, .. } if used_precomputed_asset => format!(
+            "Cylinder (r={:.3e}) used precomputed FDM grid asset: {}x{}x{} cells, {}/{} active cells",
+            radius, grid_cells[0], grid_cells[1], grid_cells[2], active_count, n_cells
+        ),
+        GeometryShape::Cylinder { radius, .. } => format!(
+            "Cylinder (r={:.3e}) voxelized to {}x{}x{} grid, {}/{} active cells",
+            radius, grid_cells[0], grid_cells[1], grid_cells[2], active_count, n_cells
+        ),
+        GeometryShape::Imported { format, .. } => format!(
+            "Imported geometry ({format}) used precomputed FDM grid asset: {}x{}x{} cells, {}/{} active cells",
+            grid_cells[0], grid_cells[1], grid_cells[2], active_count, n_cells
+        ),
+    };
+
     let fdm_plan = FdmPlanIR {
         grid: GridDimensions { cells: grid_cells },
         cell_size,
-        region_mask: vec![0; (grid_cells[0] * grid_cells[1] * grid_cells[2]) as usize],
+        region_mask: vec![0; n_cells],
+        active_mask,
         initial_magnetization,
         material: FdmMaterialIR {
             name: material.name.clone(),
@@ -250,9 +397,10 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         provenance: ProvenancePlanIR {
             notes: vec![
                 "Phase 1 reference FDM planner".to_string(),
+                geometry_label,
                 format!(
-                    "Box geometry lowered to {}x{}x{} grid",
-                    grid_cells[0], grid_cells[1], grid_cells[2]
+                    "realized grid size: [{:.6e}, {:.6e}, {:.6e}] m",
+                    realized_size[0], realized_size[1], realized_size[2]
                 ),
                 format!(
                     "active terms: exchange={}, demag={}, zeeman={}",
@@ -332,6 +480,25 @@ fn validate_executable_outputs(
     }
 }
 
+fn validate_grid_asset_cell_size(
+    asset: &FdmGridAssetIR,
+    requested_cell_size: [f64; 3],
+    errors: &mut Vec<String>,
+) {
+    const CELL_TOLERANCE: f64 = 1e-12;
+    for axis in 0..3 {
+        let requested = requested_cell_size[axis];
+        let provided = asset.cell_size[axis];
+        if (requested - provided).abs() > CELL_TOLERANCE * requested.max(1.0) {
+            let label = ["x", "y", "z"][axis];
+            errors.push(format!(
+                "fdm_grid_asset for geometry '{}' has cell_size[{label}]={provided:.6e} m, but planner requested {requested:.6e} m",
+                asset.geometry_name
+            ));
+        }
+    }
+}
+
 /// Generate deterministic random unit vectors from a seed.
 pub fn generate_random_unit_vectors(seed: u64, count: usize) -> Vec<[f64; 3]> {
     // Simple xorshift64-based PRNG for deterministic random unit vectors.
@@ -398,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    fn imported_geometry_is_rejected() {
+    fn imported_geometry_without_grid_asset_is_rejected() {
         let mut ir = ProblemIR::bootstrap_example();
         ir.geometry.entries = vec![GeometryEntryIR::ImportedGeometry {
             name: "mesh".to_string(),
@@ -408,7 +575,40 @@ mod tests {
         ir.regions[0].geometry = "mesh".to_string();
 
         let err = plan(&ir).expect_err("imported geometry should be rejected");
-        assert!(err.reasons.iter().any(|r| r.contains("not executable")));
+        assert!(err
+            .reasons
+            .iter()
+            .any(|r| r.contains("requires a precomputed FDM grid asset")));
+    }
+
+    #[test]
+    fn imported_geometry_with_grid_asset_plans_successfully() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.geometry.entries = vec![GeometryEntryIR::ImportedGeometry {
+            name: "mesh".to_string(),
+            source: "sample.stl".to_string(),
+            format: "stl".to_string(),
+        }];
+        ir.regions[0].geometry = "mesh".to_string();
+        ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+            fdm_grid_assets: vec![fullmag_ir::FdmGridAssetIR {
+                geometry_name: "mesh".to_string(),
+                cells: [4, 2, 1],
+                cell_size: [2e-9, 2e-9, 5e-9],
+                origin: [-4e-9, -2e-9, -2.5e-9],
+                active_mask: vec![true, true, true, true, false, false, false, false],
+            }],
+            fem_mesh_assets: vec![],
+        });
+
+        let plan = plan(&ir).expect("imported geometry with grid asset should plan");
+        match plan.backend_plan {
+            BackendPlanIR::Fdm(fdm) => {
+                assert_eq!(fdm.grid.cells, [4, 2, 1]);
+                assert_eq!(fdm.active_mask.unwrap().len(), 8);
+            }
+            _ => panic!("expected FDM plan"),
+        }
     }
 
     #[test]

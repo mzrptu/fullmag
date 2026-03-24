@@ -11,6 +11,8 @@ interface Props {
   grid: [number, number, number];
   vectors: Float64Array | null;
   quantityLabel: string;
+  /** e.g. "m", "H_ex", "H_demag", "H_ext", "H_eff" */
+  quantityId?: string;
   component: VectorComponent;
   plane: SlicePlane;
   sliceIndex: number;
@@ -48,6 +50,40 @@ function getColorScale(min: number, max: number) {
   }
   if (max <= 0) return { min, max, palette: NEGATIVE_PALETTE };
   return { min, max, palette: POSITIVE_PALETTE };
+}
+
+/**
+ * Quantity-aware colorbar range.
+ * – Magnetization magnitude: always [0, 1] (unit vector → |m|≡1, noise is FP artefact)
+ * – Magnetization component:  always [-1, 1]
+ * – Field quantities (H_ex, etc.): use actual data min/max, but snap symmetric if it crosses zero
+ */
+function getSmartColorScale(
+  dMin: number,
+  dMax: number,
+  quantityId: string | undefined,
+  component: VectorComponent,
+) {
+  const isMagnetization = !quantityId || quantityId === "m";
+
+  if (isMagnetization) {
+    if (component === "magnitude") {
+      return { min: 0, max: 1, palette: POSITIVE_PALETTE };
+    }
+    // Component mx/my/mz: range is always [-1, 1]
+    return { min: -1, max: 1, palette: DIVERGING_PALETTE };
+  }
+
+  // For field quantities, use actual data range but snap to nice bounds
+  // If nearly constant (range < 1e-10 × |max|), expand the range
+  const range = dMax - dMin;
+  if (range < Math.abs(dMax) * 1e-10 && range > 0) {
+    const mid = (dMin + dMax) / 2;
+    const halfSpan = Math.abs(mid) * 0.01 || 1e-20;
+    return getColorScale(mid - halfSpan, mid + halfSpan);
+  }
+
+  return getColorScale(dMin, dMax);
 }
 
 function formatMagnitude(value: number): string {
@@ -89,6 +125,7 @@ export default function MagnetizationSlice2D({
   grid,
   vectors,
   quantityLabel,
+  quantityId,
   component,
   plane,
   sliceIndex,
@@ -165,7 +202,7 @@ export default function MagnetizationSlice2D({
     }
 
     const chart = chartRef.current;
-    const scale = getColorScale(dMin, dMax);
+    const scale = getSmartColorScale(dMin, dMax, quantityId, component);
     const xCategories = Array.from({ length: xLen }, (_, i) => i);
     const yCategories = Array.from({ length: yLen }, (_, i) => i);
 

@@ -1,0 +1,30 @@
+"""Geometry asset, meshing, and voxelization helpers for backend lowering."""
+
+from .asset_pipeline import realize_fdm_grid_asset, realize_fem_mesh_asset
+from .gmsh_bridge import (
+    MeshData,
+    generate_box_mesh,
+    generate_cylinder_mesh,
+    generate_mesh,
+    generate_mesh_from_file,
+)
+from .quality import MeshQualityReport, validate_mesh
+from .surface_assets import SurfaceAsset, export_geometry_to_stl, load_surface_asset
+from .voxelization import VoxelMaskData, voxelize_geometry
+
+__all__ = [
+    "MeshData",
+    "MeshQualityReport",
+    "SurfaceAsset",
+    "VoxelMaskData",
+    "export_geometry_to_stl",
+    "generate_box_mesh",
+    "generate_cylinder_mesh",
+    "generate_mesh",
+    "generate_mesh_from_file",
+    "load_surface_asset",
+    "realize_fdm_grid_asset",
+    "realize_fem_mesh_asset",
+    "validate_mesh",
+    "voxelize_geometry",
+]

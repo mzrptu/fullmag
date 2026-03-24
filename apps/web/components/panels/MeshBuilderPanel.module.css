@@ -1,0 +1,95 @@
+.meshBuilder {
+  display: grid;
+  gap: 1.2rem;
+}
+
+.section {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.sectionTitle {
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.rowWide {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.qualityGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem 1rem;
+}
+
+.qualityStat {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  color: var(--text-2);
+}
+
+.qualityStat code {
+  font-family: var(--font-mono);
+  color: var(--text-1);
+  font-size: 0.78rem;
+}
+
+.actionRow {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+}
+
+.statusPill {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.statusPill[data-status="idle"] {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.statusPill[data-status="generating"] {
+  background: hsl(210 60% 20%);
+  color: hsl(210 80% 70%);
+  animation: gentlePulse 1.8s ease-in-out infinite;
+}
+
+.statusPill[data-status="ready"] {
+  background: hsl(140 40% 18%);
+  color: hsl(140 60% 65%);
+}
+
+.statusPill[data-status="error"] {
+  background: hsl(0 40% 18%);
+  color: hsl(0 60% 65%);
+}
+
+@keyframes gentlePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.separator {
+  height: 1px;
+  background: var(--border-1);
+  margin: 0.2rem 0;
+}

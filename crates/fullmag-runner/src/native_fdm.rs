@@ -135,6 +135,7 @@ impl NativeFdmBackend {
             e_ext: stats.external_energy_joules,
             e_total: stats.total_energy_joules,
             max_h_eff: stats.max_effective_field_amplitude,
+            max_h_demag: 0.0, // TODO(WP2): wire from C ABI max_demag_field_amplitude
             max_dm_dt: stats.max_rhs_amplitude,
             wall_time_ns: stats.wall_time_ns,
         })

@@ -76,6 +76,7 @@ pub(crate) fn write_artifacts(
         e_total: 0.0,
         max_dm_dt: 0.0,
         max_h_eff: 0.0,
+        max_h_demag: 0.0,
         wall_time_ns: 0,
     });
     write_field_file(
@@ -152,6 +153,11 @@ fn field_layout(plan: &fullmag_ir::ExecutionPlanIR) -> serde_json::Value {
         BackendPlanIR::Fem(fem) => serde_json::json!({
             "backend": "fem",
             "mesh_name": fem.mesh_name,
+            "mesh_source": fem.mesh_source,
+            "fe_order": fem.fe_order,
+            "hmax": fem.hmax,
+            "n_nodes": fem.mesh.as_ref().map(|mesh| mesh.nodes.len()),
+            "n_elements": fem.mesh.as_ref().map(|mesh| mesh.elements.len()),
         }),
     }
 }

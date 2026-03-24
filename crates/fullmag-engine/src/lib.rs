@@ -1,8 +1,9 @@
 use rustfft::num_complex::Complex;
-use rustfft::FftPlanner;
+use rustfft::{Fft, FftPlanner};
 use std::error::Error;
 use std::f64::consts::PI;
 use std::fmt;
+use std::sync::Arc;
 
 pub const MU0: f64 = 4.0 * PI * 1e-7;
 pub const DEFAULT_GYROMAGNETIC_RATIO: f64 = 2.211e5;
@@ -159,6 +160,116 @@ impl Default for EffectiveFieldTerms {
     }
 }
 
+/// Cached FFT plans and scratch buffers for spectral demag.
+///
+/// Build once per grid via [`ExchangeLlgProblem::create_workspace`] and pass
+/// into [`ExchangeLlgProblem::step`].  This avoids rebuilding `FftPlanner`
+/// and re-planning every call to `demag_field_from_vectors`.
+pub struct FftWorkspace {
+    fwd_x: Arc<dyn Fft<f64>>,
+    fwd_y: Arc<dyn Fft<f64>>,
+    fwd_z: Arc<dyn Fft<f64>>,
+    inv_x: Arc<dyn Fft<f64>>,
+    inv_y: Arc<dyn Fft<f64>>,
+    inv_z: Arc<dyn Fft<f64>>,
+    /// Padded grid dimensions (2×N per axis).
+    pub px: usize,
+    pub py: usize,
+    pub pz: usize,
+    /// Re-usable scratch line buffers.
+    line_y: Vec<Complex<f64>>,
+    line_z: Vec<Complex<f64>>,
+    /// Re-usable padded frequency-domain buffers (avoids allocation per demag call).
+    buf_mx: Vec<Complex<f64>>,
+    buf_my: Vec<Complex<f64>>,
+    buf_mz: Vec<Complex<f64>>,
+    buf_hx: Vec<Complex<f64>>,
+    buf_hy: Vec<Complex<f64>>,
+    buf_hz: Vec<Complex<f64>>,
+}
+
+impl FftWorkspace {
+    pub fn new(nx: usize, ny: usize, nz: usize) -> Self {
+        let px = nx * 2;
+        let py = ny * 2;
+        let pz = nz * 2;
+        let padded_len = px * py * pz;
+        let mut planner = FftPlanner::<f64>::new();
+        let zero = Complex::new(0.0, 0.0);
+        Self {
+            fwd_x: planner.plan_fft_forward(px),
+            fwd_y: planner.plan_fft_forward(py),
+            fwd_z: planner.plan_fft_forward(pz),
+            inv_x: planner.plan_fft_inverse(px),
+            inv_y: planner.plan_fft_inverse(py),
+            inv_z: planner.plan_fft_inverse(pz),
+            px,
+            py,
+            pz,
+            line_y: vec![zero; py],
+            line_z: vec![zero; pz],
+            buf_mx: vec![zero; padded_len],
+            buf_my: vec![zero; padded_len],
+            buf_mz: vec![zero; padded_len],
+            buf_hx: vec![zero; padded_len],
+            buf_hy: vec![zero; padded_len],
+            buf_hz: vec![zero; padded_len],
+        }
+    }
+
+    /// Zero out all six M/H frequency-domain buffers.
+    fn clear_bufs(&mut self) {
+        let zero = Complex::new(0.0, 0.0);
+        for v in self.buf_mx.iter_mut()
+            .chain(self.buf_my.iter_mut())
+            .chain(self.buf_mz.iter_mut())
+            .chain(self.buf_hx.iter_mut())
+            .chain(self.buf_hy.iter_mut())
+            .chain(self.buf_hz.iter_mut())
+        {
+            *v = zero;
+        }
+    }
+
+    /// Forward FFT on the three M-component buffers (buf_mx, buf_my, buf_mz).
+    fn fft3_m_forward(&mut self) {
+        fft3_core(
+            &mut self.buf_mx, self.px, self.py, self.pz,
+            &*self.fwd_x, &*self.fwd_y, &*self.fwd_z,
+            &mut self.line_y, &mut self.line_z,
+        );
+        fft3_core(
+            &mut self.buf_my, self.px, self.py, self.pz,
+            &*self.fwd_x, &*self.fwd_y, &*self.fwd_z,
+            &mut self.line_y, &mut self.line_z,
+        );
+        fft3_core(
+            &mut self.buf_mz, self.px, self.py, self.pz,
+            &*self.fwd_x, &*self.fwd_y, &*self.fwd_z,
+            &mut self.line_y, &mut self.line_z,
+        );
+    }
+
+    /// Inverse FFT on the three H-component buffers (buf_hx, buf_hy, buf_hz).
+    fn fft3_h_inverse(&mut self) {
+        fft3_core(
+            &mut self.buf_hx, self.px, self.py, self.pz,
+            &*self.inv_x, &*self.inv_y, &*self.inv_z,
+            &mut self.line_y, &mut self.line_z,
+        );
+        fft3_core(
+            &mut self.buf_hy, self.px, self.py, self.pz,
+            &*self.inv_x, &*self.inv_y, &*self.inv_z,
+            &mut self.line_y, &mut self.line_z,
+        );
+        fft3_core(
+            &mut self.buf_hz, self.px, self.py, self.pz,
+            &*self.inv_x, &*self.inv_y, &*self.inv_z,
+            &mut self.line_y, &mut self.line_z,
+        );
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExchangeLlgState {
     grid: GridShape,
@@ -205,6 +316,7 @@ pub struct StepReport {
     pub external_energy_joules: f64,
     pub total_energy_joules: f64,
     pub max_effective_field_amplitude: f64,
+    pub max_demag_field_amplitude: f64,
     pub max_rhs_amplitude: f64,
 }
 
@@ -220,6 +332,7 @@ pub struct EffectiveFieldObservables {
     pub external_energy_joules: f64,
     pub total_energy_joules: f64,
     pub max_effective_field_amplitude: f64,
+    pub max_demag_field_amplitude: f64,
     pub max_rhs_amplitude: f64,
 }
 
@@ -264,6 +377,11 @@ impl ExchangeLlgProblem {
 
     pub fn uniform_state(&self, value: Vector3) -> Result<ExchangeLlgState> {
         ExchangeLlgState::uniform(self.grid, value)
+    }
+
+    /// Build a reusable FFT workspace matching this problem's grid.
+    pub fn create_workspace(&self) -> FftWorkspace {
+        FftWorkspace::new(self.grid.nx, self.grid.ny, self.grid.nz)
     }
 
     pub fn exchange_field(&self, state: &ExchangeLlgState) -> Result<Vec<Vector3>> {
@@ -314,19 +432,35 @@ impl ExchangeLlgProblem {
     }
 
     pub fn step(&self, state: &mut ExchangeLlgState, dt: f64) -> Result<StepReport> {
+        let mut ws = self.create_workspace();
+        self.step_with_workspace(state, dt, &mut ws)
+    }
+
+    /// Step with a pre-built FFT workspace (avoids re-planning per step).
+    pub fn step_with_workspace(
+        &self,
+        state: &mut ExchangeLlgState,
+        dt: f64,
+        ws: &mut FftWorkspace,
+    ) -> Result<StepReport> {
         self.ensure_state_matches_grid(state)?;
         if dt <= 0.0 {
             return Err(EngineError::new("dt must be positive"));
         }
 
         match self.dynamics.integrator {
-            TimeIntegrator::Heun => self.heun_step(state, dt),
+            TimeIntegrator::Heun => self.heun_step(state, dt, ws),
         }
     }
 
-    fn heun_step(&self, state: &mut ExchangeLlgState, dt: f64) -> Result<StepReport> {
+    fn heun_step(
+        &self,
+        state: &mut ExchangeLlgState,
+        dt: f64,
+        ws: &mut FftWorkspace,
+    ) -> Result<StepReport> {
         let initial = state.magnetization.clone();
-        let k1 = self.llg_rhs_from_vectors(&initial);
+        let k1 = self.llg_rhs_from_vectors_ws(&initial, ws);
 
         let predicted = initial
             .iter()
@@ -334,7 +468,7 @@ impl ExchangeLlgProblem {
             .map(|(m, rhs)| normalized(add(*m, scale(*rhs, dt))))
             .collect::<Result<Vec<_>>>()?;
 
-        let k2 = self.llg_rhs_from_vectors(&predicted);
+        let k2 = self.llg_rhs_from_vectors_ws(&predicted, ws);
         let corrected = initial
             .iter()
             .zip(k1.iter().zip(k2.iter()))
@@ -344,7 +478,7 @@ impl ExchangeLlgProblem {
         state.magnetization = corrected;
         state.time_seconds += dt;
 
-        let observables = self.observe_vectors(state.magnetization());
+        let observables = self.observe_vectors_ws(state.magnetization(), ws);
 
         Ok(StepReport {
             time_seconds: state.time_seconds,
@@ -353,6 +487,7 @@ impl ExchangeLlgProblem {
             external_energy_joules: observables.external_energy_joules,
             total_energy_joules: observables.total_energy_joules,
             max_effective_field_amplitude: observables.max_effective_field_amplitude,
+            max_demag_field_amplitude: observables.max_demag_field_amplitude,
             max_rhs_amplitude: observables.max_rhs_amplitude,
         })
     }
@@ -367,13 +502,22 @@ impl ExchangeLlgProblem {
     }
 
     fn observe_vectors(&self, magnetization: &[Vector3]) -> EffectiveFieldObservables {
+        let mut ws = self.create_workspace();
+        self.observe_vectors_ws(magnetization, &mut ws)
+    }
+
+    fn observe_vectors_ws(
+        &self,
+        magnetization: &[Vector3],
+        ws: &mut FftWorkspace,
+    ) -> EffectiveFieldObservables {
         let exchange_field = if self.terms.exchange {
             self.exchange_field_from_vectors(magnetization)
         } else {
             zero_vectors(self.grid.cell_count())
         };
         let demag_field = if self.terms.demag {
-            self.demag_field_from_vectors(magnetization)
+            self.demag_field_from_vectors_ws(magnetization, ws)
         } else {
             zero_vectors(self.grid.cell_count())
         };
@@ -403,6 +547,10 @@ impl ExchangeLlgProblem {
         let total_energy_joules =
             exchange_energy_joules + demag_energy_joules + external_energy_joules;
 
+        let max_effective_field_amplitude = max_norm(&effective_field);
+        let max_demag_field_amplitude = max_norm(&demag_field);
+        let max_rhs_amplitude = max_norm(&rhs);
+
         EffectiveFieldObservables {
             magnetization: magnetization.to_vec(),
             exchange_field,
@@ -413,8 +561,9 @@ impl ExchangeLlgProblem {
             demag_energy_joules,
             external_energy_joules,
             total_energy_joules,
-            max_effective_field_amplitude: max_norm(&effective_field),
-            max_rhs_amplitude: max_norm(&rhs),
+            max_effective_field_amplitude,
+            max_demag_field_amplitude,
+            max_rhs_amplitude,
         }
     }
 
@@ -460,14 +609,22 @@ impl ExchangeLlgProblem {
     }
 
     fn demag_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
-        let px = self.grid.nx * 2;
-        let py = self.grid.ny * 2;
-        let pz = self.grid.nz * 2;
+        let mut ws = self.create_workspace();
+        self.demag_field_from_vectors_ws(magnetization, &mut ws)
+    }
+
+    fn demag_field_from_vectors_ws(
+        &self,
+        magnetization: &[Vector3],
+        ws: &mut FftWorkspace,
+    ) -> Vec<Vector3> {
+        let px = ws.px;
+        let py = ws.py;
+        let pz = ws.pz;
         let padded_len = px * py * pz;
 
-        let mut mx = vec![Complex::new(0.0, 0.0); padded_len];
-        let mut my = vec![Complex::new(0.0, 0.0); padded_len];
-        let mut mz = vec![Complex::new(0.0, 0.0); padded_len];
+        // Zero out and pack magnetization into workspace M buffers.
+        ws.clear_bufs();
 
         for z in 0..self.grid.nz {
             for y in 0..self.grid.ny {
@@ -478,24 +635,18 @@ impl ExchangeLlgProblem {
                         magnetization[src_index],
                         self.material.saturation_magnetisation,
                     );
-                    mx[dst_index] = Complex::new(moment[0], 0.0);
-                    my[dst_index] = Complex::new(moment[1], 0.0);
-                    mz[dst_index] = Complex::new(moment[2], 0.0);
+                    ws.buf_mx[dst_index] = Complex::new(moment[0], 0.0);
+                    ws.buf_my[dst_index] = Complex::new(moment[1], 0.0);
+                    ws.buf_mz[dst_index] = Complex::new(moment[2], 0.0);
                 }
             }
         }
 
-        fft3_in_place(&mut mx, px, py, pz, false);
-        fft3_in_place(&mut my, px, py, pz, false);
-        fft3_in_place(&mut mz, px, py, pz, false);
+        ws.fft3_m_forward();
 
         let lx = px as f64 * self.cell_size.dx;
         let ly = py as f64 * self.cell_size.dy;
         let lz = pz as f64 * self.cell_size.dz;
-
-        let mut hx = vec![Complex::new(0.0, 0.0); padded_len];
-        let mut hy = vec![Complex::new(0.0, 0.0); padded_len];
-        let mut hz = vec![Complex::new(0.0, 0.0); padded_len];
 
         for z in 0..pz {
             let kz = 2.0 * PI * frequency_index(z, pz) as f64 / lz;
@@ -509,17 +660,15 @@ impl ExchangeLlgProblem {
                     }
 
                     let index = padded_index(px, py, x, y, z);
-                    let kdotm = mx[index] * kx + my[index] * ky + mz[index] * kz;
-                    hx[index] = -kdotm * (kx / k2);
-                    hy[index] = -kdotm * (ky / k2);
-                    hz[index] = -kdotm * (kz / k2);
+                    let kdotm = ws.buf_mx[index] * kx + ws.buf_my[index] * ky + ws.buf_mz[index] * kz;
+                    ws.buf_hx[index] = -kdotm * (kx / k2);
+                    ws.buf_hy[index] = -kdotm * (ky / k2);
+                    ws.buf_hz[index] = -kdotm * (kz / k2);
                 }
             }
         }
 
-        fft3_in_place(&mut hx, px, py, pz, true);
-        fft3_in_place(&mut hy, px, py, pz, true);
-        fft3_in_place(&mut hz, px, py, pz, true);
+        ws.fft3_h_inverse();
 
         let normalisation = 1.0 / padded_len as f64;
         let mut field = vec![[0.0, 0.0, 0.0]; self.grid.cell_count()];
@@ -529,9 +678,9 @@ impl ExchangeLlgProblem {
                     let src_index = padded_index(px, py, x, y, z);
                     let dst_index = self.grid.index(x, y, z);
                     field[dst_index] = [
-                        hx[src_index].re * normalisation,
-                        hy[src_index].re * normalisation,
-                        hz[src_index].re * normalisation,
+                        ws.buf_hx[src_index].re * normalisation,
+                        ws.buf_hy[src_index].re * normalisation,
+                        ws.buf_hz[src_index].re * normalisation,
                     ];
                 }
             }
@@ -545,13 +694,22 @@ impl ExchangeLlgProblem {
     }
 
     fn effective_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
+        let mut ws = self.create_workspace();
+        self.effective_field_from_vectors_ws(magnetization, &mut ws)
+    }
+
+    fn effective_field_from_vectors_ws(
+        &self,
+        magnetization: &[Vector3],
+        ws: &mut FftWorkspace,
+    ) -> Vec<Vector3> {
         let exchange_field = if self.terms.exchange {
             self.exchange_field_from_vectors(magnetization)
         } else {
             zero_vectors(self.grid.cell_count())
         };
         let demag_field = if self.terms.demag {
-            self.demag_field_from_vectors(magnetization)
+            self.demag_field_from_vectors_ws(magnetization, ws)
         } else {
             zero_vectors(self.grid.cell_count())
         };
@@ -560,7 +718,16 @@ impl ExchangeLlgProblem {
     }
 
     fn llg_rhs_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
-        let field = self.effective_field_from_vectors(magnetization);
+        let mut ws = self.create_workspace();
+        self.llg_rhs_from_vectors_ws(magnetization, &mut ws)
+    }
+
+    fn llg_rhs_from_vectors_ws(
+        &self,
+        magnetization: &[Vector3],
+        ws: &mut FftWorkspace,
+    ) -> Vec<Vector3> {
+        let field = self.effective_field_from_vectors_ws(magnetization, ws);
         magnetization
             .iter()
             .zip(field.iter())
@@ -680,6 +847,7 @@ pub fn run_reference_exchange_demo(steps: usize, dt: f64) -> Result<ReferenceDem
         external_energy_joules: 0.0,
         total_energy_joules: initial_exchange_energy_joules,
         max_effective_field_amplitude: 0.0,
+        max_demag_field_amplitude: 0.0,
         max_rhs_amplitude: 0.0,
     };
 
@@ -699,30 +867,19 @@ pub fn run_reference_exchange_demo(steps: usize, dt: f64) -> Result<ReferenceDem
     })
 }
 
-fn fft3_in_place(
+/// Core 3D FFT: operates on an external data slice using explicit plan/scratch refs.
+fn fft3_core(
     data: &mut [Complex<f64>],
     nx: usize,
     ny: usize,
     nz: usize,
-    inverse: bool,
+    fft_x: &dyn Fft<f64>,
+    fft_y: &dyn Fft<f64>,
+    fft_z: &dyn Fft<f64>,
+    line_y: &mut [Complex<f64>],
+    line_z: &mut [Complex<f64>],
 ) {
-    let mut planner = FftPlanner::<f64>::new();
-    let fft_x = if inverse {
-        planner.plan_fft_inverse(nx)
-    } else {
-        planner.plan_fft_forward(nx)
-    };
-    let fft_y = if inverse {
-        planner.plan_fft_inverse(ny)
-    } else {
-        planner.plan_fft_forward(ny)
-    };
-    let fft_z = if inverse {
-        planner.plan_fft_inverse(nz)
-    } else {
-        planner.plan_fft_forward(nz)
-    };
-
+    // X-axis transforms (contiguous in memory)
     for z in 0..nz {
         for y in 0..ny {
             let start = padded_index(nx, ny, 0, y, z);
@@ -730,31 +887,62 @@ fn fft3_in_place(
         }
     }
 
-    let mut line_y = vec![Complex::new(0.0, 0.0); ny];
+    // Y-axis transforms (strided, use scratch line)
     for z in 0..nz {
         for x in 0..nx {
             for y in 0..ny {
                 line_y[y] = data[padded_index(nx, ny, x, y, z)];
             }
-            fft_y.process(&mut line_y);
+            fft_y.process(line_y);
             for y in 0..ny {
                 data[padded_index(nx, ny, x, y, z)] = line_y[y];
             }
         }
     }
 
-    let mut line_z = vec![Complex::new(0.0, 0.0); nz];
+    // Z-axis transforms (strided, use scratch line)
     for y in 0..ny {
         for x in 0..nx {
             for z in 0..nz {
                 line_z[z] = data[padded_index(nx, ny, x, y, z)];
             }
-            fft_z.process(&mut line_z);
+            fft_z.process(line_z);
             for z in 0..nz {
                 data[padded_index(nx, ny, x, y, z)] = line_z[z];
             }
         }
     }
+}
+
+/// 3D FFT using cached workspace plans (avoids per-call FftPlanner).
+fn fft3_with_workspace(
+    data: &mut [Complex<f64>],
+    ws: &mut FftWorkspace,
+    inverse: bool,
+) {
+    let (fft_x, fft_y, fft_z) = if inverse {
+        (&*ws.inv_x, &*ws.inv_y, &*ws.inv_z)
+    } else {
+        (&*ws.fwd_x, &*ws.fwd_y, &*ws.fwd_z)
+    };
+    fft3_core(
+        data, ws.px, ws.py, ws.pz,
+        fft_x, fft_y, fft_z,
+        &mut ws.line_y, &mut ws.line_z,
+    );
+}
+
+/// Legacy wrapper — creates workspace on the fly (used only in tests).
+#[allow(dead_code)]
+fn fft3_in_place(
+    data: &mut [Complex<f64>],
+    nx: usize,
+    ny: usize,
+    nz: usize,
+    inverse: bool,
+) {
+    let mut ws = FftWorkspace::new(nx / 2, ny / 2, nz / 2);
+    fft3_with_workspace(data, &mut ws, inverse);
 }
 
 fn padded_index(nx: usize, ny: usize, x: usize, y: usize, z: usize) -> usize {
@@ -1005,6 +1193,113 @@ mod tests {
         assert!(
             e_out > e_in,
             "thin-film demag should penalise out-of-plane magnetization more strongly, out={e_out}, in={e_in}"
+        );
+    }
+
+    #[test]
+    fn demag_energy_is_non_negative_for_random_states() {
+        let problem = demag_problem(4, 4, 2);
+        // Seeded pseudo-random initial magnetization
+        let n = 4 * 4 * 2;
+        let mut m0 = Vec::with_capacity(n);
+        let mut seed: u64 = 42;
+        for _ in 0..n {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let x = ((seed >> 33) as f64) / (u32::MAX as f64) * 2.0 - 1.0;
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let y = ((seed >> 33) as f64) / (u32::MAX as f64) * 2.0 - 1.0;
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let z = ((seed >> 33) as f64) / (u32::MAX as f64) * 2.0 - 1.0;
+            let len = (x * x + y * y + z * z).sqrt().max(1e-12);
+            m0.push([x / len, y / len, z / len]);
+        }
+        let state = problem.new_state(m0).expect("state should build");
+        let obs = problem.observe(&state).expect("observables");
+
+        assert!(
+            obs.demag_energy_joules >= 0.0,
+            "demag energy must be non-negative, got {}",
+            obs.demag_energy_joules
+        );
+        assert!(obs.demag_energy_joules.is_finite(), "demag energy must be finite");
+    }
+
+    #[test]
+    fn total_energy_decreases_during_demag_relaxation() {
+        let grid = GridShape::new(8, 8, 1).expect("valid grid");
+        let problem = ExchangeLlgProblem::with_terms(
+            grid,
+            CellSize::new(2e-9, 2e-9, 2e-9).expect("valid cell size"),
+            MaterialParameters::new(800e3, 13e-12, 0.5).expect("valid material"),
+            LlgConfig::default(),
+            EffectiveFieldTerms {
+                exchange: true,
+                demag: true,
+                external_field: None,
+            },
+        );
+
+        // Start with slightly tilted m (pure z gives m×H=0, no dynamics)
+        let n = grid.cell_count();
+        let tilted: Vec<Vector3> = (0..n).map(|_| {
+            let len = (0.01f64 * 0.01 + 0.01 * 0.01 + 1.0).sqrt();
+            [0.01 / len, 0.01 / len, 1.0 / len]
+        }).collect();
+        let mut state = problem.new_state(tilted).expect("state should build");
+        let mut ws = problem.create_workspace();
+
+        let initial_energy = problem.observe(&state).expect("observables").total_energy_joules;
+        let dt = 1e-14;
+        for _ in 0..200 {
+            problem
+                .step_with_workspace(&mut state, dt, &mut ws)
+                .expect("step should succeed");
+        }
+        let final_energy = problem.observe(&state).expect("observables").total_energy_joules;
+
+        assert!(
+            final_energy < initial_energy,
+            "total energy should decrease during damped relaxation with demag, initial={initial_energy}, final={final_energy}"
+        );
+    }
+
+    #[test]
+    fn workspace_demag_matches_standalone_demag() {
+        let problem = demag_problem(4, 4, 2);
+        let state = problem.uniform_state([1.0, 0.0, 0.0]).expect("state should build");
+
+        // Compute via standalone call (creates workspace internally)
+        let field_direct = problem.demag_field(&state).expect("demag field should evaluate");
+        // Compute via workspace
+        let mut ws = problem.create_workspace();
+        let obs_ws = problem.observe(&state).expect("observables");
+
+        for (i, (direct, ws_val)) in field_direct.iter().zip(obs_ws.demag_field.iter()).enumerate()
+        {
+            for c in 0..3 {
+                assert!(
+                    (direct[c] - ws_val[c]).abs() < 1e-14,
+                    "component {c} of cell {i} differs between workspace and standalone demag"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn thin_film_in_plane_demag_energy_is_small() {
+        let problem = demag_problem(8, 8, 1);
+        let state = problem.uniform_state([1.0, 0.0, 0.0]).expect("state should build");
+        let obs = problem.observe(&state).expect("observables");
+
+        // In-plane uniform magnetization of a thin film should have near-zero demag energy
+        // (relative to the out-of-plane case)
+        let out_of_plane = problem.uniform_state([0.0, 0.0, 1.0]).expect("state should build");
+        let e_out = problem.observe(&out_of_plane).expect("observables").demag_energy_joules;
+
+        assert!(
+            obs.demag_energy_joules < e_out * 0.5,
+            "in-plane demag energy should be smaller than out-of-plane, in={}, out={e_out}",
+            obs.demag_energy_joules
         );
     }
 }
