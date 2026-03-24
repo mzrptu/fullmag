@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+cuda = ["fullmag-runner/cuda"]
+
 [dependencies]
 async-stream = "0.3"
 axum.workspace = true

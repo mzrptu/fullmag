@@ -14,6 +14,7 @@ import SegmentedControl from "../ui/SegmentedControl";
 import StatusBadge from "../ui/StatusBadge";
 import EmptyState from "../ui/EmptyState";
 import SelectField from "../ui/SelectField";
+import ScalarPlot from "../plots/ScalarPlot";
 
 interface RunControlRoomProps {
   sessionId: string;
@@ -352,42 +353,15 @@ export default function RunControlRoom({ sessionId }: RunControlRoomProps) {
             subtitle="Time-series of active energies and diagnostics."
             panelId="scalars"
             eyebrow="Analysis"
+            actions={
+              <StatusBadge
+                label={`${scalarRows.length} points`}
+                tone={scalarRows.length ? "info" : "default"}
+              />
+            }
           >
             {scalarRows.length > 0 ? (
-              <div
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "0.82rem",
-                  color: "var(--text-2)",
-                  maxHeight: "var(--terminal-height)",
-                  overflow: "auto",
-                }}
-              >
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>Step</th>
-                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>Time</th>
-                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>E_ex</th>
-                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>E_demag</th>
-                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>E_ext</th>
-                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "left", color: "var(--text-3)" }}>E_total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scalarRows.slice(-20).map((row) => (
-                      <tr key={`${row.step}-${row.time}`} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.step}</td>
-                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.time.toExponential(3)}</td>
-                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.e_ex.toExponential(3)}</td>
-                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.e_demag.toExponential(3)}</td>
-                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.e_ext.toExponential(3)}</td>
-                        <td style={{ padding: "0.25rem 0.5rem" }}>{row.e_total.toExponential(3)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ScalarPlot rows={scalarRows} />
             ) : (
               <EmptyState title="No scalar data yet" tone="info" compact />
             )}

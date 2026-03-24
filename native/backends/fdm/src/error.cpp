@@ -18,6 +18,13 @@ void set_cuda_error(Context &ctx, const char *operation, cudaError_t err) {
     ctx.last_error = buf;
 }
 
+void set_cufft_error(Context &ctx, const char *operation, cufftResult err) {
+    char buf[512];
+    std::snprintf(buf, sizeof(buf), "cuFFT error in %s: %d",
+                  operation, static_cast<int>(err));
+    ctx.last_error = buf;
+}
+
 #endif // FULLMAG_HAS_CUDA
 
 } // namespace fdm

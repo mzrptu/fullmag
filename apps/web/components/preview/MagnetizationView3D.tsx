@@ -4,7 +4,9 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import ViewCube from "./ViewCube";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
+import t from "./Toolbar3D.module.css";
 
 // ─── Types (mirroring amumax preview3D.ts) ──────────────────────────
 interface Props {
@@ -491,38 +493,11 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
   return (
     <div style={{ position: "relative" }}>
       {/* ─── Floating Toolbar (1:1 from amumax Toolbar3D.svelte) ──── */}
-      <div style={{
-        position: "absolute", left: 8, top: 8, zIndex: 10,
-        display: "flex", flexDirection: "column",
-      }}>
-        <button
-          onClick={() => setExpanded(!expanded)}
-          title="3D Controls"
-          style={{
-            width: 32, height: 32, display: "flex", alignItems: "center",
-            justifyContent: "center", borderRadius: 8,
-            background: "rgba(12,18,31,0.7)", border: "1px solid rgba(255,255,255,0.1)",
-            color: "#8899bb", fontSize: 16, cursor: "pointer",
-            backdropFilter: "blur(8px)",
-          }}
-        >
-          ⚙
-        </button>
+      <div className={t.toolbar}>
+        <button className={t.toggleBtn} onClick={() => setExpanded(!expanded)} title="3D Controls">⚙</button>
 
         {expanded && (
-          <div style={{
-            marginTop: 4,
-            background: "linear-gradient(180deg, rgba(12,18,31,0.92), rgba(8,12,22,0.92))",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 12, padding: 10,
-            minWidth: 200, maxWidth: 220, maxHeight: 360,
-            overflowY: "auto", display: "flex", flexDirection: "column", gap: 10,
-            backdropFilter: "blur(14px)",
-            boxShadow: "0 20px 50px rgba(0,0,0,0.28)",
-            scrollbarWidth: "thin" as const,
-            scrollbarColor: "rgba(107,167,255,0.3) transparent",
-          }}>
-            {/* Render mode */}
+          <div className={t.toolbarContent}>
             <ControlGroup label="Render mode">
               <SegmentedGroup
                 options={[["glyph", "ARROWS"], ["voxel", "VOXEL"]]}
@@ -532,13 +507,11 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
               />
             </ControlGroup>
 
-            {/* Brightness */}
             <ControlGroup label="Brightness" value={settings.brightness.toFixed(1)}>
               <Slider min={0.3} max={3.0} step={0.1} value={settings.brightness}
                 onChange={(v) => update({ brightness: v })} />
             </ControlGroup>
 
-            {/* Quality */}
             <ControlGroup label="Quality">
               <SegmentedGroup
                 options={[["low", "LOW"], ["high", "HIGH"], ["ultra", "ULTRA"]]}
@@ -548,7 +521,6 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
               />
             </ControlGroup>
 
-            {/* Voxel-only controls */}
             {settings.renderMode === "voxel" && (
               <>
                 <ControlGroup label="Color by">
@@ -586,28 +558,12 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
               </>
             )}
 
-            {/* Divider */}
-            <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "2px 0" }} />
+            <div className={t.divider} />
 
-            {/* Topography */}
             <ControlGroup label="Topography">
               <button
+                className={`${t.actionBtn} ${settings.topoEnabled ? t.topoActive : ""}`}
                 onClick={() => update({ topoEnabled: !settings.topoEnabled })}
-                style={{
-                  padding: "0.48rem 0", fontSize: 11, fontWeight: 700,
-                  letterSpacing: "0.04em", cursor: "pointer", width: "100%",
-                  borderRadius: 8, border: "1px solid rgba(255,255,255,0.08)",
-                  ...(settings.topoEnabled
-                    ? {
-                        background: "linear-gradient(135deg, rgba(52,211,153,0.85), rgba(16,185,129,0.85))",
-                        color: "#08101d",
-                        borderColor: "rgba(52,211,153,0.5)",
-                      }
-                    : {
-                        background: "rgba(255,255,255,0.035)",
-                        color: "#8899bb",
-                      }),
-                }}
               >
                 {settings.topoEnabled ? "⛰ ON" : "OFF"}
               </button>
@@ -631,32 +587,15 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
               </>
             )}
 
-            {/* Reset camera */}
-            <button
-              onClick={resetCamera}
-              style={{
-                padding: "0.48rem 0", fontSize: 11, fontWeight: 700,
-                letterSpacing: "0.04em", color: "#8899bb",
-                background: "rgba(255,255,255,0.035)",
-                border: "1px solid rgba(255,255,255,0.08)",
-                borderRadius: 8, cursor: "pointer", width: "100%",
-              }}
-            >
-              Reset Camera
-            </button>
+            <button className={t.actionBtn} onClick={resetCamera}>Reset Camera</button>
           </div>
         )}
       </div>
 
       {/* ─── Visible count badge ──── */}
       {visibleCount > 0 && (
-        <div style={{
-          position: "absolute", right: 8, top: 8, zIndex: 10,
-          fontSize: 10, color: "#667799", fontFamily: "monospace",
-          background: "rgba(12,18,31,0.7)", padding: "4px 8px",
-          borderRadius: 6, backdropFilter: "blur(8px)",
-        }}>
-          {fieldLabel} · {visibleCount.toLocaleString()} cells
+        <div className={t.statsPill}>
+          {settings.renderMode === "voxel" ? "Voxels" : "Arrows"}: {visibleCount.toLocaleString()}
         </div>
       )}
 
@@ -669,6 +608,9 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
           background: `#${BG_COLOR.toString(16).padStart(6, "0")}`,
         }}
       />
+
+      {/* ─── ViewCube + Axis Gizmo ──── */}
+      <ViewCube sceneRef={sceneRef} grid={grid} />
     </div>
   );
 }
@@ -680,14 +622,10 @@ function ControlGroup({ label, value, children }: {
   label: string; value?: string; children: React.ReactNode;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <div style={{
-        fontSize: 11, color: "#8899bb", display: "flex",
-        justifyContent: "space-between", alignItems: "center",
-        textTransform: "uppercase" as const, letterSpacing: "0.05em",
-      }}>
+    <div className={t.controlGroup}>
+      <div className={t.controlLabel}>
         {label}
-        {value && <span style={{ color: "#ccd6e6", fontWeight: 600, fontFamily: "monospace" }}>{value}</span>}
+        {value && <span className={t.controlValue}>{value}</span>}
       </div>
       {children}
     </div>
@@ -700,32 +638,14 @@ function SegmentedGroup({ options, value, onChange, columns }: {
   onChange: (v: string) => void;
   columns: number;
 }) {
+  const gridClass = columns === 2 ? t.btnGroup2 : columns === 3 ? t.btnGroupWide : "";
   return (
-    <div style={{
-      display: "grid",
-      gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-      borderRadius: 8, overflow: "hidden",
-      border: "1px solid rgba(255,255,255,0.08)",
-      background: "rgba(255,255,255,0.03)",
-    }}>
-      {options.map(([k, label], i) => (
+    <div className={`${t.btnGroup} ${gridClass}`}>
+      {options.map(([k, label]) => (
         <button
           key={k}
+          className={`${t.segBtn} ${value === k ? t.segBtnActive : ""}`}
           onClick={() => onChange(k)}
-          style={{
-            padding: "0.42rem 0", fontSize: 11, fontWeight: 700,
-            letterSpacing: "0.04em", border: "none", cursor: "pointer",
-            borderRight: i < options.length - 1 ? "1px solid rgba(255,255,255,0.08)" : "none",
-            ...(value === k
-              ? {
-                  background: "linear-gradient(135deg, rgba(87,200,182,0.92), rgba(56,178,162,0.92))",
-                  color: "#08101d",
-                }
-              : {
-                  background: "transparent",
-                  color: "#667799",
-                }),
-          }}
         >
           {label}
         </button>
@@ -741,13 +661,9 @@ function Slider({ min, max, step, value, onChange }: {
   return (
     <input
       type="range"
+      className={t.slider}
       min={min} max={max} step={step} value={value}
       onChange={(e) => onChange(parseFloat(e.target.value))}
-      style={{
-        width: "100%", height: 4, appearance: "none" as const,
-        background: "linear-gradient(90deg, rgba(87,200,182,0.2), rgba(107,167,255,0.24))",
-        borderRadius: 999, outline: "none", cursor: "pointer", border: "none",
-      }}
     />
   );
 }

@@ -28,18 +28,18 @@ Every feature carries one of three statuses:
 | Feature | FDM | FEM | Hybrid | Tier | Notes |
 |---------|-----|-----|--------|------|-------|
 | `Box` geometry | ✅ exec | planned | planned | **public-executable** (FDM) | Box→grid lowering in `fullmag-plan` |
-| `Cylinder` geometry | planned | planned | planned | semantic-only | Requires voxelizer for FDM execution |
+| `Cylinder` geometry | planned | planned | planned | semantic-only | Requires active-mask voxelizer for accurate curved-boundary FDM execution |
 | Imported geometry ref | planned | planned | planned | semantic-only | Requires voxelizer/mesher pipeline |
 | Material constants (`Ms`, `A`, `alpha`) | ✅ exec | planned | planned | **public-executable** (FDM) | Used by the CPU reference FDM runner |
 | Material constants (`Ku1`, `anisU`) | planned | planned | planned | semantic-only | Anisotropy not in exchange-only scope |
 | Ferromagnet + uniform `m0` | ✅ exec | planned | planned | **public-executable** (FDM) | Lowered to per-cell vectors by planner |
 | Ferromagnet + random `m0` | ✅ exec | planned | planned | **public-executable** (FDM) | Deterministic xorshift64 RNG in planner |
 | `Exchange` | ✅ exec | planned | planned | **public-executable** (FDM) | CPU 6-point stencil in `fullmag-engine` |
-| `Demag` | ✅ exec | planned | planned | **public-executable** (FDM) | CPU bootstrap spectral demag on zero-padded grid; CUDA path still deferred |
+| `Demag` | ✅ exec | planned | planned | **public-executable** (FDM) | CPU bootstrap spectral demag and CUDA spectral demag on zero-padded grid |
 | `InterfacialDMI` | planned | planned | planned | semantic-only | Not numerically implemented |
-| `Zeeman` | ✅ exec | planned | planned | **public-executable** (FDM) | Public API still authors `B`; planner normalizes to `H_ext` in A/m |
+| `Zeeman` | ✅ exec | planned | planned | **public-executable** (FDM) | Public API still authors `B`; planner normalizes to `H_ext` in A/m for CPU and CUDA FDM |
 | `LLG` (Heun) | ✅ exec | planned | planned | **public-executable** (FDM) | Heun stepper in `fullmag-engine` |
-| Execution precision `double` | ✅ exec | planned | planned | **public-executable** (FDM) | Current CPU reference precision and calibration baseline |
+| Execution precision `double` | ✅ exec | planned | planned | **public-executable** (FDM) | Current CPU reference precision and qualified CUDA precision for the narrow FDM slice |
 | Execution precision `single` | planned | planned | planned | semantic-only | Defined in Python API and `ProblemIR`; reserved for Phase 2 CUDA FDM |
 | Field/scalar outputs (`m`, `H_ex`, `H_demag`, `H_ext`, `H_eff`, `E_ex`, `E_demag`, `E_ext`, `E_total`) | ✅ exec | planned | planned | **public-executable** (FDM) | Artifacts: `metadata.json`, expanded `scalars.csv`, and per-field snapshots under `fields/` |
 | FDM hints | ✅ exec | n/a | planned | **public-executable** | Cell size → grid dims in planner |

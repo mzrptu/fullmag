@@ -5,7 +5,7 @@
 
 use fullmag_engine::{
     CellSize, EffectiveFieldTerms, ExchangeLlgProblem, ExchangeLlgState, GridShape, LlgConfig,
-    MaterialParameters, TimeIntegrator, Vector3,
+    MaterialParameters, TimeIntegrator,
 };
 use fullmag_ir::{ExecutionPrecision, FdmPlanIR, IntegratorChoice, OutputIR};
 
@@ -408,7 +408,7 @@ fn select_field_values(observables: &StateObservables, name: &str) -> Vec<[f64; 
 }
 
 #[cfg(test)]
-fn max_vector_norm(values: &[Vector3]) -> f64 {
+fn max_vector_norm(values: &[[f64; 3]]) -> f64 {
     values
         .iter()
         .map(|value| (value[0] * value[0] + value[1] * value[1] + value[2] * value[2]).sqrt())

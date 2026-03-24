@@ -1,14 +1,14 @@
 # Output Naming Policy v0
 
 - Status: accepted
-- Last updated: 2026-03-23
+- Last updated: 2026-03-24
 - Parent spec: `docs/specs/exchange-only-full-solver-architecture-v1.md`
 
 ---
 
 ## 1. Purpose
 
-This document freezes the canonical observable names for the exchange-only release.
+This document freezes the canonical observable names for the current narrow executable release.
 All backends must use exactly these names when publishing outputs. This ensures that:
 
 - artifacts from FDM and FEM runs are directly comparable,
@@ -23,22 +23,31 @@ All backends must use exactly these names when publishing outputs. This ensures 
 |------|------|------|------|-------------|
 | `m` | vector field | `[f64; 3]` per cell/node | dimensionless | reduced magnetization $\mathbf{m} = \mathbf{M}/M_s$ |
 | `H_ex` | vector field | `[f64; 3]` per cell/node | A/m | exchange effective field |
+| `H_demag` | vector field | `[f64; 3]` per cell/node | A/m | demagnetization field |
+| `H_ext` | vector field | `[f64; 3]` per cell/node | A/m | externally applied field |
+| `H_eff` | vector field | `[f64; 3]` per cell/node | A/m | total effective field for the active interaction set |
 
 ### 2.2 Scalars
 
 | Name | Kind | Type | Unit | Description |
 |------|------|------|------|-------------|
 | `E_ex` | scalar | `f64` | J | total exchange energy $\int e_{\mathrm{ex}} \, dV$ |
+| `E_demag` | scalar | `f64` | J | total demagnetization energy |
+| `E_ext` | scalar | `f64` | J | total external-field energy |
+| `E_total` | scalar | `f64` | J | total realized energy for the active interaction set |
 | `time` | scalar | `f64` | s | simulation time |
 | `step` | scalar | `u64` | 1 | time-step index (0-based) |
 | `solver_dt` | scalar | `f64` | s | timestep used in the current step |
+| `max_dm_dt` | scalar | `f64` | 1/s | maximum $|d\mathbf{m}/dt|$ across the realized grid |
+| `max_h_eff` | scalar | `f64` | A/m | maximum $|\mathbf{H}_{\mathrm{eff}}|$ across the realized grid |
 
 ### 2.3 Naming convention
 
 - Field names are lowercase with underscores.
 - Energy terms use `E_` prefix + interaction abbreviation (e.g., `E_ex` for exchange).
 - Effective field terms use `H_` prefix + interaction abbreviation (e.g., `H_ex`).
-- When multiple energy terms are active (future releases), a `E_total` scalar aggregates all terms and `H_eff` aggregates all effective field contributions.
+- When multiple energy terms are active, `E_total` aggregates all terms and `H_eff` aggregates all
+  effective field contributions.
 
 ## 3. Output scheduling
 
@@ -59,7 +68,21 @@ pub enum OutputIR {
 ## 4. Validation rules
 
 - Output names must match the canonical dictionary (§2). Unknown names are rejected.
-- For the exchange-only release, only `m`, `H_ex`, `E_ex`, `time`, `step`, and `solver_dt` are legal.
+- For the current executable FDM release, legal outputs are:
+  - `m`
+  - `H_ex`
+  - `H_demag`
+  - `H_ext`
+  - `H_eff`
+  - `E_ex`
+  - `E_demag`
+  - `E_ext`
+  - `E_total`
+  - `time`
+  - `step`
+  - `solver_dt`
+  - `max_dm_dt`
+  - `max_h_eff`
 - `every_seconds` must be positive.
 - At least one output is required per problem.
 
@@ -69,17 +92,10 @@ When additional energy terms are implemented, the following names will be added:
 
 | Name | Kind | Unit | Notes |
 |------|------|------|-------|
-| `H_demag` | vector field | A/m | demagnetization field |
 | `H_ani` | vector field | A/m | anisotropy field |
 | `H_dmi` | vector field | A/m | DMI effective field |
-| `H_ext` | vector field | A/m | external (Zeeman) field |
-| `H_eff` | vector field | A/m | total effective field |
-| `E_demag` | scalar | J | demagnetization energy |
 | `E_ani` | scalar | J | anisotropy energy |
 | `E_dmi` | scalar | J | DMI energy |
-| `E_ext` | scalar | J | Zeeman energy |
-| `E_total` | scalar | J | total energy |
-| `max_dm_dt` | scalar | 1/s | maximum $|d\mathbf{m}/dt|$ (convergence metric) |
 | `max_torque` | scalar | A/m | maximum $|\mathbf{m} \times \mathbf{H}_{\mathrm{eff}}|$ |
 
 These names are reserved — no output with these names may be created with different semantics.

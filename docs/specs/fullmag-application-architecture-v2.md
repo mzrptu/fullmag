@@ -783,11 +783,11 @@ The first coherent, honest product slice is:
 
 That executable path should be:
 
-> `Box + Exchange + TimeEvolution(LLG-Heun) + FDM + GPU double`
+> `Box + (Exchange | Demag | Zeeman combinations) + TimeEvolution(LLG-Heun) + FDM + GPU double`
 
 If GPU double is not ready yet, temporarily:
 
-> `Box + Exchange + TimeEvolution(LLG-Heun) + FDM + CPU reference`
+> `Box + (Exchange | Demag | Zeeman combinations) + TimeEvolution(LLG-Heun) + FDM + CPU reference`
 
 but only as a staging milestone, not the product identity.
 

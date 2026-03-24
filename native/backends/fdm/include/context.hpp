@@ -16,6 +16,7 @@
 
 #ifdef FULLMAG_HAS_CUDA
 #include <cuda_runtime.h>
+#include <cufft.h>
 #endif
 
 namespace fullmag {
@@ -36,6 +37,10 @@ struct Context {
 
     // Material
     double Ms, A, alpha, gamma;
+    bool enable_exchange = true;
+    bool enable_demag = false;
+    bool has_external_field = false;
+    double external_field[3] = {0.0, 0.0, 0.0};
 
     // Execution
     fullmag_fdm_precision precision;
@@ -48,8 +53,21 @@ struct Context {
     // Device state (SoA layout)
     DeviceVectorField m;      // magnetization
     DeviceVectorField h_ex;   // exchange field
+    DeviceVectorField h_demag;// demag field
     DeviceVectorField k1;     // predictor RHS
     DeviceVectorField tmp;    // predictor state
+    DeviceVectorField work;   // effective field / scratch
+
+    // Demag FFT resources
+    uint32_t fft_nx = 0;
+    uint32_t fft_ny = 0;
+    uint32_t fft_nz = 0;
+    uint64_t fft_cell_count = 0;
+    void *fft_x = nullptr;
+    void *fft_y = nullptr;
+    void *fft_z = nullptr;
+    cufftHandle fft_plan = 0;
+    bool fft_plan_valid = false;
 
     // Device info cache
     fullmag_fdm_device_info device_info_cache;
@@ -79,6 +97,9 @@ bool context_download_field_f64(
 
 /// Populate device info cache.
 bool context_query_device_info(Context &ctx);
+
+/// Populate H_ex / H_demag / H_eff for the current state without advancing time.
+bool context_refresh_observables(Context &ctx);
 
 #endif // FULLMAG_HAS_CUDA
 

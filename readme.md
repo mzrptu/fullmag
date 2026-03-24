@@ -42,6 +42,7 @@ In the current bootstrap shell, the normal local workflow is:
 
 ```bash
 fullmag examples/exchange_relax.py --until 2e-9
+fullmag examples/exchange_demag_zeeman.py --until 1e-11
 fullmag -i examples/exchange_relax.py --until 2e-9
 ```
 
@@ -79,6 +80,13 @@ The repository now includes:
 This is still a foundation milestone. The shell of the application now exists, but live control-room
 behavior and GPU/FEM depth are still in progress.
 
+The currently honest executable physics slice is:
+
+- `Box + Exchange + Demag + Zeeman + TimeEvolution(LLG-Heun) + FDM`
+- CPU reference in `double`
+- native CUDA FDM in `double`
+- native CUDA `single` implementation exists but is not yet public-qualified
+
 ## Quick start
 
 ### 1. Set up environment
@@ -109,6 +117,7 @@ python3 scripts/check_repo_consistency.py
 python scripts/run_python_ir_smoke.py --cli target/debug/fullmag
 /usr/local/cargo/bin/cargo run -p fullmag-cli --bin fullmag -- reference-exchange-demo --steps 10 --dt 1e-13
 /usr/local/cargo/bin/cargo run -p fullmag-cli --bin fullmag -- examples/exchange_relax.py --until 2e-9 --json
+/usr/local/cargo/bin/cargo run -p fullmag-cli --bin fullmag --features cuda -- examples/exchange_demag_zeeman.py --until 1e-11 --json
 ```
 
 ### 4. Install the local launcher on your PATH

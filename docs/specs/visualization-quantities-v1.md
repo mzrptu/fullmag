@@ -71,11 +71,12 @@ Each quantity belongs to one of these kinds:
 
 - `m`
 - `H_ex`
+- `H_demag`
+- `H_ext`
+- `H_eff`
 - later:
-  - `H_demag`
   - `H_dmi`
   - `H_ani`
-  - `H_zee`
   - `H_eff_total`
   - `dm_dt`
 
@@ -92,9 +93,10 @@ Each quantity belongs to one of these kinds:
 #### Global scalars
 
 - `E_ex`
-- later `E_demag`
+- `E_demag`
+- `E_ext`
+- `E_total`
 - later `E_dmi`
-- later `E_total`
 
 ## 5. Quantity metadata
 
@@ -184,7 +186,7 @@ The browser only renders quantities present in the run/session quantity registry
 
 ## 7. Phase-1 minimum quantity registry
 
-For the current executable exchange-only baseline, the minimum quantity registry is:
+For the current executable FDM baseline, the minimum quantity registry is:
 
 - `m`
   - kind: `vector_field`
@@ -196,9 +198,45 @@ For the current executable exchange-only baseline, the minimum quantity registry
   - kind: `vector_field`
   - unit: `A/m`
   - location: `cell`
-  - availability: `artifact_only` in the bootstrap shell
+  - availability: `live` + `artifact_only`
+
+- `H_demag`
+  - kind: `vector_field`
+  - unit: `A/m`
+  - location: `cell`
+  - availability: `live` + `artifact_only`
+
+- `H_ext`
+  - kind: `vector_field`
+  - unit: `A/m`
+  - location: `cell`
+  - availability: `live` + `artifact_only`
+
+- `H_eff`
+  - kind: `vector_field`
+  - unit: `A/m`
+  - location: `cell`
+  - availability: `live` + `artifact_only`
 
 - `E_ex`
+  - kind: `global_scalar`
+  - unit: `J`
+  - location: `global`
+  - availability: `live` + `artifact_only`
+
+- `E_demag`
+  - kind: `global_scalar`
+  - unit: `J`
+  - location: `global`
+  - availability: `live` + `artifact_only`
+
+- `E_ext`
+  - kind: `global_scalar`
+  - unit: `J`
+  - location: `global`
+  - availability: `live` + `artifact_only`
+
+- `E_total`
   - kind: `global_scalar`
   - unit: `J`
   - location: `global`

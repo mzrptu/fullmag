@@ -630,8 +630,12 @@ The capability matrix should continue to distinguish clearly between:
 - internal numerical reference,
 - public executability.
 
-For this topic, exchange is already partially executable in FDM, while demag and Zeeman remain to
-be upgraded from semantic/shared status into executable backend support.
+For this topic, `Exchange + Demag + Zeeman` are now executable in the public FDM path:
+
+- CPU reference FDM executes the full interaction set in `double`,
+- native CUDA FDM executes the same interaction set in `double`,
+- native CUDA `single` exists as an implementation path but remains unqualified for public use
+  until the documented calibration tiers are completed.
 
 ## 5. Validation strategy
 
@@ -673,8 +677,9 @@ be upgraded from semantic/shared status into executable backend support.
 
 ### 5.2 Cross-backend checks
 
-- FDM CPU double vs CUDA double for exchange-only remains the first calibration tier.
-- After demag lands, compare FDM CPU vs CUDA on small deterministic problems with open boundary.
+- FDM CPU double vs CUDA double for exchange remains the first calibration tier.
+- FDM CPU double vs CUDA double for `Exchange + Demag + Zeeman` must be checked on small
+  deterministic open-boundary problems.
 - Once FEM exists, compare FDM/FEM on the same physical geometry after projection to common
   observables (`E_ex`, `E_demag`, total magnetization, sampled fields).
 
@@ -696,20 +701,21 @@ be upgraded from semantic/shared status into executable backend support.
 - [x] ProblemIR (shared semantics)
 - [x] Planner-facing design
 - [x] Capability-matrix implications documented
-- [ ] FDM backend fully implemented for this whole interaction set
+- [x] FDM backend fully implemented for this whole interaction set
 - [ ] FEM backend
 - [ ] Hybrid backend
-- [ ] Outputs / observables fully wired for this whole interaction set
+- [x] Outputs / observables fully wired for this whole interaction set
 - [ ] Tests / benchmarks complete
 - [x] Documentation
 
 ## 7. Known limits and deferred work
 
-- The current public executable FDM path exposes demag and Zeeman through the CPU reference engine,
-  not yet through the native CUDA backend.
+- The current public executable FDM path exposes demag and Zeeman through both the CPU reference
+  engine and the native CUDA backend in `double`.
 - Periodic demag, multilayer demag, and nonuniform FFT variants are deferred.
 - Interface-specific exchange terms beyond ordinary material jumps are deferred.
-- Public mixed precision is deferred.
+- Public `single` precision remains deferred until GPU `double` vs GPU `single` qualification is
+  frozen as part of the calibration policy.
 - The current `Zeeman(B=...)` API should be treated as transitional until units are made explicit.
 - The final scientific artifact layer should move beyond transitional JSON/CSV bootstrap storage.
 

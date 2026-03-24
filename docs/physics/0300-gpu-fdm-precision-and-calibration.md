@@ -2,15 +2,16 @@
 
 - Status: draft
 - Owners: Fullmag core
-- Last updated: 2026-03-23
+- Last updated: 2026-03-24
 - Related ADRs: `docs/adr/0001-physics-first-python-api.md`
 - Related specs: `docs/specs/problem-ir-v0.md`, `docs/specs/capability-matrix-v0.md`, `docs/specs/exchange-only-full-solver-architecture-v1.md`, `docs/plans/active/phase-2-gpu-fdm-calibrated-rollout.md`, `docs/plans/active/phase-2-gpu-fdm-implementation-playbook.md`
 
 ## 1. Problem statement
 
-Fullmag now has a trusted CPU reference engine for exchange-only LLG.
-The next production milestone is to move the executable FDM path onto CUDA without changing the
-physical meaning of the problem.
+Fullmag now has a trusted CPU reference engine for the narrow `Exchange + Demag + Zeeman` FDM
+slice, and a matching native CUDA `double` execution path for the same slice.
+The next production milestone is to finish calibration and qualification of that CUDA path without
+changing the physical meaning of the problem.
 
 This move is not only about performance.
 It must also define:
@@ -28,26 +29,29 @@ The guiding principle is:
 
 ### 2.1 Governing equations
 
-The continuum model is unchanged from `0200-llg-exchange-reference-engine.md`.
-We still solve the Gilbert-form LLG equation with exchange-only effective field:
+The continuum model is unchanged from the current FDM physics notes.
+We still solve the Gilbert-form LLG equation with an effective field assembled from the active
+interaction set. For the currently executable slice:
+
+\[
+\mathbf{H}_{\mathrm{eff}} =
+\mathbf{H}_{\mathrm{ex}} +
+\mathbf{H}_{\mathrm{demag}} +
+\mathbf{H}_{\mathrm{ext}}.
+\]
+
+The Heun stepper still evolves:
 
 \[
 \frac{\partial \mathbf{m}}{\partial t}
 =
 -\frac{\gamma}{1 + \alpha^2}
 \left(
-\mathbf{m} \times \mathbf{H}_{\mathrm{ex}}
+\mathbf{m} \times \mathbf{H}_{\mathrm{eff}}
 +
 \alpha \, \mathbf{m} \times
-\left(\mathbf{m} \times \mathbf{H}_{\mathrm{ex}}\right)
+\left(\mathbf{m} \times \mathbf{H}_{\mathrm{eff}}\right)
 \right),
-\]
-
-with
-
-\[
-\mathbf{H}_{\mathrm{ex}} =
-\frac{2 A}{\mu_0 M_s} \nabla^2 \mathbf{m}.
 \]
 
 Precision choice must not change these equations.
@@ -58,7 +62,12 @@ discrete operator.
 
 - `m`: reduced magnetization, dimensionless.
 - `H_ex`: exchange field, `A/m`.
-- `E_ex`: total exchange energy, `J`.
+- `H_demag`: dipolar self-interaction field, `A/m`.
+- `H_ext`: externally applied field, `A/m`.
+- `E_ex`: exchange energy, `J`.
+- `E_demag`: demagnetization energy, `J`.
+- `E_ext`: external-field energy, `J`.
+- `E_total`: total realized energy for the active interaction set, `J`.
 - `gamma`: gyromagnetic ratio in Gilbert form, `m / (A s)`.
 - `alpha`: Gilbert damping, dimensionless.
 - `M_s`: saturation magnetization, `A/m`.
@@ -67,11 +76,11 @@ discrete operator.
 
 ### 2.3 Assumptions and approximations
 
-- The exchange-only FDM discretization remains the same in CPU and GPU paths.
+- The executable FDM discretization remains the same in CPU and GPU paths for the active term set.
 - The public precision selector exposes only:
   - `double`
   - `single`
-- Public `mixed` precision is out of scope for the exchange-only release.
+- Public `mixed` precision is out of scope for the current release.
 - In `single` mode, scalar reductions may still accumulate into wider internal types if that is
   documented and deterministic. This does not create a third public precision mode.
 - The CPU reference engine remains a correctness baseline and stays `double` only.

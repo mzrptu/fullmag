@@ -2,6 +2,7 @@ fn main() {
     if let Ok(lib_dir) = std::env::var("FULLMAG_FDM_LIB_DIR") {
         println!("cargo:rustc-link-search=native={}", lib_dir);
         println!("cargo:rustc-link-lib=dylib=fullmag_fdm");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir);
         println!("cargo:rerun-if-env-changed=FULLMAG_FDM_LIB_DIR");
         return;
     }
@@ -24,19 +25,26 @@ fn main() {
 
     std::fs::create_dir_all(&build_dir).expect("creating native build dir should succeed");
 
-    let configure_status = std::process::Command::new("cmake")
+    let cmake = std::env::var("FULLMAG_CMAKE").unwrap_or_else(|_| "cmake".to_string());
+    let mut configure = std::process::Command::new(&cmake);
+    if std::path::Path::new("/usr/local/cuda/bin/nvcc").exists() {
+        configure.env("CUDACXX", "/usr/local/cuda/bin/nvcc");
+        configure.env("CUDAToolkit_ROOT", "/usr/local/cuda");
+    }
+
+    let configure_status = configure
         .arg("-S")
         .arg(&native_root)
         .arg("-B")
         .arg(&build_dir)
         .arg("-DFULLMAG_ENABLE_CUDA=ON")
         .status()
-        .expect("cmake not found; install cmake or set FULLMAG_FDM_LIB_DIR to a prebuilt native backend");
+        .expect("cmake not found; install cmake, set FULLMAG_CMAKE, or set FULLMAG_FDM_LIB_DIR to a prebuilt native backend");
     if !configure_status.success() {
         panic!("cmake configure for fullmag_fdm failed");
     }
 
-    let build_status = std::process::Command::new("cmake")
+    let build_status = std::process::Command::new(&cmake)
         .arg("--build")
         .arg(&build_dir)
         .arg("--target")
@@ -52,4 +60,5 @@ fn main() {
         build_dir.join("backends/fdm").display()
     );
     println!("cargo:rustc-link-lib=dylib=fullmag_fdm");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
 }

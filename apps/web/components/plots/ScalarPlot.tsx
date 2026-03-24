@@ -1,108 +1,246 @@
+// @ts-nocheck
 "use client";
 
-import { useEffect, useRef } from "react";
-import type { StepStats } from "../../lib/useSimulation";
+/**
+ * ScalarPlot – ECharts line chart for time-series data.
+ *
+ * 1:1 port of amumax table-plot.ts adapted for fullmag's scalar_rows format.
+ * Shows a line chart with optional column selection.
+ */
 
-declare const echarts: any;
+import { useEffect, useRef, useMemo } from "react";
+import * as echarts from "echarts";
 
-interface Props {
-  steps: StepStats[];
-  yField?: "e_ex" | "max_dm_dt" | "max_h_eff";
-}
-
-const FIELD_LABELS: Record<string, string> = {
-  e_ex: "Exchange Energy (J)",
-  max_dm_dt: "max |dm/dt|",
-  max_h_eff: "max |H_eff| (A/m)",
+// ─── Theme constants (from amumax echarts-theme.ts) ────────────────
+const THEME = {
+  bg: "#080d1a",
+  surface1: "#0f172a",
+  border: "#1e2d4a",
+  text1: "#e2e8f0",
+  text2: "#94a3b8",
+  text3: "#5a6b8a",
+  accent: "#3b82f6",
+  info: "#60a5fa",
+  tooltipBg: "#0f172a",
+  tooltipBorder: "#3b82f6",
+  tooltipText: "#e2e8f0",
+  toolboxIcon: "#94a3b8",
+  brushBg: "rgba(59, 130, 246, 0.15)",
+  brushBorder: "#3b82f6",
 };
 
-export default function ScalarPlot({ steps, yField = "e_ex" }: Props) {
+const SERIES_COLORS = ["#60a5fa", "#34d399", "#f472b6", "#fbbf24", "#a78bfa", "#fb923c"];
+
+interface ScalarRow {
+  step: number;
+  time: number;
+  e_ex: number;
+  e_demag: number;
+  e_ext: number;
+  e_total: number;
+}
+
+interface Props {
+  rows: ScalarRow[];
+  xColumn?: string;
+  yColumns?: string[];
+}
+
+const DEFAULT_Y_COLUMNS = ["e_ex", "e_demag", "e_ext", "e_total"];
+const COLUMN_LABELS: Record<string, string> = {
+  step: "Step",
+  time: "Time (s)",
+  e_ex: "E_exchange (J)",
+  e_demag: "E_demag (J)",
+  e_ext: "E_external (J)",
+  e_total: "E_total (J)",
+};
+
+export default function ScalarPlot({
+  rows,
+  xColumn = "time",
+  yColumns = DEFAULT_Y_COLUMNS,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<any>(null);
+  const chartRef = useRef<echarts.ECharts | null>(null);
 
+  // ─── Build series data ────────────────────────────────────────────
+  const seriesData = useMemo(() => {
+    if (!rows.length) return [];
+    return yColumns.map((col, i) => ({
+      type: "line" as const,
+      name: COLUMN_LABELS[col] ?? col,
+      showSymbol: false,
+      sampling: "lttb" as const,
+      progressive: 2000,
+      progressiveThreshold: 3000,
+      animation: false,
+      lineStyle: { width: 1.5 },
+      itemStyle: { color: SERIES_COLORS[i % SERIES_COLORS.length] },
+      data: rows.map((row) => [(row as any)[xColumn], (row as any)[col]]),
+    }));
+  }, [rows, xColumn, yColumns]);
+
+  // ─── Init / update chart ──────────────────────────────────────────
   useEffect(() => {
-    if (!containerRef.current) return;
-    // Dynamic import of echarts
-    import("echarts").then((ec) => {
-      if (!containerRef.current) return;
-      const chart = ec.init(containerRef.current, "dark");
-      chartRef.current = chart;
+    if (!containerRef.current || !seriesData.length) return;
 
-      const observer = new ResizeObserver(() => chart.resize());
-      observer.observe(containerRef.current);
+    if (!chartRef.current || chartRef.current.isDisposed()) {
+      chartRef.current = echarts.init(containerRef.current, undefined, {
+        renderer: "canvas",
+      });
+    }
 
-      return () => {
-        observer.disconnect();
-        chart.dispose();
-        chartRef.current = null;
-      };
-    });
-  }, []);
+    const chart = chartRef.current;
+    const xLabel = COLUMN_LABELS[xColumn] ?? xColumn;
 
-  useEffect(() => {
-    if (!chartRef.current || steps.length === 0) return;
-
-    const times = steps.map((s) => s.time.toExponential(2));
-    const values = steps.map((s) => s[yField]);
-
-    chartRef.current.setOption({
-      backgroundColor: "transparent",
-      tooltip: {
-        trigger: "axis",
-        formatter: (params: any) => {
-          const p = params[0];
-          return `t = ${steps[p.dataIndex].time.toExponential(3)} s<br/>${FIELD_LABELS[yField]}: ${p.value.toExponential(4)}`;
-        },
-      },
-      grid: { left: 80, right: 24, top: 32, bottom: 40 },
-      xAxis: {
-        type: "category",
-        data: times,
-        name: "Time (s)",
-        nameLocation: "center",
-        nameGap: 28,
-        axisLabel: { fontSize: 10, rotate: 30 },
-      },
-      yAxis: {
-        type: "value",
-        name: FIELD_LABELS[yField],
-        nameLocation: "center",
-        nameGap: 60,
-        axisLabel: {
-          formatter: (v: number) => v.toExponential(1),
-        },
-      },
-      series: [
-        {
+    chart.setOption(
+      {
+        animation: false,
+        axisPointer: {
+          show: true,
           type: "line",
-          data: values,
-          smooth: true,
-          showSymbol: false,
-          lineStyle: { width: 2, color: "#58a6ff" },
-          areaStyle: {
-            color: {
-              type: "linear",
-              x: 0, y: 0, x2: 0, y2: 1,
-              colorStops: [
-                { offset: 0, color: "rgba(88,166,255,0.3)" },
-                { offset: 1, color: "rgba(88,166,255,0)" },
-              ],
-            },
+          lineStyle: { color: THEME.accent, width: 2, type: "dashed" },
+          label: {
+            backgroundColor: THEME.tooltipBg,
+            color: THEME.tooltipText,
+            formatter: (params: any) => parseFloat(params.value).toPrecision(3),
+            padding: [8, 5, 8, 5],
+            borderColor: THEME.accent,
+            borderWidth: 1,
           },
         },
-      ],
-      animation: false,
-    });
-  }, [steps, yField]);
+        tooltip: {
+          trigger: "axis",
+          confine: true,
+          backgroundColor: THEME.tooltipBg,
+          borderColor: THEME.tooltipBorder,
+          borderWidth: 1,
+          textStyle: { color: THEME.tooltipText, fontSize: 12 },
+          formatter: (params: any) => {
+            if (!Array.isArray(params)) return "";
+            const xVal = params[0]?.value?.[0];
+            let html = `<strong>${xLabel}: ${Number(xVal).toExponential(3)}</strong>`;
+            for (const p of params) {
+              html += `<br/><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.color};margin-right:4px;"></span>${p.seriesName}: ${Number(p.value[1]).toExponential(4)}`;
+            }
+            return html;
+          },
+        },
+        legend: {
+          show: yColumns.length > 1,
+          bottom: 0,
+          textStyle: { color: THEME.text2, fontSize: 11 },
+          itemWidth: 16,
+          itemHeight: 8,
+          itemGap: 16,
+        },
+        grid: {
+          containLabel: false,
+          left: "12%",
+          right: "6%",
+          top: 32,
+          bottom: yColumns.length > 1 ? 52 : 36,
+        },
+        xAxis: {
+          name: xLabel,
+          nameLocation: "middle",
+          nameGap: 25,
+          nameTextStyle: { color: THEME.text2 },
+          axisTick: {
+            alignWithLabel: true,
+            length: 6,
+            lineStyle: { type: "solid", color: THEME.border },
+          },
+          axisLabel: {
+            show: true,
+            formatter: (value: number) =>
+              Math.abs(value) >= 1e-3 || value === 0
+                ? Number(value).toPrecision(3)
+                : Number(value).toExponential(1),
+            color: THEME.text2,
+          },
+          axisLine: { lineStyle: { color: THEME.border } },
+          splitLine: { show: false },
+        },
+        yAxis: {
+          nameLocation: "middle",
+          nameGap: 55,
+          nameTextStyle: { color: THEME.text2 },
+          axisTick: {
+            alignWithLabel: true,
+            length: 6,
+            lineStyle: { type: "solid", color: THEME.border },
+          },
+          axisLabel: {
+            show: true,
+            formatter: (value: number) => Number(value).toExponential(2),
+            color: THEME.text2,
+          },
+          axisLine: { lineStyle: { color: THEME.border } },
+          splitLine: {
+            show: true,
+            lineStyle: { color: THEME.border, type: "dashed", opacity: 0.4 },
+          },
+        },
+        toolbox: {
+          show: true,
+          top: 6,
+          right: 10,
+          itemSize: 18,
+          itemGap: 10,
+          iconStyle: { borderColor: THEME.toolboxIcon, borderWidth: 1 },
+          emphasis: { iconStyle: { borderColor: THEME.text1 } },
+          feature: {
+            dataZoom: {
+              xAxisIndex: 0,
+              yAxisIndex: 0,
+              brushStyle: {
+                color: THEME.brushBg,
+                borderColor: THEME.brushBorder,
+                borderWidth: 2,
+              },
+            },
+            restore: { show: true },
+            saveAsImage: { type: "png", name: "scalar_plot" },
+          },
+        },
+        series: seriesData,
+      },
+      { notMerge: true },
+    );
+
+    return () => {};
+  }, [seriesData, xColumn, yColumns]);
+
+  // ─── Resize observer ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver(() => chartRef.current?.resize());
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // ─── Cleanup ──────────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      if (chartRef.current && !chartRef.current.isDisposed()) {
+        chartRef.current.dispose();
+      }
+      chartRef.current = null;
+    };
+  }, []);
 
   return (
     <div
       ref={containerRef}
       style={{
         width: "100%",
-        height: "300px",
-        borderRadius: "var(--radius-lg)",
-        overflow: "hidden",
+        height: "320px",
+        minHeight: "280px",
+        borderRadius: "var(--radius-md)",
+        border: "1px solid var(--border-subtle)",
+        background: "rgba(5, 9, 17, 0.65)",
       }}
     />
   );

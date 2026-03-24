@@ -240,10 +240,11 @@ It must be able to grow by registering new quantities as solver terms become exe
 
 - `m`
 - `H_ex`
-- later `H_demag`
+- `H_demag`
 - later `H_dmi`
 - later `H_ani`
-- later `H_zee`
+- `H_ext`
+- `H_eff`
 - later `H_eff_total`
 - energy-related scalar/density quantities
 

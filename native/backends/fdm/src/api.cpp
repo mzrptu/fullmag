@@ -61,6 +61,12 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
     // Execution config
     ctx->precision  = plan->precision;
     ctx->integrator = plan->integrator;
+    ctx->enable_exchange = plan->enable_exchange != 0;
+    ctx->enable_demag = plan->enable_demag != 0;
+    ctx->has_external_field = plan->has_external_field != 0;
+    ctx->external_field[0] = plan->external_field_am[0];
+    ctx->external_field[1] = plan->external_field_am[1];
+    ctx->external_field[2] = plan->external_field_am[2];
 
     // Validate
     if (ctx->cell_count == 0) {
@@ -85,6 +91,10 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
             *ctx, plan->initial_magnetization_xyz,
             plan->initial_magnetization_len))
     {
+        return reinterpret_cast<fullmag_fdm_backend *>(ctx);
+    }
+
+    if (!context_refresh_observables(*ctx)) {
         return reinterpret_cast<fullmag_fdm_backend *>(ctx);
     }
 

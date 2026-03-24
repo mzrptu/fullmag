@@ -13,6 +13,8 @@ use fullmag_fdm_sys as ffi;
 
 #[cfg(feature = "cuda")]
 use crate::types::RunError;
+#[cfg(feature = "cuda")]
+use crate::types::StepStats;
 
 #[cfg(feature = "cuda")]
 use std::ffi::CStr;
@@ -78,6 +80,10 @@ impl NativeFdmBackend {
             material,
             precision,
             integrator,
+            enable_exchange: if plan.enable_exchange { 1 } else { 0 },
+            enable_demag: if plan.enable_demag { 1 } else { 0 },
+            has_external_field: if plan.external_field.is_some() { 1 } else { 0 },
+            external_field_am: plan.external_field.unwrap_or([0.0, 0.0, 0.0]),
             initial_magnetization_xyz: m_flat.as_ptr(),
             initial_magnetization_len: m_flat.len() as u64,
         };
@@ -107,6 +113,9 @@ impl NativeFdmBackend {
             time_seconds: 0.0,
             dt_seconds: 0.0,
             exchange_energy_joules: 0.0,
+            demag_energy_joules: 0.0,
+            external_energy_joules: 0.0,
+            total_energy_joules: 0.0,
             max_effective_field_amplitude: 0.0,
             max_rhs_amplitude: 0.0,
             wall_time_ns: 0,
@@ -122,9 +131,9 @@ impl NativeFdmBackend {
             time: stats.time_seconds,
             dt: stats.dt_seconds,
             e_ex: stats.exchange_energy_joules,
-            e_demag: 0.0,
-            e_ext: 0.0,
-            e_total: stats.exchange_energy_joules,
+            e_demag: stats.demag_energy_joules,
+            e_ext: stats.external_energy_joules,
+            e_total: stats.total_energy_joules,
             max_h_eff: stats.max_effective_field_amplitude,
             max_dm_dt: stats.max_rhs_amplitude,
             wall_time_ns: stats.wall_time_ns,
@@ -168,6 +177,27 @@ impl NativeFdmBackend {
     pub fn copy_h_ex(&self, cell_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
         self.copy_field(
             ffi::fullmag_fdm_observable::FULLMAG_FDM_OBSERVABLE_H_EX,
+            cell_count,
+        )
+    }
+
+    pub fn copy_h_demag(&self, cell_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
+        self.copy_field(
+            ffi::fullmag_fdm_observable::FULLMAG_FDM_OBSERVABLE_H_DEMAG,
+            cell_count,
+        )
+    }
+
+    pub fn copy_h_ext(&self, cell_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
+        self.copy_field(
+            ffi::fullmag_fdm_observable::FULLMAG_FDM_OBSERVABLE_H_EXT,
+            cell_count,
+        )
+    }
+
+    pub fn copy_h_eff(&self, cell_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
+        self.copy_field(
+            ffi::fullmag_fdm_observable::FULLMAG_FDM_OBSERVABLE_H_EFF,
             cell_count,
         )
     }

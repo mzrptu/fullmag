@@ -209,6 +209,7 @@ int main() {
     plan.material = {Ms, A, alpha, gamma};
     plan.precision = FULLMAG_FDM_PRECISION_DOUBLE;
     plan.integrator = FULLMAG_FDM_INTEGRATOR_HEUN;
+    plan.enable_exchange = 1;
     plan.initial_magnetization_xyz = m0_flat.data();
     plan.initial_magnetization_len = n * 3;
 

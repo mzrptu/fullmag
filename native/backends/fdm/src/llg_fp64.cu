@@ -22,6 +22,10 @@ namespace fdm {
 // Forward declarations from exchange_fp64.cu
 extern void launch_exchange_field_fp64(Context &ctx);
 extern double launch_exchange_energy_fp64(Context &ctx, double *d_partial);
+extern void launch_demag_field_fp64(Context &ctx);
+extern void launch_effective_field_fp64(Context &ctx);
+extern double launch_demag_energy_fp64(Context &ctx);
+extern double launch_external_energy_fp64(Context &ctx);
 
 // Forward declarations from reductions_fp64.cu
 extern double reduce_max_norm_fp64(const void *vx, const void *vy, const void *vz, uint64_t n);
@@ -29,7 +33,7 @@ extern double reduce_max_norm_fp64(const void *vx, const void *vy, const void *v
 /* ── LLG RHS kernel ──
  *
  * Computes dm/dt = -γ̄ · (m × H + α · m × (m × H))
- * for each cell from the current m and H_ex fields.
+ * for each cell from the current m and H_eff fields.
  *
  * Output is written to (out_x, out_y, out_z) in SoA layout.
  */
@@ -158,17 +162,23 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
     cudaMemcpy(ctx.tmp.y, ctx.m.y, n * sizeof(double), cudaMemcpyDeviceToDevice);
     cudaMemcpy(ctx.tmp.z, ctx.m.z, n * sizeof(double), cudaMemcpyDeviceToDevice);
 
-    // --- Step 1: Compute exchange field at current m ---
-    launch_exchange_field_fp64(ctx);
+    // --- Step 1: Compute field contributions at current m ---
+    if (ctx.enable_exchange) {
+        launch_exchange_field_fp64(ctx);
+    }
+    if (ctx.enable_demag) {
+        launch_demag_field_fp64(ctx);
+    }
+    launch_effective_field_fp64(ctx);
 
-    // --- Step 2: Compute k1 = RHS(m, H_ex) ---
+    // --- Step 2: Compute k1 = RHS(m, H_eff) ---
     llg_rhs_fp64_kernel<<<grid, BLOCK_SIZE>>>(
         static_cast<const double*>(ctx.m.x),
         static_cast<const double*>(ctx.m.y),
         static_cast<const double*>(ctx.m.z),
-        static_cast<const double*>(ctx.h_ex.x),
-        static_cast<const double*>(ctx.h_ex.y),
-        static_cast<const double*>(ctx.h_ex.z),
+        static_cast<const double*>(ctx.work.x),
+        static_cast<const double*>(ctx.work.y),
+        static_cast<const double*>(ctx.work.z),
         static_cast<double*>(ctx.k1.x),
         static_cast<double*>(ctx.k1.y),
         static_cast<double*>(ctx.k1.z),
@@ -188,18 +198,24 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.m.z),
         n, dt);
 
-    // --- Step 4: Compute exchange field at predicted m ---
-    launch_exchange_field_fp64(ctx);
+    // --- Step 4: Compute field contributions at predicted m ---
+    if (ctx.enable_exchange) {
+        launch_exchange_field_fp64(ctx);
+    }
+    if (ctx.enable_demag) {
+        launch_demag_field_fp64(ctx);
+    }
+    launch_effective_field_fp64(ctx);
 
-    // --- Step 5: Compute k2 = RHS(m_pred, H_ex_pred) ---
-    // Store k2 in h_ex (reuse buffer since we're done with the predicted H_ex)
+    // --- Step 5: Compute k2 = RHS(m_pred, H_eff_pred) ---
+    // Store k2 in h_ex (reuse buffer after H_eff has been formed in work)
     llg_rhs_fp64_kernel<<<grid, BLOCK_SIZE>>>(
         static_cast<const double*>(ctx.m.x),
         static_cast<const double*>(ctx.m.y),
         static_cast<const double*>(ctx.m.z),
-        static_cast<const double*>(ctx.h_ex.x),
-        static_cast<const double*>(ctx.h_ex.y),
-        static_cast<const double*>(ctx.h_ex.z),
+        static_cast<const double*>(ctx.work.x),
+        static_cast<const double*>(ctx.work.y),
+        static_cast<const double*>(ctx.work.z),
         static_cast<double*>(ctx.h_ex.x),  // reuse as k2 storage
         static_cast<double*>(ctx.h_ex.y),
         static_cast<double*>(ctx.h_ex.z),
@@ -222,26 +238,38 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         n, 0.5 * dt);
 
     // --- Step 7: Compute diagnostics on the new state ---
-    // Exchange field for diagnostics
-    launch_exchange_field_fp64(ctx);
+    // Field contributions for diagnostics
+    if (ctx.enable_exchange) {
+        launch_exchange_field_fp64(ctx);
+    }
+    if (ctx.enable_demag) {
+        launch_demag_field_fp64(ctx);
+    }
+    launch_effective_field_fp64(ctx);
 
     // Exchange energy
-    double *d_partial;
-    cudaMalloc(&d_partial, n * sizeof(double));
-    double e_ex = launch_exchange_energy_fp64(ctx, d_partial);
-    cudaFree(d_partial);
+    double e_ex = 0.0;
+    if (ctx.enable_exchange) {
+        double *d_partial = nullptr;
+        cudaMalloc(&d_partial, n * sizeof(double));
+        e_ex = launch_exchange_energy_fp64(ctx, d_partial);
+        cudaFree(d_partial);
+    }
+    double e_demag = launch_demag_energy_fp64(ctx);
+    double e_ext = launch_external_energy_fp64(ctx);
+    double e_total = e_ex + e_demag + e_ext;
 
     // Max |H_eff|
-    double max_h_eff = reduce_max_norm_fp64(ctx.h_ex.x, ctx.h_ex.y, ctx.h_ex.z, ctx.cell_count);
+    double max_h_eff = reduce_max_norm_fp64(ctx.work.x, ctx.work.y, ctx.work.z, ctx.cell_count);
 
     // Max |dm/dt| — compute RHS at new state, store in k1 temp
     llg_rhs_fp64_kernel<<<grid, BLOCK_SIZE>>>(
         static_cast<const double*>(ctx.m.x),
         static_cast<const double*>(ctx.m.y),
         static_cast<const double*>(ctx.m.z),
-        static_cast<const double*>(ctx.h_ex.x),
-        static_cast<const double*>(ctx.h_ex.y),
-        static_cast<const double*>(ctx.h_ex.z),
+        static_cast<const double*>(ctx.work.x),
+        static_cast<const double*>(ctx.work.y),
+        static_cast<const double*>(ctx.work.z),
         static_cast<double*>(ctx.k1.x),
         static_cast<double*>(ctx.k1.y),
         static_cast<double*>(ctx.k1.z),
@@ -260,6 +288,9 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
     stats->time_seconds = ctx.current_time;
     stats->dt_seconds = dt;
     stats->exchange_energy_joules = e_ex;
+    stats->demag_energy_joules = e_demag;
+    stats->external_energy_joules = e_ext;
+    stats->total_energy_joules = e_total;
     stats->max_effective_field_amplitude = max_h_eff;
     stats->max_rhs_amplitude = max_dm_dt;
 }

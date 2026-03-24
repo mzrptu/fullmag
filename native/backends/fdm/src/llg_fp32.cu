@@ -16,6 +16,10 @@ namespace fdm {
 // Forward declarations from exchange_fp32.cu
 extern void launch_exchange_field_fp32(Context &ctx);
 extern double launch_exchange_energy_fp32(Context &ctx, double *d_partial);
+extern void launch_demag_field_fp32(Context &ctx);
+extern void launch_effective_field_fp32(Context &ctx);
+extern double launch_demag_energy_fp32(Context &ctx);
+extern double launch_external_energy_fp32(Context &ctx);
 
 // Forward declaration from reductions_fp64.cu (reads fp32 as well via separate path)
 double reduce_max_norm_fp32(const void *vx, const void *vy, const void *vz, uint64_t n);
@@ -133,13 +137,19 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
     cudaMemcpy(ctx.tmp.y, ctx.m.y, bytes, cudaMemcpyDeviceToDevice);
     cudaMemcpy(ctx.tmp.z, ctx.m.z, bytes, cudaMemcpyDeviceToDevice);
 
-    // Step 1: exchange field at m
-    launch_exchange_field_fp32(ctx);
+    // Step 1: field contributions at m
+    if (ctx.enable_exchange) {
+        launch_exchange_field_fp32(ctx);
+    }
+    if (ctx.enable_demag) {
+        launch_demag_field_fp32(ctx);
+    }
+    launch_effective_field_fp32(ctx);
 
-    // Step 2: k1 = RHS(m, H_ex)
+    // Step 2: k1 = RHS(m, H_eff)
     llg_rhs_fp32_kernel<<<grid, BLOCK_SIZE>>>(
         (const float*)ctx.m.x, (const float*)ctx.m.y, (const float*)ctx.m.z,
-        (const float*)ctx.h_ex.x, (const float*)ctx.h_ex.y, (const float*)ctx.h_ex.z,
+        (const float*)ctx.work.x, (const float*)ctx.work.y, (const float*)ctx.work.z,
         (float*)ctx.k1.x, (float*)ctx.k1.y, (float*)ctx.k1.z,
         n, gamma_bar_f, alpha_f);
 
@@ -150,13 +160,19 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         (float*)ctx.m.x, (float*)ctx.m.y, (float*)ctx.m.z,
         n, dt_f);
 
-    // Step 4: exchange field at predicted m
-    launch_exchange_field_fp32(ctx);
+    // Step 4: field contributions at predicted m
+    if (ctx.enable_exchange) {
+        launch_exchange_field_fp32(ctx);
+    }
+    if (ctx.enable_demag) {
+        launch_demag_field_fp32(ctx);
+    }
+    launch_effective_field_fp32(ctx);
 
-    // Step 5: k2 = RHS(m_pred, H_ex_pred) → store in h_ex
+    // Step 5: k2 = RHS(m_pred, H_eff_pred) → store in h_ex
     llg_rhs_fp32_kernel<<<grid, BLOCK_SIZE>>>(
         (const float*)ctx.m.x, (const float*)ctx.m.y, (const float*)ctx.m.z,
-        (const float*)ctx.h_ex.x, (const float*)ctx.h_ex.y, (const float*)ctx.h_ex.z,
+        (const float*)ctx.work.x, (const float*)ctx.work.y, (const float*)ctx.work.z,
         (float*)ctx.h_ex.x, (float*)ctx.h_ex.y, (float*)ctx.h_ex.z,
         n, gamma_bar_f, alpha_f);
 
@@ -169,18 +185,30 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         n, 0.5f * dt_f);
 
     // Diagnostics
-    launch_exchange_field_fp32(ctx);
+    if (ctx.enable_exchange) {
+        launch_exchange_field_fp32(ctx);
+    }
+    if (ctx.enable_demag) {
+        launch_demag_field_fp32(ctx);
+    }
+    launch_effective_field_fp32(ctx);
 
-    double *d_partial;
-    cudaMalloc(&d_partial, n * sizeof(double));
-    double e_ex = launch_exchange_energy_fp32(ctx, d_partial);
-    cudaFree(d_partial);
+    double e_ex = 0.0;
+    if (ctx.enable_exchange) {
+        double *d_partial = nullptr;
+        cudaMalloc(&d_partial, n * sizeof(double));
+        e_ex = launch_exchange_energy_fp32(ctx, d_partial);
+        cudaFree(d_partial);
+    }
+    double e_demag = launch_demag_energy_fp32(ctx);
+    double e_ext = launch_external_energy_fp32(ctx);
+    double e_total = e_ex + e_demag + e_ext;
 
-    double max_h_eff = reduce_max_norm_fp32(ctx.h_ex.x, ctx.h_ex.y, ctx.h_ex.z, ctx.cell_count);
+    double max_h_eff = reduce_max_norm_fp32(ctx.work.x, ctx.work.y, ctx.work.z, ctx.cell_count);
 
     llg_rhs_fp32_kernel<<<grid, BLOCK_SIZE>>>(
         (const float*)ctx.m.x, (const float*)ctx.m.y, (const float*)ctx.m.z,
-        (const float*)ctx.h_ex.x, (const float*)ctx.h_ex.y, (const float*)ctx.h_ex.z,
+        (const float*)ctx.work.x, (const float*)ctx.work.y, (const float*)ctx.work.z,
         (float*)ctx.k1.x, (float*)ctx.k1.y, (float*)ctx.k1.z,
         n, gamma_bar_f, alpha_f);
 
@@ -195,6 +223,9 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
     stats->time_seconds = ctx.current_time;
     stats->dt_seconds = dt;
     stats->exchange_energy_joules = e_ex;
+    stats->demag_energy_joules = e_demag;
+    stats->external_energy_joules = e_ext;
+    stats->total_energy_joules = e_total;
     stats->max_effective_field_amplitude = max_h_eff;
     stats->max_rhs_amplitude = max_dm_dt;
 }

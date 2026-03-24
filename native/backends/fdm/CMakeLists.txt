@@ -18,6 +18,8 @@ if(FULLMAG_ENABLE_CUDA)
         src/device_info.cpp
         src/exchange_fp64.cu
         src/exchange_fp32.cu
+        src/demag_fp64.cu
+        src/demag_fp32.cu
         src/llg_fp64.cu
         src/llg_fp32.cu
         src/reductions_fp64.cu
@@ -43,6 +45,7 @@ if(FULLMAG_ENABLE_CUDA)
 
     target_link_libraries(fullmag_fdm PRIVATE
         CUDA::cudart
+        CUDA::cufft
     )
 else()
     target_compile_definitions(fullmag_fdm PRIVATE FULLMAG_HAS_CUDA=0)

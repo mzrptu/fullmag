@@ -34,6 +34,9 @@ pub enum fullmag_fdm_integrator {
 pub enum fullmag_fdm_observable {
     FULLMAG_FDM_OBSERVABLE_M = 1,
     FULLMAG_FDM_OBSERVABLE_H_EX = 2,
+    FULLMAG_FDM_OBSERVABLE_H_DEMAG = 3,
+    FULLMAG_FDM_OBSERVABLE_H_EXT = 4,
+    FULLMAG_FDM_OBSERVABLE_H_EFF = 5,
 }
 
 // ── Descriptors ──
@@ -65,6 +68,10 @@ pub struct fullmag_fdm_plan_desc {
     pub material: fullmag_fdm_material_desc,
     pub precision: fullmag_fdm_precision,
     pub integrator: fullmag_fdm_integrator,
+    pub enable_exchange: i32,
+    pub enable_demag: i32,
+    pub has_external_field: i32,
+    pub external_field_am: [f64; 3],
     pub initial_magnetization_xyz: *const f64,
     pub initial_magnetization_len: u64,
 }
@@ -78,6 +85,9 @@ pub struct fullmag_fdm_step_stats {
     pub time_seconds: f64,
     pub dt_seconds: f64,
     pub exchange_energy_joules: f64,
+    pub demag_energy_joules: f64,
+    pub external_energy_joules: f64,
+    pub total_energy_joules: f64,
     pub max_effective_field_amplitude: f64,
     pub max_rhs_amplitude: f64,
     pub wall_time_ns: u64,

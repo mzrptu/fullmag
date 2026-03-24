@@ -50,8 +50,11 @@ typedef enum {
 } fullmag_fdm_integrator;
 
 typedef enum {
-    FULLMAG_FDM_OBSERVABLE_M    = 1,
-    FULLMAG_FDM_OBSERVABLE_H_EX = 2,
+    FULLMAG_FDM_OBSERVABLE_M        = 1,
+    FULLMAG_FDM_OBSERVABLE_H_EX     = 2,
+    FULLMAG_FDM_OBSERVABLE_H_DEMAG  = 3,
+    FULLMAG_FDM_OBSERVABLE_H_EXT    = 4,
+    FULLMAG_FDM_OBSERVABLE_H_EFF    = 5,
 } fullmag_fdm_observable;
 
 /* ── Plan descriptor ── */
@@ -77,6 +80,10 @@ typedef struct {
     fullmag_fdm_material_desc  material;
     fullmag_fdm_precision      precision;
     fullmag_fdm_integrator     integrator;
+    int                        enable_exchange;
+    int                        enable_demag;
+    int                        has_external_field;
+    double                     external_field_am[3]; /* H_ext in A/m */
 
     /* Initial m in AoS layout: [m0x, m0y, m0z, m1x, m1y, m1z, ...] */
     const double              *initial_magnetization_xyz;
@@ -90,7 +97,10 @@ typedef struct {
     double   time_seconds;
     double   dt_seconds;
     double   exchange_energy_joules;
-    double   max_effective_field_amplitude;  /* max |H_ex| */
+    double   demag_energy_joules;
+    double   external_energy_joules;
+    double   total_energy_joules;
+    double   max_effective_field_amplitude;  /* max |H_eff| */
     double   max_rhs_amplitude;             /* max |dm/dt| */
     uint64_t wall_time_ns;
 } fullmag_fdm_step_stats;

@@ -66,14 +66,7 @@ pub(crate) fn execute_fdm(
         FdmEngine::CpuReference => {
             cpu_reference::execute_reference_fdm(plan, until_seconds, outputs)
         }
-        FdmEngine::CudaFdm => {
-            if plan_requires_cpu_reference(plan, outputs) {
-                return handle_unsupported_cuda_plan(plan, outputs, || {
-                    cpu_reference::execute_reference_fdm(plan, until_seconds, outputs)
-                });
-            }
-            execute_cuda_fdm(plan, until_seconds, outputs)
-        }
+        FdmEngine::CudaFdm => execute_cuda_fdm(plan, until_seconds, outputs),
     }
 }
 
@@ -97,18 +90,6 @@ pub(crate) fn execute_fdm_with_callback(
             on_step,
         ),
         FdmEngine::CudaFdm => {
-            if plan_requires_cpu_reference(plan, outputs) {
-                return handle_unsupported_cuda_plan(plan, outputs, || {
-                    cpu_reference::execute_reference_fdm_with_callback(
-                        plan,
-                        until_seconds,
-                        outputs,
-                        grid,
-                        field_every_n,
-                        on_step,
-                    )
-                });
-            }
             let executed = execute_cuda_fdm(plan, until_seconds, outputs)?;
             let emit_every = field_every_n.max(1);
             for stats in &executed.result.steps {
@@ -134,34 +115,6 @@ pub(crate) fn execute_fdm_with_callback(
             Ok(executed)
         }
     }
-}
-
-fn plan_requires_cpu_reference(plan: &FdmPlanIR, outputs: &[OutputIR]) -> bool {
-    plan.enable_demag
-        || plan.external_field.is_some()
-        || outputs.iter().any(|output| match output {
-            OutputIR::Field { name, .. } => matches!(name.as_str(), "H_demag" | "H_ext" | "H_eff"),
-            OutputIR::Scalar { name, .. } => matches!(name.as_str(), "E_demag" | "E_ext" | "E_total"),
-        })
-}
-
-fn handle_unsupported_cuda_plan<T>(
-    plan: &FdmPlanIR,
-    outputs: &[OutputIR],
-    fallback: impl FnOnce() -> Result<T, RunError>,
-) -> Result<T, RunError> {
-    let policy = std::env::var("FULLMAG_FDM_EXECUTION").unwrap_or_else(|_| "auto".into());
-    if policy == "cuda" {
-        return Err(RunError {
-            message: format!(
-                "CUDA FDM backend does not yet support the requested plan (enable_demag={}, external_field={}, outputs={:?})",
-                plan.enable_demag,
-                plan.external_field.is_some(),
-                outputs
-            ),
-        });
-    }
-    fallback()
 }
 
 #[cfg(feature = "cuda")]
@@ -274,15 +227,25 @@ fn capture_initial_cuda_fields(
         .collect::<Vec<_>>();
 
     for name in due_field_names {
-        if name == "m" {
-            field_snapshots.push(FieldSnapshot {
-                name: name.clone(),
-                step: 0,
-                time: 0.0,
-                solver_dt: 0.0,
-                values: backend.copy_m(cell_count)?,
-            });
-        }
+        let values = match name.as_str() {
+            "m" => backend.copy_m(cell_count)?,
+            "H_ex" => backend.copy_h_ex(cell_count)?,
+            "H_demag" => backend.copy_h_demag(cell_count)?,
+            "H_ext" => backend.copy_h_ext(cell_count)?,
+            "H_eff" => backend.copy_h_eff(cell_count)?,
+            other => {
+                return Err(RunError {
+                    message: format!("unsupported CUDA field snapshot '{}'", other),
+                })
+            }
+        };
+        field_snapshots.push(FieldSnapshot {
+            name: name.clone(),
+            step: 0,
+            time: 0.0,
+            solver_dt: 0.0,
+            values,
+        });
     }
     advance_due_schedules(field_schedules, 0.0);
     Ok(())
@@ -315,6 +278,9 @@ fn record_cuda_due_outputs(
         let values = match name.as_str() {
             "m" => backend.copy_m(cell_count)?,
             "H_ex" => backend.copy_h_ex(cell_count)?,
+            "H_demag" => backend.copy_h_demag(cell_count)?,
+            "H_ext" => backend.copy_h_ext(cell_count)?,
+            "H_eff" => backend.copy_h_eff(cell_count)?,
             other => {
                 return Err(RunError {
                     message: format!("unsupported CUDA field snapshot '{}'", other),
@@ -376,6 +342,9 @@ fn record_cuda_final_outputs(
         let values = match name.as_str() {
             "m" => backend.copy_m(cell_count)?,
             "H_ex" => backend.copy_h_ex(cell_count)?,
+            "H_demag" => backend.copy_h_demag(cell_count)?,
+            "H_ext" => backend.copy_h_ext(cell_count)?,
+            "H_eff" => backend.copy_h_eff(cell_count)?,
             other => {
                 return Err(RunError {
                     message: format!("unsupported CUDA field snapshot '{}'", other),

@@ -1,0 +1,163 @@
+/* ── ViewCube ─────────────────────────────── */
+.vc {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 72px;
+  height: 82px;
+  z-index: var(--z-sticky, 10);
+  perspective: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+.vcScene {
+  width: 60px;
+  height: 60px;
+  transform-style: preserve-3d;
+  cursor: grab;
+  touch-action: none;
+  pointer-events: auto;
+}
+.vcScene:active {
+  cursor: grabbing;
+}
+
+.vcFace {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  display: grid;
+  grid-template-columns: 10px 1fr 10px;
+  grid-template-rows: 10px 1fr 10px;
+  backface-visibility: visible;
+  background: linear-gradient(135deg, rgba(15, 22, 40, 0.8), rgba(20, 30, 52, 0.76));
+  border: 1px solid rgba(90, 130, 200, 0.2);
+}
+
+.vcZone {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s;
+}
+.vcZone:hover {
+  background: rgba(107, 167, 255, 0.25);
+}
+.vcZoneface {
+  color: rgba(200, 215, 240, 0.8);
+}
+.vcZoneface:hover {
+  background: rgba(107, 167, 255, 0.38);
+  color: #fff;
+}
+.vcZoneedge:hover {
+  background: rgba(87, 200, 182, 0.3);
+}
+.vcZonecorner:hover {
+  background: rgba(200, 160, 80, 0.3);
+}
+
+.vcLabel {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.vcHome {
+  margin-top: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(15, 22, 40, 0.8);
+  border: 1px solid rgba(90, 130, 200, 0.3);
+  color: rgba(200, 215, 240, 0.7);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  backdrop-filter: blur(6px);
+  line-height: 1;
+  pointer-events: auto;
+}
+.vcHome:hover {
+  background: rgba(55, 95, 170, 0.6);
+  border-color: rgba(107, 167, 255, 0.5);
+  color: #fff;
+}
+
+/* ── Axis Gizmo ──────────────────────────── */
+.ag {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 90px;
+  height: 90px;
+  z-index: var(--z-sticky, 10);
+  perspective: 200px;
+  pointer-events: none;
+}
+
+.agScene {
+  width: 90px;
+  height: 90px;
+  transform-style: preserve-3d;
+  position: relative;
+}
+
+.agShaft,
+.agTip,
+.agLbl {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-style: preserve-3d;
+}
+
+.agShaft {
+  width: 2px;
+  height: 36px;
+  margin-left: -1px;
+  margin-top: 0;
+  transform-origin: center top;
+  border-radius: 1px;
+}
+
+.agShaftX { background: #e65050; }
+.agShaftY { background: #50c850; }
+.agShaftZ { background: #5090e6; }
+
+.agTip {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  margin-left: -5px;
+  margin-top: -5px;
+  transform-origin: center center;
+}
+
+.agTipX { border-bottom: 10px solid #e65050; }
+.agTipY { border-bottom: 10px solid #50c850; }
+.agTipZ { border-bottom: 10px solid #5090e6; }
+
+.agLbl {
+  font-size: 13px;
+  font-weight: 800;
+  pointer-events: none;
+  margin-left: -5px;
+  margin-top: -8px;
+}
+.agLblX { color: #e65050; }
+.agLblY { color: #50c850; }
+.agLblZ { color: #5090e6; }

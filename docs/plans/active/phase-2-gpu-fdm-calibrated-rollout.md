@@ -2,7 +2,7 @@
 
 - Status: active
 - Priority: P0
-- Last updated: 2026-03-23
+- Last updated: 2026-03-24
 - Parent target architecture: `docs/specs/fullmag-application-architecture-v2.md`
 - Parent solver architecture: `docs/specs/exchange-only-full-solver-architecture-v1.md`
 - Related plans:
@@ -28,18 +28,18 @@ GPU FDM is not complete.
 
 What exists:
 
-- public CPU reference execution for the narrow exchange-only FDM slice,
+- public CPU reference execution for the narrow `Exchange + Demag + Zeeman` FDM slice,
 - precision policy in Python API, `ProblemIR`, planning, and metadata,
 - documentation for GPU precision and calibration,
-- native CUDA/FDM backend source and tests,
+- native CUDA/FDM backend source and executable double-precision path for `Exchange + Demag + Zeeman`,
 - Rust-owned script host plus Python helper bridge,
 - bootstrap file-backed session manifests and API routes.
 
 What does not exist yet:
 
-- fully qualified production CUDA backend,
-- finished public GPU qualification,
-- GPU parity and calibration harness,
+- fully qualified production CUDA backend across the broader roadmap,
+- finished public GPU qualification for `single`,
+- broader GPU parity and calibration harness,
 - GPU-backed session/run shell,
 - GPU-backed control-room flow.
 
@@ -65,7 +65,8 @@ transition, but Phase 2 must not deepen dependence on that older model.
 
 ## 4. Non-negotiable rules
 
-1. CUDA must implement the same discrete exchange-only LLG model as the CPU reference.
+1. CUDA must implement the same discrete FDM LLG model as the CPU reference for the currently
+   executable interaction set.
 2. GPU `double` parity is required before GPU `single` becomes public-executable.
 3. Precision remains user-visible and explicit.
 4. Python API and `ProblemIR` stay backend-neutral.
@@ -115,6 +116,10 @@ Deliver:
 - Rust runner dispatch into CUDA,
 - identical observable and artifact semantics relative to CPU.
 
+Status:
+
+- complete for `Exchange + Demag + Zeeman` in the narrow `Box`-based FDM slice.
+
 ### Stage 2E - GPU `single`
 
 Deliver only after Stage 2D passes:
@@ -123,6 +128,11 @@ Deliver only after Stage 2D passes:
 - precision-aware context creation,
 - qualification against GPU `double`,
 - metadata and provenance proving the chosen execution precision.
+
+Status:
+
+- implementation path exists,
+- public qualification remains open.
 
 ### Stage 2F - calibration and regression harness
 
