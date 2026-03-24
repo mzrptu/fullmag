@@ -10,6 +10,7 @@
 mod artifacts;
 mod cpu_reference;
 mod dispatch;
+mod fem_reference;
 mod native_fdm;
 mod schedules;
 mod types;
@@ -31,19 +32,15 @@ pub fn run_problem(
 ) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
 
-    let fdm = match &plan.backend_plan {
-        BackendPlanIR::Fdm(fdm) => fdm,
-        _ => {
-            return Err(RunError {
-                message:
-                    "current runner supports only FDM backend execution; FEM plans are planner-ready but not executable yet"
-                        .to_string(),
-            })
+    let executed = match &plan.backend_plan {
+        BackendPlanIR::Fdm(fdm) => {
+            let engine = dispatch::resolve_fdm_engine()?;
+            dispatch::execute_fdm(engine, fdm, until_seconds, &plan.output_plan.outputs)?
+        }
+        BackendPlanIR::Fem(fem) => {
+            fem_reference::execute_reference_fem(fem, until_seconds, &plan.output_plan.outputs)?
         }
     };
-
-    let engine = dispatch::resolve_fdm_engine()?;
-    let executed = dispatch::execute_fdm(engine, fdm, until_seconds, &plan.output_plan.outputs)?;
 
     if let Err(e) = artifacts::write_artifacts(output_dir, problem, &plan, &executed) {
         return Err(RunError {
@@ -67,28 +64,28 @@ pub fn run_problem_with_callback(
 ) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
 
-    let fdm = match &plan.backend_plan {
-        BackendPlanIR::Fdm(fdm) => fdm,
-        _ => {
+    let executed = match &plan.backend_plan {
+        BackendPlanIR::Fdm(fdm) => {
+            let grid = fdm.grid.cells;
+            let engine = dispatch::resolve_fdm_engine()?;
+            dispatch::execute_fdm_with_callback(
+                engine,
+                fdm,
+                until_seconds,
+                &plan.output_plan.outputs,
+                grid,
+                field_every_n,
+                &mut on_step,
+            )?
+        }
+        BackendPlanIR::Fem(_) => {
             return Err(RunError {
                 message:
-                    "current runner supports only FDM backend execution; FEM plans are planner-ready but not executable yet"
+                    "live callback execution is not implemented for FEM yet; use run_problem / Simulation.run for headless FEM execution"
                         .to_string(),
             })
         }
     };
-
-    let grid = fdm.grid.cells;
-    let engine = dispatch::resolve_fdm_engine()?;
-    let executed = dispatch::execute_fdm_with_callback(
-        engine,
-        fdm,
-        until_seconds,
-        &plan.output_plan.outputs,
-        grid,
-        field_every_n,
-        &mut on_step,
-    )?;
 
     if let Err(e) = artifacts::write_artifacts(output_dir, problem, &plan, &executed) {
         return Err(RunError {
@@ -116,9 +113,13 @@ pub fn run_problem_with_callback(
         .iter()
         .flat_map(|v| v.iter().copied())
         .collect();
+    let final_grid = match &plan.backend_plan {
+        BackendPlanIR::Fdm(fdm) => [fdm.grid.cells[0], fdm.grid.cells[1], fdm.grid.cells[2]],
+        BackendPlanIR::Fem(_) => [0, 0, 0],
+    };
     on_step(StepUpdate {
         stats: final_stats,
-        grid: [grid[0], grid[1], grid[2]],
+        grid: final_grid,
         magnetization: Some(final_m),
         finished: true,
     });

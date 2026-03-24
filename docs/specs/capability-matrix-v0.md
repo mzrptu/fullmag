@@ -27,23 +27,24 @@ Every feature carries one of three statuses:
 
 | Feature | FDM | FEM | Hybrid | Tier | Notes |
 |---------|-----|-----|--------|------|-------|
-| `Box` geometry | ✅ exec | planned | planned | **public-executable** (FDM) | Box→grid lowering in `fullmag-plan` |
+| `Box` geometry | ✅ exec | ✅ exec | planned | **public-executable** (FDM/FEM) | Box→grid lowering for FDM and Box→mesh lowering for FEM |
 | `Cylinder` geometry | planned | planned | planned | semantic-only | Requires active-mask voxelizer for accurate curved-boundary FDM execution |
 | Imported geometry ref | planned | planned | planned | semantic-only | FDM planner accepts it when a precomputed grid asset is attached; public execution still depends on voxelization extras |
-| Material constants (`Ms`, `A`, `alpha`) | ✅ exec | planned | planned | **public-executable** (FDM) | Used by the CPU reference FDM runner |
+| Material constants (`Ms`, `A`, `alpha`) | ✅ exec | ✅ exec | planned | **public-executable** (FDM/FEM) | Used by the CPU reference FDM runner and bootstrap FEM CPU reference runner |
 | Material constants (`Ku1`, `anisU`) | planned | planned | planned | semantic-only | Anisotropy not in exchange-only scope |
-| Ferromagnet + uniform `m0` | ✅ exec | planned | planned | **public-executable** (FDM) | Lowered to per-cell vectors by planner |
-| Ferromagnet + random `m0` | ✅ exec | planned | planned | **public-executable** (FDM) | Deterministic xorshift64 RNG in planner |
-| `Exchange` | ✅ exec | planned | planned | **public-executable** (FDM) | CPU 6-point stencil in `fullmag-engine` |
+| Ferromagnet + uniform `m0` | ✅ exec | ✅ exec | planned | **public-executable** (FDM/FEM) | Lowered to per-cell vectors for FDM and per-node vectors for FEM |
+| Ferromagnet + random `m0` | ✅ exec | ✅ exec | planned | **public-executable** (FDM/FEM) | Deterministic xorshift64 RNG in planner |
+| `Exchange` | ✅ exec | ✅ exec | planned | **public-executable** (FDM/FEM) | CPU 6-point stencil in FDM and lumped-mass P1 operator in FEM |
 | `Demag` | ✅ exec | planned | planned | **public-executable** (FDM) | CPU bootstrap spectral demag and CUDA spectral demag on zero-padded grid |
 | `InterfacialDMI` | planned | planned | planned | semantic-only | Not numerically implemented |
-| `Zeeman` | ✅ exec | planned | planned | **public-executable** (FDM) | Public API still authors `B`; planner normalizes to `H_ext` in A/m for CPU and CUDA FDM |
-| `LLG` (Heun) | ✅ exec | planned | planned | **public-executable** (FDM) | Heun stepper in `fullmag-engine` |
-| Execution precision `double` | ✅ exec | planned | planned | **public-executable** (FDM) | Current CPU reference precision and qualified CUDA precision for the narrow FDM slice |
+| `Zeeman` | ✅ exec | ✅ exec | planned | **public-executable** (FDM/FEM) | Public API authors `B`; planner normalizes to `H_ext` in A/m for CPU FDM and CPU FEM |
+| `LLG` (Heun) | ✅ exec | ✅ exec | planned | **public-executable** (FDM/FEM) | Heun stepper in `fullmag-engine` |
+| Execution precision `double` | ✅ exec | ✅ exec | planned | **public-executable** (FDM/FEM) | Current CPU reference precision for both narrow executable backends |
 | Execution precision `single` | planned | planned | planned | semantic-only | Defined in Python API and `ProblemIR`; reserved for Phase 2 CUDA FDM |
-| Field/scalar outputs (`m`, `H_ex`, `H_demag`, `H_ext`, `H_eff`, `E_ex`, `E_demag`, `E_ext`, `E_total`) | ✅ exec | planned | planned | **public-executable** (FDM) | Artifacts: `metadata.json`, expanded `scalars.csv`, and per-field snapshots under `fields/` |
+| Field/scalar outputs (`m`, `H_ex`, `H_ext`, `H_eff`, `E_ex`, `E_ext`, `E_total`) | ✅ exec | ✅ exec | planned | **public-executable** (FDM/FEM) | Common artifact layout for current FDM/FEM executable slices |
+| FEM demag outputs (`H_demag`, `E_demag`) | ✅ exec | planned | planned | **public-executable** (FDM) | FEM runner still rejects `Demag()` |
 | FDM hints | ✅ exec | n/a | planned | **public-executable** | Cell size → grid dims in planner |
-| FEM hints | n/a | planned | planned | semantic-only | Planner can build `FemPlanIR` from precomputed `MeshIR`; runner execution remains deferred |
+| FEM hints | n/a | ✅ exec | planned | **public-executable** (FEM) | Planner builds `FemPlanIR`; execution currently requires `MeshIR` or external meshing extras |
 | Hybrid hints | n/a | n/a | planned | semantic-only | Requires hybrid mode and backend |
 
 ## Early planner rules

@@ -37,8 +37,18 @@ This note therefore serves two purposes simultaneously:
 2. define the *GPU-aware FEM implementation target* so future work does not drift into a
    CPU-only or mesh-library-specific dead end.
 
-At the time of writing, FEM remains non-executable in the public product path.
-This is therefore a design-frozen physics note, not a description of already shipped FEM behavior.
+At the time of writing, the public product path now has a **narrow executable FEM CPU-reference
+slice**:
+
+- precomputed `MeshIR` (or external meshing through the Python geometry asset layer),
+- `Exchange`,
+- optional `Zeeman`,
+- `LLG(heun)`,
+- `double` precision.
+
+`Demag` remains planner-only for FEM and is **not** yet executable in the public runner.
+This note therefore still serves primarily as a design-frozen physics note for the full FEM target,
+while also constraining the already shipped exchange/Zeeman CPU-reference subset.
 
 ## 2. Physical model
 

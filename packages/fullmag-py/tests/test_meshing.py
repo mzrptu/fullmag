@@ -16,8 +16,8 @@ from fullmag.meshing.voxelization import VoxelMaskData, voxelize_geometry
 
 
 class MeshScaffoldTests(unittest.TestCase):
-    def test_meshdata_roundtrip_npz(self) -> None:
-        mesh = MeshData(
+    def _unit_tet_mesh(self) -> MeshData:
+        return MeshData(
             nodes=np.asarray(
                 [
                     [0.0, 0.0, 0.0],
@@ -31,6 +31,9 @@ class MeshScaffoldTests(unittest.TestCase):
             boundary_faces=np.asarray([[0, 1, 2]], dtype=np.int32),
             boundary_markers=np.asarray([7], dtype=np.int32),
         )
+
+    def test_meshdata_roundtrip_npz(self) -> None:
+        mesh = self._unit_tet_mesh()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "mesh.npz"
@@ -43,21 +46,22 @@ class MeshScaffoldTests(unittest.TestCase):
         np.testing.assert_array_equal(mesh.boundary_faces, loaded.boundary_faces)
         np.testing.assert_array_equal(mesh.boundary_markers, loaded.boundary_markers)
 
+    def test_meshdata_roundtrip_json(self) -> None:
+        mesh = self._unit_tet_mesh()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "mesh.json"
+            mesh.save(path)
+            loaded = MeshData.load(path)
+
+        np.testing.assert_allclose(mesh.nodes, loaded.nodes)
+        np.testing.assert_array_equal(mesh.elements, loaded.elements)
+        np.testing.assert_array_equal(mesh.element_markers, loaded.element_markers)
+        np.testing.assert_array_equal(mesh.boundary_faces, loaded.boundary_faces)
+        np.testing.assert_array_equal(mesh.boundary_markers, loaded.boundary_markers)
+
     def test_meshdata_to_ir_has_canonical_shape(self) -> None:
-        mesh = MeshData(
-            nodes=np.asarray(
-                [
-                    [0.0, 0.0, 0.0],
-                    [1.0, 0.0, 0.0],
-                    [0.0, 1.0, 0.0],
-                    [0.0, 0.0, 1.0],
-                ]
-            ),
-            elements=np.asarray([[0, 1, 2, 3]], dtype=np.int32),
-            element_markers=np.asarray([1], dtype=np.int32),
-            boundary_faces=np.asarray([[0, 1, 2]], dtype=np.int32),
-            boundary_markers=np.asarray([7], dtype=np.int32),
-        )
+        mesh = self._unit_tet_mesh()
 
         mesh_ir = mesh.to_ir("unit_tet")
 
@@ -69,20 +73,7 @@ class MeshScaffoldTests(unittest.TestCase):
             self.assertTrue(fullmag_core.validate_mesh_ir(mesh_ir))
 
     def test_validate_mesh_reports_basic_quality(self) -> None:
-        mesh = MeshData(
-            nodes=np.asarray(
-                [
-                    [0.0, 0.0, 0.0],
-                    [1.0, 0.0, 0.0],
-                    [0.0, 1.0, 0.0],
-                    [0.0, 0.0, 1.0],
-                ]
-            ),
-            elements=np.asarray([[0, 1, 2, 3]], dtype=np.int32),
-            element_markers=np.asarray([1], dtype=np.int32),
-            boundary_faces=np.asarray([[0, 1, 2]], dtype=np.int32),
-            boundary_markers=np.asarray([1], dtype=np.int32),
-        )
+        mesh = self._unit_tet_mesh()
 
         report = validate_mesh(mesh)
 
@@ -169,6 +160,21 @@ class MeshScaffoldTests(unittest.TestCase):
 
             mocked.assert_called_once()
             self.assertIsInstance(mesh, MeshData)
+
+    def test_generate_mesh_from_json_works_without_optional_meshing_stack(self) -> None:
+        mesh = self._unit_tet_mesh()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "mesh.json"
+            mesh.save(path)
+            loaded = realize_fem_mesh_asset(
+                fm.Box(size=(1.0, 1.0, 1.0)),
+                fm.FEM(order=1, hmax=0.1, mesh=str(path)),
+            )
+
+        self.assertIsInstance(loaded, MeshData)
+        np.testing.assert_allclose(mesh.nodes, loaded.nodes)
+        np.testing.assert_array_equal(mesh.elements, loaded.elements)
 
 
 if __name__ == "__main__":

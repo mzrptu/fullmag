@@ -344,6 +344,7 @@ dependencies = [
 name = "fullmag-engine"
 version = "0.1.0"
 dependencies = [
+ "fullmag-ir",
  "rustfft",
 ]
 

@@ -6,9 +6,13 @@ import Header from "../ui/Header";
 import ConsolePanel from "../panels/ConsolePanel";
 import SolverPanel from "../panels/SolverPanel";
 import MeshPanel from "../panels/MeshPanel";
+import MeshBuilderPanel from "../panels/MeshBuilderPanel";
+import type { GeneratedMesh } from "../panels/MeshBuilderPanel";
 import MetricsPanel from "../panels/MetricsPanel";
 import MagnetizationSlice2D from "../preview/MagnetizationSlice2D";
 import MagnetizationView3D from "../preview/MagnetizationView3D";
+import FemMeshView3D from "../preview/FemMeshView3D";
+import type { FemMeshData } from "../preview/FemMeshView3D";
 import Panel from "../ui/Panel";
 import SegmentedControl from "../ui/SegmentedControl";
 import StatusBadge from "../ui/StatusBadge";
@@ -51,10 +55,25 @@ export default function RunControlRoom({ sessionId }: RunControlRoomProps) {
   const [plane, setPlane] = useState<SlicePlane>("xy");
   const [sliceIndex, setSliceIndex] = useState(0);
   const [selectedQuantity, setSelectedQuantity] = useState("m");
+  const [femMeshPreview, setFemMeshPreview] = useState<FemMeshData | null>(null);
 
   const session = state?.session;
   const run = state?.run;
   const liveState = state?.live_state;
+
+  /* Detect FEM backend from plan_summary */
+  const planSummary = session?.plan_summary as Record<string, unknown> | undefined;
+  const isFemBackend = planSummary?.backend === "fem";
+  const femInfo = isFemBackend
+    ? {
+        nNodes: (planSummary?.n_nodes as number) ?? 0,
+        nElements: (planSummary?.n_elements as number) ?? 0,
+        nBoundaryFaces: 0,
+        totalVolume: 0,
+        feOrder: (planSummary?.fe_order as number) ?? 1,
+      }
+    : undefined;
+
   const grid = (liveState?.grid ?? state?.latest_fields.grid ?? [0, 0, 0]) as [
     number,
     number,
@@ -306,6 +325,11 @@ export default function RunControlRoom({ sessionId }: RunControlRoomProps) {
                       tone="info"
                     />
                   </div>
+                ) : viewMode === "3D" && isFemBackend && femMeshPreview ? (
+                  <FemMeshView3D
+                    meshData={femMeshPreview}
+                    colorField="mz"
+                  />
                 ) : viewMode === "3D" ? (
                   <MagnetizationView3D
                     grid={grid}
@@ -346,8 +370,22 @@ export default function RunControlRoom({ sessionId }: RunControlRoomProps) {
         </div>
 
         <div>
-          <MeshPanel grid={grid} cellSize={cellSize} />
+          <MeshPanel grid={grid} cellSize={cellSize} femInfo={femInfo} />
         </div>
+        {isFemBackend && (
+          <div>
+            <MeshBuilderPanel
+              onMeshGenerated={(mesh: GeneratedMesh) => {
+                setFemMeshPreview({
+                  nodes: mesh.nodes,
+                  boundaryFaces: mesh.boundaryFaces,
+                  nNodes: mesh.nNodes,
+                  nElements: mesh.nElements,
+                });
+              }}
+            />
+          </div>
+        )}
         <div>
           <Panel
             title="Scalars"

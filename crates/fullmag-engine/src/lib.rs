@@ -1,3 +1,5 @@
+pub mod fem;
+
 use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 use std::error::Error;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Any
 import math
@@ -86,6 +87,22 @@ class MeshData:
     def save(self, path: str | Path) -> None:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
+        if target.suffix.lower() == ".json":
+            target.write_text(
+                json.dumps(
+                    {
+                        "mesh_name": target.stem,
+                        "nodes": self.nodes.tolist(),
+                        "elements": self.elements.tolist(),
+                        "element_markers": self.element_markers.tolist(),
+                        "boundary_faces": self.boundary_faces.tolist(),
+                        "boundary_markers": self.boundary_markers.tolist(),
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return
         np.savez_compressed(
             target,
             nodes=self.nodes,
@@ -97,7 +114,18 @@ class MeshData:
 
     @classmethod
     def load(cls, path: str | Path) -> "MeshData":
-        data = np.load(Path(path))
+        source = Path(path)
+        if source.suffix.lower() == ".json":
+            payload = json.loads(source.read_text(encoding="utf-8"))
+            return cls(
+                nodes=np.asarray(payload["nodes"], dtype=np.float64),
+                elements=np.asarray(payload["elements"], dtype=np.int32),
+                element_markers=np.asarray(payload["element_markers"], dtype=np.int32),
+                boundary_faces=np.asarray(payload["boundary_faces"], dtype=np.int32),
+                boundary_markers=np.asarray(payload["boundary_markers"], dtype=np.int32),
+            )
+
+        data = np.load(source)
         return cls(
             nodes=data["nodes"],
             elements=data["elements"],
@@ -193,6 +221,8 @@ def generate_mesh_from_file(
 ) -> MeshData:
     path = Path(source)
     suffix = path.suffix.lower()
+    if suffix == ".json":
+        return MeshData.load(path)
     if suffix in {".msh", ".vtk", ".vtu", ".xdmf"}:
         return _read_mesh_file(path)
     if suffix in {".step", ".stp", ".iges", ".igs"}:
