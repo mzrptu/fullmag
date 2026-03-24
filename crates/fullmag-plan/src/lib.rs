@@ -10,7 +10,8 @@ use fullmag_ir::{
     BackendPlanIR, BackendTarget, CommonPlanMeta, DiscretizationHintsIR, ExchangeBoundaryCondition,
     ExecutionMode, ExecutionPlanIR, ExecutionPrecision, FdmGridAssetIR, FdmMaterialIR, FdmPlanIR,
     FemPlanIR, GeometryEntryIR, GridDimensions, InitialMagnetizationIR, IntegratorChoice, MeshIR,
-    OutputIR, OutputPlanIR, ProblemIR, ProvenancePlanIR, IR_VERSION,
+    OutputIR, OutputPlanIR, ProblemIR, ProvenancePlanIR, RelaxationAlgorithmIR,
+    RelaxationControlIR, IR_VERSION,
 };
 use std::collections::BTreeSet;
 use std::fmt;
@@ -34,6 +35,52 @@ impl fmt::Display for PlanError {
 }
 
 impl std::error::Error for PlanError {}
+
+fn planned_study_controls(
+    problem: &ProblemIR,
+    errors: &mut Vec<String>,
+) -> (
+    IntegratorChoice,
+    Option<f64>,
+    f64,
+    Option<RelaxationControlIR>,
+) {
+    let integrator = match problem.study.dynamics() {
+        fullmag_ir::DynamicsIR::Llg { integrator, .. } => {
+            if integrator == "heun" {
+                IntegratorChoice::Heun
+            } else {
+                errors.push(format!(
+                    "integrator '{}' is not supported; only 'heun' is available",
+                    integrator
+                ));
+                IntegratorChoice::Heun
+            }
+        }
+    };
+
+    let fixed_timestep = match problem.study.dynamics() {
+        fullmag_ir::DynamicsIR::Llg { fixed_timestep, .. } => *fixed_timestep,
+    };
+
+    let gyromagnetic_ratio = match problem.study.dynamics() {
+        fullmag_ir::DynamicsIR::Llg {
+            gyromagnetic_ratio, ..
+        } => *gyromagnetic_ratio,
+    };
+
+    let relaxation = problem.study.relaxation().map(|control| {
+        if control.algorithm != RelaxationAlgorithmIR::LlgOverdamped {
+            errors.push(format!(
+                "relaxation algorithm '{}' is defined but not yet executable in the current public runner; only 'llg_overdamped' is currently supported",
+                control.algorithm.as_str()
+            ));
+        }
+        control
+    });
+
+    (integrator, fixed_timestep, gyromagnetic_ratio, relaxation)
+}
 
 /// Plans a `ProblemIR` into an `ExecutionPlanIR`.
 ///
@@ -419,31 +466,11 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         }
     };
 
-    // Check integrator
-    let integrator = match problem.study.dynamics() {
-        fullmag_ir::DynamicsIR::Llg { integrator, .. } => {
-            if integrator == "heun" {
-                IntegratorChoice::Heun
-            } else {
-                return Err(PlanError {
-                    reasons: vec![format!(
-                        "integrator '{}' is not supported; only 'heun' is available",
-                        integrator
-                    )],
-                });
-            }
-        }
-    };
-
-    let fixed_timestep = match problem.study.dynamics() {
-        fullmag_ir::DynamicsIR::Llg { fixed_timestep, .. } => *fixed_timestep,
-    };
-
-    let gyromagnetic_ratio = match problem.study.dynamics() {
-        fullmag_ir::DynamicsIR::Llg {
-            gyromagnetic_ratio, ..
-        } => *gyromagnetic_ratio,
-    };
+    let (integrator, fixed_timestep, gyromagnetic_ratio, relaxation) =
+        planned_study_controls(problem, &mut errors);
+    if !errors.is_empty() {
+        return Err(PlanError { reasons: errors });
+    }
 
     let active_count = active_mask
         .as_ref()
@@ -497,6 +524,21 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         exchange_bc: ExchangeBoundaryCondition::Neumann,
         integrator,
         fixed_timestep,
+        relaxation,
+    };
+    let study_note = if let Some(control) = fdm_plan.relaxation.as_ref() {
+        format!(
+            "study: relaxation algorithm={} torque_tolerance={:.6e} energy_tolerance={} max_steps={}",
+            control.algorithm.as_str(),
+            control.torque_tolerance,
+            control
+                .energy_tolerance
+                .map(|value| format!("{value:.6e}"))
+                .unwrap_or_else(|| "none".to_string()),
+            control.max_steps
+        )
+    } else {
+        "study: time_evolution".to_string()
     };
 
     Ok(ExecutionPlanIR {
@@ -524,6 +566,7 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
                     enable_demag,
                     external_field.is_some()
                 ),
+                study_note,
             ],
         },
     })
@@ -683,29 +726,8 @@ fn plan_fem(
         None => vec![[1.0, 0.0, 0.0]; n_nodes],
     };
 
-    let integrator = match problem.study.dynamics() {
-        fullmag_ir::DynamicsIR::Llg { integrator, .. } => {
-            if integrator == "heun" {
-                IntegratorChoice::Heun
-            } else {
-                errors.push(format!(
-                    "integrator '{}' is not supported; only 'heun' is available",
-                    integrator
-                ));
-                IntegratorChoice::Heun
-            }
-        }
-    };
-
-    let fixed_timestep = match problem.study.dynamics() {
-        fullmag_ir::DynamicsIR::Llg { fixed_timestep, .. } => *fixed_timestep,
-    };
-
-    let gyromagnetic_ratio = match problem.study.dynamics() {
-        fullmag_ir::DynamicsIR::Llg {
-            gyromagnetic_ratio, ..
-        } => *gyromagnetic_ratio,
-    };
+    let (integrator, fixed_timestep, gyromagnetic_ratio, relaxation) =
+        planned_study_controls(problem, &mut errors);
 
     if !errors.is_empty() {
         return Err(PlanError { reasons: errors });
@@ -729,6 +751,21 @@ fn plan_fem(
         exchange_bc: ExchangeBoundaryCondition::Neumann,
         integrator,
         fixed_timestep,
+        relaxation,
+    };
+    let study_note = if let Some(control) = fem_plan.relaxation.as_ref() {
+        format!(
+            "study: relaxation algorithm={} torque_tolerance={:.6e} energy_tolerance={} max_steps={}",
+            control.algorithm.as_str(),
+            control.torque_tolerance,
+            control
+                .energy_tolerance
+                .map(|value| format!("{value:.6e}"))
+                .unwrap_or_else(|| "none".to_string()),
+            control.max_steps
+        )
+    } else {
+        "study: time_evolution".to_string()
     };
 
     Ok(ExecutionPlanIR {
@@ -752,7 +789,8 @@ fn plan_fem(
                     enable_demag,
                     external_field.is_some()
                 ),
-                "FEM execution is not yet wired in the runner; this plan is planner-ready only"
+                study_note,
+                "FEM CPU reference execution is available; native MFEM/libCEED/hypre GPU execution remains in progress"
                     .to_string(),
             ],
         },
@@ -1139,6 +1177,51 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason.contains("requires Demag()")));
+    }
+
+    #[test]
+    fn llg_overdamped_relaxation_lowers_to_relaxation_control() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.study = fullmag_ir::StudyIR::Relaxation {
+            algorithm: fullmag_ir::RelaxationAlgorithmIR::LlgOverdamped,
+            dynamics: ir.study.dynamics().clone(),
+            torque_tolerance: 1e-3,
+            energy_tolerance: Some(1e-12),
+            max_steps: 250,
+            sampling: ir.study.sampling().clone(),
+        };
+
+        let plan = plan(&ir).expect("llg_overdamped relaxation should be plannable");
+        match plan.backend_plan {
+            BackendPlanIR::Fdm(fdm) => {
+                let control = fdm.relaxation.expect("relaxation control");
+                assert_eq!(
+                    control.algorithm,
+                    fullmag_ir::RelaxationAlgorithmIR::LlgOverdamped
+                );
+                assert_eq!(control.max_steps, 250);
+                assert_eq!(control.energy_tolerance, Some(1e-12));
+            }
+            _ => panic!("expected FDM plan"),
+        }
+    }
+
+    #[test]
+    fn projected_gradient_relaxation_is_defined_but_not_yet_executable() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.study = fullmag_ir::StudyIR::Relaxation {
+            algorithm: fullmag_ir::RelaxationAlgorithmIR::ProjectedGradientBb,
+            dynamics: ir.study.dynamics().clone(),
+            torque_tolerance: 1e-3,
+            energy_tolerance: None,
+            max_steps: 250,
+            sampling: ir.study.sampling().clone(),
+        };
+
+        let err = plan(&ir).expect_err("projected_gradient_bb should not be executable yet");
+        assert!(err.reasons.iter().any(|reason| {
+            reason.contains("projected_gradient_bb") && reason.contains("not yet executable")
+        }));
     }
 
     #[test]

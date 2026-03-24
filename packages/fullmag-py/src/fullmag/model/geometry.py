@@ -11,8 +11,30 @@ from fullmag._validation import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Mixin for CSG operator overloads
+# ---------------------------------------------------------------------------
+class _GeometryOps:
+    """Mixin providing ``-``, ``+``, ``&`` operators for CSG boolean ops."""
+
+    def __sub__(self, other: "Geometry") -> "Difference":
+        return Difference(base=self, tool=other)  # type: ignore[arg-type]
+
+    def __add__(self, other: "Geometry") -> "Union":
+        return Union(a=self, b=other)  # type: ignore[arg-type]
+
+    def __and__(self, other: "Geometry") -> "Intersection":
+        return Intersection(a=self, b=other)  # type: ignore[arg-type]
+
+    def translate(self, offset: tuple[float, float, float]) -> "Translate":
+        return Translate(geometry=self, offset=offset)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Imported geometry (NPZ mask, STL, STEP, etc.)
+# ---------------------------------------------------------------------------
 @dataclass(frozen=True, slots=True)
-class ImportedGeometry:
+class ImportedGeometry(_GeometryOps):
     source: str
     name: str | None = None
 
@@ -37,8 +59,13 @@ class ImportedGeometry:
         }
 
 
+# ---------------------------------------------------------------------------
+# Primitive shapes
+# ---------------------------------------------------------------------------
 @dataclass(frozen=True, slots=True)
-class Box:
+class Box(_GeometryOps):
+    """Axis-aligned box centered at origin."""
+
     size: tuple[float, float, float]
     name: str = "box"
 
@@ -62,7 +89,9 @@ class Box:
 
 
 @dataclass(frozen=True, slots=True)
-class Cylinder:
+class Cylinder(_GeometryOps):
+    """Circular cylinder centered at origin, axis along z."""
+
     radius: float
     height: float
     name: str = "cylinder"
@@ -86,16 +115,88 @@ class Cylinder:
 
 
 @dataclass(frozen=True, slots=True)
-class Difference:
+class Ellipsoid(_GeometryOps):
+    """Ellipsoid centered at origin with semi-axes (rx, ry, rz).
+
+    For a sphere, use ``Sphere(r)`` or ``Ellipsoid(r, r, r)``.
+    """
+
+    rx: float
+    ry: float
+    rz: float
+    name: str = "ellipsoid"
+
+    def __init__(
+        self, rx: float, ry: float, rz: float, name: str = "ellipsoid"
+    ) -> None:
+        object.__setattr__(self, "rx", require_positive(rx, "rx"))
+        object.__setattr__(self, "ry", require_positive(ry, "ry"))
+        object.__setattr__(self, "rz", require_positive(rz, "rz"))
+        object.__setattr__(self, "name", require_non_empty(name, "name"))
+
+    @property
+    def geometry_name(self) -> str:
+        return self.name
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "kind": "ellipsoid",
+            "rx": self.rx,
+            "ry": self.ry,
+            "rz": self.rz,
+        }
+
+
+def Sphere(radius: float, name: str = "sphere") -> Ellipsoid:
+    """Convenience constructor for a sphere (uniform ellipsoid)."""
+    return Ellipsoid(rx=radius, ry=radius, rz=radius, name=name)
+
+
+@dataclass(frozen=True, slots=True)
+class Ellipse(_GeometryOps):
+    """Elliptical disk centered at origin, axis along z.
+
+    For a circular disk, use ``Ellipse(r, r, h)`` or just ``Cylinder(r, h)``.
+    """
+
+    rx: float
+    ry: float
+    height: float
+    name: str = "ellipse"
+
+    def __init__(
+        self, rx: float, ry: float, height: float, name: str = "ellipse"
+    ) -> None:
+        object.__setattr__(self, "rx", require_positive(rx, "rx"))
+        object.__setattr__(self, "ry", require_positive(ry, "ry"))
+        object.__setattr__(self, "height", require_positive(height, "height"))
+        object.__setattr__(self, "name", require_non_empty(name, "name"))
+
+    @property
+    def geometry_name(self) -> str:
+        return self.name
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "kind": "ellipse",
+            "rx": self.rx,
+            "ry": self.ry,
+            "height": self.height,
+        }
+
+
+# ---------------------------------------------------------------------------
+# CSG boolean operations
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class Difference(_GeometryOps):
     """CSG Boolean difference: base geometry minus tool geometry.
 
     Example: Box with a cylindrical hole::
 
-        body = fm.Difference(
-            base=fm.Box(size=(1e-6, 1e-6, 10e-9), name="layer"),
-            tool=fm.Cylinder(radius=50e-9, height=10e-9, name="hole"),
-            name="layer_with_hole",
-        )
+        body = fm.Box(size=(1e-6, 1e-6, 10e-9)) - fm.Cylinder(radius=50e-9, height=10e-9)
     """
 
     base: "Geometry"
@@ -125,5 +226,128 @@ class Difference:
         }
 
 
-Geometry: TypeAlias = ImportedGeometry | Box | Cylinder | Difference
+@dataclass(frozen=True, slots=True)
+class Union(_GeometryOps):
+    """CSG Boolean union: combine two geometries.
 
+    Example::
+
+        body = fm.Box(size=(1e-6, 1e-6, 10e-9)) + fm.Cylinder(radius=50e-9, height=10e-9)
+    """
+
+    a: "Geometry"
+    b: "Geometry"
+    name: str = "union"
+
+    def __init__(
+        self,
+        a: "Geometry",
+        b: "Geometry",
+        name: str = "union",
+    ) -> None:
+        object.__setattr__(self, "a", a)
+        object.__setattr__(self, "b", b)
+        object.__setattr__(self, "name", require_non_empty(name, "name"))
+
+    @property
+    def geometry_name(self) -> str:
+        return self.name
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "kind": "union",
+            "a": self.a.to_ir(),
+            "b": self.b.to_ir(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Intersection(_GeometryOps):
+    """CSG Boolean intersection: keep only overlapping region.
+
+    Example::
+
+        body = fm.Box(size=(1e-6, 1e-6, 10e-9)) & fm.Cylinder(radius=50e-9, height=10e-9)
+    """
+
+    a: "Geometry"
+    b: "Geometry"
+    name: str = "intersection"
+
+    def __init__(
+        self,
+        a: "Geometry",
+        b: "Geometry",
+        name: str = "intersection",
+    ) -> None:
+        object.__setattr__(self, "a", a)
+        object.__setattr__(self, "b", b)
+        object.__setattr__(self, "name", require_non_empty(name, "name"))
+
+    @property
+    def geometry_name(self) -> str:
+        return self.name
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "kind": "intersection",
+            "a": self.a.to_ir(),
+            "b": self.b.to_ir(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Spatial transformations
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class Translate(_GeometryOps):
+    """Translate (offset) a geometry by a 3D vector.
+
+    Example: Hole off-center::
+
+        hole = fm.Cylinder(radius=50e-9, height=10e-9).translate((100e-9, 0, 0))
+    """
+
+    geometry: "Geometry"
+    offset: tuple[float, float, float]
+    name: str = "translate"
+
+    def __init__(
+        self,
+        geometry: "Geometry",
+        offset: tuple[float, float, float],
+        name: str = "translate",
+    ) -> None:
+        object.__setattr__(self, "geometry", geometry)
+        object.__setattr__(self, "offset", as_vector3(offset, "offset"))
+        object.__setattr__(self, "name", require_non_empty(name, "name"))
+
+    @property
+    def geometry_name(self) -> str:
+        return self.name
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "kind": "translate",
+            "geometry": self.geometry.to_ir(),
+            "offset": list(self.offset),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Type alias
+# ---------------------------------------------------------------------------
+Geometry: TypeAlias = (
+    ImportedGeometry
+    | Box
+    | Cylinder
+    | Ellipsoid
+    | Ellipse
+    | Difference
+    | Union
+    | Intersection
+    | Translate
+)

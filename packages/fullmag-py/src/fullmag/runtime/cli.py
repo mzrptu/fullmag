@@ -27,20 +27,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--backend",
         choices=[target.value for target in BackendTarget],
-        default=BackendTarget.FDM.value,
-        help="Requested backend target.",
+        help="Requested backend target. If omitted, use the script runtime policy.",
     )
     parser.add_argument(
         "--mode",
         choices=[mode.value for mode in ExecutionMode],
-        default=ExecutionMode.STRICT.value,
-        help="Execution mode.",
+        help="Execution mode. If omitted, use the script runtime policy.",
     )
     parser.add_argument(
         "--precision",
         choices=[precision.value for precision in ExecutionPrecision],
-        default=ExecutionPrecision.DOUBLE.value,
-        help="Requested execution precision.",
+        help="Requested execution precision. If omitted, use the script runtime policy.",
     )
     parser.add_argument(
         "--output-dir",

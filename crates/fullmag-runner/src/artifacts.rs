@@ -229,6 +229,7 @@ mod tests {
                 exchange_bc: ExchangeBoundaryCondition::Neumann,
                 integrator: IntegratorChoice::Heun,
                 fixed_timestep: Some(1e-13),
+                relaxation: None,
             }),
             output_plan: OutputPlanIR {
                 outputs: Vec::new(),

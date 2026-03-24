@@ -331,6 +331,7 @@ mod tests {
             exchange_bc: ExchangeBoundaryCondition::Neumann,
             integrator: IntegratorChoice::Heun,
             fixed_timestep: Some(1e-13),
+            relaxation: None,
         }
     }
 
@@ -384,6 +385,7 @@ mod tests {
             exchange_bc: ExchangeBoundaryCondition::Neumann,
             integrator: IntegratorChoice::Heun,
             fixed_timestep: Some(2.5e-13),
+            relaxation: None,
         }
     }
 

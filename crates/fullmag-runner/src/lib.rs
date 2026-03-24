@@ -13,6 +13,7 @@ mod dispatch;
 mod fem_reference;
 mod native_fdm;
 mod native_fem;
+mod relaxation;
 mod schedules;
 mod types;
 
@@ -22,6 +23,7 @@ pub use types::{
 };
 
 use fullmag_ir::{BackendPlanIR, FdmPlanIR, OutputIR, ProblemIR};
+use serde_json::Value;
 
 use std::path::Path;
 
@@ -35,16 +37,17 @@ pub fn run_problem(
 ) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
 
-    let executed = match &plan.backend_plan {
+    let cpu_threads = configured_cpu_threads(problem);
+    let executed = with_cpu_parallelism(cpu_threads, || match &plan.backend_plan {
         BackendPlanIR::Fdm(fdm) => {
-            let engine = dispatch::resolve_fdm_engine()?;
-            dispatch::execute_fdm(engine, fdm, until_seconds, &plan.output_plan.outputs)?
+            let engine = dispatch::resolve_fdm_engine(problem)?;
+            dispatch::execute_fdm(engine, fdm, until_seconds, &plan.output_plan.outputs)
         }
         BackendPlanIR::Fem(fem) => {
-            let engine = dispatch::resolve_fem_engine()?;
-            dispatch::execute_fem(engine, fem, until_seconds, &plan.output_plan.outputs)?
+            let engine = dispatch::resolve_fem_engine(problem)?;
+            dispatch::execute_fem(engine, fem, until_seconds, &plan.output_plan.outputs)
         }
-    };
+    })?;
 
     if let Err(e) = artifacts::write_artifacts(output_dir, problem, &plan, &executed) {
         return Err(RunError {
@@ -64,14 +67,15 @@ pub fn run_problem_with_callback(
     until_seconds: f64,
     output_dir: &Path,
     field_every_n: u64,
-    mut on_step: impl FnMut(StepUpdate),
+    mut on_step: impl FnMut(StepUpdate) + Send,
 ) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
 
-    let executed = match &plan.backend_plan {
+    let cpu_threads = configured_cpu_threads(problem);
+    let executed = with_cpu_parallelism(cpu_threads, || match &plan.backend_plan {
         BackendPlanIR::Fdm(fdm) => {
             let grid = fdm.grid.cells;
-            let engine = dispatch::resolve_fdm_engine()?;
+            let engine = dispatch::resolve_fdm_engine(problem)?;
             dispatch::execute_fdm_with_callback(
                 engine,
                 fdm,
@@ -80,10 +84,10 @@ pub fn run_problem_with_callback(
                 grid,
                 field_every_n,
                 &mut on_step,
-            )?
+            )
         }
         BackendPlanIR::Fem(fem) => {
-            let engine = dispatch::resolve_fem_engine()?;
+            let engine = dispatch::resolve_fem_engine(problem)?;
             dispatch::execute_fem_with_callback(
                 engine,
                 fem,
@@ -91,9 +95,9 @@ pub fn run_problem_with_callback(
                 &plan.output_plan.outputs,
                 field_every_n,
                 &mut on_step,
-            )?
+            )
         }
-    };
+    })?;
 
     if let Err(e) = artifacts::write_artifacts(output_dir, problem, &plan, &executed) {
         return Err(RunError {
@@ -143,6 +147,40 @@ pub fn run_problem_with_callback(
     Ok(executed.result)
 }
 
+fn configured_cpu_threads(problem: &ProblemIR) -> usize {
+    problem
+        .problem_meta
+        .runtime_metadata
+        .get("runtime_selection")
+        .and_then(Value::as_object)
+        .and_then(|selection| selection.get("cpu_threads"))
+        .and_then(Value::as_u64)
+        .map(|threads| threads as usize)
+        .unwrap_or_else(default_cpu_threads)
+}
+
+fn default_cpu_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get().saturating_sub(1).max(1))
+        .unwrap_or(1)
+}
+
+fn with_cpu_parallelism<T>(
+    cpu_threads: usize,
+    f: impl FnOnce() -> Result<T, RunError> + Send,
+) -> Result<T, RunError>
+where
+    T: Send,
+{
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(cpu_threads)
+        .build()
+        .map_err(|error| RunError {
+            message: format!("failed to configure CPU thread pool: {error}"),
+        })?
+        .install(f)
+}
+
 /// Execute a reference FDM plan without artifact writing.
 pub fn run_reference_fdm(
     plan: &FdmPlanIR,
@@ -159,6 +197,7 @@ mod tests {
         ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, GridDimensions,
         IntegratorChoice,
     };
+    use serde_json::json;
 
     fn make_test_plan() -> FdmPlanIR {
         FdmPlanIR {
@@ -178,6 +217,7 @@ mod tests {
             exchange_bc: ExchangeBoundaryCondition::Neumann,
             integrator: IntegratorChoice::Heun,
             fixed_timestep: Some(1e-14),
+            relaxation: None,
             enable_exchange: true,
             enable_demag: false,
             external_field: None,
@@ -198,6 +238,26 @@ mod tests {
                 step.e_ex
             );
         }
+    }
+
+    #[test]
+    fn default_cpu_threads_uses_max_minus_one_with_floor_one() {
+        let expected = std::thread::available_parallelism()
+            .map(|parallelism| parallelism.get().saturating_sub(1).max(1))
+            .unwrap_or(1);
+        assert_eq!(default_cpu_threads(), expected);
+    }
+
+    #[test]
+    fn configured_cpu_threads_prefers_runtime_override() {
+        let mut problem = fullmag_ir::ProblemIR::bootstrap_example();
+        problem.problem_meta.runtime_metadata.insert(
+            "runtime_selection".to_string(),
+            json!({
+                "cpu_threads": 7,
+            }),
+        );
+        assert_eq!(configured_cpu_threads(&problem), 7);
     }
 
     #[test]

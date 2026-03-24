@@ -9,6 +9,7 @@ use fullmag_engine::{
 };
 use fullmag_ir::{ExecutionPrecision, FdmPlanIR, IntegratorChoice, OutputIR};
 
+use crate::relaxation::relaxation_converged;
 use crate::schedules::{
     advance_due_schedules, collect_field_schedules, collect_scalar_schedules, is_due, same_time,
     OutputSchedule,
@@ -155,17 +156,31 @@ fn execute_reference_fdm_impl(
 
     // --- Create FFT workspace once for the entire simulation ---
     let mut fft_workspace = problem.create_workspace();
+    let mut previous_total_energy = Some(observe_state(&problem, &state)?.total_energy);
 
     while state.time_seconds < until_seconds {
         let dt_step = dt.min(until_seconds - state.time_seconds);
         let wall_start = Instant::now();
-        problem
+        let report = problem
             .step_with_workspace(&mut state, dt_step, &mut fft_workspace)
             .map_err(|e| RunError {
                 message: format!("Step {}: {}", step_count, e),
             })?;
         let wall_elapsed = wall_start.elapsed().as_nanos() as u64;
         step_count += 1;
+        let latest_stats = StepStats {
+            step: step_count,
+            time: report.time_seconds,
+            dt: report.dt_used,
+            e_ex: report.exchange_energy_joules,
+            e_demag: report.demag_energy_joules,
+            e_ext: report.external_energy_joules,
+            e_total: report.total_energy_joules,
+            max_dm_dt: report.max_rhs_amplitude,
+            max_h_eff: report.max_effective_field_amplitude,
+            max_h_demag: report.max_demag_field_amplitude,
+            wall_time_ns: wall_elapsed,
+        };
 
         if !default_scalar_trace || !field_schedules.is_empty() {
             record_due_outputs(
@@ -209,6 +224,21 @@ fn execute_reference_fdm_impl(
                 magnetization,
                 finished: false,
             });
+        }
+
+        let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
+            step_count >= control.max_steps
+                || relaxation_converged(
+                    control,
+                    &latest_stats,
+                    previous_total_energy,
+                    plan.gyromagnetic_ratio,
+                    plan.material.damping,
+                )
+        });
+        previous_total_energy = Some(latest_stats.e_total);
+        if stop_for_relaxation {
+            break;
         }
     }
 
@@ -455,7 +485,7 @@ mod tests {
     use super::*;
     use fullmag_ir::{
         ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, GridDimensions,
-        IntegratorChoice,
+        IntegratorChoice, RelaxationAlgorithmIR, RelaxationControlIR,
     };
 
     fn make_test_plan() -> FdmPlanIR {
@@ -476,6 +506,7 @@ mod tests {
             exchange_bc: ExchangeBoundaryCondition::Neumann,
             integrator: IntegratorChoice::Heun,
             fixed_timestep: Some(1e-14),
+            relaxation: None,
             enable_exchange: true,
             enable_demag: false,
             external_field: None,
@@ -701,5 +732,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn llg_overdamped_relaxation_stops_before_time_limit_on_uniform_state() {
+        let plan = FdmPlanIR {
+            relaxation: Some(RelaxationControlIR {
+                algorithm: RelaxationAlgorithmIR::LlgOverdamped,
+                torque_tolerance: 1e-6,
+                energy_tolerance: None,
+                max_steps: 1000,
+            }),
+            ..make_test_plan()
+        };
+
+        let executed =
+            execute_reference_fdm(&plan, 1e-9, &[]).expect("relaxation run should succeed");
+
+        assert!(executed.result.steps.len() <= 2);
+        let final_time = executed.result.steps.last().expect("final stats").time;
+        assert!(
+            final_time < 1e-9,
+            "relaxation should stop early, got final_time={final_time}"
+        );
     }
 }

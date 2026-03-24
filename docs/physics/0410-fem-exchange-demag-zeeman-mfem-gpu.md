@@ -42,13 +42,20 @@ slice**:
 
 - precomputed `MeshIR` (or external meshing through the Python geometry asset layer),
 - `Exchange`,
+- optional bootstrap `Demag`,
 - optional `Zeeman`,
 - `LLG(heun)`,
 - `double` precision.
 
-`Demag` remains planner-only for FEM and is **not** yet executable in the public runner.
+The current executable `Demag` path is still **bootstrap-only**:
+
+- it is not yet the final MFEM/libCEED/hypre realization,
+- in the public CPU-reference runner it currently uses a transfer-grid exact tensor demag path to
+  improve FDM↔FEM parity,
+- the long-term target remains a true FEM magnetostatic operator on MFEM/hypre.
+
 This note therefore still serves primarily as a design-frozen physics note for the full FEM target,
-while also constraining the already shipped exchange/Zeeman CPU-reference subset.
+while also constraining the already shipped bootstrap executable subset.
 
 ## 2. Physical model
 

@@ -26,7 +26,10 @@ Current repo status relevant to this note:
 - the planner can now construct a bootstrap `FemPlanIR` from a precomputed `MeshIR`,
 - `FemPlanIR` already carries mesh data, per-node initial magnetization, material payload,
   active term flags, precision, and LLG timing parameters,
-- the runner still does **not** execute FEM plans yet.
+- the runner now executes bootstrap FEM CPU-reference plans,
+- `StudyIR::Relaxation` exists and `algorithm="llg_overdamped"` is executable in the
+  current public path,
+- higher-order FEM relaxation methods remain defined but not yet public-executable.
 
 For FEM, relaxation is especially important because:
 
@@ -239,6 +242,10 @@ fm.Relaxation(
 Backend-neutral user API; FE-specific solver/preconditioner knobs belong in
 execution hints or backend policy, not in the top-level public object.
 
+Current executable subset:
+
+- `algorithm = "llg_overdamped"`
+
 ### 4.2 ProblemIR representation
 
 Use a shared `StudyIR::Relaxation` shape across backends.
@@ -286,12 +293,12 @@ Capability matrix should separate explicit relaxation support from tangent-plane
 
 ## 6. Completeness checklist
 
-- [ ] Python API
-- [ ] ProblemIR
-- [ ] Planner
+- [x] Python API
+- [x] ProblemIR
+- [x] Planner
 - [ ] Capability matrix
-- [ ] FDM backend
-- [ ] FEM backend
+- [x] FDM backend (`llg_overdamped`)
+- [x] FEM backend (`llg_overdamped` on CPU reference)
 - [ ] Hybrid backend
 - [ ] Outputs / observables
 - [ ] Tests / benchmarks

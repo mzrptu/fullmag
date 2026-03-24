@@ -20,6 +20,17 @@
 This note defines a roadmap for **better relaxation / energy-minimization algorithms**
 in the FDM backend beyond the current “run damped LLG with fixed-step Heun” baseline.
 
+Current repo status after the first executable alignment:
+
+- `fm.Relaxation(...)` exists in the public Python API,
+- `StudyIR::Relaxation` exists in canonical `ProblemIR`,
+- planner and runner execute `algorithm="llg_overdamped"` end-to-end,
+- stop criteria currently support:
+  - torque tolerance,
+  - optional energy tolerance,
+  - max-steps hard cap,
+- higher-order direct minimizers remain defined but not yet public-executable.
+
 The goal of relaxation is not to reproduce true precessional dynamics.
 The goal is to compute a low-energy or metastable state satisfying
 
@@ -274,7 +285,11 @@ Recommended new study section:
 }
 ```
 
-This should live in `StudyIR`, not be smuggled into `DynamicsIR`.
+This now lives in `StudyIR`.
+
+Current executable subset:
+
+- `algorithm = "llg_overdamped"`
 
 ### 4.3 Planner and capability-matrix impact
 
@@ -316,11 +331,11 @@ Once FEM relaxation exists:
 
 ## 6. Completeness checklist
 
-- [ ] Python API
-- [ ] ProblemIR
-- [ ] Planner
+- [x] Python API
+- [x] ProblemIR
+- [x] Planner
 - [ ] Capability matrix
-- [ ] FDM backend
+- [x] FDM backend (`llg_overdamped`)
 - [ ] FEM backend
 - [ ] Hybrid backend
 - [ ] Outputs / observables

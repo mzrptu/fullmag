@@ -7,7 +7,18 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from fullmag.model.geometry import Box, Cylinder, Geometry, ImportedGeometry
+from fullmag.model.geometry import (
+    Box,
+    Cylinder,
+    Difference,
+    Ellipse,
+    Ellipsoid,
+    Geometry,
+    ImportedGeometry,
+    Intersection,
+    Translate,
+    Union,
+)
 
 
 def _import_trimesh() -> Any:
@@ -74,57 +85,134 @@ class VoxelMaskData:
         }
 
 
+# ---------------------------------------------------------------------------
+# Bounding box computation
+# ---------------------------------------------------------------------------
+def _bounding_box(geometry: Geometry) -> tuple[float, float, float]:
+    """Return (sx, sy, sz) that fully contains the geometry, centered at origin."""
+    if isinstance(geometry, Box):
+        return geometry.size
+    if isinstance(geometry, Cylinder):
+        d = 2.0 * geometry.radius
+        return (d, d, geometry.height)
+    if isinstance(geometry, Ellipsoid):
+        return (2.0 * geometry.rx, 2.0 * geometry.ry, 2.0 * geometry.rz)
+    if isinstance(geometry, Ellipse):
+        return (2.0 * geometry.rx, 2.0 * geometry.ry, geometry.height)
+    if isinstance(geometry, Difference):
+        return _bounding_box(geometry.base)
+    if isinstance(geometry, Union):
+        ba = _bounding_box(geometry.a)
+        bb = _bounding_box(geometry.b)
+        return (max(ba[0], bb[0]), max(ba[1], bb[1]), max(ba[2], bb[2]))
+    if isinstance(geometry, Intersection):
+        ba = _bounding_box(geometry.a)
+        bb = _bounding_box(geometry.b)
+        return (min(ba[0], bb[0]), min(ba[1], bb[1]), min(ba[2], bb[2]))
+    if isinstance(geometry, Translate):
+        inner = _bounding_box(geometry.geometry)
+        ox, oy, oz = geometry.offset
+        return (
+            inner[0] + 2.0 * abs(ox),
+            inner[1] + 2.0 * abs(oy),
+            inner[2] + 2.0 * abs(oz),
+        )
+    if isinstance(geometry, ImportedGeometry):
+        raise TypeError(
+            "cannot compute bounding box for ImportedGeometry; "
+            "use _voxelize_imported_geometry directly"
+        )
+    raise TypeError(f"unsupported geometry type: {type(geometry)!r}")
+
+
+# ---------------------------------------------------------------------------
+# SDF-based containment test (vectorized numpy)
+# ---------------------------------------------------------------------------
+def _contains(
+    geometry: Geometry,
+    xx: NDArray[np.float64],
+    yy: NDArray[np.float64],
+    zz: NDArray[np.float64],
+) -> NDArray[np.bool_]:
+    """Return boolean mask of cells contained in the geometry.
+
+    xx, yy, zz are 3D arrays of cell center coordinates (shape nz, ny, nx).
+    """
+    if isinstance(geometry, Box):
+        sx, sy, sz = geometry.size
+        return (
+            (np.abs(xx) <= sx / 2.0)
+            & (np.abs(yy) <= sy / 2.0)
+            & (np.abs(zz) <= sz / 2.0)
+        )
+
+    if isinstance(geometry, Cylinder):
+        r = geometry.radius
+        h = geometry.height
+        return (xx * xx + yy * yy <= r * r) & (np.abs(zz) <= h / 2.0)
+
+    if isinstance(geometry, Ellipsoid):
+        rx, ry, rz = geometry.rx, geometry.ry, geometry.rz
+        return (xx / rx) ** 2 + (yy / ry) ** 2 + (zz / rz) ** 2 <= 1.0
+
+    if isinstance(geometry, Ellipse):
+        rx, ry, h = geometry.rx, geometry.ry, geometry.height
+        return ((xx / rx) ** 2 + (yy / ry) ** 2 <= 1.0) & (np.abs(zz) <= h / 2.0)
+
+    if isinstance(geometry, Difference):
+        base_mask = _contains(geometry.base, xx, yy, zz)
+        tool_mask = _contains(geometry.tool, xx, yy, zz)
+        return base_mask & ~tool_mask
+
+    if isinstance(geometry, Union):
+        return _contains(geometry.a, xx, yy, zz) | _contains(geometry.b, xx, yy, zz)
+
+    if isinstance(geometry, Intersection):
+        return _contains(geometry.a, xx, yy, zz) & _contains(geometry.b, xx, yy, zz)
+
+    if isinstance(geometry, Translate):
+        ox, oy, oz = geometry.offset
+        return _contains(geometry.geometry, xx - ox, yy - oy, zz - oz)
+
+    raise TypeError(f"unsupported geometry type for containment test: {type(geometry)!r}")
+
+
+# ---------------------------------------------------------------------------
+# Main voxelization entry point
+# ---------------------------------------------------------------------------
 def voxelize_geometry(
     geometry: Geometry,
     cell_size: tuple[float, float, float],
 ) -> VoxelMaskData:
-    if isinstance(geometry, Box):
-        return _voxelize_box(geometry.size, cell_size)
-    if isinstance(geometry, Cylinder):
-        return _voxelize_cylinder(geometry.radius, geometry.height, cell_size)
+    """Convert any Geometry into a VoxelMaskData using SDF containment.
+
+    For ImportedGeometry, delegates to file-based loading.
+    For all other types, uses recursive ``_contains`` evaluation.
+    """
     if isinstance(geometry, ImportedGeometry):
         return _voxelize_imported_geometry(geometry.source, cell_size)
-    raise TypeError(f"unsupported geometry type: {type(geometry)!r}")
 
-
-def _voxelize_box(
-    size: tuple[float, float, float],
-    cell_size: tuple[float, float, float],
-) -> VoxelMaskData:
-    sx, sy, sz = size
+    # Compute bounding box and grid
+    sx, sy, sz = _bounding_box(geometry)
     dx, dy, dz = cell_size
     nx = max(1, int(round(sx / dx)))
     ny = max(1, int(round(sy / dy)))
     nz = max(1, int(round(sz / dz)))
-    mask = np.ones((nz, ny, nx), dtype=np.bool_)
-    return VoxelMaskData(
-        mask=mask,
-        cell_size=cell_size,
-        origin=(-sx / 2.0, -sy / 2.0, -sz / 2.0),
-    )
 
+    # Cell center coordinates
+    xs = -sx / 2.0 + (np.arange(nx, dtype=np.float64) + 0.5) * dx
+    ys = -sy / 2.0 + (np.arange(ny, dtype=np.float64) + 0.5) * dy
+    zs = -sz / 2.0 + (np.arange(nz, dtype=np.float64) + 0.5) * dz
 
-def _voxelize_cylinder(
-    radius: float,
-    height: float,
-    cell_size: tuple[float, float, float],
-) -> VoxelMaskData:
-    dx, dy, dz = cell_size
-    sx = 2.0 * radius
-    sy = 2.0 * radius
-    sz = height
-    nx = max(1, int(round(sx / dx)))
-    ny = max(1, int(round(sy / dy)))
-    nz = max(1, int(round(sz / dz)))
+    # 3D meshgrid: xx[iz, iy, ix], yy[iz, iy, ix], zz[iz, iy, ix]
+    xx_2d, yy_2d = np.meshgrid(xs, ys, indexing="xy")
+    xx = np.broadcast_to(xx_2d[np.newaxis, :, :], (nz, ny, nx)).copy()
+    yy = np.broadcast_to(yy_2d[np.newaxis, :, :], (nz, ny, nx)).copy()
+    zz = np.broadcast_to(
+        zs[:, np.newaxis, np.newaxis], (nz, ny, nx)
+    ).copy()
 
-    xs = (-sx / 2.0) + (np.arange(nx, dtype=np.float64) + 0.5) * dx
-    ys = (-sy / 2.0) + (np.arange(ny, dtype=np.float64) + 0.5) * dy
-    zz = (-sz / 2.0) + (np.arange(nz, dtype=np.float64) + 0.5) * dz
-
-    xx, yy = np.meshgrid(xs, ys, indexing="xy")
-    radial_mask = (xx * xx + yy * yy) <= radius * radius
-    mask = np.repeat(radial_mask[np.newaxis, :, :], nz, axis=0)
-    mask &= (np.abs(zz)[:, np.newaxis, np.newaxis] <= (height / 2.0))
+    mask = _contains(geometry, xx, yy, zz)
 
     return VoxelMaskData(
         mask=mask,
@@ -133,6 +221,9 @@ def _voxelize_cylinder(
     )
 
 
+# ---------------------------------------------------------------------------
+# Imported geometry (NPZ / STL)
+# ---------------------------------------------------------------------------
 def _voxelize_imported_geometry(
     source: str | Path,
     cell_size: tuple[float, float, float],

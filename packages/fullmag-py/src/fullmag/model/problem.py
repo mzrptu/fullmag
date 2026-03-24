@@ -11,7 +11,7 @@ from fullmag.model.dynamics import LLG
 from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Zeeman
 from fullmag.model.outputs import SaveField, SaveScalar
 from fullmag.model.structure import Ferromagnet, Material, Region
-from fullmag.model.study import TimeEvolution
+from fullmag.model.study import Relaxation, TimeEvolution
 
 IR_VERSION = "0.2.0"
 API_VERSION = "0.2.0"
@@ -39,6 +39,169 @@ class ExecutionPrecision(str, Enum):
     DOUBLE = "double"
 
 
+class DeviceTarget(str, Enum):
+    AUTO = "auto"
+    CPU = "cpu"
+    CUDA = "cuda"
+    GPU = "gpu"
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSelection:
+    backend_target: BackendTarget = BackendTarget.AUTO
+    device_target: DeviceTarget = DeviceTarget.AUTO
+    gpu_count: int = 0
+    device_index: int | None = None
+    cpu_threads: int | None = None
+    execution_mode: ExecutionMode = ExecutionMode.STRICT
+    execution_precision: ExecutionPrecision = ExecutionPrecision.DOUBLE
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "backend_target", BackendTarget(self.backend_target))
+        object.__setattr__(self, "device_target", DeviceTarget(self.device_target))
+        object.__setattr__(self, "execution_mode", ExecutionMode(self.execution_mode))
+        object.__setattr__(self, "execution_precision", ExecutionPrecision(self.execution_precision))
+        if self.gpu_count < 0:
+            raise ValueError("gpu_count must be >= 0")
+        if self.device_index is not None and self.device_index < 0:
+            raise ValueError("device_index must be >= 0")
+        if self.cpu_threads is not None and self.cpu_threads <= 0:
+            raise ValueError("cpu_threads must be >= 1")
+        if self.device_target in {DeviceTarget.CPU, DeviceTarget.AUTO} and self.device_index is not None:
+            raise ValueError("device_index requires device_target='cuda' or 'gpu'")
+        if self.device_target in {DeviceTarget.CPU, DeviceTarget.AUTO} and self.gpu_count != 0:
+            raise ValueError("gpu_count requires device_target='cuda' or 'gpu'")
+
+    def engine(self, backend: BackendTarget | str) -> "RuntimeSelection":
+        normalized_backend = backend.value if isinstance(backend, BackendTarget) else str(backend).lower()
+        return RuntimeSelection(
+            backend_target=BackendTarget(normalized_backend),
+            device_target=self.device_target,
+            gpu_count=self.gpu_count,
+            device_index=self.device_index,
+            cpu_threads=self.cpu_threads,
+            execution_mode=self.execution_mode,
+            execution_precision=self.execution_precision,
+        )
+
+    def device(self, index: int) -> "RuntimeSelection":
+        if self.device_target not in {DeviceTarget.CUDA, DeviceTarget.GPU}:
+            raise ValueError("device(index) requires device_target='cuda' or 'gpu'")
+        return RuntimeSelection(
+            backend_target=self.backend_target,
+            device_target=self.device_target,
+            gpu_count=self.gpu_count or 1,
+            device_index=index,
+            cpu_threads=self.cpu_threads,
+            execution_mode=self.execution_mode,
+            execution_precision=self.execution_precision,
+        )
+
+    def cpu(self) -> "RuntimeSelection":
+        return RuntimeSelection(
+            backend_target=self.backend_target,
+            device_target=DeviceTarget.CPU,
+            gpu_count=0,
+            device_index=None,
+            cpu_threads=self.cpu_threads,
+            execution_mode=self.execution_mode,
+            execution_precision=self.execution_precision,
+        )
+
+    def cuda(self, gpu_count: int = 1) -> "RuntimeSelection":
+        return RuntimeSelection(
+            backend_target=self.backend_target,
+            device_target=DeviceTarget.CUDA,
+            gpu_count=gpu_count,
+            device_index=self.device_index,
+            cpu_threads=self.cpu_threads,
+            execution_mode=self.execution_mode,
+            execution_precision=self.execution_precision,
+        )
+
+    def gpu(self, gpu_count: int = 1) -> "RuntimeSelection":
+        return RuntimeSelection(
+            backend_target=self.backend_target,
+            device_target=DeviceTarget.GPU,
+            gpu_count=gpu_count,
+            device_index=self.device_index,
+            cpu_threads=self.cpu_threads,
+            execution_mode=self.execution_mode,
+            execution_precision=self.execution_precision,
+        )
+
+    def threads(self, cpu_threads: int) -> "RuntimeSelection":
+        return RuntimeSelection(
+            backend_target=self.backend_target,
+            device_target=self.device_target,
+            gpu_count=self.gpu_count,
+            device_index=self.device_index,
+            cpu_threads=cpu_threads,
+            execution_mode=self.execution_mode,
+            execution_precision=self.execution_precision,
+        )
+
+    def mode(self, execution_mode: ExecutionMode | str) -> "RuntimeSelection":
+        normalized_mode = (
+            execution_mode.value if isinstance(execution_mode, ExecutionMode) else str(execution_mode).lower()
+        )
+        return RuntimeSelection(
+            backend_target=self.backend_target,
+            device_target=self.device_target,
+            gpu_count=self.gpu_count,
+            device_index=self.device_index,
+            cpu_threads=self.cpu_threads,
+            execution_mode=ExecutionMode(normalized_mode),
+            execution_precision=self.execution_precision,
+        )
+
+    def precision(self, execution_precision: ExecutionPrecision | str) -> "RuntimeSelection":
+        normalized_precision = (
+            execution_precision.value
+            if isinstance(execution_precision, ExecutionPrecision)
+            else str(execution_precision).lower()
+        )
+        return RuntimeSelection(
+            backend_target=self.backend_target,
+            device_target=self.device_target,
+            gpu_count=self.gpu_count,
+            device_index=self.device_index,
+            cpu_threads=self.cpu_threads,
+            execution_mode=self.execution_mode,
+            execution_precision=ExecutionPrecision(normalized_precision),
+        )
+
+    def resolved(
+        self,
+        *,
+        backend: BackendTarget | str | None = None,
+        mode: ExecutionMode | str | None = None,
+        precision: ExecutionPrecision | str | None = None,
+    ) -> "RuntimeSelection":
+        resolved = self
+        if backend is not None:
+            resolved = resolved.engine(backend)
+        if mode is not None:
+            resolved = resolved.mode(mode)
+        if precision is not None:
+            resolved = resolved.precision(precision)
+        return resolved
+
+    def to_runtime_metadata(self) -> dict[str, object]:
+        return {
+            "backend": self.backend_target.value,
+            "device": self.device_target.value,
+            "gpu_count": self.gpu_count,
+            "device_index": self.device_index,
+            "cpu_threads": self.cpu_threads,
+            "execution_mode": self.execution_mode.value,
+            "execution_precision": self.execution_precision.value,
+        }
+
+
+backend = RuntimeSelection()
+
+
 EnergyTerm = Exchange | Demag | InterfacialDMI | Zeeman
 OutputSpec = SaveField | SaveScalar
 
@@ -48,11 +211,12 @@ class Problem:
     name: str
     magnets: Sequence[Ferromagnet]
     energy: Sequence[EnergyTerm]
-    study: TimeEvolution | None = None
+    study: TimeEvolution | Relaxation | None = None
     dynamics: LLG | None = None
     outputs: Sequence[OutputSpec] | None = None
     discretization: DiscretizationHints | None = None
     description: str | None = None
+    runtime: RuntimeSelection = field(default_factory=RuntimeSelection)
     runtime_metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -73,21 +237,27 @@ class Problem:
     def to_ir(
         self,
         *,
-        requested_backend: BackendTarget = BackendTarget.AUTO,
-        execution_mode: ExecutionMode = ExecutionMode.STRICT,
-        execution_precision: ExecutionPrecision = ExecutionPrecision.DOUBLE,
+        requested_backend: BackendTarget | None = None,
+        execution_mode: ExecutionMode | None = None,
+        execution_precision: ExecutionPrecision | None = None,
         script_source: str | None = None,
         entrypoint_kind: str = "direct",
     ) -> dict[str, object]:
+        runtime = self.runtime.resolved(
+            backend=requested_backend,
+            mode=execution_mode,
+            precision=execution_precision,
+        )
         materials = self._collect_materials()
         regions = self._collect_regions()
         geometries = self._collect_geometries()
-        geometries = self._collect_geometries()
         source_hash = sha256(script_source.encode("utf-8")).hexdigest() if script_source else None
         geometry_assets = self._build_geometry_assets(
-            requested_backend=requested_backend,
+            requested_backend=runtime.backend_target,
             geometries=geometries,
         )
+        runtime_metadata = dict(self.runtime_metadata)
+        runtime_metadata["runtime_selection"] = runtime.to_runtime_metadata()
 
         return {
             "ir_version": IR_VERSION,
@@ -100,7 +270,7 @@ class Problem:
                 "serializer_version": SERIALIZER_VERSION,
                 "entrypoint_kind": entrypoint_kind,
                 "source_hash": source_hash,
-                "runtime_metadata": self.runtime_metadata,
+                "runtime_metadata": runtime_metadata,
                 "backend_revision": None,
                 "seeds": [],
             },
@@ -112,14 +282,14 @@ class Problem:
             "energy_terms": [term.to_ir() for term in self.energy],
             "study": self.study.to_ir(),
             "backend_policy": {
-                "requested_backend": requested_backend.value,
-                "execution_precision": execution_precision.value,
+                "requested_backend": runtime.backend_target.value,
+                "execution_precision": runtime.execution_precision.value,
                 "discretization_hints": self.discretization.to_ir() if self.discretization else None,
             },
-            "validation_profile": {"execution_mode": execution_mode.value},
+            "validation_profile": {"execution_mode": runtime.execution_mode.value},
         }
 
-    def _normalize_study(self) -> TimeEvolution:
+    def _normalize_study(self) -> TimeEvolution | Relaxation:
         if self.study is not None and (self.dynamics is not None or self.outputs is not None):
             raise ValueError(
                 "Problem accepts either study=... or the legacy dynamics=... and outputs=... shape, not both"

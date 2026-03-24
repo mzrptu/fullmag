@@ -10,7 +10,8 @@
 //! - `cpu`: force CPU reference
 //! - `gpu`: force native FEM GPU, fail if unavailable
 
-use fullmag_ir::{FdmPlanIR, FemPlanIR, OutputIR};
+use fullmag_ir::{FdmPlanIR, FemPlanIR, OutputIR, ProblemIR};
+use serde_json::Value;
 
 use crate::cpu_reference;
 use crate::fem_reference;
@@ -20,6 +21,8 @@ use crate::native_fdm::NativeFdmBackend;
 use crate::native_fem;
 #[cfg(feature = "fem-gpu")]
 use crate::native_fem::NativeFemBackend;
+#[cfg(any(feature = "cuda", feature = "fem-gpu"))]
+use crate::relaxation::relaxation_converged;
 #[cfg(feature = "cuda")]
 use crate::schedules::{
     advance_due_schedules, collect_field_schedules, collect_scalar_schedules, is_due, same_time,
@@ -50,8 +53,10 @@ pub(crate) enum FemEngine {
 }
 
 /// Resolve which FDM engine to use based on environment and availability.
-pub(crate) fn resolve_fdm_engine() -> Result<FdmEngine, RunError> {
-    let policy = std::env::var("FULLMAG_FDM_EXECUTION").unwrap_or_else(|_| "auto".into());
+pub(crate) fn resolve_fdm_engine(problem: &ProblemIR) -> Result<FdmEngine, RunError> {
+    apply_runtime_gpu_index(problem, "fdm");
+    let policy = std::env::var("FULLMAG_FDM_EXECUTION")
+        .unwrap_or_else(|_| runtime_fdm_policy(problem).to_string());
 
     match policy.as_str() {
         "cpu" => Ok(FdmEngine::CpuReference),
@@ -76,8 +81,10 @@ pub(crate) fn resolve_fdm_engine() -> Result<FdmEngine, RunError> {
 }
 
 /// Resolve which FEM engine to use based on environment and availability.
-pub(crate) fn resolve_fem_engine() -> Result<FemEngine, RunError> {
-    let policy = std::env::var("FULLMAG_FEM_EXECUTION").unwrap_or_else(|_| "auto".into());
+pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunError> {
+    apply_runtime_gpu_index(problem, "fem");
+    let policy = std::env::var("FULLMAG_FEM_EXECUTION")
+        .unwrap_or_else(|_| runtime_fem_policy(problem).to_string());
 
     match policy.as_str() {
         "cpu" => Ok(FemEngine::CpuReference),
@@ -99,6 +106,60 @@ pub(crate) fn resolve_fem_engine() -> Result<FemEngine, RunError> {
                 Ok(FemEngine::CpuReference)
             }
         }
+    }
+}
+
+fn runtime_selection(problem: &ProblemIR) -> Option<&serde_json::Map<String, Value>> {
+    problem
+        .problem_meta
+        .runtime_metadata
+        .get("runtime_selection")
+        .and_then(Value::as_object)
+}
+
+fn runtime_device(problem: &ProblemIR) -> Option<&str> {
+    runtime_selection(problem)
+        .and_then(|selection| selection.get("device"))
+        .and_then(Value::as_str)
+}
+
+fn runtime_device_index(problem: &ProblemIR) -> Option<u32> {
+    runtime_selection(problem)
+        .and_then(|selection| selection.get("device_index"))
+        .and_then(Value::as_u64)
+        .map(|index| index as u32)
+}
+
+fn runtime_fdm_policy(problem: &ProblemIR) -> &'static str {
+    match runtime_device(problem) {
+        Some("cpu") => "cpu",
+        Some("cuda") | Some("gpu") => "cuda",
+        _ => "auto",
+    }
+}
+
+fn runtime_fem_policy(problem: &ProblemIR) -> &'static str {
+    match runtime_device(problem) {
+        Some("cpu") => "cpu",
+        Some("cuda") | Some("gpu") => "gpu",
+        _ => "auto",
+    }
+}
+
+fn apply_runtime_gpu_index(problem: &ProblemIR, backend: &str) {
+    let Some(index) = runtime_device_index(problem) else {
+        return;
+    };
+    let specific_env = match backend {
+        "fdm" => "FULLMAG_FDM_GPU_INDEX",
+        "fem" => "FULLMAG_FEM_GPU_INDEX",
+        _ => return,
+    };
+    if std::env::var_os(specific_env).is_none() {
+        std::env::set_var(specific_env, index.to_string());
+    }
+    if std::env::var_os("FULLMAG_CUDA_DEVICE_INDEX").is_none() {
+        std::env::set_var("FULLMAG_CUDA_DEVICE_INDEX", index.to_string());
     }
 }
 
@@ -264,6 +325,7 @@ fn execute_cuda_fdm(
 
     let mut latest_stats: Option<StepStats> = None;
     let mut current_time = 0.0;
+    let mut previous_total_energy: Option<f64> = None;
     while current_time < until_seconds {
         let dt_step = dt.min(until_seconds - current_time);
         let stats = backend.step(dt_step)?;
@@ -278,6 +340,20 @@ fn execute_cuda_fdm(
             &mut steps,
             &mut field_snapshots,
         )?;
+        let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
+            stats.step >= control.max_steps
+                || relaxation_converged(
+                    control,
+                    &stats,
+                    previous_total_energy,
+                    plan.gyromagnetic_ratio,
+                    plan.material.damping,
+                )
+        });
+        previous_total_energy = Some(stats.e_total);
+        if stop_for_relaxation {
+            break;
+        }
     }
 
     record_cuda_final_outputs(
@@ -350,6 +426,7 @@ fn execute_native_fem(
 
     let mut latest_stats: Option<StepStats> = None;
     let mut current_time = 0.0;
+    let mut previous_total_energy: Option<f64> = None;
     while current_time < until_seconds {
         let dt_step = dt.min(until_seconds - current_time);
         let stats = backend.step(dt_step)?;
@@ -359,6 +436,21 @@ fn execute_native_fem(
             steps.push(stats);
         } else {
             steps.push(stats);
+        }
+        let latest = steps.last().expect("just pushed stats");
+        let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
+            latest.step >= control.max_steps
+                || relaxation_converged(
+                    control,
+                    latest,
+                    previous_total_energy,
+                    plan.gyromagnetic_ratio,
+                    plan.material.damping,
+                )
+        });
+        previous_total_energy = Some(latest.e_total);
+        if stop_for_relaxation {
+            break;
         }
     }
 

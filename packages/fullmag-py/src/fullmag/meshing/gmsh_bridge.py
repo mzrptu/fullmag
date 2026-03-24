@@ -9,7 +9,18 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
-from fullmag.model.geometry import Box, Cylinder, Difference, Geometry, ImportedGeometry
+from fullmag.model.geometry import (
+    Box,
+    Cylinder,
+    Difference,
+    Ellipse,
+    Ellipsoid,
+    Geometry,
+    ImportedGeometry,
+    Intersection,
+    Translate,
+    Union,
+)
 
 
 def _import_gmsh() -> Any:
@@ -238,8 +249,8 @@ def generate_mesh(
             order=order,
             air_padding=air_padding,
         )
-    if isinstance(geometry, Difference):
-        return generate_difference_mesh(geometry, hmax=hmax, order=order)
+    if isinstance(geometry, (Difference, Union, Intersection, Translate, Ellipsoid, Ellipse)):
+        return _generate_csg_mesh(geometry, hmax=hmax, order=order)
     if isinstance(geometry, ImportedGeometry):
         return generate_mesh_from_file(geometry.source, hmax=hmax, order=order, air_padding=air_padding)
     raise TypeError(f"unsupported geometry type: {type(geometry)!r}")
@@ -253,6 +264,7 @@ def generate_box_mesh(
 ) -> MeshData:
     gmsh = _import_gmsh()
     gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add("fullmag_box")
         sx, sy, sz = size
@@ -278,6 +290,7 @@ def generate_cylinder_mesh(
 ) -> MeshData:
     gmsh = _import_gmsh()
     gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add("fullmag_cylinder")
         gmsh.model.occ.addCylinder(0.0, 0.0, -height / 2.0, 0.0, 0.0, height, radius)
@@ -305,6 +318,7 @@ def generate_difference_mesh(
     SCALE = 1e6  # m → µm
     gmsh = _import_gmsh()
     gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add("fullmag_difference")
         base_tags = _add_geometry_to_occ(gmsh, geometry.base, scale=SCALE)
@@ -327,6 +341,38 @@ def generate_difference_mesh(
         gmsh.finalize()
 
 
+def _generate_csg_mesh(
+    geometry: Geometry,
+    hmax: float,
+    order: int = 1,
+) -> MeshData:
+    """Mesh any geometry type via the generic OCC pipeline.
+
+    Uses micrometre scaling (×1e6) for OCC numerical stability.
+    """
+    SCALE = 1e6
+    gmsh = _import_gmsh()
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    try:
+        gmsh.model.add("fullmag_csg")
+        _add_geometry_to_occ(gmsh, geometry, scale=SCALE)
+        gmsh.model.occ.synchronize()
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax * SCALE)
+        gmsh.option.setNumber("Mesh.ElementOrder", order)
+        gmsh.model.mesh.generate(3)
+        mesh = _extract_mesh_data(gmsh)
+        return MeshData(
+            nodes=mesh.nodes / SCALE,
+            elements=mesh.elements,
+            element_markers=mesh.element_markers,
+            boundary_faces=mesh.boundary_faces,
+            boundary_markers=mesh.boundary_markers,
+        )
+    finally:  # pragma: no branch
+        gmsh.finalize()
+
+
 def _add_geometry_to_occ(
     gmsh: Any,
     geometry: Geometry,
@@ -335,7 +381,7 @@ def _add_geometry_to_occ(
     """Add a geometry primitive to the Gmsh OCC kernel.
 
     Returns list of (dim, tag) tuples suitable for boolean operations.
-    Supports recursive Difference nesting.
+    Supports recursive CSG nesting.
     All dimensions are multiplied by `scale` before passing to OCC.
     """
     if isinstance(geometry, Box):
@@ -351,13 +397,50 @@ def _add_geometry_to_occ(
             r,
         )
         return [(3, tag)]
+    if isinstance(geometry, Ellipsoid):
+        # OCC: create sphere with max radius, then dilate to ellipsoid
+        rmax = max(geometry.rx, geometry.ry, geometry.rz) * scale
+        tag = gmsh.model.occ.addSphere(0.0, 0.0, 0.0, rmax)
+        fx = (geometry.rx * scale) / rmax
+        fy = (geometry.ry * scale) / rmax
+        fz = (geometry.rz * scale) / rmax
+        gmsh.model.occ.dilate([(3, tag)], 0.0, 0.0, 0.0, fx, fy, fz)
+        return [(3, tag)]
+    if isinstance(geometry, Ellipse):
+        # Elliptical cylinder: create circular cylinder, then dilate x/y
+        rmax = max(geometry.rx, geometry.ry) * scale
+        h = geometry.height * scale
+        tag = gmsh.model.occ.addCylinder(
+            0.0, 0.0, -h / 2.0,
+            0.0, 0.0, h,
+            rmax,
+        )
+        fx = (geometry.rx * scale) / rmax
+        fy = (geometry.ry * scale) / rmax
+        gmsh.model.occ.dilate([(3, tag)], 0.0, 0.0, 0.0, fx, fy, 1.0)
+        return [(3, tag)]
     if isinstance(geometry, Difference):
         base_tags = _add_geometry_to_occ(gmsh, geometry.base, scale=scale)
         tool_tags = _add_geometry_to_occ(gmsh, geometry.tool, scale=scale)
         result, _ = gmsh.model.occ.cut(base_tags, tool_tags)
         return result
+    if isinstance(geometry, Union):
+        a_tags = _add_geometry_to_occ(gmsh, geometry.a, scale=scale)
+        b_tags = _add_geometry_to_occ(gmsh, geometry.b, scale=scale)
+        result, _ = gmsh.model.occ.fuse(a_tags, b_tags)
+        return result
+    if isinstance(geometry, Intersection):
+        a_tags = _add_geometry_to_occ(gmsh, geometry.a, scale=scale)
+        b_tags = _add_geometry_to_occ(gmsh, geometry.b, scale=scale)
+        result, _ = gmsh.model.occ.intersect(a_tags, b_tags)
+        return result
+    if isinstance(geometry, Translate):
+        inner_tags = _add_geometry_to_occ(gmsh, geometry.geometry, scale=scale)
+        ox, oy, oz = [d * scale for d in geometry.offset]
+        gmsh.model.occ.translate(inner_tags, ox, oy, oz)
+        return inner_tags
     raise TypeError(
-        f"CSG operand must be Box, Cylinder, or Difference, got {type(geometry)!r}"
+        f"unsupported geometry type for OCC meshing: {type(geometry)!r}"
     )
 
 
@@ -383,6 +466,7 @@ def generate_mesh_from_file(
 def _mesh_cad_file(path: Path, hmax: float, order: int, air_padding: float) -> MeshData:
     gmsh = _import_gmsh()
     gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add(path.stem)
         gmsh.model.occ.importShapes(str(path))
@@ -400,6 +484,7 @@ def _mesh_cad_file(path: Path, hmax: float, order: int, air_padding: float) -> M
 def _mesh_stl_surface(path: Path, hmax: float, order: int, air_padding: float) -> MeshData:
     gmsh = _import_gmsh()
     gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add(path.stem)
         gmsh.merge(str(path))

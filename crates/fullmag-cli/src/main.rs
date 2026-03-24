@@ -36,12 +36,12 @@ struct ScriptCli {
     interactive: bool,
     #[arg(long)]
     until: f64,
-    #[arg(long, value_enum, default_value_t = BackendArg::Auto)]
-    backend: BackendArg,
-    #[arg(long, value_enum, default_value_t = ModeArg::Strict)]
-    mode: ModeArg,
-    #[arg(long, value_enum, default_value_t = PrecisionArg::Double)]
-    precision: PrecisionArg,
+    #[arg(long, value_enum)]
+    backend: Option<BackendArg>,
+    #[arg(long, value_enum)]
+    mode: Option<ModeArg>,
+    #[arg(long, value_enum)]
+    precision: Option<PrecisionArg>,
     #[arg(long)]
     output_dir: Option<PathBuf>,
     #[arg(long, default_value = ".fullmag/sessions")]
@@ -214,6 +214,30 @@ impl From<PrecisionArg> for ExecutionPrecision {
     }
 }
 
+fn backend_target_name(value: BackendTarget) -> &'static str {
+    match value {
+        BackendTarget::Auto => "auto",
+        BackendTarget::Fdm => "fdm",
+        BackendTarget::Fem => "fem",
+        BackendTarget::Hybrid => "hybrid",
+    }
+}
+
+fn execution_mode_name(value: ExecutionMode) -> &'static str {
+    match value {
+        ExecutionMode::Strict => "strict",
+        ExecutionMode::Extended => "extended",
+        ExecutionMode::Hybrid => "hybrid",
+    }
+}
+
+fn execution_precision_name(value: ExecutionPrecision) -> &'static str {
+    match value {
+        ExecutionPrecision::Single => "single",
+        ExecutionPrecision::Double => "double",
+    }
+}
+
 fn main() -> Result<()> {
     let raw_args = std::env::args_os().collect::<Vec<_>>();
     if is_script_mode(&raw_args) {
@@ -367,9 +391,14 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
     let ir = export_problem_ir_via_python(&script_path, &args)?;
     validate_ir(&ir)?;
     let plan_summary = ir
-        .plan_for(Some(args.backend.into()))
+        .plan_for(args.backend.map(BackendTarget::from))
         .map_err(join_errors)?;
     let execution_plan = fullmag_plan::plan(&ir).map_err(|error| anyhow!(error.to_string()))?;
+    let field_every_n = 10;
+    let use_live_callback = matches!(
+        &execution_plan.backend_plan,
+        BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_)
+    );
     let session_manifest_path = session_dir.join("session.json");
     let run_manifest_path = session_dir.join("run.json");
     let live_state_path = session_dir.join("live_state.json");
@@ -393,24 +422,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             status: "running".to_string(),
             script_path: script_path.display().to_string(),
             problem_name: ir.problem_meta.name.clone(),
-            requested_backend: args
-                .backend
-                .to_possible_value()
-                .unwrap()
-                .get_name()
-                .to_string(),
-            execution_mode: args
-                .mode
-                .to_possible_value()
-                .unwrap()
-                .get_name()
-                .to_string(),
-            precision: args
-                .precision
-                .to_possible_value()
-                .unwrap()
-                .get_name()
-                .to_string(),
+            requested_backend: backend_target_name(ir.backend_policy.requested_backend).to_string(),
+            execution_mode: execution_mode_name(ir.validation_profile.execution_mode).to_string(),
+            precision: execution_precision_name(ir.backend_policy.execution_precision).to_string(),
             artifact_dir: artifact_dir.display().to_string(),
             started_at_unix_ms,
             finished_at_unix_ms: started_at_unix_ms,
@@ -433,6 +447,10 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         },
     )?;
     initialise_live_scalars(&live_scalars_path)?;
+    if use_live_callback {
+        let initial_update = initial_step_update(&execution_plan.backend_plan);
+        update_live_state(&live_state_path, &initial_update)?;
+    }
 
     if !args.headless {
         if let Err(error) = spawn_control_room(&session_id, args.web_port) {
@@ -443,11 +461,6 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         }
     }
 
-    let field_every_n = 10;
-    let use_live_callback = matches!(
-        &execution_plan.backend_plan,
-        BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_)
-    );
     let result = match if use_live_callback {
         fullmag_runner::run_problem_with_callback(
             &ir,
@@ -455,6 +468,22 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             &artifact_dir,
             field_every_n,
             |update| {
+                // ── mumax3-style console diagnostics ──────────────
+                let s = &update.stats;
+                let print_step = s.step <= 10
+                    || (s.step <= 100 && s.step % 10 == 0)
+                    || (s.step <= 1000 && s.step % 100 == 0)
+                    || s.step % 1000 == 0
+                    || update.finished;
+                if print_step {
+                    let wall_ms = s.wall_time_ns as f64 / 1e6;
+                    eprintln!(
+                        "step {:>6}  t={:.4e}  dt={:.3e}  maxTorque={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
+                        s.step, s.time, s.dt, s.max_dm_dt, s.e_total, s.max_h_eff, wall_ms
+                    );
+                }
+
+                // ── file persistence (unchanged) ─────────────────
                 if update.stats.step <= 1
                     || update.stats.step % field_every_n == 0
                     || update.finished
@@ -517,23 +546,11 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     status: "failed".to_string(),
                     script_path: script_path.display().to_string(),
                     problem_name: ir.problem_meta.name.clone(),
-                    requested_backend: args
-                        .backend
-                        .to_possible_value()
-                        .unwrap()
-                        .get_name()
+                    requested_backend: backend_target_name(ir.backend_policy.requested_backend)
                         .to_string(),
-                    execution_mode: args
-                        .mode
-                        .to_possible_value()
-                        .unwrap()
-                        .get_name()
+                    execution_mode: execution_mode_name(ir.validation_profile.execution_mode)
                         .to_string(),
-                    precision: args
-                        .precision
-                        .to_possible_value()
-                        .unwrap()
-                        .get_name()
+                    precision: execution_precision_name(ir.backend_policy.execution_precision)
                         .to_string(),
                     artifact_dir: artifact_dir.display().to_string(),
                     started_at_unix_ms,
@@ -577,24 +594,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         script_path: script_path.display().to_string(),
         problem_name: ir.problem_meta.name.clone(),
         status: format!("{:?}", result.status).to_lowercase(),
-        backend: args
-            .backend
-            .to_possible_value()
-            .unwrap()
-            .get_name()
-            .to_string(),
-        mode: args
-            .mode
-            .to_possible_value()
-            .unwrap()
-            .get_name()
-            .to_string(),
-        precision: args
-            .precision
-            .to_possible_value()
-            .unwrap()
-            .get_name()
-            .to_string(),
+        backend: backend_target_name(ir.backend_policy.requested_backend).to_string(),
+        mode: execution_mode_name(ir.validation_profile.execution_mode).to_string(),
+        precision: execution_precision_name(ir.backend_policy.execution_precision).to_string(),
         total_steps: result.steps.len(),
         final_time: result.steps.last().map(|step| step.time),
         final_e_ex: result.steps.last().map(|step| step.e_ex),
@@ -697,31 +699,31 @@ fn print_script_summary(summary: &ScriptRunSummary) {
 }
 
 fn export_problem_ir_via_python(script_path: &Path, args: &ScriptCli) -> Result<ProblemIR> {
-    let helper_args = [
+    let mut helper_args = vec![
         "-m".to_string(),
         "fullmag.runtime.helper".to_string(),
         "export-ir".to_string(),
         "--script".to_string(),
         script_path.display().to_string(),
-        "--backend".to_string(),
-        args.backend
-            .to_possible_value()
-            .unwrap()
-            .get_name()
-            .to_string(),
-        "--mode".to_string(),
-        args.mode
-            .to_possible_value()
-            .unwrap()
-            .get_name()
-            .to_string(),
-        "--precision".to_string(),
-        args.precision
-            .to_possible_value()
-            .unwrap()
-            .get_name()
-            .to_string(),
     ];
+    if let Some(backend) = args.backend {
+        helper_args.push("--backend".to_string());
+        helper_args.push(backend.to_possible_value().unwrap().get_name().to_string());
+    }
+    if let Some(mode) = args.mode {
+        helper_args.push("--mode".to_string());
+        helper_args.push(mode.to_possible_value().unwrap().get_name().to_string());
+    }
+    if let Some(precision) = args.precision {
+        helper_args.push("--precision".to_string());
+        helper_args.push(
+            precision
+                .to_possible_value()
+                .unwrap()
+                .get_name()
+                .to_string(),
+        );
+    }
 
     let output = run_python_helper(&helper_args)
         .with_context(|| format!("failed to export ProblemIR from {}", script_path.display()))?;
@@ -1009,6 +1011,50 @@ fn append_live_scalar_row(path: &Path, update: &fullmag_runner::StepUpdate) -> R
     .with_context(|| format!("failed to append {}", path.display()))
 }
 
+fn initial_step_update(backend_plan: &BackendPlanIR) -> fullmag_runner::StepUpdate {
+    let stats = fullmag_runner::StepStats {
+        step: 0,
+        time: 0.0,
+        dt: 0.0,
+        e_ex: 0.0,
+        e_demag: 0.0,
+        e_ext: 0.0,
+        e_total: 0.0,
+        max_dm_dt: 0.0,
+        max_h_eff: 0.0,
+        max_h_demag: 0.0,
+        wall_time_ns: 0,
+    };
+
+    match backend_plan {
+        BackendPlanIR::Fdm(fdm) => fullmag_runner::StepUpdate {
+            stats,
+            grid: [fdm.grid.cells[0], fdm.grid.cells[1], fdm.grid.cells[2]],
+            fem_mesh: None,
+            magnetization: Some(flatten_magnetization(&fdm.initial_magnetization)),
+            finished: false,
+        },
+        BackendPlanIR::Fem(fem) => fullmag_runner::StepUpdate {
+            stats,
+            grid: [0, 0, 0],
+            fem_mesh: Some(fullmag_runner::FemMeshPayload {
+                nodes: fem.mesh.nodes.clone(),
+                elements: fem.mesh.elements.clone(),
+                boundary_faces: fem.mesh.boundary_faces.clone(),
+            }),
+            magnetization: Some(flatten_magnetization(&fem.initial_magnetization)),
+            finished: false,
+        },
+    }
+}
+
+fn flatten_magnetization(values: &[[f64; 3]]) -> Vec<f64> {
+    values
+        .iter()
+        .flat_map(|value| value.iter().copied())
+        .collect()
+}
+
 fn update_live_state(path: &Path, update: &fullmag_runner::StepUpdate) -> Result<()> {
     write_json_file(
         path,
@@ -1180,4 +1226,98 @@ fn validate_ir(ir: &ProblemIR) -> Result<()> {
 
 fn join_errors(errors: Vec<String>) -> anyhow::Error {
     anyhow!(errors.join("; "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fullmag_ir::{
+        ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, FemPlanIR, GridDimensions,
+        IntegratorChoice, MaterialIR, MeshIR,
+    };
+
+    #[test]
+    fn initial_step_update_bootstraps_fdm_grid_and_magnetization() {
+        let plan = BackendPlanIR::Fdm(fullmag_ir::FdmPlanIR {
+            grid: GridDimensions { cells: [4, 3, 1] },
+            cell_size: [2e-9, 2e-9, 10e-9],
+            region_mask: vec![0; 12],
+            active_mask: None,
+            initial_magnetization: vec![[1.0, 0.0, 0.0]; 12],
+            material: FdmMaterialIR {
+                name: "Py".to_string(),
+                saturation_magnetisation: 800e3,
+                exchange_stiffness: 13e-12,
+                damping: 0.5,
+            },
+            enable_exchange: true,
+            enable_demag: false,
+            external_field: None,
+            gyromagnetic_ratio: 2.211e5,
+            precision: ExecutionPrecision::Double,
+            exchange_bc: ExchangeBoundaryCondition::Neumann,
+            integrator: IntegratorChoice::Heun,
+            fixed_timestep: Some(1e-13),
+            relaxation: None,
+        });
+
+        let update = initial_step_update(&plan);
+        assert_eq!(update.stats.step, 0);
+        assert_eq!(update.grid, [4, 3, 1]);
+        assert!(update.fem_mesh.is_none());
+        assert_eq!(update.magnetization.as_ref().map(Vec::len), Some(36));
+        assert!(!update.finished);
+    }
+
+    #[test]
+    fn initial_step_update_bootstraps_fem_mesh_and_magnetization() {
+        let mesh = MeshIR {
+            mesh_name: "tiny".to_string(),
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            elements: vec![[0, 1, 2, 3]],
+            element_markers: vec![1],
+            boundary_faces: vec![[0, 1, 2]],
+            boundary_markers: vec![1],
+        };
+        let plan = BackendPlanIR::Fem(FemPlanIR {
+            mesh_name: mesh.mesh_name.clone(),
+            mesh_source: None,
+            mesh: mesh.clone(),
+            fe_order: 1,
+            hmax: 1.0,
+            initial_magnetization: vec![[0.0, 1.0, 0.0]; 4],
+            material: MaterialIR {
+                name: "Py".to_string(),
+                saturation_magnetisation: 800e3,
+                exchange_stiffness: 13e-12,
+                damping: 0.5,
+                uniaxial_anisotropy: None,
+                anisotropy_axis: None,
+            },
+            enable_exchange: true,
+            enable_demag: true,
+            external_field: None,
+            gyromagnetic_ratio: 2.211e5,
+            precision: ExecutionPrecision::Double,
+            exchange_bc: ExchangeBoundaryCondition::Neumann,
+            integrator: IntegratorChoice::Heun,
+            fixed_timestep: Some(1e-13),
+            relaxation: None,
+        });
+
+        let update = initial_step_update(&plan);
+        assert_eq!(update.stats.step, 0);
+        assert_eq!(update.grid, [0, 0, 0]);
+        assert_eq!(
+            update.fem_mesh.as_ref().map(|payload| payload.nodes.len()),
+            Some(mesh.nodes.len())
+        );
+        assert_eq!(update.magnetization.as_ref().map(Vec::len), Some(12));
+        assert!(!update.finished);
+    }
 }

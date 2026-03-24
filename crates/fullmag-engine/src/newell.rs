@@ -447,19 +447,39 @@ pub fn compute_newell_kernels(
             }
         }
 
-        let s_xx = UnsafeSyncSlice { ptr: n_xx.as_mut_ptr(), len: padded_len };
-        let s_yy = UnsafeSyncSlice { ptr: n_yy.as_mut_ptr(), len: padded_len };
-        let s_zz = UnsafeSyncSlice { ptr: n_zz.as_mut_ptr(), len: padded_len };
-        let s_xy = UnsafeSyncSlice { ptr: n_xy.as_mut_ptr(), len: padded_len };
-        let s_xz = UnsafeSyncSlice { ptr: n_xz.as_mut_ptr(), len: padded_len };
-        let s_yz = UnsafeSyncSlice { ptr: n_yz.as_mut_ptr(), len: padded_len };
+        let s_xx = UnsafeSyncSlice {
+            ptr: n_xx.as_mut_ptr(),
+            len: padded_len,
+        };
+        let s_yy = UnsafeSyncSlice {
+            ptr: n_yy.as_mut_ptr(),
+            len: padded_len,
+        };
+        let s_zz = UnsafeSyncSlice {
+            ptr: n_zz.as_mut_ptr(),
+            len: padded_len,
+        };
+        let s_xy = UnsafeSyncSlice {
+            ptr: n_xy.as_mut_ptr(),
+            len: padded_len,
+        };
+        let s_xz = UnsafeSyncSlice {
+            ptr: n_xz.as_mut_ptr(),
+            len: padded_len,
+        };
+        let s_yz = UnsafeSyncSlice {
+            ptr: n_yz.as_mut_ptr(),
+            len: padded_len,
+        };
 
         (0..nz).into_par_iter().for_each(|k| {
             for j in 0..ny {
                 for i in 0..nx {
                     unsafe {
                         compute_and_place(
-                            i, j, k,
+                            i,
+                            j,
+                            k,
                             s_xx.as_mut_slice(),
                             s_yy.as_mut_slice(),
                             s_zz.as_mut_slice(),
@@ -478,8 +498,7 @@ pub fn compute_newell_kernels(
             for j in 0..ny {
                 for i in 0..nx {
                     compute_and_place(
-                        i, j, k, &mut n_xx, &mut n_yy, &mut n_zz, &mut n_xy, &mut n_xz,
-                        &mut n_yz,
+                        i, j, k, &mut n_xx, &mut n_yy, &mut n_zz, &mut n_xy, &mut n_xz, &mut n_yz,
                     );
                 }
             }

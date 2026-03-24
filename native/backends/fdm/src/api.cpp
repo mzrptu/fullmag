@@ -8,8 +8,10 @@
 #include "fullmag_fdm.h"
 #include "context.hpp"
 
+#include <cstdlib>
 #include <cstring>
 #include <new>
+#include <optional>
 
 using namespace fullmag::fdm;
 
@@ -20,13 +22,52 @@ extern void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stat
 extern void set_cuda_error(Context &ctx, const char *operation, cudaError_t err);
 } }
 
+namespace {
+
+std::optional<int> selected_cuda_device_from_env() {
+    const char *specific = std::getenv("FULLMAG_FDM_GPU_INDEX");
+    const char *generic = std::getenv("FULLMAG_CUDA_DEVICE_INDEX");
+    const char *raw = specific != nullptr ? specific : generic;
+    if (raw == nullptr || *raw == '\0') {
+        return std::nullopt;
+    }
+    char *end = nullptr;
+    long parsed = std::strtol(raw, &end, 10);
+    if (end == raw || *end != '\0' || parsed < 0) {
+        return std::nullopt;
+    }
+    return static_cast<int>(parsed);
+}
+
+bool select_cuda_device_if_requested(Context &ctx) {
+    auto selected = selected_cuda_device_from_env();
+    if (!selected.has_value()) {
+        return true;
+    }
+    cudaError_t err = cudaSetDevice(*selected);
+    if (err != cudaSuccess) {
+        set_cuda_error(ctx, "cudaSetDevice", err);
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
 /* ── Availability ── */
 
 int fullmag_fdm_is_available(void) {
 #if FULLMAG_HAS_CUDA
     int device_count = 0;
     cudaError_t err = cudaGetDeviceCount(&device_count);
-    return (err == cudaSuccess && device_count > 0) ? 1 : 0;
+    if (err != cudaSuccess || device_count <= 0) {
+        return 0;
+    }
+    auto selected = selected_cuda_device_from_env();
+    if (selected.has_value() && *selected >= device_count) {
+        return 0;
+    }
+    return 1;
 #else
     return 0;
 #endif
@@ -42,6 +83,9 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
 
     auto *ctx = new (std::nothrow) Context();
     if (!ctx) return nullptr;
+    if (!select_cuda_device_if_requested(*ctx)) {
+        return reinterpret_cast<fullmag_fdm_backend *>(ctx);
+    }
 
     // Copy grid
     ctx->nx = plan->grid.nx;

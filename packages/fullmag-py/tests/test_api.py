@@ -72,6 +72,30 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(ir["study"]["kind"], "time_evolution")
         self.assertEqual(ir["study"]["dynamics"]["integrator"], "heun")
         self.assertEqual(ir["study"]["sampling"]["outputs"][0]["name"], "m")
+        self.assertEqual(
+            ir["problem_meta"]["runtime_metadata"]["runtime_selection"]["device"], "auto"
+        )
+
+    def test_problem_runtime_selection_serializes_to_ir(self) -> None:
+        problem = self._build_problem()
+        problem = fm.Problem(
+            name=problem.name,
+            magnets=problem.magnets,
+            energy=problem.energy,
+            study=problem.study,
+            discretization=problem.discretization,
+            runtime=fm.backend.cuda(1).device(0).threads(8).engine("fdm").precision("single"),
+        )
+
+        ir = problem.to_ir()
+
+        self.assertEqual(ir["backend_policy"]["requested_backend"], "fdm")
+        self.assertEqual(ir["backend_policy"]["execution_precision"], "single")
+        runtime = ir["problem_meta"]["runtime_metadata"]["runtime_selection"]
+        self.assertEqual(runtime["device"], "cuda")
+        self.assertEqual(runtime["gpu_count"], 1)
+        self.assertEqual(runtime["device_index"], 0)
+        self.assertEqual(runtime["cpu_threads"], 8)
 
     def test_random_initializer_serializes_to_ir(self) -> None:
         initializer = fm.init.random(seed=42)
@@ -95,6 +119,52 @@ class ProblemApiTests(unittest.TestCase):
         ir = problem.to_ir()
         self.assertEqual(ir["study"]["kind"], "time_evolution")
         self.assertEqual(ir["study"]["sampling"]["outputs"][0]["name"], "m")
+
+    def test_relaxation_serializes_to_ir(self) -> None:
+        geometry = fm.Box(size=(100e-9, 20e-9, 5e-9), name="track")
+        material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.1)
+        magnet = fm.Ferromagnet(name="track", geometry=geometry, material=material)
+
+        problem = fm.Problem(
+            name="relax_problem",
+            magnets=[magnet],
+            energy=[fm.Exchange(), fm.Demag()],
+            study=fm.Relaxation(
+                algorithm="llg_overdamped",
+                torque_tolerance=1e-3,
+                energy_tolerance=1e-12,
+                max_steps=500,
+                dynamics=fm.LLG(fixed_timestep=2e-13),
+                outputs=[fm.SaveField("m", every=1e-12)],
+            ),
+        )
+
+        ir = problem.to_ir()
+        self.assertEqual(ir["study"]["kind"], "relaxation")
+        self.assertEqual(ir["study"]["algorithm"], "llg_overdamped")
+        self.assertEqual(ir["study"]["torque_tolerance"], 1e-3)
+        self.assertEqual(ir["study"]["energy_tolerance"], 1e-12)
+        self.assertEqual(ir["study"]["max_steps"], 500)
+        self.assertEqual(ir["study"]["dynamics"]["fixed_timestep"], 2e-13)
+
+    def test_relaxation_requires_supported_algorithm_and_positive_limits(self) -> None:
+        with self.assertRaisesRegex(ValueError, "algorithm must be one of"):
+            fm.Relaxation(
+                algorithm="made_up",
+                outputs=[fm.SaveField("m", every=1e-12)],
+            )
+
+        with self.assertRaisesRegex(ValueError, "torque_tolerance"):
+            fm.Relaxation(
+                torque_tolerance=0.0,
+                outputs=[fm.SaveField("m", every=1e-12)],
+            )
+
+        with self.assertRaisesRegex(ValueError, "max_steps"):
+            fm.Relaxation(
+                max_steps=0,
+                outputs=[fm.SaveField("m", every=1e-12)],
+            )
 
     def test_cylinder_serializes_to_ir(self) -> None:
         geometry = fm.Cylinder(radius=50e-9, height=10e-9, name="pillar")
@@ -122,6 +192,30 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(ir["backend_policy"]["requested_backend"], "hybrid")
         self.assertEqual(ir["backend_policy"]["execution_precision"], "single")
         self.assertEqual(ir["validation_profile"]["execution_mode"], "hybrid")
+
+    def test_simulation_uses_problem_runtime_by_default(self) -> None:
+        problem = self._build_problem()
+        problem = fm.Problem(
+            name=problem.name,
+            magnets=problem.magnets,
+            energy=problem.energy,
+            study=problem.study,
+            discretization=problem.discretization,
+            runtime=fm.backend.cuda(1).device(0).threads(4).engine("fdm").precision("single"),
+        )
+
+        simulation = fm.Simulation(problem)
+        ir = simulation.to_ir()
+
+        self.assertEqual(simulation.backend, fm.BackendTarget.FDM)
+        self.assertEqual(simulation.precision, fm.ExecutionPrecision.SINGLE)
+        self.assertEqual(ir["backend_policy"]["requested_backend"], "fdm")
+        self.assertEqual(
+            ir["problem_meta"]["runtime_metadata"]["runtime_selection"]["device_index"], 0
+        )
+        self.assertEqual(
+            ir["problem_meta"]["runtime_metadata"]["runtime_selection"]["cpu_threads"], 4
+        )
 
     def test_fem_hint_accepts_optional_mesh_reference(self) -> None:
         fem = fm.FEM(order=1, hmax=2e-9, mesh="meshes/sample.msh")
@@ -431,6 +525,56 @@ class ProblemApiTests(unittest.TestCase):
         ir = json.loads(stdout.getvalue())
         self.assertEqual(ir["problem_meta"]["name"], "helper_problem")
         self.assertEqual(ir["study"]["kind"], "time_evolution")
+
+    def test_helper_uses_problem_runtime_when_no_overrides_are_passed(self) -> None:
+        script = """
+        import fullmag as fm
+
+        problem = fm.Problem(
+            name="runtime_selected_problem",
+            magnets=[
+                fm.Ferromagnet(
+                    name="track",
+                    geometry=fm.Box(size=(100e-9, 20e-9, 5e-9), name="track"),
+                    material=fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.1),
+                )
+            ],
+            energy=[fm.Exchange()],
+            study=fm.TimeEvolution(
+                dynamics=fm.LLG(),
+                outputs=[fm.SaveField("m", every=1e-12)],
+            ),
+            discretization=fm.DiscretizationHints(
+                fdm=fm.FDM(cell=(5e-9, 5e-9, 5e-9)),
+            ),
+            runtime=fm.backend.cuda(1).device(0).threads(6).engine("fdm").precision("single"),
+        )
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_runtime_helper.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = runtime_helper.main(
+                    [
+                        "export-ir",
+                        "--script",
+                        str(path),
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        ir = json.loads(stdout.getvalue())
+        self.assertEqual(ir["backend_policy"]["requested_backend"], "fdm")
+        self.assertEqual(ir["backend_policy"]["execution_precision"], "single")
+        self.assertEqual(
+            ir["problem_meta"]["runtime_metadata"]["runtime_selection"]["device_index"], 0
+        )
+        self.assertEqual(
+            ir["problem_meta"]["runtime_metadata"]["runtime_selection"]["cpu_threads"], 6
+        )
 
 
 if __name__ == "__main__":

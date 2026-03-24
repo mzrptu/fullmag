@@ -26,14 +26,18 @@ def build() -> fm.Problem:
         geometry=strip,
         material=mat,
         m0=fm.init.random(seed=42),
-    )make control-room-stop
+    )
 
     return fm.Problem(
         name="exchange_relax",
         magnets=[magnet],
         energy=[fm.Exchange()],
-        study=fm.TimeEvolution(
-            dynamics=fm.LLG(),
+        study=fm.Relaxation(
+            algorithm="llg_overdamped",
+            torque_tolerance=5e-2,
+            energy_tolerance=1e-21,
+            max_steps=50_000,
+            dynamics=fm.LLG(fixed_timestep=1e-13),
             outputs=[
                 fm.SaveField("m", every=100e-12),
                 fm.SaveField("H_ex", every=100e-12),

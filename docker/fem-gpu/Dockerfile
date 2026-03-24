@@ -4,9 +4,16 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV CMAKE_VERSION=3.30.5
 ENV HYPRE_REF=v2.32.0
 ENV LIBCEED_REF=v0.12.0
-ENV MFEM_REF=v4.7.0
+ENV MFEM_REF=v4.7
 ENV INSTALL_PREFIX=/opt/fullmag-deps
-ENV PATH=${INSTALL_PREFIX}/bin:/root/.cargo/bin:$PATH
+ENV CUDA_HOME=/usr/local/cuda
+ENV CUDA_PATH=/usr/local/cuda
+ENV CC=gcc
+ENV CXX=g++
+ENV FC=gfortran
+ENV NVCC=/usr/local/cuda/bin/nvcc
+ENV PATH=/usr/local/cuda/bin:${INSTALL_PREFIX}/bin:/root/.cargo/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}
 ENV CMAKE_PREFIX_PATH=${INSTALL_PREFIX}:${CMAKE_PREFIX_PATH}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -33,22 +40,20 @@ WORKDIR /tmp/build
 
 RUN git clone --depth 1 --branch ${HYPRE_REF} https://github.com/hypre-space/hypre.git
 RUN cd hypre/src && \
+    CC=${CC} CXX=${CXX} FC=${FC} CUDA_HOME=${CUDA_HOME} CUDA_PATH=${CUDA_PATH} NVCC=${NVCC} \
     ./configure \
       --prefix=${INSTALL_PREFIX} \
       --with-cuda \
       --enable-unified-memory \
-      --without-mpi && \
-    make -j"$(nproc)" && \
+      --without-MPI && \
+    make -j1 && \
     make install
 
 RUN git clone --depth 1 --branch ${LIBCEED_REF} https://github.com/CEED/libCEED.git
-RUN cmake -S /tmp/build/libCEED -B /tmp/build/libCEED/build \
-      -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} \
-      -DCEED_BACKEND_CUDA=ON && \
-    cmake --build /tmp/build/libCEED/build -j"$(nproc)" && \
-    cmake --install /tmp/build/libCEED/build
+RUN cd /tmp/build/libCEED && \
+    make configure CUDA_DIR=${CUDA_HOME} && \
+    make -j"$(nproc)" CUDA_DIR=${CUDA_HOME} && \
+    make install prefix=${INSTALL_PREFIX} CUDA_DIR=${CUDA_HOME}
 
 RUN git clone --depth 1 --branch ${MFEM_REF} https://github.com/mfem/mfem.git
 RUN cmake -S /tmp/build/mfem -B /tmp/build/mfem/build \
@@ -68,11 +73,14 @@ RUN cmake -S /tmp/build/mfem -B /tmp/build/mfem/build \
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS fem-gpu-dev
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV NODE_MAJOR=22
 ENV PNPM_HOME=/pnpm
 ENV INSTALL_PREFIX=/opt/fullmag-deps
-ENV PATH=/root/.cargo/bin:${PNPM_HOME}:${INSTALL_PREFIX}/bin:${PATH}
+ENV CUDA_HOME=/usr/local/cuda
+ENV CUDA_PATH=/usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:/root/.cargo/bin:${PNPM_HOME}:${INSTALL_PREFIX}/bin:${PATH}
 ENV CMAKE_PREFIX_PATH=${INSTALL_PREFIX}:${CMAKE_PREFIX_PATH}
-ENV LD_LIBRARY_PATH=${INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
@@ -81,18 +89,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     clang \
     curl \
     git \
-    nodejs \
-    npm \
+    gnupg \
     pkg-config \
     python3 \
     python3-dev \
     python3-pip \
     python3-venv \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --no-cache-dir cmake==3.30.5
 RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain nightly
-RUN npm install -g pnpm@10.8.1
+RUN corepack enable && corepack prepare pnpm@10.8.1 --activate
 
 COPY --from=deps /opt/fullmag-deps /opt/fullmag-deps
 

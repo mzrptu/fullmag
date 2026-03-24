@@ -36,6 +36,15 @@ pub enum IntegratorChoice {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum RelaxationAlgorithmIR {
+    LlgOverdamped,
+    ProjectedGradientBb,
+    NonlinearCg,
+    TangentPlaneImplicit,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ExchangeBoundaryCondition {
     Neumann,
 }
@@ -164,18 +173,49 @@ pub enum StudyIR {
         dynamics: DynamicsIR,
         sampling: SamplingIR,
     },
+    Relaxation {
+        algorithm: RelaxationAlgorithmIR,
+        dynamics: DynamicsIR,
+        torque_tolerance: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        energy_tolerance: Option<f64>,
+        max_steps: u64,
+        sampling: SamplingIR,
+    },
 }
 
 impl StudyIR {
     pub fn dynamics(&self) -> &DynamicsIR {
         match self {
-            StudyIR::TimeEvolution { dynamics, .. } => dynamics,
+            StudyIR::TimeEvolution { dynamics, .. } | StudyIR::Relaxation { dynamics, .. } => {
+                dynamics
+            }
         }
     }
 
     pub fn sampling(&self) -> &SamplingIR {
         match self {
-            StudyIR::TimeEvolution { sampling, .. } => sampling,
+            StudyIR::TimeEvolution { sampling, .. } | StudyIR::Relaxation { sampling, .. } => {
+                sampling
+            }
+        }
+    }
+
+    pub fn relaxation(&self) -> Option<RelaxationControlIR> {
+        match self {
+            StudyIR::TimeEvolution { .. } => None,
+            StudyIR::Relaxation {
+                algorithm,
+                torque_tolerance,
+                energy_tolerance,
+                max_steps,
+                ..
+            } => Some(RelaxationControlIR {
+                algorithm: *algorithm,
+                torque_tolerance: *torque_tolerance,
+                energy_tolerance: *energy_tolerance,
+                max_steps: *max_steps,
+            }),
         }
     }
 }
@@ -438,6 +478,8 @@ pub struct FdmPlanIR {
     pub exchange_bc: ExchangeBoundaryCondition,
     pub integrator: IntegratorChoice,
     pub fixed_timestep: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relaxation: Option<RelaxationControlIR>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -467,6 +509,17 @@ pub struct FemPlanIR {
     pub exchange_bc: ExchangeBoundaryCondition,
     pub integrator: IntegratorChoice,
     pub fixed_timestep: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relaxation: Option<RelaxationControlIR>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RelaxationControlIR {
+    pub algorithm: RelaxationAlgorithmIR,
+    pub torque_tolerance: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub energy_tolerance: Option<f64>,
+    pub max_steps: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -639,22 +692,28 @@ impl ProblemIR {
                 }
             }
         }
-        match self.study.dynamics() {
-            DynamicsIR::Llg {
-                gyromagnetic_ratio,
-                integrator,
-                fixed_timestep,
+        match &self.study {
+            StudyIR::TimeEvolution { dynamics, .. } => {
+                validate_study_dynamics(dynamics, &mut errors);
+            }
+            StudyIR::Relaxation {
+                dynamics,
+                torque_tolerance,
+                energy_tolerance,
+                max_steps,
+                ..
             } => {
-                if *gyromagnetic_ratio <= 0.0 {
-                    errors.push("llg.gyromagnetic_ratio must be positive".to_string());
+                validate_study_dynamics(dynamics, &mut errors);
+                if *torque_tolerance <= 0.0 {
+                    errors.push("relaxation.torque_tolerance must be positive".to_string());
                 }
-                if integrator.trim().is_empty() {
-                    errors.push("llg.integrator must not be empty".to_string());
-                } else if integrator != "heun" {
-                    errors.push("llg.integrator must currently be 'heun'".to_string());
+                if energy_tolerance.is_some_and(|value| value <= 0.0) {
+                    errors.push(
+                        "relaxation.energy_tolerance must be positive when provided".to_string(),
+                    );
                 }
-                if fixed_timestep.is_some_and(|value| value <= 0.0) {
-                    errors.push("llg.fixed_timestep must be positive when provided".to_string());
+                if *max_steps == 0 {
+                    errors.push("relaxation.max_steps must be > 0".to_string());
                 }
             }
         }
@@ -938,6 +997,17 @@ impl BackendTarget {
     }
 }
 
+impl RelaxationAlgorithmIR {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RelaxationAlgorithmIR::LlgOverdamped => "llg_overdamped",
+            RelaxationAlgorithmIR::ProjectedGradientBb => "projected_gradient_bb",
+            RelaxationAlgorithmIR::NonlinearCg => "nonlinear_cg",
+            RelaxationAlgorithmIR::TangentPlaneImplicit => "tangent_plane_implicit",
+        }
+    }
+}
+
 fn validate_unique_names<'a>(
     names: impl Iterator<Item = &'a str>,
     label: &str,
@@ -956,6 +1026,28 @@ fn validate_unique_names<'a>(
             label,
             duplicates.into_iter().collect::<Vec<_>>().join(", ")
         ));
+    }
+}
+
+fn validate_study_dynamics(dynamics: &DynamicsIR, errors: &mut Vec<String>) {
+    match dynamics {
+        DynamicsIR::Llg {
+            gyromagnetic_ratio,
+            integrator,
+            fixed_timestep,
+        } => {
+            if *gyromagnetic_ratio <= 0.0 {
+                errors.push("llg.gyromagnetic_ratio must be positive".to_string());
+            }
+            if integrator.trim().is_empty() {
+                errors.push("llg.integrator must not be empty".to_string());
+            } else if integrator != "heun" {
+                errors.push("llg.integrator must currently be 'heun'".to_string());
+            }
+            if fixed_timestep.is_some_and(|value| value <= 0.0) {
+                errors.push("llg.fixed_timestep must be positive when provided".to_string());
+            }
+        }
     }
 }
 
@@ -1121,6 +1213,7 @@ mod tests {
                 exchange_bc: ExchangeBoundaryCondition::Neumann,
                 integrator: IntegratorChoice::Heun,
                 fixed_timestep: Some(1e-13),
+                relaxation: None,
             }),
             output_plan: OutputPlanIR {
                 outputs: vec![OutputIR::Field {

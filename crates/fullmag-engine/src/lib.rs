@@ -121,12 +121,35 @@ impl MaterialParameters {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeIntegrator {
     Heun,
+    RK4,
+    RK23,
+    RK45,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AdaptiveStepConfig {
+    pub max_error: f64,
+    pub dt_min: f64,
+    pub dt_max: f64,
+    pub headroom: f64,
+}
+
+impl Default for AdaptiveStepConfig {
+    fn default() -> Self {
+        Self {
+            max_error: 1e-5,
+            dt_min: 1e-18,
+            dt_max: 1e-10,
+            headroom: 0.8,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LlgConfig {
     pub gyromagnetic_ratio: f64,
     pub integrator: TimeIntegrator,
+    pub adaptive: AdaptiveStepConfig,
 }
 
 impl Default for LlgConfig {
@@ -134,6 +157,7 @@ impl Default for LlgConfig {
         Self {
             gyromagnetic_ratio: DEFAULT_GYROMAGNETIC_RATIO,
             integrator: TimeIntegrator::Heun,
+            adaptive: AdaptiveStepConfig::default(),
         }
     }
 }
@@ -146,7 +170,13 @@ impl LlgConfig {
         Ok(Self {
             gyromagnetic_ratio,
             integrator,
+            adaptive: AdaptiveStepConfig::default(),
         })
+    }
+
+    pub fn with_adaptive(mut self, config: AdaptiveStepConfig) -> Self {
+        self.adaptive = config;
+        self
     }
 }
 
@@ -289,16 +319,29 @@ impl FftWorkspace {
     /// Zero out all six M/H frequency-domain buffers.
     fn clear_bufs(&mut self) {
         let zero = Complex::new(0.0, 0.0);
-        for v in self
-            .buf_mx
-            .iter_mut()
-            .chain(self.buf_my.iter_mut())
-            .chain(self.buf_mz.iter_mut())
-            .chain(self.buf_hx.iter_mut())
-            .chain(self.buf_hy.iter_mut())
-            .chain(self.buf_hz.iter_mut())
+        #[cfg(feature = "parallel")]
         {
-            *v = zero;
+            use rayon::prelude::*;
+            self.buf_mx.par_iter_mut().for_each(|v| *v = zero);
+            self.buf_my.par_iter_mut().for_each(|v| *v = zero);
+            self.buf_mz.par_iter_mut().for_each(|v| *v = zero);
+            self.buf_hx.par_iter_mut().for_each(|v| *v = zero);
+            self.buf_hy.par_iter_mut().for_each(|v| *v = zero);
+            self.buf_hz.par_iter_mut().for_each(|v| *v = zero);
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            for v in self
+                .buf_mx
+                .iter_mut()
+                .chain(self.buf_my.iter_mut())
+                .chain(self.buf_mz.iter_mut())
+                .chain(self.buf_hx.iter_mut())
+                .chain(self.buf_hy.iter_mut())
+                .chain(self.buf_hz.iter_mut())
+            {
+                *v = zero;
+            }
         }
     }
 
@@ -519,6 +562,8 @@ impl ExchangeLlgState {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StepReport {
     pub time_seconds: f64,
+    pub dt_used: f64,
+    pub step_rejected: bool,
     pub exchange_energy_joules: f64,
     pub demag_energy_joules: f64,
     pub external_energy_joules: f64,
@@ -702,6 +747,9 @@ impl ExchangeLlgProblem {
 
         match self.dynamics.integrator {
             TimeIntegrator::Heun => self.heun_step(state, dt, ws),
+            TimeIntegrator::RK4 => self.rk4_step(state, dt, ws),
+            TimeIntegrator::RK23 => self.rk23_step(state, dt, ws),
+            TimeIntegrator::RK45 => self.rk45_step(state, dt, ws),
         }
     }
 
@@ -757,6 +805,8 @@ impl ExchangeLlgProblem {
 
         Ok(StepReport {
             time_seconds: state.time_seconds,
+            dt_used: dt,
+            step_rejected: false,
             exchange_energy_joules: observables.exchange_energy_joules,
             demag_energy_joules: observables.demag_energy_joules,
             external_energy_joules: observables.external_energy_joules,
@@ -765,6 +815,345 @@ impl ExchangeLlgProblem {
             max_demag_field_amplitude: observables.max_demag_field_amplitude,
             max_rhs_amplitude: observables.max_rhs_amplitude,
         })
+    }
+
+    // -----------------------------------------------------------------------
+    // Helper: build StepReport from observables
+    // -----------------------------------------------------------------------
+    fn make_step_report(
+        &self,
+        state: &ExchangeLlgState,
+        dt_used: f64,
+        step_rejected: bool,
+        ws: &mut FftWorkspace,
+    ) -> StepReport {
+        let observables = self.observe_vectors_ws(state.magnetization(), ws);
+        StepReport {
+            time_seconds: state.time_seconds,
+            dt_used,
+            step_rejected,
+            exchange_energy_joules: observables.exchange_energy_joules,
+            demag_energy_joules: observables.demag_energy_joules,
+            external_energy_joules: observables.external_energy_joules,
+            total_energy_joules: observables.total_energy_joules,
+            max_effective_field_amplitude: observables.max_effective_field_amplitude,
+            max_demag_field_amplitude: observables.max_demag_field_amplitude,
+            max_rhs_amplitude: observables.max_rhs_amplitude,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helper: parallel/sequential m_new[i] = normalize(m0[i] + delta[i])
+    // -----------------------------------------------------------------------
+    fn par_apply_normalized(&self, m0: &[Vector3], delta: &[Vector3]) -> Result<Vec<Vector3>> {
+        let compute = |i: usize| normalized(add(m0[i], delta[i]));
+        #[cfg(feature = "parallel")]
+        {
+            (0..m0.len())
+                .into_par_iter()
+                .map(compute)
+                .collect::<Result<Vec<_>>>()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            (0..m0.len()).map(compute).collect::<Result<Vec<_>>>()
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // RK4 (Classical Runge-Kutta, 4th order, fixed step)
+    // -----------------------------------------------------------------------
+    fn rk4_step(
+        &self,
+        state: &mut ExchangeLlgState,
+        dt: f64,
+        ws: &mut FftWorkspace,
+    ) -> Result<StepReport> {
+        let n = state.magnetization.len();
+        let m0 = state.magnetization.clone();
+
+        // k1 = f(t, m0)
+        let k1 = self.llg_rhs_from_vectors_ws(&m0, ws);
+
+        // m1 = normalize(m0 + dt/2 * k1)
+        let delta: Vec<Vector3> = (0..n).map(|i| scale(k1[i], 0.5 * dt)).collect();
+        let m1 = self.par_apply_normalized(&m0, &delta)?;
+
+        // k2 = f(t + dt/2, m1)
+        let k2 = self.llg_rhs_from_vectors_ws(&m1, ws);
+
+        // m2 = normalize(m0 + dt/2 * k2)
+        let delta: Vec<Vector3> = (0..n).map(|i| scale(k2[i], 0.5 * dt)).collect();
+        let m2 = self.par_apply_normalized(&m0, &delta)?;
+
+        // k3 = f(t + dt/2, m2)
+        let k3 = self.llg_rhs_from_vectors_ws(&m2, ws);
+
+        // m3 = normalize(m0 + dt * k3)
+        let delta: Vec<Vector3> = (0..n).map(|i| scale(k3[i], dt)).collect();
+        let m3 = self.par_apply_normalized(&m0, &delta)?;
+
+        // k4 = f(t + dt, m3)
+        let k4 = self.llg_rhs_from_vectors_ws(&m3, ws);
+
+        // y = normalize(m0 + dt/6 * (k1 + 2*k2 + 2*k3 + k4))
+        let delta: Vec<Vector3> = (0..n)
+            .map(|i| {
+                scale(
+                    add(add(k1[i], scale(k2[i], 2.0)), add(scale(k3[i], 2.0), k4[i])),
+                    dt / 6.0,
+                )
+            })
+            .collect();
+        state.magnetization = self.par_apply_normalized(&m0, &delta)?;
+        state.time_seconds += dt;
+
+        Ok(self.make_step_report(state, dt, false, ws))
+    }
+
+    // -----------------------------------------------------------------------
+    // RK23 (Bogacki-Shampine 2(3), adaptive)
+    // -----------------------------------------------------------------------
+    fn rk23_step(
+        &self,
+        state: &mut ExchangeLlgState,
+        dt: f64,
+        ws: &mut FftWorkspace,
+    ) -> Result<StepReport> {
+        let cfg = self.dynamics.adaptive;
+        let mut dt = dt.min(cfg.dt_max).max(cfg.dt_min);
+        let n = state.magnetization.len();
+        let m0 = state.magnetization.clone();
+
+        loop {
+            // k1 = f(t, m0)
+            let k1 = self.llg_rhs_from_vectors_ws(&m0, ws);
+
+            // k2 = f(t + dt/2, normalize(m0 + dt/2 * k1))
+            let delta: Vec<Vector3> = (0..n).map(|i| scale(k1[i], 0.5 * dt)).collect();
+            let m1 = self.par_apply_normalized(&m0, &delta)?;
+            let k2 = self.llg_rhs_from_vectors_ws(&m1, ws);
+
+            // k3 = f(t + 3dt/4, normalize(m0 + 3dt/4 * k2))
+            let delta: Vec<Vector3> = (0..n).map(|i| scale(k2[i], 0.75 * dt)).collect();
+            let m2 = self.par_apply_normalized(&m0, &delta)?;
+            let k3 = self.llg_rhs_from_vectors_ws(&m2, ws);
+
+            // 3rd-order solution: y3 = m0 + dt*(2/9*k1 + 1/3*k2 + 4/9*k3)
+            let delta3: Vec<Vector3> = (0..n)
+                .map(|i| {
+                    scale(
+                        add(
+                            add(scale(k1[i], 2.0 / 9.0), scale(k2[i], 1.0 / 3.0)),
+                            scale(k3[i], 4.0 / 9.0),
+                        ),
+                        dt,
+                    )
+                })
+                .collect();
+            let y3 = self.par_apply_normalized(&m0, &delta3)?;
+
+            // k4 for embedded error estimate
+            let k4 = self.llg_rhs_from_vectors_ws(&y3, ws);
+
+            // Error = dt * |(-5/72)k1 + (1/12)k2 + (1/9)k3 + (-1/8)k4|
+            let error = self.max_error_norm(
+                &[
+                    (&k1, -5.0 / 72.0),
+                    (&k2, 1.0 / 12.0),
+                    (&k3, 1.0 / 9.0),
+                    (&k4, -1.0 / 8.0),
+                ],
+                dt,
+                n,
+            );
+
+            if error <= cfg.max_error || dt <= cfg.dt_min {
+                state.magnetization = y3;
+                state.time_seconds += dt;
+                return Ok(self.make_step_report(state, dt, false, ws));
+            }
+
+            // Reject: reduce dt with 3rd-order scaling
+            let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(1.0 / 3.0);
+            dt = dt_new.max(cfg.dt_min).min(cfg.dt_max);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // RK45 (Dormand-Prince 4(5), adaptive) — mumax3 default
+    // -----------------------------------------------------------------------
+    fn rk45_step(
+        &self,
+        state: &mut ExchangeLlgState,
+        dt: f64,
+        ws: &mut FftWorkspace,
+    ) -> Result<StepReport> {
+        let cfg = self.dynamics.adaptive;
+        let mut dt = dt.min(cfg.dt_max).max(cfg.dt_min);
+        let n = state.magnetization.len();
+        let m0 = state.magnetization.clone();
+
+        // Dormand-Prince coefficients
+        const A21: f64 = 1.0 / 5.0;
+        const A31: f64 = 3.0 / 40.0;
+        const A32: f64 = 9.0 / 40.0;
+        const A41: f64 = 44.0 / 45.0;
+        const A42: f64 = -56.0 / 15.0;
+        const A43: f64 = 32.0 / 9.0;
+        const A51: f64 = 19372.0 / 6561.0;
+        const A52: f64 = -25360.0 / 2187.0;
+        const A53: f64 = 64448.0 / 6561.0;
+        const A54: f64 = -212.0 / 729.0;
+        const A61: f64 = 9017.0 / 3168.0;
+        const A62: f64 = -355.0 / 33.0;
+        const A63: f64 = 46732.0 / 5247.0;
+        const A64: f64 = 49.0 / 176.0;
+        const A65: f64 = -5103.0 / 18656.0;
+
+        // 5th-order weights
+        const B1: f64 = 35.0 / 384.0;
+        const B3: f64 = 500.0 / 1113.0;
+        const B4: f64 = 125.0 / 192.0;
+        const B5: f64 = -2187.0 / 6784.0;
+        const B6: f64 = 11.0 / 84.0;
+
+        // Error coefficients: e_i = b_i - b*_i
+        const E1: f64 = 71.0 / 57600.0;
+        const E3: f64 = -71.0 / 16695.0;
+        const E4: f64 = 71.0 / 1920.0;
+        const E5: f64 = -17253.0 / 339200.0;
+        const E6: f64 = 22.0 / 525.0;
+        const E7: f64 = -1.0 / 40.0;
+
+        loop {
+            // Stage 1
+            let k1 = self.llg_rhs_from_vectors_ws(&m0, ws);
+
+            // Stage 2
+            let delta: Vec<Vector3> = (0..n).map(|i| scale(k1[i], A21 * dt)).collect();
+            let ms = self.par_apply_normalized(&m0, &delta)?;
+            let k2 = self.llg_rhs_from_vectors_ws(&ms, ws);
+
+            // Stage 3
+            let delta: Vec<Vector3> = (0..n)
+                .map(|i| scale(add(scale(k1[i], A31), scale(k2[i], A32)), dt))
+                .collect();
+            let ms = self.par_apply_normalized(&m0, &delta)?;
+            let k3 = self.llg_rhs_from_vectors_ws(&ms, ws);
+
+            // Stage 4
+            let delta: Vec<Vector3> = (0..n)
+                .map(|i| {
+                    scale(
+                        add(add(scale(k1[i], A41), scale(k2[i], A42)), scale(k3[i], A43)),
+                        dt,
+                    )
+                })
+                .collect();
+            let ms = self.par_apply_normalized(&m0, &delta)?;
+            let k4 = self.llg_rhs_from_vectors_ws(&ms, ws);
+
+            // Stage 5
+            let delta: Vec<Vector3> = (0..n)
+                .map(|i| {
+                    scale(
+                        add(
+                            add(scale(k1[i], A51), scale(k2[i], A52)),
+                            add(scale(k3[i], A53), scale(k4[i], A54)),
+                        ),
+                        dt,
+                    )
+                })
+                .collect();
+            let ms = self.par_apply_normalized(&m0, &delta)?;
+            let k5 = self.llg_rhs_from_vectors_ws(&ms, ws);
+
+            // Stage 6
+            let delta: Vec<Vector3> = (0..n)
+                .map(|i| {
+                    scale(
+                        add(
+                            add(add(scale(k1[i], A61), scale(k2[i], A62)), scale(k3[i], A63)),
+                            add(scale(k4[i], A64), scale(k5[i], A65)),
+                        ),
+                        dt,
+                    )
+                })
+                .collect();
+            let ms = self.par_apply_normalized(&m0, &delta)?;
+            let k6 = self.llg_rhs_from_vectors_ws(&ms, ws);
+
+            // 5th-order solution
+            let delta5: Vec<Vector3> = (0..n)
+                .map(|i| {
+                    scale(
+                        add(
+                            add(add(scale(k1[i], B1), scale(k3[i], B3)), scale(k4[i], B4)),
+                            add(scale(k5[i], B5), scale(k6[i], B6)),
+                        ),
+                        dt,
+                    )
+                })
+                .collect();
+            let y5 = self.par_apply_normalized(&m0, &delta5)?;
+
+            // k7 for error estimate (FSAL)
+            let k7 = self.llg_rhs_from_vectors_ws(&y5, ws);
+
+            // Error estimate
+            let error = self.max_error_norm(
+                &[
+                    (&k1, E1),
+                    (&k3, E3),
+                    (&k4, E4),
+                    (&k5, E5),
+                    (&k6, E6),
+                    (&k7, E7),
+                ],
+                dt,
+                n,
+            );
+
+            if error <= cfg.max_error || dt <= cfg.dt_min {
+                state.magnetization = y5;
+                state.time_seconds += dt;
+                return Ok(self.make_step_report(state, dt, false, ws));
+            }
+
+            // Reject: reduce dt with 5th-order scaling
+            let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(0.2);
+            dt = dt_new.max(cfg.dt_min).min(cfg.dt_max);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Error norm helper for adaptive solvers
+    // -----------------------------------------------------------------------
+    fn max_error_norm(&self, weighted_stages: &[(&Vec<Vector3>, f64)], dt: f64, n: usize) -> f64 {
+        let compute = |i: usize| {
+            let mut err = [0.0, 0.0, 0.0];
+            for &(k, w) in weighted_stages {
+                err[0] += w * k[i][0];
+                err[1] += w * k[i][1];
+                err[2] += w * k[i][2];
+            }
+            err[0] *= dt;
+            err[1] *= dt;
+            err[2] *= dt;
+            norm(err)
+        };
+        #[cfg(feature = "parallel")]
+        {
+            (0..n)
+                .into_par_iter()
+                .map(compute)
+                .reduce(|| 0.0_f64, f64::max)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            (0..n).map(compute).fold(0.0_f64, f64::max)
+        }
     }
 
     fn ensure_state_matches_grid(&self, state: &ExchangeLlgState) -> Result<()> {
@@ -954,13 +1343,38 @@ impl ExchangeLlgProblem {
 
         // Newell tensor convolution in Fourier space:
         // H_i(k) = -Σ_j N_ij(k) · M_j(k)
-        for i in 0..padded_len {
-            let mx = ws.buf_mx[i];
-            let my = ws.buf_my[i];
-            let mz = ws.buf_mz[i];
-            ws.buf_hx[i] = -(ws.kern_xx[i] * mx + ws.kern_xy[i] * my + ws.kern_xz[i] * mz);
-            ws.buf_hy[i] = -(ws.kern_xy[i] * mx + ws.kern_yy[i] * my + ws.kern_yz[i] * mz);
-            ws.buf_hz[i] = -(ws.kern_xz[i] * mx + ws.kern_yz[i] * my + ws.kern_zz[i] * mz);
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            // Split into non-overlapping slices for parallel processing.
+            // buf_mx/my/mz are read-only at this point; buf_hx/hy/hz are write-only.
+            let (mx_sl, my_sl, mz_sl) = (&ws.buf_mx[..], &ws.buf_my[..], &ws.buf_mz[..]);
+            let (kxx, kyy, kzz) = (&ws.kern_xx[..], &ws.kern_yy[..], &ws.kern_zz[..]);
+            let (kxy, kxz, kyz) = (&ws.kern_xy[..], &ws.kern_xz[..], &ws.kern_yz[..]);
+            let hx = &mut ws.buf_hx[..];
+            let hy = &mut ws.buf_hy[..];
+            let hz = &mut ws.buf_hz[..];
+            // Process hx, hy, hz sequentially but each one in parallel
+            hx.par_iter_mut().enumerate().for_each(|(i, h)| {
+                *h = -(kxx[i] * mx_sl[i] + kxy[i] * my_sl[i] + kxz[i] * mz_sl[i]);
+            });
+            hy.par_iter_mut().enumerate().for_each(|(i, h)| {
+                *h = -(kxy[i] * mx_sl[i] + kyy[i] * my_sl[i] + kyz[i] * mz_sl[i]);
+            });
+            hz.par_iter_mut().enumerate().for_each(|(i, h)| {
+                *h = -(kxz[i] * mx_sl[i] + kyz[i] * my_sl[i] + kzz[i] * mz_sl[i]);
+            });
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            for i in 0..padded_len {
+                let mx = ws.buf_mx[i];
+                let my = ws.buf_my[i];
+                let mz = ws.buf_mz[i];
+                ws.buf_hx[i] = -(ws.kern_xx[i] * mx + ws.kern_xy[i] * my + ws.kern_xz[i] * mz);
+                ws.buf_hy[i] = -(ws.kern_xy[i] * mx + ws.kern_yy[i] * my + ws.kern_yz[i] * mz);
+                ws.buf_hz[i] = -(ws.kern_xz[i] * mx + ws.kern_yz[i] * my + ws.kern_zz[i] * mz);
+            }
         }
 
         ws.fft3_h_inverse();
@@ -1187,6 +1601,8 @@ pub fn run_reference_exchange_demo(steps: usize, dt: f64) -> Result<ReferenceDem
     let initial_exchange_energy_joules = problem.exchange_energy(&state)?;
     let mut last_report = StepReport {
         time_seconds: 0.0,
+        dt_used: dt,
+        step_rejected: false,
         exchange_energy_joules: initial_exchange_energy_joules,
         demag_energy_joules: 0.0,
         external_energy_joules: 0.0,

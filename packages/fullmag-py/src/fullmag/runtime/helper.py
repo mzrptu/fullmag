@@ -22,17 +22,14 @@ def build_parser() -> argparse.ArgumentParser:
     export_ir.add_argument(
         "--backend",
         choices=[target.value for target in BackendTarget],
-        default=BackendTarget.AUTO.value,
     )
     export_ir.add_argument(
         "--mode",
         choices=[mode.value for mode in ExecutionMode],
-        default=ExecutionMode.STRICT.value,
     )
     export_ir.add_argument(
         "--precision",
         choices=[precision.value for precision in ExecutionPrecision],
-        default=ExecutionPrecision.DOUBLE.value,
     )
     return parser
 

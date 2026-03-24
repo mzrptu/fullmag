@@ -1,8 +1,8 @@
-# Bootstrap executable FEM demagnetization via Robin-truncated scalar potential solve
+# Bootstrap executable FEM demagnetization: Robin scalar potential and transfer-grid exact demag
 
 - Status: draft
 - Owners: Fullmag core
-- Last updated: 2026-03-24
+- Last updated: 2026-03-25
 - Related ADRs:
   - `docs/adr/0001-physics-first-python-api.md`
 - Related specs:
@@ -16,7 +16,7 @@
 
 ## 1. Problem statement
 
-This note freezes the **first executable FEM demagnetization path** used by the bootstrap CPU
+This note freezes the **bootstrap executable FEM demagnetization paths** used by the CPU
 reference engine.
 
 The long-term FEM demagnetization direction for Fullmag remains:
@@ -34,12 +34,34 @@ reference implementation that:
 - supports session streaming and control-room observables,
 - stays explicit about its approximations.
 
-The current bootstrap answer is:
+The bootstrap design now has two layers:
 
-> **solve the scalar-potential magnetostatic problem on the supplied `MeshIR`, using a Robin
-> boundary term as the first open-boundary surrogate.**
+1. **historical/reference seam**:
+   solve the scalar-potential magnetostatic problem on the supplied `MeshIR`, using a Robin
+   boundary term as the first open-boundary surrogate;
+2. **current executable runner path**:
+   project the magnetic FEM state to a transfer FDM grid, compute exact Newell tensor demag on
+   that grid, and sample `H_demag` back to FEM nodes.
 
-This is not the final FEM demag backend. It is the first honest reference seam.
+The reason for the current executable default is pragmatic and explicit:
+
+> **for the public CPU-reference runner, transfer-grid exact tensor demag gives much better
+> FDM↔FEM parity than the old dense Robin solve, while keeping the same public `Demag()` surface.**
+
+This is still not the final FEM demag backend. The final target remains MFEM/libCEED/hypre on GPU.
+
+## 1.1 Current executable default
+
+At the time of writing, the executable `fullmag` FEM runner uses:
+
+- FEM exchange on the mesh,
+- FEM Zeeman on the mesh,
+- **transfer-grid exact tensor demag** for `H_demag` / `E_demag`,
+- `LLG(heun)` in the bootstrap CPU-reference path.
+
+The older Robin scalar-potential solve remains in the engine as a reference seam and fallback for
+non-runner experimentation, but it is no longer the preferred executable path for cross-backend
+validation.
 
 ## 2. Physical model
 
@@ -274,4 +296,3 @@ identity.
 - Make magnetic/support regions explicit in the lowered FEM plan.
 - Add mesh-native FEM live visualization in the control room.
 - Validate against trusted FEM micromagnetics references and future MFEM production runs.
-

@@ -38,14 +38,19 @@ class Result:
 @dataclass(slots=True)
 class Simulation:
     problem: Problem
-    backend: BackendTarget | str = BackendTarget.AUTO
-    mode: ExecutionMode | str = ExecutionMode.STRICT
-    precision: ExecutionPrecision | str = ExecutionPrecision.DOUBLE
+    backend: BackendTarget | str | None = None
+    mode: ExecutionMode | str | None = None
+    precision: ExecutionPrecision | str | None = None
 
     def __post_init__(self) -> None:
-        self.backend = BackendTarget(self.backend)
-        self.mode = ExecutionMode(self.mode)
-        self.precision = ExecutionPrecision(self.precision)
+        runtime = self.problem.runtime
+        self.backend = runtime.backend_target if self.backend is None else BackendTarget(self.backend)
+        self.mode = runtime.execution_mode if self.mode is None else ExecutionMode(self.mode)
+        self.precision = (
+            runtime.execution_precision
+            if self.precision is None
+            else ExecutionPrecision(self.precision)
+        )
         if self.backend is BackendTarget.HYBRID and self.mode is not ExecutionMode.HYBRID:
             raise ValueError("backend='hybrid' requires mode='hybrid'")
         if self.mode is ExecutionMode.HYBRID and self.backend is not BackendTarget.HYBRID:

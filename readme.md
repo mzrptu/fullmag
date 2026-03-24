@@ -151,6 +151,7 @@ This uses the dedicated `fem-gpu` container with:
 - libCEED
 - hypre
 - Rust nightly
+- Node 22 + pnpm 10 for the control room stack
 
 and builds the native FEM backend with `FULLMAG_USE_MFEM_STACK=ON`.
 

@@ -10,6 +10,7 @@ use fullmag_engine::fem::{FemLlgProblem, FemLlgState, MeshTopology};
 use fullmag_engine::{EffectiveFieldTerms, LlgConfig, MaterialParameters, TimeIntegrator};
 use fullmag_ir::{ExecutionPrecision, FemPlanIR, IntegratorChoice, OutputIR};
 
+use crate::relaxation::relaxation_converged;
 use crate::schedules::{
     advance_due_schedules, collect_field_schedules, collect_scalar_schedules, is_due, same_time,
     OutputSchedule,
@@ -84,7 +85,7 @@ fn execute_reference_fem_impl(
         message: format!("LLG: {}", e),
     })?;
 
-    let problem = FemLlgProblem::with_terms(
+    let problem = FemLlgProblem::with_terms_and_demag_transfer_grid(
         topology,
         material,
         dynamics,
@@ -93,6 +94,7 @@ fn execute_reference_fem_impl(
             demag: plan.enable_demag,
             external_field: plan.external_field,
         },
+        Some([plan.hmax, plan.hmax, plan.hmax]),
     );
     let mut state = problem
         .new_state(plan.initial_magnetization.clone())
@@ -125,14 +127,29 @@ fn execute_reference_fem_impl(
         )?;
     }
 
+    let mut previous_total_energy = Some(observe_state(&problem, &state)?.total_energy);
+
     while state.time_seconds < until_seconds {
         let dt_step = dt.min(until_seconds - state.time_seconds);
         let wall_start = Instant::now();
-        problem.step(&mut state, dt_step).map_err(|e| RunError {
+        let report = problem.step(&mut state, dt_step).map_err(|e| RunError {
             message: format!("FEM step {}: {}", step_count, e),
         })?;
         let wall_elapsed = wall_start.elapsed().as_nanos() as u64;
         step_count += 1;
+        let latest_stats = StepStats {
+            step: step_count,
+            time: report.time_seconds,
+            dt: report.dt_used,
+            e_ex: report.exchange_energy_joules,
+            e_demag: report.demag_energy_joules,
+            e_ext: report.external_energy_joules,
+            e_total: report.total_energy_joules,
+            max_dm_dt: report.max_rhs_amplitude,
+            max_h_eff: report.max_effective_field_amplitude,
+            max_h_demag: report.max_demag_field_amplitude,
+            wall_time_ns: wall_elapsed,
+        };
 
         if !default_scalar_trace || !field_schedules.is_empty() {
             record_due_outputs(
@@ -181,6 +198,21 @@ fn execute_reference_fem_impl(
                 finished: false,
             });
         }
+
+        let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
+            step_count >= control.max_steps
+                || relaxation_converged(
+                    control,
+                    &latest_stats,
+                    previous_total_energy,
+                    plan.gyromagnetic_ratio,
+                    plan.material.damping,
+                )
+        });
+        previous_total_energy = Some(latest_stats.e_total);
+        if stop_for_relaxation {
+            break;
+        }
     }
 
     record_final_outputs(
@@ -206,7 +238,7 @@ fn execute_reference_fem_impl(
             execution_engine: "cpu_reference_fem".to_string(),
             precision: "double".to_string(),
             demag_operator_kind: if plan.enable_demag {
-                Some("fem_scalar_potential_robin".to_string())
+                Some("fem_transfer_grid_tensor_fft_newell".to_string())
             } else {
                 None
             },
@@ -411,7 +443,7 @@ mod tests {
     use super::*;
     use fullmag_ir::{
         ExchangeBoundaryCondition, ExecutionPrecision, FemPlanIR, IntegratorChoice, MaterialIR,
-        MeshIR,
+        MeshIR, RelaxationAlgorithmIR, RelaxationControlIR,
     };
 
     fn make_test_plan(enable_demag: bool) -> FemPlanIR {
@@ -450,6 +482,71 @@ mod tests {
             exchange_bc: ExchangeBoundaryCondition::Neumann,
             integrator: IntegratorChoice::Heun,
             fixed_timestep: Some(1e-13),
+            relaxation: None,
+        }
+    }
+
+    fn make_box_demag_plan() -> FemPlanIR {
+        FemPlanIR {
+            mesh_name: "box_40x20x10_coarse".to_string(),
+            mesh_source: Some("examples/assets/box_40x20x10_coarse.mesh.json".to_string()),
+            mesh: MeshIR {
+                mesh_name: "box_40x20x10_coarse".to_string(),
+                nodes: vec![
+                    [-20e-9, -10e-9, -5e-9],
+                    [20e-9, -10e-9, -5e-9],
+                    [20e-9, 10e-9, -5e-9],
+                    [-20e-9, 10e-9, -5e-9],
+                    [-20e-9, -10e-9, 5e-9],
+                    [20e-9, -10e-9, 5e-9],
+                    [20e-9, 10e-9, 5e-9],
+                    [-20e-9, 10e-9, 5e-9],
+                ],
+                elements: vec![
+                    [0, 1, 2, 6],
+                    [0, 2, 3, 6],
+                    [0, 3, 7, 6],
+                    [0, 7, 4, 6],
+                    [0, 4, 5, 6],
+                    [0, 5, 1, 6],
+                ],
+                element_markers: vec![1; 6],
+                boundary_faces: vec![
+                    [0, 1, 2],
+                    [0, 1, 5],
+                    [1, 2, 6],
+                    [0, 2, 3],
+                    [2, 3, 6],
+                    [0, 3, 7],
+                    [3, 6, 7],
+                    [0, 4, 7],
+                    [4, 6, 7],
+                    [0, 4, 5],
+                    [4, 5, 6],
+                    [1, 5, 6],
+                ],
+                boundary_markers: vec![1; 12],
+            },
+            fe_order: 1,
+            hmax: 10e-9,
+            initial_magnetization: vec![[0.0, 0.0, 1.0]; 8],
+            material: MaterialIR {
+                name: "Py".to_string(),
+                saturation_magnetisation: 800e3,
+                exchange_stiffness: 13e-12,
+                damping: 0.5,
+                uniaxial_anisotropy: None,
+                anisotropy_axis: None,
+            },
+            enable_exchange: true,
+            enable_demag: true,
+            external_field: None,
+            gyromagnetic_ratio: 2.211e5,
+            precision: ExecutionPrecision::Double,
+            exchange_bc: ExchangeBoundaryCondition::Neumann,
+            integrator: IntegratorChoice::Heun,
+            fixed_timestep: Some(1e-13),
+            relaxation: None,
         }
     }
 
@@ -469,7 +566,7 @@ mod tests {
 
     #[test]
     fn demag_outputs_are_nonzero_when_enabled() {
-        let plan = make_test_plan(true);
+        let plan = make_box_demag_plan();
         let result =
             execute_reference_fem(&plan, 1e-12, &[]).expect("FEM demag run should succeed");
         assert_eq!(result.result.status, RunStatus::Completed);
@@ -490,5 +587,28 @@ mod tests {
 
         assert_eq!(result.result.status, RunStatus::Completed);
         assert!(seen > 0, "expected at least one live FEM callback update");
+    }
+
+    #[test]
+    fn llg_overdamped_relaxation_stops_before_time_limit_on_uniform_fem_state() {
+        let plan = FemPlanIR {
+            relaxation: Some(RelaxationControlIR {
+                algorithm: RelaxationAlgorithmIR::LlgOverdamped,
+                torque_tolerance: 1e-6,
+                energy_tolerance: None,
+                max_steps: 1000,
+            }),
+            ..make_test_plan(false)
+        };
+
+        let executed =
+            execute_reference_fem(&plan, 1e-9, &[]).expect("FEM relaxation run should succeed");
+
+        assert!(executed.result.steps.len() <= 2);
+        let final_time = executed.result.steps.last().expect("final stats").time;
+        assert!(
+            final_time < 1e-9,
+            "FEM relaxation should stop early, got final_time={final_time}"
+        );
     }
 }

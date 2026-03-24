@@ -16,8 +16,7 @@ The source of truth is the serialized object graph, not Python source text.
 - `MaterialIR`
 - `MagnetIR`
 - `EnergyTermsIR`
-- `DynamicsIR`
-- `SamplingIR`
+- `StudyIR`
 - `BackendPolicyIR`
 - `ValidationProfileIR`
 
@@ -55,6 +54,8 @@ Current bootstrap coverage includes:
 - material constants
 - ferromagnets with uniform initial magnetization
 - `Exchange`, `Demag`, `InterfacialDMI`, `Zeeman`
+- `StudyIR::TimeEvolution`
+- `StudyIR::Relaxation`
 - `LLG` with gyromagnetic ratio, integrator, and optional fixed timestep
 - field/scalar sampling
 - FDM/FEM/Hybrid discretization hints
@@ -65,6 +66,7 @@ Current public-executable FDM lowering supports:
 
 - `Box` geometry,
 - `LLG(heun)`,
+- `Relaxation(llg_overdamped)` with torque/energy/max-step stopping,
 - `Exchange`, `Demag`, and `Zeeman` in executable combinations,
 - canonical field outputs `m`, `H_ex`, `H_demag`, `H_ext`, `H_eff`,
 - canonical scalar outputs `E_ex`, `E_demag`, `E_ext`, `E_total`, `time`, `step`, `solver_dt`,
@@ -164,53 +166,32 @@ Validation rules:
 - `SampledField.values` must be non-empty.
 
 
-## `GeometryIR`
+## `StudyIR`
 
-`GeometryIR` stores a canonical list of geometry entries:
+`StudyIR` is the canonical carrier for computation intent.
 
-- imported geometry references,
-- analytic primitives (`box`, `cylinder`).
+Current variants:
 
-Canonical shape:
+- `TimeEvolution`
+  - `dynamics: DynamicsIR`
+  - `sampling: SamplingIR`
+- `Relaxation`
+  - `algorithm`
+  - `dynamics: DynamicsIR`
+  - `torque_tolerance`
+  - `energy_tolerance`
+  - `max_steps`
+  - `sampling: SamplingIR`
 
-```json
-{
-  "geometry": {
-    "entries": [
-      {"kind": "imported_geometry", "name": "track", "source": "track.step", "format": "step"},
-      {"kind": "box", "name": "strip", "size": [2.0e-7, 2.0e-8, 5.0e-9]},
-      {"kind": "cylinder", "name": "pillar", "radius": 5.0e-8, "height": 1.0e-8}
-    ]
-  }
-}
-```
+Current executable relaxation subset:
 
-Validation rules:
+- `algorithm = "llg_overdamped"`
 
-- at least one geometry entry is required,
-- geometry names must be unique across all entry kinds,
-- `Box.size` components must be positive,
-- `Cylinder.radius` and `Cylinder.height` must be positive.
+Defined but not yet public-executable:
 
-## `InitialMagnetizationIR`
-
-Canonical magnetization variants:
-
-- `Uniform { value: [f64; 3] }`,
-- `RandomSeeded { seed: u64 }`,
-- `SampledField { values: Vec<[f64; 3]> }`.
-
-Public Python mapping:
-
-- `fm.init.uniform(...)` -> `Uniform`,
-- `fm.init.random(seed=...)` -> `RandomSeeded`,
-- `fm.init.from_function(...)` -> `SampledField` once lowering-time sampling is implemented.
-
-Validation rules:
-
-- `Uniform.value` must contain exactly 3 components,
-- `RandomSeeded.seed` must be positive,
-- `SampledField.values` must be non-empty.
+- `projected_gradient_bb`
+- `nonlinear_cg`
+- `tangent_plane_implicit`
 
 ## `DynamicsIR::Llg` parameter policy
 
