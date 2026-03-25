@@ -114,7 +114,7 @@ impl MultilayerDemagRuntime {
     pub fn compute_demag_fields(&self, layers: &mut [FdmLayerRuntime]) {
         let n_layers = layers.len();
         let padded_len = self.padded_len();
-        let [px, py, pz] = self.fft_shape;
+        let [px, py, _pz] = self.fft_shape;
 
         // Step 1: Forward FFT all layers' magnetizations
         let mut m_fft: Vec<VectorFieldFft> = Vec::with_capacity(n_layers);

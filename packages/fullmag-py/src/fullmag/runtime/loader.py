@@ -22,12 +22,14 @@ class LoadedStage:
         execution_mode,
         execution_precision,
         script_source: str,
+        source_root: str | Path | None = None,
     ) -> dict[str, object]:
         return self.problem.to_ir(
             requested_backend=requested_backend,
             execution_mode=execution_mode,
             execution_precision=execution_precision,
             script_source=script_source,
+            source_root=source_root,
             entrypoint_kind=self.entrypoint_kind,
         )
 
@@ -53,6 +55,7 @@ class LoadedProblem:
             execution_mode=execution_mode,
             execution_precision=execution_precision,
             script_source=self.script_source,
+            source_root=self.source_path.parent,
             entrypoint_kind=self.entrypoint_kind,
         )
 

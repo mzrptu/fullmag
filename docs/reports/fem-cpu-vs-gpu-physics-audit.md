@@ -358,19 +358,19 @@ normalize_aos_field(corrected);
 
 ### 🔴 Krytyczne (mogą wpływać na wyniki)
 
-| # | Problem | CPU (`fem.rs`) | GPU (`mfem_bridge.cpp`) | Wpływ |
-|---|---------|---------------|------------------------|-------|
-| 1 | **Bounding box demag** | Tylko magnetyczne węzły | Wszystkie węzły | Inny transfer-grid dla mieszanych meshów |
-| 2 | **Rasteryzacja elementów** | Tylko magnetyczne elementy | Wszystkie elementy | Fałszywe wartości m w niemagnetycznych komórkach |
-| 3 | **LLG RHS masking** | Zeruje RHS na niemagnetycznych nodach | Oblicza RHS wszędzie | Niemagnetyczne węzły dryftują w GPU |
+| # | Problem | CPU (`fem.rs`) | GPU (`mfem_bridge.cpp`) | Wpływ | Status |
+|---|---------|---------------|------------------------|-------|--------|
+| 1 | **Bounding box demag** | Tylko magnetyczne węzły | Wszystkie węzły | Inny transfer-grid dla mieszanych meshów | ✅ NAPRAWIONE — dodano `magnetic_node_mask` filtrowanie w `magnetic_bbox()` |
+| 2 | **Rasteryzacja elementów** | Tylko magnetyczne elementy | Wszystkie elementy | Fałszywe wartości m w niemagnetycznych komórkach | ✅ NAPRAWIONE — dodano `magnetic_element_mask` filtrowanie w rasteryzacji |
+| 3 | **LLG RHS masking** | Zeruje RHS na niemagnetycznych nodach | Oblicza RHS wszędzie | Niemagnetyczne węzły dryftują w GPU | ✅ NAPRAWIONE — dodano `zero_non_magnetic_nodes_aos()` po każdym `llg_rhs_aos()` |
 
 ### 🟡 Umiarkowane (wpływają na metryki, nie na fizykę)
 
-| # | Problem | CPU | GPU | Wpływ |
-|---|---------|-----|-----|-------|
-| 4 | **max_rhs_amplitude** | Z post-step observe | max(k1, k2) w trakcie kroku | Inna raportowana wartość dm/dt |
-| 5 | **H_ext na niemagnetycznych** | Zero | Wartość pola | Bez wpływu (volume=0 w energii) |
-| 6 | **H_demag na niemagnetycznych** | Zero | Interpolowana wartość | Bez wpływu (filtrowane w energii) |
+| # | Problem | CPU | GPU | Wpływ | Status |
+|---|---------|-----|-----|-------|--------|
+| 4 | **max_rhs_amplitude** | Z post-step observe | max(k1, k2) w trakcie kroku | Inna raportowana wartość dm/dt | ✅ NAPRAWIONE — teraz oblicza post-step RHS z finalnego stanu |
+| 5 | **H_ext na niemagnetycznych** | Zero | Wartość pola | Bez wpływu (volume=0 w energii) | — (brak wpływu na fizykę) |
+| 6 | **H_demag na niemagnetycznych** | Zero | Interpolowana wartość | Bez wpływu (filtrowane w energii) | ✅ NAPRAWIONE — sampling pomija niemagnetyczne węzły |
 
 ### ✅ Zgodne
 
@@ -410,3 +410,31 @@ Nawet dla meshów z jednym markerem (identyczne ścieżki kodu), różnice mogą
 - **max_dm_dt:** Może się **znacząco** różnić — to inna metryka w CPU vs GPU
 
 Jeśli obserwujesz rozbieżności > 1e-8, przyczyna prawdopodobnie leży po stronie **transfer-grid geometry** (punkt 5.1–5.2) lub **spectral demag precision** (cuFFT vs rustfft).
+
+---
+
+## 12. Zastosowane poprawki
+
+**Data poprawek:** 2026-03-25
+
+### Pliki zmodyfikowane
+
+| Plik | Zmiany |
+|------|--------|
+| `native/backends/fem/include/context.hpp` | Dodano `magnetic_element_mask`, `magnetic_node_mask` (wektory `uint8_t`) do struktury `Context` |
+| `native/backends/fem/src/context.cpp` | Budowa masek magnetycznych w `context_from_plan()` — logika identyczna z CPU: marker 1 = magnetyczny, gdy istnieją mieszane markery |
+| `native/backends/fem/src/mfem_bridge.cpp` | 7 zmian: (1) `magnetic_bbox()` filtruje po masce węzłów, (2) rasteryzacja pomija niemagnetyczne elementy, (3) nowa funkcja `zero_non_magnetic_nodes_aos()`, (4-5) zerowanie k1/k2 po `llg_rhs_aos()`, (6) post-step RHS dla `max_rhs_amplitude`, (7) sampling demag pomija niemagnetyczne węzły, (8) `std::call_once` dla singletona `mfem::Device`, (9) dodano `region_mask=nullptr` w `fullmag_fdm_plan_desc` |
+| `native/backends/fem/src/api.cpp` | `fullmag_fem_set_global_error()` przed `delete handle` |
+| `crates/fullmag-runner/src/native_fem.rs` | Poprawiony `last_global_error_or()`, zmieniony `hmax` w teście z 1.0→0.4, asercja nazwy urządzenia |
+
+### Testy
+
+- **3/3 native_fem testy przechodzą** (`--test-threads=1`)
+  - `native_fem_exchange_parity` — GPU i CPU dają identyczne wyniki exchange
+  - `native_fem_scaffold_exposes_initial_state_fields` — inicjalizacja, pola, device info
+  - `native_fem_scaffold_step_is_honestly_unavailable` — graceful error dla brakującego FDM backendu
+
+### Znane problemy pre-existing (nie naprawione)
+
+- **E_total=NaN na starcie z uniform m=[1,0,0]**: Exchange field = 0 (∇m=0 dla uniform), demag energy NaN — dotyczy obu ścieżek (CPU i GPU). Wymaga osobnej analizy.
+- **cudaFree "driver shutting down"**: Kosmetyczny błąd MFEM przy wyjściu procesu — CUDA driver zamknięty przed zwolnieniem pamięci MFEM. Nie wpływa na wyniki.

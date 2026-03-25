@@ -12,6 +12,7 @@ from unittest.mock import patch
 import numpy as np
 
 import fullmag as fm
+from fullmag.meshing.voxelization import VoxelMaskData
 from fullmag.runtime import cli as runtime_cli
 from fullmag.runtime import helper as runtime_helper
 from fullmag.meshing.gmsh_bridge import MeshData
@@ -276,6 +277,51 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(assets[0]["cell_size"], [5e-9, 5e-9, 5e-9])
         self.assertLess(sum(assets[0]["active_mask"]), len(assets[0]["active_mask"]))
 
+    def test_imported_geometry_problem_exports_fdm_grid_asset(self) -> None:
+        geometry = fm.ImportedGeometry(source="examples/nanoflower.stl", name="flower")
+        material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
+        magnet = fm.Ferromagnet(name="flower", geometry=geometry, material=material)
+        problem = fm.Problem(
+            name="flower_problem",
+            magnets=[magnet],
+            energy=[fm.Exchange()],
+            study=fm.TimeEvolution(
+                dynamics=fm.LLG(),
+                outputs=[fm.SaveField("m", every=1e-12)],
+            ),
+            discretization=fm.DiscretizationHints(fdm=fm.FDM(cell=(5e-9, 5e-9, 5e-9))),
+        )
+
+        voxels = VoxelMaskData(
+            mask=np.asarray([[[True, False], [False, True]]], dtype=np.bool_),
+            cell_size=(5e-9, 5e-9, 5e-9),
+            origin=(0.0, 0.0, 0.0),
+        )
+
+        with patch("fullmag.meshing.realize_fdm_grid_asset", return_value=voxels):
+            ir = problem.to_ir(requested_backend=fm.BackendTarget.FDM)
+
+        assets = ir["geometry_assets"]["fdm_grid_assets"]
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0]["geometry_name"], "flower")
+        self.assertEqual(assets[0]["cell_size"], [5e-9, 5e-9, 5e-9])
+        self.assertEqual(
+            ir["geometry"]["entries"][0]["source"],
+            "examples/nanoflower.stl",
+        )
+
+    def test_imported_geometry_supports_anisotropic_scale_in_ir(self) -> None:
+        geometry = fm.ImportedGeometry(
+            source="examples/nanoflower.stl",
+            name="flower",
+            scale=(1.0, 2.0, 0.5),
+        )
+
+        self.assertEqual(
+            geometry.to_ir()["scale"],
+            [1.0, 2.0, 0.5],
+        )
+
     def test_fem_backend_exports_mesh_asset(self) -> None:
         geometry = fm.Box(size=(10e-9, 10e-9, 10e-9), name="box")
         material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
@@ -423,6 +469,59 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(loaded.problem.name, "from_problem")
         self.assertEqual(loaded.entrypoint_kind, "problem")
 
+    def test_script_relative_imported_geometry_is_resolved_for_ir_and_assets(self) -> None:
+        script = """
+        import fullmag as fm
+
+        def build():
+            geom = fm.ImportedGeometry(source="flower.stl", name="flower")
+            material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
+            magnet = fm.Ferromagnet(name="flower", geometry=geom, material=material)
+            return fm.Problem(
+                name="flower_problem",
+                magnets=[magnet],
+                energy=[fm.Exchange()],
+                study=fm.TimeEvolution(
+                    dynamics=fm.LLG(),
+                    outputs=[fm.SaveField("m", every=1e-12)],
+                ),
+                discretization=fm.DiscretizationHints(
+                    fdm=fm.FDM(cell=(5e-9, 5e-9, 5e-9)),
+                ),
+            )
+        """
+
+        voxels = VoxelMaskData(
+            mask=np.asarray([[[True]]], dtype=np.bool_),
+            cell_size=(5e-9, 5e-9, 5e-9),
+            origin=(0.0, 0.0, 0.0),
+        )
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_imported_geometry.py"
+            stl = Path(tmp_dir) / "flower.stl"
+            stl.write_text("solid flower\nendsolid flower\n", encoding="utf-8")
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path)
+
+            with patch("fullmag.meshing.realize_fdm_grid_asset", return_value=voxels) as mocked:
+                ir = loaded.to_ir(
+                    requested_backend=fm.BackendTarget.FDM,
+                    execution_mode=fm.ExecutionMode.STRICT,
+                    execution_precision=fm.ExecutionPrecision.DOUBLE,
+                )
+
+        resolved_source = str(stl.resolve())
+        self.assertEqual(ir["geometry"]["entries"][0]["source"], resolved_source)
+        self.assertEqual(
+            mocked.call_args.args[0].source,
+            resolved_source,
+        )
+        self.assertEqual(
+            ir["geometry_assets"]["fdm_grid_assets"][0]["geometry_name"],
+            "flower",
+        )
+
     def test_flat_run_entrypoint_is_supported(self) -> None:
         script = """
         import fullmag as fm
@@ -503,6 +602,29 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(loaded.stages[1].entrypoint_kind, "flat_run")
         self.assertEqual(loaded.stages[0].problem.study.to_ir()["kind"], "relaxation")
         self.assertEqual(loaded.stages[1].problem.study.to_ir()["kind"], "time_evolution")
+
+    def test_flat_solver_accepts_g_factor(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fdm")
+        fm.cell(5e-9, 5e-9, 5e-9)
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        fm.solver(dt=1e-13, g=2.115)
+        fm.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_flat_solver_g.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path)
+
+        gamma = loaded.problem.study.to_ir()["dynamics"]["gyromagnetic_ratio"]
+        self.assertGreater(gamma, 2.211e5)
 
     def test_flat_script_can_request_interactive_session(self) -> None:
         script = """

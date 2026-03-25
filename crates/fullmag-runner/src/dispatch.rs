@@ -15,6 +15,7 @@ use serde_json::Value;
 
 use crate::cpu_reference;
 use crate::fem_reference;
+#[cfg(feature = "cuda")]
 use crate::multilayer_cuda;
 use crate::multilayer_reference;
 use crate::native_fdm;
@@ -57,10 +58,22 @@ pub(crate) enum FemEngine {
 /// Resolve which FDM engine to use based on environment and availability.
 pub(crate) fn resolve_fdm_engine(problem: &ProblemIR) -> Result<FdmEngine, RunError> {
     apply_runtime_gpu_index(problem, "fdm");
-    let policy = std::env::var("FULLMAG_FDM_EXECUTION")
-        .unwrap_or_else(|_| runtime_fdm_policy(problem).to_string());
+    let ir_policy = runtime_fdm_policy(problem);
+    let (policy, env_override) = match std::env::var("FULLMAG_FDM_EXECUTION") {
+        Ok(env_val) => {
+            if env_val != ir_policy {
+                eprintln!(
+                    "warning: FULLMAG_FDM_EXECUTION={} overrides script runtime_selection.device={}",
+                    env_val, ir_policy
+                );
+            }
+            (env_val, true)
+        }
+        Err(_) => (ir_policy.to_string(), false),
+    };
+    let _ = env_override; // reserved for future diagnostics
 
-    match policy.as_str() {
+    let engine = match policy.as_str() {
         "cpu" => Ok(FdmEngine::CpuReference),
         "cuda" => {
             if native_fdm::is_cuda_available() {
@@ -79,14 +92,32 @@ pub(crate) fn resolve_fdm_engine(problem: &ProblemIR) -> Result<FdmEngine, RunEr
                 Ok(FdmEngine::CpuReference)
             }
         }
+    }?;
+
+    // Reject direct-minimization algorithms (BB/NCG) on CUDA — not yet ported
+    if engine == FdmEngine::CudaFdm {
+        reject_direct_minimization_on_cuda(problem)?;
     }
+
+    Ok(engine)
 }
 
 /// Resolve which FEM engine to use based on environment and availability.
 pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunError> {
     apply_runtime_gpu_index(problem, "fem");
-    let policy = std::env::var("FULLMAG_FEM_EXECUTION")
-        .unwrap_or_else(|_| runtime_fem_policy(problem).to_string());
+    let ir_policy = runtime_fem_policy(problem);
+    let policy = match std::env::var("FULLMAG_FEM_EXECUTION") {
+        Ok(env_val) => {
+            if env_val != ir_policy {
+                eprintln!(
+                    "warning: FULLMAG_FEM_EXECUTION={} overrides script runtime_selection.device={}",
+                    env_val, ir_policy
+                );
+            }
+            env_val
+        }
+        Err(_) => ir_policy.to_string(),
+    };
 
     match policy.as_str() {
         "cpu" => Ok(FemEngine::CpuReference),
@@ -165,6 +196,31 @@ fn apply_runtime_gpu_index(problem: &ProblemIR, backend: &str) {
     }
 }
 
+/// Reject BB and NCG relaxation algorithms on CUDA — they are only implemented
+/// for the CPU reference engine. Return a clear error instead of silent fallback.
+fn reject_direct_minimization_on_cuda(problem: &ProblemIR) -> Result<(), RunError> {
+    use fullmag_ir::RelaxationAlgorithmIR;
+
+    // Check if the study is a relaxation with a direct-minimization algorithm
+    let algorithm = match &problem.study {
+        fullmag_ir::StudyIR::Relaxation { algorithm, .. } => algorithm,
+        _ => return Ok(()),
+    };
+
+    match algorithm {
+        RelaxationAlgorithmIR::ProjectedGradientBb | RelaxationAlgorithmIR::NonlinearCg => {
+            Err(RunError {
+                message: format!(
+                    "relaxation algorithm '{}' is only implemented for the CPU reference engine; \
+                     use algorithm='llg_overdamped' for CUDA execution, or switch to device='cpu'",
+                    algorithm.as_str()
+                ),
+            })
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Execute an FDM plan using the selected engine.
 pub(crate) fn execute_fdm(
     engine: FdmEngine,
@@ -191,7 +247,18 @@ pub(crate) fn execute_fdm_multilayer(
             multilayer_reference::execute_reference_fdm_multilayer(plan, until_seconds, outputs)
         }
         FdmEngine::CudaFdm => {
-            multilayer_cuda::execute_cuda_fdm_multilayer(plan, until_seconds, outputs)
+            #[cfg(feature = "cuda")]
+            {
+                return multilayer_cuda::execute_cuda_fdm_multilayer(plan, until_seconds, outputs);
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                return Err(RunError {
+                    message:
+                        "FULLMAG_FDM_EXECUTION=cuda requested for multilayer FDM, but fullmag-runner was built without the cuda feature"
+                            .to_string(),
+                });
+            }
         }
     }
 }
@@ -326,12 +393,23 @@ pub(crate) fn execute_fdm_multilayer_with_callback(
             )
         }
         FdmEngine::CudaFdm => {
-            multilayer_cuda::execute_cuda_fdm_multilayer_with_callback(
-                plan,
-                until_seconds,
-                outputs,
-                on_step,
-            )
+            #[cfg(feature = "cuda")]
+            {
+                return multilayer_cuda::execute_cuda_fdm_multilayer_with_callback(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    on_step,
+                );
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                return Err(RunError {
+                    message:
+                        "FULLMAG_FDM_EXECUTION=cuda requested for multilayer FDM, but fullmag-runner was built without the cuda feature"
+                            .to_string(),
+                });
+            }
         }
     }
 }

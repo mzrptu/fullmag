@@ -63,6 +63,28 @@ pub enum ExchangeBoundaryCondition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ImportedGeometryScaleIR {
+    Uniform(f64),
+    Anisotropic([f64; 3]),
+}
+
+impl Default for ImportedGeometryScaleIR {
+    fn default() -> Self {
+        Self::Uniform(1.0)
+    }
+}
+
+impl ImportedGeometryScaleIR {
+    pub fn is_positive(&self) -> bool {
+        match self {
+            Self::Uniform(scale) => *scale > 0.0,
+            Self::Anisotropic(scale) => scale.iter().all(|component| *component > 0.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProblemMeta {
     pub name: String,
     pub description: Option<String>,
@@ -89,6 +111,8 @@ pub enum GeometryEntryIR {
         name: String,
         source: String,
         format: String,
+        #[serde(default)]
+        scale: ImportedGeometryScaleIR,
     },
     Box {
         name: String,
@@ -907,12 +931,19 @@ impl ProblemIR {
                     name,
                     source,
                     format,
+                    scale,
                 } => {
                     if name.trim().is_empty() {
                         errors.push("imported geometry name must not be empty".to_string());
                     }
                     if source.trim().is_empty() {
                         errors.push(format!("geometry '{}' source must not be empty", name));
+                    }
+                    if !scale.is_positive() {
+                        errors.push(format!(
+                            "geometry '{}' scale must be positive",
+                            name
+                        ));
                     }
                     if format.trim().is_empty() {
                         errors.push(format!("geometry '{}' format must not be empty", name));

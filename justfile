@@ -37,16 +37,36 @@ control-room-stop:
     ./scripts/stop-control-room.sh
 
 run script:
+    just build fullmag
     PATH="{{local_bin}}:$PATH" fullmag {{script}}
 
+run-interactive script:
+    just build fullmag
+    PATH="{{local_bin}}:$PATH" fullmag -i {{script}}
+
 run-headless script:
+    just build fullmag
     PATH="{{local_bin}}:$PATH" fullmag {{script}} --headless --json
 
 run-py-layer-hole:
+    just build fullmag
     PATH="{{local_bin}}:$PATH" fullmag examples/py_layer_hole_relax_150nm.py
 
 run-py-layer-hole-headless:
+    just build fullmag
     PATH="{{local_bin}}:$PATH" fullmag examples/py_layer_hole_relax_150nm.py --headless --json
+
+run-nanoflower:
+    just build fullmag
+    PATH="{{local_bin}}:$PATH" fullmag examples/nanoflower_fdm.py
+
+run-nanoflower-interactive:
+    just build fullmag
+    PATH="{{local_bin}}:$PATH" fullmag -i examples/nanoflower_fdm.py
+
+run-nanoflower-headless:
+    just build fullmag
+    PATH="{{local_bin}}:$PATH" fullmag examples/nanoflower_fdm.py --headless --json
 
 fem-gpu-headless script:
     docker compose --profile fem-gpu run --rm fem-gpu bash -lc '\

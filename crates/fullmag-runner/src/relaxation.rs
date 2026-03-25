@@ -50,6 +50,12 @@ pub(crate) fn approximate_max_torque(max_dm_dt: f64, gyromagnetic_ratio: f64, da
 // Result type for direct-minimization algorithms
 // ---------------------------------------------------------------------------
 
+/// Result of a direct-minimization relaxation algorithm (BB or NCG).
+///
+/// These fields are populated by the algorithm but not yet consumed by the
+/// runner dispatch — the runner currently reads the engine state directly.
+/// They will be used once per-algorithm provenance reporting is added.
+#[allow(dead_code)]
 pub struct RelaxationResult {
     pub final_magnetization: Vec<Vector3>,
     pub steps_taken: u64,

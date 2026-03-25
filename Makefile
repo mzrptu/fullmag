@@ -40,15 +40,17 @@ install-cli:
 	mkdir -p .fullmag/local
 	@if [ -x "/usr/local/cuda/bin/nvcc" ] && [ -x "$$HOME/.local/bin/cmake" ]; then \
 		echo "Installing Rust launcher with CUDA support..."; \
-		FULLMAG_CMAKE="$$HOME/.local/bin/cmake" CARGO_TARGET_DIR=.fullmag/target cargo +nightly install --path crates/fullmag-cli --root .fullmag/local --force --features cuda; \
+		FULLMAG_CMAKE="$$HOME/.local/bin/cmake" CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-cli --release --features cuda; \
 		mkdir -p .fullmag/local/lib; \
 		src_dir=$$(find .fullmag/target -path '*native-build/backends/fdm' -type d | head -n 1); \
 		if [ -n "$$src_dir" ]; then cp -a $$src_dir/libfullmag_fdm.so* .fullmag/local/lib/; fi; \
 	else \
 		echo "Installing Rust launcher without CUDA support..."; \
-		CARGO_TARGET_DIR=.fullmag/target cargo +nightly install --path crates/fullmag-cli --root .fullmag/local --force; \
+		CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-cli --release; \
 	fi
-	@mv .fullmag/local/bin/fullmag .fullmag/local/bin/fullmag-bin
+	@mkdir -p .fullmag/local/bin
+	@cp .fullmag/target/release/fullmag .fullmag/local/bin/fullmag-bin.new
+	@mv -f .fullmag/local/bin/fullmag-bin.new .fullmag/local/bin/fullmag-bin
 	@printf '%s\n' '#!/usr/bin/env bash' \
 		'SELF_DIR="$$(cd "$$(dirname "$$0")" && pwd)"' \
 		'export LD_LIBRARY_PATH="$$SELF_DIR/../lib$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}"' \

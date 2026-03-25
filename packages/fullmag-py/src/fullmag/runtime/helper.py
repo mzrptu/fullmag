@@ -85,6 +85,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 execution_mode=simulation.mode,
                                 execution_precision=simulation.precision,
                                 script_source=loaded.script_source,
+                                source_root=loaded.source_path.parent,
                             ),
                             "default_until_seconds": stage.default_until_seconds,
                             "entrypoint_kind": stage.entrypoint_kind,

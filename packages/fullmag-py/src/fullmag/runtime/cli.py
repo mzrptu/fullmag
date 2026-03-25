@@ -86,6 +86,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     execution_mode=simulation.mode,
                     execution_precision=simulation.precision,
                     script_source=loaded.script_source,
+                    source_root=loaded.source_path.parent,
                 )
                 if final_magnetization is not None:
                     _apply_continuation_initial_state(ir, final_magnetization)

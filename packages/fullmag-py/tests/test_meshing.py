@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import struct
 
 import numpy as np
 
@@ -17,6 +18,38 @@ from fullmag.meshing.voxelization import VoxelMaskData, voxelize_geometry
 
 
 class MeshScaffoldTests(unittest.TestCase):
+    def _write_binary_cube_stl(self, path: Path) -> None:
+        vertices = np.asarray(
+            [
+                [-1.0, -1.0, -1.0],
+                [1.0, -1.0, -1.0],
+                [1.0, 1.0, -1.0],
+                [-1.0, 1.0, -1.0],
+                [-1.0, -1.0, 1.0],
+                [1.0, -1.0, 1.0],
+                [1.0, 1.0, 1.0],
+                [-1.0, 1.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        faces = [
+            (0, 1, 2), (0, 2, 3),
+            (4, 6, 5), (4, 7, 6),
+            (0, 4, 5), (0, 5, 1),
+            (1, 5, 6), (1, 6, 2),
+            (2, 6, 7), (2, 7, 3),
+            (3, 7, 4), (3, 4, 0),
+        ]
+        with path.open("wb") as handle:
+            header = b"fullmag cube".ljust(80, b"\0")
+            handle.write(header)
+            handle.write(struct.pack("<I", len(faces)))
+            for i0, i1, i2 in faces:
+                handle.write(struct.pack("<3f", 0.0, 0.0, 0.0))
+                for index in (i0, i1, i2):
+                    handle.write(struct.pack("<3f", *vertices[index]))
+                handle.write(struct.pack("<H", 0))
+
     def _unit_tet_mesh(self) -> MeshData:
         return MeshData(
             nodes=np.asarray(
@@ -131,6 +164,46 @@ class MeshScaffoldTests(unittest.TestCase):
 
         self.assertIsInstance(voxels, VoxelMaskData)
         self.assertGreater(voxels.active_cell_count, 0)
+
+    def test_binary_stl_voxelization_falls_back_without_trimesh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "cube.stl"
+            self._write_binary_cube_stl(path)
+            geometry = fm.ImportedGeometry(source=str(path), name="cube")
+
+            with patch(
+                "fullmag.meshing.voxelization._import_trimesh",
+                side_effect=ImportError("missing trimesh"),
+            ):
+                voxels = voxelize_geometry(geometry, (1.0, 1.0, 1.0))
+
+        self.assertEqual(voxels.shape, (2, 2, 2))
+        self.assertEqual(voxels.active_cell_count, 8)
+        self.assertAlmostEqual(voxels.origin[0], -1.0)
+        self.assertAlmostEqual(voxels.origin[1], -1.0)
+        self.assertAlmostEqual(voxels.origin[2], -1.0)
+
+    def test_binary_stl_voxelization_respects_anisotropic_import_scale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "cube.stl"
+            self._write_binary_cube_stl(path)
+            geometry = fm.ImportedGeometry(
+                source=str(path),
+                name="cube",
+                scale=(2.0, 2.0, 0.5),
+            )
+
+            with patch(
+                "fullmag.meshing.voxelization._import_trimesh",
+                side_effect=ImportError("missing trimesh"),
+            ):
+                voxels = voxelize_geometry(geometry, (1.0, 1.0, 1.0))
+
+        self.assertEqual(voxels.shape, (1, 4, 4))
+        self.assertEqual(voxels.active_cell_count, 16)
+        self.assertAlmostEqual(voxels.origin[0], -2.0)
+        self.assertAlmostEqual(voxels.origin[1], -2.0)
+        self.assertAlmostEqual(voxels.origin[2], -0.5)
 
     def test_realize_fem_mesh_asset_prefers_prebuilt_mesh_when_given(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

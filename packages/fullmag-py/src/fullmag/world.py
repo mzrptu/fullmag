@@ -31,11 +31,12 @@ Multi-magnet example::
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Zeeman
-from fullmag.model.dynamics import LLG
+from fullmag.model.dynamics import DEFAULT_GAMMA, LLG
 from fullmag.model.outputs import SaveField, SaveScalar
 from fullmag.model.study import Relaxation, TimeEvolution
 from fullmag.model.structure import Ferromagnet, Material
@@ -144,6 +145,7 @@ class _WorldState:
     _dt: float | None = None
     _max_error: float | None = None
     _integrator: str | None = None
+    _gamma: float | None = None
     _interactive: bool = False
 
     # Outputs
@@ -166,6 +168,14 @@ class CapturedStage:
 
 
 _captured_stages: list[CapturedStage] = []
+
+_MU_0 = 4.0e-7 * math.pi
+_MU_B = 9.274_010_078_3e-24
+_HBAR = 1.054_571_817e-34
+
+
+def _gamma_from_g_factor(g_factor: float) -> float:
+    return _MU_0 * g_factor * (_MU_B / _HBAR)
 
 
 def reset() -> None:
@@ -280,6 +290,8 @@ def solver(
     dt: float | None = None,
     max_error: float | None = None,
     integrator: str | None = None,
+    gamma: float | None = None,
+    g: float | None = None,
 ) -> None:
     """Configure the time integrator.
 
@@ -291,13 +303,28 @@ def solver(
         Adaptive integrator error tolerance.
     integrator : str, optional
         Integrator name: ``"heun"``, ``"rk4"``, ``"rk23"``, ``"rk45"``.
+    gamma : float, optional
+        Gyromagnetic ratio in Fullmag internal units of ``m / (A s)``.
+    g : float, optional
+        Electron ``g``-factor. When provided, Fullmag derives
+        ``gamma = mu0 * g * mu_B / hbar``.
     """
+    if gamma is not None and g is not None:
+        raise ValueError("solver() accepts either gamma=... or g=..., not both")
     if dt is not None:
         _state._dt = dt
     if max_error is not None:
         _state._max_error = max_error
     if integrator is not None:
         _state._integrator = integrator
+    if gamma is not None:
+        if gamma <= 0.0:
+            raise ValueError("gamma must be positive")
+        _state._gamma = gamma
+    elif g is not None:
+        if g <= 0.0:
+            raise ValueError("g must be positive")
+        _state._gamma = _gamma_from_g_factor(g)
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +407,8 @@ def _build_problem(
     llg_kwargs: dict[str, Any] = {}
     if s._dt is not None:
         llg_kwargs["fixed_timestep"] = s._dt
+    if s._gamma is not None and not math.isclose(s._gamma, DEFAULT_GAMMA):
+        llg_kwargs["gamma"] = s._gamma
     dynamics = LLG(**llg_kwargs)
 
     # Discretization

@@ -11,6 +11,7 @@ mod artifacts;
 mod cpu_reference;
 mod dispatch;
 mod fem_reference;
+#[cfg(feature = "cuda")]
 mod multilayer_cuda;
 mod multilayer_reference;
 mod native_fdm;
@@ -229,8 +230,8 @@ pub fn run_reference_multilayer_fdm(
 mod tests {
     use super::*;
     use fullmag_ir::{
-        ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, GridDimensions,
-        IntegratorChoice,
+        ExchangeBoundaryCondition, ExecutionPrecision, FdmGridAssetIR, FdmMaterialIR,
+        GeometryAssetsIR, GeometryEntryIR, GridDimensions, IntegratorChoice,
     };
     use serde_json::json;
 
@@ -293,6 +294,124 @@ mod tests {
             }),
         );
         assert_eq!(configured_cpu_threads(&problem), 7);
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn imported_geometry_fdm_cuda_matches_cpu_reference_when_cuda_is_available() {
+        if !native_fdm::is_cuda_available() {
+            eprintln!(
+                "skipping imported-geometry CUDA parity test: CUDA backend is not available on this host"
+            );
+            return;
+        }
+
+        let mut problem = fullmag_ir::ProblemIR::bootstrap_example();
+        problem.geometry.entries = vec![GeometryEntryIR::ImportedGeometry {
+            name: "mesh".to_string(),
+            source: "examples/nanoflower.stl".to_string(),
+            format: "stl".to_string(),
+            scale: fullmag_ir::ImportedGeometryScaleIR::Uniform(1.0),
+        }];
+        problem.regions[0].geometry = "mesh".to_string();
+        problem.geometry_assets = Some(GeometryAssetsIR {
+            fdm_grid_assets: vec![FdmGridAssetIR {
+                geometry_name: "mesh".to_string(),
+                cells: [4, 2, 1],
+                cell_size: [2e-9, 2e-9, 2e-9],
+                origin: [-4e-9, -2e-9, -1e-9],
+                active_mask: vec![true, true, true, true, false, false, false, false],
+            }],
+            fem_mesh_assets: vec![],
+        });
+        problem.energy_terms = vec![
+            fullmag_ir::EnergyTermIR::Exchange,
+            fullmag_ir::EnergyTermIR::Demag,
+        ];
+        problem.problem_meta.runtime_metadata.insert(
+            "runtime_selection".to_string(),
+            json!({
+                "backend": "fdm",
+                "device": "cuda",
+                "gpu_count": 1,
+                "execution_mode": "strict",
+                "execution_precision": "double",
+            }),
+        );
+
+        let plan = fullmag_plan::plan(&problem).expect("plan imported geometry");
+        let BackendPlanIR::Fdm(fdm) = &plan.backend_plan else {
+            panic!("expected FDM plan");
+        };
+
+        let cpu = dispatch::execute_fdm(
+            dispatch::FdmEngine::CpuReference,
+            fdm,
+            2e-13,
+            &plan.output_plan.outputs,
+        )
+        .expect("cpu run");
+        let cuda = dispatch::execute_fdm(
+            dispatch::FdmEngine::CudaFdm,
+            fdm,
+            2e-13,
+            &plan.output_plan.outputs,
+        )
+        .expect("cuda run");
+
+        let cpu_final = cpu.result.steps.last().expect("cpu final step");
+        let cuda_final = cuda.result.steps.last().expect("cuda final step");
+
+        let e_total_rel = (cuda_final.e_total - cpu_final.e_total).abs() / cpu_final.e_total.abs();
+        let e_demag_rel =
+            (cuda_final.e_demag - cpu_final.e_demag).abs() / cpu_final.e_demag.abs().max(1e-30);
+        let max_h_eff_rel =
+            (cuda_final.max_h_eff - cpu_final.max_h_eff).abs() / cpu_final.max_h_eff.abs();
+
+        assert!(
+            e_total_rel < 1e-3,
+            "imported geometry total energy drift too large: cpu={} cuda={} rel={}",
+            cpu_final.e_total,
+            cuda_final.e_total,
+            e_total_rel
+        );
+        assert!(
+            e_demag_rel < 1e-3,
+            "imported geometry demag energy drift too large: cpu={} cuda={} rel={}",
+            cpu_final.e_demag,
+            cuda_final.e_demag,
+            e_demag_rel
+        );
+        assert!(
+            max_h_eff_rel < 1e-3,
+            "imported geometry max|H_eff| drift too large: cpu={} cuda={} rel={}",
+            cpu_final.max_h_eff,
+            cuda_final.max_h_eff,
+            max_h_eff_rel
+        );
+
+        assert_eq!(
+            cpu.result.final_magnetization.len(),
+            cuda.result.final_magnetization.len(),
+            "final magnetization length mismatch"
+        );
+        for (index, (cpu_m, cuda_m)) in cpu
+            .result
+            .final_magnetization
+            .iter()
+            .zip(cuda.result.final_magnetization.iter())
+            .enumerate()
+        {
+            let err = ((cpu_m[0] - cuda_m[0]).abs())
+                .max((cpu_m[1] - cuda_m[1]).abs())
+                .max((cpu_m[2] - cuda_m[2]).abs());
+            assert!(
+                err < 5e-4,
+                "final magnetization drift too large at cell {index}: cpu={:?} cuda={:?}",
+                cpu_m,
+                cuda_m
+            );
+        }
     }
 
     #[test]

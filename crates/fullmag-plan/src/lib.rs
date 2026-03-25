@@ -1929,6 +1929,7 @@ mod tests {
             name: "mesh".to_string(),
             source: "sample.step".to_string(),
             format: "step".to_string(),
+            scale: fullmag_ir::ImportedGeometryScaleIR::Uniform(1.0),
         }];
         ir.regions[0].geometry = "mesh".to_string();
 
@@ -1946,6 +1947,7 @@ mod tests {
             name: "mesh".to_string(),
             source: "sample.stl".to_string(),
             format: "stl".to_string(),
+            scale: fullmag_ir::ImportedGeometryScaleIR::Uniform(1.0),
         }];
         ir.regions[0].geometry = "mesh".to_string();
         ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {

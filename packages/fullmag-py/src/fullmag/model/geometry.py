@@ -42,14 +42,25 @@ def _derived_translate_name(base_name: str, offset: tuple[float, float, float]) 
 # ---------------------------------------------------------------------------
 # Imported geometry (NPZ mask, STL, STEP, etc.)
 # ---------------------------------------------------------------------------
+ImportedGeometryScale: TypeAlias = float | tuple[float, float, float]
+
+
 @dataclass(frozen=True, slots=True)
 class ImportedGeometry(_GeometryOps):
     source: str
+    scale: ImportedGeometryScale = 1.0
     name: str | None = None
 
     def __post_init__(self) -> None:
         source = require_non_empty(self.source, "source")
         object.__setattr__(self, "source", source)
+        if isinstance(self.scale, (int, float)):
+            object.__setattr__(self, "scale", require_positive(float(self.scale), "scale"))
+        else:
+            normalized_scale = as_vector3(self.scale, "scale")
+            for index, component in enumerate(normalized_scale):
+                require_positive(component, f"scale[{index}]")
+            object.__setattr__(self, "scale", normalized_scale)
         if self.name is not None:
             object.__setattr__(self, "name", require_non_empty(self.name, "name"))
 
@@ -60,11 +71,17 @@ class ImportedGeometry(_GeometryOps):
         return self.source.rsplit("/", 1)[-1].rsplit(".", 1)[0]
 
     def to_ir(self) -> dict[str, object]:
+        scale_ir: float | list[float]
+        if isinstance(self.scale, (int, float)):
+            scale_ir = float(self.scale)
+        else:
+            scale_ir = list(self.scale)
         return {
             "name": self.geometry_name,
             "kind": "imported_geometry",
             "source": self.source,
             "format": infer_geometry_format(self.source),
+            "scale": scale_ir,
         }
 
 

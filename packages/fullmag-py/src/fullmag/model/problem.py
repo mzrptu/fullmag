@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 from hashlib import sha256
+from pathlib import Path
 from typing import Any, Sequence
 
 from fullmag._validation import ensure_unique_names, require_non_empty
@@ -67,6 +69,12 @@ class RuntimeSelection:
             raise ValueError("device_index must be >= 0")
         if self.cpu_threads is not None and self.cpu_threads <= 0:
             raise ValueError("cpu_threads must be >= 1")
+        if self.cpu_threads is not None and self.cpu_threads > 1:
+            warnings.warn(
+                f"cpu_threads={self.cpu_threads} requested but parallel CPU execution is not yet "
+                "implemented — the simulation will run single-threaded",
+                stacklevel=2,
+            )
         if self.device_target in {DeviceTarget.CPU, DeviceTarget.AUTO} and self.device_index is not None:
             raise ValueError("device_index requires device_target='cuda' or 'gpu'")
         if self.device_target in {DeviceTarget.CPU, DeviceTarget.AUTO} and self.gpu_count != 0:
@@ -120,15 +128,14 @@ class RuntimeSelection:
         )
 
     def gpu(self, gpu_count: int = 1) -> "RuntimeSelection":
-        return RuntimeSelection(
-            backend_target=self.backend_target,
-            device_target=DeviceTarget.GPU,
-            gpu_count=gpu_count,
-            device_index=self.device_index,
-            cpu_threads=self.cpu_threads,
-            execution_mode=self.execution_mode,
-            execution_precision=self.execution_precision,
+        """Alias for :meth:`cuda`.  Deprecated — use ``.cuda()`` instead."""
+        warnings.warn(
+            "RuntimeSelection.gpu() is deprecated — use .cuda() instead; "
+            "'gpu' and 'cuda' are synonyms in Fullmag",
+            DeprecationWarning,
+            stacklevel=2,
         )
+        return self.cuda(gpu_count=gpu_count)
 
     def threads(self, cpu_threads: int) -> "RuntimeSelection":
         return RuntimeSelection(
@@ -241,6 +248,7 @@ class Problem:
         execution_mode: ExecutionMode | None = None,
         execution_precision: ExecutionPrecision | None = None,
         script_source: str | None = None,
+        source_root: str | Path | None = None,
         entrypoint_kind: str = "direct",
     ) -> dict[str, object]:
         runtime = self.runtime.resolved(
@@ -250,7 +258,10 @@ class Problem:
         )
         materials = self._collect_materials()
         regions = self._collect_regions()
-        geometries = self._collect_geometries()
+        geometries = [
+            self._resolve_geometry_sources(geometry, source_root=source_root)
+            for geometry in self._collect_geometries()
+        ]
         discretization = self._resolve_discretization(runtime.backend_target)
         source_hash = sha256(script_source.encode("utf-8")).hexdigest() if script_source else None
         geometry_assets = self._build_geometry_assets(
@@ -468,3 +479,57 @@ class Problem:
         if not assets["fdm_grid_assets"] and not assets["fem_mesh_assets"]:
             return None
         return assets
+
+    def _resolve_geometry_sources(
+        self,
+        geometry: object,
+        *,
+        source_root: str | Path | None,
+    ) -> object:
+        if source_root is None:
+            return geometry
+
+        from fullmag.model.geometry import (
+            Difference,
+            ImportedGeometry,
+            Intersection,
+            Translate,
+            Union,
+        )
+
+        root = Path(source_root)
+
+        if isinstance(geometry, ImportedGeometry):
+            source_path = Path(geometry.source)
+            if source_path.is_absolute():
+                return geometry
+            return ImportedGeometry(
+                source=str((root / source_path).resolve()),
+                scale=geometry.scale,
+                name=geometry.name,
+            )
+        if isinstance(geometry, Difference):
+            return Difference(
+                base=self._resolve_geometry_sources(geometry.base, source_root=source_root),
+                tool=self._resolve_geometry_sources(geometry.tool, source_root=source_root),
+                name=geometry.name,
+            )
+        if isinstance(geometry, Union):
+            return Union(
+                a=self._resolve_geometry_sources(geometry.a, source_root=source_root),
+                b=self._resolve_geometry_sources(geometry.b, source_root=source_root),
+                name=geometry.name,
+            )
+        if isinstance(geometry, Intersection):
+            return Intersection(
+                a=self._resolve_geometry_sources(geometry.a, source_root=source_root),
+                b=self._resolve_geometry_sources(geometry.b, source_root=source_root),
+                name=geometry.name,
+            )
+        if isinstance(geometry, Translate):
+            return Translate(
+                geometry=self._resolve_geometry_sources(geometry.geometry, source_root=source_root),
+                offset=geometry.offset,
+                name=geometry.name,
+            )
+        return geometry
