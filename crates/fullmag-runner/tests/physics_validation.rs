@@ -59,11 +59,7 @@ fn assert_vec_approx(label: &str, actual: [f64; 3], expected: [f64; 3], tol: f64
 }
 
 /// µMAG Standard Problem 4 plan: 128×32×1 Permalloy film.
-fn sp4_plan(
-    algorithm: RelaxationAlgorithmIR,
-    damping: f64,
-    enable_demag: bool,
-) -> FdmPlanIR {
+fn sp4_plan(algorithm: RelaxationAlgorithmIR, damping: f64, enable_demag: bool) -> FdmPlanIR {
     let nx = 128u32;
     let ny = 32u32;
     let n = (nx * ny) as usize;
@@ -73,9 +69,7 @@ fn sp4_plan(
     let m0 = vec![[1.0 / norm, 0.1 / norm, 0.0]; n];
 
     FdmPlanIR {
-        grid: GridDimensions {
-            cells: [nx, ny, 1],
-        },
+        grid: GridDimensions { cells: [nx, ny, 1] },
         cell_size: [500e-9 / nx as f64, 125e-9 / ny as f64, 3e-9],
         region_mask: vec![0; n],
         active_mask: None,
@@ -138,8 +132,7 @@ fn uniform_field_alignment() {
         external_field: Some([1e6, 0.0, 0.0]),
     };
 
-    let result =
-        fullmag_runner::run_reference_fdm(&plan, 1e-9, &[]).expect("run should succeed");
+    let result = fullmag_runner::run_reference_fdm(&plan, 1e-9, &[]).expect("run should succeed");
     assert_eq!(result.status, RunStatus::Completed);
 
     let avg = average_m(&result.final_magnetization);
@@ -185,8 +178,7 @@ fn exchange_only_random_to_uniform() {
         external_field: None,
     };
 
-    let result =
-        fullmag_runner::run_reference_fdm(&plan, 1e-9, &[]).expect("run should succeed");
+    let result = fullmag_runner::run_reference_fdm(&plan, 1e-9, &[]).expect("run should succeed");
 
     // Exchange energy should be negligibly small after relaxation
     // (BB converges very rapidly on this exchange-only problem)
@@ -225,9 +217,7 @@ fn thin_film_shape_anisotropy() {
         .collect();
 
     let plan = FdmPlanIR {
-        grid: GridDimensions {
-            cells: [nx, ny, 1],
-        },
+        grid: GridDimensions { cells: [nx, ny, 1] },
         cell_size: [5e-9, 5e-9, 2e-9], // thin: 2nm thick vs 80nm wide
         region_mask: vec![0; n],
         active_mask: None,
@@ -249,8 +239,7 @@ fn thin_film_shape_anisotropy() {
         external_field: None,
     };
 
-    let result =
-        fullmag_runner::run_reference_fdm(&plan, 10e-9, &[]).expect("run should succeed");
+    let result = fullmag_runner::run_reference_fdm(&plan, 10e-9, &[]).expect("run should succeed");
 
     let avg = average_m(&result.final_magnetization);
 

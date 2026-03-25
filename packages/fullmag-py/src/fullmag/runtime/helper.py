@@ -7,7 +7,6 @@ from typing import Sequence
 
 from fullmag.model import BackendTarget, ExecutionMode, ExecutionPrecision
 from fullmag.runtime.loader import load_problem_from_script
-from fullmag.runtime.simulation import Simulation
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,6 +15,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Internal helper for Rust-hosted Fullmag script execution.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    check_syntax = subparsers.add_parser(
+        "check-syntax",
+        help="Validate that a Python script is syntactically correct without executing it.",
+    )
+    check_syntax.add_argument("--script", required=True, help="Path to Python script.")
 
     export_ir = subparsers.add_parser("export-ir", help="Load a Python script and print canonical ProblemIR.")
     export_ir.add_argument("--script", required=True, help="Path to Python script.")
@@ -56,18 +61,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
+    if args.command == "check-syntax":
+        script_path = Path(args.script)
+        source = script_path.read_text(encoding="utf-8")
+        compile(source, str(script_path), "exec")
+        print(json.dumps({"status": "ok", "script": str(script_path.resolve())}))
+        return 0
+
     if args.command in {"export-ir", "export-run-config"}:
         loaded = load_problem_from_script(Path(args.script))
-        simulation = Simulation(
-            loaded.problem,
-            backend=args.backend,
-            mode=args.mode,
-            precision=args.precision,
+        requested_backend = BackendTarget(args.backend) if args.backend is not None else None
+        execution_mode = ExecutionMode(args.mode) if args.mode is not None else None
+        execution_precision = (
+            ExecutionPrecision(args.precision) if args.precision is not None else None
         )
         ir = loaded.to_ir(
-            requested_backend=simulation.backend,
-            execution_mode=simulation.mode,
-            execution_precision=simulation.precision,
+            requested_backend=requested_backend,
+            execution_mode=execution_mode,
+            execution_precision=execution_precision,
         )
         if args.command == "export-ir":
             print(json.dumps(ir))
@@ -81,9 +92,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "stages": [
                         {
                             "ir": stage.to_ir(
-                                requested_backend=simulation.backend,
-                                execution_mode=simulation.mode,
-                                execution_precision=simulation.precision,
+                                requested_backend=requested_backend,
+                                execution_mode=execution_mode,
+                                execution_precision=execution_precision,
                                 script_source=loaded.script_source,
                                 source_root=loaded.source_path.parent,
                             ),

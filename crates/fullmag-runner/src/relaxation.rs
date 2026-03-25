@@ -7,10 +7,7 @@
 //! - `nonlinear_cg`: Nonlinear conjugate gradient (Polak–Ribière+) with
 //!   backtracking line search (OOMMF-level quality).
 
-use fullmag_engine::{
-    add, dot, normalized, scale, sub, ExchangeLlgProblem,
-    FftWorkspace, Vector3,
-};
+use fullmag_engine::{add, dot, normalized, scale, sub, ExchangeLlgProblem, FftWorkspace, Vector3};
 use fullmag_ir::RelaxationControlIR;
 
 use crate::types::StepStats;
@@ -82,8 +79,6 @@ fn compute_max_torque(magnetization: &[Vector3], h_eff: &[Vector3]) -> f64 {
         })
         .fold(0.0, f64::max)
 }
-
-
 
 // ---------------------------------------------------------------------------
 // Helper: global inner product <a, b> = sum_i a_i · b_i
@@ -160,13 +155,16 @@ pub(crate) fn execute_projected_gradient_bb(
 
         loop {
             m_trial = (0..n)
-                .map(|i| normalized(sub(m[i], scale(g[i], trial_lambda))).unwrap_or([0.0, 0.0, 0.0]))
+                .map(|i| {
+                    normalized(sub(m[i], scale(g[i], trial_lambda))).unwrap_or([0.0, 0.0, 0.0])
+                })
                 .collect::<Vec<_>>();
 
             e_trial = problem.total_energy_from_vectors_ws(&m_trial, ws);
 
             // Armijo sufficient decrease: E(trial) <= E(m) - c * λ * ||g||²
-            if e_trial <= energy - c_armijo * trial_lambda * g_norm_sq || backtracks >= max_backtrack
+            if e_trial <= energy - c_armijo * trial_lambda * g_norm_sq
+                || backtracks >= max_backtrack
             {
                 break;
             }
@@ -314,7 +312,11 @@ pub(crate) fn execute_nonlinear_cg(
 
         // Initial step size based on conservative estimate
         let p_norm = global_dot(&p, &p).sqrt();
-        let mut lambda = if p_norm > 0.0 { (1e-6_f64).min(1.0 / p_norm) } else { 1e-6 };
+        let mut lambda = if p_norm > 0.0 {
+            (1e-6_f64).min(1.0 / p_norm)
+        } else {
+            1e-6
+        };
 
         let mut m_new;
         let mut e_new;

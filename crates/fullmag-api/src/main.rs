@@ -261,7 +261,10 @@ async fn main() {
         .route("/v1/sessions/:session_id", get(get_session))
         .route("/v1/sessions/:session_id/state", get(get_session_state))
         .route("/v1/sessions/:session_id/events", get(get_session_events))
-        .route("/v1/sessions/:session_id/commands", post(enqueue_session_command))
+        .route(
+            "/v1/sessions/:session_id/commands",
+            post(enqueue_session_command),
+        )
         .route(
             "/v1/sessions/:session_id/assets/import",
             post(import_session_asset),
@@ -591,7 +594,10 @@ async fn enqueue_session_command(
     std::fs::write(&queued_path, text)?;
 
     Ok(Json(SessionCommandResponse {
-        command_id: payload["command_id"].as_str().unwrap_or_default().to_string(),
+        command_id: payload["command_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
         session_id,
         kind: payload["kind"].as_str().unwrap_or_default().to_string(),
         queued_path: make_repo_relative(&state.repo_root, &queued_path),

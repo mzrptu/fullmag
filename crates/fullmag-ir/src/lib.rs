@@ -490,6 +490,11 @@ impl FdmGridAssetIR {
                 self.active_mask.len()
             ));
         }
+        if !self.active_mask.iter().any(|active| *active) {
+            errors.push(
+                "fdm_grid_asset.active_mask must contain at least one active cell".to_string(),
+            );
+        }
 
         if errors.is_empty() {
             Ok(())
@@ -940,10 +945,7 @@ impl ProblemIR {
                         errors.push(format!("geometry '{}' source must not be empty", name));
                     }
                     if !scale.is_positive() {
-                        errors.push(format!(
-                            "geometry '{}' scale must be positive",
-                            name
-                        ));
+                        errors.push(format!("geometry '{}' scale must be positive", name));
                     }
                     if format.trim().is_empty() {
                         errors.push(format!("geometry '{}' format must not be empty", name));
@@ -1398,5 +1400,23 @@ mod tests {
         let decoded: ExecutionPlanIR =
             serde_json::from_str(&encoded).expect("execution plan should deserialize");
         assert_eq!(decoded, plan);
+    }
+
+    #[test]
+    fn fdm_grid_asset_must_not_be_empty() {
+        let asset = FdmGridAssetIR {
+            geometry_name: "mesh".to_string(),
+            cells: [2, 2, 1],
+            cell_size: [5e-9, 5e-9, 5e-9],
+            origin: [0.0, 0.0, 0.0],
+            active_mask: vec![false, false, false, false],
+        };
+
+        let errors = asset
+            .validate()
+            .expect_err("empty active mask must fail validation");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("must contain at least one active cell")));
     }
 }

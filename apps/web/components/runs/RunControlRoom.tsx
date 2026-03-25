@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { resolveApiBase } from "../../lib/apiBase";
 import { useSessionStream } from "../../lib/useSessionStream";
 import EngineConsole from "../panels/EngineConsole";
 import MeshQualityHistogram from "../panels/MeshQualityHistogram";
@@ -143,7 +144,7 @@ export default function RunControlRoom({ sessionId }: RunControlRoomProps) {
     setCommandBusy(true);
     setCommandMessage(null);
     try {
-      const response = await fetch(`http://127.0.0.1:8080/v1/sessions/${sessionId}/commands`, {
+      const response = await fetch(`${resolveApiBase()}/v1/sessions/${sessionId}/commands`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

@@ -2,16 +2,16 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use fullmag_engine::run_reference_exchange_demo;
 use fullmag_ir::{
-    BackendPlanIR, BackendTarget, ExecutionMode, ExecutionPlanSummary, ExecutionPrecision,
-    ProblemIR,
+    BackendPlanIR, BackendTarget, ExecutionMode, ExecutionPlanIR, ExecutionPlanSummary,
+    ExecutionPrecision, ProblemIR,
 };
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
 #[command(name = "fullmag")]
@@ -140,7 +140,7 @@ struct SessionManifest {
     artifact_dir: String,
     started_at_unix_ms: u128,
     finished_at_unix_ms: u128,
-    plan_summary: ExecutionPlanSummary,
+    plan_summary: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -216,6 +216,30 @@ struct SessionCommand {
     energy_tolerance: Option<f64>,
 }
 
+fn bootstrap_live_state(status: &str) -> LiveStateManifest {
+    LiveStateManifest {
+        status: status.to_string(),
+        updated_at_unix_ms: unix_time_millis().unwrap_or(0),
+        latest_step: LiveStepView {
+            step: 0,
+            time: 0.0,
+            dt: 0.0,
+            e_ex: 0.0,
+            e_demag: 0.0,
+            e_ext: 0.0,
+            e_total: 0.0,
+            max_dm_dt: 0.0,
+            max_h_eff: 0.0,
+            max_h_demag: 0.0,
+            wall_time_ns: 0,
+            grid: [0, 0, 0],
+            fem_mesh: None,
+            magnetization: None,
+            finished: false,
+        },
+    }
+}
+
 impl From<BackendArg> for BackendTarget {
     fn from(value: BackendArg) -> Self {
         match value {
@@ -268,6 +292,136 @@ fn execution_precision_name(value: ExecutionPrecision) -> &'static str {
         ExecutionPrecision::Single => "single",
         ExecutionPrecision::Double => "double",
     }
+}
+
+fn format_length_m(value: f64) -> String {
+    let abs = value.abs();
+    if abs >= 1e-3 {
+        format!("{:.3} mm", value * 1e3)
+    } else if abs >= 1e-6 {
+        format!("{:.3} um", value * 1e6)
+    } else if abs >= 1e-9 {
+        format!("{:.3} nm", value * 1e9)
+    } else {
+        format!("{:.4e} m", value)
+    }
+}
+
+fn format_extent(extent: [f64; 3]) -> String {
+    format!(
+        "{} x {} x {}",
+        format_length_m(extent[0]),
+        format_length_m(extent[1]),
+        format_length_m(extent[2]),
+    )
+}
+
+fn fem_mesh_bbox(mesh: &fullmag_ir::MeshIR) -> Option<([f64; 3], [f64; 3])> {
+    let mut iter = mesh.nodes.iter();
+    let first = iter.next()?;
+    let mut min = *first;
+    let mut max = *first;
+    for node in iter {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(node[axis]);
+            max[axis] = max[axis].max(node[axis]);
+        }
+    }
+    Some((min, max))
+}
+
+fn log_execution_plan(
+    stage_index: usize,
+    stage_count: usize,
+    stage: &ResolvedScriptStage,
+    plan: &ExecutionPlanIR,
+) {
+    eprintln!(
+        "- stage {} / {}: {}",
+        stage_index + 1,
+        stage_count,
+        stage.entrypoint_kind
+    );
+    match &plan.backend_plan {
+        BackendPlanIR::Fdm(fdm) => {
+            let extent = [
+                fdm.grid.cells[0] as f64 * fdm.cell_size[0],
+                fdm.grid.cells[1] as f64 * fdm.cell_size[1],
+                fdm.grid.cells[2] as f64 * fdm.cell_size[2],
+            ];
+            let total_cells = fdm.grid.cells[0] as usize
+                * fdm.grid.cells[1] as usize
+                * fdm.grid.cells[2] as usize;
+            let active_cells = fdm
+                .active_mask
+                .as_ref()
+                .map(|mask| mask.iter().filter(|value| **value).count())
+                .unwrap_or(total_cells);
+            eprintln!("  backend_plan: fdm");
+            eprintln!("  world_extent: {}", format_extent(extent));
+            eprintln!(
+                "  grid: {} x {} x {} cells",
+                fdm.grid.cells[0], fdm.grid.cells[1], fdm.grid.cells[2]
+            );
+            eprintln!("  cell: {}", format_extent(fdm.cell_size));
+            eprintln!("  active_cells: {} / {}", active_cells, total_cells);
+        }
+        BackendPlanIR::FdmMultilayer(multilayer) => {
+            let conv_cell = multilayer
+                .layers
+                .first()
+                .map(|layer| layer.convolution_cell_size)
+                .unwrap_or([0.0, 0.0, 0.0]);
+            let extent = [
+                multilayer.common_cells[0] as f64 * conv_cell[0],
+                multilayer.common_cells[1] as f64 * conv_cell[1],
+                multilayer.common_cells[2] as f64 * conv_cell[2],
+            ];
+            let active_cells: usize = multilayer
+                .layers
+                .iter()
+                .map(|layer| {
+                    layer
+                        .native_active_mask
+                        .as_ref()
+                        .map(|mask| mask.iter().filter(|value| **value).count())
+                        .unwrap_or_else(|| {
+                            layer.native_grid[0] as usize
+                                * layer.native_grid[1] as usize
+                                * layer.native_grid[2] as usize
+                        })
+                })
+                .sum();
+            eprintln!("  backend_plan: fdm_multilayer ({})", multilayer.mode);
+            eprintln!("  world_extent: {}", format_extent(extent));
+            eprintln!(
+                "  convolution_grid: {} x {} x {} cells",
+                multilayer.common_cells[0], multilayer.common_cells[1], multilayer.common_cells[2]
+            );
+            eprintln!("  convolution_cell: {}", format_extent(conv_cell));
+            eprintln!("  layers: {}", multilayer.layers.len());
+            eprintln!("  active_cells_native_total: {}", active_cells);
+        }
+        BackendPlanIR::Fem(fem) => {
+            eprintln!("  backend_plan: fem");
+            eprintln!("  mesh: {}", fem.mesh_name);
+            eprintln!(
+                "  mesh_size: {} nodes, {} elements",
+                fem.mesh.nodes.len(),
+                fem.mesh.elements.len()
+            );
+            if let Some((min, max)) = fem_mesh_bbox(&fem.mesh) {
+                let extent = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+                eprintln!("  world_extent: {}", format_extent(extent));
+            }
+            eprintln!("  fe_order: {}", fem.fe_order);
+            eprintln!("  hmax: {}", format_length_m(fem.hmax));
+        }
+    }
+}
+
+fn plan_summary_json(plan_summary: &ExecutionPlanSummary) -> serde_json::Value {
+    serde_json::to_value(plan_summary).unwrap_or_else(|_| serde_json::json!({}))
 }
 
 fn main() -> Result<()> {
@@ -403,6 +557,25 @@ fn is_script_mode(raw_args: &[OsString]) -> bool {
 fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
     let args = ScriptCli::parse_from(raw_args);
     let started_at_unix_ms = unix_time_millis()?;
+    let script_path = args
+        .script
+        .canonicalize()
+        .with_context(|| format!("failed to resolve script path {}", args.script.display()))?;
+    check_script_syntax_via_python(&script_path)?;
+    eprintln!("fullmag syntax check passed");
+    eprintln!("- script: {}", script_path.display());
+    let requested_backend_name = args
+        .backend
+        .map(|value| value.to_possible_value().unwrap().get_name().to_string())
+        .unwrap_or_else(|| "auto".to_string());
+    let requested_mode_name = args
+        .mode
+        .map(|value| value.to_possible_value().unwrap().get_name().to_string())
+        .unwrap_or_else(|| "strict".to_string());
+    let requested_precision_name = args
+        .precision
+        .map(|value| value.to_possible_value().unwrap().get_name().to_string())
+        .unwrap_or_else(|| "double".to_string());
 
     let session_id = format!("session-{}-{}", started_at_unix_ms, std::process::id());
     let run_id = format!("run-{}", session_id);
@@ -414,12 +587,171 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
 
     fs::create_dir_all(&session_dir)
         .with_context(|| format!("failed to create session dir {}", session_dir.display()))?;
+    let field_every_n = 10;
+    let session_manifest_path = session_dir.join("session.json");
+    let run_manifest_path = session_dir.join("run.json");
+    let live_state_path = session_dir.join("live_state.json");
+    let live_scalars_path = session_dir.join("live_scalars.csv");
+    let events_path = session_dir.join("events.ndjson");
 
-    let script_path = args
-        .script
-        .canonicalize()
-        .with_context(|| format!("failed to resolve script path {}", args.script.display()))?;
-    let script_config = export_script_execution_config_via_python(&script_path, &args)?;
+    append_event(
+        &events_path,
+        &serde_json::json!({
+            "kind": "bootstrap_started",
+            "session_id": session_id.clone(),
+            "run_id": run_id.clone(),
+            "script_path": script_path.display().to_string(),
+            "started_at_unix_ms": started_at_unix_ms,
+        }),
+    )?;
+    append_event(
+        &events_path,
+        &serde_json::json!({
+            "kind": "session_started",
+            "session_id": session_id.clone(),
+            "run_id": run_id.clone(),
+            "script_path": script_path.display().to_string(),
+            "started_at_unix_ms": started_at_unix_ms,
+            "stage_count": serde_json::Value::Null,
+        }),
+    )?;
+    append_event(
+        &events_path,
+        &serde_json::json!({
+            "kind": "bootstrap_phase_changed",
+            "session_id": session_id.clone(),
+            "run_id": run_id.clone(),
+            "phase": "syntax_checked",
+        }),
+    )?;
+    write_json_file(
+        &session_manifest_path,
+        &SessionManifest {
+            session_id: session_id.clone(),
+            run_id: run_id.clone(),
+            status: "bootstrapping".to_string(),
+            interactive_session_requested: args.interactive,
+            script_path: script_path.display().to_string(),
+            problem_name: script_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("fullmag_script")
+                .to_string(),
+            requested_backend: requested_backend_name.clone(),
+            execution_mode: requested_mode_name.clone(),
+            precision: requested_precision_name.clone(),
+            artifact_dir: artifact_dir.display().to_string(),
+            started_at_unix_ms,
+            finished_at_unix_ms: started_at_unix_ms,
+            plan_summary: serde_json::json!({ "status": "bootstrapping" }),
+        },
+    )?;
+    write_json_file(
+        &run_manifest_path,
+        &RunManifest {
+            run_id: run_id.clone(),
+            session_id: session_id.clone(),
+            status: "bootstrapping".to_string(),
+            total_steps: 0,
+            final_time: None,
+            final_e_ex: None,
+            final_e_demag: None,
+            final_e_ext: None,
+            final_e_total: None,
+            artifact_dir: artifact_dir.display().to_string(),
+        },
+    )?;
+    initialise_live_scalars(&live_scalars_path)?;
+    write_json_file(&live_state_path, &bootstrap_live_state("bootstrapping"))?;
+
+    announce_session_start(
+        &session_id,
+        &script_path,
+        &requested_backend_name,
+        args.headless,
+    );
+
+    if !args.headless {
+        append_event(
+            &events_path,
+            &serde_json::json!({
+                "kind": "bootstrap_phase_changed",
+                "session_id": session_id.clone(),
+                "run_id": run_id.clone(),
+                "phase": "ui_bootstrap",
+            }),
+        )?;
+        spawn_control_room(&session_id, args.web_port).with_context(|| {
+            format!(
+                "failed to bootstrap control room for session {}",
+                session_id
+            )
+        })?;
+        eprintln!("fullmag control room bootstrap verified");
+        append_event(
+            &events_path,
+            &serde_json::json!({
+                "kind": "bootstrap_phase_changed",
+                "session_id": session_id.clone(),
+                "run_id": run_id.clone(),
+                "phase": "ui_ready",
+            }),
+        )?;
+    }
+
+    update_live_state_status(&live_state_path, "materializing_script", Some(false))?;
+    append_event(
+        &events_path,
+        &serde_json::json!({
+            "kind": "bootstrap_phase_changed",
+            "session_id": session_id.clone(),
+            "run_id": run_id.clone(),
+            "phase": "materializing_script",
+        }),
+    )?;
+    eprintln!("fullmag materializing script");
+    let script_config = match export_script_execution_config_via_python(&script_path, &args) {
+        Ok(config) => config,
+        Err(error) => {
+            append_event(
+                &events_path,
+                &serde_json::json!({
+                    "kind": "bootstrap_failed",
+                    "session_id": session_id.clone(),
+                    "run_id": run_id.clone(),
+                    "error": error.to_string(),
+                }),
+            )?;
+            update_session_manifest_status(
+                &session_manifest_path,
+                &session_id,
+                &run_id,
+                "failed",
+                args.interactive,
+                &script_path,
+                script_path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("fullmag_script"),
+                &requested_backend_name,
+                &requested_mode_name,
+                &requested_precision_name,
+                &artifact_dir,
+                started_at_unix_ms,
+                unix_time_millis()?,
+                &serde_json::json!({ "status": "bootstrap_failed" }),
+            )?;
+            update_run_manifest_status(
+                &run_manifest_path,
+                &run_id,
+                &session_id,
+                "failed",
+                &artifact_dir,
+                &[],
+            )?;
+            return Err(error);
+        }
+    };
     let stages = materialize_script_stages(script_config)?;
     if stages.is_empty() {
         bail!("script did not produce any executable stages");
@@ -427,19 +759,29 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
     for stage in &stages {
         validate_ir(&stage.ir)?;
     }
+    let stage_execution_plans = stages
+        .iter()
+        .map(|stage| fullmag_plan::plan(&stage.ir).map_err(|error| anyhow!(error.to_string())))
+        .collect::<Result<Vec<_>>>()?;
 
     let mut current_plan_summary = stages[0]
         .ir
         .plan_for(args.backend.map(BackendTarget::from))
         .map_err(join_errors)?;
-    let initial_execution_plan =
-        fullmag_plan::plan(&stages[0].ir).map_err(|error| anyhow!(error.to_string()))?;
-    let field_every_n = 10;
-    let session_manifest_path = session_dir.join("session.json");
-    let run_manifest_path = session_dir.join("run.json");
-    let live_state_path = session_dir.join("live_state.json");
-    let live_scalars_path = session_dir.join("live_scalars.csv");
-    let events_path = session_dir.join("events.ndjson");
+    append_event(
+        &events_path,
+        &serde_json::json!({
+            "kind": "bootstrap_phase_changed",
+            "session_id": session_id.clone(),
+            "run_id": run_id.clone(),
+            "phase": "planning_completed",
+            "stage_count": stages.len(),
+        }),
+    )?;
+    let initial_execution_plan = stage_execution_plans[0].clone();
+    let initial_update = initial_step_update(&initial_execution_plan.backend_plan);
+    update_live_state(&live_state_path, &initial_update)?;
+
     let final_problem_name = stages
         .last()
         .expect("stages should be non-empty after validation")
@@ -486,65 +828,38 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
     append_event(
         &events_path,
         &serde_json::json!({
-            "kind": "session_started",
+            "kind": "bootstrap_completed",
             "session_id": session_id.clone(),
             "run_id": run_id.clone(),
-            "script_path": script_path.display().to_string(),
-            "started_at_unix_ms": started_at_unix_ms,
             "stage_count": stages.len(),
+            "problem_name": final_problem_name.clone(),
+            "requested_backend": backend_target_name(final_requested_backend),
         }),
     )?;
-    write_json_file(
+    update_session_manifest_status(
         &session_manifest_path,
-        &SessionManifest {
-            session_id: session_id.clone(),
-            run_id: run_id.clone(),
-            status: "running".to_string(),
-            interactive_session_requested: interactive_requested,
-            script_path: script_path.display().to_string(),
-            problem_name: final_problem_name.clone(),
-            requested_backend: backend_target_name(final_requested_backend).to_string(),
-            execution_mode: execution_mode_name(final_execution_mode).to_string(),
-            precision: execution_precision_name(final_precision).to_string(),
-            artifact_dir: artifact_dir.display().to_string(),
-            started_at_unix_ms,
-            finished_at_unix_ms: started_at_unix_ms,
-            plan_summary: current_plan_summary.clone(),
-        },
-    )?;
-    write_json_file(
-        &run_manifest_path,
-        &RunManifest {
-            run_id: run_id.clone(),
-            session_id: session_id.clone(),
-            status: "running".to_string(),
-            total_steps: 0,
-            final_time: None,
-            final_e_ex: None,
-            final_e_demag: None,
-            final_e_ext: None,
-            final_e_total: None,
-            artifact_dir: artifact_dir.display().to_string(),
-        },
-    )?;
-    initialise_live_scalars(&live_scalars_path)?;
-    let initial_update = initial_step_update(&initial_execution_plan.backend_plan);
-    update_live_state(&live_state_path, &initial_update)?;
-
-    announce_session_start(
         &session_id,
+        &run_id,
+        "running",
+        interactive_requested,
         &script_path,
+        &final_problem_name,
         backend_target_name(final_requested_backend),
-        args.headless,
+        execution_mode_name(final_execution_mode),
+        execution_precision_name(final_precision),
+        &artifact_dir,
+        started_at_unix_ms,
+        started_at_unix_ms,
+        &plan_summary_json(&current_plan_summary),
+    )?;
+    eprintln!(
+        "fullmag script materialized\n- problem: {}\n- stages: {}",
+        final_problem_name,
+        stages.len()
     );
-
-    if !args.headless {
-        if let Err(error) = spawn_control_room(&session_id, args.web_port) {
-            eprintln!(
-                "warning: failed to auto-start control room for session {}: {}",
-                session_id, error
-            );
-        }
+    for (stage_index, (stage, plan)) in stages.iter().zip(stage_execution_plans.iter()).enumerate()
+    {
+        log_execution_plan(stage_index, stages.len(), stage, plan);
     }
 
     let stage_count = stages.len();
@@ -721,7 +1036,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         artifact_dir: artifact_dir.display().to_string(),
                         started_at_unix_ms,
                         finished_at_unix_ms: failed_at_unix_ms,
-                        plan_summary: current_plan_summary.clone(),
+                        plan_summary: plan_summary_json(&current_plan_summary),
                     },
                 );
                 append_event(
@@ -744,8 +1059,14 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
 
         if !use_live_callback {
             let grid = match &execution_plan.backend_plan {
-                BackendPlanIR::Fdm(fdm) => [fdm.grid.cells[0], fdm.grid.cells[1], fdm.grid.cells[2]],
-                BackendPlanIR::FdmMultilayer(fdm) => [fdm.common_cells[0], fdm.common_cells[1], fdm.common_cells[2]],
+                BackendPlanIR::Fdm(fdm) => {
+                    [fdm.grid.cells[0], fdm.grid.cells[1], fdm.grid.cells[2]]
+                }
+                BackendPlanIR::FdmMultilayer(fdm) => [
+                    fdm.common_cells[0],
+                    fdm.common_cells[1],
+                    fdm.common_cells[2],
+                ],
                 BackendPlanIR::Fem(_) => [0, 0, 0],
             };
             let fem_mesh = match &execution_plan.backend_plan {
@@ -776,7 +1097,10 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     finished: is_final_step && is_session_final_stage,
                 };
                 append_live_scalar_row(&live_scalars_path, &update)?;
-                if update.stats.step <= 1 || update.stats.step % field_every_n == 0 || update.finished {
+                if update.stats.step <= 1
+                    || update.stats.step % field_every_n == 0
+                    || update.finished
+                {
                     update_running_run_manifest(
                         &run_manifest_path,
                         &run_id,
@@ -856,7 +1180,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             &artifact_dir,
             started_at_unix_ms,
             awaiting_at_unix_ms,
-            &current_plan_summary,
+            &plan_summary_json(&current_plan_summary),
         )?;
         update_run_manifest_status(
             &run_manifest_path,
@@ -898,24 +1222,27 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 }),
             )?;
 
-            let Some(mut stage) = (match build_interactive_command_stage(&interactive_template_ir, &command) {
-                Ok(stage) => stage,
-                Err(error) => {
-                    let _ = move_command_file(&command_path, &failed_commands_dir(&session_dir));
-                    append_event(
-                        &events_path,
-                        &serde_json::json!({
-                            "kind": "interactive_command_failed",
-                            "session_id": session_id.clone(),
-                            "run_id": run_id.clone(),
-                            "command_id": command.command_id,
-                            "command_kind": command.kind,
-                            "error": error.to_string(),
-                        }),
-                    )?;
-                    continue;
-                }
-            }) else {
+            let Some(mut stage) =
+                (match build_interactive_command_stage(&interactive_template_ir, &command) {
+                    Ok(stage) => stage,
+                    Err(error) => {
+                        let _ =
+                            move_command_file(&command_path, &failed_commands_dir(&session_dir));
+                        append_event(
+                            &events_path,
+                            &serde_json::json!({
+                                "kind": "interactive_command_failed",
+                                "session_id": session_id.clone(),
+                                "run_id": run_id.clone(),
+                                "command_id": command.command_id,
+                                "command_kind": command.kind,
+                                "error": error.to_string(),
+                            }),
+                        )?;
+                        continue;
+                    }
+                })
+            else {
                 let _ = move_command_file(&command_path, &processed_commands_dir(&session_dir));
                 break;
             };
@@ -962,7 +1289,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 &artifact_dir,
                 started_at_unix_ms,
                 running_at_unix_ms,
-                &current_plan_summary,
+                &plan_summary_json(&current_plan_summary),
             )?;
             update_run_manifest_status(
                 &run_manifest_path,
@@ -1022,7 +1349,11 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     },
                 )
             } else {
-                fullmag_runner::run_problem(&stage.ir, stage.until_seconds, &current_stage_artifact_dir)
+                fullmag_runner::run_problem(
+                    &stage.ir,
+                    stage.until_seconds,
+                    &current_stage_artifact_dir,
+                )
             } {
                 Ok(result) => result,
                 Err(error) => {
@@ -1041,9 +1372,10 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         &artifact_dir,
                         started_at_unix_ms,
                         unix_time_millis().unwrap_or(awaiting_at_unix_ms),
-                        &current_plan_summary,
+                        &plan_summary_json(&current_plan_summary),
                     );
-                    let _ = update_live_state_status(&live_state_path, "awaiting_command", Some(false));
+                    let _ =
+                        update_live_state_status(&live_state_path, "awaiting_command", Some(false));
                     append_event(
                         &events_path,
                         &serde_json::json!({
@@ -1061,8 +1393,14 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
 
             if !use_live_callback {
                 let grid = match &execution_plan.backend_plan {
-                    BackendPlanIR::Fdm(fdm) => [fdm.grid.cells[0], fdm.grid.cells[1], fdm.grid.cells[2]],
-                    BackendPlanIR::FdmMultilayer(fdm) => [fdm.common_cells[0], fdm.common_cells[1], fdm.common_cells[2]],
+                    BackendPlanIR::Fdm(fdm) => {
+                        [fdm.grid.cells[0], fdm.grid.cells[1], fdm.grid.cells[2]]
+                    }
+                    BackendPlanIR::FdmMultilayer(fdm) => [
+                        fdm.common_cells[0],
+                        fdm.common_cells[1],
+                        fdm.common_cells[2],
+                    ],
                     BackendPlanIR::Fem(_) => [0, 0, 0],
                 };
                 let fem_mesh = match &execution_plan.backend_plan {
@@ -1075,10 +1413,14 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 };
                 for stats in &stage_result.steps {
                     let update = fullmag_runner::StepUpdate {
-                        stats: offset_step_stats(std::slice::from_ref(stats), step_offset, time_offset)
-                            .into_iter()
-                            .next()
-                            .expect("single step should offset"),
+                        stats: offset_step_stats(
+                            std::slice::from_ref(stats),
+                            step_offset,
+                            time_offset,
+                        )
+                        .into_iter()
+                        .next()
+                        .expect("single step should offset"),
                         grid,
                         fem_mesh: fem_mesh.clone(),
                         magnetization: None,
@@ -1115,8 +1457,8 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 )?;
                 update_live_state(&live_state_path, &final_update)?;
 
-                let final_step_already_recorded = final_update.stats.step <= 1
-                    || final_update.stats.step % field_every_n == 0;
+                let final_step_already_recorded =
+                    final_update.stats.step <= 1 || final_update.stats.step % field_every_n == 0;
                 if !final_step_already_recorded {
                     append_live_scalar_row(&live_scalars_path, &final_update)?;
                 }
@@ -1148,7 +1490,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 &artifact_dir,
                 started_at_unix_ms,
                 ready_at_unix_ms,
-                &current_plan_summary,
+                &plan_summary_json(&current_plan_summary),
             )?;
             update_run_manifest_status(
                 &run_manifest_path,
@@ -1216,7 +1558,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             artifact_dir: summary.artifact_dir.clone(),
             started_at_unix_ms,
             finished_at_unix_ms,
-            plan_summary: current_plan_summary.clone(),
+            plan_summary: plan_summary_json(&current_plan_summary),
         },
     )?;
     write_json_file(
@@ -1349,6 +1691,24 @@ fn export_script_execution_config_via_python(
         .context("failed to deserialize script execution config from python helper")
 }
 
+fn check_script_syntax_via_python(script_path: &Path) -> Result<()> {
+    let helper_args = vec![
+        "-m".to_string(),
+        "fullmag.runtime.helper".to_string(),
+        "check-syntax".to_string(),
+        "--script".to_string(),
+        script_path.display().to_string(),
+    ];
+
+    let output = run_python_helper(&helper_args)
+        .with_context(|| format!("failed to syntax-check {}", script_path.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("python syntax check failed: {}", stderr.trim());
+    }
+    Ok(())
+}
+
 fn resolve_script_until_seconds(ir: &ProblemIR, default_until_seconds: Option<f64>) -> Result<f64> {
     if let Some(until_seconds) = default_until_seconds {
         return Ok(until_seconds);
@@ -1356,10 +1716,14 @@ fn resolve_script_until_seconds(ir: &ProblemIR, default_until_seconds: Option<f6
 
     match &ir.study {
         fullmag_ir::StudyIR::Relaxation {
-            dynamics, max_steps, ..
+            dynamics,
+            max_steps,
+            ..
         } => {
             let dt = match dynamics {
-                fullmag_ir::DynamicsIR::Llg { fixed_timestep, .. } => fixed_timestep.unwrap_or(1e-13),
+                fullmag_ir::DynamicsIR::Llg { fixed_timestep, .. } => {
+                    fixed_timestep.unwrap_or(1e-13)
+                }
             };
             Ok(dt * (*max_steps as f64))
         }
@@ -1383,7 +1747,10 @@ fn materialize_script_stages(config: ScriptExecutionConfig) -> Result<Vec<Resolv
         .into_iter()
         .map(|stage| {
             Ok(ResolvedScriptStage {
-                until_seconds: resolve_script_until_seconds(&stage.ir, stage.default_until_seconds)?,
+                until_seconds: resolve_script_until_seconds(
+                    &stage.ir,
+                    stage.default_until_seconds,
+                )?,
                 ir: stage.ir,
                 entrypoint_kind: stage.entrypoint_kind,
             })
@@ -1402,11 +1769,10 @@ fn apply_continuation_initial_state(
         );
     }
 
-    problem.magnets[0].initial_magnetization = Some(
-        fullmag_ir::InitialMagnetizationIR::SampledField {
+    problem.magnets[0].initial_magnetization =
+        Some(fullmag_ir::InitialMagnetizationIR::SampledField {
             values: final_magnetization.to_vec(),
-        },
-    );
+        });
     Ok(())
 }
 
@@ -1513,9 +1879,9 @@ fn build_interactive_command_stage(
     match command.kind.as_str() {
         "close" => Ok(None),
         "run" => {
-            let until_seconds = command.until_seconds.ok_or_else(|| {
-                anyhow!("interactive 'run' command requires until_seconds")
-            })?;
+            let until_seconds = command
+                .until_seconds
+                .ok_or_else(|| anyhow!("interactive 'run' command requires until_seconds"))?;
             if until_seconds <= 0.0 {
                 bail!("interactive 'run' command requires positive until_seconds");
             }
@@ -1578,7 +1944,7 @@ fn update_session_manifest_status(
     artifact_dir: &Path,
     started_at_unix_ms: u128,
     finished_at_unix_ms: u128,
-    plan_summary: &ExecutionPlanSummary,
+    plan_summary: &serde_json::Value,
 ) -> Result<()> {
     write_json_file(
         path,
@@ -1685,42 +2051,17 @@ fn spawn_control_room(session_id: &str, requested_port: Option<u16>) -> Result<(
     fs::create_dir_all(&log_dir)?;
 
     // 1. Start fullmag-api if not already running on port 8080
-    if !port_is_listening(8080) {
+    if api_is_ready(8080) {
+        eprintln!("  reusing fullmag-api on :8080");
+    } else {
         eprintln!("  starting fullmag-api on :8080 ...");
         let api_log = fs::File::create(log_dir.join("fullmag-api.log"))
             .context("failed to create api log")?;
         let api_err = api_log.try_clone()?;
 
         let self_exe = std::env::current_exe().unwrap_or_default();
-        let sibling_api = self_exe.with_file_name("fullmag-api");
-
-        if sibling_api.exists() {
-            ProcessCommand::new(&sibling_api)
-                .current_dir(&root)
-                .stdin(Stdio::null())
-                .stdout(api_log)
-                .stderr(api_err)
-                .spawn()
-                .context("failed to spawn fullmag-api binary")?;
-        } else {
-            ProcessCommand::new("cargo")
-                .args(["run", "-p", "fullmag-api"])
-                .current_dir(&root)
-                .stdin(Stdio::null())
-                .stdout(api_log)
-                .stderr(api_err)
-                .spawn()
-                .context("failed to spawn fullmag-api via cargo")?;
-        }
-
-        for _ in 0..100 {
-            if port_is_listening(8080) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-    } else {
-        eprintln!("  reusing fullmag-api on :8080");
+        let mut child = spawn_fullmag_api(&root, &self_exe, api_log, api_err)?;
+        wait_for_api_ready(8080, &mut child, Duration::from_secs(60))?;
     }
 
     // 2. Resolve frontend port
@@ -1751,8 +2092,16 @@ fn spawn_control_room(session_id: &str, requested_port: Option<u16>) -> Result<(
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+        if !port_is_listening(web_port) {
+            bail!(
+                "control room frontend did not become ready on :{}",
+                web_port
+            );
+        }
     } else if port_is_listening(web_port) {
         eprintln!("  reusing control room on :{}", web_port);
+    } else {
+        bail!("control room frontend directory missing or failed to start");
     }
 
     // 3. Open browser
@@ -1815,13 +2164,101 @@ fn resolve_web_port(requested: Option<u16>, url_file: &Path) -> Result<u16> {
 fn port_is_listening(port: u16) -> bool {
     std::net::TcpStream::connect_timeout(
         &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
-        std::time::Duration::from_millis(200),
+        Duration::from_millis(200),
     )
     .is_ok()
 }
 
 fn port_is_bindable(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+fn api_is_ready(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = match std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(250)) {
+        Ok(stream) => stream,
+        Err(_) => return false,
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+    if stream
+        .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut response = String::new();
+    if stream.read_to_string(&mut response).is_err() {
+        return false;
+    }
+    response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")
+}
+
+fn spawn_fullmag_api(
+    root: &Path,
+    self_exe: &Path,
+    stdout: fs::File,
+    stderr: fs::File,
+) -> Result<std::process::Child> {
+    let sibling_api = self_exe.with_file_name("fullmag-api");
+    let candidates = [
+        sibling_api,
+        root.join(".fullmag")
+            .join("local")
+            .join("bin")
+            .join("fullmag-api"),
+        root.join(".fullmag")
+            .join("target")
+            .join("release")
+            .join("fullmag-api"),
+        root.join(".fullmag")
+            .join("target")
+            .join("debug")
+            .join("fullmag-api"),
+        root.join("target").join("release").join("fullmag-api"),
+        root.join("target").join("debug").join("fullmag-api"),
+    ];
+
+    if let Some(path) = candidates.iter().find(|candidate| candidate.exists()) {
+        return ProcessCommand::new(path)
+            .current_dir(root)
+            .stdin(Stdio::null())
+            .stdout(stdout)
+            .stderr(stderr)
+            .spawn()
+            .with_context(|| format!("failed to spawn fullmag-api binary {}", path.display()));
+    }
+
+    ProcessCommand::new("cargo")
+        .args(["run", "-p", "fullmag-api"])
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(stdout)
+        .stderr(stderr)
+        .spawn()
+        .context("failed to spawn fullmag-api via cargo")
+}
+
+fn wait_for_api_ready(port: u16, child: &mut std::process::Child, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if api_is_ready(port) {
+            return Ok(());
+        }
+        if let Some(status) = child
+            .try_wait()
+            .context("failed to poll fullmag-api process")?
+        {
+            bail!(
+                "fullmag-api exited before becoming ready (status: {})",
+                status
+            );
+        }
+        if Instant::now() >= deadline {
+            bail!("fullmag-api did not become ready on :{}", port);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn which_opener() -> Result<String> {
@@ -1857,8 +2294,8 @@ fn unix_time_millis() -> Result<u128> {
 }
 
 fn read_json_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let text =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     serde_json::from_str(&text)
         .with_context(|| format!("failed to parse json from {}", path.display()))
 }
@@ -1933,7 +2370,11 @@ fn initial_step_update(backend_plan: &BackendPlanIR) -> fullmag_runner::StepUpda
         },
         BackendPlanIR::FdmMultilayer(fdm) => fullmag_runner::StepUpdate {
             stats,
-            grid: [fdm.common_cells[0], fdm.common_cells[1], fdm.common_cells[2]],
+            grid: [
+                fdm.common_cells[0],
+                fdm.common_cells[1],
+                fdm.common_cells[2],
+            ],
             fem_mesh: None,
             magnetization: None,
             finished: false,
@@ -1976,7 +2417,11 @@ fn final_stage_step_update(
         },
         BackendPlanIR::FdmMultilayer(fdm) => fullmag_runner::StepUpdate {
             stats,
-            grid: [fdm.common_cells[0], fdm.common_cells[1], fdm.common_cells[2]],
+            grid: [
+                fdm.common_cells[0],
+                fdm.common_cells[1],
+                fdm.common_cells[2],
+            ],
             fem_mesh: None,
             magnetization: None,
             finished,

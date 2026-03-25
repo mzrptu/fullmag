@@ -205,6 +205,60 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertAlmostEqual(voxels.origin[1], -2.0)
         self.assertAlmostEqual(voxels.origin[2], -0.5)
 
+    def test_binary_stl_voxelization_accepts_units_shortcut(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "cube.stl"
+            self._write_binary_cube_stl(path)
+            geometry_with_units = fm.ImportedGeometry(
+                source=str(path),
+                name="cube",
+                units="nm",
+            )
+            geometry_with_scale = fm.ImportedGeometry(
+                source=str(path),
+                name="cube",
+                scale=1e-9,
+            )
+
+            with patch(
+                "fullmag.meshing.voxelization._import_trimesh",
+                side_effect=ImportError("missing trimesh"),
+            ):
+                voxels_with_units = voxelize_geometry(
+                    geometry_with_units,
+                    (1e-9, 1e-9, 1e-9),
+                )
+                voxels_with_scale = voxelize_geometry(
+                    geometry_with_scale,
+                    (1e-9, 1e-9, 1e-9),
+                )
+
+        self.assertEqual(voxels_with_units.shape, voxels_with_scale.shape)
+        self.assertEqual(
+            voxels_with_units.active_cell_count,
+            voxels_with_scale.active_cell_count,
+        )
+        self.assertAlmostEqual(voxels_with_units.origin[0], voxels_with_scale.origin[0])
+        self.assertAlmostEqual(voxels_with_units.origin[1], voxels_with_scale.origin[1])
+        self.assertAlmostEqual(voxels_with_units.origin[2], voxels_with_scale.origin[2])
+
+    def test_nanoflower_stl_fallback_keeps_nonempty_domain_at_nm_scale(self) -> None:
+        nanoflower = Path(__file__).resolve().parents[3] / "examples" / "nanoflower.stl"
+        geometry = fm.ImportedGeometry(
+            source=str(nanoflower),
+            name="nanoflower",
+            units="nm",
+        )
+
+        with patch(
+            "fullmag.meshing.voxelization._import_trimesh",
+            side_effect=ImportError("missing trimesh"),
+        ):
+            voxels = voxelize_geometry(geometry, (5e-9, 5e-9, 5e-9))
+
+        self.assertEqual(voxels.shape, (23, 66, 66))
+        self.assertGreater(voxels.active_cell_count, 0)
+
     def test_realize_fem_mesh_asset_prefers_prebuilt_mesh_when_given(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "mesh.vtk"

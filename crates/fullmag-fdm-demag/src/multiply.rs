@@ -86,9 +86,12 @@ pub fn accumulate_tensor_convolution(
             let mx = src_m_fft.x[i];
             let my = src_m_fft.y[i];
             let mz = src_m_fft.z[i];
-            dst_h_fft.x[i] += kernel_fft.k_xx[i] * mx + kernel_fft.k_xy[i] * my + kernel_fft.k_xz[i] * mz;
-            dst_h_fft.y[i] += kernel_fft.k_xy[i] * mx + kernel_fft.k_yy[i] * my + kernel_fft.k_yz[i] * mz;
-            dst_h_fft.z[i] += kernel_fft.k_xz[i] * mx + kernel_fft.k_yz[i] * my + kernel_fft.k_zz[i] * mz;
+            dst_h_fft.x[i] +=
+                kernel_fft.k_xx[i] * mx + kernel_fft.k_xy[i] * my + kernel_fft.k_xz[i] * mz;
+            dst_h_fft.y[i] +=
+                kernel_fft.k_xy[i] * mx + kernel_fft.k_yy[i] * my + kernel_fft.k_yz[i] * mz;
+            dst_h_fft.z[i] +=
+                kernel_fft.k_xz[i] * mx + kernel_fft.k_yz[i] * my + kernel_fft.k_zz[i] * mz;
         }
     }
 }

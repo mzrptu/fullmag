@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { resolveApiBase } from "../../lib/apiBase";
 import Panel from "../ui/Panel";
 import Button from "../ui/Button";
 import ReadonlyField from "../ui/ReadonlyField";
@@ -54,8 +55,6 @@ interface MeshOperationsPanelProps {
   femHmax?: number | null;
   artifactDir?: string | null;
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8080";
 
 function formatMeters(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) {
@@ -365,7 +364,7 @@ export default function MeshOperationsPanel({
       const buffer = await file.arrayBuffer();
       let summary: ImportedAssetSummary;
       try {
-        const response = await fetch(`${API_BASE}/v1/sessions/${sessionId}/assets/import`, {
+        const response = await fetch(`${resolveApiBase()}/v1/sessions/${sessionId}/assets/import`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

@@ -153,9 +153,7 @@ extern "C" {
         len: u64,
     ) -> i32;
 
-    pub fn fullmag_fdm_backend_refresh_observables(
-        handle: *mut fullmag_fdm_backend,
-    ) -> i32;
+    pub fn fullmag_fdm_backend_refresh_observables(handle: *mut fullmag_fdm_backend) -> i32;
 
     pub fn fullmag_fdm_backend_get_device_info(
         handle: *mut fullmag_fdm_backend,

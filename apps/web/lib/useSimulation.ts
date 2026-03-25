@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { resolveApiBase } from "./apiBase";
 
 export interface StepStats {
   step: number;
@@ -32,8 +33,6 @@ export interface SimulationState {
   error: string | null;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
-
 export function useSimulation() {
   const [state, setState] = useState<SimulationState>({
     status: "idle",
@@ -46,7 +45,7 @@ export function useSimulation() {
   const stepsRef = useRef<StepStats[]>([]);
 
   const connect = useCallback(() => {
-    const wsUrl = API_BASE.replace(/^http/, "ws") + "/ws/live";
+    const wsUrl = resolveApiBase().replace(/^http/, "ws") + "/ws/live";
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -104,7 +103,7 @@ export function useSimulation() {
       connect();
 
       try {
-        const res = await fetch(`${API_BASE}/v1/run`, {
+        const res = await fetch(`${resolveApiBase()}/v1/run`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

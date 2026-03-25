@@ -8,11 +8,11 @@
 
 use fullmag_ir::{
     BackendPlanIR, BackendTarget, CommonPlanMeta, DiscretizationHintsIR, ExchangeBoundaryCondition,
-    ExecutionMode, ExecutionPlanIR, ExecutionPrecision, FdmGridAssetIR, FdmHintsIR,
-    FdmLayerPlanIR, FdmMaterialIR, FdmMultilayerPlanIR, FdmMultilayerSummaryIR, FdmPlanIR,
-    FemPlanIR, GeometryEntryIR, GridDimensions, InitialMagnetizationIR, IntegratorChoice,
-    MeshIR, OutputIR, OutputPlanIR, ProblemIR, ProvenancePlanIR, RelaxationAlgorithmIR,
-    RelaxationControlIR, IR_VERSION,
+    ExecutionMode, ExecutionPlanIR, ExecutionPrecision, FdmGridAssetIR, FdmHintsIR, FdmLayerPlanIR,
+    FdmMaterialIR, FdmMultilayerPlanIR, FdmMultilayerSummaryIR, FdmPlanIR, FemPlanIR,
+    GeometryEntryIR, GridDimensions, InitialMagnetizationIR, IntegratorChoice, MeshIR, OutputIR,
+    OutputPlanIR, ProblemIR, ProvenancePlanIR, RelaxationAlgorithmIR, RelaxationControlIR,
+    IR_VERSION,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -1066,7 +1066,13 @@ fn plan_fdm_multilayer(
             None => {
                 if let Some(ref mask) = active_mask {
                     mask.iter()
-                        .map(|&active| if active { [1.0, 0.0, 0.0] } else { [0.0, 0.0, 0.0] })
+                        .map(|&active| {
+                            if active {
+                                [1.0, 0.0, 0.0]
+                            } else {
+                                [0.0, 0.0, 0.0]
+                            }
+                        })
                         .collect()
                 } else {
                     vec![[1.0, 0.0, 0.0]; n_cells]
@@ -1221,9 +1227,8 @@ fn plan_fdm_multilayer(
 
     let estimated_unique_kernels = unique_shifts.len() as u32;
     let estimated_pair_kernels = (lowered_bodies.len() * lowered_bodies.len()) as u32;
-    let padded_len = (common_cells[0] * 2) as u64
-        * (common_cells[1] * 2) as u64
-        * (common_cells[2] * 2) as u64;
+    let padded_len =
+        (common_cells[0] * 2) as u64 * (common_cells[1] * 2) as u64 * (common_cells[2] * 2) as u64;
     let estimated_kernel_bytes = padded_len * 6 * 16 * estimated_unique_kernels as u64;
 
     let (integrator, fixed_timestep, gyromagnetic_ratio, relaxation) =
@@ -1234,9 +1239,10 @@ fn plan_fdm_multilayer(
                 .to_string(),
         );
     }
-    if relaxation.as_ref().is_some_and(|control| {
-        control.algorithm != RelaxationAlgorithmIR::LlgOverdamped
-    }) {
+    if relaxation
+        .as_ref()
+        .is_some_and(|control| control.algorithm != RelaxationAlgorithmIR::LlgOverdamped)
+    {
         errors.push(
             "the public multilayer FDM runner currently supports only 'llg_overdamped' relaxation"
                 .to_string(),
@@ -1846,28 +1852,22 @@ fn merge_fem_meshes(meshes: &[(String, MeshIR)]) -> Result<MeshIR, String> {
     for (_, mesh) in meshes {
         let remapped_markers = merged_fem_element_markers(mesh)?;
         nodes.extend(mesh.nodes.iter().copied());
-        elements.extend(
-            mesh.elements
-                .iter()
-                .map(|element| {
-                    [
-                        element[0] + node_offset,
-                        element[1] + node_offset,
-                        element[2] + node_offset,
-                        element[3] + node_offset,
-                    ]
-                }),
-        );
+        elements.extend(mesh.elements.iter().map(|element| {
+            [
+                element[0] + node_offset,
+                element[1] + node_offset,
+                element[2] + node_offset,
+                element[3] + node_offset,
+            ]
+        }));
         element_markers.extend(remapped_markers);
-        boundary_faces.extend(
-            mesh.boundary_faces.iter().map(|face| {
-                [
-                    face[0] + node_offset,
-                    face[1] + node_offset,
-                    face[2] + node_offset,
-                ]
-            }),
-        );
+        boundary_faces.extend(mesh.boundary_faces.iter().map(|face| {
+            [
+                face[0] + node_offset,
+                face[1] + node_offset,
+                face[2] + node_offset,
+            ]
+        }));
         boundary_markers.extend(mesh.boundary_markers.iter().copied());
         node_offset += mesh.nodes.len() as u32;
     }

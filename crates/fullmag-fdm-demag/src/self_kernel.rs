@@ -69,7 +69,17 @@ pub fn fft_newell_to_kernel(
         let mut buf: Vec<Complex<f64>> = real.into_iter().map(|v| Complex::new(v, 0.0)).collect();
         let mut line_y = vec![zero; py];
         let mut line_z = vec![zero; pz];
-        fft3_core(&mut buf, px, py, pz, &*fwd_x, &*fwd_y, &*fwd_z, &mut line_y, &mut line_z);
+        fft3_core(
+            &mut buf,
+            px,
+            py,
+            pz,
+            &*fwd_x,
+            &*fwd_y,
+            &*fwd_z,
+            &mut line_y,
+            &mut line_z,
+        );
         buf
     };
 

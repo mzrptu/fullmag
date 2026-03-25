@@ -51,7 +51,8 @@ mod tests {
     fn zero_shift_equals_self_kernel() {
         let cells = [4, 4, 1];
         let cs = [2e-9, 2e-9, 1e-9];
-        let self_k = crate::compute_exact_self_kernel(cells[0], cells[1], cells[2], cs[0], cs[1], cs[2]);
+        let self_k =
+            crate::compute_exact_self_kernel(cells[0], cells[1], cells[2], cs[0], cs[1], cs[2]);
         let shifted_k = compute_shifted_kernel(cells, cs, 0.0);
 
         // At zero shift, the shifted kernel must equal the self kernel

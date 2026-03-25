@@ -202,15 +202,22 @@ def _voxelize_stl_without_trimesh(
     mask = np.zeros((nz, ny, nx), dtype=np.bool_)
     ray_origin_x = float(mins[0] - dx)
     direction = np.asarray([1.0, 0.0, 0.0], dtype=np.float64)
-    tolerance = dx * 1e-9 + 1e-15
+    # Use a spatial tolerance for coordinate comparisons, but keep the
+    # Moller-Trumbore determinant tolerance much smaller. After scaling STL
+    # coordinates from e.g. nanometers to meters, a geometry can be perfectly
+    # valid while its triangle determinants are around 1e-16 .. 1e-18. The
+    # old single tolerance rejected every triangle as "parallel", producing a
+    # silently empty active mask.
+    spatial_tolerance = max(dx, dy, dz) * 1e-9 + 1e-15
+    det_tolerance = max(dx, dy, dz) ** 2 * 1e-12
 
     for iz, z in enumerate(z_centers):
         for iy, y in enumerate(y_centers):
             candidate = (
-                (y >= (y_min - tolerance))
-                & (y <= (y_max + tolerance))
-                & (z >= (z_min - tolerance))
-                & (z <= (z_max + tolerance))
+                (y >= (y_min - spatial_tolerance))
+                & (y <= (y_max + spatial_tolerance))
+                & (z >= (z_min - spatial_tolerance))
+                & (z <= (z_max + spatial_tolerance))
             )
             if not np.any(candidate):
                 continue
@@ -223,7 +230,7 @@ def _voxelize_stl_without_trimesh(
             edge2 = v2 - v0
             pvec = np.cross(np.broadcast_to(direction, edge2.shape), edge2)
             det = np.einsum("ij,ij->i", edge1, pvec)
-            valid = np.abs(det) > tolerance
+            valid = np.abs(det) > det_tolerance
             if not np.any(valid):
                 continue
 
@@ -242,10 +249,10 @@ def _voxelize_stl_without_trimesh(
             t = np.einsum("ij,ij->i", edge2, qvec) * inv_det
 
             hit = (
-                (u >= -tolerance)
-                & (v >= -tolerance)
-                & ((u + v) <= (1.0 + tolerance))
-                & (t >= -tolerance)
+                (u >= -spatial_tolerance)
+                & (v >= -spatial_tolerance)
+                & ((u + v) <= (1.0 + spatial_tolerance))
+                & (t >= -spatial_tolerance)
             )
             if not np.any(hit):
                 continue
@@ -253,7 +260,7 @@ def _voxelize_stl_without_trimesh(
             intersections = np.sort(ray_origin_x + t[hit])
             intersections = _merge_sorted_intersections(
                 intersections,
-                tolerance=tolerance,
+                tolerance=spatial_tolerance,
             )
             if intersections.size < 2:
                 continue
@@ -264,7 +271,9 @@ def _voxelize_stl_without_trimesh(
 
             row = mask[iz, iy, :]
             for start, end in intersections.reshape(-1, 2):
-                row |= (x_centers >= (start - tolerance)) & (x_centers <= (end + tolerance))
+                row |= (x_centers >= (start - spatial_tolerance)) & (
+                    x_centers <= (end + spatial_tolerance)
+                )
 
     return VoxelMaskData(
         mask=mask,

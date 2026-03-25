@@ -6,17 +6,6 @@ Flat scripting API — inspired by mumax3.
 
 import fullmag as fm
 
-TARGET_SIZE = (330e-9, 330e-9, 5e-9)
-SOURCE_STL_EXTENT = (
-    329.98683166503906,
-    329.9898681640625,
-    112.44074249267578,
-)
-STL_TO_TARGET_SCALE = tuple(
-    TARGET_SIZE[index] / SOURCE_STL_EXTENT[index]
-    for index in range(3)
-)
-
 # ── Engine ──────────────────────────────────────────────────
 fm.name("nanoflower_fdm")
 fm.engine("fdm")
@@ -27,7 +16,7 @@ fm.cell(5e-9, 5e-9, 5e-9)
 flower = fm.geometry(
     fm.ImportedGeometry(
         source="nanoflower.stl",
-        scale=STL_TO_TARGET_SCALE,
+        units="nm",
         name="nanoflower",
     ),
     name="nanoflower",

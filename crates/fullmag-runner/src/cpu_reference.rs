@@ -182,12 +182,9 @@ fn execute_reference_fdm_impl(
                 &mut fft_workspace,
                 control,
             ),
-            RelaxationAlgorithmIR::NonlinearCg => execute_nonlinear_cg(
-                &problem,
-                state.magnetization(),
-                &mut fft_workspace,
-                control,
-            ),
+            RelaxationAlgorithmIR::NonlinearCg => {
+                execute_nonlinear_cg(&problem, state.magnetization(), &mut fft_workspace, control)
+            }
             _ => unreachable!(),
         };
 
@@ -864,7 +861,10 @@ mod tests {
 
         let executed =
             execute_reference_fdm(&plan, 1e-9, &[]).expect("BB relaxation should succeed");
-        assert!(executed.result.steps.len() >= 2, "should have initial + final stats");
+        assert!(
+            executed.result.steps.len() >= 2,
+            "should have initial + final stats"
+        );
         let first_energy = executed.result.steps.first().unwrap().e_ex;
         let last_energy = executed.result.steps.last().unwrap().e_ex;
         assert!(
@@ -891,7 +891,10 @@ mod tests {
 
         let executed =
             execute_reference_fdm(&plan, 1e-9, &[]).expect("NCG relaxation should succeed");
-        assert!(executed.result.steps.len() >= 2, "should have initial + final stats");
+        assert!(
+            executed.result.steps.len() >= 2,
+            "should have initial + final stats"
+        );
         let first_energy = executed.result.steps.first().unwrap().e_ex;
         let last_energy = executed.result.steps.last().unwrap().e_ex;
         assert!(

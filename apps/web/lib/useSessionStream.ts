@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { resolveApiBase } from "./apiBase";
 
 export interface SessionManifest {
   session_id: string;
@@ -113,8 +114,6 @@ interface UseSessionStreamResult {
   error: string | null;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8080";
-
 function flattenField(raw: any): number[] | null {
   if (!raw || !Array.isArray(raw.values)) {
     return null;
@@ -197,7 +196,7 @@ export function useSessionStream(sessionId: string): UseSessionStreamResult {
       esRef.current.close();
     }
 
-    const url = `${API_BASE}/v1/sessions/${sessionId}/events`;
+    const url = `${resolveApiBase()}/v1/sessions/${sessionId}/events`;
     const es = new EventSource(url);
     esRef.current = es;
 

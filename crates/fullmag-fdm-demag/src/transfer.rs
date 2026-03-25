@@ -88,7 +88,8 @@ pub fn push_m(
                                 n_lo[2] + native_cell_size[2],
                             ];
 
-                            let overlap_vol = (c_hi[0].min(n_hi[0]) - c_lo[0].max(n_lo[0])).max(0.0)
+                            let overlap_vol = (c_hi[0].min(n_hi[0]) - c_lo[0].max(n_lo[0]))
+                                .max(0.0)
                                 * (c_hi[1].min(n_hi[1]) - c_lo[1].max(n_lo[1])).max(0.0)
                                 * (c_hi[2].min(n_hi[2]) - c_lo[2].max(n_lo[2])).max(0.0);
 
@@ -107,11 +108,7 @@ pub fn push_m(
                 }
 
                 if total_vol > 0.0 {
-                    conv_m[conv_idx] = [
-                        acc[0] / total_vol,
-                        acc[1] / total_vol,
-                        acc[2] / total_vol,
-                    ];
+                    conv_m[conv_idx] = [acc[0] / total_vol, acc[1] / total_vol, acc[2] / total_vol];
                 }
             }
         }
@@ -143,8 +140,7 @@ pub fn pull_h(
     for nz in 0..native_cells[2] {
         for ny in 0..native_cells[1] {
             for nx in 0..native_cells[0] {
-                let n_idx =
-                    nz * native_cells[1] * native_cells[0] + ny * native_cells[0] + nx;
+                let n_idx = nz * native_cells[1] * native_cells[0] + ny * native_cells[0] + nx;
 
                 // Native cell center in physical coordinates
                 let center = [
@@ -167,13 +163,7 @@ pub fn pull_h(
 }
 
 /// Trilinear interpolation on a 3D grid.
-fn trilinear_sample(
-    data: &[[f64; 3]],
-    cells: [usize; 3],
-    fx: f64,
-    fy: f64,
-    fz: f64,
-) -> [f64; 3] {
+fn trilinear_sample(data: &[[f64; 3]], cells: [usize; 3], fx: f64, fy: f64, fz: f64) -> [f64; 3] {
     let x0 = fx.floor() as isize;
     let y0 = fy.floor() as isize;
     let z0 = fz.floor() as isize;
@@ -187,12 +177,9 @@ fn trilinear_sample(
     for dz in 0..2 {
         for dy in 0..2 {
             for dx in 0..2 {
-                let ix =
-                    (x0 + dx as isize).clamp(0, cells[0] as isize - 1) as usize;
-                let iy =
-                    (y0 + dy as isize).clamp(0, cells[1] as isize - 1) as usize;
-                let iz =
-                    (z0 + dz as isize).clamp(0, cells[2] as isize - 1) as usize;
+                let ix = (x0 + dx as isize).clamp(0, cells[0] as isize - 1) as usize;
+                let iy = (y0 + dy as isize).clamp(0, cells[1] as isize - 1) as usize;
+                let iz = (z0 + dz as isize).clamp(0, cells[2] as isize - 1) as usize;
 
                 let w = if dx == 0 { 1.0 - wx } else { wx }
                     * if dy == 0 { 1.0 - wy } else { wy }

@@ -19,9 +19,7 @@ use fullmag_ir::{
 
 use crate::native_fdm::{is_cuda_available, NativeFdmBackend};
 use crate::relaxation::relaxation_converged;
-use crate::schedules::{
-    collect_field_schedules, collect_scalar_schedules, is_due, OutputSchedule,
-};
+use crate::schedules::{collect_field_schedules, collect_scalar_schedules, is_due, OutputSchedule};
 use crate::types::{
     ExecutedRun, ExecutionProvenance, FieldSnapshot, RunError, RunResult, RunStatus,
     StateObservables, StepStats, StepUpdate,
@@ -101,12 +99,15 @@ fn execute_cuda_fdm_multilayer_impl(
     }
     if plan.precision != ExecutionPrecision::Double {
         return Err(RunError {
-            message: "CUDA-assisted multilayer FDM runner currently supports only double precision".to_string(),
+            message: "CUDA-assisted multilayer FDM runner currently supports only double precision"
+                .to_string(),
         });
     }
     if plan.integrator != IntegratorChoice::Heun {
         return Err(RunError {
-            message: "CUDA-assisted multilayer FDM runner currently supports only the heun integrator".to_string(),
+            message:
+                "CUDA-assisted multilayer FDM runner currently supports only the heun integrator"
+                    .to_string(),
         });
     }
 
@@ -147,8 +148,12 @@ fn execute_cuda_fdm_multilayer_impl(
     let mut field_schedules = collect_field_schedules(outputs)?;
     let default_scalar_trace = scalar_schedules.is_empty();
 
-    let initial_observables =
-        observe_multilayer_cuda(&contexts, &mut gpu_contexts, &states, demag_runtime.as_ref())?;
+    let initial_observables = observe_multilayer_cuda(
+        &contexts,
+        &mut gpu_contexts,
+        &states,
+        demag_runtime.as_ref(),
+    )?;
     if default_scalar_trace {
         steps.push(make_step_stats(0, 0.0, 0.0, 0, &initial_observables));
     }
@@ -175,8 +180,12 @@ fn execute_cuda_fdm_multilayer_impl(
         let wall_time_ns = wall_start.elapsed().as_nanos() as u64;
         step_count += 1;
 
-        let observables =
-            observe_multilayer_cuda(&contexts, &mut gpu_contexts, &states, demag_runtime.as_ref())?;
+        let observables = observe_multilayer_cuda(
+            &contexts,
+            &mut gpu_contexts,
+            &states,
+            demag_runtime.as_ref(),
+        )?;
         let latest_stats = make_step_stats(
             step_count,
             current_time(&states),
@@ -233,8 +242,12 @@ fn execute_cuda_fdm_multilayer_impl(
         }
     }
 
-    let final_observables =
-        observe_multilayer_cuda(&contexts, &mut gpu_contexts, &states, demag_runtime.as_ref())?;
+    let final_observables = observe_multilayer_cuda(
+        &contexts,
+        &mut gpu_contexts,
+        &states,
+        demag_runtime.as_ref(),
+    )?;
     let final_stats = make_step_stats(
         step_count,
         current_time(&states),
@@ -326,10 +339,13 @@ fn build_contexts_and_states(
         .map_err(|error| RunError {
             message: format!("material for magnet '{}': {}", layer.magnet_name, error),
         })?;
-        let dynamics = LlgConfig::new(plan.gyromagnetic_ratio, fullmag_engine::TimeIntegrator::Heun)
-            .map_err(|error| RunError {
-                message: format!("LLG for magnet '{}': {}", layer.magnet_name, error),
-            })?;
+        let dynamics = LlgConfig::new(
+            plan.gyromagnetic_ratio,
+            fullmag_engine::TimeIntegrator::Heun,
+        )
+        .map_err(|error| RunError {
+            message: format!("LLG for magnet '{}': {}", layer.magnet_name, error),
+        })?;
         let problem = ExchangeLlgProblem::with_terms_and_mask(
             grid,
             cell_size,
@@ -343,12 +359,18 @@ fn build_contexts_and_states(
             layer.native_active_mask.clone(),
         )
         .map_err(|error| RunError {
-            message: format!("problem construction for magnet '{}': {}", layer.magnet_name, error),
+            message: format!(
+                "problem construction for magnet '{}': {}",
+                layer.magnet_name, error
+            ),
         })?;
         let state = problem
             .new_state(layer.initial_magnetization.clone())
             .map_err(|error| RunError {
-                message: format!("state construction for magnet '{}': {}", layer.magnet_name, error),
+                message: format!(
+                    "state construction for magnet '{}': {}",
+                    layer.magnet_name, error
+                ),
             })?;
         states.push(state);
         contexts.push(LayerContext {
@@ -633,7 +655,8 @@ fn execute_native_stacked_cuda_multilayer(
     }
 
     let final_observables = observe_native_stacked_cuda(&backend, native)?;
-    let final_stats = latest_stats.unwrap_or_else(|| make_step_stats(0, 0.0, 0.0, 0, &final_observables));
+    let final_stats =
+        latest_stats.unwrap_or_else(|| make_step_stats(0, 0.0, 0.0, 0, &final_observables));
     if !steps
         .iter()
         .any(|step| step.step == final_stats.step && (step.time - final_stats.time).abs() <= 1e-18)
@@ -708,7 +731,9 @@ fn single_layer_cuda_plan(plan: &FdmMultilayerPlanIR, layer: &FdmLayerPlanIR) ->
     }
 }
 
-fn build_multilayer_demag_runtime(plan: &FdmMultilayerPlanIR) -> Result<MultilayerDemagRuntime, RunError> {
+fn build_multilayer_demag_runtime(
+    plan: &FdmMultilayerPlanIR,
+) -> Result<MultilayerDemagRuntime, RunError> {
     let conv_grid = [
         plan.common_cells[0] as usize,
         plan.common_cells[1] as usize,
@@ -778,23 +803,38 @@ fn observe_multilayer_cuda(
 
         let mut local_demag = layer_demag.remove(0);
         zero_outside_active(&mut local_demag, context.problem.active_mask.as_deref());
-        let mut local_external = context.problem.external_field(state).map_err(|error| RunError {
-            message: format!("external field for magnet '{}': {}", context.magnet_name, error),
-        })?;
+        let mut local_external =
+            context
+                .problem
+                .external_field(state)
+                .map_err(|error| RunError {
+                    message: format!(
+                        "external field for magnet '{}': {}",
+                        context.magnet_name, error
+                    ),
+                })?;
         zero_outside_active(&mut local_external, context.problem.active_mask.as_deref());
         let mut local_effective = zero_vectors(local_exchange.len());
         for cell in 0..local_effective.len() {
-            local_effective[cell] =
-                add(add(local_exchange[cell], local_demag[cell]), local_external[cell]);
+            local_effective[cell] = add(
+                add(local_exchange[cell], local_demag[cell]),
+                local_external[cell],
+            );
         }
         zero_outside_active(&mut local_effective, context.problem.active_mask.as_deref());
         let rhs = llg_rhs_for_layer(context, state.magnetization(), &local_effective);
 
         let layer_cell_volume = context.problem.cell_size.volume();
         let layer_ms = context.problem.material.saturation_magnetisation;
-        exchange_energy += context.problem.exchange_energy(state).map_err(|error| RunError {
-            message: format!("exchange energy for magnet '{}': {}", context.magnet_name, error),
-        })?;
+        exchange_energy += context
+            .problem
+            .exchange_energy(state)
+            .map_err(|error| RunError {
+                message: format!(
+                    "exchange energy for magnet '{}': {}",
+                    context.magnet_name, error
+                ),
+            })?;
         demag_energy += state
             .magnetization()
             .iter()
@@ -873,9 +913,11 @@ fn step_multilayer_cuda(
         .map_err(|message| RunError { message })?;
 
     for (state, new_layer) in states.iter_mut().zip(corrected.into_iter()) {
-        state.set_magnetization(new_layer).map_err(|error| RunError {
-            message: format!("setting multilayer magnetization: {}", error),
-        })?;
+        state
+            .set_magnetization(new_layer)
+            .map_err(|error| RunError {
+                message: format!("setting multilayer magnetization: {}", error),
+            })?;
         state.time_seconds += dt;
     }
     Ok(())
@@ -903,7 +945,11 @@ fn llg_rhs_multilayer_cuda(
     }
     let mut layer_demag = compute_demag_fields(contexts, &states, demag_runtime);
     let mut rhs_layers = Vec::with_capacity(contexts.len());
-    for ((context, gpu), state) in contexts.iter().zip(gpu_contexts.iter_mut()).zip(states.iter()) {
+    for ((context, gpu), state) in contexts
+        .iter()
+        .zip(gpu_contexts.iter_mut())
+        .zip(states.iter())
+    {
         gpu.backend.upload_magnetization(state.magnetization())?;
         gpu.backend.refresh_observables()?;
 
@@ -911,17 +957,30 @@ fn llg_rhs_multilayer_cuda(
         zero_outside_active(&mut local_exchange, context.problem.active_mask.as_deref());
         let mut local_demag = layer_demag.remove(0);
         zero_outside_active(&mut local_demag, context.problem.active_mask.as_deref());
-        let mut local_external = context.problem.external_field(state).map_err(|error| RunError {
-            message: format!("external field for magnet '{}': {}", context.magnet_name, error),
-        })?;
+        let mut local_external =
+            context
+                .problem
+                .external_field(state)
+                .map_err(|error| RunError {
+                    message: format!(
+                        "external field for magnet '{}': {}",
+                        context.magnet_name, error
+                    ),
+                })?;
         zero_outside_active(&mut local_external, context.problem.active_mask.as_deref());
         let mut local_effective = zero_vectors(local_exchange.len());
         for cell in 0..local_effective.len() {
-            local_effective[cell] =
-                add(add(local_exchange[cell], local_demag[cell]), local_external[cell]);
+            local_effective[cell] = add(
+                add(local_exchange[cell], local_demag[cell]),
+                local_external[cell],
+            );
         }
         zero_outside_active(&mut local_effective, context.problem.active_mask.as_deref());
-        rhs_layers.push(llg_rhs_for_layer(context, state.magnetization(), &local_effective));
+        rhs_layers.push(llg_rhs_for_layer(
+            context,
+            state.magnetization(),
+            &local_effective,
+        ));
     }
     Ok(rhs_layers)
 }
@@ -992,17 +1051,35 @@ fn observe_native_stacked_cuda(
     let ms = native.combined_plan.material.saturation_magnetisation;
 
     let exchange_energy = if native.combined_plan.enable_exchange {
-        field_energy_from_full(&magnetization_full, &exchange_full, active_mask, ms, cell_volume)
+        field_energy_from_full(
+            &magnetization_full,
+            &exchange_full,
+            active_mask,
+            ms,
+            cell_volume,
+        )
     } else {
         0.0
     };
     let demag_energy = if native.combined_plan.enable_demag {
-        field_energy_from_full(&magnetization_full, &demag_full, active_mask, ms, cell_volume)
+        field_energy_from_full(
+            &magnetization_full,
+            &demag_full,
+            active_mask,
+            ms,
+            cell_volume,
+        )
     } else {
         0.0
     };
     let external_energy = if native.combined_plan.external_field.is_some() {
-        field_energy_from_full(&magnetization_full, &external_full, active_mask, ms, cell_volume)
+        field_energy_from_full(
+            &magnetization_full,
+            &external_full,
+            active_mask,
+            ms,
+            cell_volume,
+        )
     } else {
         0.0
     };
@@ -1128,7 +1205,10 @@ fn record_due_fields(
     Ok(())
 }
 
-fn select_field_values(observables: &StateObservables, name: &str) -> Result<Vec<[f64; 3]>, RunError> {
+fn select_field_values(
+    observables: &StateObservables,
+    name: &str,
+) -> Result<Vec<[f64; 3]>, RunError> {
     Ok(match name {
         "m" => observables.magnetization.clone(),
         "H_ex" => observables.exchange_field.clone(),
@@ -1144,7 +1224,10 @@ fn select_field_values(observables: &StateObservables, name: &str) -> Result<Vec
 }
 
 fn current_time(states: &[ExchangeLlgState]) -> f64 {
-    states.first().map(|state| state.time_seconds).unwrap_or(0.0)
+    states
+        .first()
+        .map(|state| state.time_seconds)
+        .unwrap_or(0.0)
 }
 
 fn average_damping(contexts: &[LayerContext]) -> f64 {
@@ -1159,7 +1242,10 @@ fn average_damping(contexts: &[LayerContext]) -> f64 {
 }
 
 fn flatten_layers(layers: &[Vec<[f64; 3]>]) -> Vec<[f64; 3]> {
-    layers.iter().flat_map(|layer| layer.iter().copied()).collect()
+    layers
+        .iter()
+        .flat_map(|layer| layer.iter().copied())
+        .collect()
 }
 
 fn make_step_stats(
@@ -1207,7 +1293,14 @@ fn llg_rhs_for_layer(
     magnetization
         .iter()
         .zip(field.iter())
-        .map(|(m, h)| llg_rhs_from_field(*m, *h, context.problem.material.damping, context.problem.dynamics.gyromagnetic_ratio))
+        .map(|(m, h)| {
+            llg_rhs_from_field(
+                *m,
+                *h,
+                context.problem.material.damping,
+                context.problem.dynamics.gyromagnetic_ratio,
+            )
+        })
         .collect()
 }
 
@@ -1409,12 +1502,13 @@ mod tests {
         let plan = make_plan(true);
         let cpu = multilayer_reference::execute_reference_fdm_multilayer(&plan, 2e-13, &[])
             .expect("cpu multilayer");
-        let cuda = execute_cuda_fdm_multilayer(&plan, 2e-13, &[])
-            .expect("cuda-assisted multilayer");
+        let cuda =
+            execute_cuda_fdm_multilayer(&plan, 2e-13, &[]).expect("cuda-assisted multilayer");
 
         let cpu_final = cpu.result.steps.last().expect("cpu final");
         let cuda_final = cuda.result.steps.last().expect("cuda final");
-        let rel_gap = (cuda_final.e_total - cpu_final.e_total).abs() / cpu_final.e_total.abs().max(1e-30);
+        let rel_gap =
+            (cuda_final.e_total - cpu_final.e_total).abs() / cpu_final.e_total.abs().max(1e-30);
         assert!(
             rel_gap < 5e-3,
             "cuda-assisted multilayer should stay close to cpu reference; rel_gap={rel_gap} cpu={} cuda={}",
@@ -1437,8 +1531,7 @@ mod tests {
         let plan = make_touching_plan();
         let cpu = multilayer_reference::execute_reference_fdm_multilayer(&plan, 1e-13, &[])
             .expect("cpu multilayer");
-        let cuda = execute_cuda_fdm_multilayer(&plan, 1e-13, &[])
-            .expect("cuda multilayer");
+        let cuda = execute_cuda_fdm_multilayer(&plan, 1e-13, &[]).expect("cuda multilayer");
 
         let cpu_initial = cpu.result.steps.first().expect("cpu initial");
         let cuda_initial = cuda.result.steps.first().expect("cuda initial");
@@ -1455,8 +1548,8 @@ mod tests {
 
         let cpu_final = cpu.result.steps.last().expect("cpu final");
         let cuda_final = cuda.result.steps.last().expect("cuda final");
-        let rel_gap = (cuda_final.e_total - cpu_final.e_total).abs()
-            / cpu_final.e_total.abs().max(1e-30);
+        let rel_gap =
+            (cuda_final.e_total - cpu_final.e_total).abs() / cpu_final.e_total.abs().max(1e-30);
         assert!(
             rel_gap < 5e-3,
             "touching-body native CUDA path should stay close to CPU multilayer reference; rel_gap={rel_gap} cpu={} cuda={}",

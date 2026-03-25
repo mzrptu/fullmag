@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8080";
+import { resolveApiBase } from "../../../lib/apiBase";
 
 type SessionManifest = {
   session_id: string;
@@ -171,7 +170,7 @@ export default function RunsIndexPage() {
 
     const load = async () => {
       try {
-        const response = await fetch(`${API_BASE}/v1/sessions`, { cache: "no-store" });
+        const response = await fetch(`${resolveApiBase()}/v1/sessions`, { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = (await response.json()) as SessionManifest[];
         if (!cancelled) {

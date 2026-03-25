@@ -24,10 +24,10 @@ use fullmag_fdm_demag::{
 #[derive(Debug, Clone)]
 pub struct FdmLayerRuntime {
     pub magnet_name: String,
-    pub grid: [usize; 3],       // (nx, ny, nz)
-    pub cell_size: [f64; 3],    // (dx, dy, dz)
-    pub origin: [f64; 3],       // global position after Translate
-    pub ms: f64,                // saturation magnetisation
+    pub grid: [usize; 3],    // (nx, ny, nz)
+    pub cell_size: [f64; 3], // (dx, dy, dz)
+    pub origin: [f64; 3],    // global position after Translate
+    pub ms: f64,             // saturation magnetisation
     pub exchange_stiffness: f64,
     pub damping: f64,
     pub active_mask: Option<Vec<bool>>,
@@ -281,8 +281,12 @@ mod tests {
 
         // Build self-kernel
         let kernel = fullmag_fdm_demag::compute_exact_self_kernel(
-            grid[0], grid[1], grid[2],
-            cell_size[0], cell_size[1], cell_size[2],
+            grid[0],
+            grid[1],
+            grid[2],
+            cell_size[0],
+            cell_size[1],
+            cell_size[2],
         );
 
         let mut layer = FdmLayerRuntime {

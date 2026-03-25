@@ -48,12 +48,7 @@ pub fn run_problem(
         }
         BackendPlanIR::FdmMultilayer(fdm) => {
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_multilayer(
-                engine,
-                fdm,
-                until_seconds,
-                &plan.output_plan.outputs,
-            )
+            dispatch::execute_fdm_multilayer(engine, fdm, until_seconds, &plan.output_plan.outputs)
         }
         BackendPlanIR::Fem(fem) => {
             let engine = dispatch::resolve_fem_engine(problem)?;
@@ -149,9 +144,11 @@ pub fn run_problem_with_callback(
         .collect();
     let final_grid = match &plan.backend_plan {
         BackendPlanIR::Fdm(fdm) => [fdm.grid.cells[0], fdm.grid.cells[1], fdm.grid.cells[2]],
-        BackendPlanIR::FdmMultilayer(fdm) => {
-            [fdm.common_cells[0], fdm.common_cells[1], fdm.common_cells[2]]
-        }
+        BackendPlanIR::FdmMultilayer(fdm) => [
+            fdm.common_cells[0],
+            fdm.common_cells[1],
+            fdm.common_cells[2],
+        ],
         BackendPlanIR::Fem(_) => [0, 0, 0],
     };
     on_step(StepUpdate {
@@ -223,7 +220,10 @@ pub fn run_reference_multilayer_fdm(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<RunResult, RunError> {
-    Ok(multilayer_reference::execute_reference_fdm_multilayer(plan, until_seconds, outputs)?.result)
+    Ok(
+        multilayer_reference::execute_reference_fdm_multilayer(plan, until_seconds, outputs)?
+            .result,
+    )
 }
 
 #[cfg(test)]

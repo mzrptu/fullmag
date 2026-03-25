@@ -288,8 +288,7 @@ impl NativeFdmBackend {
     }
 
     pub fn refresh_observables(&mut self) -> Result<(), RunError> {
-        let rc =
-            unsafe { ffi::fullmag_fdm_backend_refresh_observables(self.handle as *mut _) };
+        let rc = unsafe { ffi::fullmag_fdm_backend_refresh_observables(self.handle as *mut _) };
         if rc != ffi::FULLMAG_FDM_OK {
             return Err(self.last_error_or("refresh_observables failed"));
         }

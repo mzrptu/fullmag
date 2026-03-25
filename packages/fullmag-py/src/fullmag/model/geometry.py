@@ -43,21 +43,57 @@ def _derived_translate_name(base_name: str, offset: tuple[float, float, float]) 
 # Imported geometry (NPZ mask, STL, STEP, etc.)
 # ---------------------------------------------------------------------------
 ImportedGeometryScale: TypeAlias = float | tuple[float, float, float]
+ImportedGeometryUnits: TypeAlias = str
+
+_IMPORTED_GEOMETRY_UNIT_SCALES: dict[str, float] = {
+    "m": 1.0,
+    "cm": 1e-2,
+    "mm": 1e-3,
+    "um": 1e-6,
+    "µm": 1e-6,
+    "μm": 1e-6,
+    "nm": 1e-9,
+    "pm": 1e-12,
+}
+
+
+def _normalize_import_units(units: ImportedGeometryUnits | None) -> tuple[ImportedGeometryUnits | None, float]:
+    if units is None:
+        return None, 1.0
+    normalized = require_non_empty(units, "units").strip().lower()
+    try:
+        return normalized, _IMPORTED_GEOMETRY_UNIT_SCALES[normalized]
+    except KeyError as exc:
+        supported = ", ".join(sorted(_IMPORTED_GEOMETRY_UNIT_SCALES))
+        raise ValueError(f"units must be one of: {supported}") from exc
+
+
+def _apply_unit_scale(
+    scale: ImportedGeometryScale,
+    unit_scale: float,
+) -> ImportedGeometryScale:
+    if isinstance(scale, (int, float)):
+        return float(scale) * unit_scale
+    return tuple(float(component) * unit_scale for component in scale)
 
 
 @dataclass(frozen=True, slots=True)
 class ImportedGeometry(_GeometryOps):
     source: str
     scale: ImportedGeometryScale = 1.0
+    units: ImportedGeometryUnits | None = None
     name: str | None = None
 
     def __post_init__(self) -> None:
         source = require_non_empty(self.source, "source")
         object.__setattr__(self, "source", source)
+        normalized_units, unit_scale = _normalize_import_units(self.units)
+        object.__setattr__(self, "units", normalized_units)
+        effective_scale = _apply_unit_scale(self.scale, unit_scale)
         if isinstance(self.scale, (int, float)):
-            object.__setattr__(self, "scale", require_positive(float(self.scale), "scale"))
+            object.__setattr__(self, "scale", require_positive(float(effective_scale), "scale"))
         else:
-            normalized_scale = as_vector3(self.scale, "scale")
+            normalized_scale = as_vector3(effective_scale, "scale")
             for index, component in enumerate(normalized_scale):
                 require_positive(component, f"scale[{index}]")
             object.__setattr__(self, "scale", normalized_scale)

@@ -322,6 +322,28 @@ class ProblemApiTests(unittest.TestCase):
             [1.0, 2.0, 0.5],
         )
 
+    def test_imported_geometry_units_are_converted_to_scale(self) -> None:
+        geometry = fm.ImportedGeometry(
+            source="examples/nanoflower.stl",
+            name="flower",
+            units="nm",
+        )
+
+        self.assertEqual(geometry.to_ir()["scale"], 1e-9)
+
+    def test_imported_geometry_units_compose_with_explicit_scale(self) -> None:
+        geometry = fm.ImportedGeometry(
+            source="examples/nanoflower.stl",
+            name="flower",
+            units="nm",
+            scale=(2.0, 2.0, 0.5),
+        )
+
+        self.assertEqual(
+            geometry.to_ir()["scale"],
+            [2e-9, 2e-9, 5e-10],
+        )
+
     def test_fem_backend_exports_mesh_asset(self) -> None:
         geometry = fm.Box(size=(10e-9, 10e-9, 10e-9), name="box")
         material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
