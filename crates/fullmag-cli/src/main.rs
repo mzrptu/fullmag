@@ -186,6 +186,33 @@ struct LiveStepView {
 struct ScriptExecutionConfig {
     ir: ProblemIR,
     default_until_seconds: Option<f64>,
+    #[serde(default)]
+    stages: Vec<ScriptExecutionStage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ScriptExecutionStage {
+    ir: ProblemIR,
+    default_until_seconds: Option<f64>,
+    entrypoint_kind: String,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedScriptStage {
+    ir: ProblemIR,
+    until_seconds: f64,
+    entrypoint_kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionCommand {
+    command_id: String,
+    kind: String,
+    created_at_unix_ms: u128,
+    until_seconds: Option<f64>,
+    max_steps: Option<u64>,
+    torque_tolerance: Option<f64>,
+    energy_tolerance: Option<f64>,
 }
 
 impl From<BackendArg> for BackendTarget {
@@ -392,31 +419,78 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         .canonicalize()
         .with_context(|| format!("failed to resolve script path {}", args.script.display()))?;
     let script_config = export_script_execution_config_via_python(&script_path, &args)?;
-    let until_seconds = resolve_script_until_seconds(&script_config.ir, script_config.default_until_seconds)?;
-    let ir = script_config.ir;
-    validate_ir(&ir)?;
-    let plan_summary = ir
+    let stages = materialize_script_stages(script_config)?;
+    if stages.is_empty() {
+        bail!("script did not produce any executable stages");
+    }
+    for stage in &stages {
+        validate_ir(&stage.ir)?;
+    }
+
+    let mut current_plan_summary = stages[0]
+        .ir
         .plan_for(args.backend.map(BackendTarget::from))
         .map_err(join_errors)?;
-    let execution_plan = fullmag_plan::plan(&ir).map_err(|error| anyhow!(error.to_string()))?;
+    let initial_execution_plan =
+        fullmag_plan::plan(&stages[0].ir).map_err(|error| anyhow!(error.to_string()))?;
     let field_every_n = 10;
-    let use_live_callback = matches!(
-        &execution_plan.backend_plan,
-        BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_)
-    );
     let session_manifest_path = session_dir.join("session.json");
     let run_manifest_path = session_dir.join("run.json");
     let live_state_path = session_dir.join("live_state.json");
     let live_scalars_path = session_dir.join("live_scalars.csv");
+    let events_path = session_dir.join("events.ndjson");
+    let final_problem_name = stages
+        .last()
+        .expect("stages should be non-empty after validation")
+        .ir
+        .problem_meta
+        .name
+        .clone();
+    let final_requested_backend = stages
+        .last()
+        .expect("stages should be non-empty after validation")
+        .ir
+        .backend_policy
+        .requested_backend;
+    let final_execution_mode = stages
+        .last()
+        .expect("stages should be non-empty after validation")
+        .ir
+        .validation_profile
+        .execution_mode;
+    let final_precision = stages
+        .last()
+        .expect("stages should be non-empty after validation")
+        .ir
+        .backend_policy
+        .execution_precision;
+    let interactive_template_ir = stages
+        .last()
+        .expect("stages should be non-empty after validation")
+        .ir
+        .clone();
+    let script_requested_interactive = stages
+        .last()
+        .and_then(|stage| {
+            stage
+                .ir
+                .problem_meta
+                .runtime_metadata
+                .get("interactive_session_requested")
+        })
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let interactive_requested = args.interactive || script_requested_interactive;
 
     append_event(
-        &session_dir.join("events.ndjson"),
+        &events_path,
         &serde_json::json!({
             "kind": "session_started",
             "session_id": session_id.clone(),
             "run_id": run_id.clone(),
             "script_path": script_path.display().to_string(),
             "started_at_unix_ms": started_at_unix_ms,
+            "stage_count": stages.len(),
         }),
     )?;
     write_json_file(
@@ -426,14 +500,14 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             run_id: run_id.clone(),
             status: "running".to_string(),
             script_path: script_path.display().to_string(),
-            problem_name: ir.problem_meta.name.clone(),
-            requested_backend: backend_target_name(ir.backend_policy.requested_backend).to_string(),
-            execution_mode: execution_mode_name(ir.validation_profile.execution_mode).to_string(),
-            precision: execution_precision_name(ir.backend_policy.execution_precision).to_string(),
+            problem_name: final_problem_name.clone(),
+            requested_backend: backend_target_name(final_requested_backend).to_string(),
+            execution_mode: execution_mode_name(final_execution_mode).to_string(),
+            precision: execution_precision_name(final_precision).to_string(),
             artifact_dir: artifact_dir.display().to_string(),
             started_at_unix_ms,
             finished_at_unix_ms: started_at_unix_ms,
-            plan_summary: plan_summary.clone(),
+            plan_summary: current_plan_summary.clone(),
         },
     )?;
     write_json_file(
@@ -452,15 +526,13 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         },
     )?;
     initialise_live_scalars(&live_scalars_path)?;
-    if use_live_callback {
-        let initial_update = initial_step_update(&execution_plan.backend_plan);
-        update_live_state(&live_state_path, &initial_update)?;
-    }
+    let initial_update = initial_step_update(&initial_execution_plan.backend_plan);
+    update_live_state(&live_state_path, &initial_update)?;
 
     announce_session_start(
         &session_id,
         &script_path,
-        backend_target_name(ir.backend_policy.requested_backend),
+        backend_target_name(final_requested_backend),
         args.headless,
     );
 
@@ -473,148 +545,594 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         }
     }
 
-    let result = match if use_live_callback {
-        fullmag_runner::run_problem_with_callback(
-            &ir,
-            until_seconds,
-            &artifact_dir,
-            field_every_n,
-            |update| {
-                // ── mumax3-style console diagnostics ──────────────
-                let s = &update.stats;
-                let print_step = s.step <= 10
-                    || (s.step <= 100 && s.step % 10 == 0)
-                    || (s.step <= 1000 && s.step % 100 == 0)
-                    || s.step % 1000 == 0
-                    || update.finished;
-                if print_step {
-                    let wall_ms = s.wall_time_ns as f64 / 1e6;
-                    eprintln!(
-                        "step {:>6}  t={:.4e}  dt={:.3e}  maxTorque={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
-                        s.step, s.time, s.dt, s.max_dm_dt, s.e_total, s.max_h_eff, wall_ms
-                    );
-                }
+    let stage_count = stages.len();
+    let mut aggregated_steps = Vec::<fullmag_runner::StepStats>::new();
+    let mut final_magnetization: Vec<[f64; 3]> = Vec::new();
+    let mut step_offset = 0u64;
+    let mut time_offset = 0.0f64;
+    let mut continuation_magnetization: Option<Vec<[f64; 3]>> = None;
 
-                // ── file persistence (unchanged) ─────────────────
-                if update.stats.step <= 1
-                    || update.stats.step % field_every_n == 0
-                    || update.finished
-                {
-                    let _ = update_running_run_manifest(
+    for (stage_index, mut stage) in stages.into_iter().enumerate() {
+        if let Some(previous_final_magnetization) = continuation_magnetization.as_deref() {
+            apply_continuation_initial_state(&mut stage.ir, previous_final_magnetization)?;
+        }
+        validate_ir(&stage.ir)?;
+
+        current_plan_summary = stage
+            .ir
+            .plan_for(args.backend.map(BackendTarget::from))
+            .map_err(join_errors)?;
+        let execution_plan =
+            fullmag_plan::plan(&stage.ir).map_err(|error| anyhow!(error.to_string()))?;
+        let use_live_callback = matches!(
+            &execution_plan.backend_plan,
+            BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_)
+        );
+        let is_final_stage = stage_index + 1 == stage_count;
+        let is_session_final_stage = is_final_stage && !interactive_requested;
+        let current_stage_artifact_dir = stage_artifact_dir(
+            &session_dir,
+            &artifact_dir,
+            stage_index,
+            stage_count,
+            &stage.entrypoint_kind,
+        );
+        fs::create_dir_all(&current_stage_artifact_dir).with_context(|| {
+            format!(
+                "failed to create stage artifact dir {}",
+                current_stage_artifact_dir.display()
+            )
+        })?;
+
+        append_event(
+            &events_path,
+            &serde_json::json!({
+                "kind": "stage_started",
+                "session_id": session_id.clone(),
+                "run_id": run_id.clone(),
+                "stage_index": stage_index,
+                "stage_number": stage_index + 1,
+                "stage_count": stage_count,
+                "entrypoint_kind": stage.entrypoint_kind,
+                "until_seconds": stage.until_seconds,
+                "artifact_dir": current_stage_artifact_dir.display().to_string(),
+            }),
+        )?;
+
+        let stage_initial_update = offset_step_update(
+            &initial_step_update(&execution_plan.backend_plan),
+            step_offset,
+            time_offset,
+            false,
+        );
+        update_live_state(&live_state_path, &stage_initial_update)?;
+
+        let stage_result = match if use_live_callback {
+            fullmag_runner::run_problem_with_callback(
+                &stage.ir,
+                stage.until_seconds,
+                &current_stage_artifact_dir,
+                field_every_n,
+                |update| {
+                    let adjusted = offset_step_update(
+                        &update,
+                        step_offset,
+                        time_offset,
+                        update.finished && is_session_final_stage,
+                    );
+                    let s = &adjusted.stats;
+                    let print_step = s.step <= 10
+                        || (s.step <= 100 && s.step % 10 == 0)
+                        || (s.step <= 1000 && s.step % 100 == 0)
+                        || s.step % 1000 == 0
+                        || adjusted.finished;
+                    if print_step {
+                        let wall_ms = s.wall_time_ns as f64 / 1e6;
+                        eprintln!(
+                            "stage {}/{} ({})  step {:>6}  t={:.4e}  dt={:.3e}  maxTorque={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
+                            stage_index + 1,
+                            stage_count,
+                            stage.entrypoint_kind,
+                            s.step,
+                            s.time,
+                            s.dt,
+                            s.max_dm_dt,
+                            s.e_total,
+                            s.max_h_eff,
+                            wall_ms
+                        );
+                    }
+
+                    if adjusted.stats.step <= 1
+                        || adjusted.stats.step % field_every_n == 0
+                        || adjusted.finished
+                    {
+                        let _ = update_running_run_manifest(
+                            &run_manifest_path,
+                            &run_id,
+                            &session_id,
+                            &artifact_dir,
+                            &adjusted,
+                        );
+                        let _ = update_live_state(&live_state_path, &adjusted);
+                        let _ = append_live_scalar_row(&live_scalars_path, &adjusted);
+                        if adjusted.stats.step % 100 == 0 || adjusted.finished {
+                            let _ = append_event(
+                                &events_path,
+                                &serde_json::json!({
+                                    "kind": if adjusted.finished { "run_finished_step" } else { "run_progress" },
+                                    "session_id": session_id.clone(),
+                                    "run_id": run_id.clone(),
+                                    "stage_index": stage_index,
+                                    "stage_number": stage_index + 1,
+                                    "stage_count": stage_count,
+                                    "entrypoint_kind": stage.entrypoint_kind,
+                                    "step": adjusted.stats.step,
+                                    "time": adjusted.stats.time,
+                                    "e_ex": adjusted.stats.e_ex,
+                                    "e_demag": adjusted.stats.e_demag,
+                                    "e_ext": adjusted.stats.e_ext,
+                                    "e_total": adjusted.stats.e_total,
+                                    "finished": adjusted.finished,
+                                }),
+                            );
+                        }
+                    }
+                },
+            )
+        } else {
+            fullmag_runner::run_problem(&stage.ir, stage.until_seconds, &current_stage_artifact_dir)
+        } {
+            Ok(result) => result,
+            Err(error) => {
+                let failed_at_unix_ms = unix_time_millis()?;
+                let _ = write_json_file(
+                    &run_manifest_path,
+                    &RunManifest {
+                        run_id: run_id.clone(),
+                        session_id: session_id.clone(),
+                        status: "failed".to_string(),
+                        total_steps: aggregated_steps
+                            .last()
+                            .map(|step| step.step as usize)
+                            .unwrap_or(0),
+                        final_time: aggregated_steps.last().map(|step| step.time),
+                        final_e_ex: aggregated_steps.last().map(|step| step.e_ex),
+                        final_e_demag: aggregated_steps.last().map(|step| step.e_demag),
+                        final_e_ext: aggregated_steps.last().map(|step| step.e_ext),
+                        final_e_total: aggregated_steps.last().map(|step| step.e_total),
+                        artifact_dir: artifact_dir.display().to_string(),
+                    },
+                );
+                let _ = write_json_file(
+                    &session_manifest_path,
+                    &SessionManifest {
+                        session_id: session_id.clone(),
+                        run_id: run_id.clone(),
+                        status: "failed".to_string(),
+                        script_path: script_path.display().to_string(),
+                        problem_name: final_problem_name.clone(),
+                        requested_backend: backend_target_name(final_requested_backend).to_string(),
+                        execution_mode: execution_mode_name(final_execution_mode).to_string(),
+                        precision: execution_precision_name(final_precision).to_string(),
+                        artifact_dir: artifact_dir.display().to_string(),
+                        started_at_unix_ms,
+                        finished_at_unix_ms: failed_at_unix_ms,
+                        plan_summary: current_plan_summary.clone(),
+                    },
+                );
+                append_event(
+                    &events_path,
+                    &serde_json::json!({
+                        "kind": "run_failed",
+                        "session_id": session_id.clone(),
+                        "run_id": run_id.clone(),
+                        "stage_index": stage_index,
+                        "stage_number": stage_index + 1,
+                        "stage_count": stage_count,
+                        "entrypoint_kind": stage.entrypoint_kind,
+                        "finished_at_unix_ms": failed_at_unix_ms,
+                        "error": error.to_string(),
+                    }),
+                )?;
+                return Err(anyhow!(error.to_string()));
+            }
+        };
+
+        if !use_live_callback {
+            let grid = match &execution_plan.backend_plan {
+                BackendPlanIR::Fdm(fdm) => [fdm.grid.cells[0], fdm.grid.cells[1], fdm.grid.cells[2]],
+                BackendPlanIR::Fem(_) => [0, 0, 0],
+            };
+            let fem_mesh = match &execution_plan.backend_plan {
+                BackendPlanIR::Fem(fem) => Some(fullmag_runner::FemMeshPayload {
+                    nodes: fem.mesh.nodes.clone(),
+                    elements: fem.mesh.elements.clone(),
+                    boundary_faces: fem.mesh.boundary_faces.clone(),
+                }),
+                BackendPlanIR::Fdm(_) => None,
+            };
+            for (index, stats) in stage_result.steps.iter().enumerate() {
+                let is_final_step = index + 1 == stage_result.steps.len();
+                let update = fullmag_runner::StepUpdate {
+                    stats: offset_step_stats(std::slice::from_ref(stats), step_offset, time_offset)
+                        .into_iter()
+                        .next()
+                        .expect("single step should offset"),
+                    grid,
+                    fem_mesh: fem_mesh.clone(),
+                    magnetization: if is_final_step && is_session_final_stage {
+                        Some(flatten_magnetization(&stage_result.final_magnetization))
+                    } else {
+                        None
+                    },
+                    finished: is_final_step && is_session_final_stage,
+                };
+                append_live_scalar_row(&live_scalars_path, &update)?;
+                if update.stats.step <= 1 || update.stats.step % field_every_n == 0 || update.finished {
+                    update_running_run_manifest(
                         &run_manifest_path,
                         &run_id,
                         &session_id,
                         &artifact_dir,
                         &update,
-                    );
-                    let _ = update_live_state(&live_state_path, &update);
-                    let _ = append_live_scalar_row(&live_scalars_path, &update);
-                    if update.stats.step % 100 == 0 || update.finished {
-                        let _ = append_event(
-                            &session_dir.join("events.ndjson"),
-                            &serde_json::json!({
-                                "kind": if update.finished { "run_finished_step" } else { "run_progress" },
-                                "session_id": session_id.clone(),
-                                "run_id": run_id.clone(),
-                                "step": update.stats.step,
-                                "time": update.stats.time,
-                                "e_ex": update.stats.e_ex,
-                                "e_demag": update.stats.e_demag,
-                                "e_ext": update.stats.e_ext,
-                                "e_total": update.stats.e_total,
-                                "finished": update.finished,
-                            }),
-                        );
-                    }
+                    )?;
+                    update_live_state(&live_state_path, &update)?;
                 }
-            },
-        )
-    } else {
-        fullmag_runner::run_problem(&ir, until_seconds, &artifact_dir)
-    } {
-        Ok(result) => result,
-        Err(error) => {
-            let failed_at_unix_ms = unix_time_millis()?;
-            let _ = write_json_file(
-                &run_manifest_path,
-                &RunManifest {
-                    run_id: run_id.clone(),
-                    session_id: session_id.clone(),
-                    status: "failed".to_string(),
-                    total_steps: 0,
-                    final_time: None,
-                    final_e_ex: None,
-                    final_e_demag: None,
-                    final_e_ext: None,
-                    final_e_total: None,
-                    artifact_dir: artifact_dir.display().to_string(),
-                },
-            );
-            let _ = write_json_file(
-                &session_manifest_path,
-                &SessionManifest {
-                    session_id: session_id.clone(),
-                    run_id: run_id.clone(),
-                    status: "failed".to_string(),
-                    script_path: script_path.display().to_string(),
-                    problem_name: ir.problem_meta.name.clone(),
-                    requested_backend: backend_target_name(ir.backend_policy.requested_backend)
-                        .to_string(),
-                    execution_mode: execution_mode_name(ir.validation_profile.execution_mode)
-                        .to_string(),
-                    precision: execution_precision_name(ir.backend_policy.execution_precision)
-                        .to_string(),
-                    artifact_dir: artifact_dir.display().to_string(),
-                    started_at_unix_ms,
-                    finished_at_unix_ms: failed_at_unix_ms,
-                    plan_summary: plan_summary.clone(),
-                },
-            );
-            append_event(
-                &session_dir.join("events.ndjson"),
-                &serde_json::json!({
-                    "kind": "run_failed",
-                    "session_id": session_id.clone(),
-                    "run_id": run_id.clone(),
-                    "finished_at_unix_ms": failed_at_unix_ms,
-                    "error": error.to_string(),
-                }),
-            )?;
-            return Err(anyhow!(error.to_string()));
+            }
         }
-    };
 
-    if !use_live_callback {
-        persist_completed_headless_run(
-            &execution_plan.backend_plan,
-            &run_manifest_path,
-            &live_state_path,
-            &live_scalars_path,
-            &session_dir.join("events.ndjson"),
-            &run_id,
-            &session_id,
-            &artifact_dir,
-            &result,
+        let offset_steps = offset_step_stats(&stage_result.steps, step_offset, time_offset);
+        if let Some(last) = offset_steps.last() {
+            step_offset = last.step;
+            time_offset = last.time;
+        }
+        aggregated_steps.extend(offset_steps);
+        final_magnetization = stage_result.final_magnetization.clone();
+        continuation_magnetization = Some(stage_result.final_magnetization);
+
+        append_event(
+            &events_path,
+            &serde_json::json!({
+                "kind": "stage_completed",
+                "session_id": session_id.clone(),
+                "run_id": run_id.clone(),
+                "stage_index": stage_index,
+                "stage_number": stage_index + 1,
+                "stage_count": stage_count,
+                "entrypoint_kind": stage.entrypoint_kind,
+                "final_step": aggregated_steps.last().map(|step| step.step),
+                "final_time": aggregated_steps.last().map(|step| step.time),
+            }),
         )?;
     }
 
+    if interactive_requested {
+        ensure_command_dirs(&session_dir)?;
+        let awaiting_at_unix_ms = unix_time_millis()?;
+        update_session_manifest_status(
+            &session_manifest_path,
+            session_id: &session_id,
+            run_id: &run_id,
+            status: "awaiting_command",
+            script_path: &script_path,
+            problem_name: &final_problem_name,
+            requested_backend: backend_target_name(final_requested_backend),
+            execution_mode: execution_mode_name(final_execution_mode),
+            precision: execution_precision_name(final_precision),
+            artifact_dir: &artifact_dir,
+            started_at_unix_ms,
+            finished_at_unix_ms: awaiting_at_unix_ms,
+            plan_summary: &current_plan_summary,
+        )?;
+        update_run_manifest_status(
+            &run_manifest_path,
+            run_id: &run_id,
+            session_id: &session_id,
+            status: "awaiting_command",
+            artifact_dir: &artifact_dir,
+            steps: &aggregated_steps,
+        )?;
+        append_event(
+            &events_path,
+            &serde_json::json!({
+                "kind": "interactive_session_ready",
+                "session_id": session_id.clone(),
+                "run_id": run_id.clone(),
+                "awaiting_command": true,
+            }),
+        )?;
+        eprintln!("interactive session ready");
+        eprintln!("- session_id: {}", session_id);
+        eprintln!("- queue: submit commands through the control room or API");
+
+        let mut interactive_stage_index = stage_count;
+        loop {
+            let Some((command_path, command)) = next_pending_command(&session_dir)? else {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                continue;
+            };
+
+            append_event(
+                &events_path,
+                &serde_json::json!({
+                    "kind": "interactive_command_received",
+                    "session_id": session_id.clone(),
+                    "run_id": run_id.clone(),
+                    "command_id": command.command_id,
+                    "command_kind": command.kind,
+                }),
+            )?;
+
+            let Some(mut stage) = match build_interactive_command_stage(&interactive_template_ir, &command) {
+                Ok(stage) => stage,
+                Err(error) => {
+                    let _ = move_command_file(&command_path, &failed_commands_dir(&session_dir));
+                    append_event(
+                        &events_path,
+                        &serde_json::json!({
+                            "kind": "interactive_command_failed",
+                            "session_id": session_id.clone(),
+                            "run_id": run_id.clone(),
+                            "command_id": command.command_id,
+                            "command_kind": command.kind,
+                            "error": error.to_string(),
+                        }),
+                    )?;
+                    continue;
+                }
+            } else {
+                let _ = move_command_file(&command_path, &processed_commands_dir(&session_dir));
+                break;
+            };
+
+            if let Some(previous_final_magnetization) = continuation_magnetization.as_deref() {
+                apply_continuation_initial_state(&mut stage.ir, previous_final_magnetization)?;
+            }
+            validate_ir(&stage.ir)?;
+            current_plan_summary = stage
+                .ir
+                .plan_for(args.backend.map(BackendTarget::from))
+                .map_err(join_errors)?;
+            let execution_plan =
+                fullmag_plan::plan(&stage.ir).map_err(|error| anyhow!(error.to_string()))?;
+            let use_live_callback = matches!(
+                &execution_plan.backend_plan,
+                BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_)
+            );
+            let current_stage_artifact_dir = stage_artifact_dir(
+                &session_dir,
+                &artifact_dir,
+                interactive_stage_index,
+                interactive_stage_index + 2,
+                &stage.entrypoint_kind,
+            );
+            fs::create_dir_all(&current_stage_artifact_dir).with_context(|| {
+                format!(
+                    "failed to create interactive stage artifact dir {}",
+                    current_stage_artifact_dir.display()
+                )
+            })?;
+            let running_at_unix_ms = unix_time_millis()?;
+            update_session_manifest_status(
+                &session_manifest_path,
+                session_id: &session_id,
+                run_id: &run_id,
+                status: "running",
+                script_path: &script_path,
+                problem_name: &final_problem_name,
+                requested_backend: backend_target_name(final_requested_backend),
+                execution_mode: execution_mode_name(final_execution_mode),
+                precision: execution_precision_name(final_precision),
+                artifact_dir: &artifact_dir,
+                started_at_unix_ms,
+                finished_at_unix_ms: running_at_unix_ms,
+                plan_summary: &current_plan_summary,
+            )?;
+            update_run_manifest_status(
+                &run_manifest_path,
+                run_id: &run_id,
+                session_id: &session_id,
+                status: "running",
+                artifact_dir: &artifact_dir,
+                steps: &aggregated_steps,
+            )?;
+            let stage_initial_update = offset_step_update(
+                &initial_step_update(&execution_plan.backend_plan),
+                step_offset,
+                time_offset,
+                false,
+            );
+            update_live_state(&live_state_path, &stage_initial_update)?;
+
+            let stage_result = match if use_live_callback {
+                fullmag_runner::run_problem_with_callback(
+                    &stage.ir,
+                    stage.until_seconds,
+                    &current_stage_artifact_dir,
+                    field_every_n,
+                    |update| {
+                        let adjusted = offset_step_update(&update, step_offset, time_offset, false);
+                        let s = &adjusted.stats;
+                        let print_step = s.step <= 10
+                            || (s.step <= 100 && s.step % 10 == 0)
+                            || (s.step <= 1000 && s.step % 100 == 0)
+                            || s.step % 1000 == 0;
+                        if print_step {
+                            let wall_ms = s.wall_time_ns as f64 / 1e6;
+                            eprintln!(
+                                "interactive {}  step {:>6}  t={:.4e}  dt={:.3e}  maxTorque={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
+                                stage.entrypoint_kind,
+                                s.step,
+                                s.time,
+                                s.dt,
+                                s.max_dm_dt,
+                                s.e_total,
+                                s.max_h_eff,
+                                wall_ms
+                            );
+                        }
+
+                        if adjusted.stats.step <= 1 || adjusted.stats.step % field_every_n == 0 {
+                            let _ = update_running_run_manifest(
+                                &run_manifest_path,
+                                &run_id,
+                                &session_id,
+                                &artifact_dir,
+                                &adjusted,
+                            );
+                            let _ = update_live_state(&live_state_path, &adjusted);
+                            let _ = append_live_scalar_row(&live_scalars_path, &adjusted);
+                        }
+                    },
+                )
+            } else {
+                fullmag_runner::run_problem(&stage.ir, stage.until_seconds, &current_stage_artifact_dir)
+            } {
+                Ok(result) => result,
+                Err(error) => {
+                    let _ = move_command_file(&command_path, &failed_commands_dir(&session_dir));
+                    let _ = update_session_manifest_status(
+                        &session_manifest_path,
+                        session_id: &session_id,
+                        run_id: &run_id,
+                        status: "awaiting_command",
+                        script_path: &script_path,
+                        problem_name: &final_problem_name,
+                        requested_backend: backend_target_name(final_requested_backend),
+                        execution_mode: execution_mode_name(final_execution_mode),
+                        precision: execution_precision_name(final_precision),
+                        artifact_dir: &artifact_dir,
+                        started_at_unix_ms,
+                        finished_at_unix_ms: unix_time_millis().unwrap_or(awaiting_at_unix_ms),
+                        plan_summary: &current_plan_summary,
+                    );
+                    append_event(
+                        &events_path,
+                        &serde_json::json!({
+                            "kind": "interactive_command_failed",
+                            "session_id": session_id.clone(),
+                            "run_id": run_id.clone(),
+                            "command_id": command.command_id,
+                            "command_kind": command.kind,
+                            "error": error.to_string(),
+                        }),
+                    )?;
+                    continue;
+                }
+            };
+
+            if !use_live_callback {
+                let grid = match &execution_plan.backend_plan {
+                    BackendPlanIR::Fdm(fdm) => [fdm.grid.cells[0], fdm.grid.cells[1], fdm.grid.cells[2]],
+                    BackendPlanIR::Fem(_) => [0, 0, 0],
+                };
+                let fem_mesh = match &execution_plan.backend_plan {
+                    BackendPlanIR::Fem(fem) => Some(fullmag_runner::FemMeshPayload {
+                        nodes: fem.mesh.nodes.clone(),
+                        elements: fem.mesh.elements.clone(),
+                        boundary_faces: fem.mesh.boundary_faces.clone(),
+                    }),
+                    BackendPlanIR::Fdm(_) => None,
+                };
+                for stats in &stage_result.steps {
+                    let update = fullmag_runner::StepUpdate {
+                        stats: offset_step_stats(std::slice::from_ref(stats), step_offset, time_offset)
+                            .into_iter()
+                            .next()
+                            .expect("single step should offset"),
+                        grid,
+                        fem_mesh: fem_mesh.clone(),
+                        magnetization: None,
+                        finished: false,
+                    };
+                    append_live_scalar_row(&live_scalars_path, &update)?;
+                    if update.stats.step <= 1 || update.stats.step % field_every_n == 0 {
+                        update_running_run_manifest(
+                            &run_manifest_path,
+                            &run_id,
+                            &session_id,
+                            &artifact_dir,
+                            &update,
+                        )?;
+                        update_live_state(&live_state_path, &update)?;
+                    }
+                }
+            }
+
+            let offset_steps = offset_step_stats(&stage_result.steps, step_offset, time_offset);
+            if let Some(last) = offset_steps.last() {
+                step_offset = last.step;
+                time_offset = last.time;
+            }
+            aggregated_steps.extend(offset_steps);
+            final_magnetization = stage_result.final_magnetization.clone();
+            continuation_magnetization = Some(stage_result.final_magnetization);
+            let _ = move_command_file(&command_path, &processed_commands_dir(&session_dir));
+            interactive_stage_index += 1;
+
+            let ready_at_unix_ms = unix_time_millis()?;
+            update_session_manifest_status(
+                &session_manifest_path,
+                session_id: &session_id,
+                run_id: &run_id,
+                status: "awaiting_command",
+                script_path: &script_path,
+                problem_name: &final_problem_name,
+                requested_backend: backend_target_name(final_requested_backend),
+                execution_mode: execution_mode_name(final_execution_mode),
+                precision: execution_precision_name(final_precision),
+                artifact_dir: &artifact_dir,
+                started_at_unix_ms,
+                finished_at_unix_ms: ready_at_unix_ms,
+                plan_summary: &current_plan_summary,
+            )?;
+            update_run_manifest_status(
+                &run_manifest_path,
+                run_id: &run_id,
+                session_id: &session_id,
+                status: "awaiting_command",
+                artifact_dir: &artifact_dir,
+                steps: &aggregated_steps,
+            )?;
+            append_event(
+                &events_path,
+                &serde_json::json!({
+                    "kind": "interactive_command_completed",
+                    "session_id": session_id.clone(),
+                    "run_id": run_id.clone(),
+                    "command_id": command.command_id,
+                    "command_kind": command.kind,
+                    "total_steps": aggregated_steps.last().map(|step| step.step),
+                    "final_time": aggregated_steps.last().map(|step| step.time),
+                }),
+            )?;
+        }
+
+        mark_live_state_finished(&live_state_path)?;
+    }
+
     let finished_at_unix_ms = unix_time_millis()?;
+    let final_status = fullmag_runner::RunStatus::Completed;
 
     let summary = ScriptRunSummary {
         session_id: session_id.clone(),
         run_id: run_id.clone(),
         script_path: script_path.display().to_string(),
-        problem_name: ir.problem_meta.name.clone(),
-        status: format!("{:?}", result.status).to_lowercase(),
-        backend: backend_target_name(ir.backend_policy.requested_backend).to_string(),
-        mode: execution_mode_name(ir.validation_profile.execution_mode).to_string(),
-        precision: execution_precision_name(ir.backend_policy.execution_precision).to_string(),
-        total_steps: result.steps.len(),
-        final_time: result.steps.last().map(|step| step.time),
-        final_e_ex: result.steps.last().map(|step| step.e_ex),
-        final_e_demag: result.steps.last().map(|step| step.e_demag),
-        final_e_ext: result.steps.last().map(|step| step.e_ext),
-        final_e_total: result.steps.last().map(|step| step.e_total),
+        problem_name: final_problem_name.clone(),
+        status: format!("{:?}", final_status).to_lowercase(),
+        backend: backend_target_name(final_requested_backend).to_string(),
+        mode: execution_mode_name(final_execution_mode).to_string(),
+        precision: execution_precision_name(final_precision).to_string(),
+        total_steps: aggregated_steps
+            .last()
+            .map(|step| step.step as usize)
+            .unwrap_or(0),
+        final_time: aggregated_steps.last().map(|step| step.time),
+        final_e_ex: aggregated_steps.last().map(|step| step.e_ex),
+        final_e_demag: aggregated_steps.last().map(|step| step.e_demag),
+        final_e_ext: aggregated_steps.last().map(|step| step.e_ext),
+        final_e_total: aggregated_steps.last().map(|step| step.e_total),
         artifact_dir: artifact_dir.display().to_string(),
         session_dir: session_dir.display().to_string(),
     };
@@ -633,7 +1151,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             artifact_dir: summary.artifact_dir.clone(),
             started_at_unix_ms,
             finished_at_unix_ms,
-            plan_summary,
+            plan_summary: current_plan_summary.clone(),
         },
     )?;
     write_json_file(
@@ -661,6 +1179,8 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             "total_steps": summary.total_steps,
             "finished_at_unix_ms": finished_at_unix_ms,
             "artifact_dir": summary.artifact_dir.clone(),
+            "stage_count": stage_count,
+            "final_magnetization_cells": final_magnetization.len(),
         }),
     )?;
 
@@ -670,7 +1190,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         print_script_summary(&summary);
     }
 
-    if args.interactive {
+    if interactive_requested {
         pause_after_run(&summary.session_id, args.headless)?;
     }
 
@@ -786,6 +1306,273 @@ fn resolve_script_until_seconds(ir: &ProblemIR, default_until_seconds: Option<f6
             "no stop time provided. Define DEFAULT_UNTIL in the script for time-evolution runs"
         ),
     }
+}
+
+fn materialize_script_stages(config: ScriptExecutionConfig) -> Result<Vec<ResolvedScriptStage>> {
+    if config.stages.is_empty() {
+        return Ok(vec![ResolvedScriptStage {
+            until_seconds: resolve_script_until_seconds(&config.ir, config.default_until_seconds)?,
+            ir: config.ir,
+            entrypoint_kind: "direct_script".to_string(),
+        }]);
+    }
+
+    config
+        .stages
+        .into_iter()
+        .map(|stage| {
+            Ok(ResolvedScriptStage {
+                until_seconds: resolve_script_until_seconds(&stage.ir, stage.default_until_seconds)?,
+                ir: stage.ir,
+                entrypoint_kind: stage.entrypoint_kind,
+            })
+        })
+        .collect()
+}
+
+fn apply_continuation_initial_state(
+    problem: &mut ProblemIR,
+    final_magnetization: &[[f64; 3]],
+) -> Result<()> {
+    if problem.magnets.len() != 1 {
+        bail!(
+            "multi-stage flat scripts currently require exactly one magnet; found {}",
+            problem.magnets.len()
+        );
+    }
+
+    problem.magnets[0].initial_magnetization = Some(
+        fullmag_ir::InitialMagnetizationIR::SampledField {
+            values: final_magnetization.to_vec(),
+        },
+    );
+    Ok(())
+}
+
+fn offset_step_update(
+    update: &fullmag_runner::StepUpdate,
+    step_offset: u64,
+    time_offset: f64,
+    finished: bool,
+) -> fullmag_runner::StepUpdate {
+    let mut adjusted = update.clone();
+    adjusted.stats.step += step_offset;
+    adjusted.stats.time += time_offset;
+    adjusted.finished = finished;
+    adjusted
+}
+
+fn offset_step_stats(
+    steps: &[fullmag_runner::StepStats],
+    step_offset: u64,
+    time_offset: f64,
+) -> Vec<fullmag_runner::StepStats> {
+    steps
+        .iter()
+        .cloned()
+        .map(|mut step| {
+            step.step += step_offset;
+            step.time += time_offset;
+            step
+        })
+        .collect()
+}
+
+fn stage_artifact_dir(
+    session_dir: &Path,
+    artifact_dir: &Path,
+    stage_index: usize,
+    total_stages: usize,
+    entrypoint_kind: &str,
+) -> PathBuf {
+    if stage_index + 1 == total_stages {
+        return artifact_dir.to_path_buf();
+    }
+    session_dir
+        .join("stages")
+        .join(format!("stage_{stage_index:02}_{entrypoint_kind}"))
+}
+
+fn pending_commands_dir(session_dir: &Path) -> PathBuf {
+    session_dir.join("commands").join("pending")
+}
+
+fn processed_commands_dir(session_dir: &Path) -> PathBuf {
+    session_dir.join("commands").join("processed")
+}
+
+fn failed_commands_dir(session_dir: &Path) -> PathBuf {
+    session_dir.join("commands").join("failed")
+}
+
+fn ensure_command_dirs(session_dir: &Path) -> Result<()> {
+    fs::create_dir_all(pending_commands_dir(session_dir))?;
+    fs::create_dir_all(processed_commands_dir(session_dir))?;
+    fs::create_dir_all(failed_commands_dir(session_dir))?;
+    Ok(())
+}
+
+fn next_pending_command(session_dir: &Path) -> Result<Option<(PathBuf, SessionCommand)>> {
+    let pending_dir = pending_commands_dir(session_dir);
+    if !pending_dir.exists() {
+        return Ok(None);
+    }
+
+    let mut entries = fs::read_dir(&pending_dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .collect::<Vec<_>>();
+    entries.sort();
+
+    let Some(path) = entries.into_iter().next() else {
+        return Ok(None);
+    };
+    let command: SessionCommand = read_json_file(&path)?;
+    Ok(Some((path, command)))
+}
+
+fn move_command_file(source: &Path, target_dir: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(target_dir)?;
+    let file_name = source
+        .file_name()
+        .ok_or_else(|| anyhow!("command path '{}' has no file name", source.display()))?;
+    let target = target_dir.join(file_name);
+    fs::rename(source, &target).or_else(|_| {
+        fs::copy(source, &target)?;
+        fs::remove_file(source)?;
+        Ok(())
+    })?;
+    Ok(target)
+}
+
+fn build_interactive_command_stage(
+    base_problem: &ProblemIR,
+    command: &SessionCommand,
+) -> Result<Option<ResolvedScriptStage>> {
+    match command.kind.as_str() {
+        "close" => Ok(None),
+        "run" => {
+            let until_seconds = command.until_seconds.ok_or_else(|| {
+                anyhow!("interactive 'run' command requires until_seconds")
+            })?;
+            if until_seconds <= 0.0 {
+                bail!("interactive 'run' command requires positive until_seconds");
+            }
+
+            let mut ir = base_problem.clone();
+            let dynamics = ir.study.dynamics().clone();
+            let sampling = ir.study.sampling().clone();
+            ir.problem_meta.entrypoint_kind = "interactive_run".to_string();
+            ir.study = fullmag_ir::StudyIR::TimeEvolution { dynamics, sampling };
+
+            Ok(Some(ResolvedScriptStage {
+                ir,
+                until_seconds,
+                entrypoint_kind: "interactive_run".to_string(),
+            }))
+        }
+        "relax" => {
+            let mut ir = base_problem.clone();
+            let dynamics = ir.study.dynamics().clone();
+            let sampling = ir.study.sampling().clone();
+            let max_steps = command.max_steps.unwrap_or(50_000);
+            let torque_tolerance = command.torque_tolerance.unwrap_or(1e-6);
+            ir.problem_meta.entrypoint_kind = "interactive_relax".to_string();
+            ir.study = fullmag_ir::StudyIR::Relaxation {
+                algorithm: fullmag_ir::RelaxationAlgorithmIR::LlgOverdamped,
+                dynamics: dynamics.clone(),
+                torque_tolerance,
+                energy_tolerance: command.energy_tolerance,
+                max_steps,
+                sampling,
+            };
+
+            let until_seconds = match dynamics {
+                fullmag_ir::DynamicsIR::Llg { fixed_timestep, .. } => {
+                    fixed_timestep.unwrap_or(1e-13) * max_steps as f64
+                }
+            };
+
+            Ok(Some(ResolvedScriptStage {
+                ir,
+                until_seconds,
+                entrypoint_kind: "interactive_relax".to_string(),
+            }))
+        }
+        other => bail!("unsupported interactive command kind '{other}'"),
+    }
+}
+
+fn update_session_manifest_status(
+    path: &Path,
+    *,
+    session_id: &str,
+    run_id: &str,
+    status: &str,
+    script_path: &Path,
+    problem_name: &str,
+    requested_backend: &str,
+    execution_mode: &str,
+    precision: &str,
+    artifact_dir: &Path,
+    started_at_unix_ms: u128,
+    finished_at_unix_ms: u128,
+    plan_summary: &ExecutionPlanSummary,
+) -> Result<()> {
+    write_json_file(
+        path,
+        &SessionManifest {
+            session_id: session_id.to_string(),
+            run_id: run_id.to_string(),
+            status: status.to_string(),
+            script_path: script_path.display().to_string(),
+            problem_name: problem_name.to_string(),
+            requested_backend: requested_backend.to_string(),
+            execution_mode: execution_mode.to_string(),
+            precision: precision.to_string(),
+            artifact_dir: artifact_dir.display().to_string(),
+            started_at_unix_ms,
+            finished_at_unix_ms,
+            plan_summary: plan_summary.clone(),
+        },
+    )
+}
+
+fn update_run_manifest_status(
+    path: &Path,
+    *,
+    run_id: &str,
+    session_id: &str,
+    status: &str,
+    artifact_dir: &Path,
+    steps: &[fullmag_runner::StepStats],
+) -> Result<()> {
+    write_json_file(
+        path,
+        &RunManifest {
+            run_id: run_id.to_string(),
+            session_id: session_id.to_string(),
+            status: status.to_string(),
+            total_steps: steps.last().map(|step| step.step as usize).unwrap_or(0),
+            final_time: steps.last().map(|step| step.time),
+            final_e_ex: steps.last().map(|step| step.e_ex),
+            final_e_demag: steps.last().map(|step| step.e_demag),
+            final_e_ext: steps.last().map(|step| step.e_ext),
+            final_e_total: steps.last().map(|step| step.e_total),
+            artifact_dir: artifact_dir.display().to_string(),
+        },
+    )
+}
+
+fn mark_live_state_finished(path: &Path) -> Result<()> {
+    let Some(mut live_state) = read_optional_json_file::<LiveStateManifest>(path)? else {
+        return Ok(());
+    };
+    live_state.status = "completed".to_string();
+    live_state.updated_at_unix_ms = unix_time_millis()?;
+    live_state.latest_step.finished = true;
+    write_json_file(path, &live_state)
 }
 
 fn run_python_helper(args: &[String]) -> Result<std::process::Output> {
@@ -1163,89 +1950,6 @@ fn update_running_run_manifest(
             artifact_dir: artifact_dir.display().to_string(),
         },
     )
-}
-
-fn persist_completed_headless_run(
-    backend_plan: &BackendPlanIR,
-    run_manifest_path: &Path,
-    live_state_path: &Path,
-    live_scalars_path: &Path,
-    events_path: &Path,
-    run_id: &str,
-    session_id: &str,
-    artifact_dir: &Path,
-    result: &fullmag_runner::RunResult,
-) -> Result<()> {
-    let grid = match backend_plan {
-        BackendPlanIR::Fdm(fdm) => [fdm.grid.cells[0], fdm.grid.cells[1], fdm.grid.cells[2]],
-        BackendPlanIR::Fem(_) => [0, 0, 0],
-    };
-
-    for stats in &result.steps {
-        let update = fullmag_runner::StepUpdate {
-            stats: stats.clone(),
-            grid,
-            fem_mesh: match backend_plan {
-                BackendPlanIR::Fem(fem) => Some(fullmag_runner::FemMeshPayload {
-                    nodes: fem.mesh.nodes.clone(),
-                    elements: fem.mesh.elements.clone(),
-                    boundary_faces: fem.mesh.boundary_faces.clone(),
-                }),
-                BackendPlanIR::Fdm(_) => None,
-            },
-            magnetization: None,
-            finished: false,
-        };
-        append_live_scalar_row(live_scalars_path, &update)?;
-    }
-
-    if let Some(last) = result.steps.last() {
-        let final_update = fullmag_runner::StepUpdate {
-            stats: last.clone(),
-            grid,
-            fem_mesh: match backend_plan {
-                BackendPlanIR::Fem(fem) => Some(fullmag_runner::FemMeshPayload {
-                    nodes: fem.mesh.nodes.clone(),
-                    elements: fem.mesh.elements.clone(),
-                    boundary_faces: fem.mesh.boundary_faces.clone(),
-                }),
-                BackendPlanIR::Fdm(_) => None,
-            },
-            magnetization: Some(
-                result
-                    .final_magnetization
-                    .iter()
-                    .flat_map(|value| value.iter().copied())
-                    .collect(),
-            ),
-            finished: true,
-        };
-        update_running_run_manifest(
-            run_manifest_path,
-            run_id,
-            session_id,
-            artifact_dir,
-            &final_update,
-        )?;
-        update_live_state(live_state_path, &final_update)?;
-        append_event(
-            events_path,
-            &serde_json::json!({
-                "kind": "run_finished_step",
-                "session_id": session_id,
-                "run_id": run_id,
-                "step": final_update.stats.step,
-                "time": final_update.stats.time,
-                "e_ex": final_update.stats.e_ex,
-                "e_demag": final_update.stats.e_demag,
-                "e_ext": final_update.stats.e_ext,
-                "e_total": final_update.stats.e_total,
-                "finished": true,
-            }),
-        )?;
-    }
-
-    Ok(())
 }
 
 fn append_event(path: &Path, event: &serde_json::Value) -> Result<()> {

@@ -62,34 +62,78 @@ def main(argv: Sequence[str] | None = None) -> int:
             mode=args.mode,
             precision=args.precision,
         )
-        until_seconds = loaded.default_until_seconds
-        if until_seconds is None and isinstance(loaded.problem.study, Relaxation):
-            study = loaded.problem.study
-            fixed_timestep = study.dynamics.fixed_timestep
-            until_seconds = (fixed_timestep or 1e-13) * study.max_steps
-        if until_seconds is None:
-            print(
-                "fullmag run failed: no stop time provided. Define DEFAULT_UNTIL in the script "
-                "for time-evolution runs.",
-                file=sys.stderr,
+        if loaded.stages:
+            aggregate_payload: dict[str, object] = {
+                "status": "completed",
+                "steps": [],
+                "final_magnetization": None,
+            }
+            final_magnetization = None
+            step_offset = 0
+            time_offset = 0.0
+
+            for stage in loaded.stages:
+                until_seconds = _resolve_until_seconds(stage.problem.study, stage.default_until_seconds)
+                if until_seconds is None:
+                    print(
+                        "fullmag run failed: no stop time provided. Define DEFAULT_UNTIL in the script "
+                        "for time-evolution runs.",
+                        file=sys.stderr,
+                    )
+                    return 2
+                ir = stage.to_ir(
+                    requested_backend=simulation.backend,
+                    execution_mode=simulation.mode,
+                    execution_precision=simulation.precision,
+                    script_source=loaded.script_source,
+                )
+                if final_magnetization is not None:
+                    _apply_continuation_initial_state(ir, final_magnetization)
+                run_payload = run_problem_json(ir, until_seconds, args.output_dir)
+                if run_payload is None:
+                    print(
+                        "Native runner (_fullmag_core) is not installed. "
+                        "Build it with maturin in crates/fullmag-py-core to enable execution.",
+                        file=sys.stderr,
+                    )
+                    return 2
+                offset_steps = []
+                for step in run_payload.get("steps", []):
+                    adjusted = dict(step)
+                    adjusted["step"] = int(step.get("step", 0)) + step_offset
+                    adjusted["time"] = float(step.get("time", 0.0)) + time_offset
+                    offset_steps.append(adjusted)
+                aggregate_payload["steps"].extend(offset_steps)
+                final_magnetization = run_payload.get("final_magnetization")
+                aggregate_payload["final_magnetization"] = final_magnetization
+                if offset_steps:
+                    step_offset = int(offset_steps[-1]["step"])
+                    time_offset = float(offset_steps[-1]["time"])
+        else:
+            until_seconds = _resolve_until_seconds(loaded.problem.study, loaded.default_until_seconds)
+            if until_seconds is None:
+                print(
+                    "fullmag run failed: no stop time provided. Define DEFAULT_UNTIL in the script "
+                    "for time-evolution runs.",
+                    file=sys.stderr,
+                )
+                return 2
+            ir = loaded.to_ir(
+                requested_backend=simulation.backend,
+                execution_mode=simulation.mode,
+                execution_precision=simulation.precision,
             )
-            return 2
-        ir = loaded.to_ir(
-            requested_backend=simulation.backend,
-            execution_mode=simulation.mode,
-            execution_precision=simulation.precision,
-        )
-        run_payload = run_problem_json(ir, until_seconds, args.output_dir)
-        if run_payload is None:
-            print(
-                "Native runner (_fullmag_core) is not installed. "
-                "Build it with maturin in crates/fullmag-py-core to enable execution.",
-                file=sys.stderr,
-            )
-            return 2
+            aggregate_payload = run_problem_json(ir, until_seconds, args.output_dir)
+            if aggregate_payload is None:
+                print(
+                    "Native runner (_fullmag_core) is not installed. "
+                    "Build it with maturin in crates/fullmag-py-core to enable execution.",
+                    file=sys.stderr,
+                )
+                return 2
 
         result = result_from_run_payload(
-            run_payload,
+            aggregate_payload,
             backend=simulation.backend,
             mode=simulation.mode,
             precision=simulation.precision,
@@ -110,6 +154,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         print_human_summary(summary)
 
     return 0 if result.status == "completed" else 1
+
+
+def _resolve_until_seconds(study, default_until_seconds: float | None) -> float | None:
+    if default_until_seconds is not None:
+        return default_until_seconds
+    if isinstance(study, Relaxation):
+        fixed_timestep = study.dynamics.fixed_timestep
+        return (fixed_timestep or 1e-13) * study.max_steps
+    return None
+
+
+def _apply_continuation_initial_state(ir: dict[str, object], final_magnetization) -> None:
+    magnets = ir.get("magnets")
+    if not isinstance(magnets, list) or len(magnets) != 1:
+        raise RuntimeError(
+            "multi-stage flat scripts currently require exactly one magnet"
+        )
+    magnets[0]["initial_magnetization"] = {
+        "kind": "sampled_field",
+        "values": final_magnetization,
+    }
 
 
 def build_summary(*, script_path: str, problem_name: str, result) -> dict[str, object]:

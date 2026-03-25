@@ -558,6 +558,24 @@ impl ExchangeLlgState {
     pub fn magnetization(&self) -> &[Vector3] {
         &self.magnetization
     }
+
+    /// Replace the magnetization vector, normalizing each cell.
+    ///
+    /// Zero vectors (inactive cells) are preserved as-is.
+    pub fn set_magnetization(&mut self, magnetization: Vec<Vector3>) -> Result<()> {
+        if magnetization.len() != self.grid.cell_count() {
+            return Err(EngineError::new(format!(
+                "magnetization length {} does not match grid cell count {}",
+                magnetization.len(),
+                self.grid.cell_count()
+            )));
+        }
+        self.magnetization = magnetization
+            .into_iter()
+            .map(normalized)
+            .collect::<Result<Vec<_>>>()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1416,12 +1434,12 @@ impl ExchangeLlgProblem {
             .collect()
     }
 
-    fn effective_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
+    pub fn effective_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
         let mut ws = self.create_workspace();
         self.effective_field_from_vectors_ws(magnetization, &mut ws)
     }
 
-    fn effective_field_from_vectors_ws(
+    pub fn effective_field_from_vectors_ws(
         &self,
         magnetization: &[Vector3],
         ws: &mut FftWorkspace,
@@ -1438,6 +1456,68 @@ impl ExchangeLlgProblem {
         };
         let external_field = self.external_field_vectors();
         combine_fields(&exchange_field, &demag_field, &external_field)
+    }
+
+    /// Compute tangent-space gradient: g_i = -P_{m_i} H_eff,i
+    /// where P_{m_i} = I - m_i m_i^T is the orthogonal projector.
+    ///
+    /// For inactive cells (zero magnetization), returns zero.
+    pub fn tangent_gradient_from_vectors_ws(
+        &self,
+        magnetization: &[Vector3],
+        ws: &mut FftWorkspace,
+    ) -> Vec<Vector3> {
+        let h_eff = self.effective_field_from_vectors_ws(magnetization, ws);
+        magnetization
+            .iter()
+            .zip(h_eff.iter())
+            .map(|(m, h)| {
+                // g_i = -(H_eff - (m · H_eff) m) = -P_m H_eff
+                let m_dot_h = dot(*m, *h);
+                let projected = sub(*h, scale(*m, m_dot_h));
+                scale(projected, -1.0)
+            })
+            .collect()
+    }
+
+    /// Compute tangent-space gradient from pre-computed effective field.
+    pub fn tangent_gradient_from_field(
+        magnetization: &[Vector3],
+        h_eff: &[Vector3],
+    ) -> Vec<Vector3> {
+        magnetization
+            .iter()
+            .zip(h_eff.iter())
+            .map(|(m, h)| {
+                let m_dot_h = dot(*m, *h);
+                let projected = sub(*h, scale(*m, m_dot_h));
+                scale(projected, -1.0)
+            })
+            .collect()
+    }
+
+    /// Compute total energy without building full observables (cheaper).
+    pub fn total_energy_from_vectors_ws(
+        &self,
+        magnetization: &[Vector3],
+        ws: &mut FftWorkspace,
+    ) -> f64 {
+        let mut total = 0.0;
+
+        if self.terms.exchange {
+            let h_ex = self.exchange_field_from_vectors(magnetization);
+            total += self.exchange_energy_from_field(magnetization, &h_ex);
+        }
+        if self.terms.demag {
+            let h_demag = self.demag_field_from_vectors_ws(magnetization, ws);
+            total += self.demag_energy_from_fields(magnetization, &h_demag);
+        }
+        if self.terms.external_field.is_some() {
+            let h_ext = self.external_field_vectors();
+            total += self.external_energy_from_fields(magnetization, &h_ext);
+        }
+
+        total
     }
 
     fn llg_rhs_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
@@ -1733,7 +1813,7 @@ fn combine_fields(
     }
 }
 
-fn normalized(vector: Vector3) -> Result<Vector3> {
+pub fn normalized(vector: Vector3) -> Result<Vector3> {
     let norm = norm(vector);
     if norm <= 0.0 {
         // Inactive cell (masked out by active_mask) — preserve zero vector
@@ -1742,7 +1822,7 @@ fn normalized(vector: Vector3) -> Result<Vector3> {
     Ok(scale(vector, 1.0 / norm))
 }
 
-fn max_norm(vectors: &[Vector3]) -> f64 {
+pub fn max_norm(vectors: &[Vector3]) -> f64 {
     #[cfg(feature = "parallel")]
     {
         vectors
@@ -1759,19 +1839,19 @@ fn max_norm(vectors: &[Vector3]) -> f64 {
     }
 }
 
-fn add(left: Vector3, right: Vector3) -> Vector3 {
+pub fn add(left: Vector3, right: Vector3) -> Vector3 {
     [left[0] + right[0], left[1] + right[1], left[2] + right[2]]
 }
 
-fn sub(left: Vector3, right: Vector3) -> Vector3 {
+pub fn sub(left: Vector3, right: Vector3) -> Vector3 {
     [left[0] - right[0], left[1] - right[1], left[2] - right[2]]
 }
 
-fn scale(vector: Vector3, factor: f64) -> Vector3 {
+pub fn scale(vector: Vector3, factor: f64) -> Vector3 {
     [vector[0] * factor, vector[1] * factor, vector[2] * factor]
 }
 
-fn dot(left: Vector3, right: Vector3) -> f64 {
+pub fn dot(left: Vector3, right: Vector3) -> f64 {
     left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
 }
 
@@ -1783,11 +1863,11 @@ fn cross(left: Vector3, right: Vector3) -> Vector3 {
     ]
 }
 
-fn squared_norm(vector: Vector3) -> f64 {
+pub fn squared_norm(vector: Vector3) -> f64 {
     dot(vector, vector)
 }
 
-fn norm(vector: Vector3) -> f64 {
+pub fn norm(vector: Vector3) -> f64 {
     squared_norm(vector).sqrt()
 }
 

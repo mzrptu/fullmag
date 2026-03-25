@@ -153,6 +153,41 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
         static_cast<size_t>(plan.demag_kernel_spectrum_len),
         ctx.transfer_grid.kernel_yz_spectrum,
         0.0);
+    // Build magnetic element mask (matches CPU: marker 1 = magnetic when
+    // both marker-1 and non-marker-1 elements exist; otherwise all magnetic).
+    {
+        ctx.magnetic_element_mask.assign(static_cast<size_t>(ctx.n_elements), 1u);
+        if (!ctx.element_markers.empty()) {
+            bool has_marker_1 = false;
+            bool has_other = false;
+            for (size_t i = 0; i < ctx.element_markers.size(); ++i) {
+                if (ctx.element_markers[i] == 1u) {
+                    has_marker_1 = true;
+                } else {
+                    has_other = true;
+                }
+            }
+            if (has_marker_1 && has_other) {
+                for (size_t i = 0; i < ctx.element_markers.size(); ++i) {
+                    ctx.magnetic_element_mask[i] =
+                        ctx.element_markers[i] == 1u ? 1u : 0u;
+                }
+            }
+        }
+        // Build per-node mask: a node is magnetic if it belongs to at least
+        // one magnetic element.
+        ctx.magnetic_node_mask.assign(static_cast<size_t>(ctx.n_nodes), 0u);
+        for (uint32_t e = 0; e < ctx.n_elements; ++e) {
+            if (ctx.magnetic_element_mask[e] == 0u) {
+                continue;
+            }
+            const size_t base = static_cast<size_t>(e) * 4u;
+            for (int v = 0; v < 4; ++v) {
+                ctx.magnetic_node_mask[ctx.elements[base + v]] = 1u;
+            }
+        }
+    }
+
     fill_zero_vector_field(ctx.h_ex_xyz, ctx.n_nodes);
     fill_zero_vector_field(ctx.h_demag_xyz, ctx.n_nodes);
     if (ctx.has_external_field) {

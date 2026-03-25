@@ -75,6 +75,9 @@ struct Context {
     std::vector<uint32_t> boundary_faces;
     std::vector<uint32_t> boundary_markers;
 
+    std::vector<uint8_t> magnetic_element_mask;
+    std::vector<uint8_t> magnetic_node_mask;
+
     std::vector<double> m_xyz;
     std::vector<double> h_ex_xyz;
     std::vector<double> h_demag_xyz;

@@ -104,3 +104,5 @@ Minimum expected structure:
   - detailed GPU/CUDA implementation handoff
 - `active/fullmag-local-launcher-and-live-ui-plan-2026-03-25.md`
   - plan for one-command local launch, host-owned live control room, and runtime resolution
+- `active/interactive-session-mode-plan-2026-03-25.md`
+  - plan for true interactive sessions with command injection, pause/resume/break, and live UI controls

@@ -70,9 +70,12 @@ fn planned_study_controls(
     };
 
     let relaxation = problem.study.relaxation().map(|control| {
-        if control.algorithm != RelaxationAlgorithmIR::LlgOverdamped {
+        if control.algorithm != RelaxationAlgorithmIR::LlgOverdamped
+            && control.algorithm != RelaxationAlgorithmIR::ProjectedGradientBb
+            && control.algorithm != RelaxationAlgorithmIR::NonlinearCg
+        {
             errors.push(format!(
-                "relaxation algorithm '{}' is defined but not yet executable in the current public runner; only 'llg_overdamped' is currently supported",
+                "relaxation algorithm '{}' is defined but not yet executable in the current public runner; only 'llg_overdamped', 'projected_gradient_bb', and 'nonlinear_cg' are currently supported",
                 control.algorithm.as_str()
             ));
         }
@@ -1230,7 +1233,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_gradient_relaxation_is_defined_but_not_yet_executable() {
+    fn projected_gradient_bb_is_now_plannable() {
         let mut ir = ProblemIR::bootstrap_example();
         ir.study = fullmag_ir::StudyIR::Relaxation {
             algorithm: fullmag_ir::RelaxationAlgorithmIR::ProjectedGradientBb,
@@ -1241,9 +1244,59 @@ mod tests {
             sampling: ir.study.sampling().clone(),
         };
 
-        let err = plan(&ir).expect_err("projected_gradient_bb should not be executable yet");
+        let plan = plan(&ir).expect("projected_gradient_bb should now plan successfully");
+        match plan.backend_plan {
+            BackendPlanIR::Fdm(fdm) => {
+                let control = fdm.relaxation.expect("relaxation control");
+                assert_eq!(
+                    control.algorithm,
+                    fullmag_ir::RelaxationAlgorithmIR::ProjectedGradientBb
+                );
+            }
+            _ => panic!("expected FDM plan"),
+        }
+    }
+
+    #[test]
+    fn nonlinear_cg_is_now_plannable() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.study = fullmag_ir::StudyIR::Relaxation {
+            algorithm: fullmag_ir::RelaxationAlgorithmIR::NonlinearCg,
+            dynamics: ir.study.dynamics().clone(),
+            torque_tolerance: 1e-3,
+            energy_tolerance: None,
+            max_steps: 250,
+            sampling: ir.study.sampling().clone(),
+        };
+
+        let plan = plan(&ir).expect("nonlinear_cg should now plan successfully");
+        match plan.backend_plan {
+            BackendPlanIR::Fdm(fdm) => {
+                let control = fdm.relaxation.expect("relaxation control");
+                assert_eq!(
+                    control.algorithm,
+                    fullmag_ir::RelaxationAlgorithmIR::NonlinearCg
+                );
+            }
+            _ => panic!("expected FDM plan"),
+        }
+    }
+
+    #[test]
+    fn tangent_plane_implicit_is_still_gated() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.study = fullmag_ir::StudyIR::Relaxation {
+            algorithm: fullmag_ir::RelaxationAlgorithmIR::TangentPlaneImplicit,
+            dynamics: ir.study.dynamics().clone(),
+            torque_tolerance: 1e-3,
+            energy_tolerance: None,
+            max_steps: 250,
+            sampling: ir.study.sampling().clone(),
+        };
+
+        let err = plan(&ir).expect_err("tangent_plane_implicit should not be executable yet");
         assert!(err.reasons.iter().any(|reason| {
-            reason.contains("projected_gradient_bb") && reason.contains("not yet executable")
+            reason.contains("tangent_plane_implicit") && reason.contains("not yet executable")
         }));
     }
 

@@ -144,6 +144,7 @@ class _WorldState:
     _dt: float | None = None
     _max_error: float | None = None
     _integrator: str | None = None
+    _interactive: bool = False
 
     # Outputs
     _outputs: list = field(default_factory=list)
@@ -155,9 +156,16 @@ class _WorldState:
 # Module-level singleton
 _state = _WorldState()
 _capture_enabled = False
-_captured_problem: Problem | None = None
-_captured_entrypoint_kind: str | None = None
-_captured_default_until_seconds: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CapturedStage:
+    problem: Problem
+    entrypoint_kind: str
+    default_until_seconds: float | None = None
+
+
+_captured_stages: list[CapturedStage] = []
 
 
 def reset() -> None:
@@ -168,26 +176,18 @@ def reset() -> None:
 
 def begin_script_capture() -> None:
     """Enable loader capture mode for flat scripts."""
-    global _capture_enabled, _captured_problem, _captured_entrypoint_kind, _captured_default_until_seconds
+    global _capture_enabled, _captured_stages
     reset()
     _capture_enabled = True
-    _captured_problem = None
-    _captured_entrypoint_kind = None
-    _captured_default_until_seconds = None
+    _captured_stages = []
 
 
-def finish_script_capture() -> tuple[Problem | None, str | None, float | None]:
+def finish_script_capture() -> list[CapturedStage]:
     """Return captured flat-script execution data and clear capture mode."""
-    global _capture_enabled, _captured_problem, _captured_entrypoint_kind, _captured_default_until_seconds
-    captured = (
-        _captured_problem,
-        _captured_entrypoint_kind,
-        _captured_default_until_seconds,
-    )
+    global _capture_enabled, _captured_stages
+    captured = list(_captured_stages)
     _capture_enabled = False
-    _captured_problem = None
-    _captured_entrypoint_kind = None
-    _captured_default_until_seconds = None
+    _captured_stages = []
     reset()
     return captured
 
@@ -241,6 +241,14 @@ def hmax(val: float) -> None:
 def fem_order(order: int) -> None:
     """Set FEM element order (1 or 2)."""
     _state._fem_order = order
+
+
+def interactive(enabled: bool = True) -> None:
+    """Request that the launcher keep the session open after the run.
+
+    This is the script-owned counterpart of ``fullmag -i``.
+    """
+    _state._interactive = bool(enabled)
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +421,7 @@ def _build_problem(
         study=study,
         discretization=DiscretizationHints(**disc_kwargs) if disc_kwargs else None,
         runtime=rt,
+        runtime_metadata={"interactive_session_requested": s._interactive},
     )
 
 
@@ -427,10 +436,13 @@ def run(until: float) -> Any:
     from fullmag.runtime import Simulation
     problem = _build_problem()
     if _capture_enabled:
-        global _captured_problem, _captured_entrypoint_kind, _captured_default_until_seconds
-        _captured_problem = problem
-        _captured_entrypoint_kind = "flat_run"
-        _captured_default_until_seconds = until
+        _captured_stages.append(
+            CapturedStage(
+                problem=problem,
+                entrypoint_kind="flat_run",
+                default_until_seconds=until,
+            )
+        )
         return problem
     return Simulation(problem).run(until=until)
 
@@ -452,10 +464,13 @@ def relax(
         relax_max_steps=max_steps,
     )
     if _capture_enabled:
-        global _captured_problem, _captured_entrypoint_kind, _captured_default_until_seconds
-        _captured_problem = problem
-        _captured_entrypoint_kind = "flat_relax"
-        _captured_default_until_seconds = None
+        _captured_stages.append(
+            CapturedStage(
+                problem=problem,
+                entrypoint_kind="flat_relax",
+                default_until_seconds=None,
+            )
+        )
         return problem
 
     fixed_timestep = problem.study.dynamics.fixed_timestep if isinstance(problem.study, Relaxation) else None

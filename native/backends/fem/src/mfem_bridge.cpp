@@ -91,14 +91,19 @@ bool magnetic_bbox(const Context &ctx, Vec3 &bbox_min, Vec3 &bbox_max) {
     bbox_max = {-std::numeric_limits<double>::infinity(),
                 -std::numeric_limits<double>::infinity(),
                 -std::numeric_limits<double>::infinity()};
+    bool found_any = false;
     for (uint32_t node = 0; node < ctx.n_nodes; ++node) {
+        if (!ctx.magnetic_node_mask.empty() && ctx.magnetic_node_mask[node] == 0u) {
+            continue;
+        }
         const Vec3 point = node_coords(ctx, node);
         for (int axis = 0; axis < 3; ++axis) {
             bbox_min[axis] = std::min(bbox_min[axis], point[axis]);
             bbox_max[axis] = std::max(bbox_max[axis], point[axis]);
         }
+        found_any = true;
     }
-    return true;
+    return found_any;
 }
 
 TransferGridDesc build_transfer_grid_desc(const Context &ctx, const Vec3 &bbox_min, const Vec3 &bbox_max) {
@@ -205,6 +210,10 @@ void rasterize_magnetization_to_transfer_grid(
     cell_magnetization_xyz.assign(static_cast<size_t>(desc.cell_count()) * 3u, 0.0);
 
     for (uint32_t element_index = 0; element_index < ctx.n_elements; ++element_index) {
+        if (!ctx.magnetic_element_mask.empty() &&
+            ctx.magnetic_element_mask[element_index] == 0u) {
+            continue;
+        }
         const size_t base = static_cast<size_t>(element_index) * 4u;
         const std::array<uint32_t, 4> element = {
             ctx.elements[base + 0],
@@ -468,6 +477,24 @@ double max_norm_aos(const std::vector<double> &field_xyz) {
             vector_norm3(field_xyz[base + 0], field_xyz[base + 1], field_xyz[base + 2]));
     }
     return max_value;
+}
+
+void zero_non_magnetic_nodes_aos(
+    std::vector<double> &field_xyz,
+    const std::vector<uint8_t> &magnetic_node_mask)
+{
+    if (magnetic_node_mask.empty()) {
+        return;
+    }
+    const size_t n = field_xyz.size() / 3u;
+    for (size_t i = 0; i < n; ++i) {
+        if (magnetic_node_mask[i] == 0u) {
+            const size_t base = i * 3u;
+            field_xyz[base + 0] = 0.0;
+            field_xyz[base + 1] = 0.0;
+            field_xyz[base + 2] = 0.0;
+        }
+    }
 }
 
 double external_energy_from_field(
@@ -750,6 +777,9 @@ bool compute_demag_for_magnetization(
 
     h_demag_xyz.assign(static_cast<size_t>(ctx.n_nodes) * 3u, 0.0);
     for (uint32_t node = 0; node < ctx.n_nodes; ++node) {
+        if (!ctx.magnetic_node_mask.empty() && ctx.magnetic_node_mask[node] == 0u) {
+            continue;
+        }
         const Vec3 sampled = sample_cell_centered_vector_field(
             ctx.transfer_grid.demag_xyz,
             ctx.transfer_grid.desc,
@@ -1042,6 +1072,7 @@ bool context_step_exchange_heun_mfem(
         ctx.material.damping,
         k1,
         max_rhs_k1);
+    zero_non_magnetic_nodes_aos(k1, ctx.magnetic_node_mask);
 
     std::vector<double> predicted = ctx.m_xyz;
     for (size_t i = 0; i < predicted.size(); ++i) {
@@ -1073,6 +1104,7 @@ bool context_step_exchange_heun_mfem(
         ctx.material.damping,
         k2,
         max_rhs_k2);
+    zero_non_magnetic_nodes_aos(k2, ctx.magnetic_node_mask);
 
     std::vector<double> corrected = ctx.m_xyz;
     for (size_t i = 0; i < corrected.size(); ++i) {
@@ -1105,6 +1137,19 @@ bool context_step_exchange_heun_mfem(
     ctx.step_count += 1;
     ctx.mfem_exchange_ready = true;
 
+    // Compute post-step RHS from final corrected state (matches CPU metric).
+    std::vector<double> rhs_final;
+    double max_rhs_final = 0.0;
+    llg_rhs_aos(
+        ctx.m_xyz,
+        ctx.h_eff_xyz,
+        ctx.material.gyromagnetic_ratio,
+        ctx.material.damping,
+        rhs_final,
+        max_rhs_final);
+    zero_non_magnetic_nodes_aos(rhs_final, ctx.magnetic_node_mask);
+    max_rhs_final = max_norm_aos(rhs_final);
+
     stats.step = ctx.step_count;
     stats.time_seconds = ctx.current_time;
     stats.dt_seconds = dt_seconds;
@@ -1115,7 +1160,7 @@ bool context_step_exchange_heun_mfem(
         stats.exchange_energy_joules + stats.demag_energy_joules + stats.external_energy_joules;
     stats.max_effective_field_amplitude = max_norm_aos(ctx.h_eff_xyz);
     stats.max_demag_field_amplitude = max_norm_aos(ctx.h_demag_xyz);
-    stats.max_rhs_amplitude = std::max(max_rhs_k1, max_rhs_k2);
+    stats.max_rhs_amplitude = max_rhs_final;
     stats.demag_linear_iterations = 0;
     stats.demag_linear_residual = 0.0;
     stats.wall_time_ns = 0;

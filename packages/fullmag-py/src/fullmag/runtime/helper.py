@@ -78,6 +78,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 {
                     "ir": ir,
                     "default_until_seconds": loaded.default_until_seconds,
+                    "stages": [
+                        {
+                            "ir": stage.to_ir(
+                                requested_backend=simulation.backend,
+                                execution_mode=simulation.mode,
+                                execution_precision=simulation.precision,
+                                script_source=loaded.script_source,
+                            ),
+                            "default_until_seconds": stage.default_until_seconds,
+                            "entrypoint_kind": stage.entrypoint_kind,
+                        }
+                        for stage in (loaded.stages or ())
+                    ],
                 }
             )
         )

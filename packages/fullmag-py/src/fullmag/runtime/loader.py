@@ -10,12 +10,36 @@ from fullmag.model import Problem
 
 
 @dataclass(frozen=True, slots=True)
+class LoadedStage:
+    problem: Problem
+    entrypoint_kind: str
+    default_until_seconds: float | None = None
+
+    def to_ir(
+        self,
+        *,
+        requested_backend,
+        execution_mode,
+        execution_precision,
+        script_source: str,
+    ) -> dict[str, object]:
+        return self.problem.to_ir(
+            requested_backend=requested_backend,
+            execution_mode=execution_mode,
+            execution_precision=execution_precision,
+            script_source=script_source,
+            entrypoint_kind=self.entrypoint_kind,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class LoadedProblem:
     problem: Problem
     source_path: Path
     script_source: str
     entrypoint_kind: str
     default_until_seconds: float | None = None
+    stages: tuple[LoadedStage, ...] = ()
 
     def to_ir(
         self,
@@ -46,16 +70,24 @@ def load_problem_from_script(path: str | Path) -> LoadedProblem:
     try:
         spec.loader.exec_module(module)
         script_source = source_path.read_text(encoding="utf-8")
-        captured_problem, captured_entrypoint_kind, captured_default_until = (
-            world.finish_script_capture()
-        )
-        if captured_problem is not None:
+        captured_stages = world.finish_script_capture()
+        if captured_stages:
+            loaded_stages = tuple(
+                LoadedStage(
+                    problem=stage.problem,
+                    entrypoint_kind=stage.entrypoint_kind,
+                    default_until_seconds=stage.default_until_seconds,
+                )
+                for stage in captured_stages
+            )
+            final_stage = loaded_stages[-1]
             return LoadedProblem(
-                problem=captured_problem,
+                problem=final_stage.problem,
                 source_path=source_path,
                 script_source=script_source,
-                entrypoint_kind=captured_entrypoint_kind or "flat_run",
-                default_until_seconds=captured_default_until,
+                entrypoint_kind="flat_sequence" if len(loaded_stages) > 1 else final_stage.entrypoint_kind,
+                default_until_seconds=final_stage.default_until_seconds,
+                stages=loaded_stages,
             )
 
         problem, entrypoint_kind = _extract_problem(module)
@@ -65,6 +97,7 @@ def load_problem_from_script(path: str | Path) -> LoadedProblem:
             script_source=script_source,
             entrypoint_kind=entrypoint_kind,
             default_until_seconds=_extract_default_until(module),
+            stages=(),
         )
     finally:
         world.finish_script_capture()

@@ -288,6 +288,54 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(assets[0]["geometry_name"], "box")
         self.assertEqual(assets[0]["mesh"]["mesh_name"], "box")
 
+    def test_fem_backend_derives_mesh_hints_from_fdm_cell_when_missing(self) -> None:
+        geometry = fm.Box(size=(40e-9, 20e-9, 10e-9), name="box")
+        material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
+        magnet = fm.Ferromagnet(name="box", geometry=geometry, material=material)
+        problem = fm.Problem(
+            name="derived_fem_hints_problem",
+            magnets=[magnet],
+            energy=[fm.Exchange()],
+            study=fm.TimeEvolution(
+                dynamics=fm.LLG(),
+                outputs=[fm.SaveField("m", every=1e-12)],
+            ),
+            discretization=fm.DiscretizationHints(
+                fdm=fm.FDM(cell=(5e-9, 5e-9, 10e-9)),
+            ),
+        )
+
+        mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            ),
+            elements=np.asarray([[0, 1, 2, 3]], dtype=np.int32),
+            element_markers=np.asarray([1], dtype=np.int32),
+            boundary_faces=np.asarray([[0, 1, 2]], dtype=np.int32),
+            boundary_markers=np.asarray([1], dtype=np.int32),
+        )
+
+        with patch("fullmag.meshing.realize_fem_mesh_asset", return_value=mesh), patch(
+            "fullmag._core.validate_mesh_ir", return_value=True
+        ):
+            ir = problem.to_ir(requested_backend=fm.BackendTarget.FEM)
+
+        fem_hints = ir["backend_policy"]["discretization_hints"]["fem"]
+        self.assertEqual(fem_hints["order"], 1)
+        self.assertEqual(fem_hints["hmax"], 5e-9)
+        self.assertEqual(
+            ir["problem_meta"]["runtime_metadata"]["derived_discretization"]["policy"],
+            "fem_from_fdm_cell",
+        )
+        assets = ir["geometry_assets"]["fem_mesh_assets"]
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0]["geometry_name"], "box")
+
     def test_build_entrypoint_is_preferred(self) -> None:
         script = """
         import fullmag as fm
@@ -397,6 +445,68 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(loaded.entrypoint_kind, "flat_relax")
         self.assertIsNone(loaded.default_until_seconds)
         self.assertEqual(loaded.problem.study.to_ir()["kind"], "relaxation")
+
+    def test_flat_stage_sequence_is_supported(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fdm")
+        fm.cell(5e-9, 5e-9, 5e-9)
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        fm.solver(dt=1e-13)
+        fm.save("m", every=1e-12)
+        fm.relax(max_steps=25)
+        fm.run(4e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_flat_sequence.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path)
+
+        self.assertEqual(loaded.entrypoint_kind, "flat_sequence")
+        self.assertEqual(loaded.default_until_seconds, 4e-12)
+        self.assertEqual(len(loaded.stages), 2)
+        self.assertEqual(loaded.stages[0].entrypoint_kind, "flat_relax")
+        self.assertEqual(loaded.stages[1].entrypoint_kind, "flat_run")
+        self.assertEqual(loaded.stages[0].problem.study.to_ir()["kind"], "relaxation")
+        self.assertEqual(loaded.stages[1].problem.study.to_ir()["kind"], "time_evolution")
+
+    def test_flat_script_can_request_interactive_session(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fdm")
+        fm.interactive(True)
+        fm.cell(5e-9, 5e-9, 5e-9)
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        fm.solver(dt=1e-13)
+        fm.save("m", every=1e-12)
+        fm.run(4e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_flat_interactive.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path)
+
+        ir = loaded.stages[0].to_ir(
+            requested_backend=fm.BackendTarget.FDM,
+            execution_mode=fm.ExecutionMode.STRICT,
+            execution_precision=fm.ExecutionPrecision.DOUBLE,
+            script_source=loaded.script_source,
+        )
+        self.assertTrue(
+            ir["problem_meta"]["runtime_metadata"]["interactive_session_requested"]
+        )
 
     def test_llg_requires_supported_integrator_and_positive_timestep(self) -> None:
         with self.assertRaisesRegex(ValueError, "integrator must be one of"):
@@ -528,6 +638,66 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(captured["until_seconds"], 4e-12)
         self.assertEqual(captured["entrypoint_kind"], "flat_run")
+
+    def test_cli_executes_flat_stage_sequence_with_continuation(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fdm")
+        fm.cell(5e-9, 5e-9, 5e-9)
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        fm.solver(dt=1e-13)
+        fm.save("m", every=1e-12)
+        fm.relax(max_steps=25)
+        fm.run(4e-12)
+        """
+
+        calls: list[tuple[dict[str, object], float]] = []
+
+        def fake_run_problem_json(ir, until_seconds, output_dir):
+            calls.append((ir, until_seconds))
+            return {
+                "status": "completed",
+                "steps": [
+                    {
+                        "step": 1,
+                        "time": until_seconds,
+                        "dt": until_seconds,
+                        "e_ex": 1.0,
+                        "e_demag": 2.0,
+                        "e_ext": 0.0,
+                        "e_total": 3.0,
+                        "max_dm_dt": 4.0,
+                        "max_h_eff": 5.0,
+                        "wall_time_ns": 42,
+                    }
+                ],
+                "final_magnetization": [[1.0, 0.0, 0.0]],
+            }
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_cli_flat_sequence.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+
+            with patch(
+                "fullmag.runtime.cli.run_problem_json",
+                side_effect=fake_run_problem_json,
+            ):
+                exit_code = runtime_cli.main([str(path), "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(calls), 2)
+        self.assertAlmostEqual(calls[1][1], 4e-12)
+        self.assertEqual(calls[0][0]["problem_meta"]["entrypoint_kind"], "flat_relax")
+        self.assertEqual(calls[1][0]["problem_meta"]["entrypoint_kind"], "flat_run")
+        self.assertEqual(
+            calls[1][0]["magnets"][0]["initial_magnetization"]["kind"],
+            "sampled_field",
+        )
 
     def test_cli_json_mode_prints_machine_readable_summary(self) -> None:
         script = """
@@ -809,6 +979,45 @@ class ProblemApiTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["default_until_seconds"], 3e-12)
         self.assertEqual(payload["ir"]["problem_meta"]["name"], "runtime_config_problem")
+
+    def test_helper_exports_run_config_with_flat_stage_sequence(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fdm")
+        fm.cell(5e-9, 5e-9, 5e-9)
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        fm.solver(dt=1e-13)
+        fm.save("m", every=1e-12)
+        fm.relax(max_steps=25)
+        fm.run(4e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_run_config_sequence.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = runtime_helper.main(
+                    [
+                        "export-run-config",
+                        "--script",
+                        str(path),
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["ir"]["problem_meta"]["entrypoint_kind"], "flat_sequence")
+        self.assertEqual(len(payload["stages"]), 2)
+        self.assertEqual(payload["stages"][0]["entrypoint_kind"], "flat_relax")
+        self.assertEqual(payload["stages"][1]["entrypoint_kind"], "flat_run")
+        self.assertEqual(payload["stages"][1]["default_until_seconds"], 4e-12)
 
 
 if __name__ == "__main__":

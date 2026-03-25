@@ -7,9 +7,13 @@ use fullmag_engine::{
     CellSize, EffectiveFieldTerms, ExchangeLlgProblem, ExchangeLlgState, GridShape, LlgConfig,
     MaterialParameters, TimeIntegrator,
 };
-use fullmag_ir::{ExecutionPrecision, FdmPlanIR, IntegratorChoice, OutputIR};
+use fullmag_ir::{
+    ExecutionPrecision, FdmPlanIR, IntegratorChoice, OutputIR, RelaxationAlgorithmIR,
+};
 
-use crate::relaxation::relaxation_converged;
+use crate::relaxation::{
+    execute_nonlinear_cg, execute_projected_gradient_bb, relaxation_converged,
+};
 use crate::schedules::{
     advance_due_schedules, collect_field_schedules, collect_scalar_schedules, is_due, same_time,
     OutputSchedule,
@@ -158,87 +162,138 @@ fn execute_reference_fdm_impl(
     let mut fft_workspace = problem.create_workspace();
     let mut previous_total_energy = Some(observe_state(&problem, &state)?.total_energy);
 
-    while state.time_seconds < until_seconds {
-        let dt_step = dt.min(until_seconds - state.time_seconds);
+    // --- Dispatch on relaxation algorithm ---
+    let is_direct_minimization = plan.relaxation.as_ref().is_some_and(|control| {
+        matches!(
+            control.algorithm,
+            RelaxationAlgorithmIR::ProjectedGradientBb | RelaxationAlgorithmIR::NonlinearCg
+        )
+    });
+
+    if is_direct_minimization {
+        // Direct minimization: BB or NCG — bypasses LLG time-stepping
+        let control = plan.relaxation.as_ref().unwrap();
         let wall_start = Instant::now();
-        let report = problem
-            .step_with_workspace(&mut state, dt_step, &mut fft_workspace)
-            .map_err(|e| RunError {
-                message: format!("Step {}: {}", step_count, e),
-            })?;
-        let wall_elapsed = wall_start.elapsed().as_nanos() as u64;
-        step_count += 1;
-        let latest_stats = StepStats {
-            step: step_count,
-            time: report.time_seconds,
-            dt: report.dt_used,
-            e_ex: report.exchange_energy_joules,
-            e_demag: report.demag_energy_joules,
-            e_ext: report.external_energy_joules,
-            e_total: report.total_energy_joules,
-            max_dm_dt: report.max_rhs_amplitude,
-            max_h_eff: report.max_effective_field_amplitude,
-            max_h_demag: report.max_demag_field_amplitude,
-            wall_time_ns: wall_elapsed,
+
+        let result = match control.algorithm {
+            RelaxationAlgorithmIR::ProjectedGradientBb => execute_projected_gradient_bb(
+                &problem,
+                state.magnetization(),
+                &mut fft_workspace,
+                control,
+            ),
+            RelaxationAlgorithmIR::NonlinearCg => execute_nonlinear_cg(
+                &problem,
+                state.magnetization(),
+                &mut fft_workspace,
+                control,
+            ),
+            _ => unreachable!(),
         };
 
-        if !default_scalar_trace || !field_schedules.is_empty() {
-            record_due_outputs(
-                &problem,
-                &state,
-                step_count,
-                dt_step,
-                wall_elapsed,
-                &mut scalar_schedules,
-                &mut field_schedules,
-                &mut steps,
-                &mut field_snapshots,
-            )?;
-        }
+        let wall_elapsed = wall_start.elapsed().as_nanos() as u64;
 
-        if let Some((live_grid, field_every_n, on_step)) = live.as_mut() {
-            let observables = observe_state(&problem, &state)?;
-            let emit_every = (*field_every_n).max(1);
-            let include_field = step_count % emit_every == 0;
-            let magnetization = if include_field {
-                Some(
-                    observables
-                        .magnetization
-                        .iter()
-                        .flat_map(|vector| vector.iter().copied())
-                        .collect(),
-                )
-            } else {
-                None
+        // Update state with result
+        state
+            .set_magnetization(result.final_magnetization)
+            .map_err(|e| RunError {
+                message: format!("Setting relaxation result: {}", e),
+            })?;
+        step_count = result.steps_taken;
+
+        // Record final observables
+        let observables = observe_state(&problem, &state)?;
+        steps.push(make_step_stats(
+            step_count,
+            state.time_seconds,
+            0.0,
+            wall_elapsed,
+            &observables,
+        ));
+    } else {
+        // LLG overdamped (or no relaxation): existing time-stepping loop
+        while state.time_seconds < until_seconds {
+            let dt_step = dt.min(until_seconds - state.time_seconds);
+            let wall_start = Instant::now();
+            let report = problem
+                .step_with_workspace(&mut state, dt_step, &mut fft_workspace)
+                .map_err(|e| RunError {
+                    message: format!("Step {}: {}", step_count, e),
+                })?;
+            let wall_elapsed = wall_start.elapsed().as_nanos() as u64;
+            step_count += 1;
+            let latest_stats = StepStats {
+                step: step_count,
+                time: report.time_seconds,
+                dt: report.dt_used,
+                e_ex: report.exchange_energy_joules,
+                e_demag: report.demag_energy_joules,
+                e_ext: report.external_energy_joules,
+                e_total: report.total_energy_joules,
+                max_dm_dt: report.max_rhs_amplitude,
+                max_h_eff: report.max_effective_field_amplitude,
+                max_h_demag: report.max_demag_field_amplitude,
+                wall_time_ns: wall_elapsed,
             };
-            on_step(StepUpdate {
-                stats: make_step_stats(
+
+            if !default_scalar_trace || !field_schedules.is_empty() {
+                record_due_outputs(
+                    &problem,
+                    &state,
                     step_count,
-                    state.time_seconds,
                     dt_step,
                     wall_elapsed,
-                    &observables,
-                ),
-                grid: [live_grid[0], live_grid[1], live_grid[2]],
-                fem_mesh: None,
-                magnetization,
-                finished: false,
-            });
-        }
+                    &mut scalar_schedules,
+                    &mut field_schedules,
+                    &mut steps,
+                    &mut field_snapshots,
+                )?;
+            }
 
-        let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
-            step_count >= control.max_steps
-                || relaxation_converged(
-                    control,
-                    &latest_stats,
-                    previous_total_energy,
-                    plan.gyromagnetic_ratio,
-                    plan.material.damping,
-                )
-        });
-        previous_total_energy = Some(latest_stats.e_total);
-        if stop_for_relaxation {
-            break;
+            if let Some((live_grid, field_every_n, on_step)) = live.as_mut() {
+                let observables = observe_state(&problem, &state)?;
+                let emit_every = (*field_every_n).max(1);
+                let include_field = step_count % emit_every == 0;
+                let magnetization = if include_field {
+                    Some(
+                        observables
+                            .magnetization
+                            .iter()
+                            .flat_map(|vector| vector.iter().copied())
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
+                on_step(StepUpdate {
+                    stats: make_step_stats(
+                        step_count,
+                        state.time_seconds,
+                        dt_step,
+                        wall_elapsed,
+                        &observables,
+                    ),
+                    grid: [live_grid[0], live_grid[1], live_grid[2]],
+                    fem_mesh: None,
+                    magnetization,
+                    finished: false,
+                });
+            }
+
+            let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
+                step_count >= control.max_steps
+                    || relaxation_converged(
+                        control,
+                        &latest_stats,
+                        previous_total_energy,
+                        plan.gyromagnetic_ratio,
+                        plan.material.damping,
+                    )
+            });
+            previous_total_energy = Some(latest_stats.e_total);
+            if stop_for_relaxation {
+                break;
+            }
         }
     }
 

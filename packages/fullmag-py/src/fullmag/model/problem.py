@@ -6,7 +6,7 @@ from hashlib import sha256
 from typing import Any, Sequence
 
 from fullmag._validation import ensure_unique_names, require_non_empty
-from fullmag.model.discretization import DiscretizationHints
+from fullmag.model.discretization import DiscretizationHints, FEM
 from fullmag.model.dynamics import LLG
 from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Zeeman
 from fullmag.model.outputs import SaveField, SaveScalar
@@ -251,13 +251,20 @@ class Problem:
         materials = self._collect_materials()
         regions = self._collect_regions()
         geometries = self._collect_geometries()
+        discretization = self._resolve_discretization(runtime.backend_target)
         source_hash = sha256(script_source.encode("utf-8")).hexdigest() if script_source else None
         geometry_assets = self._build_geometry_assets(
             requested_backend=runtime.backend_target,
             geometries=geometries,
+            discretization=discretization,
         )
         runtime_metadata = dict(self.runtime_metadata)
         runtime_metadata["runtime_selection"] = runtime.to_runtime_metadata()
+        if self.discretization is not None and discretization is not self.discretization:
+            runtime_metadata["derived_discretization"] = {
+                "policy": "fem_from_fdm_cell",
+                "fem": discretization.fem.to_ir() if discretization.fem else None,
+            }
 
         return {
             "ir_version": IR_VERSION,
@@ -284,10 +291,37 @@ class Problem:
             "backend_policy": {
                 "requested_backend": runtime.backend_target.value,
                 "execution_precision": runtime.execution_precision.value,
-                "discretization_hints": self.discretization.to_ir() if self.discretization else None,
+                "discretization_hints": discretization.to_ir() if discretization else None,
             },
             "validation_profile": {"execution_mode": runtime.execution_mode.value},
         }
+
+    def _resolve_discretization(
+        self,
+        requested_backend: BackendTarget,
+    ) -> DiscretizationHints | None:
+        if self.discretization is None:
+            return None
+
+        if requested_backend != BackendTarget.FEM:
+            return self.discretization
+        if self.discretization.fem is not None:
+            return self.discretization
+
+        fdm = self.discretization.fdm
+        if fdm is None or fdm.default_cell is None:
+            return self.discretization
+
+        # Bootstrap policy: when the user requests FEM but only provides an
+        # FDM reference cell, derive a first mesh size from the finest FDM
+        # spacing. This keeps one script runnable on both backends, while more
+        # advanced meshing controls remain an explicit FEM API feature.
+        derived_fem = FEM(order=1, hmax=min(fdm.default_cell))
+        return DiscretizationHints(
+            fdm=self.discretization.fdm,
+            fem=derived_fem,
+            hybrid=self.discretization.hybrid,
+        )
 
     def _normalize_study(self) -> TimeEvolution | Relaxation:
         if self.study is not None and (self.dynamics is not None or self.outputs is not None):
@@ -371,8 +405,9 @@ class Problem:
         *,
         requested_backend: BackendTarget,
         geometries: Sequence[object],
+        discretization: DiscretizationHints | None,
     ) -> dict[str, Any] | None:
-        if self.discretization is None:
+        if discretization is None:
             return None
 
         assets: dict[str, list[dict[str, object]]] = {
@@ -380,31 +415,31 @@ class Problem:
             "fem_mesh_assets": [],
         }
 
-        if self.discretization.fdm is not None:
+        if discretization.fdm is not None:
             from fullmag.model.geometry import Cylinder, ImportedGeometry
             from fullmag.meshing import realize_fdm_grid_asset
 
             for geometry in geometries:
                 if isinstance(geometry, (Cylinder, ImportedGeometry)):
-                    asset = realize_fdm_grid_asset(geometry, self.discretization.fdm)
+                    asset = realize_fdm_grid_asset(geometry, discretization.fdm)
                     assets["fdm_grid_assets"].append(asset.to_ir(geometry.geometry_name))
 
         should_build_fem_assets = (
             requested_backend == BackendTarget.FEM
             or (
                 requested_backend == BackendTarget.AUTO
-                and self.discretization.fem is not None
-                and self.discretization.fem.mesh is not None
+                and discretization.fem is not None
+                and discretization.fem.mesh is not None
             )
         )
 
-        if should_build_fem_assets and self.discretization.fem is not None:
+        if should_build_fem_assets and discretization.fem is not None:
             from fullmag._core import validate_mesh_ir
             from fullmag.model.geometry import ImportedGeometry
             from fullmag.meshing import realize_fem_mesh_asset
 
             for geometry in geometries:
-                mesh_source = self.discretization.fem.mesh
+                mesh_source = discretization.fem.mesh
                 if mesh_source is None and isinstance(geometry, ImportedGeometry):
                     mesh_source = geometry.source
                 if mesh_source is not None:
@@ -415,7 +450,7 @@ class Problem:
                         }
                     )
                 else:
-                    mesh = realize_fem_mesh_asset(geometry, self.discretization.fem)
+                    mesh = realize_fem_mesh_asset(geometry, discretization.fem)
                     mesh_ir = mesh.to_ir(geometry.geometry_name)
                     is_valid = validate_mesh_ir(mesh_ir)
                     if is_valid is False:
