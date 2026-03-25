@@ -44,6 +44,18 @@ struct LayerGpuContext {
     cell_count: usize,
 }
 
+#[derive(Debug, Clone)]
+struct NativeStackedLayer {
+    native_grid: [usize; 3],
+    offset: [usize; 3],
+}
+
+struct NativeStackedCudaPlan {
+    combined_plan: FdmPlanIR,
+    layers: Vec<NativeStackedLayer>,
+    global_grid: [u32; 3],
+}
+
 pub(crate) fn execute_cuda_fdm_multilayer(
     plan: &FdmMultilayerPlanIR,
     until_seconds: f64,
@@ -96,6 +108,16 @@ fn execute_cuda_fdm_multilayer_impl(
         return Err(RunError {
             message: "CUDA-assisted multilayer FDM runner currently supports only the heun integrator".to_string(),
         });
+    }
+
+    if let Some(native_stacked) = build_native_stacked_cuda_plan(plan)? {
+        return execute_native_stacked_cuda_multilayer(
+            plan,
+            &native_stacked,
+            until_seconds,
+            outputs,
+            live,
+        );
     }
 
     let (contexts, mut states) = build_contexts_and_states(plan)?;
@@ -358,6 +380,305 @@ fn build_gpu_contexts(plan: &FdmMultilayerPlanIR) -> Result<Vec<LayerGpuContext>
             })
         })
         .collect()
+}
+
+fn build_native_stacked_cuda_plan(
+    plan: &FdmMultilayerPlanIR,
+) -> Result<Option<NativeStackedCudaPlan>, RunError> {
+    let Some(first_layer) = plan.layers.first() else {
+        return Ok(None);
+    };
+
+    let reference_material = &first_layer.material;
+    let reference_cell_size = first_layer.native_cell_size;
+    if plan.layers.iter().any(|layer| {
+        layer.material != *reference_material || layer.native_cell_size != reference_cell_size
+    }) {
+        return Ok(None);
+    }
+
+    let mut min_origin = first_layer.native_origin;
+    let mut max_extent = [
+        first_layer.native_origin[0] + first_layer.native_grid[0] as f64 * reference_cell_size[0],
+        first_layer.native_origin[1] + first_layer.native_grid[1] as f64 * reference_cell_size[1],
+        first_layer.native_origin[2] + first_layer.native_grid[2] as f64 * reference_cell_size[2],
+    ];
+    for layer in plan.layers.iter().skip(1) {
+        for axis in 0..3 {
+            min_origin[axis] = min_origin[axis].min(layer.native_origin[axis]);
+            max_extent[axis] = max_extent[axis].max(
+                layer.native_origin[axis]
+                    + layer.native_grid[axis] as f64 * reference_cell_size[axis],
+            );
+        }
+    }
+
+    let mut global_grid = [0u32; 3];
+    for axis in 0..3 {
+        let cells = (max_extent[axis] - min_origin[axis]) / reference_cell_size[axis];
+        let rounded = cells.round();
+        if (cells - rounded).abs() > 1e-6 || rounded < 1.0 {
+            return Ok(None);
+        }
+        global_grid[axis] = rounded as u32;
+    }
+
+    let global_grid_usize = [
+        global_grid[0] as usize,
+        global_grid[1] as usize,
+        global_grid[2] as usize,
+    ];
+    let total_cells = global_grid_usize[0] * global_grid_usize[1] * global_grid_usize[2];
+    let mut active_mask = vec![false; total_cells];
+    let mut region_mask = vec![0u32; total_cells];
+    let mut initial_magnetization = vec![[0.0, 0.0, 0.0]; total_cells];
+    let mut layers = Vec::with_capacity(plan.layers.len());
+
+    for (layer_index, layer) in plan.layers.iter().enumerate() {
+        let native_grid = [
+            layer.native_grid[0] as usize,
+            layer.native_grid[1] as usize,
+            layer.native_grid[2] as usize,
+        ];
+        let mut offset = [0usize; 3];
+        for axis in 0..3 {
+            let offset_cells =
+                (layer.native_origin[axis] - min_origin[axis]) / reference_cell_size[axis];
+            let rounded = offset_cells.round();
+            if (offset_cells - rounded).abs() > 1e-6 || rounded < 0.0 {
+                return Ok(None);
+            }
+            offset[axis] = rounded as usize;
+        }
+
+        for z in 0..native_grid[2] {
+            for y in 0..native_grid[1] {
+                for x in 0..native_grid[0] {
+                    let local_index = z * native_grid[1] * native_grid[0] + y * native_grid[0] + x;
+                    let is_active = layer
+                        .native_active_mask
+                        .as_ref()
+                        .map_or(true, |mask| mask[local_index]);
+                    if !is_active {
+                        continue;
+                    }
+
+                    let gx = offset[0] + x;
+                    let gy = offset[1] + y;
+                    let gz = offset[2] + z;
+                    if gx >= global_grid_usize[0]
+                        || gy >= global_grid_usize[1]
+                        || gz >= global_grid_usize[2]
+                    {
+                        return Ok(None);
+                    }
+                    let global_index = gz * global_grid_usize[1] * global_grid_usize[0]
+                        + gy * global_grid_usize[0]
+                        + gx;
+                    if active_mask[global_index] {
+                        return Err(RunError {
+                            message: format!(
+                                "native single-grid multilayer CUDA fast path encountered overlapping active cells between bodies near global cell ({gx}, {gy}, {gz})"
+                            ),
+                        });
+                    }
+                    active_mask[global_index] = true;
+                    region_mask[global_index] = (layer_index + 1) as u32;
+                    initial_magnetization[global_index] = layer.initial_magnetization[local_index];
+                }
+            }
+        }
+
+        layers.push(NativeStackedLayer {
+            native_grid,
+            offset,
+        });
+    }
+
+    Ok(Some(NativeStackedCudaPlan {
+        combined_plan: FdmPlanIR {
+            grid: GridDimensions { cells: global_grid },
+            cell_size: reference_cell_size,
+            region_mask,
+            active_mask: Some(active_mask),
+            initial_magnetization,
+            material: reference_material.clone(),
+            enable_exchange: plan.enable_exchange,
+            enable_demag: plan.enable_demag,
+            external_field: plan.external_field,
+            gyromagnetic_ratio: plan.gyromagnetic_ratio,
+            precision: plan.precision,
+            exchange_bc: plan.exchange_bc,
+            integrator: plan.integrator,
+            fixed_timestep: plan.fixed_timestep,
+            relaxation: plan.relaxation.clone(),
+        },
+        layers,
+        global_grid,
+    }))
+}
+
+fn execute_native_stacked_cuda_multilayer(
+    plan: &FdmMultilayerPlanIR,
+    native: &NativeStackedCudaPlan,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    mut live: Option<(&[u32; 3], &mut dyn FnMut(StepUpdate))>,
+) -> Result<ExecutedRun, RunError> {
+    let mut backend = NativeFdmBackend::create(&native.combined_plan)?;
+    let device_info = backend.device_info().ok();
+    let mut steps: Vec<StepStats> = Vec::new();
+    let mut field_snapshots: Vec<FieldSnapshot> = Vec::new();
+    let mut scalar_schedules = collect_scalar_schedules(outputs)?;
+    let mut field_schedules = collect_field_schedules(outputs)?;
+    let default_scalar_trace = scalar_schedules.is_empty();
+    let dt = native.combined_plan.fixed_timestep.unwrap_or(1e-13);
+    let initial_magnetization = flatten_layers(
+        &plan
+            .layers
+            .iter()
+            .map(|layer| layer.initial_magnetization.clone())
+            .collect::<Vec<_>>(),
+    );
+
+    let initial_observables = observe_native_stacked_cuda(&backend, native)?;
+    if default_scalar_trace {
+        steps.push(make_step_stats(0, 0.0, 0.0, 0, &initial_observables));
+    }
+    record_due_fields(
+        &initial_observables,
+        0,
+        0.0,
+        0.0,
+        &mut field_schedules,
+        &mut field_snapshots,
+    )?;
+
+    let mut previous_total_energy = Some(initial_observables.total_energy);
+    let mut latest_stats: Option<StepStats> = None;
+    while latest_stats.as_ref().map_or(0.0, |stats| stats.time) < until_seconds {
+        let current_time = latest_stats.as_ref().map_or(0.0, |stats| stats.time);
+        let dt_step = dt.min(until_seconds - current_time);
+        let stats = backend.step(dt_step)?;
+        let need_observables = default_scalar_trace
+            || scalar_schedules
+                .iter()
+                .any(|schedule| is_due(stats.time, schedule.next_time))
+            || field_schedules
+                .iter()
+                .any(|schedule| is_due(stats.time, schedule.next_time))
+            || live.is_some();
+        let observables = if need_observables {
+            Some(observe_native_stacked_cuda(&backend, native)?)
+        } else {
+            None
+        };
+
+        if default_scalar_trace
+            || scalar_schedules
+                .iter()
+                .any(|schedule| is_due(stats.time, schedule.next_time))
+        {
+            steps.push(stats.clone());
+            for schedule in &mut scalar_schedules {
+                if is_due(stats.time, schedule.next_time) {
+                    schedule.next_time += schedule.every_seconds;
+                }
+            }
+        }
+
+        if let Some(observables) = observables.as_ref() {
+            record_due_fields(
+                observables,
+                stats.step,
+                stats.time,
+                stats.dt,
+                &mut field_schedules,
+                &mut field_snapshots,
+            )?;
+            if let Some((_, on_step)) = live.as_mut() {
+                on_step(StepUpdate {
+                    stats: stats.clone(),
+                    grid: native.global_grid,
+                    fem_mesh: None,
+                    magnetization: None,
+                    finished: false,
+                });
+            }
+        } else if let Some((_, on_step)) = live.as_mut() {
+            on_step(StepUpdate {
+                stats: stats.clone(),
+                grid: native.global_grid,
+                fem_mesh: None,
+                magnetization: None,
+                finished: false,
+            });
+        }
+
+        let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
+            stats.step >= control.max_steps
+                || relaxation_converged(
+                    control,
+                    &stats,
+                    previous_total_energy,
+                    plan.gyromagnetic_ratio,
+                    native.combined_plan.material.damping,
+                )
+        });
+        previous_total_energy = Some(stats.e_total);
+        latest_stats = Some(stats);
+        if stop_for_relaxation {
+            break;
+        }
+    }
+
+    let final_observables = observe_native_stacked_cuda(&backend, native)?;
+    let final_stats = latest_stats.unwrap_or_else(|| make_step_stats(0, 0.0, 0.0, 0, &final_observables));
+    if !steps
+        .iter()
+        .any(|step| step.step == final_stats.step && (step.time - final_stats.time).abs() <= 1e-18)
+    {
+        steps.push(final_stats.clone());
+    }
+    for schedule in &mut field_schedules {
+        field_snapshots.push(FieldSnapshot {
+            name: schedule.name.clone(),
+            step: final_stats.step,
+            time: final_stats.time,
+            solver_dt: final_stats.dt,
+            values: select_field_values(&final_observables, &schedule.name)?,
+        });
+    }
+
+    Ok(ExecutedRun {
+        result: RunResult {
+            status: RunStatus::Completed,
+            steps,
+            final_magnetization: final_observables.magnetization.clone(),
+        },
+        initial_magnetization,
+        field_snapshots,
+        provenance: ExecutionProvenance {
+            execution_engine: "cuda_native_multilayer_single_grid".to_string(),
+            precision: "double".to_string(),
+            demag_operator_kind: if native.combined_plan.enable_demag {
+                Some("tensor_fft_newell".to_string())
+            } else {
+                None
+            },
+            fft_backend: if native.combined_plan.enable_demag {
+                Some("cuFFT".to_string())
+            } else {
+                None
+            },
+            device_name: device_info.as_ref().map(|info| info.name.clone()),
+            compute_capability: device_info
+                .as_ref()
+                .map(|info| info.compute_capability.clone()),
+            cuda_driver_version: device_info.as_ref().map(|info| info.driver_version),
+            cuda_runtime_version: device_info.as_ref().map(|info| info.runtime_version),
+        },
+    })
 }
 
 fn single_layer_cuda_plan(plan: &FdmMultilayerPlanIR, layer: &FdmLayerPlanIR) -> FdmPlanIR {
@@ -654,6 +975,129 @@ fn compute_demag_fields(
     zero
 }
 
+fn observe_native_stacked_cuda(
+    backend: &NativeFdmBackend,
+    native: &NativeStackedCudaPlan,
+) -> Result<StateObservables, RunError> {
+    let cell_count = native.combined_plan.initial_magnetization.len();
+    let magnetization_full = backend.copy_m(cell_count)?;
+    let exchange_full = backend.copy_h_ex(cell_count)?;
+    let demag_full = backend.copy_h_demag(cell_count)?;
+    let external_full = backend.copy_h_ext(cell_count)?;
+    let effective_full = backend.copy_h_eff(cell_count)?;
+    let active_mask = native.combined_plan.active_mask.as_deref();
+    let cell_volume = native.combined_plan.cell_size[0]
+        * native.combined_plan.cell_size[1]
+        * native.combined_plan.cell_size[2];
+    let ms = native.combined_plan.material.saturation_magnetisation;
+
+    let exchange_energy = if native.combined_plan.enable_exchange {
+        field_energy_from_full(&magnetization_full, &exchange_full, active_mask, ms, cell_volume)
+    } else {
+        0.0
+    };
+    let demag_energy = if native.combined_plan.enable_demag {
+        field_energy_from_full(&magnetization_full, &demag_full, active_mask, ms, cell_volume)
+    } else {
+        0.0
+    };
+    let external_energy = if native.combined_plan.external_field.is_some() {
+        field_energy_from_full(&magnetization_full, &external_full, active_mask, ms, cell_volume)
+    } else {
+        0.0
+    };
+
+    Ok(StateObservables {
+        magnetization: extract_native_stacked_field(&magnetization_full, native),
+        exchange_field: extract_native_stacked_field(&exchange_full, native),
+        demag_field: extract_native_stacked_field(&demag_full, native),
+        external_field: extract_native_stacked_field(&external_full, native),
+        effective_field: extract_native_stacked_field(&effective_full, native),
+        exchange_energy,
+        demag_energy,
+        external_energy,
+        total_energy: exchange_energy + demag_energy + external_energy,
+        max_dm_dt: max_rhs_norm_from_full(
+            &magnetization_full,
+            &effective_full,
+            active_mask,
+            native.combined_plan.material.damping,
+            native.combined_plan.gyromagnetic_ratio,
+        ),
+        max_h_eff: max_norm_from_full(&effective_full, active_mask),
+        max_h_demag: max_norm_from_full(&demag_full, active_mask),
+    })
+}
+
+fn extract_native_stacked_field(
+    full_field: &[[f64; 3]],
+    native: &NativeStackedCudaPlan,
+) -> Vec<[f64; 3]> {
+    let global_grid = [
+        native.global_grid[0] as usize,
+        native.global_grid[1] as usize,
+        native.global_grid[2] as usize,
+    ];
+    let mut values = Vec::new();
+    for layer in &native.layers {
+        for z in 0..layer.native_grid[2] {
+            for y in 0..layer.native_grid[1] {
+                for x in 0..layer.native_grid[0] {
+                    let gx = layer.offset[0] + x;
+                    let gy = layer.offset[1] + y;
+                    let gz = layer.offset[2] + z;
+                    let global_index =
+                        gz * global_grid[1] * global_grid[0] + gy * global_grid[0] + gx;
+                    values.push(full_field[global_index]);
+                }
+            }
+        }
+    }
+    values
+}
+
+fn field_energy_from_full(
+    magnetization: &[[f64; 3]],
+    field: &[[f64; 3]],
+    active_mask: Option<&[bool]>,
+    ms: f64,
+    cell_volume: f64,
+) -> f64 {
+    let mut sum = 0.0;
+    for index in 0..magnetization.len() {
+        if active_mask.is_some_and(|mask| !mask[index]) {
+            continue;
+        }
+        sum += -0.5 * MU0 * ms * dot(magnetization[index], field[index]) * cell_volume;
+    }
+    sum
+}
+
+fn max_norm_from_full(values: &[[f64; 3]], active_mask: Option<&[bool]>) -> f64 {
+    values
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| active_mask.is_none_or(|mask| mask[*index]))
+        .map(|(_, value)| norm(*value))
+        .fold(0.0, f64::max)
+}
+
+fn max_rhs_norm_from_full(
+    magnetization: &[[f64; 3]],
+    effective_field: &[[f64; 3]],
+    active_mask: Option<&[bool]>,
+    damping: f64,
+    gyromagnetic_ratio: f64,
+) -> f64 {
+    magnetization
+        .iter()
+        .zip(effective_field.iter())
+        .enumerate()
+        .filter(|(index, _)| active_mask.is_none_or(|mask| mask[*index]))
+        .map(|(_, (m, h))| norm(llg_rhs_from_field(*m, *h, damping, gyromagnetic_ratio)))
+        .fold(0.0, f64::max)
+}
+
 fn record_due_fields(
     observables: &StateObservables,
     step: u64,
@@ -892,6 +1336,69 @@ mod tests {
         }
     }
 
+    fn make_touching_plan() -> FdmMultilayerPlanIR {
+        FdmMultilayerPlanIR {
+            mode: "three_d".to_string(),
+            common_cells: [2, 1, 1],
+            layers: vec![
+                FdmLayerPlanIR {
+                    magnet_name: "bottom".to_string(),
+                    native_grid: [2, 1, 1],
+                    native_cell_size: [2e-9, 2e-9, 2e-9],
+                    native_origin: [0.0, 0.0, 0.0],
+                    native_active_mask: None,
+                    initial_magnetization: vec![[1.0, 0.0, 0.0]; 2],
+                    material: FdmMaterialIR {
+                        name: "Py".to_string(),
+                        saturation_magnetisation: 800e3,
+                        exchange_stiffness: 13e-12,
+                        damping: 0.1,
+                    },
+                    convolution_grid: [2, 1, 1],
+                    convolution_cell_size: [2e-9, 2e-9, 2e-9],
+                    convolution_origin: [0.0, 0.0, 0.0],
+                    transfer_kind: "identity".to_string(),
+                },
+                FdmLayerPlanIR {
+                    magnet_name: "top".to_string(),
+                    native_grid: [2, 1, 1],
+                    native_cell_size: [2e-9, 2e-9, 2e-9],
+                    native_origin: [0.0, 0.0, 2e-9],
+                    native_active_mask: None,
+                    initial_magnetization: vec![[0.0, 1.0, 0.0]; 2],
+                    material: FdmMaterialIR {
+                        name: "Py".to_string(),
+                        saturation_magnetisation: 800e3,
+                        exchange_stiffness: 13e-12,
+                        damping: 0.1,
+                    },
+                    convolution_grid: [2, 1, 1],
+                    convolution_cell_size: [2e-9, 2e-9, 2e-9],
+                    convolution_origin: [0.0, 0.0, 2e-9],
+                    transfer_kind: "identity".to_string(),
+                },
+            ],
+            enable_exchange: true,
+            enable_demag: true,
+            external_field: None,
+            gyromagnetic_ratio: 2.211e5,
+            precision: ExecutionPrecision::Double,
+            exchange_bc: ExchangeBoundaryCondition::Neumann,
+            integrator: IntegratorChoice::Heun,
+            fixed_timestep: Some(1e-13),
+            relaxation: None,
+            planner_summary: fullmag_ir::FdmMultilayerSummaryIR {
+                requested_strategy: "multilayer_convolution".to_string(),
+                selected_strategy: "multilayer_convolution".to_string(),
+                eligibility: "eligible".to_string(),
+                estimated_pair_kernels: 4,
+                estimated_unique_kernels: 1,
+                estimated_kernel_bytes: 0,
+                warnings: Vec::new(),
+            },
+        }
+    }
+
     #[test]
     fn cuda_assisted_multilayer_tracks_cpu_reference_when_cuda_is_available() {
         if !is_cuda_available() {
@@ -911,6 +1418,48 @@ mod tests {
         assert!(
             rel_gap < 5e-3,
             "cuda-assisted multilayer should stay close to cpu reference; rel_gap={rel_gap} cpu={} cuda={}",
+            cpu_final.e_total,
+            cuda_final.e_total
+        );
+        assert_eq!(
+            cuda.provenance.execution_engine,
+            "cuda_native_multilayer_single_grid"
+        );
+    }
+
+    #[test]
+    fn native_single_grid_multilayer_preserves_inter_body_exchange_barrier() {
+        if !is_cuda_available() {
+            eprintln!("skipping touching multilayer test: CUDA backend is not available");
+            return;
+        }
+
+        let plan = make_touching_plan();
+        let cpu = multilayer_reference::execute_reference_fdm_multilayer(&plan, 1e-13, &[])
+            .expect("cpu multilayer");
+        let cuda = execute_cuda_fdm_multilayer(&plan, 1e-13, &[])
+            .expect("cuda multilayer");
+
+        let cpu_initial = cpu.result.steps.first().expect("cpu initial");
+        let cuda_initial = cuda.result.steps.first().expect("cuda initial");
+        assert!(
+            cpu_initial.e_ex.abs() <= 1e-24,
+            "touching CPU baseline should have zero inter-body exchange, got {}",
+            cpu_initial.e_ex
+        );
+        assert!(
+            cuda_initial.e_ex.abs() <= 1e-24,
+            "native CUDA combined-grid path should keep exchange barrier across touching bodies, got {}",
+            cuda_initial.e_ex
+        );
+
+        let cpu_final = cpu.result.steps.last().expect("cpu final");
+        let cuda_final = cuda.result.steps.last().expect("cuda final");
+        let rel_gap = (cuda_final.e_total - cpu_final.e_total).abs()
+            / cpu_final.e_total.abs().max(1e-30);
+        assert!(
+            rel_gap < 5e-3,
+            "touching-body native CUDA path should stay close to CPU multilayer reference; rel_gap={rel_gap} cpu={} cuda={}",
             cpu_final.e_total,
             cuda_final.e_total
         );

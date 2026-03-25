@@ -79,6 +79,11 @@ impl NativeFdmBackend {
                 .map(|is_active| if *is_active { 1u8 } else { 0u8 })
                 .collect()
         });
+        let region_mask_flat = if plan.region_mask.is_empty() {
+            None
+        } else {
+            Some(plan.region_mask.clone())
+        };
         let demag_kernel_spectra = if plan.enable_demag {
             if plan.grid.cells[2] == 1 {
                 Some(fullmag_engine::compute_newell_kernel_spectra_thin_film_2d(
@@ -136,6 +141,12 @@ impl NativeFdmBackend {
                 .as_ref()
                 .map_or(std::ptr::null(), |mask| mask.as_ptr()),
             active_mask_len: active_mask_flat
+                .as_ref()
+                .map_or(0, |mask| mask.len() as u64),
+            region_mask: region_mask_flat
+                .as_ref()
+                .map_or(std::ptr::null(), |mask| mask.as_ptr()),
+            region_mask_len: region_mask_flat
                 .as_ref()
                 .map_or(0, |mask| mask.len() as u64),
             initial_magnetization_xyz: m_flat.as_ptr(),

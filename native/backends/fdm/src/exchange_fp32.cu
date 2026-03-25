@@ -22,11 +22,13 @@ __global__ void exchange_field_fp32_kernel(
     const float * __restrict__ my,
     const float * __restrict__ mz,
     const uint8_t * __restrict__ active_mask,
+    const uint32_t * __restrict__ region_mask,
     float * __restrict__ hx,
     float * __restrict__ hy,
     float * __restrict__ hz,
     int nx, int ny, int nz,
     int has_active_mask,
+    int has_region_mask,
     float inv_dx2, float inv_dy2, float inv_dz2,
     float prefactor)
 {
@@ -46,6 +48,8 @@ __global__ void exchange_field_fp32_kernel(
         return;
     }
 
+    uint32_t center_region = has_region_mask ? region_mask[idx] : 0u;
+
     int xm = (x > 0)      ? idx - 1        : idx;
     int xp = (x < nx - 1) ? idx + 1        : idx;
     int ym = (y > 0)      ? idx - nx       : idx;
@@ -60,6 +64,14 @@ __global__ void exchange_field_fp32_kernel(
         if (active_mask[yp] == 0) yp = idx;
         if (active_mask[zm] == 0) zm = idx;
         if (active_mask[zp] == 0) zp = idx;
+    }
+    if (has_region_mask) {
+        if (region_mask[xm] != center_region) xm = idx;
+        if (region_mask[xp] != center_region) xp = idx;
+        if (region_mask[ym] != center_region) ym = idx;
+        if (region_mask[yp] != center_region) yp = idx;
+        if (region_mask[zm] != center_region) zm = idx;
+        if (region_mask[zp] != center_region) zp = idx;
     }
 
     float cx = mx[idx], cy = my[idx], cz = mz[idx];
@@ -100,11 +112,13 @@ void launch_exchange_field_fp32(Context &ctx) {
         static_cast<const float*>(ctx.m.y),
         static_cast<const float*>(ctx.m.z),
         ctx.active_mask,
+        ctx.region_mask,
         static_cast<float*>(ctx.h_ex.x),
         static_cast<float*>(ctx.h_ex.y),
         static_cast<float*>(ctx.h_ex.z),
         ctx.nx, ctx.ny, ctx.nz,
         ctx.has_active_mask ? 1 : 0,
+        ctx.has_region_mask ? 1 : 0,
         inv_dx2, inv_dy2, inv_dz2,
         prefactor);
 }

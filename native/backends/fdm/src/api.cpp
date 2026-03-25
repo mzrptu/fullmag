@@ -109,6 +109,7 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
     ctx->enable_demag = plan->enable_demag != 0;
     ctx->has_external_field = plan->has_external_field != 0;
     ctx->has_active_mask = plan->active_mask != nullptr;
+    ctx->has_region_mask = plan->region_mask != nullptr;
     ctx->has_demag_tensor_kernel = plan->demag_kernel_spectrum_len != 0;
     ctx->external_field[0] = plan->external_field_am[0];
     ctx->external_field[1] = plan->external_field_am[1];
@@ -133,6 +134,12 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
             + ", got " + std::to_string(plan->active_mask_len);
         return reinterpret_cast<fullmag_fdm_backend *>(ctx);
     }
+    if (ctx->has_region_mask && plan->region_mask_len != ctx->cell_count) {
+        ctx->last_error = "region_mask_len mismatch: expected "
+            + std::to_string(ctx->cell_count)
+            + ", got " + std::to_string(plan->region_mask_len);
+        return reinterpret_cast<fullmag_fdm_backend *>(ctx);
+    }
     if (ctx->has_active_mask) {
         ctx->active_mask_host.assign(plan->active_mask, plan->active_mask + plan->active_mask_len);
         ctx->active_cell_count = 0;
@@ -141,6 +148,9 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
                 ctx->active_cell_count++;
             }
         }
+    }
+    if (ctx->has_region_mask) {
+        ctx->region_mask_host.assign(plan->region_mask, plan->region_mask + plan->region_mask_len);
     }
     uint64_t expected_fft_cell_count_3d =
         static_cast<uint64_t>(ctx->nx * 2) * (ctx->ny * 2) * (ctx->nz * 2);
@@ -177,6 +187,11 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
 
     if (ctx->has_active_mask &&
         !context_upload_active_mask(*ctx, plan->active_mask, plan->active_mask_len))
+    {
+        return reinterpret_cast<fullmag_fdm_backend *>(ctx);
+    }
+    if (ctx->has_region_mask &&
+        !context_upload_region_mask(*ctx, plan->region_mask, plan->region_mask_len))
     {
         return reinterpret_cast<fullmag_fdm_backend *>(ctx);
     }

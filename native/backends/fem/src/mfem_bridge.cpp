@@ -697,6 +697,8 @@ bool ensure_transfer_grid_backend(
         static_cast<uint64_t>(ctx.transfer_grid.kernel_xx_spectrum.size()),
         ctx.transfer_grid.active_mask.data(),
         static_cast<uint64_t>(ctx.transfer_grid.active_mask.size()),
+        nullptr,  // region_mask — not used for FEM transfer grid
+        0,        // region_mask_len
         ctx.transfer_grid.magnetization_xyz.data(),
         static_cast<uint64_t>(ctx.transfer_grid.magnetization_xyz.size()),
     };

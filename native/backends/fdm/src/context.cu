@@ -107,6 +107,26 @@ static void free_active_mask(Context &ctx) {
     }
 }
 
+static bool alloc_region_mask(Context &ctx) {
+    if (!ctx.has_region_mask) {
+        return true;
+    }
+    size_t bytes = ctx.cell_count * sizeof(uint32_t);
+    cudaError_t err = cudaMalloc(reinterpret_cast<void **>(&ctx.region_mask), bytes);
+    if (err != cudaSuccess) {
+        set_cuda_error(ctx, "cudaMalloc(region_mask)", err);
+        return false;
+    }
+    return true;
+}
+
+static void free_region_mask(Context &ctx) {
+    if (ctx.region_mask) {
+        cudaFree(ctx.region_mask);
+        ctx.region_mask = nullptr;
+    }
+}
+
 static bool alloc_reduction_scratch(Context &ctx) {
     cudaError_t err = cudaMalloc(reinterpret_cast<void **>(&ctx.reduction_scratch),
         ctx.cell_count * sizeof(double));
@@ -217,6 +237,7 @@ static void free_fft_workspace(Context &ctx) {
 
 bool context_alloc_device(Context &ctx) {
     if (!alloc_active_mask(ctx)) return false;
+    if (!alloc_region_mask(ctx)) return false;
     if (!alloc_reduction_scratch(ctx)) return false;
     if (!alloc_vector_field(ctx, ctx.m))    return false;
     if (!alloc_vector_field(ctx, ctx.h_ex)) return false;
@@ -258,6 +279,7 @@ void context_free_device(Context &ctx) {
     free_fft_workspace(ctx);
     free_demag_kernel(ctx);
     free_active_mask(ctx);
+    free_region_mask(ctx);
     free_reduction_scratch(ctx);
 }
 
@@ -276,6 +298,26 @@ bool context_upload_active_mask(Context &ctx, const uint8_t *mask, uint64_t len)
         cudaMemcpyHostToDevice);
     if (err != cudaSuccess) {
         set_cuda_error(ctx, "cudaMemcpy(active_mask)", err);
+        return false;
+    }
+    return true;
+}
+
+bool context_upload_region_mask(Context &ctx, const uint32_t *mask, uint64_t len) {
+    if (!ctx.has_region_mask) {
+        return true;
+    }
+    if (!mask || len != ctx.cell_count) {
+        ctx.last_error = "region_mask length mismatch";
+        return false;
+    }
+    cudaError_t err = cudaMemcpy(
+        ctx.region_mask,
+        mask,
+        ctx.cell_count * sizeof(uint32_t),
+        cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+        set_cuda_error(ctx, "cudaMemcpy(region_mask)", err);
         return false;
     }
     return true;

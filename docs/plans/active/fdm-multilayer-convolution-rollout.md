@@ -11,7 +11,8 @@ trybie `multilayer_convolution`, ale tylko dla ograniczonego, uczciwie opisanego
 - body-local `Exchange()`,
 - globalne `Demag()` pomiędzy ciałami,
 - planowanie przez `BackendPlanIR::FdmMultilayer(...)`,
-- wykonanie przez CPU reference runner oraz publiczny `cuda-assisted` runner,
+- wykonanie przez CPU reference runner, publiczny `cuda-assisted` runner oraz
+  native CUDA single-grid fast path dla kompatybilnych z-stacków,
 - translacje geometrii przez `Translate`,
 - przykład end-to-end:
   [examples/fdm_multibody_two_layer_stack.py](/home/kkingstoun/git/fullmag/fullmag/examples/fdm_multibody_two_layer_stack.py)
@@ -33,12 +34,16 @@ obsługiwane są tylko:
 - `Box`, `Cylinder`, `Difference` oraz opcjonalne `Translate`,
 - `ImportedGeometry` tylko przez precomputed FDM grid asset,
 - `Heun` + `double`,
-- CPU reference oraz runner `cuda-assisted`, w którym local exchange per body idzie przez
-  native CUDA FDM, a globalny cross-body demag pozostaje na istniejącym runtime konwolucyjnym.
+- CPU reference oraz dwa tory CUDA:
+  - `cuda_native_multilayer_single_grid` dla kompatybilnych z-stacków dających się złożyć do
+    jednego globalnego grida z `active_mask + region_mask`,
+  - `cuda-assisted_multilayer` jako fallback, gdzie local exchange per body idzie przez
+    native CUDA FDM, a globalny cross-body demag pozostaje na istniejącym runtime konwolucyjnym.
 
 Jeszcze **nie** są gotowe:
 
-- pełny native multilayer demag path w ABI/CUDA C backendzie,
+- pełny natywny ABI/CUDA path dla heterogenicznych multilayer cases, które nie mieszczą się w
+  single-grid fast path,
 - warstwy z przesunięciem w `x/y`,
 - `Union` / `Intersection` w publicznym plannerze multilayer,
 - inter-body exchange / explicit couplings,

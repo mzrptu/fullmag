@@ -125,11 +125,13 @@ __global__ void exchange_energy_blocks_kernel(
     const Scalar *my,
     const Scalar *mz,
     const uint8_t *active_mask,
+    const uint32_t *region_mask,
     double *block_out,
     int nx,
     int ny,
     int nz,
     int has_active_mask,
+    int has_region_mask,
     double a_times_v,
     double inv_dx2,
     double inv_dy2,
@@ -145,6 +147,7 @@ __global__ void exchange_energy_blocks_kernel(
         if (has_active_mask && active_mask[idx] == 0) {
             continue;
         }
+        uint32_t center_region = has_region_mask ? region_mask[idx] : 0u;
         int z = static_cast<int>(idx / (static_cast<uint64_t>(ny) * nx));
         int rem = static_cast<int>(idx - static_cast<uint64_t>(z) * ny * nx);
         int y = rem / nx;
@@ -156,7 +159,8 @@ __global__ void exchange_energy_blocks_kernel(
 
         if (x + 1 < nx) {
             uint64_t ni = idx + 1;
-            if (!has_active_mask || active_mask[ni] != 0) {
+            if ((!has_active_mask || active_mask[ni] != 0)
+                && (!has_region_mask || region_mask[ni] == center_region)) {
                 double dx_ = to_f64(mx[ni]) - cx;
                 double dy_ = to_f64(my[ni]) - cy;
                 double dz_ = to_f64(mz[ni]) - cz;
@@ -165,7 +169,8 @@ __global__ void exchange_energy_blocks_kernel(
         }
         if (y + 1 < ny) {
             uint64_t ni = idx + nx;
-            if (!has_active_mask || active_mask[ni] != 0) {
+            if ((!has_active_mask || active_mask[ni] != 0)
+                && (!has_region_mask || region_mask[ni] == center_region)) {
                 double dx_ = to_f64(mx[ni]) - cx;
                 double dy_ = to_f64(my[ni]) - cy;
                 double dz_ = to_f64(mz[ni]) - cz;
@@ -174,7 +179,8 @@ __global__ void exchange_energy_blocks_kernel(
         }
         if (z + 1 < nz) {
             uint64_t ni = idx + static_cast<uint64_t>(nx) * ny;
-            if (!has_active_mask || active_mask[ni] != 0) {
+            if ((!has_active_mask || active_mask[ni] != 0)
+                && (!has_region_mask || region_mask[ni] == center_region)) {
                 double dx_ = to_f64(mx[ni]) - cx;
                 double dy_ = to_f64(my[ni]) - cy;
                 double dz_ = to_f64(mz[ni]) - cz;
@@ -347,11 +353,13 @@ double reduce_exchange_energy_fp64(Context &ctx) {
         static_cast<const double *>(ctx.m.y),
         static_cast<const double *>(ctx.m.z),
         ctx.active_mask,
+        ctx.region_mask,
         ctx.reduction_scratch,
         static_cast<int>(ctx.nx),
         static_cast<int>(ctx.ny),
         static_cast<int>(ctx.nz),
         ctx.has_active_mask ? 1 : 0,
+        ctx.has_region_mask ? 1 : 0,
         ctx.A * cell_volume,
         1.0 / (ctx.dx * ctx.dx),
         1.0 / (ctx.dy * ctx.dy),
@@ -367,11 +375,13 @@ double reduce_exchange_energy_fp32(Context &ctx) {
         static_cast<const float *>(ctx.m.y),
         static_cast<const float *>(ctx.m.z),
         ctx.active_mask,
+        ctx.region_mask,
         ctx.reduction_scratch,
         static_cast<int>(ctx.nx),
         static_cast<int>(ctx.ny),
         static_cast<int>(ctx.nz),
         ctx.has_active_mask ? 1 : 0,
+        ctx.has_region_mask ? 1 : 0,
         ctx.A * cell_volume,
         1.0 / (ctx.dx * ctx.dx),
         1.0 / (ctx.dy * ctx.dy),

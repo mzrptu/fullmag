@@ -102,6 +102,15 @@ typedef struct {
     const uint8_t             *active_mask;
     uint64_t                   active_mask_len; /* = cell_count when present */
 
+    /*
+     * Optional region/body ids for exchange barriers.
+     * Neighboring active cells with different non-zero region ids are treated
+     * as a sharp inter-body interface, i.e. exchange sees a free surface.
+     * Length must equal cell_count when present.
+     */
+    const uint32_t            *region_mask;
+    uint64_t                   region_mask_len;
+
     /* Initial m in AoS layout: [m0x, m0y, m0z, m1x, m1y, m1z, ...] */
     const double              *initial_magnetization_xyz;
     uint64_t                   initial_magnetization_len; /* = 3 * cell_count */

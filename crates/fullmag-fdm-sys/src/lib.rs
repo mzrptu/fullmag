@@ -81,6 +81,8 @@ pub struct fullmag_fdm_plan_desc {
     pub demag_kernel_spectrum_len: u64,
     pub active_mask: *const u8,
     pub active_mask_len: u64,
+    pub region_mask: *const u32,
+    pub region_mask_len: u64,
     pub initial_magnetization_xyz: *const f64,
     pub initial_magnetization_len: u64,
 }

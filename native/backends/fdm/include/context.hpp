@@ -50,6 +50,7 @@ struct Context {
     bool enable_demag = false;
     bool has_external_field = false;
     bool has_active_mask = false;
+    bool has_region_mask = false;
     bool has_demag_tensor_kernel = false;
     bool thin_film_2d_demag = false;
     double external_field[3] = {0.0, 0.0, 0.0};
@@ -71,9 +72,11 @@ struct Context {
     DeviceVectorField tmp;    // predictor state
     DeviceVectorField work;   // effective field / scratch
     uint8_t *active_mask = nullptr;
+    uint32_t *region_mask = nullptr;
     double *reduction_scratch = nullptr;
     uint64_t reduction_scratch_len = 0;
     std::vector<uint8_t> active_mask_host;
+    std::vector<uint32_t> region_mask_host;
 
     // Demag FFT resources
     uint32_t fft_nx = 0;
@@ -108,6 +111,9 @@ bool context_upload_magnetization(Context &ctx, const double *m_xyz, uint64_t le
 
 /// Upload active cell mask (host u8 -> device u8).
 bool context_upload_active_mask(Context &ctx, const uint8_t *mask, uint64_t len);
+
+/// Upload region ids (host u32 -> device u32).
+bool context_upload_region_mask(Context &ctx, const uint32_t *mask, uint64_t len);
 
 /// Upload precomputed Newell tensor spectra (host f64 interleaved complex -> device complex).
 bool context_upload_demag_kernel_spectra(
