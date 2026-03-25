@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <cstring>
 
+#if FULLMAG_HAS_CUDA_RUNTIME
+#include <cuda_runtime.h>
+#endif
+
 namespace fullmag::fem {
 
 namespace {
@@ -190,11 +194,30 @@ int context_copy_field_f64(
 void context_populate_device_info(Context &ctx) {
     std::memset(&ctx.device_info_cache, 0, sizeof(ctx.device_info_cache));
 #if FULLMAG_HAS_MFEM_STACK
+    std::string backend_name = ctx.mfem_exchange_ready
+        ? (ctx.enable_demag ? "mfem_cuda_transfer_grid_demag_ready" : "mfem_cuda_exchange_ready")
+        : (ctx.mfem_ready ? "mfem_cuda_mesh_ready" : "mfem_stack_uninitialized");
+#if FULLMAG_HAS_CUDA_RUNTIME
+    if (ctx.mfem_selected_device_index >= 0) {
+        cudaDeviceProp props{};
+        int driver_version = 0;
+        int runtime_version = 0;
+        if (cudaGetDeviceProperties(&props, ctx.mfem_selected_device_index) == cudaSuccess) {
+            backend_name = std::string(props.name);
+            ctx.device_info_cache.compute_capability_major = props.major;
+            ctx.device_info_cache.compute_capability_minor = props.minor;
+        }
+        if (cudaDriverGetVersion(&driver_version) == cudaSuccess) {
+            ctx.device_info_cache.driver_version = driver_version;
+        }
+        if (cudaRuntimeGetVersion(&runtime_version) == cudaSuccess) {
+            ctx.device_info_cache.runtime_version = runtime_version;
+        }
+    }
+#endif
     std::strncpy(
         ctx.device_info_cache.name,
-        ctx.mfem_exchange_ready
-            ? (ctx.enable_demag ? "mfem_transfer_grid_demag_ready" : "mfem_exchange_ready")
-            : (ctx.mfem_ready ? "mfem_stack_mesh_ready" : "mfem_stack_uninitialized"),
+        backend_name.c_str(),
         sizeof(ctx.device_info_cache.name) - 1);
     ctx.device_info_cache.is_gpu_enabled = 1;
 #else

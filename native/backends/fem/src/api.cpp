@@ -3,7 +3,13 @@
 #include "context.hpp"
 
 #include <cstring>
+#include <cstdlib>
+#include <optional>
 #include <string>
+
+#if FULLMAG_HAS_CUDA_RUNTIME
+#include <cuda_runtime.h>
+#endif
 
 void fullmag_fem_set_global_error(const std::string &message);
 void fullmag_fem_clear_global_error();
@@ -15,12 +21,37 @@ namespace {
 constexpr const char *kUnavailableMessage =
     "fullmag_fem native backend was built without the MFEM stack; rebuild with FULLMAG_USE_MFEM_STACK=ON and an installed MFEM toolchain";
 
+std::optional<int> selected_cuda_device_from_env() {
+    const char *specific = std::getenv("FULLMAG_FEM_GPU_INDEX");
+    const char *generic = std::getenv("FULLMAG_CUDA_DEVICE_INDEX");
+    const char *raw = specific != nullptr ? specific : generic;
+    if (raw == nullptr || *raw == '\0') {
+        return std::nullopt;
+    }
+    char *end = nullptr;
+    const long parsed = std::strtol(raw, &end, 10);
+    if (end == raw || *end != '\0' || parsed < 0) {
+        return std::nullopt;
+    }
+    return static_cast<int>(parsed);
+}
+
 } // namespace
 
 extern "C" {
 
 int fullmag_fem_is_available(void) {
 #if FULLMAG_HAS_MFEM_STACK
+#if FULLMAG_HAS_CUDA_RUNTIME
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count <= 0) {
+        return 0;
+    }
+    const auto selected = selected_cuda_device_from_env();
+    if (selected.has_value() && (*selected < 0 || *selected >= device_count)) {
+        return 0;
+    }
+#endif
     return 1;
 #else
     return 0;

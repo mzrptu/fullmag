@@ -46,7 +46,10 @@ fn main() {
         .arg(&native_root)
         .arg("-B")
         .arg(&build_dir)
-        .arg("-DFULLMAG_ENABLE_CUDA=OFF")
+        .arg(format!(
+            "-DFULLMAG_ENABLE_CUDA={}",
+            if use_mfem_stack { "ON" } else { "OFF" }
+        ))
         .arg("-DFULLMAG_ENABLE_FEM_GPU=ON")
         .arg(format!(
             "-DFULLMAG_USE_MFEM_STACK={}",
@@ -84,6 +87,21 @@ fn main() {
         "cargo:rustc-link-search=native={}",
         build_dir.join("backends/fem").display()
     );
+    println!(
+        "cargo:rustc-link-search=native={}",
+        build_dir.join("backends/fdm").display()
+    );
     println!("cargo:rustc-link-lib=dylib=fullmag_fem");
+    if use_mfem_stack {
+        println!("cargo:rustc-link-lib=dylib=fullmag_fdm");
+    }
     println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
+    println!(
+        "cargo:rustc-link-arg=-Wl,-rpath,{}",
+        build_dir.join("backends/fem").display()
+    );
+    println!(
+        "cargo:rustc-link-arg=-Wl,-rpath,{}",
+        build_dir.join("backends/fdm").display()
+    );
 }

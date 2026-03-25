@@ -17,7 +17,7 @@
 ## 1. Problem statement
 
 This note freezes the **bootstrap executable FEM demagnetization paths** used by the CPU
-reference engine.
+reference engine and by the current native MFEM executable seam.
 
 The long-term FEM demagnetization direction for Fullmag remains:
 
@@ -58,6 +58,10 @@ At the time of writing, the executable `fullmag` FEM runner uses:
 - FEM Zeeman on the mesh,
 - **transfer-grid exact tensor demag** for `H_demag` / `E_demag`,
 - `LLG(heun)` in the bootstrap CPU-reference path.
+
+When the native MFEM backend is available, the same executable bootstrap contract is reused
+there too: exchange stays on the FEM mesh, while demag is still supplied through the
+transfer-grid demag seam rather than through the final mesh-native hypre/open-boundary solver.
 
 The older Robin scalar-potential solve remains in the engine as a reference seam and fallback for
 non-runner experimentation, but it is no longer the preferred executable path for cross-backend

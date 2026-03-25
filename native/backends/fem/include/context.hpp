@@ -85,7 +85,9 @@ struct Context {
     std::vector<double> mfem_h_ex_z;
     std::vector<double> mfem_lumped_mass;
 
+    int mfem_selected_device_index = -1;
     void *mfem_mesh = nullptr;
+    void *mfem_device = nullptr;
     void *mfem_fec = nullptr;
     void *mfem_fes = nullptr;
     void *mfem_gf_mx = nullptr;

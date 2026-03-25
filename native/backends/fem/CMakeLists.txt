@@ -16,6 +16,14 @@ set(FEM_SOURCES
     src/error.cpp
 )
 
+if(FULLMAG_USE_MFEM_STACK)
+    find_package(MFEM CONFIG REQUIRED)
+
+    list(APPEND FEM_SOURCES
+        src/mfem_bridge.cpp
+    )
+endif()
+
 add_library(fullmag_fem SHARED ${FEM_SOURCES})
 
 target_include_directories(fullmag_fem
@@ -26,13 +34,13 @@ target_include_directories(fullmag_fem
 )
 
 if(FULLMAG_USE_MFEM_STACK)
-    find_package(MFEM CONFIG REQUIRED)
-
-    list(APPEND FEM_SOURCES
-        src/mfem_bridge.cpp
-    )
-
     target_compile_definitions(fullmag_fem PRIVATE FULLMAG_HAS_MFEM_STACK=1)
+    if(FULLMAG_ENABLE_CUDA)
+        target_compile_definitions(fullmag_fem PRIVATE FULLMAG_HAS_CUDA_RUNTIME=1)
+        target_link_libraries(fullmag_fem PRIVATE CUDA::cudart)
+    else()
+        target_compile_definitions(fullmag_fem PRIVATE FULLMAG_HAS_CUDA_RUNTIME=0)
+    endif()
     target_link_libraries(fullmag_fem PRIVATE fullmag_fdm)
     if(TARGET MFEM::mfem)
         target_link_libraries(fullmag_fem PRIVATE MFEM::mfem)
@@ -41,6 +49,7 @@ if(FULLMAG_USE_MFEM_STACK)
     endif()
 else()
     target_compile_definitions(fullmag_fem PRIVATE FULLMAG_HAS_MFEM_STACK=0)
+    target_compile_definitions(fullmag_fem PRIVATE FULLMAG_HAS_CUDA_RUNTIME=0)
 endif()
 
 set_target_properties(fullmag_fem PROPERTIES

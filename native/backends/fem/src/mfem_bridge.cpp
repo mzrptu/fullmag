@@ -4,9 +4,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <optional>
+#include <string>
 #include <tuple>
+
+#if FULLMAG_HAS_CUDA_RUNTIME
+#include <cuda_runtime.h>
+#endif
 
 namespace fullmag::fem {
 
@@ -16,6 +22,21 @@ constexpr double kMu0 = 4.0e-7 * 3.14159265358979323846;
 constexpr double kGeomEps = 1e-30;
 
 using Vec3 = std::array<double, 3>;
+
+std::optional<int> selected_cuda_device_from_env() {
+    const char *specific = std::getenv("FULLMAG_FEM_GPU_INDEX");
+    const char *generic = std::getenv("FULLMAG_CUDA_DEVICE_INDEX");
+    const char *raw = specific != nullptr ? specific : generic;
+    if (raw == nullptr || *raw == '\0') {
+        return std::nullopt;
+    }
+    char *end = nullptr;
+    const long parsed = std::strtol(raw, &end, 10);
+    if (end == raw || *end != '\0' || parsed < 0) {
+        return std::nullopt;
+    }
+    return static_cast<int>(parsed);
+}
 
 Vec3 add3(const Vec3 &a, const Vec3 &b) {
     return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
@@ -780,6 +801,33 @@ bool compute_effective_fields_for_magnetization(
 
 bool context_initialize_mfem(Context &ctx, std::string &error) {
     try {
+#if FULLMAG_HAS_CUDA_RUNTIME
+        const int selected_device = selected_cuda_device_from_env().value_or(0);
+        int device_count = 0;
+        cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
+        if (cuda_err != cudaSuccess || device_count <= 0) {
+            error = "MFEM CUDA backend requested but no CUDA device is available";
+            return false;
+        }
+        if (selected_device < 0 || selected_device >= device_count) {
+            error = "requested FEM GPU device index is out of range";
+            return false;
+        }
+        cuda_err = cudaSetDevice(selected_device);
+        if (cuda_err != cudaSuccess) {
+            error = std::string("cudaSetDevice failed for native FEM backend: ") +
+                    cudaGetErrorString(cuda_err);
+            return false;
+        }
+        auto *device = new mfem::Device("cuda");
+        ctx.mfem_device = device;
+        ctx.mfem_selected_device_index = selected_device;
+#else
+        auto *device = new mfem::Device("cpu");
+        ctx.mfem_device = device;
+        ctx.mfem_selected_device_index = -1;
+#endif
+
         auto *mesh = new mfem::Mesh(3, static_cast<int>(ctx.n_nodes), static_cast<int>(ctx.n_elements),
                                     static_cast<int>(ctx.n_boundary_faces), 3);
 
@@ -875,6 +923,7 @@ void context_destroy_mfem(Context &ctx) {
     ctx.transfer_grid.active_mask.clear();
     ctx.transfer_grid.magnetization_xyz.clear();
     ctx.transfer_grid.demag_xyz.clear();
+    delete static_cast<mfem::Device *>(ctx.mfem_device);
     delete static_cast<mfem::BilinearForm *>(ctx.mfem_mass_form);
     delete static_cast<mfem::BilinearForm *>(ctx.mfem_exchange_form);
     delete static_cast<mfem::GridFunction *>(ctx.mfem_gf_mz);
@@ -883,6 +932,7 @@ void context_destroy_mfem(Context &ctx) {
     delete static_cast<mfem::FiniteElementSpace *>(ctx.mfem_fes);
     delete static_cast<mfem::FiniteElementCollection *>(ctx.mfem_fec);
     delete static_cast<mfem::Mesh *>(ctx.mfem_mesh);
+    ctx.mfem_device = nullptr;
     ctx.mfem_mass_form = nullptr;
     ctx.mfem_exchange_form = nullptr;
     ctx.mfem_gf_mz = nullptr;
