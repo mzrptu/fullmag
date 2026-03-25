@@ -5,7 +5,7 @@ use fullmag_ir::{
     BackendPlanIR, BackendTarget, ExecutionMode, ExecutionPlanSummary, ExecutionPrecision,
     ProblemIR,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -19,10 +19,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
     about = "Rust-hosted Fullmag CLI for Python-authored ProblemIR validation, planning, and execution"
 )]
 #[command(
-    override_usage = "fullmag <COMMAND>\n       fullmag [-i|--interactive] <script.py> --until <seconds> [--backend <auto|fdm|fem|hybrid>] [--mode <strict|extended|hybrid>] [--precision <single|double>] [--headless]"
+    override_usage = "fullmag <COMMAND>\n       fullmag [-i|--interactive] <script.py> [--backend <auto|fdm|fem|hybrid>] [--mode <strict|extended|hybrid>] [--precision <single|double>] [--headless]"
 )]
 #[command(
-    after_help = "Script mode examples:\n  fullmag examples/exchange_relax.py --until 2e-9\n  fullmag -i examples/exchange_relax.py --until 2e-9\n\nDefault behavior starts the bootstrap control room unless --headless is passed.\nUse -i / --interactive to keep the CLI open after the run completes."
+    after_help = "Script mode examples:\n  fullmag examples/exchange_relax.py\n  fullmag -i examples/exchange_relax.py\n\nThe launcher gets the run horizon from the script itself.\nFor time evolution scripts define DEFAULT_UNTIL in the script.\nFor relaxation studies Fullmag derives the execution horizon from the study settings.\nDefault behavior starts the bootstrap control room unless --headless is passed.\nUse -i / --interactive to keep the CLI open after the run completes."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -34,8 +34,6 @@ struct ScriptCli {
     script: PathBuf,
     #[arg(short = 'i', long, default_value_t = false)]
     interactive: bool,
-    #[arg(long)]
-    until: f64,
     #[arg(long, value_enum)]
     backend: Option<BackendArg>,
     #[arg(long, value_enum)]
@@ -184,6 +182,12 @@ struct LiveStepView {
     finished: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct ScriptExecutionConfig {
+    ir: ProblemIR,
+    default_until_seconds: Option<f64>,
+}
+
 impl From<BackendArg> for BackendTarget {
     fn from(value: BackendArg) -> Self {
         match value {
@@ -325,7 +329,6 @@ fn is_script_mode(raw_args: &[OsString]) -> bool {
     ];
     const FLAG_ONLY: &[&str] = &["-i", "--interactive", "--headless", "--json"];
     const VALUE_FLAGS: &[&str] = &[
-        "--until",
         "--backend",
         "--mode",
         "--precision",
@@ -388,7 +391,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         .script
         .canonicalize()
         .with_context(|| format!("failed to resolve script path {}", args.script.display()))?;
-    let ir = export_problem_ir_via_python(&script_path, &args)?;
+    let script_config = export_script_execution_config_via_python(&script_path, &args)?;
+    let until_seconds = resolve_script_until_seconds(&script_config.ir, script_config.default_until_seconds)?;
+    let ir = script_config.ir;
     validate_ir(&ir)?;
     let plan_summary = ir
         .plan_for(args.backend.map(BackendTarget::from))
@@ -452,6 +457,13 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         update_live_state(&live_state_path, &initial_update)?;
     }
 
+    announce_session_start(
+        &session_id,
+        &script_path,
+        backend_target_name(ir.backend_policy.requested_backend),
+        args.headless,
+    );
+
     if !args.headless {
         if let Err(error) = spawn_control_room(&session_id, args.web_port) {
             eprintln!(
@@ -464,7 +476,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
     let result = match if use_live_callback {
         fullmag_runner::run_problem_with_callback(
             &ir,
-            args.until,
+            until_seconds,
             &artifact_dir,
             field_every_n,
             |update| {
@@ -518,7 +530,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             },
         )
     } else {
-        fullmag_runner::run_problem(&ir, args.until, &artifact_dir)
+        fullmag_runner::run_problem(&ir, until_seconds, &artifact_dir)
     } {
         Ok(result) => result,
         Err(error) => {
@@ -665,6 +677,21 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
     Ok(())
 }
 
+fn announce_session_start(session_id: &str, script_path: &Path, backend: &str, headless: bool) {
+    eprintln!("fullmag session started");
+    eprintln!("- session_id: {}", session_id);
+    eprintln!("- script: {}", script_path.display());
+    eprintln!("- requested_backend: {}", backend);
+    if headless {
+        eprintln!(
+            "- live_hint: start the control room manually with `./scripts/dev-control-room.sh {}`",
+            session_id
+        );
+    } else {
+        eprintln!("- live_hint: control room bootstrap requested before solver start");
+    }
+}
+
 fn print_script_summary(summary: &ScriptRunSummary) {
     println!("fullmag session summary");
     println!("- session_id: {}", summary.session_id);
@@ -698,11 +725,14 @@ fn print_script_summary(summary: &ScriptRunSummary) {
     println!("- control_room_hint: if the browser did not open, run `./scripts/dev-control-room.sh {}` from the repo root", summary.session_id);
 }
 
-fn export_problem_ir_via_python(script_path: &Path, args: &ScriptCli) -> Result<ProblemIR> {
+fn export_script_execution_config_via_python(
+    script_path: &Path,
+    args: &ScriptCli,
+) -> Result<ScriptExecutionConfig> {
     let mut helper_args = vec![
         "-m".to_string(),
         "fullmag.runtime.helper".to_string(),
-        "export-ir".to_string(),
+        "export-run-config".to_string(),
         "--script".to_string(),
         script_path.display().to_string(),
     ];
@@ -734,7 +764,28 @@ fn export_problem_ir_via_python(script_path: &Path, args: &ScriptCli) -> Result<
 
     let stdout = String::from_utf8(output.stdout)
         .context("python helper did not return valid UTF-8 JSON")?;
-    serde_json::from_str(&stdout).context("failed to deserialize ProblemIR from python helper")
+    serde_json::from_str(&stdout)
+        .context("failed to deserialize script execution config from python helper")
+}
+
+fn resolve_script_until_seconds(ir: &ProblemIR, default_until_seconds: Option<f64>) -> Result<f64> {
+    if let Some(until_seconds) = default_until_seconds {
+        return Ok(until_seconds);
+    }
+
+    match &ir.study {
+        fullmag_ir::StudyIR::Relaxation {
+            dynamics, max_steps, ..
+        } => {
+            let dt = match dynamics {
+                fullmag_ir::DynamicsIR::Llg { fixed_timestep, .. } => fixed_timestep.unwrap_or(1e-13),
+            };
+            Ok(dt * (*max_steps as f64))
+        }
+        fullmag_ir::StudyIR::TimeEvolution { .. } => bail!(
+            "no stop time provided. Define DEFAULT_UNTIL in the script for time-evolution runs"
+        ),
+    }
 }
 
 fn run_python_helper(args: &[String]) -> Result<std::process::Output> {

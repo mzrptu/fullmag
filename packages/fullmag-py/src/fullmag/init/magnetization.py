@@ -47,8 +47,24 @@ class SampledMagnetization:
 InitialMagnetization: TypeAlias = UniformMagnetization | RandomMagnetization | SampledMagnetization
 
 
-def uniform(value: Sequence[float]) -> UniformMagnetization:
-    return UniformMagnetization(value)
+def uniform(
+    value_or_x: Sequence[float] | float = None,
+    y: float | None = None,
+    z: float | None = None,
+) -> UniformMagnetization:
+    """Create a uniform magnetization initializer.
+
+    Accepts either a 3-tuple or three positional floats::
+
+        uniform((1, 0, 0))
+        uniform(1, 0, 0)
+    """
+    if isinstance(value_or_x, (list, tuple)):
+        return UniformMagnetization(value_or_x)
+    elif value_or_x is not None and y is not None and z is not None:
+        return UniformMagnetization((value_or_x, y, z))
+    else:
+        raise TypeError("uniform() requires 3 components: uniform(x, y, z) or uniform((x, y, z))")
 
 
 def random(seed: int) -> RandomMagnetization:

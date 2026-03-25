@@ -8,7 +8,7 @@ This is the simplest public-executable problem in Phase 1:
 - FDM backend in strict mode
 
 Usage:
-    fullmag examples/exchange_relax.py --until 2e-9
+    fullmag examples/exchange_relax.py
     python examples/exchange_relax.py
 
 When fullmag-py-core is installed (maturin develop), this runs

@@ -69,8 +69,27 @@ class Box(_GeometryOps):
     size: tuple[float, float, float]
     name: str = "box"
 
-    def __init__(self, size: tuple[float, float, float], name: str = "box") -> None:
-        normalized_size = as_vector3(size, "size")
+    def __init__(
+        self,
+        size_or_x: tuple[float, float, float] | float | None = None,
+        y: float | None = None,
+        z: float | None = None,
+        *,
+        size: tuple[float, float, float] | None = None,
+        name: str = "box",
+    ) -> None:
+        # Support both Box(size=(dx,dy,dz)) and Box(dx, dy, dz)
+        if size is not None:
+            resolved = size
+        elif isinstance(size_or_x, (list, tuple)):
+            resolved = size_or_x
+        elif size_or_x is not None and y is not None and z is not None:
+            resolved = (size_or_x, y, z)
+        elif size_or_x is not None:
+            raise TypeError("Box() requires 3 dimensions: Box(dx, dy, dz) or Box(size=(dx, dy, dz))")
+        else:
+            raise TypeError("Box() requires size argument")
+        normalized_size = as_vector3(resolved, "size")
         for index, component in enumerate(normalized_size):
             require_positive(component, f"size[{index}]")
         object.__setattr__(self, "size", normalized_size)

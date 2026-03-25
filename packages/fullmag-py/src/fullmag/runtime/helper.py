@@ -31,6 +31,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--precision",
         choices=[precision.value for precision in ExecutionPrecision],
     )
+
+    export_run_config = subparsers.add_parser(
+        "export-run-config",
+        help="Load a Python script and print canonical ProblemIR plus script-owned run defaults.",
+    )
+    export_run_config.add_argument("--script", required=True, help="Path to Python script.")
+    export_run_config.add_argument(
+        "--backend",
+        choices=[target.value for target in BackendTarget],
+    )
+    export_run_config.add_argument(
+        "--mode",
+        choices=[mode.value for mode in ExecutionMode],
+    )
+    export_run_config.add_argument(
+        "--precision",
+        choices=[precision.value for precision in ExecutionPrecision],
+    )
     return parser
 
 
@@ -38,7 +56,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    if args.command == "export-ir":
+    if args.command in {"export-ir", "export-run-config"}:
         loaded = load_problem_from_script(Path(args.script))
         simulation = Simulation(
             loaded.problem,
@@ -46,13 +64,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             mode=args.mode,
             precision=args.precision,
         )
+        ir = loaded.to_ir(
+            requested_backend=simulation.backend,
+            execution_mode=simulation.mode,
+            execution_precision=simulation.precision,
+        )
+        if args.command == "export-ir":
+            print(json.dumps(ir))
+            return 0
+
         print(
             json.dumps(
-                loaded.to_ir(
-                    requested_backend=simulation.backend,
-                    execution_mode=simulation.mode,
-                    execution_precision=simulation.precision,
-                )
+                {
+                    "ir": ir,
+                    "default_until_seconds": loaded.default_until_seconds,
+                }
             )
         )
         return 0

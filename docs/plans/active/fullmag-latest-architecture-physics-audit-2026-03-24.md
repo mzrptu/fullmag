@@ -16,7 +16,7 @@ Fullmag ma już sensowny kręgosłup systemowy:
 1. **Publiczny Python authoring surface** istnieje i serializuje do typed IR.
 2. **Rust jest już realnym control plane**, a nie tylko walidatorem.
 3. **Planner i runner są oddzielone**, co jest poprawne architektonicznie.
-4. **Rust-hosted CLI** istnieje i potrafi wykonać `fullmag script.py --until ...`.
+4. **Rust-hosted CLI** istnieje i potrafi wykonać `fullmag script.py`, biorąc horyzont wykonania ze skryptu.
 5. **File-based session shell** istnieje.
 6. **FDM CPU reference** działa end-to-end.
 7. **Native CUDA FDM** istnieje jako prawdziwa ścieżka wykonawcza, nie tylko placeholder.
@@ -1427,4 +1427,3 @@ Double-precision LLG/Heun stepper.
 ## Appendix C — one-sentence final recommendation
 
 **Nie zmieniałbym już ogólnej architektury Fullmaga; zmieniłbym teraz kontrakty operatorowe, runtime live/session spine i selektywnie dodał współbieżność tam, gdzie dziś całkowicie niepotrzebnie obciążacie jeden wątek.**
-

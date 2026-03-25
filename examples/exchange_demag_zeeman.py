@@ -7,10 +7,13 @@ This extends the narrow exchange-only baseline with:
 - expanded scalar outputs: E_ex, E_demag, E_ext, E_total.
 
 Usage:
-    fullmag examples/exchange_demag_zeeman.py --until 5e-10
+    fullmag examples/exchange_demag_zeeman.py
 """
 
 import fullmag as fm
+
+
+DEFAULT_UNTIL = 5e-10
 
 
 def build() -> fm.Problem:
@@ -54,7 +57,7 @@ def build() -> fm.Problem:
 
 if __name__ == "__main__":
     problem = build()
-    result = fm.Simulation(problem, backend="fdm").run(until=5e-10)
+    result = fm.Simulation(problem, backend="fdm").run(until=DEFAULT_UNTIL)
 
     print(f"Status: {result.status}")
     if result.steps:

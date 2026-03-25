@@ -12,4 +12,10 @@
 - Current execution priority is calibrated GPU-first FDM/CUDA, with explicit user-selected precision carried through API, IR, planning, and provenance.
 - Treat `docs/1_project_scope.md`, `docs/specs/problem-ir-v0.md`, `docs/physics/`, and the ADRs as the canonical architecture and physics reference.
 - Assume container-first verification through `docker compose` and `Makefile`.
+- Prefer `justfile` as the primary build/run task layer:
+  - `just build fullmag`
+  - `just build fem-gpu-runtime-host`
+  - `just package fullmag`
+  - `just run-py-layer-hole`
+  Use raw `cargo`, `make`, or `docker compose` only when the relevant `just` recipe does not exist or when debugging lower-level issues.
 - **Keep source files under ~1000 lines.** Split growing modules into focused submodules rather than creating monolithic files.

@@ -4,10 +4,13 @@ A thin Permalloy film with a cylindrical hole in the center.
 Uses CSG Difference: Box minus Cylinder.
 
 Usage:
-    fullmag examples/py_layer_1000x1000.py --until 1e-15
+    fullmag examples/py_layer_1000x1000.py
 """
 
 import fullmag as fm
+
+
+DEFAULT_UNTIL = 1e-15
 
 
 def build() -> fm.Problem:
@@ -61,7 +64,7 @@ if __name__ == "__main__":
     print("Exported: py_layer_with_hole.stl, py_layer_with_hole.mesh.json")
 
     # ── Run simulation ───────────────────────────────
-    result = fm.Simulation(problem, backend="fdm").run(until=1e-15)
+    result = fm.Simulation(problem, backend="fdm").run(until=DEFAULT_UNTIL)
     print(f"Status: {result.status}")
 else:
     problem = build()

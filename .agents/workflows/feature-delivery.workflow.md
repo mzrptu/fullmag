@@ -13,6 +13,7 @@ Deliver a Fullmag feature without letting physics, API semantics, IR, and planni
 5. backend work
 6. validation and smoke coverage
 7. update `docs/physics/` with results and deferred work
+8. prefer `justfile` build/run/package recipes for verification and user-facing workflow examples
 
 ## Exit criteria
 

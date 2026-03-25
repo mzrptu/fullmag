@@ -57,9 +57,9 @@ Rust validation + normalization + planning + session bootstrap
 In the current bootstrap shell, the normal local workflow is:
 
 ```bash
-fullmag examples/exchange_relax.py --until 2e-9
-fullmag examples/exchange_demag_zeeman.py --until 1e-11
-fullmag -i examples/exchange_relax.py --until 2e-9
+fullmag examples/exchange_relax.py
+fullmag examples/exchange_demag_zeeman.py
+fullmag -i examples/exchange_relax.py
 ```
 
 By default this attempts to:
@@ -132,8 +132,8 @@ PYTHONPATH=packages/fullmag-py/src python -m unittest discover -s packages/fullm
 python3 scripts/check_repo_consistency.py
 python scripts/run_python_ir_smoke.py --cli target/debug/fullmag
 /usr/local/cargo/bin/cargo run -p fullmag-cli --bin fullmag -- reference-exchange-demo --steps 10 --dt 1e-13
-/usr/local/cargo/bin/cargo run -p fullmag-cli --bin fullmag -- examples/exchange_relax.py --until 2e-9 --json
-/usr/local/cargo/bin/cargo run -p fullmag-cli --bin fullmag --features cuda -- examples/exchange_demag_zeeman.py --until 1e-11 --json
+/usr/local/cargo/bin/cargo run -p fullmag-cli --bin fullmag -- examples/exchange_relax.py --json
+/usr/local/cargo/bin/cargo run -p fullmag-cli --bin fullmag --features cuda -- examples/exchange_demag_zeeman.py --json
 ```
 
 ### 3b. Build the production-style FEM GPU runtime container
@@ -162,6 +162,25 @@ make install-cli
 export PATH="$PWD/.fullmag/local/bin:$PATH"
 fullmag --help
 ```
+
+Alternative task entrypoint via `just`:
+
+```bash
+just build fullmag
+export PATH="$PWD/.fullmag/local/bin:$PATH"
+just run-py-layer-hole
+```
+
+Heavy runtime build in container, exported back to the host:
+
+```bash
+just build fem-gpu-runtime-host
+just package fullmag
+```
+
+This keeps the heavyweight FEM GPU toolchain in the managed build container while producing a
+host-side runtime bundle under `.fullmag/runtimes/` and a host package staging directory under
+`.fullmag/dist/`.
 
 ### 5. Run the bootstrap control room manually
 

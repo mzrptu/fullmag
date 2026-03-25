@@ -8,6 +8,7 @@ from typing import Sequence
 
 from fullmag._core import run_problem_json
 from fullmag.model import BackendTarget, ExecutionMode, ExecutionPrecision
+from fullmag.model.study import Relaxation
 from fullmag.runtime.loader import load_problem_from_script
 from fullmag.runtime.simulation import Simulation, result_from_run_payload
 
@@ -17,12 +18,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="fullmag-python",
         description="Legacy Python-owned launcher kept for direct package use and testing.",
     )
-    parser.add_argument("script", help="Path to a Python script exposing build() or problem")
     parser.add_argument(
-        "--until",
-        type=float,
-        required=True,
-        help="Simulation stop time in seconds.",
+        "script",
+        help="Path to a Python script exposing build(), top-level problem, or flat fm.run()/fm.relax().",
     )
     parser.add_argument(
         "--backend",
@@ -64,12 +62,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             mode=args.mode,
             precision=args.precision,
         )
+        until_seconds = loaded.default_until_seconds
+        if until_seconds is None and isinstance(loaded.problem.study, Relaxation):
+            study = loaded.problem.study
+            fixed_timestep = study.dynamics.fixed_timestep
+            until_seconds = (fixed_timestep or 1e-13) * study.max_steps
+        if until_seconds is None:
+            print(
+                "fullmag run failed: no stop time provided. Define DEFAULT_UNTIL in the script "
+                "for time-evolution runs.",
+                file=sys.stderr,
+            )
+            return 2
         ir = loaded.to_ir(
             requested_backend=simulation.backend,
             execution_mode=simulation.mode,
             execution_precision=simulation.precision,
         )
-        run_payload = run_problem_json(ir, args.until, args.output_dir)
+        run_payload = run_problem_json(ir, until_seconds, args.output_dir)
         if run_payload is None:
             print(
                 "Native runner (_fullmag_core) is not installed. "

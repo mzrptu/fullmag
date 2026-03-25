@@ -59,6 +59,20 @@ If the note does not exist or is incomplete, the task is not ready for implement
 8. `docs/physics/` notes are auto-rendered into frontend documentation — writing physics docs is writing user docs.
 9. **No single source file should exceed ~1000 lines.** When a module grows past this threshold, split it into focused submodules. Monolithic files are harder to review, test, and maintain. Prefer many small, well-named files over few large ones.
 
+## Canonical build and run entrypoints
+
+- Prefer `justfile` recipes over ad-hoc `cargo`, `make`, and raw `docker compose` commands whenever a matching recipe exists.
+- Treat these as the canonical build entrypoints:
+  - `just build fullmag` — build/install the local launcher on the host
+  - `just build fem-gpu-runtime-host` — build the heavy FEM GPU runtime in the managed container and export a host-usable runtime bundle
+  - `just package fullmag` — assemble the host-side staging package
+- Treat these as the canonical run entrypoints when applicable:
+  - `just run ...`
+  - `just run-py-layer-hole`
+  - `just control-room`
+- `make` remains a compatibility/developer fallback. Use it only when no `just` recipe exists yet or when explicitly debugging lower-level build stages.
+- Raw `docker compose` and raw `cargo` build commands are acceptable for debugging, narrow reproduction, or adding new recipes, but they should not be the default workflow recommended back to the user.
+
 ## Repo map
 
 - `packages/fullmag-py` — public embedded Python DSL and runtime scaffolding.

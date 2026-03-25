@@ -102,3 +102,5 @@ Minimum expected structure:
   - high-level GPU/CUDA rollout plan
 - `active/phase-2-gpu-fdm-implementation-playbook.md`
   - detailed GPU/CUDA implementation handoff
+- `active/fullmag-local-launcher-and-live-ui-plan-2026-03-25.md`
+  - plan for one-command local launch, host-owned live control room, and runtime resolution

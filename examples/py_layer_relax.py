@@ -4,10 +4,13 @@ Visualization demo: large enough grid to see domain structure in 2D/3D preview.
 Uses random initial magnetization to produce visible exchange-driven relaxation.
 
 Usage:
-    fullmag examples/py_layer_relax.py --until 5e-9
+    fullmag examples/py_layer_relax.py
 """
 
 import fullmag as fm
+
+
+DEFAULT_UNTIL = 5e-9
 
 
 def build() -> fm.Problem:
@@ -40,7 +43,7 @@ def build() -> fm.Problem:
 
 if __name__ == "__main__":
     problem = build()
-    result = fm.Simulation(problem, backend="fdm").run(until=5e-9)
+    result = fm.Simulation(problem, backend="fdm").run(until=DEFAULT_UNTIL)
 
     print(f"Status: {result.status}")
     if result.steps:

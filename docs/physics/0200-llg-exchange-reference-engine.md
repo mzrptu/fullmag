@@ -222,7 +222,7 @@ Reference-engine-only grid shape and field storage stay below the IR boundary fo
   small `dt`,
 - CLI smoke/demo for a tiny deterministic exchange-only run,
 - application smoke path:
-  - `fullmag examples/exchange_relax.py --until 2e-9`
+  - `fullmag examples/exchange_relax.py`
   - this is the first honest user-facing execution entrypoint for the reference engine.
 
 ## 6. Completeness checklist

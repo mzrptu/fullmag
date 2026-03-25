@@ -41,7 +41,26 @@ from .model import (
 from .runtime import BackendTarget, Result, Simulation, load_problem_from_script
 from .meshing import MeshData, generate_mesh, export_geometry_to_stl as export_stl
 
+# ── Flat scripting API (mumax-style) ──────────────────────
+from .world import (
+    MagnetHandle,
+    engine,
+    device,
+    cell,
+    hmax,
+    fem_order,
+    geometry,
+    solver,
+    b_ext,
+    save,
+    name as set_name,
+    run,
+    relax,
+    reset,
+)
+
 __all__ = [
+    # Class-based API
     "BackendTarget",
     "Box",
     "Cylinder",
@@ -86,4 +105,19 @@ __all__ = [
     "load_problem_from_script",
     "random",
     "uniform",
+    # Flat scripting API
+    "MagnetHandle",
+    "engine",
+    "device",
+    "cell",
+    "hmax",
+    "fem_order",
+    "geometry",
+    "solver",
+    "b_ext",
+    "save",
+    "set_name",
+    "run",
+    "relax",
+    "reset",
 ]

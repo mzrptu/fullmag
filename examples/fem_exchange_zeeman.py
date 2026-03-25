@@ -7,7 +7,7 @@ This example exercises the first narrow FEM execution path:
 - LLG with Heun integrator
 
 Usage:
-    fullmag examples/fem_exchange_zeeman.py --until 5e-12 --backend fem --headless
+    fullmag examples/fem_exchange_zeeman.py --backend fem --headless
 """
 
 from pathlib import Path
@@ -16,6 +16,7 @@ import fullmag as fm
 
 
 MESH_PATH = Path(__file__).with_name("assets").joinpath("box_40x20x10_coarse.mesh.json")
+DEFAULT_UNTIL = 5e-12
 
 
 def build() -> fm.Problem:
@@ -55,7 +56,7 @@ def build() -> fm.Problem:
 
 if __name__ == "__main__":
     problem = build()
-    result = fm.Simulation(problem, backend="fem").run(until=5e-12)
+    result = fm.Simulation(problem, backend="fem").run(until=DEFAULT_UNTIL)
 
     print(f"Status: {result.status}")
     if result.steps:
