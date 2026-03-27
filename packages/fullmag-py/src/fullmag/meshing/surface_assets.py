@@ -5,7 +5,18 @@ from pathlib import Path
 import shutil
 from typing import Any
 
-from fullmag.model.geometry import Box, Cylinder, Difference, Geometry, ImportedGeometry
+from fullmag.model.geometry import (
+    Box,
+    Cylinder,
+    Difference,
+    Ellipse,
+    Ellipsoid,
+    Geometry,
+    ImportedGeometry,
+    Intersection,
+    Translate,
+    Union,
+)
 
 
 def _import_trimesh() -> Any:
@@ -14,7 +25,7 @@ def _import_trimesh() -> Any:
     except ImportError as exc:  # pragma: no cover - depends on optional extra
         raise ImportError(
             "trimesh is required for STL import/export helpers. "
-            "Install with: pip install 'fullmag[meshing]'"
+            "Install with: python -m pip install 'trimesh>=4.2'"
         ) from exc
     return trimesh
 
@@ -53,6 +64,36 @@ def load_surface_asset(source: str | Path) -> SurfaceAsset:
         bounds_min=tuple(float(value) for value in bounds[0]),
         bounds_max=tuple(float(value) for value in bounds[1]),
     )
+
+
+def build_surface_preview_payload(geometry: Geometry) -> dict[str, object] | None:
+    try:
+        trimesh = _import_trimesh()
+        mesh = _geometry_to_trimesh(geometry, trimesh)
+    except Exception:
+        return None
+
+    if mesh is None:
+        return None
+
+    mesh = mesh.copy()
+    if hasattr(mesh, "remove_unreferenced_vertices"):
+        mesh.remove_unreferenced_vertices()
+    if hasattr(mesh, "merge_vertices"):
+        mesh.merge_vertices()
+
+    vertices = getattr(mesh, "vertices", None)
+    faces = getattr(mesh, "faces", None)
+    if vertices is None or faces is None or len(vertices) == 0 or len(faces) == 0:
+        return None
+
+    return {
+        "nodes": [[float(x), float(y), float(z)] for x, y, z in vertices.tolist()],
+        "elements": [],
+        "boundary_faces": [
+            [int(face[0]), int(face[1]), int(face[2])] for face in faces.tolist()
+        ],
+    }
 
 
 def export_geometry_to_stl(
@@ -106,6 +147,8 @@ def _geometry_to_trimesh(
     cylinder_sections: int = 48,
 ) -> Any:
     """Convert a geometry primitive to a trimesh Trimesh object."""
+    if isinstance(geometry, ImportedGeometry):
+        return _imported_geometry_to_trimesh(geometry, trimesh)
     if isinstance(geometry, Box):
         return trimesh.creation.box(extents=geometry.size)
     if isinstance(geometry, Cylinder):
@@ -114,8 +157,49 @@ def _geometry_to_trimesh(
             height=geometry.height,
             sections=cylinder_sections,
         )
+    if isinstance(geometry, Ellipsoid):
+        mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+        mesh.vertices[:, 0] *= geometry.rx
+        mesh.vertices[:, 1] *= geometry.ry
+        mesh.vertices[:, 2] *= geometry.rz
+        return mesh
+    if isinstance(geometry, Ellipse):
+        mesh = trimesh.creation.cylinder(radius=1.0, height=geometry.height, sections=cylinder_sections)
+        mesh.vertices[:, 0] *= geometry.rx
+        mesh.vertices[:, 1] *= geometry.ry
+        return mesh
     if isinstance(geometry, Difference):
         base = _geometry_to_trimesh(geometry.base, trimesh, cylinder_sections)
         tool = _geometry_to_trimesh(geometry.tool, trimesh, cylinder_sections)
         return base.difference(tool)
+    if isinstance(geometry, Union):
+        a = _geometry_to_trimesh(geometry.a, trimesh, cylinder_sections)
+        b = _geometry_to_trimesh(geometry.b, trimesh, cylinder_sections)
+        return a.union(b)
+    if isinstance(geometry, Intersection):
+        a = _geometry_to_trimesh(geometry.a, trimesh, cylinder_sections)
+        b = _geometry_to_trimesh(geometry.b, trimesh, cylinder_sections)
+        return a.intersection(b)
+    if isinstance(geometry, Translate):
+        mesh = _geometry_to_trimesh(geometry.geometry, trimesh, cylinder_sections)
+        mesh = mesh.copy()
+        mesh.apply_translation(geometry.offset)
+        return mesh
     raise TypeError(f"unsupported geometry for trimesh conversion: {type(geometry)!r}")
+
+
+def _imported_geometry_to_trimesh(geometry: ImportedGeometry, trimesh: Any) -> Any:
+    source = Path(geometry.source)
+    if source.suffix.lower() != ".stl":
+        raise ValueError(
+            "surface preview currently supports ImportedGeometry when the source is STL"
+        )
+
+    mesh = trimesh.load_mesh(source, force="mesh")
+    mesh = mesh.copy()
+    scale = geometry.scale
+    if isinstance(scale, (int, float)):
+        mesh.apply_scale(float(scale))
+    else:
+        mesh.vertices *= scale
+    return mesh

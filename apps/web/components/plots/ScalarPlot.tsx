@@ -12,23 +12,30 @@ import type { ECharts, EChartsOption } from "echarts";
 import * as echarts from "echarts";
 import type { ScalarRow } from "../../lib/useSessionStream";
 
-// ─── Theme constants (from amumax echarts-theme.ts) ────────────────
-const THEME = {
-  bg: "#080d1a",
-  surface1: "#0f172a",
-  border: "#1e2d4a",
-  text1: "#e2e8f0",
-  text2: "#94a3b8",
-  text3: "#5a6b8a",
-  accent: "#3b82f6",
-  info: "#60a5fa",
-  tooltipBg: "#0f172a",
-  tooltipBorder: "#3b82f6",
-  tooltipText: "#e2e8f0",
-  toolboxIcon: "#94a3b8",
-  brushBg: "rgba(59, 130, 246, 0.15)",
-  brushBorder: "#3b82f6",
-};
+// ─── Theme — reads CSS custom properties for consistency ───────────
+function getTheme() {
+  const s = typeof document !== "undefined"
+    ? getComputedStyle(document.documentElement)
+    : null;
+  const v = (prop: string, fallback: string) =>
+    s?.getPropertyValue(prop)?.trim() || fallback;
+
+  return {
+    bg:            v("--ide-bg", "#060d18"),
+    surface1:      v("--surface-1", "#0f1728"),
+    border:        v("--ide-border", "#1e2d4a"),
+    text1:         v("--ide-text-1", "#edf3fb"),
+    text2:         v("--ide-text-2", "#a7bad3"),
+    text3:         v("--ide-text-3", "#6b7f9f"),
+    accent:        v("--ide-accent", "#3b82f6"),
+    tooltipBg:     v("--surface-1", "#0f1728"),
+    tooltipBorder: v("--ide-accent", "#3b82f6"),
+    tooltipText:   v("--ide-text-1", "#edf3fb"),
+    toolboxIcon:   v("--ide-text-2", "#a7bad3"),
+    brushBg:       "rgba(59, 130, 246, 0.15)",
+    brushBorder:   v("--ide-accent", "#3b82f6"),
+  };
+}
 
 const SERIES_COLORS = ["#60a5fa", "#34d399", "#f472b6", "#fbbf24", "#a78bfa", "#fb923c", "#38bdf8", "#e879f9"];
 
@@ -83,6 +90,8 @@ export default function ScalarPlot({
   // ─── Init / update chart ──────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || !seriesData.length) return;
+
+    const THEME = getTheme();
 
     if (!chartRef.current || chartRef.current.isDisposed()) {
       chartRef.current = echarts.init(containerRef.current, undefined, {
@@ -238,8 +247,8 @@ export default function ScalarPlot({
         height: "320px",
         minHeight: "280px",
         borderRadius: "var(--radius-md)",
-        border: "1px solid var(--border-subtle)",
-        background: "rgba(5, 9, 17, 0.65)",
+        border: "1px solid var(--ide-border-subtle)",
+        background: "var(--ide-bg)",
       }}
     />
   );

@@ -4,10 +4,10 @@
   gap: 0.45rem;
   padding: 0.4rem 0.75rem;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-2);
-  font-size: 0.82rem;
+  border: 1px solid var(--ide-border-subtle);
+  background: hsla(0, 0%, 100%, 0.03);
+  color: var(--ide-text-2);
+  font-size: var(--ide-text-base);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -17,7 +17,7 @@
   height: 0.55rem;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.16);
+  box-shadow: 0 0 0 0 hsla(0, 0%, 100%, 0.16);
 }
 
 .uiBadge[data-tone='accent'],

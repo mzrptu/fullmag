@@ -9,9 +9,9 @@
   display: flex;
   justify-content: space-between;
   gap: 0.75rem;
-  font-size: 0.76rem;
+  font-size: var(--ide-text-sm);
   font-weight: 600;
-  color: var(--text-3);
+  color: var(--ide-text-3);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -23,8 +23,8 @@
   gap: 0.7rem;
   padding: 0 0.9rem;
   border-radius: var(--radius-md);
-  border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--ide-border-subtle);
+  background: hsla(0, 0%, 100%, 0.03);
   transition:
     border-color var(--duration-fast) var(--easing-default),
     box-shadow var(--duration-fast) var(--easing-default),
@@ -34,7 +34,7 @@
 .control:focus-within {
   border-color: var(--border-interactive);
   box-shadow: var(--focus-ring);
-  background: rgba(255, 255, 255, 0.04);
+  background: hsla(0, 0%, 100%, 0.04);
 }
 
 .control input {
@@ -43,18 +43,18 @@
   background: transparent;
   border: 0;
   outline: none;
-  color: var(--text-1);
+  color: var(--ide-text-1);
 }
 
 .control input::placeholder {
-  color: var(--text-3);
+  color: var(--ide-text-3);
 }
 
 .mono input {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
 }
 
 .unit {
-  color: var(--text-3);
-  font-size: 0.82rem;
+  color: var(--ide-text-3);
+  font-size: var(--ide-text-base);
 }

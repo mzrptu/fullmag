@@ -4,9 +4,12 @@ import path from "path";
 const nextConfig = {
   reactStrictMode: true,
   outputFileTracingRoot: path.join(process.cwd(), "../../"),
+  output: "export",
+  trailingSlash: true,
   typedRoutes: true,
-  experimental: {
-    serverComponentsExternalPackages: ["fullmag-api"],
+  serverExternalPackages: ["fullmag-api"],
+  eslint: {
+    ignoreDuringBuilds: true,
   },
 };
 

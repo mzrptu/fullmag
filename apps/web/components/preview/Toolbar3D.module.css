@@ -1,9 +1,10 @@
-/* ── Toolbar3D CSS Module ── 1:1 port from amumax Toolbar3D.svelte ── */
+/* ── Toolbar3D CSS Module ── Controls overlay for 3D viewport ── */
+/* All colors use --ide-* / --am-* tokens from globals.css       */
 
 .toolbar {
   position: absolute;
-  left: var(--space-sm, 0.75rem);
-  top: var(--space-sm, 0.75rem);
+  left: 0.75rem;
+  top: 0.75rem;
   z-index: var(--z-sticky, 10);
   display: flex;
   flex-direction: column;
@@ -15,40 +16,40 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-md, 1rem);
-  background: var(--surface-glass, rgba(15, 23, 40, 0.84));
-  border: 1px solid var(--border, #273753);
-  color: var(--text-3, #6b7f9f);
+  border-radius: var(--radius-md);
+  background: var(--surface-glass);
+  border: 1px solid var(--ide-border);
+  color: var(--ide-text-3);
   font-size: 16px;
   cursor: pointer;
-  transition: all var(--duration-fast, 150ms) var(--easing-default, cubic-bezier(0.4, 0, 0.2, 1));
+  transition: all var(--duration-fast) var(--ease-default);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
 
 .toggleBtn:hover {
-  background: var(--surface-3, #1b2840);
-  color: var(--text-1, #edf3fb);
+  background: var(--surface-3);
+  color: var(--ide-text-1);
 }
 
 .toolbarContent {
-  margin-top: var(--space-xs, 0.5rem);
-  background: linear-gradient(180deg, rgba(12, 18, 31, 0.92), rgba(8, 12, 22, 0.92));
-  border: 1px solid var(--border, #273753);
-  border-radius: var(--radius-lg, 1.35rem);
-  padding: var(--space-sm, 0.75rem);
+  margin-top: 0.5rem;
+  background: linear-gradient(180deg, var(--ide-surface), var(--ide-bg));
+  border: 1px solid var(--ide-border);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem;
   min-width: 200px;
   max-width: 220px;
   max-height: 360px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm, 0.75rem);
+  gap: 0.75rem;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-panel);
   scrollbar-width: thin;
-  scrollbar-color: rgba(107, 167, 255, 0.3) transparent;
+  scrollbar-color: hsla(220, 60%, 60%, 0.3) transparent;
 }
 
 .controlGroup {
@@ -58,8 +59,8 @@
 }
 
 .controlLabel {
-  font-size: 11px;
-  color: var(--text-2, #a7bad3);
+  font-size: var(--ide-text-xs);
+  color: var(--ide-text-2);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -68,9 +69,9 @@
 }
 
 .controlValue {
-  color: var(--text-1, #edf3fb);
+  color: var(--ide-text-1);
   font-weight: 600;
-  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-family: var(--font-mono);
 }
 
 /* ── Slider ── */
@@ -79,8 +80,8 @@
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: linear-gradient(90deg, rgba(87, 200, 182, 0.2), rgba(107, 167, 255, 0.24));
-  border-radius: 999px;
+  background: linear-gradient(90deg, hsla(170, 50%, 55%, 0.2), hsla(215, 60%, 60%, 0.24));
+  border-radius: var(--radius-full);
   outline: none;
   cursor: pointer;
   border: none;
@@ -91,8 +92,8 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--am-accent, #57c8b6);
-  border: 2px solid rgba(9, 14, 24, 0.9);
+  background: var(--am-accent);
+  border: 2px solid var(--ide-bg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
   cursor: pointer;
 }
@@ -101,8 +102,8 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--am-accent, #57c8b6);
-  border: 2px solid rgba(9, 14, 24, 0.9);
+  background: var(--am-accent);
+  border: 2px solid var(--ide-bg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
   cursor: pointer;
 }
@@ -111,10 +112,10 @@
 .btnGroup {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-radius: var(--radius-md, 1rem);
+  border-radius: var(--radius-md);
   overflow: hidden;
-  border: 1px solid var(--border, #273753);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--ide-border);
+  background: hsla(0, 0%, 100%, 0.03);
 }
 
 .btnGroupWide {
@@ -127,61 +128,61 @@
 
 .segBtn {
   padding: 0.42rem 0;
-  font-size: 11px;
+  font-size: var(--ide-text-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: var(--text-3, #6b7f9f);
+  color: var(--ide-text-3);
   background: transparent;
   border: none;
   cursor: pointer;
-  transition: all var(--duration-fast, 150ms) var(--easing-default, cubic-bezier(0.4, 0, 0.2, 1));
+  transition: all var(--duration-fast) var(--ease-default);
 }
 
 .segBtn:not(:last-child) {
-  border-right: 1px solid var(--border, #273753);
+  border-right: 1px solid var(--ide-border);
 }
 
 .segBtn:hover {
-  background: rgba(107, 167, 255, 0.08);
-  color: var(--text-2, #a7bad3);
+  background: hsla(215, 60%, 60%, 0.08);
+  color: var(--ide-text-2);
 }
 
 .segBtnActive {
-  background: linear-gradient(135deg, rgba(87, 200, 182, 0.92), rgba(56, 178, 162, 0.92));
-  color: #08101d;
+  background: linear-gradient(135deg, var(--am-accent), var(--accent-strong));
+  color: var(--ide-bg);
 }
 
 /* ── Action button ── */
 .actionBtn {
   padding: 0.48rem 0;
-  font-size: 11px;
+  font-size: var(--ide-text-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: var(--text-2, #a7bad3);
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid var(--border, #273753);
-  border-radius: var(--radius-md, 1rem);
+  color: var(--ide-text-2);
+  background: hsla(0, 0%, 100%, 0.035);
+  border: 1px solid var(--ide-border);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all var(--duration-fast, 150ms) var(--easing-default, cubic-bezier(0.4, 0, 0.2, 1));
+  transition: all var(--duration-fast) var(--ease-default);
   width: 100%;
 }
 
 .actionBtn:hover {
-  background: rgba(107, 167, 255, 0.08);
-  border-color: var(--border-interactive, #4d739e);
-  color: var(--text-1, #edf3fb);
+  background: hsla(215, 60%, 60%, 0.08);
+  border-color: var(--border-interactive);
+  color: var(--ide-text-1);
 }
 
 .topoActive {
-  background: linear-gradient(135deg, rgba(52, 211, 153, 0.85), rgba(16, 185, 129, 0.85)) !important;
-  color: #08101d !important;
-  border-color: rgba(52, 211, 153, 0.5) !important;
+  background: linear-gradient(135deg, hsla(157, 60%, 52%, 0.85), hsla(157, 70%, 40%, 0.85)) !important;
+  color: var(--ide-bg) !important;
+  border-color: hsla(157, 55%, 50%, 0.5) !important;
 }
 
 /* ── Divider ── */
 .divider {
   height: 1px;
-  background: var(--border, #273753);
+  background: var(--ide-border);
   margin: 2px 0;
 }
 
@@ -192,14 +193,14 @@
   bottom: 0.9rem;
   z-index: 2;
   padding: 0.35rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(9, 14, 25, 0.84);
+  border-radius: var(--radius-full);
+  border: 1px solid hsla(0, 0%, 100%, 0.12);
+  background: var(--ide-surface);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  color: var(--text-2, #a7bad3);
-  font-size: 0.78rem;
-  font-family: 'IBM Plex Mono', monospace;
+  color: var(--ide-text-2);
+  font-size: var(--ide-text-sm);
+  font-family: var(--font-mono);
   pointer-events: none;
 }
 
@@ -209,12 +210,12 @@
   right: 8px;
   top: 8px;
   z-index: 10;
-  font-size: 10px;
-  color: #667799;
-  font-family: monospace;
-  background: rgba(12, 18, 31, 0.7);
+  font-size: var(--ide-text-xs);
+  color: var(--ide-text-3);
+  font-family: var(--font-mono);
+  background: var(--ide-surface);
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }

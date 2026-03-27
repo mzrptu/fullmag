@@ -4,24 +4,24 @@
   gap: 0.7rem;
   padding: 0.95rem;
   border-radius: var(--radius-md);
-  border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--ide-border-subtle);
+  background: hsla(0, 0%, 100%, 0.03);
 }
 
 .uiMetric header {
   display: flex;
   justify-content: space-between;
   gap: 0.8rem;
-  color: var(--text-3);
-  font-size: 0.76rem;
+  color: var(--ide-text-3);
+  font-size: var(--ide-text-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
 .uiMetric header small {
-  color: var(--text-2);
-  font-size: 0.76rem;
+  color: var(--ide-text-2);
+  font-size: var(--ide-text-sm);
   text-transform: none;
   letter-spacing: normal;
 }
@@ -34,7 +34,7 @@
 .bar {
   height: 0.5rem;
   border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.06);
+  background: hsla(0, 0%, 100%, 0.06);
   overflow: hidden;
 }
 
@@ -47,11 +47,11 @@
 }
 
 .uiMetric[data-tone='warn'] .barFill {
-  background: linear-gradient(90deg, var(--am-warn), #f39b3d);
+  background: linear-gradient(90deg, var(--am-warn), hsl(30, 88%, 60%));
 }
 
 .uiMetric[data-tone='danger'] .barFill {
-  background: linear-gradient(90deg, var(--am-danger), #ff5d78);
+  background: linear-gradient(90deg, var(--am-danger), hsl(347, 100%, 68%));
 }
 
 .uiMetric[data-tone='accent'] .barFill {

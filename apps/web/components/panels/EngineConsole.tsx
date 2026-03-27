@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
-import type { LiveState, ScalarRow, SessionManifest, RunManifest, ArtifactEntry } from "../../lib/useSessionStream";
+import type { LiveState, ScalarRow, SessionManifest, RunManifest, ArtifactEntry, EngineLogEntry } from "../../lib/useSessionStream";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import s from "./EngineConsole.module.css";
 
 /* ── Types ─────────────────────────────────────────────────── */
@@ -13,6 +14,7 @@ interface EngineConsoleProps {
   run: RunManifest | null;
   liveState: LiveState | null;
   scalarRows: ScalarRow[];
+  engineLog: EngineLogEntry[];
   artifacts: ArtifactEntry[];
   connection: "connecting" | "connected" | "disconnected";
   error: string | null;
@@ -75,31 +77,67 @@ function buildLogEntries(
   run: RunManifest | null,
   liveState: LiveState | null,
   scalarRows: ScalarRow[],
+  engineLog: EngineLogEntry[],
   connection: string,
   error: string | null,
   presentationMode: "session" | "current",
 ): LogEntry[] {
   const entries: LogEntry[] = [];
   const now = Date.now();
+  const hasEngineLog = engineLog.length > 0;
+  const workspaceStatus = liveState?.status ?? session?.status ?? run?.status ?? "idle";
 
   if (session) {
-    entries.push({
-      time: session.started_at_unix_ms,
-      icon: "▶",
-      message:
-        presentationMode === "current"
-          ? `Workspace started — ${session.problem_name}`
-          : `Session ${session.session_id.slice(0, 8)} started — ${session.problem_name}`,
-      severity: "system",
-    });
-
-    if (session.requested_backend) {
+    if (!hasEngineLog) {
       entries.push({
-        time: session.started_at_unix_ms + 1,
-        icon: "⚙",
-        message: `Backend: ${session.requested_backend.toUpperCase()} · Mode: ${session.execution_mode} · Precision: ${session.precision}`,
-        severity: "info",
+        time: session.started_at_unix_ms,
+        icon: "▶",
+        message:
+          presentationMode === "current"
+            ? `Workspace started — ${session.problem_name}`
+            : `Session ${session.session_id.slice(0, 8)} started — ${session.problem_name}`,
+        severity: "system",
       });
+
+      if (session.requested_backend) {
+        entries.push({
+          time: session.started_at_unix_ms + 1,
+          icon: "⚙",
+          message: `Backend: ${session.requested_backend.toUpperCase()} · Mode: ${session.execution_mode} · Precision: ${session.precision}`,
+          severity: "info",
+        });
+      }
+
+      const phaseMessage = (() => {
+        if (workspaceStatus === "materializing_script") {
+          return {
+            icon: "◌",
+            message: "Materializing script, importing geometry, and preparing the execution plan",
+            severity: "system" as const,
+          };
+        }
+        if (workspaceStatus === "awaiting_command") {
+          return {
+            icon: "⏸",
+            message: "Workspace is waiting for the next interactive command",
+            severity: "system" as const,
+          };
+        }
+        if (workspaceStatus === "running") {
+          return {
+            icon: "●",
+            message: "Solver is running and publishing live state",
+            severity: "system" as const,
+          };
+        }
+        return null;
+      })();
+      if (phaseMessage) {
+        entries.push({
+          time: session.started_at_unix_ms + 1,
+          ...phaseMessage,
+        });
+      }
     }
 
     const plan = session.plan_summary as Record<string, unknown> | undefined;
@@ -119,6 +157,27 @@ function buildLogEntries(
           severity: "info",
         });
       }
+    }
+  }
+
+  if (engineLog.length > 0) {
+    for (const entry of engineLog) {
+      entries.push({
+        time: entry.timestamp_unix_ms,
+        icon:
+          entry.level === "error" ? "✗"
+            : entry.level === "warn" ? "⚠"
+            : entry.level === "success" ? "✓"
+            : entry.level === "system" ? "◆"
+            : "•",
+        message: entry.message,
+        severity:
+          entry.level === "error" ? "error"
+            : entry.level === "warn" ? "warn"
+            : entry.level === "success" ? "success"
+            : entry.level === "system" ? "system"
+            : "info",
+      });
     }
   }
 
@@ -190,6 +249,7 @@ function buildLogEntries(
     });
   }
 
+  entries.sort((a, b) => a.time - b.time);
   return entries;
 }
 
@@ -207,19 +267,23 @@ export default function EngineConsole({
   run,
   liveState,
   scalarRows,
+  engineLog,
   artifacts,
   connection,
   error,
-  presentationMode = "session",
+  presentationMode = "current",
 }: EngineConsoleProps) {
   const [activeTab, setActiveTab] = useState<ConsoleTab>("live");
+  /* Note: we keep state manually for backwards compat; Radix Tabs controlled via value/onValueChange */
   const logContainerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
   const logEntries = useMemo(
-    () => buildLogEntries(session, run, liveState, scalarRows, connection, error, presentationMode),
-    [session, run, liveState, scalarRows, connection, error, presentationMode],
+    () => buildLogEntries(session, run, liveState, scalarRows, engineLog, connection, error, presentationMode),
+    [session, run, liveState, scalarRows, engineLog, connection, error, presentationMode],
   );
+
+  const workspaceStatus = liveState?.status ?? session?.status ?? run?.status ?? "idle";
 
   useEffect(() => {
     if (autoScroll && logContainerRef.current) {
@@ -272,34 +336,31 @@ export default function EngineConsole({
         )}
       </div>
 
-      {/* ─── Tab bar ─────────────────────────────────── */}
-      <div className={s.tabBar}>
-        {TABS.map((tab) => (
-          <button
-            key={tab.value}
-            className={s.tab}
-            data-active={activeTab === tab.value}
-            onClick={() => setActiveTab(tab.value)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {/* ─── Radix Tabs ─────────────────────────────── */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ConsoleTab)} className={s.tabsRoot}>
+        <TabsList className={s.tabBar}>
+          {TABS.map((tab) => (
+            <TabsTrigger key={tab.value} value={tab.value} className={s.tab}>
+              {tab.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
       {/* ─── Tab content ─────────────────────────────── */}
       <div className={s.tabContent}>
-        {activeTab === "live" && (
+        <TabsContent value="live" className={s.tabPane}>
           <>
             {/* Live telemetry grid */}
             <div className={s.telemetryGrid}>
               <div className={s.metricCell}>
                 <span className={s.metricLabel}>Status</span>
                 <span className={s.metricValue} style={{
-                  color: run?.status === "completed" ? "#35b779"
-                    : session?.status === "running" ? "hsl(210, 80%, 72%)"
-                    : run?.status === "failed" ? "#cf6256" : undefined
+                  color: run?.status === "completed" ? "var(--status-running)"
+                    : workspaceStatus === "running" ? "var(--ide-accent-text)"
+                    : workspaceStatus === "materializing_script" ? "var(--status-warn)"
+                    : run?.status === "failed" ? "var(--status-failed)" : undefined
                 }}>
-                  {session?.status ?? "idle"}
+                  {workspaceStatus}
                 </span>
               </div>
               <div className={s.metricCell}>
@@ -317,7 +378,7 @@ export default function EngineConsole({
               <div className={s.metricCell}>
                 <span className={s.metricLabel}>max dm/dt</span>
                 <span className={s.metricValue} style={{
-                  color: (liveState?.max_dm_dt ?? 0) < 1e-5 ? "#35b779" : undefined
+                  color: (liveState?.max_dm_dt ?? 0) < 1e-5 ? "var(--status-running)" : undefined
                 }}>
                   {fmtExp(liveState?.max_dm_dt ?? 0)}
                 </span>
@@ -345,8 +406,8 @@ export default function EngineConsole({
                     className={s.convergenceFill}
                     style={{
                       width: `${convergenceDisplay}%`,
-                      background: convergenceDisplay > 80 ? "#35b779"
-                        : convergenceDisplay > 40 ? "#fde725" : "#cf6256",
+                      background: convergenceDisplay > 80 ? "var(--status-running)"
+                        : convergenceDisplay > 40 ? "var(--status-warn)" : "var(--status-failed)",
                     }}
                   />
                 </div>
@@ -361,7 +422,7 @@ export default function EngineConsole({
                     className={s.convergenceFill}
                     style={{
                       width: `${Math.min(100, (artifacts.length / 20) * 100)}%`,
-                      background: "hsl(210, 60%, 50%)",
+                      background: "var(--ide-accent)",
                     }}
                   />
                 </div>
@@ -371,9 +432,9 @@ export default function EngineConsole({
               </div>
             </div>
           </>
-        )}
+        </TabsContent>
 
-        {activeTab === "log" && (
+        <TabsContent value="log" className={s.tabPane}>
           <div
             className={s.logContainer}
             ref={logContainerRef}
@@ -403,9 +464,9 @@ export default function EngineConsole({
               ))
             )}
           </div>
-        )}
+        </TabsContent>
 
-        {activeTab === "energy" && (
+        <TabsContent value="energy" className={s.tabPane}>
           <div className={s.energyGrid}>
             <div className={s.energyCard} data-tone="exchange">
               <span className={s.metricLabel}>E_exchange</span>
@@ -443,7 +504,7 @@ export default function EngineConsole({
                   <div className={s.energyCard} data-tone="neutral">
                     <span className={s.metricLabel}>ΔE_total / step</span>
                     <span className={s.metricValue} style={{
-                      color: dE < 0 ? "#35b779" : "#cf6256"
+                      color: dE < 0 ? "var(--status-running)" : "var(--status-failed)"
                     }}>
                       {dStep > 0 ? fmtExp(dE / dStep) : "—"}
                     </span>
@@ -456,9 +517,9 @@ export default function EngineConsole({
               );
             })()}
           </div>
-        )}
+        </TabsContent>
 
-        {activeTab === "perf" && (
+        <TabsContent value="perf" className={s.tabPane}>
           <div className={s.perfGrid}>
             <div className={s.metricCell}>
               <span className={s.metricLabel}>Backend</span>
@@ -501,7 +562,7 @@ export default function EngineConsole({
                   className={s.perfBarFill}
                   style={{
                     width: `${Math.min(100, (stepsPerSec / 100) * 100)}%`,
-                    background: stepsPerSec > 50 ? "#35b779" : stepsPerSec > 10 ? "#fde725" : "hsl(210, 60%, 50%)",
+                    background: stepsPerSec > 50 ? "var(--status-running)" : stepsPerSec > 10 ? "var(--status-warn)" : "var(--ide-accent)",
                   }}
                 />
               </div>
@@ -510,8 +571,9 @@ export default function EngineConsole({
               </span>
             </div>
           </div>
-        )}
+        </TabsContent>
       </div>
+      </Tabs>
     </div>
   );
 }

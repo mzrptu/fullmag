@@ -2,12 +2,18 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 repo_root := justfile_directory()
 local_bin := repo_root + "/.fullmag/local/bin"
+repo_python := repo_root + "/.fullmag/local/python/bin/python"
 
 default:
     @just --list
 
 help:
     @just --list
+
+ensure-python:
+    mkdir -p .fullmag/local
+    if [ ! -x "{{repo_python}}" ]; then python3 -m venv .fullmag/local/python; fi
+    "{{repo_python}}" -m pip install 'numpy>=1.24' 'gmsh>=4.12' 'meshio>=5.3' 'trimesh>=4.2'
 
 build target="fullmag":
     if [ "{{target}}" = "fullmag" ]; then make install-cli; \
@@ -37,36 +43,44 @@ control-room-stop:
     ./scripts/stop-control-room.sh
 
 run script:
+    just ensure-python
     just build fullmag
-    PATH="{{local_bin}}:$PATH" fullmag {{script}}
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag {{script}}
 
 run-interactive script:
+    just ensure-python
     just build fullmag
-    PATH="{{local_bin}}:$PATH" fullmag -i {{script}}
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag -i {{script}}
 
 run-headless script:
+    just ensure-python
     just build fullmag
-    PATH="{{local_bin}}:$PATH" fullmag {{script}} --headless --json
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag {{script}} --headless --json
 
 run-py-layer-hole:
+    just ensure-python
     just build fullmag
-    PATH="{{local_bin}}:$PATH" fullmag examples/py_layer_hole_relax_150nm.py
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag examples/py_layer_hole_relax_150nm.py
 
 run-py-layer-hole-headless:
+    just ensure-python
     just build fullmag
-    PATH="{{local_bin}}:$PATH" fullmag examples/py_layer_hole_relax_150nm.py --headless --json
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag examples/py_layer_hole_relax_150nm.py --headless --json
 
 run-nanoflower:
+    just ensure-python
     just build fullmag
-    PATH="{{local_bin}}:$PATH" fullmag examples/nanoflower_fdm.py
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag examples/nanoflower_fem.py
 
 run-nanoflower-interactive:
+    just ensure-python
     just build fullmag
-    PATH="{{local_bin}}:$PATH" fullmag -i examples/nanoflower_fdm.py
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag -i examples/nanoflower_fdm.py
 
 run-nanoflower-headless:
+    just ensure-python
     just build fullmag
-    PATH="{{local_bin}}:$PATH" fullmag examples/nanoflower_fdm.py --headless --json
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag examples/nanoflower_fdm.py --headless --json
 
 fem-gpu-headless script:
     docker compose --profile fem-gpu run --rm fem-gpu bash -lc '\

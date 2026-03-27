@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { resolveApiBase, resolveApiWsBase } from "./apiBase";
+import { currentLiveApiClient } from "./liveApiClient";
 
 export interface SessionManifest {
   session_id: string;
@@ -76,6 +76,12 @@ export interface ScalarRow {
   max_h_demag: number;
 }
 
+export interface EngineLogEntry {
+  timestamp_unix_ms: number;
+  level: string;
+  message: string;
+}
+
 export interface QuantityDescriptor {
   id: string;
   label: string;
@@ -136,6 +142,7 @@ export interface SessionState {
   live_state: LiveState | null;
   metadata: Record<string, unknown> | null;
   scalar_rows: ScalarRow[];
+  engine_log: EngineLogEntry[];
   quantities: QuantityDescriptor[];
   fem_mesh: FemLiveMesh | null;
   latest_fields: LatestFields;
@@ -150,10 +157,6 @@ interface UseSessionStreamResult {
   connection: ConnectionStatus;
   error: string | null;
 }
-
-type LiveStreamTarget =
-  | { kind: "session"; sessionId: string }
-  | { kind: "current" };
 
 function flattenField(raw: any): number[] | null {
   if (!raw || !Array.isArray(raw.values)) {
@@ -214,6 +217,13 @@ function normalizeSessionState(raw: any): SessionState {
     live_state: liveState,
     metadata: raw.metadata ?? null,
     scalar_rows: Array.isArray(raw.scalar_rows) ? raw.scalar_rows : [],
+    engine_log: Array.isArray(raw.engine_log)
+      ? raw.engine_log.map((entry: any) => ({
+          timestamp_unix_ms: Number(entry?.timestamp_unix_ms ?? 0),
+          level: String(entry?.level ?? "info"),
+          message: String(entry?.message ?? ""),
+        }))
+      : [],
     quantities: Array.isArray(raw.quantities) ? raw.quantities : [],
     fem_mesh: raw.fem_mesh ?? raw.live_state?.latest_step?.fem_mesh ?? null,
     latest_fields: {
@@ -278,59 +288,32 @@ function normalizeSessionState(raw: any): SessionState {
   };
 }
 
-function buildStreamUrls(
-  target: LiveStreamTarget,
-): { bootstrapUrl: string; eventsUrl?: string; wsUrl?: string } {
-  const apiBase = resolveApiBase();
-  if (target.kind === "current") {
-    return {
-      bootstrapUrl: `${apiBase}/v1/live/current/bootstrap`,
-      wsUrl: `${resolveApiWsBase()}/ws/live/current`,
-    };
-  }
-  return {
-    bootstrapUrl: `${apiBase}/v1/sessions/${target.sessionId}/state`,
-    eventsUrl: `${apiBase}/v1/sessions/${target.sessionId}/events`,
-  };
-}
-
-export function useLiveStream(target: LiveStreamTarget): UseSessionStreamResult {
+export function useCurrentLiveStream(): UseSessionStreamResult {
   const [state, setState] = useState<SessionState | null>(null);
   const [connection, setConnection] = useState<ConnectionStatus>("connecting");
   const [error, setError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  // Set to true once the session emits a finished=true state — stops reconnect loop.
   const finishedRef = useRef(false);
-  // Debounce timer for "disconnected" — avoids "Offline" flash on transient drops.
   const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const targetKind = target.kind;
-  const targetSessionId = target.kind === "session" ? target.sessionId : null;
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const unmountedRef = useRef(false);
+  const intentionallyClosedRef = useRef(new WeakSet<WebSocket>());
 
   const connect = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-    if (wsRef.current) {
-      wsRef.current.close();
+    const client = currentLiveApiClient();
+    const previousWs = wsRef.current;
+    if (previousWs) {
+      intentionallyClosedRef.current.add(previousWs);
+      previousWs.close();
       wsRef.current = null;
     }
 
-    const { bootstrapUrl, eventsUrl, wsUrl } =
-      targetKind === "current"
-        ? buildStreamUrls({ kind: "current" })
-        : buildStreamUrls({ kind: "session", sessionId: targetSessionId ?? "" });
-
-    fetch(bootstrapUrl, { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) {
-          const payload = await response.json().catch(() => null);
-          throw new Error(payload?.error ?? `HTTP ${response.status}`);
-        }
-        return response.json();
-      })
+    client
+      .fetchBootstrap()
       .then((raw) => {
+        if (unmountedRef.current) {
+          return;
+        }
         const nextState = normalizeSessionState(raw);
         if (nextState.live_state?.finished) {
           finishedRef.current = true;
@@ -343,78 +326,37 @@ export function useLiveStream(target: LiveStreamTarget): UseSessionStreamResult 
         });
       })
       .catch((bootstrapError) => {
+        if (unmountedRef.current) {
+          return;
+        }
         setError(
           bootstrapError instanceof Error ? bootstrapError.message : "Failed to load live state",
         );
       });
 
-    if (targetKind === "current") {
-      const ws = new WebSocket(wsUrl ?? `${resolveApiWsBase()}/ws/live/current`);
-      wsRef.current = ws;
+    const ws = client.connectWebSocket();
+    wsRef.current = ws;
 
-      ws.onopen = () => {
-        if (disconnectTimerRef.current !== null) {
-          clearTimeout(disconnectTimerRef.current);
-          disconnectTimerRef.current = null;
-        }
-        setConnection("connected");
-        setError(null);
-      };
-
-      ws.onmessage = (event: MessageEvent<string>) => {
-        try {
-          const raw = JSON.parse(event.data);
-          setState((prevState) => {
-            const nextState = normalizeSessionState(raw);
-            if (!nextState.fem_mesh && prevState?.fem_mesh) {
-              nextState.fem_mesh = prevState.fem_mesh;
-            }
-            if (nextState.live_state?.finished) {
-              finishedRef.current = true;
-            }
-            return nextState;
-          });
-        } catch (parseError) {
-          console.warn("Failed to parse current live ws payload", parseError);
-        }
-      };
-
-      ws.onerror = () => {
-        ws.close();
-      };
-
-      ws.onclose = () => {
-        if (finishedRef.current) {
-          setConnection("disconnected");
-          return;
-        }
-        disconnectTimerRef.current = setTimeout(() => {
-          disconnectTimerRef.current = null;
-          setConnection("disconnected");
-        }, 2000);
-        setTimeout(() => {
-          if (wsRef.current === ws) {
-            setConnection("connecting");
-            connect();
-          }
-        }, 1500);
-      };
-      return;
-    }
-
-    const es = new EventSource(eventsUrl ?? "");
-    esRef.current = es;
-
-    es.onopen = () => {
+    ws.onopen = () => {
+      if (unmountedRef.current || wsRef.current !== ws) {
+        return;
+      }
       if (disconnectTimerRef.current !== null) {
         clearTimeout(disconnectTimerRef.current);
         disconnectTimerRef.current = null;
+      }
+      if (reconnectTimerRef.current !== null) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
       setConnection("connected");
       setError(null);
     };
 
-    es.addEventListener("session_state", (event: MessageEvent) => {
+    ws.onmessage = (event: MessageEvent<string>) => {
+      if (unmountedRef.current || wsRef.current !== ws) {
+        return;
+      }
       try {
         const raw = JSON.parse(event.data);
         setState((prevState) => {
@@ -428,21 +370,29 @@ export function useLiveStream(target: LiveStreamTarget): UseSessionStreamResult 
           return nextState;
         });
       } catch (parseError) {
-        console.warn("Failed to parse session_state event", parseError);
+        console.warn("Failed to parse current live ws payload", parseError);
       }
-    });
+    };
 
-    es.addEventListener("session_error", (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data);
-        setError(data.error ?? "Unknown error");
-      } catch {
-        setError("Unknown session error");
+    ws.onerror = () => {
+      if (
+        unmountedRef.current ||
+        wsRef.current !== ws ||
+        intentionallyClosedRef.current.has(ws)
+      ) {
+        return;
       }
-    });
+      ws.close();
+    };
 
-    es.onerror = () => {
-      es.close();
+    ws.onclose = () => {
+      if (
+        unmountedRef.current ||
+        wsRef.current !== ws ||
+        intentionallyClosedRef.current.has(ws)
+      ) {
+        return;
+      }
 
       if (finishedRef.current) {
         setConnection("disconnected");
@@ -454,45 +404,39 @@ export function useLiveStream(target: LiveStreamTarget): UseSessionStreamResult 
         setConnection("disconnected");
       }, 2000);
 
-      setTimeout(() => {
-        if (esRef.current === es) {
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null;
+        if (wsRef.current === ws) {
           setConnection("connecting");
           connect();
         }
       }, 1500);
     };
-  }, [targetKind, targetSessionId]);
+  }, []);
 
   useEffect(() => {
+    unmountedRef.current = false;
     finishedRef.current = false;
     setState(null);
     setConnection("connecting");
     setError(null);
     connect();
     return () => {
-      const es = esRef.current;
-      if (es) {
-        es.close();
-        esRef.current = null;
-      }
+      unmountedRef.current = true;
       const ws = wsRef.current;
       if (ws) {
+        intentionallyClosedRef.current.add(ws);
         ws.close();
         wsRef.current = null;
       }
       if (disconnectTimerRef.current !== null) {
         clearTimeout(disconnectTimerRef.current);
       }
+      if (reconnectTimerRef.current !== null) {
+        clearTimeout(reconnectTimerRef.current);
+      }
     };
   }, [connect]);
 
   return { state, connection, error };
-}
-
-export function useSessionStream(sessionId: string): UseSessionStreamResult {
-  return useLiveStream({ kind: "session", sessionId });
-}
-
-export function useCurrentLiveStream(): UseSessionStreamResult {
-  return useLiveStream({ kind: "current" });
 }

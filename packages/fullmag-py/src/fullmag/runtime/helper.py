@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
+from fullmag._progress import emit_progress
 from fullmag.model import BackendTarget, ExecutionMode, ExecutionPrecision
 from fullmag.runtime.loader import load_problem_from_script
 
@@ -69,12 +70,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command in {"export-ir", "export-run-config"}:
+        emit_progress(f"Loading Python script {Path(args.script).name}")
         loaded = load_problem_from_script(Path(args.script))
         requested_backend = BackendTarget(args.backend) if args.backend is not None else None
         execution_mode = ExecutionMode(args.mode) if args.mode is not None else None
         execution_precision = (
             ExecutionPrecision(args.precision) if args.precision is not None else None
         )
+        emit_progress("Building ProblemIR and realizing geometry assets")
         ir = loaded.to_ir(
             requested_backend=requested_backend,
             execution_mode=execution_mode,
@@ -106,6 +109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 }
             )
         )
+        emit_progress("Run configuration exported")
         return 0
 
     parser.error(f"Unsupported helper command: {args.command}")

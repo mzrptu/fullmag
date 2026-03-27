@@ -39,7 +39,7 @@ def _import_trimesh() -> Any:
     except ImportError as exc:  # pragma: no cover - depends on optional extra
         raise ImportError(
             "trimesh is required for STL voxelization helpers. "
-            "Install with: pip install 'fullmag[meshing]'"
+            "Install with: python -m pip install 'trimesh>=4.2'"
         ) from exc
     return trimesh
 

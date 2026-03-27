@@ -16,16 +16,15 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 
 use fullmag_runner::{FemMeshPayload, StepUpdate};
 
 #[derive(Debug, Clone)]
 struct AppState {
-    sessions_root: PathBuf,
     repo_root: PathBuf,
     current_workspace_root: PathBuf,
     /// Per-run broadcast channels for live step updates.
@@ -112,6 +111,13 @@ struct LiveState {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+struct EngineLogEntry {
+    timestamp_unix_ms: u128,
+    level: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct StepUpdateView {
     step: u64,
     time: f64,
@@ -140,6 +146,7 @@ struct SessionStateResponse {
     live_state: Option<LiveState>,
     metadata: Option<Value>,
     scalar_rows: Vec<ScalarRow>,
+    engine_log: Vec<EngineLogEntry>,
     quantities: Vec<QuantityDescriptor>,
     fem_mesh: Option<FemMeshPayload>,
     latest_fields: LatestFields,
@@ -319,6 +326,8 @@ struct CurrentLivePublishRequest {
     live_state: Option<LiveState>,
     #[serde(default)]
     latest_scalar_row: Option<ScalarRow>,
+    #[serde(default)]
+    engine_log: Option<Vec<EngineLogEntry>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -367,7 +376,7 @@ struct BoundsSummary {
 }
 
 fn default_output_dir() -> String {
-    ".fullmag/sessions/live/artifacts".to_string()
+    ".fullmag/local-live/current/artifacts".to_string()
 }
 
 fn uuid_v4_hex() -> String {
@@ -384,15 +393,13 @@ fn uuid_v4_hex() -> String {
 async fn main() {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
+    let repo_root = repo_root();
+    let current_workspace_root = repo_root.join(".fullmag").join("local-live").join("current");
+    let static_web_root = resolve_static_web_root(&repo_root);
+
     let state = Arc::new(AppState {
-        sessions_root: std::env::var("FULLMAG_SESSIONS_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(".fullmag/sessions")),
-        repo_root: repo_root(),
-        current_workspace_root: repo_root()
-            .join(".fullmag")
-            .join("local-live")
-            .join("current"),
+        repo_root: repo_root.clone(),
+        current_workspace_root,
         live_channels: Arc::new(RwLock::new(HashMap::new())),
         current_live_state: Arc::new(RwLock::new(None)),
         current_live_events: broadcast::channel(256).0,
@@ -459,27 +466,23 @@ async fn main() {
             "/v1/live/current/artifacts",
             get(list_current_live_artifacts),
         )
-        .route("/v1/sessions", get(list_sessions))
-        .route("/v1/sessions/:session_id", get(get_session))
-        .route("/v1/sessions/:session_id/state", get(get_session_state))
-        .route("/v1/sessions/:session_id/events", get(get_session_events))
-        .route(
-            "/v1/sessions/:session_id/commands",
-            post(enqueue_session_command),
-        )
-        .route(
-            "/v1/sessions/:session_id/assets/import",
-            post(import_session_asset),
-        )
-        .route("/v1/runs", get(list_runs))
-        .route("/v1/runs/:run_id", get(get_run))
-        .route("/v1/runs/:run_id/artifacts", get(list_run_artifacts))
         .route("/v1/docs/physics", get(list_physics_docs))
         .route("/v1/run", post(start_run))
         .route("/ws/live/current", get(ws_current_live))
         .route("/ws/live/:run_id", get(ws_live))
         .layer(cors)
         .with_state(state);
+
+    let app = if let Some(static_root) = static_web_root {
+        info!(path = %static_root.display(), "serving built control room");
+        app.fallback_service(
+            ServeDir::new(&static_root)
+                .append_index_html_on_directories(true)
+                .fallback(ServeFile::new(static_root.join("index.html"))),
+        )
+    } else {
+        app
+    };
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     info!(%addr, "starting fullmag-api");
@@ -491,6 +494,19 @@ async fn main() {
     axum::serve(listener, app)
         .await
         .expect("serving API should succeed");
+}
+
+fn resolve_static_web_root(repo_root: &Path) -> Option<PathBuf> {
+    let candidates = [
+        std::env::var_os("FULLMAG_WEB_STATIC_DIR").map(PathBuf::from),
+        Some(repo_root.join(".fullmag").join("local").join("web")),
+        Some(repo_root.join("apps").join("web").join("out")),
+    ];
+
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|path| path.join("index.html").is_file())
 }
 
 async fn healthz() -> Json<HealthResponse> {
@@ -505,7 +521,7 @@ async fn vision() -> Json<VisionResponse> {
         north_star:
             "Describe one physical problem and execute it through FDM, FEM, or hybrid plans.",
         modes: ["strict", "extended", "hybrid"],
-        runtime_spine: "current-live + legacy-session",
+        runtime_spine: "current-live",
     })
 }
 
@@ -848,136 +864,6 @@ async fn handle_current_live_ws(mut socket: WebSocket, state: Arc<AppState>) {
     }
 }
 
-async fn list_sessions(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<SessionManifest>>, ApiError> {
-    Ok(Json(read_all_sessions(&state.sessions_root)?))
-}
-
-async fn get_session(
-    State(state): State<Arc<AppState>>,
-    AxumPath(session_id): AxumPath<String>,
-) -> Result<Json<SessionManifest>, ApiError> {
-    let path = state.sessions_root.join(&session_id).join("session.json");
-    Ok(Json(read_json_file(&path)?))
-}
-
-async fn get_session_state(
-    State(state): State<Arc<AppState>>,
-    AxumPath(session_id): AxumPath<String>,
-) -> Result<Json<SessionStateResponse>, ApiError> {
-    Ok(Json(load_session_state(&state.sessions_root, &session_id)?))
-}
-
-async fn get_session_events(
-    State(state): State<Arc<AppState>>,
-    AxumPath(session_id): AxumPath<String>,
-) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let session_dir = state.sessions_root.join(&session_id);
-    if !session_dir.exists() {
-        return Err(ApiError::not_found(format!(
-            "missing session directory {}",
-            session_dir.display()
-        )));
-    }
-
-    let sessions_root = state.sessions_root.clone();
-    let stream = stream! {
-        let mut ticker = tokio::time::interval(Duration::from_millis(800));
-        let mut last_payload_json: Option<String> = None;
-        let mut first = true;
-
-        loop {
-            ticker.tick().await;
-
-            let mut payload = match load_session_state(&sessions_root, &session_id) {
-                Ok(payload) => payload,
-                Err(error) => {
-                    let json = serde_json::json!({ "error": error.message }).to_string();
-                    yield Ok(Event::default().event("session_error").data(json));
-                    break;
-                }
-            };
-
-            if !first {
-                payload.fem_mesh = None;
-            }
-            if let Some(ref mut live) = payload.live_state {
-                if !first {
-                    live.latest_step.fem_mesh = None;
-                }
-            }
-
-            let json = match serde_json::to_string(&payload) {
-                Ok(json) => json,
-                Err(error) => {
-                    let json = serde_json::json!({ "error": error.to_string() }).to_string();
-                    yield Ok(Event::default().event("session_error").data(json));
-                    break;
-                }
-            };
-
-            if last_payload_json.as_deref() != Some(json.as_str()) {
-                last_payload_json = Some(json.clone());
-                yield Ok(Event::default().event("session_state").data(json));
-            }
-
-            first = false;
-
-            if matches!(payload.session.status.as_str(), "completed" | "failed" | "cancelled") {
-                break;
-            }
-        }
-    };
-
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
-}
-
-async fn import_session_asset(
-    State(state): State<Arc<AppState>>,
-    AxumPath(session_id): AxumPath<String>,
-    Json(req): Json<ImportSessionAssetRequest>,
-) -> Result<Json<SessionAssetImportResponse>, ApiError> {
-    Ok(Json(import_asset_for_session(&state, &session_id, req)?))
-}
-
-async fn enqueue_session_command(
-    State(state): State<Arc<AppState>>,
-    AxumPath(session_id): AxumPath<String>,
-    Json(req): Json<SessionCommandRequest>,
-) -> Result<Json<SessionCommandResponse>, ApiError> {
-    Ok(Json(enqueue_command_for_session(&state, &session_id, req)?))
-}
-
-fn enqueue_command_for_session(
-    state: &AppState,
-    session_id: &str,
-    req: SessionCommandRequest,
-) -> Result<SessionCommandResponse, ApiError> {
-    let session_dir = state.sessions_root.join(&session_id);
-    if !session_dir.exists() {
-        return Err(ApiError::not_found(format!(
-            "missing session directory {}",
-            session_dir.display()
-        )));
-    }
-
-    let command = build_session_command(req)?;
-    let pending_dir = session_dir.join("commands").join("pending");
-    std::fs::create_dir_all(&pending_dir)?;
-    let queued_path = pending_dir.join(format!("{}-{}.json", command.command_id, command.kind));
-    let text = serde_json::to_string_pretty(&command)
-        .map_err(|error| ApiError::internal(format!("failed to serialize command: {}", error)))?;
-    std::fs::write(&queued_path, text)?;
-
-    Ok(SessionCommandResponse {
-        command_id: command.command_id,
-        session_id: session_id.to_string(),
-        kind: command.kind,
-        queued_path: make_repo_relative(&state.repo_root, &queued_path),
-    })
-}
-
 fn build_session_command(req: SessionCommandRequest) -> Result<SessionCommand, ApiError> {
     let kind = req.kind.trim().to_lowercase();
     if !matches!(kind.as_str(), "run" | "relax" | "close") {
@@ -1006,21 +892,6 @@ fn build_session_command(req: SessionCommandRequest) -> Result<SessionCommand, A
         torque_tolerance: req.torque_tolerance,
         energy_tolerance: req.energy_tolerance,
     })
-}
-
-fn import_asset_for_session(
-    state: &AppState,
-    session_id: &str,
-    req: ImportSessionAssetRequest,
-) -> Result<SessionAssetImportResponse, ApiError> {
-    let session_dir = state.sessions_root.join(session_id);
-    if !session_dir.exists() {
-        return Err(ApiError::not_found(format!(
-            "missing session directory {}",
-            session_dir.display()
-        )));
-    }
-    import_asset_into_dir(state, session_id, session_dir.join("imports"), req)
 }
 
 async fn import_asset_for_current_workspace(
@@ -1092,41 +963,6 @@ fn import_asset_into_dir(
     std::fs::write(manifest_path, manifest_text)?;
 
     Ok(response)
-}
-
-async fn list_runs(State(state): State<Arc<AppState>>) -> Result<Json<Vec<RunManifest>>, ApiError> {
-    let sessions = read_all_sessions(&state.sessions_root)?;
-    let mut runs = Vec::new();
-    for session in sessions {
-        let run_path = state
-            .sessions_root
-            .join(&session.session_id)
-            .join("run.json");
-        runs.push(read_json_file(&run_path)?);
-    }
-    Ok(Json(runs))
-}
-
-async fn get_run(
-    State(state): State<Arc<AppState>>,
-    AxumPath(run_id): AxumPath<String>,
-) -> Result<Json<RunManifest>, ApiError> {
-    let run_path = find_run_file(&state.sessions_root, &run_id)?;
-    Ok(Json(read_json_file(&run_path)?))
-}
-
-async fn list_run_artifacts(
-    State(state): State<Arc<AppState>>,
-    AxumPath(run_id): AxumPath<String>,
-) -> Result<Json<Vec<ArtifactEntry>>, ApiError> {
-    let run_path = find_run_file(&state.sessions_root, &run_id)?;
-    let manifest: RunManifest = read_json_file(&run_path)?;
-    let artifact_dir = PathBuf::from(&manifest.artifact_dir);
-    let mut artifacts = Vec::new();
-    if artifact_dir.exists() {
-        collect_artifacts(&artifact_dir, &artifact_dir, &mut artifacts)?;
-    }
-    Ok(Json(artifacts))
 }
 
 async fn list_physics_docs(
@@ -1663,6 +1499,7 @@ fn default_current_live_state(req: &CurrentLivePublishRequest) -> SessionStateRe
         live_state: None,
         metadata: None,
         scalar_rows: Vec::new(),
+        engine_log: Vec::new(),
         quantities: Vec::new(),
         fem_mesh: None,
         latest_fields: LatestFields::default(),
@@ -1702,6 +1539,9 @@ fn apply_current_live_publish(
     }
     if let Some(row) = req.latest_scalar_row {
         upsert_scalar_row(&mut current.scalar_rows, row);
+    }
+    if let Some(engine_log) = req.engine_log {
+        current.engine_log = engine_log;
     }
 
     if let Some(run) = current.run.as_ref() {
@@ -1794,91 +1634,6 @@ fn unix_time_millis_now() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
-}
-
-fn read_all_sessions(root: &Path) -> Result<Vec<SessionManifest>, ApiError> {
-    if !root.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut sessions: Vec<SessionManifest> = Vec::new();
-    for entry in std::fs::read_dir(root)? {
-        let entry = entry?;
-        let session_path = entry.path().join("session.json");
-        if session_path.exists() {
-            sessions.push(read_json_file(&session_path)?);
-        }
-    }
-    sessions.sort_by_key(|session| session.started_at_unix_ms);
-    sessions.reverse();
-    Ok(sessions)
-}
-
-fn load_session_state(root: &Path, session_id: &str) -> Result<SessionStateResponse, ApiError> {
-    let session_dir = root.join(session_id);
-    let session: SessionManifest = read_json_file(&session_dir.join("session.json"))?;
-    let run = read_optional_json_file::<RunManifest>(&session_dir.join("run.json"))?;
-    let artifact_dir = PathBuf::from(&session.artifact_dir);
-
-    let mut artifacts = Vec::new();
-    if artifact_dir.exists() {
-        collect_artifacts(&artifact_dir, &artifact_dir, &mut artifacts)?;
-    }
-
-    let metadata = read_optional_json_value(&artifact_dir.join("metadata.json"))?;
-    let scalar_rows = read_scalar_rows(&artifact_dir.join("scalars.csv"))?;
-    let live_state = read_optional_json_file::<LiveState>(&session_dir.join("live_state.json"))?;
-    let fem_mesh = live_state
-        .as_ref()
-        .and_then(|state| state.latest_step.fem_mesh.clone())
-        .or_else(|| metadata.as_ref().and_then(extract_fem_mesh_from_metadata));
-    let latest_fields = LatestFields {
-        m: read_latest_field_json(&artifact_dir, "m")?,
-        h_ex: read_latest_field_json(&artifact_dir, "H_ex")?,
-        h_demag: read_latest_field_json(&artifact_dir, "H_demag")?,
-        h_ext: read_latest_field_json(&artifact_dir, "H_ext")?,
-        h_eff: read_latest_field_json(&artifact_dir, "H_eff")?,
-    };
-    let field_location = if fem_mesh.is_some() { "node" } else { "cell" };
-    let quantities = build_quantities(
-        &latest_fields,
-        live_state.as_ref(),
-        run.as_ref(),
-        &scalar_rows,
-        field_location,
-    );
-
-    Ok(SessionStateResponse {
-        session,
-        run,
-        live_state,
-        metadata,
-        scalar_rows,
-        quantities,
-        fem_mesh,
-        latest_fields,
-        artifacts,
-        preview: None,
-    })
-}
-
-fn find_run_file(root: &Path, run_id: &str) -> Result<PathBuf, ApiError> {
-    if !root.exists() {
-        return Err(ApiError::not_found("sessions root does not exist"));
-    }
-
-    for entry in std::fs::read_dir(root)? {
-        let entry = entry?;
-        let path = entry.path().join("run.json");
-        if path.exists() {
-            let manifest: RunManifest = read_json_file(&path)?;
-            if manifest.run_id == run_id {
-                return Ok(path);
-            }
-        }
-    }
-
-    Err(ApiError::not_found(format!("run '{run_id}' not found")))
 }
 
 fn collect_artifacts(
@@ -2180,119 +1935,6 @@ fn bounds_from_points(points: &[[f64; 3]]) -> Option<BoundsSummary> {
         max,
         size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
     })
-}
-
-fn read_json_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, ApiError> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|_| ApiError::not_found(format!("missing {}", path.display())))?;
-    serde_json::from_str(&text).map_err(|error| {
-        ApiError::internal(format!("invalid JSON in {}: {}", path.display(), error))
-    })
-}
-
-fn read_optional_json_file<T: for<'de> Deserialize<'de>>(
-    path: &Path,
-) -> Result<Option<T>, ApiError> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    read_json_file(path).map(Some)
-}
-
-fn read_optional_json_value(path: &Path) -> Result<Option<Value>, ApiError> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let text = std::fs::read_to_string(path)
-        .map_err(|_| ApiError::not_found(format!("missing {}", path.display())))?;
-    serde_json::from_str(&text).map(Some).map_err(|error| {
-        ApiError::internal(format!("invalid JSON in {}: {}", path.display(), error))
-    })
-}
-
-fn read_scalar_rows(path: &Path) -> Result<Vec<ScalarRow>, ApiError> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let text = std::fs::read_to_string(path)
-        .map_err(|_| ApiError::not_found(format!("missing {}", path.display())))?;
-    let mut rows = Vec::new();
-    let mut header = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if index == 0 {
-            header = line
-                .split(',')
-                .map(|value| value.trim().to_string())
-                .collect();
-            continue;
-        }
-        let columns = line.split(',').map(str::trim).collect::<Vec<_>>();
-        if columns.len() != header.len() {
-            return Err(ApiError::internal(format!(
-                "invalid scalar row {} in {}",
-                index + 1,
-                path.display()
-            )));
-        }
-        let parse_f64 = |name: &str| -> Result<f64, ApiError> {
-            let Some(position) = header.iter().position(|column| column == name) else {
-                return Ok(0.0);
-            };
-            columns[position].parse().map_err(|error| {
-                ApiError::internal(format!(
-                    "invalid scalar {} in {}: {}",
-                    name,
-                    path.display(),
-                    error
-                ))
-            })
-        };
-        rows.push(ScalarRow {
-            step: parse_f64("step")? as u64,
-            time: parse_f64("time")?,
-            solver_dt: parse_f64("solver_dt")?,
-            e_ex: parse_f64("E_ex")?,
-            e_demag: parse_f64("E_demag")?,
-            e_ext: parse_f64("E_ext")?,
-            e_total: parse_f64("E_total")?,
-            max_dm_dt: parse_f64("max_dm_dt")?,
-            max_h_eff: parse_f64("max_h_eff")?,
-            max_h_demag: parse_f64("max_h_demag")?,
-        });
-    }
-    Ok(rows)
-}
-
-fn read_latest_field_json(
-    artifact_dir: &Path,
-    observable: &str,
-) -> Result<Option<Value>, ApiError> {
-    let observable_dir = artifact_dir.join("fields").join(observable);
-    if !observable_dir.exists() {
-        return Ok(None);
-    }
-
-    let mut latest: Option<PathBuf> = None;
-    for entry in std::fs::read_dir(&observable_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-        match &latest {
-            Some(current) if current.file_name() >= path.file_name() => {}
-            _ => latest = Some(path),
-        }
-    }
-
-    match latest {
-        Some(path) => read_optional_json_value(&path),
-        None => Ok(None),
-    }
 }
 
 fn build_quantities(

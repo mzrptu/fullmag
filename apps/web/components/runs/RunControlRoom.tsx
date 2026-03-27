@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { resolveApiBase } from "../../lib/apiBase";
-import { useLiveStream } from "../../lib/useSessionStream";
+import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
+import { currentLiveApiClient } from "../../lib/liveApiClient";
+import { useCurrentLiveStream } from "../../lib/useSessionStream";
 import EngineConsole from "../panels/EngineConsole";
 import MeshQualityHistogram from "../panels/MeshQualityHistogram";
 import MagnetizationSlice2D from "../preview/MagnetizationSlice2D";
@@ -10,7 +11,7 @@ import MagnetizationView3D from "../preview/MagnetizationView3D";
 import FemMeshView3D from "../preview/FemMeshView3D";
 import FemMeshSlice2D from "../preview/FemMeshSlice2D";
 import PreviewScalarField2D from "../preview/PreviewScalarField2D";
-import type { FemMeshData } from "../preview/FemMeshView3D";
+import type { ClipAxis, FemMeshData, RenderMode } from "../preview/FemMeshView3D";
 import ScalarPlot from "../plots/ScalarPlot";
 import Sparkline from "../ui/Sparkline";
 import EmptyState from "../ui/EmptyState";
@@ -19,15 +20,28 @@ import s from "./RunControlRoom.module.css";
 
 /* ── Types ─────────────────────────────────────────────────── */
 
-interface RunControlRoomProps {
-  sessionId?: string;
-  mode?: "session" | "current";
-}
-
 type ViewportMode = "3D" | "2D" | "Mesh";
 type VectorComponent = "x" | "y" | "z" | "magnitude";
 type PreviewComponent = "3D" | "x" | "y" | "z";
 type SlicePlane = "xy" | "xz" | "yz";
+type FemDockTab = "mesh" | "mesher" | "view" | "quality";
+type MesherControlStatus = "active" | "internal" | "planned";
+
+interface MesherControlDescriptor {
+  id: string;
+  label: string;
+  status: MesherControlStatus;
+  ui?: string;
+  backend?: string;
+  description?: string;
+}
+
+interface MesherGroupDescriptor {
+  id: string;
+  title: string;
+  description?: string;
+  controls: MesherControlDescriptor[];
+}
 
 const FEM_SLICE_COUNT = 25;
 
@@ -60,6 +74,19 @@ function fmtExp(v: number): string {
   return v.toExponential(3);
 }
 
+function asVec3(value: unknown): [number, number, number] | null {
+  if (!Array.isArray(value) || value.length !== 3) return null;
+  const [x, y, z] = value;
+  if ([x, y, z].some((component) => typeof component !== "number")) return null;
+  return [x as number, y as number, z as number];
+}
+
+function asMesherStatus(value: unknown): MesherControlStatus {
+  return value === "active" || value === "internal" || value === "planned"
+    ? value
+    : "planned";
+}
+
 /* ── Collapsible Section ───────────────────────────────────── */
 
 function Section({
@@ -86,24 +113,45 @@ function Section({
   );
 }
 
+function DockTabButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={s.meshDockTab}
+      data-active={active}
+      onClick={onClick}
+      type="button"
+    >
+      {label}
+    </button>
+  );
+}
+
 /* ── Component ─────────────────────────────────────────────── */
 
-export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps) {
-  const presentationMode = mode ?? (sessionId ? "session" : "current");
-  const streamTarget = useMemo(
-    () =>
-      presentationMode === "current"
-        ? ({ kind: "current" } as const)
-        : ({ kind: "session", sessionId: sessionId ?? "" } as const),
-    [presentationMode, sessionId],
-  );
-  const { state, connection, error } = useLiveStream(streamTarget);
+export default function RunControlRoom() {
+  const { state, connection, error } = useCurrentLiveStream();
   const [viewMode, setViewMode] = useState<ViewportMode>("3D");
   const [component, setComponent] = useState<VectorComponent>("magnitude");
   const [plane, setPlane] = useState<SlicePlane>("xy");
   const [sliceIndex, setSliceIndex] = useState(0);
   const [selectedQuantity, setSelectedQuantity] = useState("m");
   const [consoleCollapsed, setConsoleCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [femDockTab, setFemDockTab] = useState<FemDockTab>("mesh");
+  const [meshRenderMode, setMeshRenderMode] = useState<RenderMode>("surface");
+  const [meshOpacity, setMeshOpacity] = useState(100);
+  const [meshClipEnabled, setMeshClipEnabled] = useState(false);
+  const [meshClipAxis, setMeshClipAxis] = useState<ClipAxis>("x");
+  const [meshClipPos, setMeshClipPos] = useState(50);
+  const [meshShowArrows, setMeshShowArrows] = useState(false);
   const [runUntilInput, setRunUntilInput] = useState("1e-12");
   const [relaxMaxStepsInput, setRelaxMaxStepsInput] = useState("5000");
   const [commandBusy, setCommandBusy] = useState(false);
@@ -117,6 +165,9 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
   const preview = state?.preview ?? null;
   const femMesh = state?.fem_mesh ?? null;
   const scalarRows = state?.scalar_rows ?? [];
+  const engineLog = state?.engine_log ?? [];
+  const latestEngineMessage = engineLog.length > 0 ? engineLog[engineLog.length - 1]?.message ?? null : null;
+  const workspaceStatus = liveState?.status ?? session?.status ?? run?.status ?? "idle";
 
   /* When live_state is stale (step===0) but the run manifest has real data,
      fall back to run values so solver/energy panels show actual progress. */
@@ -156,11 +207,49 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
   const resolvedBackend =
     (typeof planSummary?.resolved_backend === "string" ? planSummary.resolved_backend : null) ??
     (typeof session?.requested_backend === "string" ? session.requested_backend : null);
-  const isFemBackend = resolvedBackend === "fem";
+  const isFemBackend = resolvedBackend === "fem" || femMesh != null || preview?.spatial_kind === "mesh";
   const metadata = state?.metadata as Record<string, unknown> | null;
   const artifactLayout = (metadata?.artifact_layout as Record<string, unknown> | undefined) ?? undefined;
   const executionPlan = (metadata?.execution_plan as Record<string, unknown> | undefined) ?? undefined;
   const backendPlan = (executionPlan?.backend_plan as Record<string, unknown> | undefined) ?? undefined;
+  const femArtifactLayout =
+    artifactLayout?.backend === "fem" ? artifactLayout : undefined;
+  const meshBoundsMin = asVec3(femArtifactLayout?.bounds_min);
+  const meshBoundsMax = asVec3(femArtifactLayout?.bounds_max);
+  const meshExtent = asVec3(femArtifactLayout?.world_extent);
+  const meshName = typeof femArtifactLayout?.mesh_name === "string" ? femArtifactLayout.mesh_name : null;
+  const meshSource = typeof femArtifactLayout?.mesh_source === "string" ? femArtifactLayout.mesh_source : null;
+  const meshFeOrder = typeof femArtifactLayout?.fe_order === "number" ? femArtifactLayout.fe_order : null;
+  const meshHmax = typeof femArtifactLayout?.hmax === "number" ? femArtifactLayout.hmax : null;
+  const meshingCapabilities = (metadata?.meshing_capabilities as Record<string, unknown> | undefined) ?? undefined;
+  const mesherBackend = typeof meshingCapabilities?.backend === "string" ? meshingCapabilities.backend : null;
+  const mesherSourceKind =
+    typeof meshingCapabilities?.source_kind === "string" ? meshingCapabilities.source_kind : null;
+  const mesherCurrentSettings =
+    (meshingCapabilities?.current_settings as Record<string, unknown> | undefined) ?? undefined;
+  const mesherGroups = useMemo<MesherGroupDescriptor[]>(() => {
+    const rawGroups = meshingCapabilities?.groups;
+    if (!Array.isArray(rawGroups)) return [];
+    return rawGroups
+      .filter((group): group is Record<string, unknown> => Boolean(group) && typeof group === "object")
+      .map((group) => ({
+        id: typeof group.id === "string" ? group.id : "group",
+        title: typeof group.title === "string" ? group.title : "Group",
+        description: typeof group.description === "string" ? group.description : undefined,
+        controls: Array.isArray(group.controls)
+          ? group.controls
+              .filter((control): control is Record<string, unknown> => Boolean(control) && typeof control === "object")
+              .map((control) => ({
+                id: typeof control.id === "string" ? control.id : "control",
+                label: typeof control.label === "string" ? control.label : "Control",
+                status: asMesherStatus(control.status),
+                ui: typeof control.ui === "string" ? control.ui : undefined,
+                backend: typeof control.backend === "string" ? control.backend : undefined,
+                description: typeof control.description === "string" ? control.description : undefined,
+              }))
+          : [],
+      }));
+  }, [meshingCapabilities?.groups]);
 
   /* Grid / mesh info — memoized to a stable reference so that a new array from every SSE
      tick does not re-trigger Three.js scene init inside MagnetizationView3D. */
@@ -190,14 +279,7 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
   const interactiveEnabled = session?.interactive_session_requested === true;
   const awaitingCommand = session?.status === "awaiting_command";
   const interactiveControlsEnabled = interactiveEnabled && (awaitingCommand || session?.status === "running");
-  const commandEndpoint =
-    presentationMode === "current"
-      ? `${resolveApiBase()}/v1/live/current/commands`
-      : `${resolveApiBase()}/v1/sessions/${sessionId}/commands`;
-  const previewEndpointBase =
-    presentationMode === "current"
-      ? `${resolveApiBase()}/v1/live/current/preview`
-      : `${resolveApiBase()}/v1/sessions/${sessionId}/preview`;
+  const liveApi = useMemo(() => currentLiveApiClient(), []);
   const previewDrivenMode: ViewportMode | null =
     preview && !isFemBackend ? (preview.type === "3D" ? "3D" : "2D") : null;
   const effectiveViewMode = previewDrivenMode ?? viewMode;
@@ -211,16 +293,7 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
     setCommandBusy(true);
     setCommandMessage(null);
     try {
-      const response = await fetch(commandEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) {
-        const detail = data?.message ?? data?.error ?? `HTTP ${response.status}`;
-        throw new Error(detail);
-      }
+      await liveApi.queueCommand(payload);
       setCommandMessage(`Queued ${String(payload.kind)}`);
     } catch (commandError) {
       setCommandMessage(
@@ -229,22 +302,13 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
     } finally {
       setCommandBusy(false);
     }
-  }, [commandEndpoint]);
+  }, [liveApi]);
 
   const updatePreview = useCallback(async (path: string, payload: Record<string, unknown> = {}) => {
     setPreviewBusy(true);
     setPreviewMessage(null);
     try {
-      const response = await fetch(`${previewEndpointBase}${path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) {
-        const detail = data?.message ?? data?.error ?? `HTTP ${response.status}`;
-        throw new Error(detail);
-      }
+      await liveApi.updatePreview(path, payload);
     } catch (previewError) {
       setPreviewMessage(
         previewError instanceof Error ? previewError.message : "Failed to update preview",
@@ -252,7 +316,7 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
     } finally {
       setPreviewBusy(false);
     }
-  }, [presentationMode, previewEndpointBase]);
+  }, [liveApi]);
 
   /* Keyboard shortcuts: 1=3D, 2=2D, 3=Mesh */
   useEffect(() => {
@@ -276,16 +340,27 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
   const quantityOptions = useMemo(
     () =>
       (state?.quantities ?? [])
-        .filter((q) => q.available)
-        .map((q) => ({ value: q.id, label: `${q.label} (${q.unit})` })),
+        .map((q) => ({
+          value: q.id,
+          label: q.available
+            ? `${q.label} (${q.unit})`
+            : `${q.label} (${q.unit}) — waiting for data`,
+          disabled: !q.available,
+        })),
     [state?.quantities],
   );
 
   const previewQuantityOptions = useMemo(
     () =>
       (state?.quantities ?? [])
-        .filter((q) => q.available && q.kind === "vector_field")
-        .map((q) => ({ value: q.id, label: `${q.label} (${q.unit})` })),
+        .filter((q) => q.kind === "vector_field")
+        .map((q) => ({
+          value: q.id,
+          label: q.available
+            ? `${q.label} (${q.unit})`
+            : `${q.label} (${q.unit}) — waiting for data`,
+          disabled: !q.available,
+        })),
     [state?.quantities],
   );
 
@@ -293,7 +368,8 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
     const options = preview ? previewQuantityOptions : quantityOptions;
     if (!options.length) return;
     if (!options.some((opt) => opt.value === selectedQuantity)) {
-      setSelectedQuantity(options[0].value);
+      const fallback = options.find((opt) => !opt.disabled) ?? options[0];
+      setSelectedQuantity(fallback.value);
     }
   }, [preview, previewQuantityOptions, quantityOptions, selectedQuantity]);
 
@@ -377,6 +453,52 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
     return `${effectiveFemMesh.nodes.length}:${femMesh?.elements.length ?? effectiveFemMesh.elements.length}:${effectiveFemMesh.boundary_faces.length}`;
   }, [effectiveFemMesh, femMesh?.elements.length]);
 
+  const meshQualitySummary = useMemo(() => {
+    if (!effectiveFemMesh) return null;
+    const nodes = effectiveFemMesh.nodes;
+    const faces = effectiveFemMesh.boundary_faces;
+    if (!nodes.length || !faces.length) return null;
+
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    let sum = 0;
+    let good = 0;
+    let fair = 0;
+    let poor = 0;
+
+    for (const [ia, ib, ic] of faces) {
+      const a = nodes[ia];
+      const b = nodes[ib];
+      const c = nodes[ic];
+      if (!a || !b || !c) continue;
+      const ab = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      const bc = Math.hypot(c[0] - b[0], c[1] - b[1], c[2] - b[2]);
+      const ca = Math.hypot(a[0] - c[0], a[1] - c[1], a[2] - c[2]);
+      const maxEdge = Math.max(ab, bc, ca);
+      const s2 = (ab + bc + ca) / 2;
+      const area = Math.sqrt(Math.max(0, s2 * (s2 - ab) * (s2 - bc) * (s2 - ca)));
+      const inradius = s2 > 0 ? area / s2 : 0;
+      const ar = inradius > 1e-18 ? maxEdge / (2 * inradius) : 1;
+      min = Math.min(min, ar);
+      max = Math.max(max, ar);
+      sum += ar;
+      if (ar < 3) good += 1;
+      else if (ar < 6) fair += 1;
+      else poor += 1;
+    }
+
+    const count = faces.length;
+    return {
+      min,
+      max,
+      mean: count > 0 ? sum / count : 0,
+      good,
+      fair,
+      poor,
+      count,
+    };
+  }, [effectiveFemMesh]);
+
   /* Slice count */
   const maxSliceCount = useMemo(() => {
     if (preview?.spatial_kind === "grid") return 1;
@@ -439,15 +561,54 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
     return lastRow ? lastRow[scalarKey as keyof typeof lastRow] ?? null : null;
   }, [scalarRows, selectedQuantity]);
 
+  const emptyStateMessage = useMemo(() => {
+    if (isFemBackend && !femMeshData) {
+      if (workspaceStatus === "materializing_script") {
+        return {
+          title: "Materializing FEM mesh",
+          description:
+            latestEngineMessage ??
+            "Importing geometry and preparing the FEM mesh. The surface preview will appear here as soon as the execution plan is ready.",
+        };
+      }
+      if (workspaceStatus === "bootstrapping") {
+        return {
+          title: "Bootstrapping live workspace",
+          description:
+            latestEngineMessage ??
+            "Starting the local workspace and waiting for the first FEM planning snapshot.",
+        };
+      }
+      return {
+        title: "Waiting for FEM preview data",
+        description:
+          latestEngineMessage ??
+          "The mesh topology is not available yet. Check the log tab for the current phase.",
+      };
+    }
+    if (workspaceStatus === "materializing_script") {
+      return {
+        title: "Materializing workspace",
+        description:
+          latestEngineMessage ??
+          "Preparing the problem description and first preview state.",
+      };
+    }
+    return {
+      title: "No preview data yet",
+      description:
+        latestEngineMessage ??
+        "Waiting for the first live field snapshot from the solver.",
+    };
+  }, [femMeshData, isFemBackend, latestEngineMessage, workspaceStatus]);
+
   /* ── Loading state ─────────────────────────────── */
   if (!state) {
     return (
       <div className={s.loadingShell}>
         {error
           ? `Connection error: ${error}`
-          : presentationMode === "current"
-            ? "Connecting to local live workspace…"
-            : `Connecting to session ${sessionId}…`}
+          : "Connecting to local live workspace…"}
       </div>
     );
   }
@@ -456,30 +617,22 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
     <div className={s.shell}>
       {/* ═══════ HEADER ═══════════════════════════════ */}
       <div className={s.header}>
-        {presentationMode === "session" && (
-          <a
-            href="/runs"
-            className={s.headerBackBtn}
-            title="Back to runs list"
-            aria-label="Back to runs list"
-          >
-            ←
-          </a>
-        )}
-        <span className={s.headerDot} data-status={session?.status ?? "idle"} />
+        <span className={s.headerDot} data-status={workspaceStatus} />
         <span className={s.headerTitle}>
-          {session?.problem_name ?? (presentationMode === "current" ? "Local Live Workspace" : sessionId)}
+          {session?.problem_name ?? "Local Live Workspace"}
         </span>
         <span className={s.headerMeta}>{session?.requested_backend?.toUpperCase() ?? ""}</span>
-        <span className={s.headerMeta}>
-          {presentationMode === "current" ? "local-live" : session?.execution_mode ?? ""}
-        </span>
+        <span className={s.headerMeta}>local-live</span>
 
         <span className={s.headerSpacer} />
 
         {isFemBackend && femMesh && (
           <span className={s.headerPill}>
-            {femMesh.nodes.length.toLocaleString()} nodes · {femMesh.elements.length.toLocaleString()} tets
+            {femMesh.nodes.length.toLocaleString()} nodes · {(
+              femMesh.elements.length > 0
+                ? `${femMesh.elements.length.toLocaleString()} tets`
+                : `${femMesh.boundary_faces.length.toLocaleString()} faces`
+            )}
           </span>
         )}
         {!isFemBackend && totalCells && totalCells > 0 && (
@@ -504,10 +657,525 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
             ))}
           </div>
         )}
+
+        {/* Sidebar toggle */}
+        <button
+          className={s.sidebarToggleBtn}
+          onClick={() => setSidebarCollapsed((v) => !v)}
+          title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+        >
+          {sidebarCollapsed ? "◀" : "▶"}
+        </button>
       </div>
 
-      {/* ═══════ VIEWPORT ═════════════════════════════ */}
-      <div className={s.viewport}>
+      {/* ═══════ BODY: Horizontal PanelGroup (main + sidebar) ═══════ */}
+      <PanelGroup orientation="horizontal" className={s.body}>
+      <Panel defaultSize={sidebarCollapsed ? 100 : 78} minSize={40}>
+      {/* ═══════ MAIN AREA (viewport + console) ═══════ */}
+      <PanelGroup orientation="vertical" className={s.main}>
+      <Panel defaultSize={70} minSize={30}>
+      {isFemBackend ? (
+        <PanelGroup orientation="horizontal" className={s.workspaceSplit}>
+          <Panel defaultSize={24} minSize={22} maxSize={40}>
+            <div className={s.meshDock}>
+              <div className={s.meshDockHeader}>
+                <div>
+                  <div className={s.meshDockEyebrow}>Mesh Workspace</div>
+                  <div className={s.meshDockTitle}>FEM Setup</div>
+                </div>
+                <span className={s.meshDockStatus} data-status={workspaceStatus}>
+                  {workspaceStatus}
+                </span>
+              </div>
+
+              <div className={s.meshDockTabs}>
+                <DockTabButton
+                  active={femDockTab === "mesh"}
+                  label="Mesh"
+                  onClick={() => setFemDockTab("mesh")}
+                />
+                <DockTabButton
+                  active={femDockTab === "mesher"}
+                  label="Mesher"
+                  onClick={() => setFemDockTab("mesher")}
+                />
+                <DockTabButton
+                  active={femDockTab === "view"}
+                  label="View"
+                  onClick={() => setFemDockTab("view")}
+                />
+                <DockTabButton
+                  active={femDockTab === "quality"}
+                  label="Quality"
+                  onClick={() => setFemDockTab("quality")}
+                />
+              </div>
+
+              <div className={s.meshDockBody}>
+                {femDockTab === "mesh" && (
+                  <>
+                    <div className={s.meshCard}>
+                      <div className={s.meshCardHeader}>
+                        <span className={s.meshCardTitle}>Topology</span>
+                        <span className={s.meshCardBadge}>
+                          {effectiveFemMesh?.elements.length
+                            ? "volume mesh"
+                            : "surface preview"}
+                        </span>
+                      </div>
+                      <div className={s.meshStatGrid}>
+                        <div className={s.meshStatCard}>
+                          <span className={s.meshStatLabel}>Nodes</span>
+                          <span className={s.meshStatValue}>
+                            {effectiveFemMesh?.nodes.length.toLocaleString() ?? "0"}
+                          </span>
+                        </div>
+                        <div className={s.meshStatCard}>
+                          <span className={s.meshStatLabel}>Elements</span>
+                          <span className={s.meshStatValue}>
+                            {effectiveFemMesh?.elements.length.toLocaleString() ?? "0"}
+                          </span>
+                        </div>
+                        <div className={s.meshStatCard}>
+                          <span className={s.meshStatLabel}>Boundary faces</span>
+                          <span className={s.meshStatValue}>
+                            {effectiveFemMesh?.boundary_faces.length.toLocaleString() ?? "0"}
+                          </span>
+                        </div>
+                        <div className={s.meshStatCard}>
+                          <span className={s.meshStatLabel}>Element type</span>
+                          <span className={s.meshStatValue}>
+                            {effectiveFemMesh?.elements.length ? "tet4" : "surface"}
+                          </span>
+                        </div>
+                        <div className={s.meshStatCard}>
+                          <span className={s.meshStatLabel}>FE order</span>
+                          <span className={s.meshStatValue}>
+                            {meshFeOrder != null ? String(meshFeOrder) : "—"}
+                          </span>
+                        </div>
+                        <div className={s.meshStatCard}>
+                          <span className={s.meshStatLabel}>hmax</span>
+                          <span className={s.meshStatValue}>
+                            {meshHmax != null ? fmtSI(meshHmax, "m") : "—"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={s.meshCard}>
+                      <div className={s.meshCardHeader}>
+                        <span className={s.meshCardTitle}>Geometry Bounds</span>
+                      </div>
+                      <div className={s.meshInfoList}>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>Mesh name</span>
+                          <span className={s.meshInfoValue}>{meshName ?? "—"}</span>
+                        </div>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>Source</span>
+                          <span className={s.meshInfoValue} title={meshSource ?? undefined}>
+                            {meshSource ? meshSource.split("/").pop() : "generated"}
+                          </span>
+                        </div>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>Extent X</span>
+                          <span className={s.meshInfoValue}>
+                            {meshExtent ? fmtSI(meshExtent[0], "m") : "—"}
+                          </span>
+                        </div>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>Extent Y</span>
+                          <span className={s.meshInfoValue}>
+                            {meshExtent ? fmtSI(meshExtent[1], "m") : "—"}
+                          </span>
+                        </div>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>Extent Z</span>
+                          <span className={s.meshInfoValue}>
+                            {meshExtent ? fmtSI(meshExtent[2], "m") : "—"}
+                          </span>
+                        </div>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>Bounds min</span>
+                          <span className={s.meshInfoValue}>
+                            {meshBoundsMin
+                              ? `${fmtExp(meshBoundsMin[0])}, ${fmtExp(meshBoundsMin[1])}, ${fmtExp(meshBoundsMin[2])}`
+                              : "—"}
+                          </span>
+                        </div>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>Bounds max</span>
+                          <span className={s.meshInfoValue}>
+                            {meshBoundsMax
+                              ? `${fmtExp(meshBoundsMax[0])}, ${fmtExp(meshBoundsMax[1])}, ${fmtExp(meshBoundsMax[2])}`
+                              : "—"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={s.meshHintBox}>
+                      <div className={s.meshHintTitle}>Pipeline</div>
+                      <div className={s.meshHintText}>
+                        {effectiveFemMesh?.elements.length
+                          ? "Surface import completed and tetrahedral volume mesh is active."
+                          : "Surface preview is shown before full tetrahedral meshing completes."}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {femDockTab === "mesher" && (
+                  <>
+                    <div className={s.meshCard}>
+                      <div className={s.meshCardHeader}>
+                        <span className={s.meshCardTitle}>Mesher Runtime</span>
+                        <span className={s.meshCardBadge}>{mesherBackend ?? "—"}</span>
+                      </div>
+                      <div className={s.meshInfoList}>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>Backend</span>
+                          <span className={s.meshInfoValue}>{mesherBackend ?? "—"}</span>
+                        </div>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>Source kind</span>
+                          <span className={s.meshInfoValue}>{mesherSourceKind ?? "—"}</span>
+                        </div>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>Order</span>
+                          <span className={s.meshInfoValue}>
+                            {typeof mesherCurrentSettings?.order === "number"
+                              ? String(mesherCurrentSettings.order)
+                              : "—"}
+                          </span>
+                        </div>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>hmax</span>
+                          <span className={s.meshInfoValue}>
+                            {typeof mesherCurrentSettings?.hmax === "number"
+                              ? fmtSI(mesherCurrentSettings.hmax, "m")
+                              : "—"}
+                          </span>
+                        </div>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>STL angle</span>
+                          <span className={s.meshInfoValue}>
+                            {typeof mesherCurrentSettings?.surface_classification_angle_deg === "number"
+                              ? `${mesherCurrentSettings.surface_classification_angle_deg}°`
+                              : "—"}
+                          </span>
+                        </div>
+                        <div className={s.meshInfoRow}>
+                          <span className={s.meshInfoKey}>Curve angle</span>
+                          <span className={s.meshInfoValue}>
+                            {typeof mesherCurrentSettings?.surface_curve_angle_deg === "number"
+                              ? `${mesherCurrentSettings.surface_curve_angle_deg}°`
+                              : "—"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={s.meshHintBox}>
+                      <div className={s.meshHintTitle}>UI principle</div>
+                      <div className={s.meshHintText}>
+                        Meshing controls should mirror the real Gmsh API surface. Controls below are grouped by what the backend can already do, what is already wired, and what still needs launcher-side integration.
+                      </div>
+                    </div>
+
+                    {mesherGroups.map((group) => (
+                      <div key={group.id} className={s.meshCard}>
+                        <div className={s.meshCardHeader}>
+                          <span className={s.meshCardTitle}>{group.title}</span>
+                          <span className={s.meshCardBadge}>{group.controls.length} controls</span>
+                        </div>
+                        {group.description && (
+                          <div className={s.meshHintText}>{group.description}</div>
+                        )}
+                        <div className={s.mesherControls}>
+                          {group.controls.map((control) => (
+                            <div key={control.id} className={s.mesherControlCard}>
+                              <div className={s.mesherControlHeader}>
+                                <span className={s.mesherControlLabel}>{control.label}</span>
+                                <span
+                                  className={s.mesherStatusBadge}
+                                  data-status={control.status}
+                                >
+                                  {control.status}
+                                </span>
+                              </div>
+                              {control.description && (
+                                <div className={s.mesherControlText}>{control.description}</div>
+                              )}
+                              {(control.ui || control.backend) && (
+                                <div className={s.meshInfoList}>
+                                  {control.ui && (
+                                    <div className={s.meshInfoRow}>
+                                      <span className={s.meshInfoKey}>UI</span>
+                                      <span className={s.meshInfoValue}>{control.ui}</span>
+                                    </div>
+                                  )}
+                                  {control.backend && (
+                                    <div className={s.meshInfoRow}>
+                                      <span className={s.meshInfoKey}>Backend</span>
+                                      <span className={s.meshInfoValue}>{control.backend}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {femDockTab === "view" && (
+                  <>
+                    <div className={s.meshCard}>
+                      <div className={s.meshCardHeader}>
+                        <span className={s.meshCardTitle}>Display</span>
+                      </div>
+                      <div className={s.meshSegmented}>
+                        {(["Mesh", "3D", "2D"] as ViewportMode[]).map((mode) => (
+                          <button
+                            key={mode}
+                            className={s.meshSegmentBtn}
+                            data-active={viewMode === mode}
+                            onClick={() => setViewMode(mode)}
+                            type="button"
+                          >
+                            {mode}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className={s.meshCard}>
+                      <div className={s.meshCardHeader}>
+                        <span className={s.meshCardTitle}>Field</span>
+                      </div>
+                      <label className={s.meshControl}>
+                        <span className={s.meshControlLabel}>Quantity</span>
+                        <select
+                          className={s.meshSelect}
+                          value={preview?.quantity ?? selectedQuantity}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            if (preview) void updatePreview("/quantity", { quantity: next });
+                            else setSelectedQuantity(next);
+                          }}
+                          disabled={previewBusy}
+                        >
+                          {(previewQuantityOptions.length
+                            ? previewQuantityOptions
+                            : [{ value: "m", label: "Magnetization", disabled: false }]).map((opt) => (
+                            <option key={opt.value} value={opt.value} disabled={opt.disabled}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className={s.meshControl}>
+                        <span className={s.meshControlLabel}>Component</span>
+                        {preview ? (
+                          <select
+                            className={s.meshSelect}
+                            value={preview.component}
+                            onChange={(e) => void updatePreview("/component", { component: e.target.value as PreviewComponent })}
+                            disabled={previewBusy}
+                          >
+                            <option value="3D">3D</option>
+                            <option value="x">x</option>
+                            <option value="y">y</option>
+                            <option value="z">z</option>
+                          </select>
+                        ) : (
+                          <select
+                            className={s.meshSelect}
+                            value={component}
+                            onChange={(e) => setComponent(e.target.value as VectorComponent)}
+                          >
+                            <option value="magnitude">Magnitude</option>
+                            <option value="x">x</option>
+                            <option value="y">y</option>
+                            <option value="z">z</option>
+                          </select>
+                        )}
+                      </label>
+                    </div>
+
+                    <div className={s.meshCard}>
+                      <div className={s.meshCardHeader}>
+                        <span className={s.meshCardTitle}>Rendering</span>
+                      </div>
+                      <div className={s.meshSegmented}>
+                        {([
+                          ["surface", "Surface"],
+                          ["surface+edges", "Surface+Edges"],
+                          ["wireframe", "Wireframe"],
+                          ["points", "Points"],
+                        ] as [RenderMode, string][]).map(([mode, label]) => (
+                          <button
+                            key={mode}
+                            className={s.meshSegmentBtn}
+                            data-active={meshRenderMode === mode}
+                            onClick={() => setMeshRenderMode(mode)}
+                            type="button"
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <label className={s.meshControl}>
+                        <span className={s.meshControlLabel}>Opacity</span>
+                        <div className={s.meshRangeRow}>
+                          <input
+                            className={s.meshRange}
+                            type="range"
+                            min={10}
+                            max={100}
+                            value={meshOpacity}
+                            onChange={(e) => setMeshOpacity(Number(e.target.value))}
+                          />
+                          <span className={s.meshRangeValue}>{meshOpacity}%</span>
+                        </div>
+                      </label>
+                      <label className={s.meshCheckbox}>
+                        <input
+                          type="checkbox"
+                          checked={meshShowArrows}
+                          onChange={(e) => setMeshShowArrows(e.target.checked)}
+                        />
+                        <span>Show vector arrows on the surface</span>
+                      </label>
+                    </div>
+
+                    <div className={s.meshCard}>
+                      <div className={s.meshCardHeader}>
+                        <span className={s.meshCardTitle}>Clipping</span>
+                      </div>
+                      <label className={s.meshCheckbox}>
+                        <input
+                          type="checkbox"
+                          checked={meshClipEnabled}
+                          onChange={(e) => setMeshClipEnabled(e.target.checked)}
+                        />
+                        <span>Enable clip plane</span>
+                      </label>
+                      <div className={s.meshSegmented}>
+                        {(["x", "y", "z"] as ClipAxis[]).map((axis) => (
+                          <button
+                            key={axis}
+                            className={s.meshSegmentBtn}
+                            data-active={meshClipAxis === axis}
+                            onClick={() => setMeshClipAxis(axis)}
+                            type="button"
+                            disabled={!meshClipEnabled}
+                          >
+                            {axis.toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
+                      <div className={s.meshRangeRow}>
+                        <input
+                          className={s.meshRange}
+                          type="range"
+                          min={0}
+                          max={100}
+                          value={meshClipPos}
+                          onChange={(e) => setMeshClipPos(Number(e.target.value))}
+                          disabled={!meshClipEnabled}
+                        />
+                        <span className={s.meshRangeValue}>{meshClipPos}%</span>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {femDockTab === "quality" && (
+                  <>
+                    <div className={s.meshCard}>
+                      <div className={s.meshCardHeader}>
+                        <span className={s.meshCardTitle}>Boundary Triangle Quality</span>
+                        <span className={s.meshCardBadge}>
+                          {meshQualitySummary
+                            ? (meshQualitySummary.mean < 3
+                              ? "good"
+                              : meshQualitySummary.mean < 6
+                                ? "fair"
+                                : "poor")
+                            : "pending"}
+                        </span>
+                      </div>
+                      {meshQualitySummary ? (
+                        <>
+                          <div className={s.meshStatGrid}>
+                            <div className={s.meshStatCard}>
+                              <span className={s.meshStatLabel}>Mean AR</span>
+                              <span className={s.meshStatValue}>{meshQualitySummary.mean.toFixed(2)}</span>
+                            </div>
+                            <div className={s.meshStatCard}>
+                              <span className={s.meshStatLabel}>Min AR</span>
+                              <span className={s.meshStatValue}>{meshQualitySummary.min.toFixed(2)}</span>
+                            </div>
+                            <div className={s.meshStatCard}>
+                              <span className={s.meshStatLabel}>Max AR</span>
+                              <span className={s.meshStatValue}>{meshQualitySummary.max.toFixed(2)}</span>
+                            </div>
+                            <div className={s.meshStatCard}>
+                              <span className={s.meshStatLabel}>Faces analysed</span>
+                              <span className={s.meshStatValue}>{meshQualitySummary.count.toLocaleString()}</span>
+                            </div>
+                          </div>
+                          {([
+                            ["Good", meshQualitySummary.good, "var(--status-running)"],
+                            ["Fair", meshQualitySummary.fair, "var(--status-warn)"],
+                            ["Poor", meshQualitySummary.poor, "var(--status-failed)"],
+                          ] as [string, number, string][]).map(([label, count, color]) => {
+                            const pct = meshQualitySummary.count > 0
+                              ? (count / meshQualitySummary.count) * 100
+                              : 0;
+                            return (
+                              <div key={label} className={s.meshQualityRow}>
+                                <span className={s.meshQualityLabel}>{label}</span>
+                                <div className={s.meshQualityTrack}>
+                                  <div
+                                    className={s.meshQualityFill}
+                                    style={{ width: `${pct}%`, background: color }}
+                                  />
+                                </div>
+                                <span className={s.meshQualityValue}>{pct.toFixed(1)}%</span>
+                              </div>
+                            );
+                          })}
+                        </>
+                      ) : (
+                        <div className={s.meshHintText}>
+                          Quality statistics will appear once the FEM boundary surface is available.
+                        </div>
+                      )}
+                    </div>
+
+                    <div className={s.meshHintBox}>
+                      <div className={s.meshHintTitle}>Interpretation</div>
+                      <div className={s.meshHintText}>
+                        Good meshes cluster near AR≈1-3. If the poor fraction stays high, lower
+                        `hmax` or clean the imported surface before tetrahedralization.
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </Panel>
+
+          <PanelResizeHandle className={s.meshDockResizeHandle} />
+
+          <Panel defaultSize={76} minSize={42}>
+            <div className={s.viewport}>
         {/* Compact selector bar */}
         <div className={s.viewportBar}>
           <span className={s.viewportBarLabel}>Qty</span>
@@ -526,8 +1194,10 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
           >
             {((preview ? previewQuantityOptions : quantityOptions).length
               ? (preview ? previewQuantityOptions : quantityOptions)
-              : [{ value: "m", label: "Magnetization" }]).map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
+              : [{ value: "m", label: "Magnetization", disabled: false }]).map((opt) => (
+              <option key={opt.value} value={opt.value} disabled={opt.disabled}>
+                {opt.label}
+              </option>
             ))}
           </select>
 
@@ -701,7 +1371,316 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
             <span>Step {effectiveStep.toLocaleString()}</span>
             <span>{fmtSI(effectiveTime, "s")}</span>
             {effectiveDmDt > 0 && (
-              <span style={{ color: effectiveDmDt < 1e-5 ? "#35b779" : undefined }}>
+              <span style={{ color: effectiveDmDt < 1e-5 ? "var(--status-running)" : undefined }}>
+                dm/dt {fmtExp(effectiveDmDt)}
+              </span>
+            )}
+          </div>
+          {!isVectorQuantity ? (
+            <div style={{ padding: "1rem" }}>
+              <EmptyState
+                title={quantityDescriptor?.label ?? "Scalar quantity"}
+                description={
+                  selectedScalarValue !== null
+                    ? `Latest: ${selectedScalarValue.toExponential(4)} ${quantityDescriptor?.unit ?? ""}`
+                    : "Scalar — see Scalars in sidebar."
+                }
+                tone="info"
+                compact
+              />
+            </div>
+          ) : preview && preview.spatial_kind === "grid" && preview.type === "2D" && preview.scalar_field.length > 0 ? (
+            <PreviewScalarField2D
+              data={preview.scalar_field}
+              grid={preview.preview_grid}
+              quantityLabel={quantityDescriptor?.label ?? preview.quantity}
+              quantityUnit={preview.unit}
+              component={preview.component}
+              min={preview.min}
+              max={preview.max}
+            />
+          ) : effectiveViewMode === "Mesh" && isFemBackend && femMeshData ? (
+            <FemMeshView3D
+              topologyKey={femTopologyKey ?? undefined}
+              meshData={femMeshData}
+              colorField="quality"
+              toolbarMode="hidden"
+              renderMode={meshRenderMode}
+              opacity={meshOpacity}
+              clipEnabled={meshClipEnabled}
+              clipAxis={meshClipAxis}
+              clipPos={meshClipPos}
+              showArrows={meshShowArrows}
+              onRenderModeChange={setMeshRenderMode}
+              onOpacityChange={setMeshOpacity}
+              onClipEnabledChange={setMeshClipEnabled}
+              onClipAxisChange={setMeshClipAxis}
+              onClipPosChange={setMeshClipPos}
+              onShowArrowsChange={setMeshShowArrows}
+            />
+          ) : effectiveViewMode === "3D" && isFemBackend && femMeshData ? (
+            <FemMeshView3D
+              topologyKey={femTopologyKey ?? undefined}
+              meshData={femMeshData}
+              fieldLabel={quantityDescriptor?.label ?? selectedQuantity}
+              colorField={
+                effectiveVectorComponent === "x" ? "x"
+                  : effectiveVectorComponent === "y" ? "y"
+                  : effectiveVectorComponent === "z" ? "z"
+                  : "magnitude"
+              }
+              toolbarMode="hidden"
+              renderMode={meshRenderMode}
+              opacity={meshOpacity}
+              clipEnabled={meshClipEnabled}
+              clipAxis={meshClipAxis}
+              clipPos={meshClipPos}
+              showArrows={meshShowArrows}
+              onRenderModeChange={setMeshRenderMode}
+              onOpacityChange={setMeshOpacity}
+              onClipEnabledChange={setMeshClipEnabled}
+              onClipAxisChange={setMeshClipAxis}
+              onClipPosChange={setMeshClipPos}
+              onShowArrowsChange={setMeshShowArrows}
+            />
+          ) : effectiveViewMode === "2D" && isFemBackend && femMeshData ? (
+            <FemMeshSlice2D
+              meshData={femMeshData}
+              quantityLabel={quantityDescriptor?.label ?? selectedQuantity}
+              quantityId={selectedQuantity}
+              component={effectiveVectorComponent}
+              plane={plane}
+              sliceIndex={sliceIndex}
+              sliceCount={maxSliceCount}
+            />
+          ) : !selectedVectors ? (
+            <div style={{ padding: "1rem" }}>
+              <EmptyState
+                title={emptyStateMessage.title}
+                description={emptyStateMessage.description}
+                tone="info"
+                compact
+              />
+            </div>
+          ) : effectiveViewMode === "3D" ? (
+            <MagnetizationView3D
+              grid={previewGrid}
+              vectors={selectedVectors}
+              fieldLabel={quantityDescriptor?.label ?? preview?.quantity ?? selectedQuantity}
+            />
+          ) : (
+            <MagnetizationSlice2D
+              grid={previewGrid}
+              vectors={selectedVectors}
+              quantityLabel={quantityDescriptor?.label ?? preview?.quantity ?? selectedQuantity}
+              quantityId={preview?.quantity ?? selectedQuantity}
+              component={component}
+              plane={plane}
+              sliceIndex={sliceIndex}
+            />
+          )}
+        </div>
+      </div>
+          </Panel>
+        </PanelGroup>
+      ) : (
+      <div className={s.viewport}>
+        {/* Compact selector bar */}
+        <div className={s.viewportBar}>
+          <span className={s.viewportBarLabel}>Qty</span>
+          <select
+            className={s.viewportBarSelect}
+            value={preview?.quantity ?? selectedQuantity}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (preview) {
+                void updatePreview("/quantity", { quantity: next });
+              } else {
+                setSelectedQuantity(next);
+              }
+            }}
+            disabled={previewBusy}
+          >
+            {((preview ? previewQuantityOptions : quantityOptions).length
+              ? (preview ? previewQuantityOptions : quantityOptions)
+              : [{ value: "m", label: "Magnetization", disabled: false }]).map((opt) => (
+              <option key={opt.value} value={opt.value} disabled={opt.disabled}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+
+          <span className={s.viewportBarSep} />
+          <span className={s.viewportBarLabel}>Comp</span>
+          {preview ? (
+            <select
+              className={s.viewportBarSelect}
+              value={preview.component}
+              onChange={(e) => void updatePreview("/component", { component: e.target.value as PreviewComponent })}
+              disabled={previewBusy}
+            >
+              <option value="3D">3D</option>
+              <option value="x">x</option>
+              <option value="y">y</option>
+              <option value="z">z</option>
+            </select>
+          ) : (
+            <select
+              className={s.viewportBarSelect}
+              value={component}
+              onChange={(e) => setComponent(e.target.value as VectorComponent)}
+            >
+              <option value="magnitude">|v|</option>
+              <option value="x">x</option>
+              <option value="y">y</option>
+              <option value="z">z</option>
+            </select>
+          )}
+
+          {preview ? (
+            <>
+              {preview.x_possible_sizes.length > 0 && preview.y_possible_sizes.length > 0 && (
+                <>
+                  <span className={s.viewportBarSep} />
+                  <span className={s.viewportBarLabel}>X</span>
+                  <select
+                    className={s.viewportBarSelect}
+                    value={preview.x_chosen_size}
+                    onChange={(e) =>
+                      void updatePreview("/XChosenSize", { xChosenSize: Number(e.target.value) })
+                    }
+                    disabled={previewBusy}
+                  >
+                    {preview.x_possible_sizes.map((size) => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                  <span className={s.viewportBarLabel}>Y</span>
+                  <select
+                    className={s.viewportBarSelect}
+                    value={preview.y_chosen_size}
+                    onChange={(e) =>
+                      void updatePreview("/YChosenSize", { yChosenSize: Number(e.target.value) })
+                    }
+                    disabled={previewBusy}
+                  >
+                    {preview.y_possible_sizes.map((size) => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+              <label className={s.viewportToggle}>
+                <input
+                  type="checkbox"
+                  checked={preview.auto_scale_enabled}
+                  onChange={(e) =>
+                    void updatePreview("/autoScaleEnabled", {
+                      autoScaleEnabled: e.target.checked,
+                    })
+                  }
+                  disabled={previewBusy}
+                />
+                <span>Auto-scale</span>
+              </label>
+              {preview.spatial_kind === "grid" && solverGrid[2] > 1 && (
+                <>
+                  <span className={s.viewportBarLabel}>Layer</span>
+                  <select
+                    className={s.viewportBarSelect}
+                    value={preview.layer}
+                    onChange={(e) => void updatePreview("/layer", { layer: Number(e.target.value) })}
+                    disabled={previewBusy || preview.all_layers}
+                  >
+                    {Array.from({ length: solverGrid[2] }, (_, i) => (
+                      <option key={i} value={i}>{i}</option>
+                    ))}
+                  </select>
+                  <label className={s.viewportToggle}>
+                    <input
+                      type="checkbox"
+                      checked={preview.all_layers}
+                      onChange={(e) =>
+                        void updatePreview("/allLayers", { allLayers: e.target.checked })
+                      }
+                      disabled={previewBusy}
+                    />
+                    <span>All layers</span>
+                  </label>
+                </>
+              )}
+              {preview.spatial_kind === "mesh" && effectiveViewMode === "2D" && (
+                <>
+                  <span className={s.viewportBarSep} />
+                  <span className={s.viewportBarLabel}>Plane</span>
+                  <select
+                    className={s.viewportBarSelect}
+                    value={plane}
+                    onChange={(e) => setPlane(e.target.value as SlicePlane)}
+                  >
+                    <option value="xy">XY</option>
+                    <option value="xz">XZ</option>
+                    <option value="yz">YZ</option>
+                  </select>
+                  <span className={s.viewportBarLabel}>Slice</span>
+                  <select
+                    className={s.viewportBarSelect}
+                    value={sliceIndex}
+                    onChange={(e) => setSliceIndex(Number(e.target.value))}
+                  >
+                    {Array.from({ length: maxSliceCount }, (_, i) => (
+                      <option key={i} value={i}>{i + 1}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+            </>
+          ) : effectiveViewMode === "2D" && (
+            <>
+              <span className={s.viewportBarSep} />
+              <span className={s.viewportBarLabel}>Plane</span>
+              <select
+                className={s.viewportBarSelect}
+                value={plane}
+                onChange={(e) => setPlane(e.target.value as SlicePlane)}
+              >
+                <option value="xy">XY</option>
+                <option value="xz">XZ</option>
+                <option value="yz">YZ</option>
+              </select>
+              <span className={s.viewportBarLabel}>Slice</span>
+              <select
+                className={s.viewportBarSelect}
+                value={sliceIndex}
+                onChange={(e) => setSliceIndex(Number(e.target.value))}
+              >
+                {Array.from({ length: maxSliceCount }, (_, i) => (
+                  <option key={i} value={i}>{i + 1}</option>
+                ))}
+              </select>
+            </>
+          )}
+        </div>
+        {(preview?.auto_downscaled || liveState?.preview_auto_downscaled) && (
+          <div
+            className={s.previewNotice}
+            title={preview?.auto_downscale_message ?? liveState?.preview_auto_downscale_message ?? undefined}
+          >
+            {preview?.auto_downscale_message ??
+              liveState?.preview_auto_downscale_message ??
+              `Preview auto-scaled to ${previewGrid[0]}×${previewGrid[1]}×${previewGrid[2]}`}
+          </div>
+        )}
+        {previewMessage && <div className={s.previewStatus}>{previewMessage}</div>}
+
+        {/* Canvas area */}
+        <div className={s.viewportCanvas}>
+          {/* Status overlay */}
+          <div className={s.viewportOverlay}>
+            <span>Step {effectiveStep.toLocaleString()}</span>
+            <span>{fmtSI(effectiveTime, "s")}</span>
+            {effectiveDmDt > 0 && (
+              <span style={{ color: effectiveDmDt < 1e-5 ? "var(--status-running)" : undefined }}>
                 dm/dt {fmtExp(effectiveDmDt)}
               </span>
             )}
@@ -759,7 +1738,12 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
             />
           ) : !selectedVectors ? (
             <div style={{ padding: "1rem" }}>
-              <EmptyState title="No preview data yet" tone="info" compact />
+              <EmptyState
+                title={emptyStateMessage.title}
+                description={emptyStateMessage.description}
+                tone="info"
+                compact
+              />
             </div>
           ) : effectiveViewMode === "3D" ? (
             <MagnetizationView3D
@@ -780,11 +1764,42 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
           )}
         </div>
       </div>
+      )}
 
-      {/* ═══════ RIGHT SIDEBAR ════════════════════════ */}
+      </Panel>
+
+      {/* ═══════ RESIZE HANDLE (viewport ↔ console) ═══ */}
+      <PanelResizeHandle className={s.resizeHandle} />
+
+      {/* ═══════ BOTTOM CONSOLE ═══════════════════════ */}
+      <Panel defaultSize={30} minSize={8} maxSize={60} collapsible collapsedSize={3}>
+        <div className={s.console}>
+          <EngineConsole
+            session={session ?? null}
+            run={run ?? null}
+            liveState={effectiveLiveState ?? null}
+            scalarRows={scalarRows}
+            engineLog={engineLog}
+            artifacts={state?.artifacts ?? []}
+            connection={connection}
+            error={error}
+            presentationMode="current"
+          />
+        </div>
+      </Panel>
+      </PanelGroup>
+      {/* end of vertical PanelGroup (viewport + console) */}
+      </Panel>
+      {/* end of main content Panel */}
+
+      {/* ═══════ RIGHT SIDEBAR (resizable panel) ════ */}
+      {!sidebarCollapsed && (
+        <>
+        <PanelResizeHandle className={s.sidebarResizeHandle} />
+        <Panel defaultSize={22} minSize={15} maxSize={40} collapsible collapsedSize={0}>
       <div className={s.sidebar}>
         {/* Solver */}
-        <Section title="Solver" badge={session?.status ?? "idle"}>
+        <Section title="Solver" badge={workspaceStatus}>
           <div className={s.fieldGrid2}>
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>Step</span>
@@ -801,7 +1816,7 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>max dm/dt</span>
               <span className={s.fieldValue} style={{
-                color: effectiveDmDt > 0 && effectiveDmDt < 1e-5 ? "#35b779" : undefined
+                color: effectiveDmDt > 0 && effectiveDmDt < 1e-5 ? "var(--status-running)" : undefined
               }}>
                 {fmtExp(effectiveDmDt)}
               </span>
@@ -816,10 +1831,10 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
             </div>
           </div>
           {dmDtSpark.length > 1 && (
-            <Sparkline data={dmDtSpark} width={140} height={20} color="#35b779" label="dm/dt" />
+            <Sparkline data={dmDtSpark} width={140} height={20} color="var(--status-running)" label="dm/dt" />
           )}
           {dtSpark.length > 1 && (
-            <Sparkline data={dtSpark} width={140} height={20} color="hsl(210, 60%, 55%)" label="Δt" />
+            <Sparkline data={dtSpark} width={140} height={20} color="var(--ide-accent)" label="Δt" />
           )}
         </Section>
 
@@ -884,7 +1899,7 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
                 disabled={commandBusy}
                 onClick={() => enqueueCommand({ kind: "close" })}
               >
-                {presentationMode === "current" ? "Close Workspace" : "Close Session"}
+                Close Workspace
               </Button>
             </div>
             {commandMessage && (
@@ -1134,37 +2149,16 @@ export default function RunControlRoom({ sessionId, mode }: RunControlRoomProps)
           )}
           <div className={s.footerRow}>
             <span className={s.fieldLabel}>
-              {presentationMode === "current" ? "Workspace" : "Session"}
+              Workspace
             </span>
-            <span className={s.footerValue}>
-              {presentationMode === "current" ? "local" : session?.session_id?.slice(0, 12) ?? "—"}
-            </span>
+            <span className={s.footerValue}>local</span>
           </div>
         </div>
       </div>
-
-      {/* ═══════ BOTTOM CONSOLE ═══════════════════════ */}
-      <div className={s.console} data-collapsed={consoleCollapsed}>
-        <button
-          className={s.consoleToggle}
-          onClick={() => setConsoleCollapsed((v) => !v)}
-          title={consoleCollapsed ? "Expand console (Ctrl+`)" : "Collapse console (Ctrl+`)"}
-        >
-          {consoleCollapsed ? "▲" : "▼"}
-        </button>
-        {!consoleCollapsed && (
-          <EngineConsole
-          session={session ?? null}
-          run={run ?? null}
-          liveState={effectiveLiveState ?? null}
-          scalarRows={scalarRows}
-          artifacts={state?.artifacts ?? []}
-          connection={connection}
-          error={error}
-          presentationMode={presentationMode}
-          />
-        )}
-      </div>
+      </Panel>
+        </>
+      )}
+      </PanelGroup>
     </div>
   );
 }

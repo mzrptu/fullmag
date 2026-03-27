@@ -1,4 +1,4 @@
-/* ── Slider.module.css ── 1:1 port from amumax ── */
+/* ── Slider.module.css ── All colors use tokens ── */
 
 .wrapper {
   display: flex;
@@ -13,16 +13,16 @@
 }
 
 .label {
-  font-size: 0.82rem;
-  color: var(--text-2, #a7bad3);
+  font-size: var(--ide-text-base);
+  color: var(--ide-text-2);
   font-weight: 500;
 }
 
 .value {
-  font-size: 0.82rem;
-  color: var(--text-1, #edf3fb);
+  font-size: var(--ide-text-base);
+  color: var(--ide-text-1);
   font-weight: 600;
-  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-family: var(--font-mono);
 }
 
 .track {
@@ -30,12 +30,8 @@
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: linear-gradient(
-    90deg,
-    rgba(87, 200, 182, 0.2),
-    rgba(107, 167, 255, 0.24)
-  );
-  border-radius: 999px;
+  background: linear-gradient(90deg, hsla(170, 50%, 55%, 0.2), hsla(215, 60%, 60%, 0.24));
+  border-radius: var(--radius-full);
   outline: none;
   cursor: pointer;
   border: none;
@@ -51,8 +47,8 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--am-accent, #57c8b6);
-  border: 2px solid rgba(9, 14, 24, 0.9);
+  background: var(--am-accent);
+  border: 2px solid var(--ide-bg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
   cursor: pointer;
 }
@@ -61,8 +57,8 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--am-accent, #57c8b6);
-  border: 2px solid rgba(9, 14, 24, 0.9);
+  background: var(--am-accent);
+  border: 2px solid var(--ide-bg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
   cursor: pointer;
 }

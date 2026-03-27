@@ -65,9 +65,9 @@ fullmag -i examples/exchange_relax.py
 By default this attempts to:
 
 - run the simulation,
-- create a local session under `.fullmag/sessions/`,
+- create a local live workspace under `.fullmag/local-live/`,
 - start the bootstrap control room,
-- open the browser to `/runs/<session_id>`.
+- open the browser to `/`.
 
 The control room now reuses one local web server URL when possible, instead of allocating a new
 port for every run.
@@ -127,7 +127,7 @@ cargo test --workspace
 /usr/local/cargo/bin/cargo build -p fullmag-cli --bin fullmag
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -e packages/fullmag-py
+pip install -e 'packages/fullmag-py[meshing]'
 PYTHONPATH=packages/fullmag-py/src python -m unittest discover -s packages/fullmag-py/tests -v
 python3 scripts/check_repo_consistency.py
 python scripts/run_python_ir_smoke.py --cli target/debug/fullmag
@@ -194,8 +194,8 @@ make control-room-stop
 
 This starts:
 
-- `fullmag-api` on `http://127.0.0.1:8080`
-- the Next.js control room on `http://127.0.0.1:3000`
+- `fullmag-api` on `http://localhost:8080`
+- the Next.js control room on `http://localhost:3000`
 
 ### 6. Inspect the canonical example
 

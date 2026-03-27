@@ -1,10 +1,11 @@
 "use client";
 
-const DEFAULT_API_BASE = "http://localhost:8080";
+const DEFAULT_API_BASE = "http://localhost:3000";
+const LOOPBACK_V4_RE = /^127(?:\.\d{1,3}){3}$/;
 
 function normalizeHostname(hostname: string): string {
   if (
-    hostname === "127.0.0.1" ||
+    LOOPBACK_V4_RE.test(hostname) ||
     hostname === "::1" ||
     hostname === "[::1]" ||
     hostname === "0.0.0.0"
@@ -26,7 +27,8 @@ export function resolveApiBase(): string {
 
   const protocol = window.location.protocol === "https:" ? "https:" : "http:";
   const hostname = normalizeHostname(window.location.hostname);
-  return `${protocol}//${hostname}:8080`;
+  const port = window.location.port ? `:${window.location.port}` : "";
+  return `${protocol}//${hostname}${port}`;
 }
 
 export function resolveApiWsBase(): string {

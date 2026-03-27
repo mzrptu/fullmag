@@ -7,10 +7,10 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.85rem 1rem;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--ide-border-subtle);
   border-radius: var(--radius-lg);
   background:
-    linear-gradient(180deg, rgba(21, 31, 51, 0.98), rgba(13, 22, 37, 0.96)),
+    linear-gradient(180deg, var(--surface-2), var(--surface-1)),
     var(--surface-1);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
@@ -23,7 +23,7 @@
   inset: 0;
   border-radius: inherit;
   padding: 1px;
-  background: linear-gradient(160deg, rgba(107, 167, 255, 0.22), transparent 46%, rgba(87, 200, 182, 0.18));
+  background: linear-gradient(160deg, hsla(215, 60%, 70%, 0.22), transparent 46%, hsla(170, 50%, 55%, 0.18));
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask-composite: exclude;
@@ -47,11 +47,11 @@
 }
 
 .eyebrow {
-  font-size: 0.72rem;
+  font-size: var(--ide-text-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  color: var(--text-3);
+  color: var(--ide-text-3);
 }
 
 .title {
@@ -64,6 +64,6 @@
 }
 
 .version {
-  font-size: 0.82rem;
-  color: var(--text-3);
+  font-size: var(--ide-text-base);
+  color: var(--ide-text-3);
 }

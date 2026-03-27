@@ -31,7 +31,19 @@ interface Props {
   fieldLabel?: string;
   showWireframe?: boolean;
   topologyKey?: string;
-  sessionId?: string;
+  toolbarMode?: "visible" | "hidden";
+  renderMode?: RenderMode;
+  opacity?: number;
+  clipEnabled?: boolean;
+  clipAxis?: ClipAxis;
+  clipPos?: number;
+  showArrows?: boolean;
+  onRenderModeChange?: (value: RenderMode) => void;
+  onOpacityChange?: (value: number) => void;
+  onClipEnabledChange?: (value: boolean) => void;
+  onClipAxisChange?: (value: ClipAxis) => void;
+  onClipPosChange?: (value: number) => void;
+  onShowArrowsChange?: (value: boolean) => void;
 }
 
 /* ── Constants ─────────────────────────────────────────────────────── */
@@ -120,6 +132,19 @@ export default function FemMeshView3D({
   colorField = "z",
   fieldLabel,
   topologyKey,
+  toolbarMode = "visible",
+  renderMode: controlledRenderMode,
+  opacity: controlledOpacity,
+  clipEnabled: controlledClipEnabled,
+  clipAxis: controlledClipAxis,
+  clipPos: controlledClipPos,
+  showArrows: controlledShowArrows,
+  onRenderModeChange,
+  onOpacityChange,
+  onClipEnabledChange,
+  onClipAxisChange,
+  onClipPosChange,
+  onShowArrowsChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -135,14 +160,51 @@ export default function FemMeshView3D({
   const centerRef = useRef<THREE.Vector3>(new THREE.Vector3());
 
   /* ── State ─────────────────────────────────────────────────────── */
-  const [renderMode, setRenderMode] = useState<RenderMode>("surface");
+  const [internalRenderMode, setInternalRenderMode] = useState<RenderMode>("surface");
   const [field, setField] = useState<FemColorField>(colorField);
-  const [opacity, setOpacity] = useState(100);
-  const [clipEnabled, setClipEnabled] = useState(false);
-  const [clipAxis, setClipAxis] = useState<ClipAxis>("x");
-  const [clipPos, setClipPos] = useState(50); // percentage 0-100
+  const [internalOpacity, setInternalOpacity] = useState(100);
+  const [internalClipEnabled, setInternalClipEnabled] = useState(false);
+  const [internalClipAxis, setInternalClipAxis] = useState<ClipAxis>("x");
+  const [internalClipPos, setInternalClipPos] = useState(50); // percentage 0-100
   const [showClipDrop, setShowClipDrop] = useState(false);
-  const [showArrows, setShowArrows] = useState(false);
+  const [internalShowArrows, setInternalShowArrows] = useState(false);
+
+  const renderMode = controlledRenderMode ?? internalRenderMode;
+  const opacity = controlledOpacity ?? internalOpacity;
+  const clipEnabled = controlledClipEnabled ?? internalClipEnabled;
+  const clipAxis = controlledClipAxis ?? internalClipAxis;
+  const clipPos = controlledClipPos ?? internalClipPos;
+  const showArrows = controlledShowArrows ?? internalShowArrows;
+
+  const updateRenderMode = useCallback((value: RenderMode) => {
+    if (onRenderModeChange) onRenderModeChange(value);
+    else setInternalRenderMode(value);
+  }, [onRenderModeChange]);
+
+  const updateOpacity = useCallback((value: number) => {
+    if (onOpacityChange) onOpacityChange(value);
+    else setInternalOpacity(value);
+  }, [onOpacityChange]);
+
+  const updateClipEnabled = useCallback((value: boolean) => {
+    if (onClipEnabledChange) onClipEnabledChange(value);
+    else setInternalClipEnabled(value);
+  }, [onClipEnabledChange]);
+
+  const updateClipAxis = useCallback((value: ClipAxis) => {
+    if (onClipAxisChange) onClipAxisChange(value);
+    else setInternalClipAxis(value);
+  }, [onClipAxisChange]);
+
+  const updateClipPos = useCallback((value: number) => {
+    if (onClipPosChange) onClipPosChange(value);
+    else setInternalClipPos(value);
+  }, [onClipPosChange]);
+
+  const updateShowArrows = useCallback((value: boolean) => {
+    if (onShowArrowsChange) onShowArrowsChange(value);
+    else setInternalShowArrows(value);
+  }, [onShowArrowsChange]);
 
   useEffect(() => { setField(colorField); }, [colorField]);
 
@@ -583,8 +645,9 @@ export default function FemMeshView3D({
   }, []);
 
   return (
-    <div className={s.container} ref={containerRef}>
+      <div className={s.container} ref={containerRef}>
       {/* ─── Toolbar ────────────────────────────────── */}
+      {toolbarMode !== "hidden" && (
       <div className={s.toolbar}>
         {/* Render mode */}
         <div className={s.toolGroup}>
@@ -594,7 +657,7 @@ export default function FemMeshView3D({
               key={opt.value}
               className={s.toolBtn}
               data-active={renderMode === opt.value}
-              onClick={() => setRenderMode(opt.value)}
+              onClick={() => updateRenderMode(opt.value)}
             >
               {opt.label}
             </button>
@@ -622,7 +685,7 @@ export default function FemMeshView3D({
             className={s.toolBtn}
             data-active={clipEnabled}
             onClick={() => {
-              setClipEnabled((v) => !v);
+              updateClipEnabled(!clipEnabled);
               if (!clipEnabled) setShowClipDrop(true);
             }}
           >
@@ -645,7 +708,7 @@ export default function FemMeshView3D({
                     key={a}
                     className={s.toolBtn}
                     data-active={clipAxis === a}
-                    onClick={() => setClipAxis(a)}
+                    onClick={() => updateClipAxis(a)}
                     style={{ padding: "0.2rem 0.45rem" }}
                   >
                     {a.toUpperCase()}
@@ -660,7 +723,7 @@ export default function FemMeshView3D({
                   min={0}
                   max={100}
                   value={clipPos}
-                  onChange={(e) => setClipPos(Number(e.target.value))}
+                  onChange={(e) => updateClipPos(Number(e.target.value))}
                 />
                 <span className={s.dropValue}>{clipPos}%</span>
               </div>
@@ -684,7 +747,7 @@ export default function FemMeshView3D({
             min={10}
             max={100}
             value={opacity}
-            onChange={(e) => setOpacity(Number(e.target.value))}
+            onChange={(e) => updateOpacity(Number(e.target.value))}
             style={{ width: 60 }}
           />
           <span className={s.dropValue}>{opacity}%</span>
@@ -695,7 +758,7 @@ export default function FemMeshView3D({
           <button
             className={s.toolBtn}
             data-active={showArrows}
-            onClick={() => setShowArrows((v) => !v)}
+            onClick={() => updateShowArrows(!showArrows)}
           >
             ↗ Arrows
           </button>
@@ -723,6 +786,7 @@ export default function FemMeshView3D({
           </button>
         </div>
       </div>
+      )}
 
       {/* ─── Info bar ───────────────────────────────── */}
       <div className={s.info}>

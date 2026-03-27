@@ -7,6 +7,11 @@ API_URL="${FULLMAG_API_URL:-http://localhost:8080}"
 WEB_BIND_HOST="${FULLMAG_WEB_BIND_HOST:-0.0.0.0}"
 WEB_PUBLIC_HOST="${FULLMAG_WEB_HOST:-localhost}"
 CONTROL_ROOM_URL_FILE=".fullmag/control-room-url.txt"
+LOOPBACK_HOST="$(python3 - <<'PY'
+import socket
+print(socket.gethostbyname("localhost"))
+PY
+)"
 
 cd "$REPO_ROOT"
 
@@ -33,10 +38,11 @@ mkdir -p .fullmag/logs
 pick_web_port() {
   python3 - <<'PY'
 import socket
+LOOPBACK = socket.gethostbyname("localhost")
 for port in (3000, 3001, 3002, 3003, 3004, 3005, 3010):
     sock = socket.socket()
     try:
-        sock.bind(("127.0.0.1", port))
+        sock.bind((LOOPBACK, port))
     except OSError:
         pass
     else:
@@ -59,8 +65,9 @@ import sys
 
 port = int(sys.argv[1])
 sock = socket.socket()
+loopback = socket.gethostbyname("localhost")
 try:
-    sock.bind(("127.0.0.1", port))
+    sock.bind((loopback, port))
 except OSError:
     raise SystemExit(1)
 else:
@@ -73,10 +80,29 @@ finally:
 PY
 }
 
+web_url_is_healthy() {
+  curl -fsS --max-time 2 "$1" >/dev/null 2>&1
+}
+
+stop_next_on_port() {
+  local port="$1"
+  for host in "${WEB_BIND_HOST}" 0.0.0.0 "${LOOPBACK_HOST}" localhost; do
+    pkill -f "next dev --hostname ${host} --port ${port}" >/dev/null 2>&1 || true
+    pkill -f "node dev-server.mjs --hostname ${host} --port ${port}" >/dev/null 2>&1 || true
+  done
+
+  for _ in $(seq 1 25); do
+    if port_is_bindable "${port}"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+}
+
 discover_existing_web_url() {
   for port in 3000 3001 3002 3003 3004 3005 3010; do
     local candidate="http://${WEB_PUBLIC_HOST}:${port}"
-    if curl -fsS "${candidate}" >/dev/null 2>&1; then
+    if web_url_is_healthy "${candidate}"; then
       printf '%s\n' "${candidate}"
       return 0
     fi
@@ -89,7 +115,7 @@ if [[ -n "${FULLMAG_WEB_URL:-}" ]]; then
   WEB_PORT="${WEB_URL_BASE##*:}"
 elif [[ -f "${CONTROL_ROOM_URL_FILE}" ]]; then
   WEB_URL_BASE="$(tr -d '\n' < "${CONTROL_ROOM_URL_FILE}")"
-  if [[ -n "${WEB_URL_BASE}" ]] && curl -fsS "${WEB_URL_BASE}" >/dev/null 2>&1; then
+  if [[ -n "${WEB_URL_BASE}" ]] && web_url_is_healthy "${WEB_URL_BASE}"; then
     WEB_PORT="${WEB_URL_BASE##*:}"
   else
     if [[ -n "${WEB_URL_BASE}" ]]; then
@@ -129,13 +155,15 @@ else
   done
 fi
 
-if [[ -n "$SESSION_ID" ]]; then
-  TARGET_URL="${WEB_URL_BASE}/runs/${SESSION_ID}"
-else
-  TARGET_URL="${WEB_URL_BASE}/runs"
+TARGET_URL="${WEB_URL_BASE}/"
+
+if ! web_url_is_healthy "${WEB_URL_BASE}" && ! port_is_bindable "${WEB_PORT}"; then
+  echo "Restarting unhealthy Next.js control room on ${WEB_URL_BASE} ..."
+  stop_next_on_port "${WEB_PORT}"
+  rm -rf "${REPO_ROOT}/apps/web/.next"
 fi
 
-if curl -fsS "${WEB_URL_BASE}" >/dev/null 2>&1; then
+if web_url_is_healthy "${WEB_URL_BASE}"; then
   echo "Reusing Next.js control room on ${WEB_URL_BASE} ..."
   (
     if command -v xdg-open >/dev/null 2>&1; then
@@ -144,13 +172,13 @@ if curl -fsS "${WEB_URL_BASE}" >/dev/null 2>&1; then
       open "${TARGET_URL}" >/dev/null 2>&1 || true
     fi
   ) &
-  echo "Session route: ${TARGET_URL}"
+  echo "Workspace route: ${TARGET_URL}"
   exit 0
 fi
 
 (
   for _ in $(seq 1 120); do
-    if curl -fsS "${WEB_URL_BASE}" >/dev/null 2>&1; then
+    if web_url_is_healthy "${WEB_URL_BASE}"; then
       if command -v xdg-open >/dev/null 2>&1; then
         xdg-open "${TARGET_URL}" >/dev/null 2>&1 || true
       elif command -v open >/dev/null 2>&1; then
@@ -164,7 +192,7 @@ fi
 ) &
 
 echo "Starting Next.js control room on ${WEB_URL_BASE} ..."
-echo "Session route: ${TARGET_URL}"
+echo "Workspace route: ${TARGET_URL}"
 echo "API log: ${REPO_ROOT}/.fullmag/logs/fullmag-api.log"
 
 if [[ ! -d "$REPO_ROOT/apps/web/node_modules" && ! -d "$REPO_ROOT/node_modules" ]]; then
@@ -174,4 +202,5 @@ fi
 
 printf '%s\n' "${WEB_URL_BASE}" > "${CONTROL_ROOM_URL_FILE}"
 
-"${PNPM_CMD[@]}" --dir apps/web exec next dev --hostname "${WEB_BIND_HOST}" --port "${WEB_PORT}"
+FULLMAG_API_PROXY_TARGET="http://localhost:8080" \
+  "${PNPM_CMD[@]}" --dir apps/web exec node dev-server.mjs --hostname "${WEB_BIND_HOST}" --port "${WEB_PORT}" --api-target "http://localhost:8080"

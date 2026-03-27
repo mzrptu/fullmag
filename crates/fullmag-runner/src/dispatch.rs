@@ -274,7 +274,7 @@ pub(crate) fn execute_fem(
         FemEngine::CpuReference => {
             fem_reference::execute_reference_fem(plan, until_seconds, outputs)
         }
-        FemEngine::NativeGpu => execute_native_fem(plan, until_seconds, outputs),
+        FemEngine::NativeGpu => execute_native_fem_impl(plan, until_seconds, outputs, None),
     }
 }
 
@@ -295,36 +295,12 @@ pub(crate) fn execute_fem_with_callback(
             field_every_n,
             on_step,
         ),
-        FemEngine::NativeGpu => {
-            let executed = execute_native_fem(plan, until_seconds, outputs)?;
-            let emit_every = field_every_n.max(1);
-            for stats in &executed.result.steps {
-                let magnetization = if stats.step % emit_every == 0 {
-                    Some(
-                        executed
-                            .result
-                            .final_magnetization
-                            .iter()
-                            .flat_map(|vector| vector.iter().copied())
-                            .collect(),
-                    )
-                } else {
-                    None
-                };
-                on_step(StepUpdate {
-                    stats: stats.clone(),
-                    grid: [0, 0, 0],
-                    fem_mesh: Some(crate::types::FemMeshPayload {
-                        nodes: plan.mesh.nodes.clone(),
-                        elements: plan.mesh.elements.clone(),
-                        boundary_faces: plan.mesh.boundary_faces.clone(),
-                    }),
-                    magnetization,
-                    finished: false,
-                });
-            }
-            Ok(executed)
-        }
+        FemEngine::NativeGpu => execute_native_fem_impl(
+            plan,
+            until_seconds,
+            outputs,
+            Some(([0, 0, 0], field_every_n, on_step)),
+        ),
     }
 }
 
@@ -347,32 +323,12 @@ pub(crate) fn execute_fdm_with_callback(
             field_every_n,
             on_step,
         ),
-        FdmEngine::CudaFdm => {
-            let executed = execute_cuda_fdm(plan, until_seconds, outputs)?;
-            let emit_every = field_every_n.max(1);
-            for stats in &executed.result.steps {
-                let magnetization = if stats.step % emit_every == 0 {
-                    Some(
-                        executed
-                            .result
-                            .final_magnetization
-                            .iter()
-                            .flat_map(|vector| vector.iter().copied())
-                            .collect(),
-                    )
-                } else {
-                    None
-                };
-                on_step(StepUpdate {
-                    stats: stats.clone(),
-                    grid,
-                    fem_mesh: None,
-                    magnetization,
-                    finished: false,
-                });
-            }
-            Ok(executed)
-        }
+        FdmEngine::CudaFdm => execute_cuda_fdm_impl(
+            plan,
+            until_seconds,
+            outputs,
+            Some((grid, field_every_n, on_step)),
+        ),
     }
 }
 
@@ -420,6 +376,16 @@ fn execute_cuda_fdm(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
+    execute_cuda_fdm_impl(plan, until_seconds, outputs, None)
+}
+
+#[cfg(feature = "cuda")]
+fn execute_cuda_fdm_impl(
+    plan: &FdmPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    mut live: Option<([u32; 3], u64, &mut dyn FnMut(StepUpdate))>,
+) -> Result<ExecutedRun, RunError> {
     if until_seconds <= 0.0 {
         return Err(RunError {
             message: "until_seconds must be positive".to_string(),
@@ -454,6 +420,21 @@ fn execute_cuda_fdm(
         let stats = backend.step(dt_step)?;
         current_time = stats.time;
         latest_stats = Some(stats.clone());
+        if let Some((grid, field_every_n, on_step)) = live.as_mut() {
+            let emit_every = (*field_every_n).max(1);
+            let magnetization = if stats.step % emit_every == 0 {
+                Some(flatten_vectors(&backend.copy_m(cell_count)?))
+            } else {
+                None
+            };
+            on_step(StepUpdate {
+                stats: stats.clone(),
+                grid: *grid,
+                fem_mesh: None,
+                magnetization,
+                finished: false,
+            });
+        }
         record_cuda_due_outputs(
             &backend,
             cell_count,
@@ -529,6 +510,16 @@ fn execute_native_fem(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
+    execute_native_fem_impl(plan, until_seconds, outputs, None)
+}
+
+#[cfg(feature = "fem-gpu")]
+fn execute_native_fem_impl(
+    plan: &FemPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    mut live: Option<([u32; 3], u64, &mut dyn FnMut(StepUpdate))>,
+) -> Result<ExecutedRun, RunError> {
     if until_seconds <= 0.0 {
         return Err(RunError {
             message: "until_seconds must be positive".to_string(),
@@ -555,6 +546,25 @@ fn execute_native_fem(
         let stats = backend.step(dt_step)?;
         current_time = stats.time;
         latest_stats = Some(stats.clone());
+        if let Some((grid, field_every_n, on_step)) = live.as_mut() {
+            let emit_every = (*field_every_n).max(1);
+            let magnetization = if stats.step % emit_every == 0 {
+                Some(flatten_vectors(&backend.copy_m(node_count)?))
+            } else {
+                None
+            };
+            on_step(StepUpdate {
+                stats: stats.clone(),
+                grid: *grid,
+                fem_mesh: Some(crate::types::FemMeshPayload {
+                    nodes: plan.mesh.nodes.clone(),
+                    elements: plan.mesh.elements.clone(),
+                    boundary_faces: plan.mesh.boundary_faces.clone(),
+                }),
+                magnetization,
+                finished: false,
+            });
+        }
         if default_scalar_trace || scalar_schedules.is_empty() {
             steps.push(stats);
         } else {
@@ -660,6 +670,16 @@ fn execute_native_fem(
     })
 }
 
+#[cfg(not(feature = "fem-gpu"))]
+fn execute_native_fem_impl(
+    plan: &FemPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    _live: Option<([u32; 3], u64, &mut dyn FnMut(StepUpdate))>,
+) -> Result<ExecutedRun, RunError> {
+    execute_native_fem(plan, until_seconds, outputs)
+}
+
 #[cfg(not(feature = "cuda"))]
 fn execute_cuda_fdm(
     _plan: &FdmPlanIR,
@@ -671,6 +691,24 @@ fn execute_cuda_fdm(
             "CUDA FDM backend requested but fullmag-runner was built without the 'cuda' feature"
                 .to_string(),
     })
+}
+
+#[cfg(not(feature = "cuda"))]
+fn execute_cuda_fdm_impl(
+    plan: &FdmPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    _live: Option<([u32; 3], u64, &mut dyn FnMut(StepUpdate))>,
+) -> Result<ExecutedRun, RunError> {
+    execute_cuda_fdm(plan, until_seconds, outputs)
+}
+
+#[cfg(any(feature = "cuda", feature = "fem-gpu"))]
+fn flatten_vectors(values: &[[f64; 3]]) -> Vec<f64> {
+    values
+        .iter()
+        .flat_map(|vector| vector.iter().copied())
+        .collect()
 }
 
 #[cfg(feature = "cuda")]

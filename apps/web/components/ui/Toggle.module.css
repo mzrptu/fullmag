@@ -3,7 +3,7 @@
   align-items: center;
   gap: 0.75rem;
   cursor: pointer;
-  color: var(--text-2);
+  color: var(--ide-text-2);
 }
 
 .uiToggle input {
@@ -17,8 +17,8 @@
   width: 2.7rem;
   height: 1.55rem;
   border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid var(--border-subtle);
+  background: hsla(0, 0%, 100%, 0.08);
+  border: 1px solid var(--ide-border-subtle);
   transition: background var(--duration-fast) var(--easing-default);
 }
 
@@ -29,14 +29,14 @@
   width: 1.05rem;
   height: 1.05rem;
   border-radius: 50%;
-  background: var(--text-2);
+  background: var(--ide-text-2);
   transition:
     transform var(--duration-fast) var(--easing-spring),
     background var(--duration-fast) var(--easing-default);
 }
 
 .uiToggle input:checked + .track {
-  background: rgba(87, 200, 182, 0.24);
+  background: hsla(170, 50%, 55%, 0.24);
 }
 
 .uiToggle input:checked + .track .thumb {
@@ -45,5 +45,5 @@
 }
 
 .label {
-  font-size: 0.92rem;
+  font-size: var(--ide-text-md);
 }

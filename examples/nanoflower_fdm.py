@@ -24,7 +24,7 @@ flower = fm.geometry(
 flower.Ms = 752e3       # saturation magnetisation [A/m]
 flower.Aex = 15.5e-12   # exchange stiffness [J/m]
 flower.alpha = 0.1      # Gilbert damping
-flower.m = fm.uniform(1, 0, 0)
+flower.m = fm.uniform(0.99, 1e-6, 1e-6)
 
 # ── Solver ──────────────────────────────────────────────────
 fm.solver(dt=1e-15, g=2.115)
@@ -37,4 +37,4 @@ fm.save("E_total", every=1e-13)
 
 # ── Run ─────────────────────────────────────────────────────
 fm.relax()
-fm.run(5e-10)
+fm.run(1e-9)

@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
-import { resolveApiBase } from "../../lib/apiBase";
+import { currentLiveApiClient } from "../../lib/liveApiClient";
 import Panel from "../ui/Panel";
 import Button from "../ui/Button";
 import ReadonlyField from "../ui/ReadonlyField";
@@ -39,7 +39,6 @@ interface ImportedAssetSummary {
 }
 
 interface MeshOperationsPanelProps {
-  sessionId?: string | null;
   backend: BackendKind;
   sourceLabel?: string | null;
   sourceKind?: string | null;
@@ -299,7 +298,6 @@ function asciiStlFromMesh(mesh: FemMeshLike, solidName: string): string {
 }
 
 export default function MeshOperationsPanel({
-  sessionId,
   backend,
   sourceLabel,
   sourceKind,
@@ -319,9 +317,7 @@ export default function MeshOperationsPanel({
   const [importTarget, setImportTarget] = useState<LocalRealization>(backend);
   const [importedAsset, setImportedAsset] = useState<ImportedAssetSummary | null>(null);
   const [isImporting, setIsImporting] = useState(false);
-  const importEndpoint = sessionId
-    ? `${resolveApiBase()}/v1/sessions/${sessionId}/assets/import`
-    : `${resolveApiBase()}/v1/live/current/assets/import`;
+  const liveApi = useMemo(() => currentLiveApiClient(), []);
 
   const primaryCount = backend === "fem" ? femMesh?.elements.length ?? null : totalCells;
   const primaryCountLabel = backend === "fem" ? "FEM elements" : "FDM cells";
@@ -367,37 +363,43 @@ export default function MeshOperationsPanel({
       const buffer = await file.arrayBuffer();
       let summary: ImportedAssetSummary;
       try {
-        const response = await fetch(importEndpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            file_name: file.name,
-            content_base64: toBase64(buffer),
-            target_realization: importTarget,
-          }),
+        const payload = await liveApi.importAsset({
+          file_name: file.name,
+          content_base64: toBase64(buffer),
+          target_realization: importTarget,
         });
-
-        if (!response.ok) {
-          const payload = await response.json().catch(() => null);
-          throw new Error(payload?.error ?? `Upload failed with status ${response.status}`);
-        }
-
-        const payload = await response.json();
+        const summaryPayload =
+          payload.summary && typeof payload.summary === "object"
+            ? (payload.summary as Record<string, unknown>)
+            : null;
         summary = {
-          assetId: payload.asset_id,
-          storedPath: payload.stored_path,
+          assetId: typeof payload.asset_id === "string" ? payload.asset_id : undefined,
+          storedPath: typeof payload.stored_path === "string" ? payload.stored_path : undefined,
           origin: "backend",
-          fileName: payload.summary.file_name,
-          fileBytes: payload.summary.file_bytes,
-          kind: payload.summary.kind,
-          bounds: payload.summary.bounds ?? undefined,
-          triangleCount: payload.summary.triangle_count ?? undefined,
-          nodeCount: payload.summary.node_count ?? undefined,
-          elementCount: payload.summary.element_count ?? undefined,
-          boundaryFaceCount: payload.summary.boundary_face_count ?? undefined,
-          note: payload.summary.note ?? undefined,
+          fileName: typeof summaryPayload?.file_name === "string" ? summaryPayload.file_name : file.name,
+          fileBytes: typeof summaryPayload?.file_bytes === "number" ? summaryPayload.file_bytes : file.size,
+          kind:
+            typeof summaryPayload?.kind === "string"
+              ? (summaryPayload.kind as ImportedAssetSummary["kind"])
+              : kind,
+          bounds: summaryPayload?.bounds ? (summaryPayload.bounds as BoundsSummary) : undefined,
+          triangleCount:
+            typeof summaryPayload?.triangle_count === "number"
+              ? summaryPayload.triangle_count
+              : undefined,
+          nodeCount:
+            typeof summaryPayload?.node_count === "number"
+              ? summaryPayload.node_count
+              : undefined,
+          elementCount:
+            typeof summaryPayload?.element_count === "number"
+              ? summaryPayload.element_count
+              : undefined,
+          boundaryFaceCount:
+            typeof summaryPayload?.boundary_face_count === "number"
+              ? summaryPayload.boundary_face_count
+              : undefined,
+          note: typeof summaryPayload?.note === "string" ? summaryPayload.note : undefined,
         };
       } catch (uploadError) {
         const text = await file.text();

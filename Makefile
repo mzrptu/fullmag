@@ -1,4 +1,4 @@
-.PHONY: up down shell fmt check cargo-check cargo-test web-install py-install py-test repo-check smoke install-cli show-cli-path control-room control-room-stop fem-gpu-build fem-gpu-shell fem-gpu-check fem-gpu-test fem-gpu-native-test
+.PHONY: up down shell fmt check cargo-check cargo-test web-install web-build-static py-install py-test repo-check smoke install-cli show-cli-path control-room control-room-stop fem-gpu-build fem-gpu-shell fem-gpu-check fem-gpu-test fem-gpu-native-test
 
 up:
 	docker compose up -d postgres minio nats dev
@@ -24,21 +24,45 @@ cargo-test:
 web-install:
 	docker compose run --rm --no-deps dev pnpm install --dir apps/web
 
+web-build-static:
+	@set -e; \
+	if command -v pnpm >/dev/null 2>&1; then \
+		PNPM_CMD="pnpm"; \
+	elif command -v corepack >/dev/null 2>&1; then \
+		PNPM_CMD="corepack pnpm"; \
+	else \
+		echo "Neither pnpm nor corepack is available on PATH." >&2; \
+		exit 127; \
+	fi; \
+	if [ ! -d "apps/web/node_modules" ] && [ ! -d "node_modules" ]; then \
+		$$PNPM_CMD install --dir apps/web; \
+	fi; \
+	rm -rf apps/web/out .fullmag/local/web.new; \
+	$$PNPM_CMD --dir apps/web build; \
+	mkdir -p .fullmag/local; \
+	cp -a apps/web/out .fullmag/local/web.new; \
+	touch .fullmag/local/web.new/.build-stamp; \
+	rm -rf .fullmag/local/web; \
+	mv .fullmag/local/web.new .fullmag/local/web; \
+	echo "Installed static control room:"; \
+	echo "  $(PWD)/.fullmag/local/web"
+
 py-install:
-	docker compose run --rm --no-deps dev bash -lc "python3 -m venv .venv && . .venv/bin/activate && pip install -e packages/fullmag-py"
+	docker compose run --rm --no-deps dev bash -lc "python3 -m venv .venv && . .venv/bin/activate && pip install -e 'packages/fullmag-py[meshing]'"
 
 py-test:
-	docker compose run --rm --no-deps dev bash -lc "python3 -m venv .venv && . .venv/bin/activate && pip install -e packages/fullmag-py && python -m unittest discover -s packages/fullmag-py/tests -v"
+	docker compose run --rm --no-deps dev bash -lc "python3 -m venv .venv && . .venv/bin/activate && pip install -e 'packages/fullmag-py[meshing]' && python -m unittest discover -s packages/fullmag-py/tests -v"
 
 repo-check:
 	docker compose run --rm --no-deps dev python3 scripts/check_repo_consistency.py
 
 smoke:
-	docker compose run --rm --no-deps dev bash -lc "python3 -m venv .venv && . .venv/bin/activate && pip install -e packages/fullmag-py && /usr/local/cargo/bin/cargo build -p fullmag-cli --bin fullmag && python scripts/run_python_ir_smoke.py --cli target/debug/fullmag"
+	docker compose run --rm --no-deps dev bash -lc "python3 -m venv .venv && . .venv/bin/activate && pip install -e 'packages/fullmag-py[meshing]' && /usr/local/cargo/bin/cargo build -p fullmag-cli --bin fullmag && python scripts/run_python_ir_smoke.py --cli target/debug/fullmag"
 
 install-cli:
 	mkdir -p .fullmag/local
-	@if [ -x "/usr/local/cuda/bin/nvcc" ] && [ -x "$$HOME/.local/bin/cmake" ]; then \
+	@set -e; \
+	if [ -x "/usr/local/cuda/bin/nvcc" ] && [ -x "$$HOME/.local/bin/cmake" ]; then \
 		echo "Installing Rust launcher with CUDA support..."; \
 		FULLMAG_CMAKE="$$HOME/.local/bin/cmake" CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-cli --release --features cuda; \
 		FULLMAG_CMAKE="$$HOME/.local/bin/cmake" CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-api --release --features cuda; \
@@ -61,6 +85,7 @@ install-cli:
 		'exec "$$SELF_DIR/fullmag-bin" "$$@"' \
 		> .fullmag/local/bin/fullmag
 	@chmod +x .fullmag/local/bin/fullmag
+	@$(MAKE) web-build-static
 	@echo ""
 	@echo "Installed repo-local launcher:"
 	@echo "  $(PWD)/.fullmag/local/bin/fullmag"

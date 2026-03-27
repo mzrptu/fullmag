@@ -7,6 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Sequence
 
+from fullmag._progress import emit_progress
 from fullmag._validation import ensure_unique_names, require_non_empty
 from fullmag.model.discretization import DiscretizationHints, FEM
 from fullmag.model.dynamics import LLG
@@ -454,6 +455,9 @@ class Problem:
                 if mesh_source is None and isinstance(geometry, ImportedGeometry):
                     mesh_source = geometry.source
                 if mesh_source is not None and mesh_source.lower().endswith(".json"):
+                    emit_progress(
+                        f"Preparing FEM mesh asset for '{geometry.geometry_name}' from MeshIR JSON"
+                    )
                     # Rust planner can load .json MeshIR directly
                     assets["fem_mesh_assets"].append(
                         {
@@ -464,7 +468,15 @@ class Problem:
                 else:
                     # All other formats (STL, STEP, etc.) or no source:
                     # tetrahedralize via gmsh → inline MeshIR
+                    emit_progress(
+                        f"Preparing FEM mesh asset for '{geometry.geometry_name}'"
+                    )
                     mesh = realize_fem_mesh_asset(geometry, discretization.fem)
+                    emit_progress(
+                        f"FEM mesh ready for '{geometry.geometry_name}': "
+                        f"{mesh.n_nodes} nodes, {mesh.n_elements} elements, "
+                        f"{mesh.n_boundary_faces} boundary faces"
+                    )
                     mesh_ir = mesh.to_ir(geometry.geometry_name)
                     is_valid = validate_mesh_ir(mesh_ir)
                     if is_valid is False:

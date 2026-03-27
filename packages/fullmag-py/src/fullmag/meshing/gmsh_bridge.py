@@ -9,6 +9,7 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
+from fullmag._progress import emit_progress
 from fullmag.model.geometry import (
     Box,
     Cylinder,
@@ -29,7 +30,7 @@ def _import_gmsh() -> Any:
     except ImportError as exc:  # pragma: no cover - depends on optional extra
         raise ImportError(
             "Gmsh Python SDK is required for FEM meshing. "
-            "Install with: pip install 'fullmag[meshing]'"
+            "Install with: python -m pip install 'gmsh>=4.12'"
         ) from exc
     return gmsh
 
@@ -40,7 +41,7 @@ def _import_meshio() -> Any:
     except ImportError as exc:  # pragma: no cover - depends on optional extra
         raise ImportError(
             "meshio is required to read pre-generated mesh files. "
-            "Install with: pip install 'fullmag[meshing]'"
+            "Install with: python -m pip install 'meshio>=5.3'"
         ) from exc
     return meshio
 
@@ -262,6 +263,7 @@ def generate_box_mesh(
     order: int = 1,
     air_padding: float = 0.0,
 ) -> MeshData:
+    emit_progress("Gmsh: generating box geometry")
     gmsh = _import_gmsh()
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
@@ -273,10 +275,15 @@ def generate_box_mesh(
         if air_padding > 0.0:
             # Air-box meshing remains planner policy; for now keep the magnetic body mesh-only.
             pass
+        emit_progress("Gmsh: generating 3D tetrahedral mesh")
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
         gmsh.option.setNumber("Mesh.ElementOrder", order)
         gmsh.model.mesh.generate(3)
-        return _extract_mesh_data(gmsh)
+        mesh = _extract_mesh_data(gmsh)
+        emit_progress(
+            f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
+        )
+        return mesh
     finally:  # pragma: no branch
         gmsh.finalize()
 
@@ -288,6 +295,7 @@ def generate_cylinder_mesh(
     order: int = 1,
     air_padding: float = 0.0,
 ) -> MeshData:
+    emit_progress("Gmsh: generating cylinder geometry")
     gmsh = _import_gmsh()
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
@@ -297,10 +305,15 @@ def generate_cylinder_mesh(
         gmsh.model.occ.synchronize()
         if air_padding > 0.0:
             pass
+        emit_progress("Gmsh: generating 3D tetrahedral mesh")
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
         gmsh.option.setNumber("Mesh.ElementOrder", order)
         gmsh.model.mesh.generate(3)
-        return _extract_mesh_data(gmsh)
+        mesh = _extract_mesh_data(gmsh)
+        emit_progress(
+            f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
+        )
+        return mesh
     finally:  # pragma: no branch
         gmsh.finalize()
 
@@ -316,6 +329,7 @@ def generate_difference_mesh(
     to micrometres (×1e6) for boolean ops, then scale nodes back (×1e-6).
     """
     SCALE = 1e6  # m → µm
+    emit_progress("Gmsh: building OCC difference geometry")
     gmsh = _import_gmsh()
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
@@ -325,10 +339,14 @@ def generate_difference_mesh(
         tool_tags = _add_geometry_to_occ(gmsh, geometry.tool, scale=SCALE)
         gmsh.model.occ.cut(base_tags, tool_tags)
         gmsh.model.occ.synchronize()
+        emit_progress("Gmsh: generating 3D tetrahedral mesh")
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax * SCALE)
         gmsh.option.setNumber("Mesh.ElementOrder", order)
         gmsh.model.mesh.generate(3)
         mesh = _extract_mesh_data(gmsh)
+        emit_progress(
+            f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
+        )
         # Scale nodes back to SI metres
         return MeshData(
             nodes=mesh.nodes / SCALE,
@@ -351,6 +369,7 @@ def _generate_csg_mesh(
     Uses micrometre scaling (×1e6) for OCC numerical stability.
     """
     SCALE = 1e6
+    emit_progress("Gmsh: building OCC geometry")
     gmsh = _import_gmsh()
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
@@ -358,10 +377,14 @@ def _generate_csg_mesh(
         gmsh.model.add("fullmag_csg")
         _add_geometry_to_occ(gmsh, geometry, scale=SCALE)
         gmsh.model.occ.synchronize()
+        emit_progress("Gmsh: generating 3D tetrahedral mesh")
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax * SCALE)
         gmsh.option.setNumber("Mesh.ElementOrder", order)
         gmsh.model.mesh.generate(3)
         mesh = _extract_mesh_data(gmsh)
+        emit_progress(
+            f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
+        )
         return MeshData(
             nodes=mesh.nodes / SCALE,
             elements=mesh.elements,
@@ -453,12 +476,16 @@ def generate_mesh_from_file(
     path = Path(source)
     suffix = path.suffix.lower()
     if suffix in {".json", ".npz"}:
+        emit_progress(f"Loading pre-generated FEM mesh from {path.name}")
         return MeshData.load(path)
     if suffix in {".msh", ".vtk", ".vtu", ".xdmf"}:
+        emit_progress(f"Loading external mesh file {path.name}")
         return _read_mesh_file(path)
     if suffix in {".step", ".stp", ".iges", ".igs"}:
+        emit_progress(f"Gmsh: meshing CAD file {path.name}")
         return _mesh_cad_file(path, hmax=hmax, order=order, air_padding=air_padding)
     if suffix == ".stl":
+        emit_progress(f"Gmsh: meshing STL surface {path.name}")
         return _mesh_stl_surface(path, hmax=hmax, order=order, air_padding=air_padding)
     raise ValueError(f"unsupported mesh/geometry source format: {path.suffix}")
 
@@ -469,14 +496,20 @@ def _mesh_cad_file(path: Path, hmax: float, order: int, air_padding: float) -> M
     gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add(path.stem)
+        emit_progress("Gmsh: importing CAD shapes")
         gmsh.model.occ.importShapes(str(path))
         gmsh.model.occ.synchronize()
         if air_padding > 0.0:
             pass
+        emit_progress("Gmsh: generating 3D tetrahedral mesh")
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
         gmsh.option.setNumber("Mesh.ElementOrder", order)
         gmsh.model.mesh.generate(3)
-        return _extract_mesh_data(gmsh)
+        mesh = _extract_mesh_data(gmsh)
+        emit_progress(
+            f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
+        )
+        return mesh
     finally:  # pragma: no branch
         gmsh.finalize()
 
@@ -487,14 +520,17 @@ def _mesh_stl_surface(path: Path, hmax: float, order: int, air_padding: float) -
     gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add(path.stem)
+        emit_progress("Gmsh: importing STL surface")
         gmsh.merge(str(path))
         angle = 40.0 * math.pi / 180.0
+        emit_progress("Gmsh: classifying STL surfaces")
         gmsh.model.mesh.classifySurfaces(
             angle,
             boundary=True,
             forReparametrization=True,
             curveAngle=math.pi,
         )
+        emit_progress("Gmsh: creating geometry from classified surfaces")
         gmsh.model.mesh.createGeometry()
         surfaces = gmsh.model.getEntities(2)
         if not surfaces:
@@ -504,10 +540,15 @@ def _mesh_stl_surface(path: Path, hmax: float, order: int, air_padding: float) -
         gmsh.model.geo.synchronize()
         if air_padding > 0.0:
             pass
+        emit_progress("Gmsh: generating 3D tetrahedral mesh")
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
         gmsh.option.setNumber("Mesh.ElementOrder", order)
         gmsh.model.mesh.generate(3)
-        return _extract_mesh_data(gmsh)
+        mesh = _extract_mesh_data(gmsh)
+        emit_progress(
+            f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
+        )
+        return mesh
     finally:  # pragma: no branch
         gmsh.finalize()
 

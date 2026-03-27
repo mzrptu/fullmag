@@ -5,9 +5,9 @@
    Theme: data-theme="dark" (default) | data-theme="light"
    ============================================================ */
 
-@import "tailwindcss";
-
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@import "tailwindcss";
 
 /* ----- 1. Design Tokens ----- */
 
@@ -1223,3 +1223,57 @@ th {
     grid-template-columns: 44px minmax(0, 1fr);
   }
 }
+
+/* ── shadcn/ui animation utilities ─────────────────────────── */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes zoomIn95 {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideInFromTop {
+  from { transform: translateY(-4px); }
+  to   { transform: translateY(0); }
+}
+
+@keyframes slideInFromBottom {
+  from { transform: translateY(4px); }
+  to   { transform: translateY(0); }
+}
+
+@keyframes slideInFromLeft {
+  from { transform: translateX(-4px); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes slideInFromRight {
+  from { transform: translateX(4px); }
+  to   { transform: translateX(0); }
+}
+
+.animate-in {
+  animation: fadeIn 150ms ease-out, zoomIn95 150ms ease-out;
+}
+
+.fade-in-0 {
+  animation: fadeIn 150ms ease-out;
+}
+
+.zoom-in-95 {
+  animation: zoomIn95 150ms ease-out;
+}
+
+[data-side="top"]  .slide-in-from-bottom-2 { animation: slideInFromBottom 150ms ease-out; }
+[data-side="bottom"] .slide-in-from-top-2  { animation: slideInFromTop 150ms ease-out; }
+[data-side="left"]  .slide-in-from-right-2 { animation: slideInFromRight 150ms ease-out; }
+[data-side="right"] .slide-in-from-left-2  { animation: slideInFromLeft 150ms ease-out; }
