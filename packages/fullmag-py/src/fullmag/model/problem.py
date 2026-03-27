@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import copy
+import json
+import os
 import warnings
 from dataclasses import dataclass, field
 from enum import Enum
@@ -19,9 +22,47 @@ from fullmag.model.study import Relaxation, TimeEvolution
 IR_VERSION = "0.2.0"
 API_VERSION = "0.2.0"
 SERIALIZER_VERSION = "0.2.0"
-IR_VERSION = "0.2.0"
-API_VERSION = "0.2.0"
-SERIALIZER_VERSION = "0.2.0"
+
+_FEM_MESH_CACHE_VERSION = "v2"
+
+
+def _fem_mesh_cache_dir() -> Path | None:
+    raw = os.environ.get("FULLMAG_FEM_MESH_CACHE_DIR")
+    if raw is not None and not raw.strip():
+        return None
+    if raw:
+        path = Path(raw).expanduser()
+    else:
+        path = Path.cwd() / ".fullmag" / "local" / "cache" / "fem_meshes"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _geometry_cache_fingerprint(geometry: object) -> dict[str, object]:
+    from fullmag.model.geometry import ImportedGeometry
+
+    fingerprint: dict[str, object] = {
+        "geometry": geometry.to_ir(),
+    }
+    if isinstance(geometry, ImportedGeometry):
+        source_path = Path(geometry.source)
+        fingerprint["source_path"] = str(source_path)
+        if source_path.exists():
+            stat = source_path.stat()
+            fingerprint["source_stat"] = {
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            }
+    return fingerprint
+
+
+def _fem_mesh_cache_key(geometry: object, hints: FEM) -> str:
+    payload = {
+        "version": _FEM_MESH_CACHE_VERSION,
+        "geometry": _geometry_cache_fingerprint(geometry),
+        "fem": hints.to_ir(),
+    }
+    return sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 class ExecutionMode(str, Enum):
@@ -226,6 +267,11 @@ class Problem:
     description: str | None = None
     runtime: RuntimeSelection = field(default_factory=RuntimeSelection)
     runtime_metadata: dict[str, object] = field(default_factory=dict)
+    geometry_asset_cache: dict[str, dict[str, Any] | None] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", require_non_empty(self.name, "name"))
@@ -251,6 +297,7 @@ class Problem:
         script_source: str | None = None,
         source_root: str | Path | None = None,
         entrypoint_kind: str = "direct",
+        asset_cache: dict[str, dict[str, Any] | None] | None = None,
     ) -> dict[str, object]:
         runtime = self.runtime.resolved(
             backend=requested_backend,
@@ -265,10 +312,12 @@ class Problem:
         ]
         discretization = self._resolve_discretization(runtime.backend_target)
         source_hash = sha256(script_source.encode("utf-8")).hexdigest() if script_source else None
+        effective_asset_cache = asset_cache if asset_cache is not None else self.geometry_asset_cache
         geometry_assets = self._build_geometry_assets(
             requested_backend=runtime.backend_target,
             geometries=geometries,
             discretization=discretization,
+            asset_cache=effective_asset_cache,
         )
         runtime_metadata = dict(self.runtime_metadata)
         runtime_metadata["runtime_selection"] = runtime.to_runtime_metadata()
@@ -418,9 +467,22 @@ class Problem:
         requested_backend: BackendTarget,
         geometries: Sequence[object],
         discretization: DiscretizationHints | None,
+        asset_cache: dict[str, dict[str, Any] | None] | None = None,
     ) -> dict[str, Any] | None:
         if discretization is None:
             return None
+
+        cache_key = json.dumps(
+            {
+                "requested_backend": requested_backend.value,
+                "geometries": [geometry.to_ir() for geometry in geometries],
+                "discretization": discretization.to_ir(),
+            },
+            sort_keys=True,
+        )
+        if asset_cache is not None and cache_key in asset_cache:
+            cached = asset_cache[cache_key]
+            return copy.deepcopy(cached)
 
         assets: dict[str, list[dict[str, object]]] = {
             "fdm_grid_assets": [],
@@ -449,6 +511,9 @@ class Problem:
             from fullmag._core import validate_mesh_ir
             from fullmag.model.geometry import ImportedGeometry
             from fullmag.meshing import realize_fem_mesh_asset
+            from fullmag.meshing.gmsh_bridge import MeshData
+
+            fem_mesh_cache_dir = _fem_mesh_cache_dir()
 
             for geometry in geometries:
                 mesh_source = discretization.fem.mesh
@@ -466,12 +531,30 @@ class Problem:
                         }
                     )
                 else:
-                    # All other formats (STL, STEP, etc.) or no source:
-                    # tetrahedralize via gmsh → inline MeshIR
-                    emit_progress(
-                        f"Preparing FEM mesh asset for '{geometry.geometry_name}'"
+                    cache_key = _fem_mesh_cache_key(geometry, discretization.fem)
+                    cache_path = (
+                        fem_mesh_cache_dir.joinpath(f"{cache_key}.npz")
+                        if fem_mesh_cache_dir is not None
+                        else None
                     )
-                    mesh = realize_fem_mesh_asset(geometry, discretization.fem)
+                    mesh: MeshData | None = None
+                    if cache_path is not None and cache_path.exists():
+                        emit_progress(
+                            f"Reusing cached FEM mesh for '{geometry.geometry_name}'"
+                        )
+                        mesh = MeshData.load(cache_path)
+                    else:
+                        # All other formats (STL, STEP, etc.) or no source:
+                        # tetrahedralize via gmsh → inline MeshIR
+                        emit_progress(
+                            f"Preparing FEM mesh asset for '{geometry.geometry_name}'"
+                        )
+                        mesh = realize_fem_mesh_asset(geometry, discretization.fem)
+                        if cache_path is not None:
+                            mesh.save(cache_path)
+                            emit_progress(
+                                f"Cached FEM mesh for '{geometry.geometry_name}'"
+                            )
                     emit_progress(
                         f"FEM mesh ready for '{geometry.geometry_name}': "
                         f"{mesh.n_nodes} nodes, {mesh.n_elements} elements, "
@@ -492,8 +575,14 @@ class Problem:
                     )
 
         if not assets["fdm_grid_assets"] and not assets["fem_mesh_assets"]:
-            return None
-        return assets
+            result = None
+        else:
+            result = assets
+
+        if asset_cache is not None:
+            asset_cache[cache_key] = copy.deepcopy(result)
+
+        return result
 
     def _resolve_geometry_sources(
         self,

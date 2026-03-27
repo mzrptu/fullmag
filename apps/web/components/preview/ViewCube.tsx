@@ -71,8 +71,8 @@ export default function ViewCube({ sceneRef, grid }: ViewCubeProps) {
 
   // ─── Camera matrix → CSS ──────────────────────────────────────────
   const getCameraMatrix = useCallback((): string => {
+    if (!sceneRef?.current) return "none";
     const scene = sceneRef.current;
-    if (!scene) return "none";
     const { camera } = scene;
     _m.copy(camera.matrixWorldInverse);
     _m.elements[12] = 0;
@@ -98,8 +98,8 @@ export default function ViewCube({ sceneRef, grid }: ViewCubeProps) {
   const handleZoneClick = useCallback(
     (dir: [number, number, number]) => {
       if (dragRef.current.hasDragged) return;
+      if (!sceneRef?.current) return;
       const scene = sceneRef.current;
-      if (!scene) return;
       const { camera, controls } = scene;
       const [nx, ny, nz] = grid;
       const cx = nx / 2, cy = nz / 2, cz = ny / 2;

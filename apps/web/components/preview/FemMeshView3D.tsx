@@ -317,6 +317,7 @@ export default function FemMeshView3D({
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(BG_COLOR);
     renderer.localClippingEnabled = true;
+    renderer.domElement.className = s.canvas;
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -415,15 +416,18 @@ export default function FemMeshView3D({
     const onResize = () => {
       const w = container.clientWidth;
       const h = container.clientHeight;
+      if (w <= 0 || h <= 0) return;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };
     const ro = new ResizeObserver(onResize);
     ro.observe(container);
+    const rafId = requestAnimationFrame(onResize);
 
     return () => {
       cancelAnimationFrame(animIdRef.current);
+      cancelAnimationFrame(rafId);
       ro.disconnect();
       controls.dispose();
       renderer.dispose();

@@ -23,6 +23,7 @@ class LoadedStage:
         execution_precision,
         script_source: str,
         source_root: str | Path | None = None,
+        asset_cache: dict[str, dict[str, object] | None] | None = None,
     ) -> dict[str, object]:
         return self.problem.to_ir(
             requested_backend=requested_backend,
@@ -31,6 +32,7 @@ class LoadedStage:
             script_source=script_source,
             source_root=source_root,
             entrypoint_kind=self.entrypoint_kind,
+            asset_cache=asset_cache,
         )
 
 
@@ -49,6 +51,7 @@ class LoadedProblem:
         requested_backend,
         execution_mode,
         execution_precision,
+        asset_cache: dict[str, dict[str, object] | None] | None = None,
     ) -> dict[str, object]:
         return self.problem.to_ir(
             requested_backend=requested_backend,
@@ -57,6 +60,7 @@ class LoadedProblem:
             script_source=self.script_source,
             source_root=self.source_path.parent,
             entrypoint_kind=self.entrypoint_kind,
+            asset_cache=asset_cache,
         )
 
 

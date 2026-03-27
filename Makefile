@@ -1,4 +1,4 @@
-.PHONY: up down shell fmt check cargo-check cargo-test web-install web-build-static py-install py-test repo-check smoke install-cli show-cli-path control-room control-room-stop fem-gpu-build fem-gpu-shell fem-gpu-check fem-gpu-test fem-gpu-native-test
+.PHONY: up down shell fmt check cargo-check cargo-test web-install web-build-static py-install py-test repo-check smoke install-cli install-cli-dev show-cli-path control-room control-room-stop fem-gpu-build fem-gpu-shell fem-gpu-check fem-gpu-test fem-gpu-native-test
 
 up:
 	docker compose up -d postgres minio nats dev
@@ -59,7 +59,10 @@ repo-check:
 smoke:
 	docker compose run --rm --no-deps dev bash -lc "python3 -m venv .venv && . .venv/bin/activate && pip install -e 'packages/fullmag-py[meshing]' && /usr/local/cargo/bin/cargo build -p fullmag-cli --bin fullmag && python scripts/run_python_ir_smoke.py --cli target/debug/fullmag"
 
-install-cli:
+install-cli: INSTALL_STATIC_WEB=1
+install-cli-dev: INSTALL_STATIC_WEB=0
+
+install-cli install-cli-dev:
 	mkdir -p .fullmag/local
 	@set -e; \
 	if [ -x "/usr/local/cuda/bin/nvcc" ] && [ -x "$$HOME/.local/bin/cmake" ]; then \
@@ -85,7 +88,7 @@ install-cli:
 		'exec "$$SELF_DIR/fullmag-bin" "$$@"' \
 		> .fullmag/local/bin/fullmag
 	@chmod +x .fullmag/local/bin/fullmag
-	@$(MAKE) web-build-static
+	@if [ "$(INSTALL_STATIC_WEB)" = "1" ]; then $(MAKE) web-build-static; fi
 	@echo ""
 	@echo "Installed repo-local launcher:"
 	@echo "  $(PWD)/.fullmag/local/bin/fullmag"

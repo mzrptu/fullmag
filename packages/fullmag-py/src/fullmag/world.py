@@ -154,6 +154,9 @@ class _WorldState:
     # Problem name
     _name: str = "fullmag_sim"
 
+    # Shared geometry/mesh asset cache for flat scripts.
+    _geometry_asset_cache: dict[str, dict[str, object] | None] = field(default_factory=dict)
+
 
 # Module-level singleton
 _state = _WorldState()
@@ -457,6 +460,7 @@ def _build_problem(
         discretization=DiscretizationHints(**disc_kwargs) if disc_kwargs else None,
         runtime=rt,
         runtime_metadata={"interactive_session_requested": s._interactive},
+        geometry_asset_cache=s._geometry_asset_cache,
     )
 
 

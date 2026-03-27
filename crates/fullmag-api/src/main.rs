@@ -1,6 +1,6 @@
 use async_stream::stream;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -394,7 +394,10 @@ async fn main() {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
     let repo_root = repo_root();
-    let current_workspace_root = repo_root.join(".fullmag").join("local-live").join("current");
+    let current_workspace_root = repo_root
+        .join(".fullmag")
+        .join("local-live")
+        .join("current");
     let static_web_root = resolve_static_web_root(&repo_root);
 
     let state = Arc::new(AppState {
@@ -470,6 +473,7 @@ async fn main() {
         .route("/v1/run", post(start_run))
         .route("/ws/live/current", get(ws_current_live))
         .route("/ws/live/:run_id", get(ws_live))
+        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .layer(cors)
         .with_state(state);
 

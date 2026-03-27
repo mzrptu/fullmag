@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import Any
@@ -22,6 +22,88 @@ from fullmag.model.geometry import (
     Translate,
     Union,
 )
+
+
+# ---------------------------------------------------------------------------
+# Mesh quality report
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class MeshQualityReport:
+    """Per-element quality metrics extracted from Gmsh.
+
+    Attributes:
+        n_elements: Total element count.
+        sicn_min: Minimum Signed Inverse Condition Number (ideal → 1).
+        sicn_max: Maximum SICN.
+        sicn_mean: Mean SICN across all elements.
+        sicn_p5: 5th-percentile SICN (worst-case tail).
+        sicn_histogram: 20 bins across [-1, 1].
+        gamma_min: Minimum inscribed/circumscribed ratio (ideal → 1).
+        gamma_mean: Mean gamma.
+        gamma_histogram: 20 bins across [0, 1].
+        volume_min: Smallest element volume.
+        volume_max: Largest element volume.
+        volume_mean: Mean element volume.
+        volume_std: Standard deviation of volumes.
+        avg_quality: Global ``Mesh.AvgQuality`` (ICN) from Gmsh.
+        element_sicn: Per-element SICN values (None if not requested).
+        element_gamma: Per-element gamma values (None if not requested).
+    """
+
+    n_elements: int
+    sicn_min: float
+    sicn_max: float
+    sicn_mean: float
+    sicn_p5: float
+    sicn_histogram: list[int]
+    gamma_min: float
+    gamma_mean: float
+    gamma_histogram: list[int]
+    volume_min: float
+    volume_max: float
+    volume_mean: float
+    volume_std: float
+    avg_quality: float
+    element_sicn: list[float] | None = None
+    element_gamma: list[float] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Mesh generation options
+# ---------------------------------------------------------------------------
+# 2D algorithm constants
+ALGO_2D_MESHADAPT = 1
+ALGO_2D_AUTOMATIC = 2
+ALGO_2D_DELAUNAY = 5
+ALGO_2D_FRONTAL_DELAUNAY = 6
+ALGO_2D_BAMG = 7
+ALGO_2D_FRONTAL_QUADS = 8
+
+# 3D algorithm constants
+ALGO_3D_DELAUNAY = 1
+ALGO_3D_FRONTAL = 4
+ALGO_3D_MMG3D = 7
+ALGO_3D_HXT = 10
+
+
+@dataclass(frozen=True, slots=True)
+class MeshOptions:
+    """Advanced mesh generation options passed through to Gmsh.
+
+    All fields have safe defaults that match Gmsh 4.x behaviour.
+    """
+
+    algorithm_2d: int = ALGO_2D_FRONTAL_DELAUNAY
+    algorithm_3d: int = ALGO_3D_DELAUNAY
+    hmin: float | None = None
+    size_factor: float = 1.0
+    size_from_curvature: int = 0
+    smoothing_steps: int = 1
+    optimize: str | None = None
+    optimize_iters: int = 1
+    size_fields: list[dict[str, Any]] = field(default_factory=list)
+    compute_quality: bool = False
+    per_element_quality: bool = False
 
 
 def _import_gmsh() -> Any:
@@ -55,6 +137,7 @@ class MeshData:
     element_markers: NDArray[np.int32]
     boundary_faces: NDArray[np.int32]
     boundary_markers: NDArray[np.int32]
+    quality: MeshQualityReport | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "nodes", np.asarray(self.nodes, dtype=np.float64))
@@ -239,9 +322,20 @@ def generate_mesh(
     hmax: float,
     order: int = 1,
     air_padding: float = 0.0,
+    options: MeshOptions | None = None,
 ) -> MeshData:
+    """Generate a tetrahedral mesh for the given geometry.
+
+    Args:
+        geometry: Fullmag geometry descriptor.
+        hmax: Maximum element size (SI metres).
+        order: Finite-element order (1 = linear, 2 = quadratic).
+        air_padding: Reserved for future air-box meshing.
+        options: Advanced Gmsh options (algorithms, quality, size fields).
+    """
+    opts = options or MeshOptions()
     if isinstance(geometry, Box):
-        return generate_box_mesh(geometry.size, hmax=hmax, order=order, air_padding=air_padding)
+        return generate_box_mesh(geometry.size, hmax=hmax, order=order, air_padding=air_padding, options=opts)
     if isinstance(geometry, Cylinder):
         return generate_cylinder_mesh(
             geometry.radius,
@@ -249,11 +343,19 @@ def generate_mesh(
             hmax=hmax,
             order=order,
             air_padding=air_padding,
+            options=opts,
         )
     if isinstance(geometry, (Difference, Union, Intersection, Translate, Ellipsoid, Ellipse)):
-        return _generate_csg_mesh(geometry, hmax=hmax, order=order)
+        return _generate_csg_mesh(geometry, hmax=hmax, order=order, options=opts)
     if isinstance(geometry, ImportedGeometry):
-        return generate_mesh_from_file(geometry.source, hmax=hmax, order=order, air_padding=air_padding)
+        return generate_mesh_from_file(
+            geometry.source,
+            hmax=hmax,
+            order=order,
+            air_padding=air_padding,
+            scale=geometry.scale,
+            options=opts,
+        )
     raise TypeError(f"unsupported geometry type: {type(geometry)!r}")
 
 
@@ -262,7 +364,9 @@ def generate_box_mesh(
     hmax: float,
     order: int = 1,
     air_padding: float = 0.0,
+    options: MeshOptions | None = None,
 ) -> MeshData:
+    opts = options or MeshOptions()
     emit_progress("Gmsh: generating box geometry")
     gmsh = _import_gmsh()
     gmsh.initialize()
@@ -276,10 +380,11 @@ def generate_box_mesh(
             # Air-box meshing remains planner policy; for now keep the magnetic body mesh-only.
             pass
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
-        gmsh.option.setNumber("Mesh.ElementOrder", order)
+        _apply_mesh_options(gmsh, hmax, order, opts)
         gmsh.model.mesh.generate(3)
-        mesh = _extract_mesh_data(gmsh)
+        _apply_post_mesh_options(gmsh, opts)
+        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
+        mesh = _extract_mesh_data(gmsh, quality=quality)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -294,7 +399,9 @@ def generate_cylinder_mesh(
     hmax: float,
     order: int = 1,
     air_padding: float = 0.0,
+    options: MeshOptions | None = None,
 ) -> MeshData:
+    opts = options or MeshOptions()
     emit_progress("Gmsh: generating cylinder geometry")
     gmsh = _import_gmsh()
     gmsh.initialize()
@@ -306,10 +413,11 @@ def generate_cylinder_mesh(
         if air_padding > 0.0:
             pass
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
-        gmsh.option.setNumber("Mesh.ElementOrder", order)
+        _apply_mesh_options(gmsh, hmax, order, opts)
         gmsh.model.mesh.generate(3)
-        mesh = _extract_mesh_data(gmsh)
+        _apply_post_mesh_options(gmsh, opts)
+        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
+        mesh = _extract_mesh_data(gmsh, quality=quality)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -363,11 +471,13 @@ def _generate_csg_mesh(
     geometry: Geometry,
     hmax: float,
     order: int = 1,
+    options: MeshOptions | None = None,
 ) -> MeshData:
     """Mesh any geometry type via the generic OCC pipeline.
 
     Uses micrometre scaling (×1e6) for OCC numerical stability.
     """
+    opts = options or MeshOptions()
     SCALE = 1e6
     emit_progress("Gmsh: building OCC geometry")
     gmsh = _import_gmsh()
@@ -378,10 +488,11 @@ def _generate_csg_mesh(
         _add_geometry_to_occ(gmsh, geometry, scale=SCALE)
         gmsh.model.occ.synchronize()
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax * SCALE)
-        gmsh.option.setNumber("Mesh.ElementOrder", order)
+        _apply_mesh_options(gmsh, hmax * SCALE, order, opts, hscale=SCALE)
         gmsh.model.mesh.generate(3)
-        mesh = _extract_mesh_data(gmsh)
+        _apply_post_mesh_options(gmsh, opts)
+        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
+        mesh = _extract_mesh_data(gmsh, quality=quality)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -391,6 +502,7 @@ def _generate_csg_mesh(
             element_markers=mesh.element_markers,
             boundary_faces=mesh.boundary_faces,
             boundary_markers=mesh.boundary_markers,
+            quality=quality,
         )
     finally:  # pragma: no branch
         gmsh.finalize()
@@ -472,25 +584,46 @@ def generate_mesh_from_file(
     hmax: float,
     order: int = 1,
     air_padding: float = 0.0,
+    scale: float | tuple[float, float, float] = 1.0,
 ) -> MeshData:
     path = Path(source)
     suffix = path.suffix.lower()
+    scale_xyz = _normalize_scale_xyz(scale)
+    source_hmax = _source_hmax_from_scale(hmax, scale_xyz)
     if suffix in {".json", ".npz"}:
         emit_progress(f"Loading pre-generated FEM mesh from {path.name}")
-        return MeshData.load(path)
+        return _scale_mesh_nodes(MeshData.load(path), scale_xyz)
     if suffix in {".msh", ".vtk", ".vtu", ".xdmf"}:
         emit_progress(f"Loading external mesh file {path.name}")
-        return _read_mesh_file(path)
+        return _scale_mesh_nodes(_read_mesh_file(path), scale_xyz)
     if suffix in {".step", ".stp", ".iges", ".igs"}:
         emit_progress(f"Gmsh: meshing CAD file {path.name}")
-        return _mesh_cad_file(path, hmax=hmax, order=order, air_padding=air_padding)
+        return _mesh_cad_file(
+            path,
+            hmax=source_hmax,
+            order=order,
+            air_padding=air_padding,
+            scale_xyz=scale_xyz,
+        )
     if suffix == ".stl":
         emit_progress(f"Gmsh: meshing STL surface {path.name}")
-        return _mesh_stl_surface(path, hmax=hmax, order=order, air_padding=air_padding)
+        return _mesh_stl_surface(
+            path,
+            hmax=source_hmax,
+            order=order,
+            air_padding=air_padding,
+            scale_xyz=scale_xyz,
+        )
     raise ValueError(f"unsupported mesh/geometry source format: {path.suffix}")
 
 
-def _mesh_cad_file(path: Path, hmax: float, order: int, air_padding: float) -> MeshData:
+def _mesh_cad_file(
+    path: Path,
+    hmax: float,
+    order: int,
+    air_padding: float,
+    scale_xyz: NDArray[np.float64],
+) -> MeshData:
     gmsh = _import_gmsh()
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
@@ -505,7 +638,7 @@ def _mesh_cad_file(path: Path, hmax: float, order: int, air_padding: float) -> M
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
         gmsh.option.setNumber("Mesh.ElementOrder", order)
         gmsh.model.mesh.generate(3)
-        mesh = _extract_mesh_data(gmsh)
+        mesh = _scale_mesh_nodes(_extract_mesh_data(gmsh), scale_xyz)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -514,7 +647,13 @@ def _mesh_cad_file(path: Path, hmax: float, order: int, air_padding: float) -> M
         gmsh.finalize()
 
 
-def _mesh_stl_surface(path: Path, hmax: float, order: int, air_padding: float) -> MeshData:
+def _mesh_stl_surface(
+    path: Path,
+    hmax: float,
+    order: int,
+    air_padding: float,
+    scale_xyz: NDArray[np.float64],
+) -> MeshData:
     gmsh = _import_gmsh()
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
@@ -544,7 +683,7 @@ def _mesh_stl_surface(path: Path, hmax: float, order: int, air_padding: float) -
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
         gmsh.option.setNumber("Mesh.ElementOrder", order)
         gmsh.model.mesh.generate(3)
-        mesh = _extract_mesh_data(gmsh)
+        mesh = _scale_mesh_nodes(_extract_mesh_data(gmsh), scale_xyz)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -572,6 +711,34 @@ def _read_mesh_file(path: Path) -> MeshData:
     )
 
 
+def _normalize_scale_xyz(scale: float | tuple[float, float, float]) -> NDArray[np.float64]:
+    if isinstance(scale, (int, float)):
+        return np.full(3, float(scale), dtype=np.float64)
+    return np.asarray(scale, dtype=np.float64)
+
+
+def _source_hmax_from_scale(hmax: float, scale_xyz: NDArray[np.float64]) -> float:
+    # Imported files are meshed in their own source coordinates. Convert the
+    # requested SI hmax into a source-space target using the most restrictive
+    # axis so anisotropic scales do not under-resolve the final SI geometry.
+    positive_scales = scale_xyz[scale_xyz > 0]
+    if positive_scales.size == 0:
+        raise ValueError("imported geometry scale must be strictly positive")
+    return float(hmax / float(np.max(positive_scales)))
+
+
+def _scale_mesh_nodes(mesh: MeshData, scale_xyz: NDArray[np.float64]) -> MeshData:
+    if np.allclose(scale_xyz, 1.0):
+        return mesh
+    return MeshData(
+        nodes=np.asarray(mesh.nodes, dtype=np.float64) * scale_xyz.reshape(1, 3),
+        elements=mesh.elements,
+        element_markers=mesh.element_markers,
+        boundary_faces=mesh.boundary_faces,
+        boundary_markers=mesh.boundary_markers,
+    )
+
+
 def _first_cell_block(mesh: Any, allowed: set[str], allow_empty: bool = False) -> NDArray[np.int32]:
     for cell_block in mesh.cells:
         if cell_block.type in allowed:
@@ -582,7 +749,7 @@ def _first_cell_block(mesh: Any, allowed: set[str], allow_empty: bool = False) -
     raise ValueError(f"mesh does not contain required cell types: {sorted(allowed)}")
 
 
-def _extract_mesh_data(gmsh: Any) -> MeshData:
+def _extract_mesh_data(gmsh: Any, quality: MeshQualityReport | None = None) -> MeshData:
     node_tags, coords, _ = gmsh.model.mesh.getNodes()
     if len(node_tags) == 0:
         raise ValueError("gmsh produced an empty node set")
@@ -605,6 +772,143 @@ def _extract_mesh_data(gmsh: Any) -> MeshData:
         element_markers=element_markers,
         boundary_faces=boundary_faces,
         boundary_markers=boundary_markers,
+        quality=quality,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gmsh option helpers
+# ---------------------------------------------------------------------------
+def _apply_mesh_options(
+    gmsh: Any,
+    hmax: float,
+    order: int,
+    opts: MeshOptions,
+    hscale: float = 1.0,
+) -> None:
+    """Apply MeshOptions to the Gmsh context before mesh.generate()."""
+    gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
+    gmsh.option.setNumber("Mesh.ElementOrder", order)
+    gmsh.option.setNumber("Mesh.Algorithm", opts.algorithm_2d)
+    gmsh.option.setNumber("Mesh.Algorithm3D", opts.algorithm_3d)
+    gmsh.option.setNumber("Mesh.MeshSizeFactor", opts.size_factor)
+    gmsh.option.setNumber("Mesh.Smoothing", opts.smoothing_steps)
+
+    if opts.hmin is not None:
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMin", opts.hmin * hscale)
+
+    if opts.size_from_curvature > 0:
+        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", opts.size_from_curvature)
+
+    if opts.size_fields:
+        _configure_mesh_size_fields(gmsh, opts.size_fields, hscale)
+
+
+def _apply_post_mesh_options(gmsh: Any, opts: MeshOptions) -> None:
+    """Apply post-generation options (optimization passes)."""
+    if opts.optimize is not None:
+        method = opts.optimize
+        niter = opts.optimize_iters
+        emit_progress(f"Gmsh: optimizing mesh (method={method!r}, iters={niter})")
+        gmsh.model.mesh.optimize(method, niter=niter)
+
+
+def _configure_mesh_size_fields(
+    gmsh: Any,
+    fields: list[dict[str, Any]],
+    hscale: float = 1.0,
+) -> None:
+    """Configure Gmsh mesh size fields from JSON-serializable configs.
+
+    Each field config dict has:
+        {"kind": "Box", "params": {"VIn": ..., "VOut": ..., ...}}
+
+    Size values (VIn, VOut, hMin, hMax, SizeMin, SizeMax, Radius, etc.)
+    are automatically scaled by ``hscale`` when the parameter name
+    contains a size-like keyword.
+    """
+    _SIZE_PARAMS = {
+        "vin", "vout", "hmin", "hmax", "hbulk",
+        "sizemin", "sizemax", "distmin", "distmax",
+        "radius", "thickness",
+        "sizeminnormal", "sizemintangent",
+        "sizemaxnormal", "sizemaxtangent",
+    }
+
+    field_ids = []
+    for config in fields:
+        kind = config["kind"]
+        fid = gmsh.model.mesh.field.add(kind)
+        for key, value in config.get("params", {}).items():
+            if isinstance(value, str):
+                gmsh.model.mesh.field.setString(fid, key, value)
+            elif isinstance(value, list):
+                gmsh.model.mesh.field.setNumbers(fid, key, value)
+            else:
+                # Auto-scale size-like params for µm-scaled geometries
+                if hscale != 1.0 and key.lower() in _SIZE_PARAMS:
+                    value = value * hscale
+                gmsh.model.mesh.field.setNumber(fid, key, value)
+        field_ids.append(fid)
+
+    if field_ids:
+        if len(field_ids) > 1:
+            combo = gmsh.model.mesh.field.add("Min")
+            gmsh.model.mesh.field.setNumbers(combo, "FieldsList", field_ids)
+            gmsh.model.mesh.field.setAsBackgroundMesh(combo)
+        else:
+            gmsh.model.mesh.field.setAsBackgroundMesh(field_ids[0])
+
+
+def _extract_quality_metrics(
+    gmsh: Any,
+    opts: MeshOptions,
+) -> MeshQualityReport:
+    """Extract per-element quality metrics from the current Gmsh mesh."""
+    emit_progress("Gmsh: extracting quality metrics")
+
+    # Collect all 3D element tags
+    elem_types, elem_tags_blocks, _ = gmsh.model.mesh.getElements(dim=3)
+    all_tags: list[int] = []
+    for block in elem_tags_blocks:
+        all_tags.extend(int(t) for t in block)
+
+    if not all_tags:
+        return MeshQualityReport(
+            n_elements=0,
+            sicn_min=0.0, sicn_max=0.0, sicn_mean=0.0, sicn_p5=0.0,
+            sicn_histogram=[0] * 20,
+            gamma_min=0.0, gamma_mean=0.0,
+            gamma_histogram=[0] * 20,
+            volume_min=0.0, volume_max=0.0, volume_mean=0.0, volume_std=0.0,
+            avg_quality=0.0,
+        )
+
+    sicn = np.asarray(gmsh.model.mesh.getElementQualities(all_tags, "minSICN"))
+    gamma = np.asarray(gmsh.model.mesh.getElementQualities(all_tags, "gamma"))
+    vols = np.asarray(gmsh.model.mesh.getElementQualities(all_tags, "volume"))
+    avg_q = gmsh.option.getNumber("Mesh.AvgQuality")
+
+    sicn_hist, _ = np.histogram(sicn, bins=20, range=(-1.0, 1.0))
+    gamma_hist, _ = np.histogram(gamma, bins=20, range=(0.0, 1.0))
+
+    return MeshQualityReport(
+        n_elements=len(all_tags),
+        sicn_min=float(np.min(sicn)),
+        sicn_max=float(np.max(sicn)),
+        sicn_mean=float(np.mean(sicn)),
+        sicn_p5=float(np.percentile(sicn, 5)),
+        sicn_histogram=sicn_hist.tolist(),
+        gamma_min=float(np.min(gamma)),
+        gamma_mean=float(np.mean(gamma)),
+        gamma_histogram=gamma_hist.tolist(),
+        volume_min=float(np.min(vols)),
+        volume_max=float(np.max(vols)),
+        volume_mean=float(np.mean(vols)),
+        volume_std=float(np.std(vols)),
+        avg_quality=float(avg_q),
+        element_sicn=sicn.tolist() if opts.per_element_quality else None,
+        element_gamma=gamma.tolist() if opts.per_element_quality else None,
     )
 
 

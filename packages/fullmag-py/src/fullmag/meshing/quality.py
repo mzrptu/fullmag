@@ -8,7 +8,9 @@ from .gmsh_bridge import MeshData
 
 
 @dataclass(frozen=True, slots=True)
-class MeshQualityReport:
+class MeshValidationReport:
+    """Basic mesh validation report (inverted elements, volume range)."""
+
     n_nodes: int
     n_elements: int
     n_boundary_faces: int
@@ -18,7 +20,8 @@ class MeshQualityReport:
     is_valid: bool
 
 
-def validate_mesh(mesh: MeshData) -> MeshQualityReport:
+def validate_mesh(mesh: MeshData) -> MeshValidationReport:
+    """Validate mesh topology and element orientation."""
     volumes: list[float] = []
     inverted = 0
 
@@ -38,7 +41,7 @@ def validate_mesh(mesh: MeshData) -> MeshQualityReport:
     max_volume = max(volumes) if volumes else 0.0
     is_valid = mesh.n_nodes >= 4 and mesh.n_elements > 0 and inverted == 0 and min_volume > 0.0
 
-    return MeshQualityReport(
+    return MeshValidationReport(
         n_nodes=mesh.n_nodes,
         n_elements=mesh.n_elements,
         n_boundary_faces=mesh.n_boundary_faces,

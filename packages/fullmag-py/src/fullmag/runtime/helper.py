@@ -72,6 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command in {"export-ir", "export-run-config"}:
         emit_progress(f"Loading Python script {Path(args.script).name}")
         loaded = load_problem_from_script(Path(args.script))
+        asset_cache = loaded.problem.geometry_asset_cache
         requested_backend = BackendTarget(args.backend) if args.backend is not None else None
         execution_mode = ExecutionMode(args.mode) if args.mode is not None else None
         execution_precision = (
@@ -82,6 +83,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             requested_backend=requested_backend,
             execution_mode=execution_mode,
             execution_precision=execution_precision,
+            asset_cache=asset_cache,
         )
         if args.command == "export-ir":
             print(json.dumps(ir))
@@ -95,12 +97,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "stages": [
                         {
                             "ir": stage.to_ir(
-                                requested_backend=requested_backend,
-                                execution_mode=execution_mode,
-                                execution_precision=execution_precision,
-                                script_source=loaded.script_source,
-                                source_root=loaded.source_path.parent,
-                            ),
+                            requested_backend=requested_backend,
+                            execution_mode=execution_mode,
+                            execution_precision=execution_precision,
+                            script_source=loaded.script_source,
+                            source_root=loaded.source_path.parent,
+                            asset_cache=asset_cache,
+                        ),
                             "default_until_seconds": stage.default_until_seconds,
                             "entrypoint_kind": stage.entrypoint_kind,
                         }

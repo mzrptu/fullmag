@@ -20,6 +20,8 @@
   flex: 1;
   min-height: 0;
   display: flex;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* ── Header ──────────────────────────────────────── */
@@ -194,41 +196,52 @@
   width: 100%;
   height: 100%;
   min-height: 0;
+  min-width: 0;
 }
 
-.meshDockResizeHandle {
-  width: 6px;
+/* ── Resize handles (shared base) ────────────────── */
+
+.meshDockResizeHandle,
+.sidebarResizeHandle {
+  width: 10px;
   background: transparent;
   cursor: ew-resize;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: background 150ms;
-  border-right: 1px solid var(--ide-border);
-  border-left: 1px solid var(--ide-border);
   flex-shrink: 0;
+  position: relative;
+  touch-action: none;
+}
+
+/* Center indicator line */
+.meshDockResizeHandle::after,
+.sidebarResizeHandle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 36px;
+  border-radius: 1px;
+  background: var(--ide-border);
+  transition: background 150ms, height 150ms;
+}
+
+.meshDockResizeHandle:hover::after,
+.sidebarResizeHandle:hover::after,
+.meshDockResizeHandle:active::after,
+.sidebarResizeHandle:active::after {
+  background: var(--ide-accent);
+  height: 52px;
 }
 
 .meshDockResizeHandle:hover,
-.meshDockResizeHandle[data-resize-handle-active] {
-  background: var(--ide-accent-bg);
-}
-
-.sidebarResizeHandle {
-  width: 6px;
-  background: transparent;
-  cursor: ew-resize;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 150ms;
-  border-right: 1px solid var(--ide-border);
-  border-left: 1px solid var(--ide-border);
-  flex-shrink: 0;
-}
-
 .sidebarResizeHandle:hover,
-.sidebarResizeHandle[data-resize-handle-active] {
+.meshDockResizeHandle:active,
+.sidebarResizeHandle:active {
   background: var(--ide-accent-bg);
 }
 
@@ -236,7 +249,9 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   background: var(--ide-bg);
   flex: 1;
@@ -245,6 +260,7 @@
 .meshDock {
   height: 100%;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: linear-gradient(180deg, var(--surface-2), var(--ide-bg));
@@ -691,9 +707,18 @@
 }
 
 .viewportCanvas {
+  display: flex;
   flex: 1;
+  height: 100%;
   min-height: 0;
+  min-width: 0;
   position: relative;
+  overflow: hidden;
+}
+
+.viewportCanvas > * {
+  min-width: 0;
+  min-height: 0;
 }
 
 .previewNotice {
@@ -736,7 +761,7 @@
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
-  min-width: 0;
+  min-width: 220px;
   height: 100%;
 }
 
@@ -826,9 +851,9 @@
   color: var(--ide-text-1);
 }
 
-/* ── Resize Handle ───────────────────────────────── */
+/* ── Resize Handle (vertical: viewport ↔ console) ── */
 .resizeHandle {
-  height: 6px;
+  height: 10px;
   background: transparent;
   cursor: ns-resize;
   display: flex;
@@ -837,26 +862,27 @@
   transition: background 150ms;
   border-top: 1px solid var(--ide-border);
   flex-shrink: 0;
+  touch-action: none;
 }
 
 .resizeHandle:hover,
-.resizeHandle[data-resize-handle-active] {
+.resizeHandle:active {
   background: var(--ide-accent-bg);
 }
 
 .resizeHandle::after {
   content: '';
   width: 48px;
-  height: 3px;
+  height: 4px;
   border-radius: 2px;
-  background: var(--ide-text-3);
-  opacity: 0;
-  transition: opacity 150ms;
+  background: var(--ide-border);
+  transition: background 150ms, opacity 150ms;
 }
 
 .resizeHandle:hover::after,
-.resizeHandle[data-resize-handle-active]::after {
-  opacity: 0.5;
+.resizeHandle:active::after {
+  background: var(--ide-accent);
+  opacity: 1;
 }
 
 /* ── Collapsible Section ─────────────────────────── */
@@ -912,6 +938,7 @@
 .sectionBody {
   padding: 0.5rem 0.7rem 0.6rem;
   overflow: hidden;
+  min-width: 0;
 }
 
 /* ── Sidebar field grid ──────────────────────────── */
@@ -936,6 +963,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
+  min-width: 0;
 }
 
 .fieldLabel {
@@ -951,6 +979,7 @@
   font-size: var(--ide-text-sm);
   color: var(--ide-text-1);
   font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .fieldUnit {

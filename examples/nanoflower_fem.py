@@ -9,7 +9,7 @@ import fullmag as fm
 # ── Engine ──────────────────────────────────────────────────
 fm.name("nanoflower_fem")
 fm.engine("fem")
-fm.device("cuda:0")
+# fm.device("cuda:0")
 
 # ── Geometry & Material ─────────────────────────────────────
 flower = fm.geometry(

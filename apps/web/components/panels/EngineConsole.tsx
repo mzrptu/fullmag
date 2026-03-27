@@ -3,6 +3,10 @@
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import type { LiveState, ScalarRow, SessionManifest, RunManifest, ArtifactEntry, EngineLogEntry } from "../../lib/useSessionStream";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Play, Settings, Loader2, Pause, Circle, Diamond,
+  ArrowRight, CheckCircle2, XCircle, AlertTriangle, Dot,
+} from "lucide-react";
 import s from "./EngineConsole.module.css";
 
 /* ── Types ─────────────────────────────────────────────────── */
@@ -63,11 +67,27 @@ function fmtRate(steps: number, ms: number): string {
   return `${(1000 / rate).toFixed(0)} ms/step`;
 }
 
+function fmtStepValue(v: number, enabled: boolean): string {
+  return enabled ? v.toLocaleString() : "—";
+}
+
+function fmtTimeOrDash(v: number, enabled: boolean): string {
+  return enabled ? fmtTime(v) : "—";
+}
+
+function fmtSIOrDash(v: number, unit: string, enabled: boolean): string {
+  return enabled ? fmtSI(v, unit) : "—";
+}
+
+function fmtExpOrDash(v: number, enabled: boolean): string {
+  return enabled ? fmtExp(v) : "—";
+}
+
 /* ── Log entry type ────────────────────────────────────────── */
 
 interface LogEntry {
   time: number;
-  icon: string;
+  icon: React.ReactNode;
   message: string;
   severity: "info" | "success" | "warn" | "error" | "system";
 }
@@ -91,7 +111,7 @@ function buildLogEntries(
     if (!hasEngineLog) {
       entries.push({
         time: session.started_at_unix_ms,
-        icon: "▶",
+        icon: <Play size={12} />,
         message:
           presentationMode === "current"
             ? `Workspace started — ${session.problem_name}`
@@ -102,7 +122,7 @@ function buildLogEntries(
       if (session.requested_backend) {
         entries.push({
           time: session.started_at_unix_ms + 1,
-          icon: "⚙",
+          icon: <Settings size={12} />,
           message: `Backend: ${session.requested_backend.toUpperCase()} · Mode: ${session.execution_mode} · Precision: ${session.precision}`,
           severity: "info",
         });
@@ -111,21 +131,21 @@ function buildLogEntries(
       const phaseMessage = (() => {
         if (workspaceStatus === "materializing_script") {
           return {
-            icon: "◌",
+            icon: <Loader2 size={12} />,
             message: "Materializing script, importing geometry, and preparing the execution plan",
             severity: "system" as const,
           };
         }
         if (workspaceStatus === "awaiting_command") {
           return {
-            icon: "⏸",
+            icon: <Pause size={12} />,
             message: "Workspace is waiting for the next interactive command",
             severity: "system" as const,
           };
         }
         if (workspaceStatus === "running") {
           return {
-            icon: "●",
+            icon: <Circle size={12} />,
             message: "Solver is running and publishing live state",
             severity: "system" as const,
           };
@@ -152,7 +172,7 @@ function buildLogEntries(
       if (parts.length > 0) {
         entries.push({
           time: session.started_at_unix_ms + 2,
-          icon: "◆",
+          icon: <Diamond size={12} />,
           message: `Mesh: ${parts.join(" · ")}`,
           severity: "info",
         });
@@ -165,11 +185,11 @@ function buildLogEntries(
       entries.push({
         time: entry.timestamp_unix_ms,
         icon:
-          entry.level === "error" ? "✗"
-            : entry.level === "warn" ? "⚠"
-            : entry.level === "success" ? "✓"
-            : entry.level === "system" ? "◆"
-            : "•",
+          entry.level === "error" ? <XCircle size={12} />
+            : entry.level === "warn" ? <AlertTriangle size={12} />
+            : entry.level === "success" ? <CheckCircle2 size={12} />
+            : entry.level === "system" ? <Diamond size={12} />
+            : <Dot size={12} />,
         message: entry.message,
         severity:
           entry.level === "error" ? "error"
@@ -188,7 +208,7 @@ function buildLogEntries(
     if (row) {
       entries.push({
         time: session ? session.started_at_unix_ms + m : now,
-        icon: "→",
+        icon: <ArrowRight size={12} />,
         message: `Step ${m}: t=${fmtTime(row.time)} dt=${fmtExp(row.solver_dt)} max_dm/dt=${fmtExp(row.max_dm_dt)}`,
         severity: "info",
       });
@@ -199,7 +219,7 @@ function buildLogEntries(
   if (liveState && liveState.step > 0) {
     entries.push({
       time: liveState.updated_at_unix_ms || now,
-      icon: "●",
+      icon: <Circle size={12} />,
       message: `Live: step=${liveState.step} t=${fmtTime(liveState.time)} dt=${fmtExp(liveState.dt)} max_dm/dt=${fmtExp(liveState.max_dm_dt)}`,
       severity: "system",
     });
@@ -212,7 +232,7 @@ function buildLogEntries(
   if (liveState && liveState.max_dm_dt < CONVERGENCE_THRESHOLD && liveState.step > 10) {
     entries.push({
       time: liveState.updated_at_unix_ms || now,
-      icon: "✓",
+      icon: <CheckCircle2 size={12} />,
       message: `Convergence criterion: max_dm/dt = ${fmtExp(liveState.max_dm_dt)} < ${CONVERGENCE_THRESHOLD.toExponential(0)} — approaching equilibrium`,
       severity: "success",
     });
@@ -222,7 +242,7 @@ function buildLogEntries(
   if (run?.status === "completed") {
     entries.push({
       time: session?.finished_at_unix_ms ?? now,
-      icon: "✓",
+      icon: <CheckCircle2 size={12} />,
       message: `Run completed — ${run.total_steps} steps in ${fmtDuration((session?.finished_at_unix_ms ?? 0) - (session?.started_at_unix_ms ?? 0))}`,
       severity: "success",
     });
@@ -230,7 +250,7 @@ function buildLogEntries(
   if (run?.status === "failed" || error) {
     entries.push({
       time: now,
-      icon: "✗",
+      icon: <XCircle size={12} />,
       message: error ? `Error: ${error}` : "Run failed",
       severity: "error",
     });
@@ -240,7 +260,7 @@ function buildLogEntries(
   if (connection === "disconnected") {
     entries.push({
       time: now,
-      icon: "⚠",
+      icon: <AlertTriangle size={12} />,
       message:
         presentationMode === "current"
           ? "Live connection lost — attempting reconnect…"
@@ -304,6 +324,18 @@ export default function EngineConsole({
   const wallTimePerStep = liveState?.wall_time_ns
     ? liveState.wall_time_ns / 1e6
     : 0;
+  const hasSolverTelemetry =
+    (liveState?.step ?? 0) > 0 ||
+    (run?.total_steps ?? 0) > 0 ||
+    scalarRows.length > 0 ||
+    workspaceStatus === "completed" ||
+    workspaceStatus === "failed";
+  const solverNotStartedMessage =
+    workspaceStatus === "materializing_script"
+      ? "Solver not started yet. FEM materialization and tetrahedral meshing are still running."
+      : workspaceStatus === "bootstrapping"
+        ? "Solver not started yet. Workspace bootstrap is still running."
+        : "Solver telemetry is not available yet.";
 
   // Convergence metric: normalize max_dm_dt to a 0-100 progress bar
   // max_dm_dt < 1e-5 is "converged", > 1e2 is "diverged"
@@ -365,27 +397,37 @@ export default function EngineConsole({
               </div>
               <div className={s.metricCell}>
                 <span className={s.metricLabel}>Step</span>
-                <span className={s.metricValue}>{(liveState?.step ?? run?.total_steps ?? 0).toLocaleString()}</span>
+                <span className={s.metricValue}>
+                  {fmtStepValue(liveState?.step ?? run?.total_steps ?? 0, hasSolverTelemetry)}
+                </span>
               </div>
               <div className={s.metricCell}>
                 <span className={s.metricLabel}>Sim Time</span>
-                <span className={s.metricValue}>{fmtTime(liveState?.time ?? run?.final_time ?? 0)}</span>
+                <span className={s.metricValue}>
+                  {fmtTimeOrDash(liveState?.time ?? run?.final_time ?? 0, hasSolverTelemetry)}
+                </span>
               </div>
               <div className={s.metricCell}>
                 <span className={s.metricLabel}>Δt</span>
-                <span className={s.metricValue}>{fmtSI(liveState?.dt ?? 0, "s")}</span>
+                <span className={s.metricValue}>
+                  {fmtSIOrDash(liveState?.dt ?? 0, "s", hasSolverTelemetry)}
+                </span>
               </div>
               <div className={s.metricCell}>
                 <span className={s.metricLabel}>max dm/dt</span>
                 <span className={s.metricValue} style={{
-                  color: (liveState?.max_dm_dt ?? 0) < 1e-5 ? "var(--status-running)" : undefined
+                  color: hasSolverTelemetry && (liveState?.max_dm_dt ?? 0) < 1e-5
+                    ? "var(--status-running)"
+                    : undefined
                 }}>
-                  {fmtExp(liveState?.max_dm_dt ?? 0)}
+                  {fmtExpOrDash(liveState?.max_dm_dt ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
               <div className={s.metricCell}>
                 <span className={s.metricLabel}>max |H_eff|</span>
-                <span className={s.metricValue}>{fmtExp(liveState?.max_h_eff ?? 0)}</span>
+                <span className={s.metricValue}>
+                  {fmtExpOrDash(liveState?.max_h_eff ?? 0, hasSolverTelemetry)}
+                </span>
               </div>
               <div className={s.metricCell}>
                 <span className={s.metricLabel}>Wall Time</span>
@@ -396,6 +438,11 @@ export default function EngineConsole({
                 <span className={s.metricValue}>{stepsPerSec > 0 ? `${stepsPerSec.toFixed(1)} st/s` : "—"}</span>
               </div>
             </div>
+            {!hasSolverTelemetry && (
+              <div style={{ padding: "0 0.75rem 0.65rem", color: "var(--ide-muted)" }}>
+                {solverNotStartedMessage}
+              </div>
+            )}
 
             {/* Convergence bars */}
             <div style={{ padding: "0.4rem 0.75rem 0.65rem" }}>

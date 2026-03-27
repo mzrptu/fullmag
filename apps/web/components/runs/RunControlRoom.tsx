@@ -16,6 +16,10 @@ import ScalarPlot from "../plots/ScalarPlot";
 import Sparkline from "../ui/Sparkline";
 import EmptyState from "../ui/EmptyState";
 import Button from "../ui/Button";
+import TitleBar from "../shell/TitleBar";
+import MenuBar from "../shell/MenuBar";
+import RibbonBar from "../shell/RibbonBar";
+import StatusBar from "../shell/StatusBar";
 import s from "./RunControlRoom.module.css";
 
 /* ── Types ─────────────────────────────────────────────────── */
@@ -44,6 +48,23 @@ interface MesherGroupDescriptor {
 }
 
 const FEM_SLICE_COUNT = 25;
+const PANEL_SIZES = {
+  bodyMainDefault: "78%",
+  bodyMainMin: "34%",
+  viewportDefault: "72%",
+  viewportMin: "24%",
+  consoleDefault: "28%",
+  consoleMin: "10%",
+  consoleMax: "72%",
+  femDockDefault: "24%",
+  femDockMin: "16%",
+  femDockMax: "50%",
+  femViewportDefault: "76%",
+  femViewportMin: "26%",
+  sidebarDefault: "22%",
+  sidebarMin: "14%",
+  sidebarMax: "50%",
+} as const;
 
 const SCALAR_FIELDS: Record<string, string> = {
   E_ex: "e_ex",
@@ -72,6 +93,54 @@ function fmtSI(v: number, unit: string): string {
 function fmtExp(v: number): string {
   if (!Number.isFinite(v) || v === 0) return "0";
   return v.toExponential(3);
+}
+
+function fmtStepValue(v: number, enabled: boolean): string {
+  return enabled ? v.toLocaleString() : "—";
+}
+
+function fmtSIOrDash(v: number, unit: string, enabled: boolean): string {
+  return enabled ? fmtSI(v, unit) : "—";
+}
+
+function fmtExpOrDash(v: number, enabled: boolean): string {
+  return enabled ? fmtExp(v) : "—";
+}
+
+function materializationProgressFromMessage(message: string | null): number {
+  if (!message) return 6;
+  const lower = message.toLowerCase();
+  if (lower.includes("control room bootstrap verified")) return 8;
+  if (lower.includes("loading python script")) return 14;
+  if (lower.includes("building problemir")) return 22;
+  if (lower.includes("preparing fem mesh asset")) return 32;
+  if (lower.includes("generating fem mesh from geometry")) return 44;
+  if (lower.includes("meshing stl surface")) return 52;
+  if (lower.includes("importing stl surface")) return 60;
+  if (lower.includes("classifying stl surfaces")) return 70;
+  if (lower.includes("creating geometry from classified surfaces")) return 80;
+  if (lower.includes("generating 3d tetrahedral mesh")) return 90;
+  if (lower.includes("mesh ready") || lower.includes("fem mesh ready")) return 96;
+  if (lower.includes("script materialized")) return 100;
+  return 12;
+}
+
+function parseStageExecutionMessage(message: string | null): { current: number; total: number; kind: string } | null {
+  if (!message) return null;
+  const match = message.match(/executing stage (\d+)\/(\d+) \(([^)]+)\)/i);
+  if (!match) return null;
+  return {
+    current: Number(match[1]),
+    total: Number(match[2]),
+    kind: match[3],
+  };
+}
+
+function fmtDuration(ms: number): string {
+  if (ms < 1000) return `${ms.toFixed(0)} ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)} s`;
+  if (ms < 3600000) return `${(ms / 60000).toFixed(1)} min`;
+  return `${(ms / 3600000).toFixed(2)} h`;
 }
 
 function asVec3(value: unknown): [number, number, number] | null {
@@ -168,6 +237,18 @@ export default function RunControlRoom() {
   const engineLog = state?.engine_log ?? [];
   const latestEngineMessage = engineLog.length > 0 ? engineLog[engineLog.length - 1]?.message ?? null : null;
   const workspaceStatus = liveState?.status ?? session?.status ?? run?.status ?? "idle";
+  const hasSolverTelemetry =
+    (liveState?.step ?? 0) > 0 ||
+    (run?.total_steps ?? 0) > 0 ||
+    scalarRows.length > 0 ||
+    workspaceStatus === "completed" ||
+    workspaceStatus === "failed";
+  const solverNotStartedMessage =
+    workspaceStatus === "materializing_script"
+      ? "Solver has not started yet. FEM materialization and tetrahedral meshing are still in progress."
+      : workspaceStatus === "bootstrapping"
+        ? "Solver has not started yet. Workspace bootstrap is still in progress."
+        : "Solver telemetry is not available yet.";
 
   /* When live_state is stale (step===0) but the run manifest has real data,
      fall back to run values so solver/energy panels show actual progress. */
@@ -198,6 +279,17 @@ export default function RunControlRoom() {
     max_h_eff: effectiveHEff,
     max_h_demag: effectiveHDemag,
   } : liveState;
+
+  /* StatusBar metrics */
+  const elapsed = session
+    ? (session.finished_at_unix_ms > session.started_at_unix_ms
+        ? session.finished_at_unix_ms - session.started_at_unix_ms
+        : Date.now() - session.started_at_unix_ms)
+    : 0;
+  const stepsPerSec = elapsed > 0
+    ? (effectiveStep / elapsed) * 1000
+    : 0;
+
   const isMeshPreview = preview?.spatial_kind === "mesh";
 
 
@@ -209,6 +301,93 @@ export default function RunControlRoom() {
     (typeof session?.requested_backend === "string" ? session.requested_backend : null);
   const isFemBackend = resolvedBackend === "fem" || femMesh != null || preview?.spatial_kind === "mesh";
   const metadata = state?.metadata as Record<string, unknown> | null;
+  const runtimeEngine =
+    (metadata?.runtime_engine as Record<string, unknown> | undefined) ?? undefined;
+  const runtimeEngineLabel =
+    typeof runtimeEngine?.engine_label === "string" ? runtimeEngine.engine_label : null;
+  const currentStage = useMemo(
+    () => parseStageExecutionMessage(latestEngineMessage),
+    [latestEngineMessage],
+  );
+  const activity = useMemo(() => {
+    if (workspaceStatus === "materializing_script") {
+      const progressValue = materializationProgressFromMessage(latestEngineMessage);
+      const isLongGmshPhase = (latestEngineMessage ?? "").toLowerCase().includes("generating 3d tetrahedral mesh");
+      return {
+        label: isFemBackend ? "Materializing FEM workspace" : "Materializing workspace",
+        detail: latestEngineMessage ?? "Preparing geometry import and execution plan",
+        progressMode: isLongGmshPhase ? "indeterminate" as const : "determinate" as const,
+        progressValue,
+      };
+    }
+
+    if (workspaceStatus === "bootstrapping") {
+      return {
+        label: "Bootstrapping workspace",
+        detail: latestEngineMessage ?? "Starting local API and control room",
+        progressMode: "indeterminate" as const,
+        progressValue: undefined,
+      };
+    }
+
+    if (workspaceStatus === "running") {
+      const stageLabel = currentStage
+        ? `Solving ${currentStage.kind} — stage ${currentStage.current}/${currentStage.total}`
+        : "Running solver";
+      return {
+        label: stageLabel,
+        detail:
+          effectiveStep > 0
+            ? `Step ${effectiveStep.toLocaleString()} · t=${fmtSI(effectiveTime, "s")} · ${runtimeEngineLabel ?? session?.requested_backend?.toUpperCase() ?? "runtime"}`
+            : latestEngineMessage ?? "Solver startup in progress",
+        progressMode: "indeterminate" as const,
+        progressValue: undefined,
+      };
+    }
+
+    if (workspaceStatus === "awaiting_command") {
+      return {
+        label: "Interactive workspace ready",
+        detail: latestEngineMessage ?? "Waiting for the next run or relax command",
+        progressMode: "determinate" as const,
+        progressValue: 100,
+      };
+    }
+
+    if (workspaceStatus === "completed") {
+      return {
+        label: "Run completed",
+        detail: latestEngineMessage ?? "Solver finished successfully",
+        progressMode: "determinate" as const,
+        progressValue: 100,
+      };
+    }
+
+    if (workspaceStatus === "failed") {
+      return {
+        label: "Run failed",
+        detail: latestEngineMessage ?? "Execution stopped with an error",
+        progressMode: "determinate" as const,
+        progressValue: 100,
+      };
+    }
+
+    return {
+      label: "Workspace idle",
+      detail: latestEngineMessage ?? "No active task",
+      progressMode: "idle" as const,
+      progressValue: undefined,
+    };
+  }, [
+    effectiveStep,
+    effectiveTime,
+    currentStage,
+    isFemBackend,
+    latestEngineMessage,
+    runtimeEngineLabel,
+    session?.requested_backend,
+    workspaceStatus,
+  ]);
   const artifactLayout = (metadata?.artifact_layout as Record<string, unknown> | undefined) ?? undefined;
   const executionPlan = (metadata?.execution_plan as Record<string, unknown> | undefined) ?? undefined;
   const backendPlan = (executionPlan?.backend_plan as Record<string, unknown> | undefined) ?? undefined;
@@ -615,68 +794,77 @@ export default function RunControlRoom() {
 
   return (
     <div className={s.shell}>
-      {/* ═══════ HEADER ═══════════════════════════════ */}
-      <div className={s.header}>
-        <span className={s.headerDot} data-status={workspaceStatus} />
-        <span className={s.headerTitle}>
-          {session?.problem_name ?? "Local Live Workspace"}
-        </span>
-        <span className={s.headerMeta}>{session?.requested_backend?.toUpperCase() ?? ""}</span>
-        <span className={s.headerMeta}>local-live</span>
+      {/* ═══════ TITLE BAR ════════════════════════════ */}
+      <TitleBar
+        problemName={session?.problem_name ?? "Local Live Workspace"}
+        backend={session?.requested_backend ?? ""}
+        runtimeEngine={runtimeEngineLabel ?? undefined}
+        status={workspaceStatus}
+        connection={connection}
+      />
 
-        <span className={s.headerSpacer} />
+      {/* ═══════ MENU BAR ═════════════════════════════ */}
+      <MenuBar
+        viewMode={effectiveViewMode}
+        interactiveEnabled={interactiveEnabled}
+        onViewChange={(mode) => setViewMode(mode as ViewportMode)}
+        onSidebarToggle={() => setSidebarCollapsed((v) => !v)}
+        onSimAction={(action) => {
+          if (action === "run") void enqueueCommand({ kind: "run" });
+          if (action === "pause") void enqueueCommand({ kind: "pause" });
+          if (action === "stop") void enqueueCommand({ kind: "stop" });
+        }}
+      />
 
-        {isFemBackend && femMesh && (
-          <span className={s.headerPill}>
-            {femMesh.nodes.length.toLocaleString()} nodes · {(
-              femMesh.elements.length > 0
-                ? `${femMesh.elements.length.toLocaleString()} tets`
-                : `${femMesh.boundary_faces.length.toLocaleString()} faces`
-            )}
-          </span>
-        )}
-        {!isFemBackend && totalCells && totalCells > 0 && (
-          <span className={s.headerPill}>
-            {solverGrid[0]}×{solverGrid[1]}×{solverGrid[2]} = {totalCells.toLocaleString()} cells
-          </span>
-        )}
-
-        {!previewDrivenMode && (
-          <div className={s.headerToggle}>
-            {(["3D", "2D", "Mesh"] as ViewportMode[]).map((mode, i) => (
-              <button
-                key={mode}
-                className={s.headerToggleBtn}
-                data-active={viewMode === mode}
-                disabled={mode === "Mesh" && !isFemBackend}
-                onClick={() => setViewMode(mode)}
-                title={`${mode} view (${i + 1})`}
-              >
-                <span className={s.kbdHint}>{i + 1}</span>{mode}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Sidebar toggle */}
-        <button
-          className={s.sidebarToggleBtn}
-          onClick={() => setSidebarCollapsed((v) => !v)}
-          title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-        >
-          {sidebarCollapsed ? "◀" : "▶"}
-        </button>
-      </div>
+      {/* ═══════ RIBBON BAR ═══════════════════════════ */}
+      <RibbonBar
+        viewMode={effectiveViewMode}
+        isFemBackend={isFemBackend}
+        solverRunning={workspaceStatus === "running"}
+        sidebarVisible={!sidebarCollapsed}
+        onViewChange={(mode) => setViewMode(mode as ViewportMode)}
+        onSidebarToggle={() => setSidebarCollapsed((v) => !v)}
+        onSimAction={(action) => {
+          if (action === "run") void enqueueCommand({ kind: "run" });
+          if (action === "pause") void enqueueCommand({ kind: "pause" });
+          if (action === "stop") void enqueueCommand({ kind: "stop" });
+        }}
+      />
 
       {/* ═══════ BODY: Horizontal PanelGroup (main + sidebar) ═══════ */}
-      <PanelGroup orientation="horizontal" className={s.body}>
-      <Panel defaultSize={sidebarCollapsed ? 100 : 78} minSize={40}>
+      <PanelGroup
+        orientation="horizontal"
+        className={s.body}
+        resizeTargetMinimumSize={{ coarse: 40, fine: 12 }}
+      >
+      <Panel
+        id="workspace-main"
+        defaultSize={sidebarCollapsed ? "100%" : PANEL_SIZES.bodyMainDefault}
+        minSize={PANEL_SIZES.bodyMainMin}
+      >
       {/* ═══════ MAIN AREA (viewport + console) ═══════ */}
-      <PanelGroup orientation="vertical" className={s.main}>
-      <Panel defaultSize={70} minSize={30}>
+      <PanelGroup
+        orientation="vertical"
+        className={s.main}
+        resizeTargetMinimumSize={{ coarse: 40, fine: 10 }}
+      >
+      <Panel
+        id="workspace-viewport"
+        defaultSize={PANEL_SIZES.viewportDefault}
+        minSize={PANEL_SIZES.viewportMin}
+      >
       {isFemBackend ? (
-        <PanelGroup orientation="horizontal" className={s.workspaceSplit}>
-          <Panel defaultSize={24} minSize={22} maxSize={40}>
+        <PanelGroup
+          orientation="horizontal"
+          className={s.workspaceSplit}
+          resizeTargetMinimumSize={{ coarse: 40, fine: 12 }}
+        >
+          <Panel
+            id="workspace-fem-dock"
+            defaultSize={PANEL_SIZES.femDockDefault}
+            minSize={PANEL_SIZES.femDockMin}
+            maxSize={PANEL_SIZES.femDockMax}
+          >
             <div className={s.meshDock}>
               <div className={s.meshDockHeader}>
                 <div>
@@ -1174,7 +1362,11 @@ export default function RunControlRoom() {
 
           <PanelResizeHandle className={s.meshDockResizeHandle} />
 
-          <Panel defaultSize={76} minSize={42}>
+          <Panel
+            id="workspace-fem-viewport"
+            defaultSize={PANEL_SIZES.femViewportDefault}
+            minSize={PANEL_SIZES.femViewportMin}
+          >
             <div className={s.viewport}>
         {/* Compact selector bar */}
         <div className={s.viewportBar}>
@@ -1772,7 +1964,14 @@ export default function RunControlRoom() {
       <PanelResizeHandle className={s.resizeHandle} />
 
       {/* ═══════ BOTTOM CONSOLE ═══════════════════════ */}
-      <Panel defaultSize={30} minSize={8} maxSize={60} collapsible collapsedSize={3}>
+      <Panel
+        id="workspace-console"
+        defaultSize={PANEL_SIZES.consoleDefault}
+        minSize={PANEL_SIZES.consoleMin}
+        maxSize={PANEL_SIZES.consoleMax}
+        collapsible
+        collapsedSize="3%"
+      >
         <div className={s.console}>
           <EngineConsole
             session={session ?? null}
@@ -1796,40 +1995,52 @@ export default function RunControlRoom() {
       {!sidebarCollapsed && (
         <>
         <PanelResizeHandle className={s.sidebarResizeHandle} />
-        <Panel defaultSize={22} minSize={15} maxSize={40} collapsible collapsedSize={0}>
+        <Panel
+          id="workspace-sidebar"
+          defaultSize={PANEL_SIZES.sidebarDefault}
+          minSize={PANEL_SIZES.sidebarMin}
+          maxSize={PANEL_SIZES.sidebarMax}
+          collapsible
+          collapsedSize="0%"
+        >
       <div className={s.sidebar}>
         {/* Solver */}
         <Section title="Solver" badge={workspaceStatus}>
           <div className={s.fieldGrid2}>
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>Step</span>
-              <span className={s.fieldValue}>{effectiveStep.toLocaleString()}</span>
+              <span className={s.fieldValue}>{fmtStepValue(effectiveStep, hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>Time</span>
-              <span className={s.fieldValue}>{fmtSI(effectiveTime, "s")}</span>
+              <span className={s.fieldValue}>{fmtSIOrDash(effectiveTime, "s", hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>Δt</span>
-              <span className={s.fieldValue}>{fmtSI(effectiveDt, "s")}</span>
+              <span className={s.fieldValue}>{fmtSIOrDash(effectiveDt, "s", hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>max dm/dt</span>
               <span className={s.fieldValue} style={{
-                color: effectiveDmDt > 0 && effectiveDmDt < 1e-5 ? "var(--status-running)" : undefined
+                color: hasSolverTelemetry && effectiveDmDt > 0 && effectiveDmDt < 1e-5 ? "var(--status-running)" : undefined
               }}>
-                {fmtExp(effectiveDmDt)}
+                {fmtExpOrDash(effectiveDmDt, hasSolverTelemetry)}
               </span>
             </div>
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>max |H_eff|</span>
-              <span className={s.fieldValue}>{fmtExp(effectiveHEff)}</span>
+              <span className={s.fieldValue}>{fmtExpOrDash(effectiveHEff, hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>max |H_demag|</span>
-              <span className={s.fieldValue}>{fmtExp(effectiveHDemag)}</span>
+              <span className={s.fieldValue}>{fmtExpOrDash(effectiveHDemag, hasSolverTelemetry)}</span>
             </div>
           </div>
+          {!hasSolverTelemetry && (
+            <div className={s.meshHintText} style={{ paddingTop: "0.5rem" }}>
+              {solverNotStartedMessage}
+            </div>
+          )}
           {dmDtSpark.length > 1 && (
             <Sparkline data={dmDtSpark} width={140} height={20} color="var(--status-running)" label="dm/dt" />
           )}
@@ -2005,24 +2216,24 @@ export default function RunControlRoom() {
         )}
 
         {/* Energy */}
-        <Section title="Energy" badge={fmtSI(effectiveETotal, "J")}>
+        <Section title="Energy" badge={fmtSIOrDash(effectiveETotal, "J", hasSolverTelemetry)}>
           <div className={s.fieldGrid2}>
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>E_exchange</span>
-              <span className={s.fieldValue}>{fmtSI(effectiveEEx, "J")}</span>
+              <span className={s.fieldValue}>{fmtSIOrDash(effectiveEEx, "J", hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>E_demag</span>
-              <span className={s.fieldValue}>{fmtSI(effectiveEDemag, "J")}</span>
+              <span className={s.fieldValue}>{fmtSIOrDash(effectiveEDemag, "J", hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>E_ext</span>
-              <span className={s.fieldValue}>{fmtSI(effectiveEExt, "J")}</span>
+              <span className={s.fieldValue}>{fmtSIOrDash(effectiveEExt, "J", hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
               <span className={s.fieldLabel}>E_total</span>
               <span className={s.fieldValue} style={{ color: "hsl(210, 70%, 65%)" }}>
-                {fmtSI(effectiveETotal, "J")}
+                {fmtSIOrDash(effectiveETotal, "J", hasSolverTelemetry)}
               </span>
             </div>
           </div>
@@ -2159,6 +2370,29 @@ export default function RunControlRoom() {
         </>
       )}
       </PanelGroup>
+
+      {/* ═══════ STATUS BAR ════════════════════════════ */}
+      <StatusBar
+        connection={connection}
+        step={effectiveLiveState?.step ?? run?.total_steps ?? 0}
+        stepDisplay={fmtStepValue(effectiveLiveState?.step ?? run?.total_steps ?? 0, hasSolverTelemetry)}
+        simTime={fmtSIOrDash(effectiveLiveState?.time ?? run?.final_time ?? 0, "s", hasSolverTelemetry)}
+        wallTime={elapsed > 0 ? fmtDuration(elapsed) : "—"}
+        throughput={stepsPerSec > 0 ? `${stepsPerSec.toFixed(1)} st/s` : "—"}
+        backend={session?.requested_backend ?? ""}
+        runtimeEngine={runtimeEngineLabel ?? undefined}
+        precision={session?.precision ?? ""}
+        status={workspaceStatus}
+        activityLabel={activity.label}
+        activityDetail={activity.detail}
+        progressMode={activity.progressMode}
+        progressValue={activity.progressValue}
+        nodeCount={isFemBackend && femMesh
+          ? `${femMesh.nodes.length.toLocaleString()} nodes`
+          : totalCells && totalCells > 0
+          ? `${totalCells.toLocaleString()} cells`
+          : undefined}
+      />
     </div>
   );
 }

@@ -17,11 +17,12 @@ ensure-python:
 
 build target="fullmag":
     if [ "{{target}}" = "fullmag" ]; then make install-cli; \
+    elif [ "{{target}}" = "fullmag-dev" ]; then make install-cli-dev; \
     elif [ "{{target}}" = "fullmag-host" ]; then make install-cli; \
     elif [ "{{target}}" = "dev-image" ]; then docker compose build dev; \
     elif [ "{{target}}" = "fem-gpu-runtime" ]; then docker compose --profile fem-gpu build fem-gpu; \
     elif [ "{{target}}" = "fem-gpu-runtime-host" ]; then ./scripts/export_fem_gpu_runtime.sh; \
-    else echo "unknown build target: {{target}}" >&2; echo "supported targets: fullmag, fullmag-host, dev-image, fem-gpu-runtime, fem-gpu-runtime-host" >&2; exit 1; fi
+    else echo "unknown build target: {{target}}" >&2; echo "supported targets: fullmag, fullmag-dev, fullmag-host, dev-image, fem-gpu-runtime, fem-gpu-runtime-host" >&2; exit 1; fi
 
 package target="fullmag":
     if [ "{{target}}" = "fullmag" ] || [ "{{target}}" = "fullmag-host" ]; then ./scripts/package_fullmag_host.sh; \
@@ -68,6 +69,11 @@ run-py-layer-hole-headless:
     PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag examples/py_layer_hole_relax_150nm.py --headless --json
 
 run-nanoflower:
+    just ensure-python
+    just build fullmag-dev
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag --dev examples/nanoflower_fem.py
+
+run-nanoflower-static:
     just ensure-python
     just build fullmag
     PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag examples/nanoflower_fem.py

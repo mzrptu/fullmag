@@ -111,6 +111,14 @@ pub struct ExecutionProvenance {
     pub cuda_runtime_version: Option<i32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeEngineInfo {
+    pub backend_family: String,
+    pub engine_id: String,
+    pub engine_label: String,
+    pub accelerator: String,
+}
+
 // ----- internal execution types -----
 
 #[derive(Debug, Clone)]

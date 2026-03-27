@@ -3,19 +3,23 @@
 from .asset_pipeline import realize_fdm_grid_asset, realize_fem_mesh_asset
 from .gmsh_bridge import (
     MeshData,
+    MeshOptions,
+    MeshQualityReport,
     generate_box_mesh,
     generate_cylinder_mesh,
     generate_difference_mesh,
     generate_mesh,
     generate_mesh_from_file,
 )
-from .quality import MeshQualityReport, validate_mesh
+from .quality import MeshValidationReport, validate_mesh
 from .surface_assets import SurfaceAsset, export_geometry_to_stl, load_surface_asset
 from .voxelization import VoxelMaskData, voxelize_geometry
 
 __all__ = [
     "MeshData",
+    "MeshOptions",
     "MeshQualityReport",
+    "MeshValidationReport",
     "SurfaceAsset",
     "VoxelMaskData",
     "export_geometry_to_stl",

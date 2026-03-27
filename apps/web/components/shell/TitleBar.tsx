@@ -6,23 +6,24 @@ import s from "./shell.module.css";
 interface TitleBarProps {
   problemName: string;
   backend: string;
+  runtimeEngine?: string;
   status: string;
   connection: "connecting" | "connected" | "disconnected";
 }
 
-export default function TitleBar({ problemName, backend, status, connection }: TitleBarProps) {
+export default function TitleBar({
+  problemName,
+  backend,
+  runtimeEngine,
+  status,
+  connection,
+}: TitleBarProps) {
   return (
     <div className={s.titleBar}>
-      {/* Traffic lights (cosmetic) */}
-      <div className={s.trafficLights}>
-        <span className={cn(s.trafficDot, s.dotClose)} />
-        <span className={cn(s.trafficDot, s.dotMinimize)} />
-        <span className={cn(s.trafficDot, s.dotMaximize)} />
-      </div>
-
       <span className={s.titleBarText}>
         {problemName}
         {backend && <> — <span className={s.titleBarMuted}>{backend.toUpperCase()}</span></>}
+        {runtimeEngine && <> · <span className={s.titleBarMuted}>{runtimeEngine}</span></>}
       </span>
 
       <span className={s.titleBarSpacer} />

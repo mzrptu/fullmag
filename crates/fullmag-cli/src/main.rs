@@ -306,12 +306,20 @@ struct LocalLiveWorkspaceState {
 
 impl LocalLiveWorkspaceState {
     fn snapshot(&self) -> CurrentLivePublishPayload {
+        let mut live_state = self.live_state.clone();
+        let mut metadata = self.metadata.clone();
+
+        if live_state.latest_step.step > 0 {
+            live_state.latest_step.fem_mesh = None;
+            metadata = None;
+        }
+
         CurrentLivePublishPayload {
             session: Some(self.session.clone()),
             session_status: Some(self.session.status.clone()),
-            metadata: self.metadata.clone(),
+            metadata,
             run: Some(self.run.clone()),
-            live_state: Some(self.live_state.clone()),
+            live_state: Some(live_state),
             latest_scalar_row: self.latest_scalar_row.clone(),
             engine_log: Some(self.engine_log.clone()),
         }
@@ -442,14 +450,22 @@ fn current_live_publisher_loop(
                 }
             }
             let snapshot = payload.lock().map(|slot| slot.clone()).unwrap_or_default();
-            let _ = publish_current_live_state(&session_id, &snapshot);
+            if let Err(error) = publish_current_live_state(&session_id, &snapshot) {
+                if api_is_ready(LOCAL_API_PORT) {
+                    eprintln!("fullmag live publish warning: {}", error);
+                }
+            }
             last_publish_at = Some(Instant::now());
         }
     }
 
     if pending.swap(false, Ordering::AcqRel) {
         let snapshot = payload.lock().map(|slot| slot.clone()).unwrap_or_default();
-        let _ = publish_current_live_state(&session_id, &snapshot);
+        if let Err(error) = publish_current_live_state(&session_id, &snapshot) {
+            if api_is_ready(LOCAL_API_PORT) {
+                eprintln!("fullmag live publish warning: {}", error);
+            }
+        }
     }
 }
 
@@ -1042,12 +1058,23 @@ fn current_live_metadata(
     plan: &ExecutionPlanIR,
     status: &str,
 ) -> serde_json::Value {
+    let runtime_engine = fullmag_runner::resolve_runtime_engine(problem)
+        .ok()
+        .map(|engine| {
+            serde_json::json!({
+                "backend_family": engine.backend_family,
+                "engine_id": engine.engine_id,
+                "engine_label": engine.engine_label,
+                "accelerator": engine.accelerator,
+            })
+        });
     serde_json::json!({
         "problem_name": &problem.problem_meta.name,
         "ir_version": &problem.ir_version,
         "source_hash": &problem.problem_meta.source_hash,
         "problem_meta": &problem.problem_meta,
         "execution_plan": plan,
+        "runtime_engine": runtime_engine,
         "artifact_layout": current_artifact_layout(plan),
         "meshing_capabilities": current_meshing_capabilities(plan),
         "engine_version": env!("CARGO_PKG_VERSION"),
@@ -1342,12 +1369,14 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
     );
 
     if !args.headless {
-        spawn_control_room(&session_id, args.dev, args.web_port, &live_workspace).with_context(|| {
-            format!(
-                "failed to bootstrap control room for workspace {}",
-                session_id
-            )
-        })?;
+        spawn_control_room(&session_id, args.dev, args.web_port, &live_workspace).with_context(
+            || {
+                format!(
+                    "failed to bootstrap control room for workspace {}",
+                    session_id
+                )
+            },
+        )?;
         eprintln!("fullmag control room bootstrap verified");
         live_workspace.push_log("system", "Control room bootstrap verified");
     }
@@ -2440,7 +2469,9 @@ const LOCAL_API_PORT: u16 = 8080;
 
 fn next_current_live_command() -> Result<Option<SessionCommand>> {
     let response = match current_live_api_client()
-        .get(format!("{LOCALHOST_API_BASE}/v1/live/current/commands/next"))
+        .get(format!(
+            "{LOCALHOST_API_BASE}/v1/live/current/commands/next"
+        ))
         .send()
     {
         Ok(response) => response,
@@ -2576,6 +2607,11 @@ fn run_python_helper_with_progress(
     }
 
     let pythonpath = repo_root().join("packages").join("fullmag-py").join("src");
+    let fem_mesh_cache_dir = repo_root()
+        .join(".fullmag")
+        .join("local")
+        .join("cache")
+        .join("fem_mesh_assets");
     let inherited_pythonpath = std::env::var("PYTHONPATH").ok();
 
     let mut last_error = None;
@@ -2588,6 +2624,7 @@ fn run_python_helper_with_progress(
         if progress_callback.is_some() {
             command.env("FULLMAG_PROGRESS", "1");
         }
+        command.env("FULLMAG_FEM_MESH_CACHE_DIR", &fem_mesh_cache_dir);
         if pythonpath.exists() {
             let mut merged = pythonpath.display().to_string();
             if let Some(existing) = &inherited_pythonpath {
@@ -2947,7 +2984,7 @@ fn current_live_api_client() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(20))
             .build()
             .expect("current live API client should build")
     })

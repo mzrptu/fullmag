@@ -22,7 +22,8 @@ mod types;
 
 // Public re-exports (unchanged API surface).
 pub use types::{
-    ExecutionProvenance, FemMeshPayload, RunError, RunResult, RunStatus, StepStats, StepUpdate,
+    ExecutionProvenance, FemMeshPayload, RunError, RunResult, RunStatus, RuntimeEngineInfo,
+    StepStats, StepUpdate,
 };
 
 use fullmag_ir::{BackendPlanIR, FdmMultilayerPlanIR, FdmPlanIR, OutputIR, ProblemIR};
@@ -170,6 +171,55 @@ pub fn run_problem_with_callback(
     });
 
     Ok(executed.result)
+}
+
+pub fn resolve_runtime_engine(problem: &ProblemIR) -> Result<RuntimeEngineInfo, RunError> {
+    let plan = fullmag_plan::plan(problem)?;
+    match &plan.backend_plan {
+        BackendPlanIR::Fdm(_) => {
+            let engine = dispatch::resolve_fdm_engine(problem)?;
+            let (engine_id, engine_label, accelerator) = match engine {
+                dispatch::FdmEngine::CpuReference => ("fdm_cpu_reference", "CPU FDM", "cpu"),
+                dispatch::FdmEngine::CudaFdm => ("fdm_cuda", "CUDA FDM", "cuda"),
+            };
+            Ok(RuntimeEngineInfo {
+                backend_family: "fdm".to_string(),
+                engine_id: engine_id.to_string(),
+                engine_label: engine_label.to_string(),
+                accelerator: accelerator.to_string(),
+            })
+        }
+        BackendPlanIR::FdmMultilayer(_) => {
+            let engine = dispatch::resolve_fdm_engine(problem)?;
+            let (engine_id, engine_label, accelerator) = match engine {
+                dispatch::FdmEngine::CpuReference => {
+                    ("fdm_multilayer_cpu_reference", "CPU FDM Multilayer", "cpu")
+                }
+                dispatch::FdmEngine::CudaFdm => {
+                    ("fdm_multilayer_cuda", "CUDA FDM Multilayer", "cuda")
+                }
+            };
+            Ok(RuntimeEngineInfo {
+                backend_family: "fdm_multilayer".to_string(),
+                engine_id: engine_id.to_string(),
+                engine_label: engine_label.to_string(),
+                accelerator: accelerator.to_string(),
+            })
+        }
+        BackendPlanIR::Fem(_) => {
+            let engine = dispatch::resolve_fem_engine(problem)?;
+            let (engine_id, engine_label, accelerator) = match engine {
+                dispatch::FemEngine::CpuReference => ("fem_cpu_reference", "CPU FEM", "cpu"),
+                dispatch::FemEngine::NativeGpu => ("fem_native_gpu", "Native FEM GPU", "gpu"),
+            };
+            Ok(RuntimeEngineInfo {
+                backend_family: "fem".to_string(),
+                engine_id: engine_id.to_string(),
+                engine_label: engine_label.to_string(),
+                accelerator: accelerator.to_string(),
+            })
+        }
+    }
 }
 
 fn configured_cpu_threads(problem: &ProblemIR) -> usize {
