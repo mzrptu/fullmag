@@ -849,8 +849,8 @@ impl FemLlgProblem {
             static WARN: Once = Once::new();
             WARN.call_once(|| {
                 eprintln!(
-                    "[fullmag::fem] PERF: Transfer-grid demag active — grid {}×{}×{} ({} cells). \
-                     FFT workspace is rebuilt per evaluation. Consider mesh-native demag for production workloads.",
+                    "[fullmag::fem] Transfer-grid demag active — grid {}×{}×{} ({} cells). \
+                     FFT workspace will be cached across evaluations.",
                     grid_desc.grid.nx, grid_desc.grid.ny, grid_desc.grid.nz,
                     grid_desc.grid.cell_count()
                 );
@@ -863,20 +863,40 @@ impl FemLlgProblem {
             return Ok((vec![[0.0, 0.0, 0.0]; self.topology.n_nodes], 0.0));
         }
 
-        let fdm_problem = ExchangeLlgProblem::with_terms_and_mask(
-            grid_desc.grid,
-            grid_desc.cell_size,
-            self.material,
-            self.dynamics,
-            EffectiveFieldTerms {
-                exchange: false,
-                demag: true,
-                external_field: None,
-            },
-            Some(rasterized.active_mask.clone()),
-        )?;
-        let fdm_state = fdm_problem.new_state(rasterized.magnetization)?;
-        let cell_demag_field = fdm_problem.demag_field(&fdm_state)?;
+        // Cache the FDM problem + FFT workspace so we don't rebuild per call.
+        use std::cell::RefCell;
+        thread_local! {
+            static CACHED: RefCell<Option<(GridShape, CellSize, ExchangeLlgProblem, crate::FftWorkspace)>> =
+                const { RefCell::new(None) };
+        }
+
+        let cell_demag_field = CACHED.with(|cached| {
+            let mut slot = cached.borrow_mut();
+            // Check if the cached workspace matches the current grid
+            let need_rebuild = match slot.as_ref() {
+                Some((g, cs, _, _)) => *g != grid_desc.grid || *cs != grid_desc.cell_size,
+                None => true,
+            };
+            if need_rebuild {
+                let fdm_problem = ExchangeLlgProblem::with_terms_and_mask(
+                    grid_desc.grid,
+                    grid_desc.cell_size,
+                    self.material,
+                    self.dynamics,
+                    EffectiveFieldTerms {
+                        exchange: false,
+                        demag: true,
+                        external_field: None,
+                    },
+                    Some(rasterized.active_mask.clone()),
+                )?;
+                let ws = fdm_problem.create_workspace();
+                *slot = Some((grid_desc.grid, grid_desc.cell_size, fdm_problem, ws));
+            }
+            let (_, _, ref fdm_problem, ref mut ws) = slot.as_mut().unwrap();
+            let fdm_state = fdm_problem.new_state(rasterized.magnetization)?;
+            Ok(fdm_problem.demag_field_from_vectors_ws(fdm_state.magnetization(), ws))
+        })?;
 
         let mut node_demag_field = vec![[0.0, 0.0, 0.0]; self.topology.n_nodes];
         for (node_index, value) in node_demag_field.iter_mut().enumerate() {

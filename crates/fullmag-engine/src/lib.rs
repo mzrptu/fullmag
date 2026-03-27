@@ -1123,11 +1123,9 @@ impl ExchangeLlgProblem {
         match self.dynamics.integrator {
             TimeIntegrator::Heun => self.heun_step_buf(state, dt, ws, bufs),
             TimeIntegrator::RK4 => self.rk4_step_buf(state, dt, ws, bufs),
-            // Adaptive + ABM fall through to allocating path for now
-            // (their allocation overhead is negligible vs. multiple retry iterations)
-            TimeIntegrator::RK23 => self.rk23_step(state, dt, ws),
-            TimeIntegrator::RK45 => self.rk45_step(state, dt, ws),
-            TimeIntegrator::ABM3 => self.abm3_step(state, dt, ws),
+            TimeIntegrator::RK23 => self.rk23_step_buf(state, dt, ws, bufs),
+            TimeIntegrator::RK45 => self.rk45_step_buf(state, dt, ws, bufs),
+            TimeIntegrator::ABM3 => self.abm3_step_buf(state, dt, ws, bufs),
         }
     }
 
@@ -1289,6 +1287,331 @@ impl ExchangeLlgProblem {
     fn llg_rhs_into_ws(&self, magnetization: &[Vector3], ws: &mut FftWorkspace, out: &mut [Vector3]) {
         let rhs = self.llg_rhs_from_vectors_ws(magnetization, ws);
         out[..rhs.len()].copy_from_slice(&rhs);
+    }
+
+    /// In-place RHS evaluation that also returns cached observables.
+    fn llg_rhs_full_into_ws(
+        &self,
+        magnetization: &[Vector3],
+        ws: &mut FftWorkspace,
+        out: &mut [Vector3],
+    ) -> RhsEvaluation {
+        let (rhs, eval) = self.llg_rhs_full_ws(magnetization, ws);
+        out[..rhs.len()].copy_from_slice(&rhs);
+        eval
+    }
+
+    // -----------------------------------------------------------------------
+    // Buffer-reusing RK23 (Bogacki-Shampine 2(3), adaptive)
+    // -----------------------------------------------------------------------
+    fn rk23_step_buf(
+        &self,
+        state: &mut ExchangeLlgState,
+        dt: f64,
+        ws: &mut FftWorkspace,
+        bufs: &mut IntegratorBuffers,
+    ) -> Result<StepReport> {
+        let cfg = self.dynamics.adaptive;
+        let mut dt = dt.min(cfg.dt_max).max(cfg.dt_min);
+        let n = state.magnetization.len();
+        bufs.m0[..n].copy_from_slice(&state.magnetization);
+
+        loop {
+            // k1 = f(t, m0)
+            self.llg_rhs_into_ws(&bufs.m0[..n], ws, &mut bufs.k[0]);
+
+            // m1 = normalize(m0 + dt/2 * k1)
+            for i in 0..n {
+                bufs.m_stage[i] = normalized(add(bufs.m0[i], scale(bufs.k[0][i], 0.5 * dt)))?;
+            }
+            self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[1]);
+
+            // m2 = normalize(m0 + 3dt/4 * k2)
+            for i in 0..n {
+                bufs.m_stage[i] = normalized(add(bufs.m0[i], scale(bufs.k[1][i], 0.75 * dt)))?;
+            }
+            self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[2]);
+
+            // y3 = normalize(m0 + dt*(2/9*k1 + 1/3*k2 + 4/9*k3))
+            for i in 0..n {
+                bufs.delta[i] = scale(
+                    add(
+                        add(scale(bufs.k[0][i], 2.0 / 9.0), scale(bufs.k[1][i], 1.0 / 3.0)),
+                        scale(bufs.k[2][i], 4.0 / 9.0),
+                    ),
+                    dt,
+                );
+                bufs.m_stage[i] = normalized(add(bufs.m0[i], bufs.delta[i]))?;
+            }
+
+            // k4 for error estimate
+            self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[3]);
+
+            // Error
+            let error = self.max_error_norm_buf(
+                &[(0, -5.0 / 72.0), (1, 1.0 / 12.0), (2, 1.0 / 9.0), (3, -1.0 / 8.0)],
+                bufs, dt, n,
+            );
+
+            if error <= cfg.max_error || dt <= cfg.dt_min {
+                state.magnetization[..n].copy_from_slice(&bufs.m_stage[..n]);
+                state.time_seconds += dt;
+                let (_, eval) = self.llg_rhs_full_ws(&state.magnetization, ws);
+                return Ok(eval.into_step_report(state.time_seconds, dt, false));
+            }
+
+            let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(1.0 / 3.0);
+            dt = dt_new.max(cfg.dt_min).min(cfg.dt_max);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Buffer-reusing RK45 (Dormand-Prince 4(5), adaptive) — mumax3 default
+    // -----------------------------------------------------------------------
+    fn rk45_step_buf(
+        &self,
+        state: &mut ExchangeLlgState,
+        dt: f64,
+        ws: &mut FftWorkspace,
+        bufs: &mut IntegratorBuffers,
+    ) -> Result<StepReport> {
+        let cfg = self.dynamics.adaptive;
+        let mut dt = dt.min(cfg.dt_max).max(cfg.dt_min);
+        let n = state.magnetization.len();
+        bufs.m0[..n].copy_from_slice(&state.magnetization);
+
+        // Dormand-Prince coefficients
+        const A21: f64 = 1.0 / 5.0;
+        const A31: f64 = 3.0 / 40.0;
+        const A32: f64 = 9.0 / 40.0;
+        const A41: f64 = 44.0 / 45.0;
+        const A42: f64 = -56.0 / 15.0;
+        const A43: f64 = 32.0 / 9.0;
+        const A51: f64 = 19372.0 / 6561.0;
+        const A52: f64 = -25360.0 / 2187.0;
+        const A53: f64 = 64448.0 / 6561.0;
+        const A54: f64 = -212.0 / 729.0;
+        const A61: f64 = 9017.0 / 3168.0;
+        const A62: f64 = -355.0 / 33.0;
+        const A63: f64 = 46732.0 / 5247.0;
+        const A64: f64 = 49.0 / 176.0;
+        const A65: f64 = -5103.0 / 18656.0;
+        const B1: f64 = 35.0 / 384.0;
+        const B3: f64 = 500.0 / 1113.0;
+        const B4: f64 = 125.0 / 192.0;
+        const B5: f64 = -2187.0 / 6784.0;
+        const B6: f64 = 11.0 / 84.0;
+        const E1: f64 = 71.0 / 57600.0;
+        const E3: f64 = -71.0 / 16695.0;
+        const E4: f64 = 71.0 / 1920.0;
+        const E5: f64 = -17253.0 / 339200.0;
+        const E6: f64 = 22.0 / 525.0;
+        const E7: f64 = -1.0 / 40.0;
+
+        loop {
+            // Stage 1 — FSAL: reuse k7 from previous accepted step
+            if let Some(fsal) = state.k_fsal.take() {
+                bufs.k[0][..n].copy_from_slice(&fsal);
+            } else {
+                self.llg_rhs_into_ws(&bufs.m0[..n], ws, &mut bufs.k[0]);
+            }
+
+            // Stage 2
+            for i in 0..n {
+                bufs.m_stage[i] = normalized(add(bufs.m0[i], scale(bufs.k[0][i], A21 * dt)))?;
+            }
+            self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[1]);
+
+            // Stage 3
+            for i in 0..n {
+                bufs.m_stage[i] = normalized(add(
+                    bufs.m0[i],
+                    scale(add(scale(bufs.k[0][i], A31), scale(bufs.k[1][i], A32)), dt),
+                ))?;
+            }
+            self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[2]);
+
+            // Stage 4
+            for i in 0..n {
+                bufs.m_stage[i] = normalized(add(
+                    bufs.m0[i],
+                    scale(
+                        add(add(scale(bufs.k[0][i], A41), scale(bufs.k[1][i], A42)), scale(bufs.k[2][i], A43)),
+                        dt,
+                    ),
+                ))?;
+            }
+            self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[3]);
+
+            // Stage 5
+            for i in 0..n {
+                bufs.m_stage[i] = normalized(add(
+                    bufs.m0[i],
+                    scale(
+                        add(
+                            add(scale(bufs.k[0][i], A51), scale(bufs.k[1][i], A52)),
+                            add(scale(bufs.k[2][i], A53), scale(bufs.k[3][i], A54)),
+                        ),
+                        dt,
+                    ),
+                ))?;
+            }
+            self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[4]);
+
+            // Stage 6
+            for i in 0..n {
+                bufs.m_stage[i] = normalized(add(
+                    bufs.m0[i],
+                    scale(
+                        add(
+                            add(add(scale(bufs.k[0][i], A61), scale(bufs.k[1][i], A62)), scale(bufs.k[2][i], A63)),
+                            add(scale(bufs.k[3][i], A64), scale(bufs.k[4][i], A65)),
+                        ),
+                        dt,
+                    ),
+                ))?;
+            }
+            self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[5]);
+
+            // 5th-order solution → m_stage
+            for i in 0..n {
+                bufs.m_stage[i] = normalized(add(
+                    bufs.m0[i],
+                    scale(
+                        add(
+                            add(add(scale(bufs.k[0][i], B1), scale(bufs.k[2][i], B3)), scale(bufs.k[3][i], B4)),
+                            add(scale(bufs.k[4][i], B5), scale(bufs.k[5][i], B6)),
+                        ),
+                        dt,
+                    ),
+                ))?;
+            }
+
+            // k7 for error estimate (FSAL) → k[6]
+            self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[6]);
+
+            // Error estimate
+            let error = self.max_error_norm_buf(
+                &[(0, E1), (2, E3), (3, E4), (4, E5), (5, E6), (6, E7)],
+                bufs, dt, n,
+            );
+
+            if error <= cfg.max_error || dt <= cfg.dt_min {
+                state.magnetization[..n].copy_from_slice(&bufs.m_stage[..n]);
+                state.time_seconds += dt;
+                // FSAL: save k7 for next step's k1
+                state.k_fsal = Some(bufs.k[6][..n].to_vec());
+                let (_, eval) = self.llg_rhs_full_ws(&state.magnetization, ws);
+                return Ok(eval.into_step_report(state.time_seconds, dt, false));
+            }
+
+            let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(0.2);
+            dt = dt_new.max(cfg.dt_min).min(cfg.dt_max);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Buffer-reusing ABM3 (Adams–Bashforth–Moulton 3rd order)
+    // -----------------------------------------------------------------------
+    fn abm3_step_buf(
+        &self,
+        state: &mut ExchangeLlgState,
+        dt: f64,
+        ws: &mut FftWorkspace,
+        bufs: &mut IntegratorBuffers,
+    ) -> Result<StepReport> {
+        let n = state.magnetization.len();
+
+        // During startup, fall back to Heun build history
+        if !state.abm_history.is_ready() {
+            bufs.m0[..n].copy_from_slice(&state.magnetization);
+
+            // k1 = f(t, m0)
+            self.llg_rhs_into_ws(&bufs.m0[..n], ws, &mut bufs.k[0]);
+
+            // predicted = normalize(m0 + dt * k1)
+            for i in 0..n {
+                bufs.m_stage[i] = normalized(add(bufs.m0[i], scale(bufs.k[0][i], dt)))?;
+            }
+
+            // k2 = f(t+dt, predicted)
+            self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[1]);
+
+            // corrected = normalize(m0 + dt/2 * (k1 + k2))
+            for i in 0..n {
+                state.magnetization[i] =
+                    normalized(add(bufs.m0[i], scale(add(bufs.k[0][i], bufs.k[1][i]), 0.5 * dt)))?;
+            }
+            state.time_seconds += dt;
+
+            // Store RHS at accepted point for history
+            let f_accepted = self.llg_rhs_from_vectors_ws(state.magnetization(), ws);
+            state.abm_history.push(f_accepted, dt);
+
+            let (_, eval) = self.llg_rhs_full_ws(&state.magnetization, ws);
+            return Ok(eval.into_step_report(state.time_seconds, dt, false));
+        }
+
+        // --- Full ABM3 step ---
+        bufs.m0[..n].copy_from_slice(&state.magnetization);
+
+        let f_n = state.abm_history.f_n().unwrap();
+        let f_n1 = state.abm_history.f_n_minus_1().unwrap();
+        let f_n2 = state.abm_history.f_n_minus_2().unwrap();
+
+        // Adams–Bashforth predictor → m_stage
+        for i in 0..n {
+            let pred = add(
+                add(scale(f_n[i], 23.0 / 12.0), scale(f_n1[i], -16.0 / 12.0)),
+                scale(f_n2[i], 5.0 / 12.0),
+            );
+            bufs.m_stage[i] = normalized(add(bufs.m0[i], scale(pred, dt)))?;
+        }
+
+        // Evaluate RHS at predicted point → k[0] (only new RHS eval)
+        self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[0]);
+
+        // Adams–Moulton corrector → state.magnetization
+        for i in 0..n {
+            let corr = add(
+                add(scale(bufs.k[0][i], 5.0 / 12.0), scale(f_n[i], 8.0 / 12.0)),
+                scale(f_n1[i], -1.0 / 12.0),
+            );
+            state.magnetization[i] = normalized(add(bufs.m0[i], scale(corr, dt)))?;
+        }
+        state.time_seconds += dt;
+
+        // Push f_star (k[0]) into history
+        state.abm_history.push(bufs.k[0][..n].to_vec(), dt);
+
+        let (_, eval) = self.llg_rhs_full_ws(&state.magnetization, ws);
+        Ok(eval.into_step_report(state.time_seconds, dt, false))
+    }
+
+    // -----------------------------------------------------------------------
+    // Error norm from buffer-indexed k-stages
+    // -----------------------------------------------------------------------
+    fn max_error_norm_buf(
+        &self,
+        weighted_stages: &[(usize, f64)],
+        bufs: &IntegratorBuffers,
+        dt: f64,
+        n: usize,
+    ) -> f64 {
+        let mut max_err = 0.0f64;
+        for i in 0..n {
+            let mut err = [0.0, 0.0, 0.0];
+            for &(k_idx, w) in weighted_stages {
+                err[0] += w * bufs.k[k_idx][i][0];
+                err[1] += w * bufs.k[k_idx][i][1];
+                err[2] += w * bufs.k[k_idx][i][2];
+            }
+            err[0] *= dt;
+            err[1] *= dt;
+            err[2] *= dt;
+            max_err = max_err.max(norm(err));
+        }
+        max_err
     }
 
     // -----------------------------------------------------------------------

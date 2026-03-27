@@ -30,6 +30,9 @@ namespace fdm {
 // void launch_heun_corrector_fp64(Context &ctx, double dt);
 // void launch_normalize_fp64(Context &ctx);
 
+// GPU-native Newell tensor computation
+void launch_newell_compute_spectra_fp64(Context &ctx);
+
 } // namespace fdm
 } // namespace fullmag
 
