@@ -27,6 +27,8 @@ pub enum fullmag_fdm_precision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum fullmag_fdm_integrator {
     FULLMAG_FDM_INTEGRATOR_HEUN = 1,
+    FULLMAG_FDM_INTEGRATOR_DP45 = 2,
+    FULLMAG_FDM_INTEGRATOR_ABM3 = 3,
 }
 
 #[repr(C)]
@@ -85,6 +87,11 @@ pub struct fullmag_fdm_plan_desc {
     pub region_mask_len: u64,
     pub initial_magnetization_xyz: *const f64,
     pub initial_magnetization_len: u64,
+    // Adaptive step configuration (DP45 only)
+    pub adaptive_max_error: f64,
+    pub adaptive_dt_min: f64,
+    pub adaptive_dt_max: f64,
+    pub adaptive_headroom: f64,
 }
 
 // ── Step stats ──

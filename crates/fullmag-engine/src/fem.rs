@@ -917,7 +917,7 @@ fn cell_index_range_for_tet(
     }
 }
 
-fn barycentric_coordinates_tet(point: Vector3, vertices: [Vector3; 4]) -> Option<[f64; 4]> {
+pub(crate) fn barycentric_coordinates_tet(point: Vector3, vertices: [Vector3; 4]) -> Option<[f64; 4]> {
     let d1 = sub(vertices[1], vertices[0]);
     let d2 = sub(vertices[2], vertices[0]);
     let d3 = sub(vertices[3], vertices[0]);
@@ -939,7 +939,7 @@ fn barycentric_coordinates_tet(point: Vector3, vertices: [Vector3; 4]) -> Option
         .then_some(barycentric)
 }
 
-fn inverse_3x3_columns(columns: [[f64; 3]; 3], det: f64) -> [[f64; 3]; 3] {
+pub(crate) fn inverse_3x3_columns(columns: [[f64; 3]; 3], det: f64) -> [[f64; 3]; 3] {
     let a = columns[0][0];
     let b = columns[1][0];
     let c = columns[2][0];

@@ -1,7 +1,9 @@
 pub mod fem;
+pub mod fem_afem_loop;
 pub mod fem_error_estimator;
 pub mod fem_face_topology;
 pub mod fem_size_field;
+pub mod fem_solution_transfer;
 pub mod multilayer;
 pub mod newell;
 pub mod studies;
@@ -806,7 +808,8 @@ impl ExchangeLlgProblem {
 
     pub fn effective_field(&self, state: &ExchangeLlgState) -> Result<Vec<Vector3>> {
         self.ensure_state_matches_grid(state)?;
-        Ok(self.effective_field_from_vectors(state.magnetization()))
+        let mut ws = self.create_workspace();
+        Ok(self.effective_field_from_vectors_ws(state.magnetization(), &mut ws))
     }
 
     pub fn llg_rhs(&self, state: &ExchangeLlgState) -> Result<Vec<Vector3>> {
@@ -828,6 +831,15 @@ impl ExchangeLlgProblem {
         Ok(self.observe_vectors(state.magnetization()))
     }
 
+    /// Single step using a disposable FFT workspace.
+    ///
+    /// **Performance warning**: this rebuilds the FFT workspace (including Newell
+    /// kernel spectra) from scratch on every call.  For production loops, use
+    /// [`step_with_workspace`] with a pre-built workspace instead.
+    #[deprecated(
+        since = "0.1.0",
+        note = "creates a new FFT workspace per call; use step_with_workspace() instead"
+    )]
     pub fn step(&self, state: &mut ExchangeLlgState, dt: f64) -> Result<StepReport> {
         let mut ws = self.create_workspace();
         self.step_with_workspace(state, dt, &mut ws)
@@ -1657,6 +1669,14 @@ impl ExchangeLlgProblem {
             .collect()
     }
 
+    /// Compute effective field using a disposable FFT workspace.
+    ///
+    /// **Performance warning**: rebuilds the FFT workspace on every call.
+    /// Prefer [`effective_field_from_vectors_ws`] with a pre-built workspace.
+    #[deprecated(
+        since = "0.1.0",
+        note = "creates a new FFT workspace per call; use effective_field_from_vectors_ws() instead"
+    )]
     pub fn effective_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
         let mut ws = self.create_workspace();
         self.effective_field_from_vectors_ws(magnetization, &mut ws)
@@ -1890,6 +1910,7 @@ pub struct ReferenceDemoReport {
     pub max_rhs_amplitude: f64,
 }
 
+#[allow(deprecated)] // Intentionally uses step() for simplicity in this demo helper
 pub fn run_reference_exchange_demo(steps: usize, dt: f64) -> Result<ReferenceDemoReport> {
     if dt <= 0.0 {
         return Err(EngineError::new("dt must be positive"));

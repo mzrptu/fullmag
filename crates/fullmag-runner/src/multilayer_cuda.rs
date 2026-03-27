@@ -103,12 +103,20 @@ fn execute_cuda_fdm_multilayer_impl(
                 .to_string(),
         });
     }
-    if plan.integrator != IntegratorChoice::Heun {
-        return Err(RunError {
-            message:
-                "CUDA-assisted multilayer FDM runner currently supports only the heun integrator"
-                    .to_string(),
-        });
+    // DP45/ABM3/Heun all supported by native CUDA backend
+    match plan.integrator {
+        IntegratorChoice::Heun
+        | IntegratorChoice::Rk45
+        | IntegratorChoice::Rk23
+        | IntegratorChoice::Abm3 => {}
+        other => {
+            return Err(RunError {
+                message: format!(
+                    "CUDA-assisted multilayer FDM runner does not support integrator {:?}",
+                    other
+                ),
+            });
+        }
     }
 
     if let Some(native_stacked) = build_native_stacked_cuda_plan(plan)? {

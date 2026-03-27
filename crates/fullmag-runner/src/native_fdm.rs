@@ -70,7 +70,15 @@ impl NativeFdmBackend {
             }
         };
 
-        let integrator = ffi::fullmag_fdm_integrator::FULLMAG_FDM_INTEGRATOR_HEUN;
+        let integrator = match plan.integrator {
+            fullmag_ir::IntegratorChoice::Rk45 | fullmag_ir::IntegratorChoice::Rk23 => {
+                ffi::fullmag_fdm_integrator::FULLMAG_FDM_INTEGRATOR_DP45
+            }
+            fullmag_ir::IntegratorChoice::Abm3 => {
+                ffi::fullmag_fdm_integrator::FULLMAG_FDM_INTEGRATOR_ABM3
+            }
+            _ => ffi::fullmag_fdm_integrator::FULLMAG_FDM_INTEGRATOR_HEUN,
+        };
 
         // Flatten [f64; 3] AoS → contiguous f64 buffer
         let m_flat: Vec<f64> = plan
@@ -155,6 +163,10 @@ impl NativeFdmBackend {
                 .map_or(0, |mask| mask.len() as u64),
             initial_magnetization_xyz: m_flat.as_ptr(),
             initial_magnetization_len: m_flat.len() as u64,
+            adaptive_max_error: 0.0,   // 0 → use backend default 1e-5
+            adaptive_dt_min: 0.0,      // 0 → use backend default 1e-18
+            adaptive_dt_max: 0.0,      // 0 → use backend default 1e-10
+            adaptive_headroom: 0.0,    // 0 → use backend default 0.8
         };
 
         let handle = unsafe { ffi::fullmag_fdm_backend_create(&plan_desc) };
