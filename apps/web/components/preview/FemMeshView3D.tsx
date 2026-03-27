@@ -4,6 +4,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import * as THREE from "three";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
+import HslSphere from "./HslSphere";
 import ViewCube from "./ViewCube";
 import s from "./FemMeshView3D.module.css";
 
@@ -21,7 +22,7 @@ export interface FemMeshData {
   };
 }
 
-export type FemColorField = "x" | "y" | "z" | "magnitude" | "quality" | "none";
+export type FemColorField = "orientation" | "x" | "y" | "z" | "magnitude" | "quality" | "none";
 export type RenderMode = "surface" | "surface+edges" | "wireframe" | "points";
 export type ClipAxis = "x" | "y" | "z";
 
@@ -38,6 +39,7 @@ interface Props {
   clipAxis?: ClipAxis;
   clipPos?: number;
   showArrows?: boolean;
+  showOrientationLegend?: boolean;
   onRenderModeChange?: (value: RenderMode) => void;
   onOpacityChange?: (value: number) => void;
   onClipEnabledChange?: (value: boolean) => void;
@@ -66,6 +68,7 @@ const RENDER_OPTIONS: { value: RenderMode; label: string }[] = [
 ];
 
 const COLOR_OPTIONS: { value: FemColorField; label: string }[] = [
+  { value: "orientation", label: "Ori" },
   { value: "z",          label: "Fz" },
   { value: "x",          label: "Fx" },
   { value: "y",          label: "Fy" },
@@ -80,6 +83,13 @@ function divergingColor(value: number, color: THREE.Color): void {
   const v = THREE.MathUtils.clamp(value, -1, 1);
   if (v < 0) color.copy(COMP_NEUTRAL).lerp(COMP_NEGATIVE, Math.abs(v));
   else       color.copy(COMP_NEUTRAL).lerp(COMP_POSITIVE, v);
+}
+
+function magnetizationHSL(vx: number, vy: number, vz: number, color: THREE.Color): void {
+  const hue = Math.atan2(vy, vx) / (Math.PI * 2);
+  const saturation = Math.min(1, Math.sqrt(vx * vx + vy * vy + vz * vz));
+  const lightness = THREE.MathUtils.clamp(vz * 0.5 + 0.5, 0.18, 0.84);
+  color.setHSL((hue + 1) % 1, saturation, lightness);
 }
 
 function magnitudeColor(mag: number, color: THREE.Color): void {
@@ -139,6 +149,7 @@ export default function FemMeshView3D({
   clipAxis: controlledClipAxis,
   clipPos: controlledClipPos,
   showArrows: controlledShowArrows,
+  showOrientationLegend = false,
   onRenderModeChange,
   onOpacityChange,
   onClipEnabledChange,
@@ -151,6 +162,10 @@ export default function FemMeshView3D({
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<TrackballControls | null>(null);
+  const viewCubeSceneRef = useRef<{
+    camera: THREE.PerspectiveCamera;
+    controls: TrackballControls;
+  } | null>(null);
   const meshRef = useRef<THREE.Mesh | null>(null);
   const wireRef = useRef<THREE.LineSegments | null>(null);
   const pointsRef = useRef<THREE.Points | null>(null);
@@ -287,6 +302,7 @@ export default function FemMeshView3D({
           const fy = fld.y[i] ?? 0;
           const fz = fld.z[i] ?? 0;
           switch (field) {
+            case "orientation": magnetizationHSL(fx, fy, fz, _c); break;
             case "x": divergingColor(fx / scaleX, _c); break;
             case "y": divergingColor(fy / scaleY, _c); break;
             case "z": divergingColor(fz / scaleZ, _c); break;
@@ -344,6 +360,7 @@ export default function FemMeshView3D({
     controls.zoomSpeed = 1.2;
     controls.panSpeed = 0.8;
     controlsRef.current = controls;
+    viewCubeSceneRef.current = { camera, controls };
 
     /* Build mesh */
     faceARs.current = null; // reset on topology change
@@ -430,6 +447,7 @@ export default function FemMeshView3D({
       cancelAnimationFrame(rafId);
       ro.disconnect();
       controls.dispose();
+      viewCubeSceneRef.current = null;
       renderer.dispose();
       renderer.domElement.remove();
     };
@@ -578,7 +596,26 @@ export default function FemMeshView3D({
       _dir.set(vx, vy, vz).normalize();
       _quat.setFromUnitVectors(_zAxis, _dir);
 
-      divergingColor(vz / Math.max(len, 1e-12), _color);
+      switch (field) {
+        case "orientation":
+          magnetizationHSL(vx, vy, vz, _color);
+          break;
+        case "x":
+          divergingColor(vx / Math.max(maxDim, 1e-12), _color);
+          break;
+        case "y":
+          divergingColor(vy / Math.max(maxDim, 1e-12), _color);
+          break;
+        case "z":
+          divergingColor(vz / Math.max(maxDim, 1e-12), _color);
+          break;
+        case "magnitude":
+          magnitudeColor(len / Math.max(len, 1e-12), _color);
+          break;
+        default:
+          divergingColor(vz / Math.max(len, 1e-12), _color);
+          break;
+      }
 
       const mat = new THREE.MeshPhongMaterial({ color: _color.clone(), shininess: 60 });
       const cone = new THREE.Mesh(coneGeom.clone(), mat);
@@ -808,9 +845,10 @@ export default function FemMeshView3D({
       </div>
 
       {/* ─── ViewCube ───────────────────────────────── */}
-      <div className={s.viewCubeWrapper}>
-        <ViewCube onRotate={handleViewCubeRotate} />
-      </div>
+      <ViewCube sceneRef={viewCubeSceneRef} onRotate={handleViewCubeRotate} />
+
+      {/* ─── HSL orientation legend ─────────────────── */}
+      {showOrientationLegend && <HslSphere sceneRef={viewCubeSceneRef} />}
     </div>
   );
 }

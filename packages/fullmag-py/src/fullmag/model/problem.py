@@ -472,7 +472,7 @@ class Problem:
         if discretization is None:
             return None
 
-        cache_key = json.dumps(
+        asset_cache_key = json.dumps(
             {
                 "requested_backend": requested_backend.value,
                 "geometries": [geometry.to_ir() for geometry in geometries],
@@ -480,8 +480,8 @@ class Problem:
             },
             sort_keys=True,
         )
-        if asset_cache is not None and cache_key in asset_cache:
-            cached = asset_cache[cache_key]
+        if asset_cache is not None and asset_cache_key in asset_cache:
+            cached = asset_cache[asset_cache_key]
             return copy.deepcopy(cached)
 
         assets: dict[str, list[dict[str, object]]] = {
@@ -531,9 +531,9 @@ class Problem:
                         }
                     )
                 else:
-                    cache_key = _fem_mesh_cache_key(geometry, discretization.fem)
+                    mesh_cache_key = _fem_mesh_cache_key(geometry, discretization.fem)
                     cache_path = (
-                        fem_mesh_cache_dir.joinpath(f"{cache_key}.npz")
+                        fem_mesh_cache_dir.joinpath(f"{mesh_cache_key}.npz")
                         if fem_mesh_cache_dir is not None
                         else None
                     )
@@ -580,7 +580,7 @@ class Problem:
             result = assets
 
         if asset_cache is not None:
-            asset_cache[cache_key] = copy.deepcopy(result)
+            asset_cache[asset_cache_key] = copy.deepcopy(result)
 
         return result
 

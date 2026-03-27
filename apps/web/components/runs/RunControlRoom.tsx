@@ -11,7 +11,7 @@ import MagnetizationView3D from "../preview/MagnetizationView3D";
 import FemMeshView3D from "../preview/FemMeshView3D";
 import FemMeshSlice2D from "../preview/FemMeshSlice2D";
 import PreviewScalarField2D from "../preview/PreviewScalarField2D";
-import type { ClipAxis, FemMeshData, RenderMode } from "../preview/FemMeshView3D";
+import type { ClipAxis, FemColorField, FemMeshData, RenderMode } from "../preview/FemMeshView3D";
 import ScalarPlot from "../plots/ScalarPlot";
 import Sparkline from "../ui/Sparkline";
 import EmptyState from "../ui/EmptyState";
@@ -631,6 +631,17 @@ export default function RunControlRoom() {
     if (!effectiveFemMesh) return null;
     return `${effectiveFemMesh.nodes.length}:${femMesh?.elements.length ?? effectiveFemMesh.elements.length}:${effectiveFemMesh.boundary_faces.length}`;
   }, [effectiveFemMesh, femMesh?.elements.length]);
+
+  const femColorField = useMemo<FemColorField>(() => {
+    const quantityId = preview?.quantity ?? selectedQuantity;
+    if (quantityId === "m" && preview?.component === "3D") {
+      return "orientation";
+    }
+    if (effectiveVectorComponent === "x") return "x";
+    if (effectiveVectorComponent === "y") return "y";
+    if (effectiveVectorComponent === "z") return "z";
+    return "magnitude";
+  }, [effectiveVectorComponent, preview?.component, preview?.quantity, selectedQuantity]);
 
   const meshQualitySummary = useMemo(() => {
     if (!effectiveFemMesh) return null;
@@ -1615,12 +1626,8 @@ export default function RunControlRoom() {
               topologyKey={femTopologyKey ?? undefined}
               meshData={femMeshData}
               fieldLabel={quantityDescriptor?.label ?? selectedQuantity}
-              colorField={
-                effectiveVectorComponent === "x" ? "x"
-                  : effectiveVectorComponent === "y" ? "y"
-                  : effectiveVectorComponent === "z" ? "z"
-                  : "magnitude"
-              }
+              colorField={femColorField}
+              showOrientationLegend={femColorField === "orientation"}
               toolbarMode="hidden"
               renderMode={meshRenderMode}
               opacity={meshOpacity}
@@ -1911,12 +1918,8 @@ export default function RunControlRoom() {
               topologyKey={femTopologyKey ?? undefined}
               meshData={femMeshData}
               fieldLabel={quantityDescriptor?.label ?? selectedQuantity}
-              colorField={
-                effectiveVectorComponent === "x" ? "x"
-                  : effectiveVectorComponent === "y" ? "y"
-                  : effectiveVectorComponent === "z" ? "z"
-                  : "magnitude"
-              }
+              colorField={femColorField}
+              showOrientationLegend={femColorField === "orientation"}
             />
           ) : effectiveViewMode === "2D" && isFemBackend && femMeshData ? (
             <FemMeshSlice2D

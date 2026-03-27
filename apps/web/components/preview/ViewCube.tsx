@@ -16,12 +16,15 @@ import * as THREE from "three";
 import type { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
 import s from "./ViewCube.module.css";
 
+type SceneHandle = {
+  camera: THREE.PerspectiveCamera;
+  controls: TrackballControls;
+};
+
 interface ViewCubeProps {
-  sceneRef: React.MutableRefObject<{
-    camera: THREE.PerspectiveCamera;
-    controls: TrackballControls;
-  } | null>;
-  grid: [number, number, number];
+  sceneRef?: React.MutableRefObject<SceneHandle | null>;
+  grid?: [number, number, number];
+  onRotate?: (quaternion: THREE.Quaternion) => void;
 }
 
 type FaceZone = {
@@ -64,7 +67,7 @@ const faces: { cssTransform: string; zones: FaceZone[][] }[] = [
   { cssTransform: `rotateX(-90deg) translateZ(${S}px)`, zones: buildZones([0, 0, -1], [0, -1, 0], [1, 0, 0], "-Z") },
 ];
 
-export default function ViewCube({ sceneRef, grid }: ViewCubeProps) {
+export default function ViewCube({ sceneRef, grid, onRotate }: ViewCubeProps) {
   const [cubeTransform, setCubeTransform] = useState("none");
   const rafRef = useRef<number | null>(null);
   const dragRef = useRef({ dragging: false, startX: 0, startY: 0, hasDragged: false });
@@ -98,7 +101,16 @@ export default function ViewCube({ sceneRef, grid }: ViewCubeProps) {
   const handleZoneClick = useCallback(
     (dir: [number, number, number]) => {
       if (dragRef.current.hasDragged) return;
-      if (!sceneRef?.current) return;
+      if (onRotate) {
+        const targetDirection = new THREE.Vector3(dir[0], dir[1], dir[2]).normalize();
+        const quaternion = new THREE.Quaternion().setFromUnitVectors(
+          new THREE.Vector3(0, 0, 1),
+          targetDirection,
+        );
+        onRotate(quaternion);
+        return;
+      }
+      if (!sceneRef?.current || !grid) return;
       const scene = sceneRef.current;
       const { camera, controls } = scene;
       const [nx, ny, nz] = grid;
@@ -114,13 +126,17 @@ export default function ViewCube({ sceneRef, grid }: ViewCubeProps) {
       controls.target.set(cx, cy, cz);
       controls.update();
     },
-    [sceneRef, grid],
+    [sceneRef, grid, onRotate],
   );
 
   // ─── Reset camera ────────────────────────────────────────────────
   const resetCamera = useCallback(() => {
+    if (onRotate) {
+      onRotate(new THREE.Quaternion());
+      return;
+    }
     const scene = sceneRef.current;
-    if (!scene) return;
+    if (!scene || !grid) return;
     const { camera, controls } = scene;
     const [nx, ny, nz] = grid;
     const cx = nx / 2, cy = nz / 2, cz = ny / 2;
@@ -130,7 +146,7 @@ export default function ViewCube({ sceneRef, grid }: ViewCubeProps) {
     camera.lookAt(cx, cy, cz);
     controls.target.set(cx, cy, cz);
     controls.update();
-  }, [sceneRef, grid]);
+  }, [sceneRef, grid, onRotate]);
 
   // ─── Drag orbit ──────────────────────────────────────────────────
   const onPointerDown = useCallback((e: React.PointerEvent) => {

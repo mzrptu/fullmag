@@ -1151,6 +1151,7 @@ class ProblemApiTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["default_until_seconds"], 3e-12)
         self.assertEqual(payload["ir"]["problem_meta"]["name"], "runtime_config_problem")
+        self.assertIn("shared_geometry_assets", payload)
 
     def test_helper_exports_run_config_with_flat_stage_sequence(self) -> None:
         script = """
@@ -1187,6 +1188,7 @@ class ProblemApiTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["ir"]["problem_meta"]["entrypoint_kind"], "flat_sequence")
         self.assertEqual(len(payload["stages"]), 2)
+        self.assertIn("shared_geometry_assets", payload)
         self.assertEqual(payload["stages"][0]["entrypoint_kind"], "flat_relax")
         self.assertEqual(payload["stages"][1]["entrypoint_kind"], "flat_run")
         self.assertEqual(payload["stages"][1]["default_until_seconds"], 4e-12)

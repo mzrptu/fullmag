@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 from pathlib import Path
 from typing import Sequence
@@ -85,6 +86,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             execution_precision=execution_precision,
             asset_cache=asset_cache,
         )
+        shared_geometry_assets = copy.deepcopy(ir.get("geometry_assets"))
+        if loaded.stages and shared_geometry_assets is not None:
+            ir = copy.deepcopy(ir)
+            ir["geometry_assets"] = None
         if args.command == "export-ir":
             print(json.dumps(ir))
             return 0
@@ -93,17 +98,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     "ir": ir,
+                    "shared_geometry_assets": shared_geometry_assets,
                     "default_until_seconds": loaded.default_until_seconds,
                     "stages": [
                         {
-                            "ir": stage.to_ir(
-                            requested_backend=requested_backend,
-                            execution_mode=execution_mode,
-                            execution_precision=execution_precision,
-                            script_source=loaded.script_source,
-                            source_root=loaded.source_path.parent,
-                            asset_cache=asset_cache,
-                        ),
+                            "ir": _compact_stage_ir(
+                                stage.to_ir(
+                                    requested_backend=requested_backend,
+                                    execution_mode=execution_mode,
+                                    execution_precision=execution_precision,
+                                    script_source=loaded.script_source,
+                                    source_root=loaded.source_path.parent,
+                                    asset_cache=asset_cache,
+                                ),
+                                shared_geometry_assets=shared_geometry_assets,
+                            ),
                             "default_until_seconds": stage.default_until_seconds,
                             "entrypoint_kind": stage.entrypoint_kind,
                         }
@@ -117,6 +126,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser.error(f"Unsupported helper command: {args.command}")
     return 2
+
+
+def _compact_stage_ir(
+    ir: dict[str, object],
+    *,
+    shared_geometry_assets: object,
+) -> dict[str, object]:
+    compacted = copy.deepcopy(ir)
+    if shared_geometry_assets is not None and compacted.get("geometry_assets") == shared_geometry_assets:
+        compacted["geometry_assets"] = None
+    return compacted
 
 
 if __name__ == "__main__":  # pragma: no cover

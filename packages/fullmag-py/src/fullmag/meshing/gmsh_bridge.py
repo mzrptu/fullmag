@@ -430,12 +430,14 @@ def generate_difference_mesh(
     geometry: Difference,
     hmax: float,
     order: int = 1,
+    options: MeshOptions | None = None,
 ) -> MeshData:
     """Mesh a CSG Difference via Gmsh OCC boolean cut.
 
     OCC has numerical precision limits, so we scale geometry from SI metres
     to micrometres (×1e6) for boolean ops, then scale nodes back (×1e-6).
     """
+    opts = options or MeshOptions()
     SCALE = 1e6  # m → µm
     emit_progress("Gmsh: building OCC difference geometry")
     gmsh = _import_gmsh()
@@ -448,10 +450,11 @@ def generate_difference_mesh(
         gmsh.model.occ.cut(base_tags, tool_tags)
         gmsh.model.occ.synchronize()
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax * SCALE)
-        gmsh.option.setNumber("Mesh.ElementOrder", order)
+        _apply_mesh_options(gmsh, hmax * SCALE, order, opts, hscale=SCALE)
         gmsh.model.mesh.generate(3)
-        mesh = _extract_mesh_data(gmsh)
+        _apply_post_mesh_options(gmsh, opts)
+        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
+        mesh = _extract_mesh_data(gmsh, quality=quality)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -462,6 +465,7 @@ def generate_difference_mesh(
             element_markers=mesh.element_markers,
             boundary_faces=mesh.boundary_faces,
             boundary_markers=mesh.boundary_markers,
+            quality=quality,
         )
     finally:  # pragma: no branch
         gmsh.finalize()
@@ -585,7 +589,9 @@ def generate_mesh_from_file(
     order: int = 1,
     air_padding: float = 0.0,
     scale: float | tuple[float, float, float] = 1.0,
+    options: MeshOptions | None = None,
 ) -> MeshData:
+    opts = options or MeshOptions()
     path = Path(source)
     suffix = path.suffix.lower()
     scale_xyz = _normalize_scale_xyz(scale)
@@ -604,6 +610,7 @@ def generate_mesh_from_file(
             order=order,
             air_padding=air_padding,
             scale_xyz=scale_xyz,
+            options=opts,
         )
     if suffix == ".stl":
         emit_progress(f"Gmsh: meshing STL surface {path.name}")
@@ -613,6 +620,7 @@ def generate_mesh_from_file(
             order=order,
             air_padding=air_padding,
             scale_xyz=scale_xyz,
+            options=opts,
         )
     raise ValueError(f"unsupported mesh/geometry source format: {path.suffix}")
 
@@ -623,7 +631,9 @@ def _mesh_cad_file(
     order: int,
     air_padding: float,
     scale_xyz: NDArray[np.float64],
+    options: MeshOptions | None = None,
 ) -> MeshData:
+    opts = options or MeshOptions()
     gmsh = _import_gmsh()
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
@@ -635,10 +645,11 @@ def _mesh_cad_file(
         if air_padding > 0.0:
             pass
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
-        gmsh.option.setNumber("Mesh.ElementOrder", order)
+        _apply_mesh_options(gmsh, hmax, order, opts)
         gmsh.model.mesh.generate(3)
-        mesh = _scale_mesh_nodes(_extract_mesh_data(gmsh), scale_xyz)
+        _apply_post_mesh_options(gmsh, opts)
+        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
+        mesh = _scale_mesh_nodes(_extract_mesh_data(gmsh, quality=quality), scale_xyz)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -653,7 +664,9 @@ def _mesh_stl_surface(
     order: int,
     air_padding: float,
     scale_xyz: NDArray[np.float64],
+    options: MeshOptions | None = None,
 ) -> MeshData:
+    opts = options or MeshOptions()
     gmsh = _import_gmsh()
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
@@ -680,10 +693,11 @@ def _mesh_stl_surface(
         if air_padding > 0.0:
             pass
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
-        gmsh.option.setNumber("Mesh.ElementOrder", order)
+        _apply_mesh_options(gmsh, hmax, order, opts)
         gmsh.model.mesh.generate(3)
-        mesh = _scale_mesh_nodes(_extract_mesh_data(gmsh), scale_xyz)
+        _apply_post_mesh_options(gmsh, opts)
+        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
+        mesh = _scale_mesh_nodes(_extract_mesh_data(gmsh, quality=quality), scale_xyz)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )

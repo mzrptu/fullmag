@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use fullmag_engine::run_reference_exchange_demo;
 use fullmag_ir::{
     BackendPlanIR, BackendTarget, ExecutionMode, ExecutionPlanIR, ExecutionPlanSummary,
-    ExecutionPrecision, ProblemIR,
+    ExecutionPrecision, GeometryAssetsIR, ProblemIR,
 };
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
@@ -197,6 +197,8 @@ struct LiveStepView {
 #[derive(Debug, Deserialize)]
 struct ScriptExecutionConfig {
     ir: ProblemIR,
+    #[serde(default)]
+    shared_geometry_assets: Option<GeometryAssetsIR>,
     default_until_seconds: Option<f64>,
     #[serde(default)]
     stages: Vec<ScriptExecutionStage>,
@@ -2376,18 +2378,31 @@ fn resolve_script_until_seconds(ir: &ProblemIR, default_until_seconds: Option<f6
 }
 
 fn materialize_script_stages(config: ScriptExecutionConfig) -> Result<Vec<ResolvedScriptStage>> {
-    if config.stages.is_empty() {
+    let ScriptExecutionConfig {
+        mut ir,
+        shared_geometry_assets,
+        default_until_seconds,
+        stages,
+    } = config;
+
+    if ir.geometry_assets.is_none() {
+        ir.geometry_assets = shared_geometry_assets.clone();
+    }
+
+    if stages.is_empty() {
         return Ok(vec![ResolvedScriptStage {
-            until_seconds: resolve_script_until_seconds(&config.ir, config.default_until_seconds)?,
-            ir: config.ir,
+            until_seconds: resolve_script_until_seconds(&ir, default_until_seconds)?,
+            ir,
             entrypoint_kind: "direct_script".to_string(),
         }]);
     }
 
-    config
-        .stages
+    stages
         .into_iter()
-        .map(|stage| {
+        .map(|mut stage| {
+            if stage.ir.geometry_assets.is_none() {
+                stage.ir.geometry_assets = shared_geometry_assets.clone();
+            }
             Ok(ResolvedScriptStage {
                 until_seconds: resolve_script_until_seconds(
                     &stage.ir,
