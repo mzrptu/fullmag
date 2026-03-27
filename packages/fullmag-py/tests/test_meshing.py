@@ -11,7 +11,7 @@ import numpy as np
 import fullmag as fm
 from fullmag import _core as fullmag_core
 from fullmag.meshing.asset_pipeline import realize_fdm_grid_asset, realize_fem_mesh_asset
-from fullmag.meshing.gmsh_bridge import MeshData
+from fullmag.meshing.gmsh_bridge import MeshData, _extract_gmsh_connectivity
 from fullmag.meshing.quality import validate_mesh
 from fullmag.meshing.surface_assets import export_geometry_to_stl
 from fullmag.meshing.voxelization import VoxelMaskData, voxelize_geometry
@@ -105,6 +105,32 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertEqual(mesh_ir["boundary_markers"], [7])
         if fullmag_core.validate_mesh_ir(mesh_ir) is not None:
             self.assertTrue(fullmag_core.validate_mesh_ir(mesh_ir))
+
+    def test_extract_gmsh_connectivity_uses_primary_nodes_for_higher_order_elements(self) -> None:
+        class _FakeMeshApi:
+            @staticmethod
+            def getElementProperties(element_type: int) -> tuple[str, int, int, int, list[float], int]:
+                if element_type == 11:  # tetra10
+                    return ("Tetrahedron 10", 3, 2, 10, [], 4)
+                if element_type == 9:  # triangle6
+                    return ("Triangle 6", 2, 2, 6, [], 3)
+                raise AssertionError(f"unexpected element type {element_type}")
+
+        class _FakeModel:
+            mesh = _FakeMeshApi()
+
+        class _FakeGmsh:
+            model = _FakeModel()
+
+        node_index = {tag: tag - 1 for tag in range(1, 17)}
+        tet_blocks = ([11], [np.asarray([1], dtype=np.int32)], [np.asarray([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], dtype=np.int32)])
+        tri_blocks = ([9], [np.asarray([1], dtype=np.int32)], [np.asarray([11, 12, 13, 14, 15, 16], dtype=np.int32)])
+
+        elements = _extract_gmsh_connectivity(_FakeGmsh(), tet_blocks, node_index, nodes_per_element=4)
+        faces = _extract_gmsh_connectivity(_FakeGmsh(), tri_blocks, node_index, nodes_per_element=3)
+
+        np.testing.assert_array_equal(elements, np.asarray([[0, 1, 2, 3]], dtype=np.int32))
+        np.testing.assert_array_equal(faces, np.asarray([[10, 11, 12]], dtype=np.int32))
 
     def test_validate_mesh_reports_basic_quality(self) -> None:
         mesh = self._unit_tet_mesh()

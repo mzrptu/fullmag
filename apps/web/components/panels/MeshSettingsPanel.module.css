@@ -207,3 +207,44 @@
   margin-right: 4px;
   vertical-align: middle;
 }
+
+/* ── Generate button ── */
+.generateBtn {
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--accent), hsl(240, 60%, 55%));
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: box-shadow 0.2s ease, opacity 0.2s ease;
+}
+.generateBtn:hover:not(:disabled) {
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35);
+}
+.generateBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Spinner ── */
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: meshSpin 0.6s linear infinite;
+}
+@keyframes meshSpin {
+  to { transform: rotate(360deg); }
+}
+

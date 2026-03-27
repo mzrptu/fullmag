@@ -2041,6 +2041,9 @@ fn extract_fem_mesh_from_metadata(metadata: &Value) -> Option<FemMeshPayload> {
 }
 
 fn repo_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("FULLMAG_REPO_ROOT") {
+        return PathBuf::from(root);
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("crate dir should have parent")

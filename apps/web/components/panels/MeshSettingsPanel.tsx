@@ -40,6 +40,8 @@ interface MeshSettingsPanelProps {
   onChange: (next: MeshOptionsState) => void;
   quality?: MeshQualityData | null;
   disabled?: boolean;
+  generating?: boolean;
+  onGenerate?: () => void;
 }
 
 /* ── Algorithm options ─────────────────────────────────────────────── */
@@ -205,6 +207,8 @@ export default function MeshSettingsPanel({
   onChange,
   quality,
   disabled = false,
+  generating = false,
+  onGenerate,
 }: MeshSettingsPanelProps) {
   const sicnCanvasRef = useRef<HTMLCanvasElement>(null);
   const gammaCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -492,6 +496,22 @@ export default function MeshSettingsPanel({
           )}
         </div>
       </div>
+      {/* ── Generate button ── */}
+      {onGenerate && (
+        <div className={s.section}>
+          <button
+            className={s.generateBtn}
+            onClick={onGenerate}
+            disabled={disabled || generating}
+          >
+            {generating ? (
+              <><span className={s.spinner} /> Generating…</>
+            ) : (
+              "⚡ Generate Mesh"
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

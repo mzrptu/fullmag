@@ -1,7 +1,7 @@
 // @ts-nocheck
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import * as THREE from "three";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
 import HslSphere from "./HslSphere";
@@ -201,6 +201,12 @@ export default function FemMeshView3D({
   const [internalClipPos, setInternalClipPos] = useState(50); // percentage 0-100
   const [showClipDrop, setShowClipDrop] = useState(false);
   const [internalShowArrows, setInternalShowArrows] = useState(false);
+  const [hoveredFace, setHoveredFace] = useState<{ idx: number; x: number; y: number } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; faceIdx: number } | null>(null);
+  const [selectedFaces, setSelectedFaces] = useState<Set<number>>(new Set());
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const mouseRef = useRef(new THREE.Vector2());
+  const highlightRef = useRef<THREE.Mesh | null>(null);
 
   const renderMode = controlledRenderMode ?? internalRenderMode;
   const opacity = controlledOpacity ?? internalOpacity;
@@ -564,17 +570,66 @@ export default function FemMeshView3D({
       return;
     }
 
+    const maxDim = maxDimRef.current;
+    const pos = ((clipPos / 100) - 0.5) * maxDim;
     const normal = new THREE.Vector3(
       clipAxis === "x" ? -1 : 0,
       clipAxis === "y" ? -1 : 0,
       clipAxis === "z" ? -1 : 0,
     );
-
-    const maxDim = maxDimRef.current;
-    const pos = ((clipPos / 100) - 0.5) * maxDim;
     const plane = new THREE.Plane(normal, pos);
     renderer.clippingPlanes = [plane];
   }, [clipEnabled, clipAxis, clipPos]);
+
+  /* ── Face highlight (multi-selection glow) ──────────────────────── */
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    // Remove old highlight
+    if (highlightRef.current) {
+      scene.remove(highlightRef.current);
+      highlightRef.current.geometry.dispose();
+      (highlightRef.current.material as THREE.Material).dispose();
+      highlightRef.current = null;
+    }
+
+    if (selectedFaces.size === 0) return;
+
+    const { nodes, boundaryFaces } = meshData;
+    const indices: number[] = [];
+    selectedFaces.forEach((fIdx) => {
+      const base = fIdx * 3;
+      if (base + 2 < boundaryFaces.length) {
+        indices.push(boundaryFaces[base], boundaryFaces[base + 1], boundaryFaces[base + 2]);
+      }
+    });
+
+    if (indices.length === 0) return;
+
+    const geom = new THREE.BufferGeometry();
+    const positions = new Float32Array(meshData.nNodes * 3);
+    for (let i = 0; i < meshData.nNodes * 3; i++) positions[i] = nodes[i];
+    geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geom.setIndex(new THREE.BufferAttribute(new Uint32Array(indices), 1));
+    geom.translate(-centerRef.current.x, -centerRef.current.y, -centerRef.current.z);
+
+    const mat = new THREE.MeshPhongMaterial({
+      color: 0x63b3ed,
+      emissive: 0x3182ce,
+      emissiveIntensity: 0.5,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.6,
+      depthTest: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+    });
+    const highlight = new THREE.Mesh(geom, mat);
+    scene.add(highlight);
+    highlightRef.current = highlight;
+  }, [selectedFaces, meshData]);
 
   /* ── Field change → recolor ──────────────────────────────────────── */
   useEffect(() => {
@@ -747,8 +802,123 @@ export default function FemMeshView3D({
     controls.target.set(0, 0, 0);
   }, []);
 
+  /* ── Raycaster: face hover ──────────────────────────────────────── */
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    const container = containerRef.current;
+    const camera = cameraRef.current;
+    const mesh = meshRef.current;
+    if (!container || !camera || !mesh) return;
+
+    const rect = container.getBoundingClientRect();
+    mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycasterRef.current.setFromCamera(mouseRef.current, camera);
+    const hits = raycasterRef.current.intersectObject(mesh, false);
+    if (hits.length > 0 && hits[0].faceIndex != null) {
+      setHoveredFace({ idx: hits[0].faceIndex, x: e.clientX - rect.left, y: e.clientY - rect.top });
+    } else {
+      setHoveredFace(null);
+    }
+  }, []);
+
+  /* ── Right-click: context menu ──────────────────────────────────── */
+  const onContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const container = containerRef.current;
+    const camera = cameraRef.current;
+    const mesh = meshRef.current;
+    if (!container || !camera || !mesh) return;
+
+    const rect = container.getBoundingClientRect();
+    mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycasterRef.current.setFromCamera(mouseRef.current, camera);
+    const hits = raycasterRef.current.intersectObject(mesh, false);
+    if (hits.length > 0 && hits[0].faceIndex != null) {
+      setCtxMenu({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+        faceIdx: hits[0].faceIndex,
+      });
+    } else {
+      setCtxMenu(null);
+    }
+  }, []);
+
+  const dismissCtxMenu = useCallback(() => setCtxMenu(null), []);
+
+  /* Click to toggle face selection */
+  const onFaceClick = useCallback((e: React.MouseEvent) => {
+    // Only on left-click, not during drag
+    if (e.button !== 0) return;
+    const container = containerRef.current;
+    const camera = cameraRef.current;
+    const mesh = meshRef.current;
+    if (!container || !camera || !mesh) return;
+
+    const rect = container.getBoundingClientRect();
+    mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycasterRef.current.setFromCamera(mouseRef.current, camera);
+    const hits = raycasterRef.current.intersectObject(mesh, false);
+    if (hits.length > 0 && hits[0].faceIndex != null) {
+      const fIdx = hits[0].faceIndex;
+      setSelectedFaces((prev) => {
+        const next = new Set(prev);
+        if (e.shiftKey || e.ctrlKey) {
+          // Toggle with modifier key
+          if (next.has(fIdx)) next.delete(fIdx);
+          else next.add(fIdx);
+        } else {
+          // Single select (replace)
+          if (next.size === 1 && next.has(fIdx)) {
+            next.clear(); // deselect
+          } else {
+            next.clear();
+            next.add(fIdx);
+          }
+        }
+        return next;
+      });
+    }
+  }, []);
+
+  /* Dismiss context menu on click anywhere */
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const dismiss = () => setCtxMenu(null);
+    window.addEventListener("click", dismiss, { once: true });
+    return () => window.removeEventListener("click", dismiss);
+  }, [ctxMenu]);
+
+  /* Face quality info for tooltip */
+  const hoveredFaceInfo = useMemo(() => {
+    if (!hoveredFace) return null;
+    const idx = hoveredFace.idx;
+    const { nodes, boundaryFaces } = meshData;
+    const nFaces = boundaryFaces.length / 3;
+    if (idx < 0 || idx >= nFaces) return null;
+
+    // Get AR
+    if (!faceARs.current) {
+      faceARs.current = computeFaceAspectRatios(nodes, boundaryFaces);
+    }
+    const ar = faceARs.current[idx];
+    const sicn = qualityPerFace?.[idx];
+    return { faceIdx: idx, ar, sicn };
+  }, [hoveredFace, meshData, qualityPerFace]);
+
   return (
-      <div className={s.container} ref={containerRef}>
+      <div
+        className={s.container}
+        ref={containerRef}
+        onPointerMove={onPointerMove}
+        onContextMenu={onContextMenu}
+        onClick={(e) => { dismissCtxMenu(); onFaceClick(e); }}
+      >
       {/* ─── Toolbar ────────────────────────────────── */}
       {toolbarMode !== "hidden" && (
       <div className={s.toolbar}>
@@ -904,6 +1074,12 @@ export default function FemMeshView3D({
             <span style={{ color: "hsl(35 90% 65%)" }}>clip {clipAxis.toUpperCase()} @ {clipPos}%</span>
           </>
         )}
+        {selectedFaces.size > 0 && (
+          <>
+            <span className={s.infoSep} />
+            <span style={{ color: "hsl(210 80% 70%)" }}>{selectedFaces.size} selected</span>
+          </>
+        )}
       </div>
 
       {/* ─── ViewCube ───────────────────────────────── */}
@@ -911,6 +1087,93 @@ export default function FemMeshView3D({
 
       {/* ─── HSL orientation legend ─────────────────── */}
       {showOrientationLegend && <HslSphere sceneRef={viewCubeSceneRef} />}
+
+      {/* ─── Face hover tooltip ────────────────────── */}
+      {hoveredFaceInfo && hoveredFace && (
+        <div
+          className={s.faceTooltip}
+          style={{ left: hoveredFace.x + 14, top: hoveredFace.y - 8 }}
+        >
+          face #{hoveredFaceInfo.faceIdx}
+          {" · AR "}{hoveredFaceInfo.ar.toFixed(2)}
+          {hoveredFaceInfo.sicn != null && ` · SICN ${hoveredFaceInfo.sicn.toFixed(3)}`}
+        </div>
+      )}
+
+      {/* ─── Right-click context menu ──────────────── */}
+      {ctxMenu && (
+        <div
+          className={s.contextMenu}
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button className={s.ctxItem}>
+            <span className={s.ctxIcon}>🔍</span>
+            Inspect face #{ctxMenu.faceIdx}
+          </button>
+          <button
+            className={s.ctxItem}
+            onClick={() => {
+              setField("quality");
+              setCtxMenu(null);
+            }}
+          >
+            <span className={s.ctxIcon}>📊</span>
+            Show quality (AR)
+          </button>
+          <button
+            className={s.ctxItem}
+            onClick={() => {
+              setField("sicn");
+              setCtxMenu(null);
+            }}
+          >
+            <span className={s.ctxIcon}>📈</span>
+            Show quality (SICN)
+          </button>
+          <div className={s.ctxSep} />
+          <button
+            className={s.ctxItem}
+            onClick={() => {
+              updateRenderMode("surface+edges");
+              setCtxMenu(null);
+            }}
+          >
+            <span className={s.ctxIcon}>◫</span>
+            Surface + edges
+          </button>
+          <button
+            className={s.ctxItem}
+            onClick={() => {
+              updateClipEnabled(!clipEnabled);
+              setCtxMenu(null);
+            }}
+          >
+            <span className={s.ctxIcon}>✂️</span>
+            {clipEnabled ? "Disable clip" : "Enable clip plane"}
+          </button>
+          <div className={s.ctxSep} />
+          <button className={s.ctxItem} onClick={takeScreenshot}>
+            <span className={s.ctxIcon}>📷</span>
+            Screenshot
+          </button>
+          {selectedFaces.size > 0 && (
+            <>
+              <div className={s.ctxSep} />
+              <button
+                className={s.ctxItem}
+                onClick={() => {
+                  setSelectedFaces(new Set());
+                  setCtxMenu(null);
+                }}
+              >
+                <span className={s.ctxIcon}>✕</span>
+                Clear selection ({selectedFaces.size})
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

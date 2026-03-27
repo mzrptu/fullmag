@@ -119,21 +119,43 @@ export function buildFullmagModelTree(opts: {
   meshStatus?: NodeStatus;
   meshElements?: number;
   solverStatus?: NodeStatus;
+  demagMethod?: string;
+  physicsTerms?: string[];
   onGeometryClick?: () => void;
+  onRegionsClick?: () => void;
   onMeshClick?: () => void;
   onMaterialClick?: () => void;
+  onPhysicsClick?: () => void;
   onSolverClick?: () => void;
+  onResultsClick?: () => void;
 }): TreeNodeData[] {
-  return [
+  const physicsChildren: TreeNodeData[] = [
+    { id: "phys-llg", label: "LLG Dynamics", icon: "∂", status: "ready" },
+    { id: "phys-exchange", label: "Exchange", icon: "↔", status: "ready" },
     {
-      id: "definitions",
-      label: "Definitions",
-      icon: "📋",
+      id: "phys-demag",
+      label: "Demagnetization",
+      icon: "🧲",
+      status: "ready",
+      badge: opts.demagMethod ?? "transfer-grid",
       children: [
-        { id: "def-params", label: "Parameters", icon: "⚙" },
-        { id: "def-variables", label: "Variables", icon: "𝑥" },
+        { id: "phys-demag-method", label: `Method: ${opts.demagMethod ?? "transfer-grid"}`, icon: "⚙" },
+        { id: "phys-demag-open-bc", label: "Open boundary", icon: "∞" },
       ],
     },
+    { id: "phys-zeeman", label: "Zeeman (external H)", icon: "→", status: "ready" },
+    { id: "phys-bc", label: "Boundary Conditions", icon: "▢" },
+  ];
+
+  // Add optional physics terms
+  if (opts.physicsTerms?.includes("thermal")) {
+    physicsChildren.push({ id: "phys-thermal", label: "Thermal Noise", icon: "🌡", status: "pending" });
+  }
+  if (opts.physicsTerms?.includes("sot") || opts.physicsTerms?.includes("stt")) {
+    physicsChildren.push({ id: "phys-spin-torque", label: "Spin Torque", icon: "⟳", status: "pending" });
+  }
+
+  return [
     {
       id: "geometry",
       label: "Geometry",
@@ -146,15 +168,40 @@ export function buildFullmagModelTree(opts: {
       ],
     },
     {
+      id: "regions",
+      label: "Regions / Selections",
+      icon: "▦",
+      status: "ready",
+      onClick: opts.onRegionsClick,
+      children: [
+        { id: "reg-domain", label: "Domain 1", icon: "■" },
+        { id: "reg-boundary", label: "Boundary", icon: "▢" },
+      ],
+    },
+    {
       id: "materials",
       label: "Materials",
-      icon: "🧲",
+      icon: "●",
       badge: opts.materialName ?? "—",
       status: "ready",
       onClick: opts.onMaterialClick,
       children: [
-        { id: "mat-body", label: opts.materialName ?? "Material 1", icon: "●" },
+        { id: "mat-body", label: opts.materialName ?? "Material 1", icon: "●",
+          children: [
+            { id: "mat-ms", label: "Ms (saturation)", icon: "𝑀" },
+            { id: "mat-aex", label: "A (exchange)", icon: "𝐴" },
+            { id: "mat-alpha", label: "α (damping)", icon: "α" },
+          ],
+        },
       ],
+    },
+    {
+      id: "physics",
+      label: "Physics",
+      icon: "⚛",
+      status: "ready",
+      onClick: opts.onPhysicsClick,
+      children: physicsChildren,
     },
     {
       id: "mesh",
@@ -165,19 +212,33 @@ export function buildFullmagModelTree(opts: {
       onClick: opts.onMeshClick,
       children: [
         { id: "mesh-size", label: "Size", icon: "📏" },
+        { id: "mesh-algorithm", label: "Algorithm", icon: "⚙" },
         { id: "mesh-quality", label: "Quality", icon: "📊" },
       ],
     },
     {
-      id: "solver",
-      label: "Solver",
-      icon: "⚙",
+      id: "study",
+      label: "Study",
+      icon: "▶",
       badge: opts.backend ?? "—",
       status: opts.solverStatus ?? "pending",
       onClick: opts.onSolverClick,
       children: [
-        { id: "solver-config", label: "Configuration", icon: "🔧" },
-        { id: "solver-results", label: "Results", icon: "📈" },
+        { id: "study-solver", label: "Solver Configuration", icon: "🔧" },
+        { id: "study-time", label: "Time Stepping", icon: "⏱" },
+        { id: "study-convergence", label: "Convergence", icon: "📉" },
+      ],
+    },
+    {
+      id: "results",
+      label: "Results",
+      icon: "📈",
+      status: "pending",
+      onClick: opts.onResultsClick,
+      children: [
+        { id: "res-fields", label: "Field Data", icon: "🗂" },
+        { id: "res-energy", label: "Energy", icon: "⚡" },
+        { id: "res-export", label: "Export", icon: "💾" },
       ],
     },
   ];

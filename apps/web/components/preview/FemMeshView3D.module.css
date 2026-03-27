@@ -187,3 +187,74 @@
   right: 0.55rem;
   z-index: 10;
 }
+
+/* ── Context menu ─────────────────────────────────────────────── */
+.contextMenu {
+  position: absolute;
+  z-index: 50;
+  min-width: 180px;
+  padding: 4px 0;
+  border-radius: 8px;
+  background: linear-gradient(
+    180deg,
+    hsla(220, 28%, 14%, 0.96),
+    hsla(220, 30%, 10%, 0.96)
+  );
+  border: 1px solid hsla(215, 50%, 55%, 0.2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(12px);
+  animation: ctxSlideIn 0.12s ease;
+}
+@keyframes ctxSlideIn {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.ctxItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  font-size: 0.73rem;
+  color: hsla(215, 30%, 88%, 0.9);
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  transition: background 0.1s ease;
+}
+.ctxItem:hover {
+  background: hsla(215, 50%, 55%, 0.15);
+}
+.ctxItem[data-disabled="true"] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.ctxIcon {
+  font-size: 12px;
+  width: 16px;
+  text-align: center;
+  opacity: 0.7;
+}
+.ctxSep {
+  height: 1px;
+  margin: 3px 10px;
+  background: hsla(215, 50%, 55%, 0.12);
+}
+
+/* ── Face info tooltip ────────────────────────────────────────── */
+.faceTooltip {
+  position: absolute;
+  z-index: 40;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: hsla(220, 30%, 10%, 0.92);
+  border: 1px solid hsla(215, 50%, 55%, 0.15);
+  font-size: 0.68rem;
+  font-family: var(--font-mono);
+  color: hsla(215, 30%, 88%, 0.85);
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+

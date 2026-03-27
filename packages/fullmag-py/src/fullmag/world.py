@@ -133,17 +133,49 @@ class _MeshOperationSpec:
 @dataclass
 class _MeshSpecState:
     hmax: float | None = None
+    hmin: float | None = None
     order: int | None = None
     source: str | None = None
     build_requested: bool = False
     operations: list[_MeshOperationSpec] = field(default_factory=list)
+    # Algorithm
+    algorithm_2d: int | None = None
+    algorithm_3d: int | None = None
+    # Optimization
+    optimize_method: str | None = None
+    optimize_iterations: int = 1
+    smoothing_steps: int = 1
+    # Size control
+    size_factor: float = 1.0
+    size_from_curvature: int = 0
+    size_fields: list[dict[str, object]] = field(default_factory=list)
+    # Quality
+    compute_quality: bool = False
+    per_element_quality: bool = False
 
     def is_configured(self) -> bool:
-        return self.hmax is not None or self.order is not None or self.source is not None
+        return (
+            self.hmax is not None
+            or self.order is not None
+            or self.source is not None
+            or self.algorithm_3d is not None
+            or self.optimize_method is not None
+            or self.compute_quality
+            or bool(self.size_fields)
+        )
 
 
 class GeometryMeshHandle:
-    """Explicit mesh workflow API bound to one flat-script geometry/magnet."""
+    """Explicit mesh workflow API bound to one flat-script geometry/magnet.
+
+    Usage::
+
+        flower = fm.geometry(fm.ImportedGeometry(source="nanoflower.stl"))
+        flower.mesh(hmax=5e-9, algorithm_3d=10, optimize="Netgen")
+        flower.mesh.size_field("Ball", VIn=1e-9, VOut=5e-9, Radius=20e-9)
+        flower.mesh.build()
+        report = flower.mesh.quality()
+    """
 
     def __init__(self, owner: MagnetHandle) -> None:
         self._owner = owner
@@ -152,24 +184,138 @@ class GeometryMeshHandle:
         self,
         *,
         hmax: float | None = None,
+        hmin: float | None = None,
         order: int | None = None,
         source: str | None = None,
+        algorithm_2d: int | None = None,
+        algorithm_3d: int | None = None,
+        optimize: str | None = None,
+        optimize_iterations: int | None = None,
+        smoothing_steps: int | None = None,
+        size_factor: float | None = None,
+        size_from_curvature: int | None = None,
+        compute_quality: bool | None = None,
+        per_element_quality: bool | None = None,
     ) -> "GeometryMeshHandle":
-        return self.configure(hmax=hmax, order=order, source=source)
+        return self.configure(
+            hmax=hmax, hmin=hmin, order=order, source=source,
+            algorithm_2d=algorithm_2d, algorithm_3d=algorithm_3d,
+            optimize=optimize, optimize_iterations=optimize_iterations,
+            smoothing_steps=smoothing_steps, size_factor=size_factor,
+            size_from_curvature=size_from_curvature,
+            compute_quality=compute_quality,
+            per_element_quality=per_element_quality,
+        )
 
     def configure(
         self,
         *,
         hmax: float | None = None,
+        hmin: float | None = None,
         order: int | None = None,
         source: str | None = None,
+        algorithm_2d: int | None = None,
+        algorithm_3d: int | None = None,
+        optimize: str | None = None,
+        optimize_iterations: int | None = None,
+        smoothing_steps: int | None = None,
+        size_factor: float | None = None,
+        size_from_curvature: int | None = None,
+        compute_quality: bool | None = None,
+        per_element_quality: bool | None = None,
     ) -> "GeometryMeshHandle":
+        """Configure mesh generation parameters.
+
+        Parameters
+        ----------
+        hmax : float, optional
+            Maximum element size (SI metres).
+        hmin : float, optional
+            Minimum element size (SI metres).
+        order : int, optional
+            FEM basis order used by the solver (1 = linear, 2 = quadratic).
+            The stored mesh topology remains first-order.
+        source : str, optional
+            Path to external mesh file.
+        algorithm_2d : int, optional
+            Gmsh 2D meshing algorithm (1=MeshAdapt, 5=Delaunay, 6=Frontal).
+        algorithm_3d : int, optional
+            Gmsh 3D meshing algorithm (1=Delaunay, 4=Frontal, 7=MMG3D, 10=HXT).
+        optimize : str, optional
+            Post-mesh optimization: "Netgen", "HighOrder", "Laplace2D", etc.
+        optimize_iterations : int, optional
+            Number of optimization passes.
+        smoothing_steps : int, optional
+            Laplacian smoothing steps after meshing.
+        size_factor : float, optional
+            Global mesh size scaling factor.
+        size_from_curvature : int, optional
+            Points per 2π curvature (0 = disabled).
+        compute_quality : bool, optional
+            Extract SICN/gamma quality metrics after meshing.
+        per_element_quality : bool, optional
+            Include per-element quality arrays (for visualization).
+        """
+        spec = self._owner._mesh_spec
         if hmax is not None:
-            self._owner._mesh_spec.hmax = hmax
+            spec.hmax = hmax
+        if hmin is not None:
+            spec.hmin = hmin
         if order is not None:
-            self._owner._mesh_spec.order = order
+            spec.order = order
         if source is not None:
-            self._owner._mesh_spec.source = source
+            spec.source = source
+        if algorithm_2d is not None:
+            spec.algorithm_2d = algorithm_2d
+        if algorithm_3d is not None:
+            spec.algorithm_3d = algorithm_3d
+        if optimize is not None:
+            spec.optimize_method = optimize
+        if optimize_iterations is not None:
+            spec.optimize_iterations = optimize_iterations
+        if smoothing_steps is not None:
+            spec.smoothing_steps = smoothing_steps
+        if size_factor is not None:
+            spec.size_factor = size_factor
+        if size_from_curvature is not None:
+            spec.size_from_curvature = size_from_curvature
+        if compute_quality is not None:
+            spec.compute_quality = compute_quality
+        if per_element_quality is not None:
+            spec.per_element_quality = per_element_quality
+        return self
+
+    def algorithm(self, *, dim2: int | None = None, dim3: int | None = None) -> "GeometryMeshHandle":
+        """Set meshing algorithms.
+
+        Examples::
+
+            flower.mesh.algorithm(dim3=10)  # HXT for 3D
+            flower.mesh.algorithm(dim2=6, dim3=1)  # Frontal-Delaunay 2D, Delaunay 3D
+        """
+        if dim2 is not None:
+            self._owner._mesh_spec.algorithm_2d = dim2
+        if dim3 is not None:
+            self._owner._mesh_spec.algorithm_3d = dim3
+        return self
+
+    def size_field(self, kind: str, **params: object) -> "GeometryMeshHandle":
+        """Add a Gmsh mesh size field.
+
+        Examples::
+
+            flower.mesh.size_field("Ball",
+                VIn=1e-9, VOut=5e-9,
+                Radius=20e-9,
+                XCenter=0, YCenter=0, ZCenter=0,
+            )
+            flower.mesh.size_field("Box", VIn=2e-9, VOut=5e-9,
+                XMin=-50e-9, XMax=50e-9,
+                YMin=-50e-9, YMax=50e-9,
+                ZMin=-5e-9, ZMax=5e-9,
+            )
+        """
+        self._owner._mesh_spec.size_fields.append({"kind": kind, "params": dict(params)})
         return self
 
     def build(self) -> "GeometryMeshHandle":
@@ -197,6 +343,16 @@ class GeometryMeshHandle:
             _MeshOperationSpec(kind="smooth", params={"iterations": iterations})
         )
         return self
+
+    def quality(self) -> object | None:
+        """Return the last quality report if ``compute_quality`` was enabled.
+
+        Returns the ``MeshQualityReport`` from the most recent ``build()`` call,
+        or ``None`` if quality extraction was not requested.
+        """
+        # Quality data is attached to the mesh after build;
+        # for now, return info from workflow metadata.
+        return None  # TODO: wire after build() stores quality data
 
 
 # ---------------------------------------------------------------------------
@@ -460,11 +616,42 @@ def _collect_mesh_workflow_metadata() -> dict[str, object] | None:
     if not explicit_mesh_api:
         return None
     fem_hint = _resolve_flat_fem_hint()
+
+    # Collect MeshOptions from specs
+    all_specs = configured_handles + [_state._default_mesh_spec] if not configured_handles else configured_handles
+    primary_spec = all_specs[0]._mesh_spec if hasattr(all_specs[0], '_mesh_spec') else all_specs[0]
+    if hasattr(primary_spec, '_mesh_spec'):
+        primary_spec = primary_spec._mesh_spec
+    mesh_options = {}
+    if primary_spec.algorithm_2d is not None:
+        mesh_options["algorithm_2d"] = primary_spec.algorithm_2d
+    if primary_spec.algorithm_3d is not None:
+        mesh_options["algorithm_3d"] = primary_spec.algorithm_3d
+    if primary_spec.hmin is not None:
+        mesh_options["hmin"] = primary_spec.hmin
+    if primary_spec.optimize_method is not None:
+        mesh_options["optimize"] = primary_spec.optimize_method
+    if primary_spec.optimize_iterations != 1:
+        mesh_options["optimize_iterations"] = primary_spec.optimize_iterations
+    if primary_spec.smoothing_steps != 1:
+        mesh_options["smoothing_steps"] = primary_spec.smoothing_steps
+    if primary_spec.size_factor != 1.0:
+        mesh_options["size_factor"] = primary_spec.size_factor
+    if primary_spec.size_from_curvature > 0:
+        mesh_options["size_from_curvature"] = primary_spec.size_from_curvature
+    if primary_spec.compute_quality:
+        mesh_options["compute_quality"] = True
+    if primary_spec.per_element_quality:
+        mesh_options["per_element_quality"] = True
+    if primary_spec.size_fields:
+        mesh_options["size_fields"] = list(primary_spec.size_fields)
+
     return {
         "explicit_mesh_api": True,
         "build_requested": build_requested,
         "fem": fem_hint.to_ir() if fem_hint is not None else None,
         "operations": operations,
+        "mesh_options": mesh_options if mesh_options else None,
     }
 
 

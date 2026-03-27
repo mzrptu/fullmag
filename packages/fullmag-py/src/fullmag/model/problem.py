@@ -23,7 +23,7 @@ IR_VERSION = "0.2.0"
 API_VERSION = "0.2.0"
 SERIALIZER_VERSION = "0.2.0"
 
-_FEM_MESH_CACHE_VERSION = "v2"
+_FEM_MESH_CACHE_VERSION = "v3"
 
 
 def _fem_mesh_cache_dir() -> Path | None:

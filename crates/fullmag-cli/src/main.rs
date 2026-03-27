@@ -913,8 +913,8 @@ fn current_meshing_capabilities(plan: &ExecutionPlanIR) -> Option<serde_json::Va
                         "label": "Element order",
                         "status": "active",
                         "ui": "segmented buttons",
-                        "backend": "gmsh.option.setNumber(\"Mesh.ElementOrder\", order) / gmsh.model.mesh.setOrder(order)",
-                        "description": "Polynomial order of FEM elements.",
+                        "backend": "FemPlanIR.fe_order / mfem::H1_FECollection(order, dim)",
+                        "description": "Polynomial order of the FEM basis; mesh topology stays first-order.",
                     },
                     {
                         "id": "mesh_source",
@@ -3117,6 +3117,9 @@ fn which_opener() -> Result<String> {
 }
 
 fn repo_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("FULLMAG_REPO_ROOT") {
+        return PathBuf::from(root);
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("crate dir should have parent")

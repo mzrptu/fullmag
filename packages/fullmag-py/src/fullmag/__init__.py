@@ -39,7 +39,13 @@ from .model import (
     backend,
 )
 from .runtime import BackendTarget, Result, Simulation, load_problem_from_script
-from .meshing import MeshData, generate_mesh, export_geometry_to_stl as export_stl
+from .meshing import (
+    MeshData,
+    MeshOptions,
+    MeshQualityReport,
+    generate_mesh,
+    export_geometry_to_stl as export_stl,
+)
 
 # ── Flat scripting API (mumax-style) ──────────────────────
 from .world import (

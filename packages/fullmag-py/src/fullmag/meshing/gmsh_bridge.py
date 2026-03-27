@@ -772,10 +772,14 @@ def _extract_mesh_data(gmsh: Any, quality: MeshQualityReport | None = None) -> M
     nodes = np.asarray(coords, dtype=np.float64).reshape(-1, 3)
 
     element_blocks = gmsh.model.mesh.getElements(dim=3)
-    elements = _extract_gmsh_connectivity(element_blocks, node_index, nodes_per_element=4)
+    elements = _extract_gmsh_connectivity(
+        gmsh, element_blocks, node_index, nodes_per_element=4
+    )
 
     boundary_blocks = gmsh.model.mesh.getElements(dim=2)
-    boundary_faces = _extract_gmsh_connectivity(boundary_blocks, node_index, nodes_per_element=3)
+    boundary_faces = _extract_gmsh_connectivity(
+        gmsh, boundary_blocks, node_index, nodes_per_element=3
+    )
 
     element_markers = np.ones(elements.shape[0], dtype=np.int32)
     boundary_markers = np.ones(boundary_faces.shape[0], dtype=np.int32)
@@ -802,7 +806,12 @@ def _apply_mesh_options(
 ) -> None:
     """Apply MeshOptions to the Gmsh context before mesh.generate()."""
     gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
-    gmsh.option.setNumber("Mesh.ElementOrder", order)
+    # The exported mesh asset is intentionally first-order topology.
+    # Higher-order FEM lives in the solver space (`fe_order`), not in the
+    # geometric mesh connectivity. Generating quadratic Gmsh elements here
+    # introduces mid-edge nodes that are not part of our MeshIR contract and
+    # has produced unstable/degenerate tetrahedra for imported STL cases.
+    gmsh.option.setNumber("Mesh.ElementOrder", 1)
     gmsh.option.setNumber("Mesh.Algorithm", opts.algorithm_2d)
     gmsh.option.setNumber("Mesh.Algorithm3D", opts.algorithm_3d)
     gmsh.option.setNumber("Mesh.MeshSizeFactor", opts.size_factor)
@@ -927,16 +936,31 @@ def _extract_quality_metrics(
 
 
 def _extract_gmsh_connectivity(
+    gmsh: Any,
     element_blocks: tuple[list[int], list[np.ndarray], list[np.ndarray]],
     node_index: dict[int, int],
     nodes_per_element: int,
 ) -> NDArray[np.int32]:
-    _, _, node_tags_blocks = element_blocks
+    element_types, _, node_tags_blocks = element_blocks
     rows: list[list[int]] = []
-    for tags in node_tags_blocks:
+    for element_type, tags in zip(element_types, node_tags_blocks):
+        _, _, _, num_nodes, _, num_primary_nodes = gmsh.model.mesh.getElementProperties(
+            int(element_type)
+        )
+        if num_primary_nodes < nodes_per_element:
+            raise ValueError(
+                f"gmsh element type {element_type} exposes only {num_primary_nodes} "
+                f"primary nodes, expected at least {nodes_per_element}"
+            )
         flat = [node_index[int(tag)] for tag in tags]
-        for start in range(0, len(flat), nodes_per_element):
-            rows.append(flat[start : start + nodes_per_element])
+        if len(flat) % num_nodes != 0:
+            raise ValueError(
+                f"gmsh connectivity for element type {element_type} has {len(flat)} "
+                f"entries, not divisible by {num_nodes}"
+            )
+        for start in range(0, len(flat), num_nodes):
+            element_nodes = flat[start : start + num_nodes]
+            rows.append(element_nodes[:nodes_per_element])
     if not rows:
         return np.zeros((0, nodes_per_element), dtype=np.int32)
     return np.asarray(rows, dtype=np.int32)

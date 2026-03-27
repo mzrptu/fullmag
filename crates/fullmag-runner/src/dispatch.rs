@@ -106,6 +106,7 @@ pub(crate) fn resolve_fdm_engine(problem: &ProblemIR) -> Result<FdmEngine, RunEr
 pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunError> {
     apply_runtime_gpu_index(problem, "fem");
     let ir_policy = runtime_fem_policy(problem);
+    let fe_order = runtime_fem_order(problem);
     let policy = match std::env::var("FULLMAG_FEM_EXECUTION") {
         Ok(env_val) => {
             if env_val != ir_policy {
@@ -122,20 +123,33 @@ pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunEr
     match policy.as_str() {
         "cpu" => Ok(FemEngine::CpuReference),
         "gpu" => {
-            if native_fem::is_gpu_available() {
-                Ok(FemEngine::NativeGpu)
-            } else {
+            if !native_fem::is_gpu_available() {
                 Err(RunError {
                     message:
                         "FULLMAG_FEM_EXECUTION=gpu but the native FEM GPU backend is not available"
                             .to_string(),
                 })
+            } else if fe_order != 1 {
+                Err(RunError {
+                    message: format!(
+                        "FULLMAG_FEM_EXECUTION=gpu requested native FEM GPU execution, but the current native backend supports fe_order=1 only (requested order={})",
+                        fe_order
+                    ),
+                })
+            } else {
+                Ok(FemEngine::NativeGpu)
             }
         }
         "auto" | _ => {
-            if native_fem::is_gpu_available() {
+            if native_fem::is_gpu_available() && fe_order == 1 {
                 Ok(FemEngine::NativeGpu)
             } else {
+                if native_fem::is_gpu_available() && fe_order != 1 {
+                    eprintln!(
+                        "warning: native FEM GPU backend currently supports fe_order=1 only; falling back to CPU for requested FEM order={}",
+                        fe_order
+                    );
+                }
                 Ok(FemEngine::CpuReference)
             }
         }
@@ -177,6 +191,16 @@ fn runtime_fem_policy(problem: &ProblemIR) -> &'static str {
         Some("cuda") | Some("gpu") => "gpu",
         _ => "auto",
     }
+}
+
+fn runtime_fem_order(problem: &ProblemIR) -> u32 {
+    problem
+        .backend_policy
+        .discretization_hints
+        .as_ref()
+        .and_then(|hints| hints.fem.as_ref())
+        .map(|hints| hints.order)
+        .unwrap_or(1)
 }
 
 fn apply_runtime_gpu_index(problem: &ProblemIR, backend: &str) {

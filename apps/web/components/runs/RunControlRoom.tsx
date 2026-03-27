@@ -32,23 +32,6 @@ type VectorComponent = "x" | "y" | "z" | "magnitude";
 type PreviewComponent = "3D" | "x" | "y" | "z";
 type SlicePlane = "xy" | "xz" | "yz";
 type FemDockTab = "mesh" | "mesher" | "view" | "quality";
-type MesherControlStatus = "active" | "internal" | "planned";
-
-interface MesherControlDescriptor {
-  id: string;
-  label: string;
-  status: MesherControlStatus;
-  ui?: string;
-  backend?: string;
-  description?: string;
-}
-
-interface MesherGroupDescriptor {
-  id: string;
-  title: string;
-  description?: string;
-  controls: MesherControlDescriptor[];
-}
 
 const FEM_SLICE_COUNT = 25;
 const PANEL_SIZES = {
@@ -153,11 +136,7 @@ function asVec3(value: unknown): [number, number, number] | null {
   return [x as number, y as number, z as number];
 }
 
-function asMesherStatus(value: unknown): MesherControlStatus {
-  return value === "active" || value === "internal" || value === "planned"
-    ? value
-    : "planned";
-}
+
 
 /* ── Collapsible Section ───────────────────────────────────── */
 
@@ -223,7 +202,7 @@ export default function RunControlRoom() {
   const [meshClipEnabled, setMeshClipEnabled] = useState(false);
   const [meshClipAxis, setMeshClipAxis] = useState<ClipAxis>("x");
   const [meshClipPos, setMeshClipPos] = useState(50);
-  const [meshShowArrows, setMeshShowArrows] = useState(false);
+  const [meshShowArrows, setMeshShowArrows] = useState(true);
   const [runUntilInput, setRunUntilInput] = useState("1e-12");
   const [relaxMaxStepsInput, setRelaxMaxStepsInput] = useState("5000");
   const [commandBusy, setCommandBusy] = useState(false);
@@ -232,6 +211,7 @@ export default function RunControlRoom() {
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
   const [meshOptions, setMeshOptions] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
   const [meshQualityData, setMeshQualityData] = useState<MeshQualityData | null>(null);
+  const [meshGenerating, setMeshGenerating] = useState(false);
 
   const session = state?.session;
   const run = state?.run;
@@ -411,29 +391,7 @@ export default function RunControlRoom() {
     typeof meshingCapabilities?.source_kind === "string" ? meshingCapabilities.source_kind : null;
   const mesherCurrentSettings =
     (meshingCapabilities?.current_settings as Record<string, unknown> | undefined) ?? undefined;
-  const mesherGroups = useMemo<MesherGroupDescriptor[]>(() => {
-    const rawGroups = meshingCapabilities?.groups;
-    if (!Array.isArray(rawGroups)) return [];
-    return rawGroups
-      .filter((group): group is Record<string, unknown> => Boolean(group) && typeof group === "object")
-      .map((group) => ({
-        id: typeof group.id === "string" ? group.id : "group",
-        title: typeof group.title === "string" ? group.title : "Group",
-        description: typeof group.description === "string" ? group.description : undefined,
-        controls: Array.isArray(group.controls)
-          ? group.controls
-              .filter((control): control is Record<string, unknown> => Boolean(control) && typeof control === "object")
-              .map((control) => ({
-                id: typeof control.id === "string" ? control.id : "control",
-                label: typeof control.label === "string" ? control.label : "Control",
-                status: asMesherStatus(control.status),
-                ui: typeof control.ui === "string" ? control.ui : undefined,
-                backend: typeof control.backend === "string" ? control.backend : undefined,
-                description: typeof control.description === "string" ? control.description : undefined,
-              }))
-          : [],
-      }));
-  }, [meshingCapabilities?.groups]);
+
 
   /* Grid / mesh info — memoized to a stable reference so that a new array from every SSE
      tick does not re-trigger Three.js scene init inside MagnetizationView3D. */
@@ -501,6 +459,36 @@ export default function RunControlRoom() {
       setPreviewBusy(false);
     }
   }, [liveApi]);
+
+  /* ── Mesh generation handler ── */
+  const handleMeshGenerate = useCallback(async () => {
+    setMeshGenerating(true);
+    try {
+      const opts = meshOptions;
+      await liveApi.queueCommand({
+        kind: "remesh",
+        mesh_options: {
+          algorithm_2d: opts.algorithm2d,
+          algorithm_3d: opts.algorithm3d,
+          hmin: opts.hmin ? parseFloat(opts.hmin) : null,
+          size_factor: opts.sizeFactor,
+          size_from_curvature: opts.sizeFromCurvature,
+          smoothing_steps: opts.smoothingSteps,
+          optimize: opts.optimize || null,
+          optimize_iterations: opts.optimizeIters,
+          compute_quality: opts.computeQuality,
+          per_element_quality: opts.perElementQuality,
+        },
+      });
+    } catch (err) {
+      setCommandMessage(
+        err instanceof Error ? err.message : "Mesh generation failed",
+      );
+    } finally {
+      setMeshGenerating(false);
+    }
+  }, [meshOptions, liveApi]);
+
 
   /* Keyboard shortcuts: 1=3D, 2=2D, 3=Mesh */
   useEffect(() => {
@@ -632,6 +620,16 @@ export default function RunControlRoom() {
     return { nodes: flatNodes, boundaryFaces: flatFaces, nNodes, nElements, fieldData };
   }, [isFemBackend, effectiveFemMesh, femMesh?.elements.length, flatNodes, flatFaces, selectedVectors]);
 
+  const femHasFieldData = Boolean(femMeshData?.fieldData);
+  const femMagnetization3DActive =
+    isFemBackend &&
+    effectiveViewMode === "3D" &&
+    (preview?.quantity ?? selectedQuantity) === "m" &&
+    femHasFieldData;
+  const femShouldShowArrows = isFemBackend && effectiveViewMode === "3D" && femHasFieldData
+    ? meshShowArrows
+    : false;
+
   const femTopologyKey = useMemo(() => {
     if (!effectiveFemMesh) return null;
     return `${effectiveFemMesh.nodes.length}:${femMesh?.elements.length ?? effectiveFemMesh.elements.length}:${effectiveFemMesh.boundary_faces.length}`;
@@ -639,14 +637,14 @@ export default function RunControlRoom() {
 
   const femColorField = useMemo<FemColorField>(() => {
     const quantityId = preview?.quantity ?? selectedQuantity;
-    if (quantityId === "m" && preview?.component === "3D") {
+    if (quantityId === "m" && effectiveViewMode === "3D" && femHasFieldData) {
       return "orientation";
     }
     if (effectiveVectorComponent === "x") return "x";
     if (effectiveVectorComponent === "y") return "y";
     if (effectiveVectorComponent === "z") return "z";
     return "magnitude";
-  }, [effectiveVectorComponent, preview?.component, preview?.quantity, selectedQuantity]);
+  }, [effectiveVectorComponent, effectiveViewMode, femHasFieldData, preview?.quantity, selectedQuantity]);
 
   const meshQualitySummary = useMemo(() => {
     if (!effectiveFemMesh) return null;
@@ -1069,6 +1067,8 @@ export default function RunControlRoom() {
                       options={meshOptions}
                       onChange={setMeshOptions}
                       quality={meshQualityData}
+                      generating={meshGenerating}
+                      onGenerate={handleMeshGenerate}
                     />
                   </>
                 )}
@@ -1555,7 +1555,7 @@ export default function RunControlRoom() {
               clipEnabled={meshClipEnabled}
               clipAxis={meshClipAxis}
               clipPos={meshClipPos}
-              showArrows={meshShowArrows}
+              showArrows={false}
               onRenderModeChange={setMeshRenderMode}
               onOpacityChange={setMeshOpacity}
               onClipEnabledChange={setMeshClipEnabled}
@@ -1569,14 +1569,14 @@ export default function RunControlRoom() {
               meshData={femMeshData}
               fieldLabel={quantityDescriptor?.label ?? selectedQuantity}
               colorField={femColorField}
-              showOrientationLegend={femColorField === "orientation"}
+              showOrientationLegend={femMagnetization3DActive}
               toolbarMode="hidden"
               renderMode={meshRenderMode}
               opacity={meshOpacity}
               clipEnabled={meshClipEnabled}
               clipAxis={meshClipAxis}
               clipPos={meshClipPos}
-              showArrows={meshShowArrows}
+              showArrows={femShouldShowArrows}
               onRenderModeChange={setMeshRenderMode}
               onOpacityChange={setMeshOpacity}
               onClipEnabledChange={setMeshClipEnabled}
@@ -1854,6 +1854,7 @@ export default function RunControlRoom() {
               topologyKey={femTopologyKey ?? undefined}
               meshData={femMeshData}
               colorField="quality"
+              showArrows={false}
             />
           ) : effectiveViewMode === "3D" && isFemBackend && femMeshData ? (
             <FemMeshView3D
@@ -1861,7 +1862,8 @@ export default function RunControlRoom() {
               meshData={femMeshData}
               fieldLabel={quantityDescriptor?.label ?? selectedQuantity}
               colorField={femColorField}
-              showOrientationLegend={femColorField === "orientation"}
+              showOrientationLegend={femMagnetization3DActive}
+              showArrows={femShouldShowArrows}
             />
           ) : effectiveViewMode === "2D" && isFemBackend && femMeshData ? (
             <FemMeshSlice2D

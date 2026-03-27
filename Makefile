@@ -65,18 +65,71 @@ install-cli-dev: INSTALL_STATIC_WEB=0
 install-cli install-cli-dev:
 	mkdir -p .fullmag/local
 	@set -e; \
-	if [ -x "/usr/local/cuda/bin/nvcc" ] && [ -x "$$HOME/.local/bin/cmake" ]; then \
+	cmake_bin=""; \
+	if [ -n "$${FULLMAG_CMAKE:-}" ] && [ -x "$${FULLMAG_CMAKE:-}" ]; then \
+		cmake_bin="$${FULLMAG_CMAKE}"; \
+	elif [ -x "$$HOME/.local/bin/cmake" ]; then \
+		cmake_bin="$$HOME/.local/bin/cmake"; \
+	elif command -v cmake >/dev/null 2>&1; then \
+		cmake_bin="$$(command -v cmake)"; \
+	fi; \
+	nvcc_bin=""; \
+	if [ -x "/usr/local/cuda/bin/nvcc" ]; then \
+		nvcc_bin="/usr/local/cuda/bin/nvcc"; \
+	elif command -v nvcc >/dev/null 2>&1; then \
+		nvcc_bin="$$(command -v nvcc)"; \
+	fi; \
+	build_log=".fullmag/local/install-cli-build.log"; \
+	managed_log=".fullmag/local/install-cli-managed-fem-gpu.log"; \
+	managed_runtime_bin=".fullmag/runtimes/fem-gpu-host/bin/fullmag-fem-gpu-bin"; \
+	build_mode="cpu"; \
+	if [ -n "$$nvcc_bin" ] && [ -n "$$cmake_bin" ]; then \
 		echo "Installing Rust launcher with CUDA support..."; \
-		FULLMAG_CMAKE="$$HOME/.local/bin/cmake" CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-cli --release --features cuda; \
-		FULLMAG_CMAKE="$$HOME/.local/bin/cmake" CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-api --release --features cuda; \
-		mkdir -p .fullmag/local/lib; \
-		src_dir=$$(find .fullmag/target -path '*native-build/backends/fdm' -type d | head -n 1); \
-		if [ -n "$$src_dir" ]; then cp -a $$src_dir/libfullmag_fdm.so* .fullmag/local/lib/; fi; \
+		if FULLMAG_USE_MFEM_STACK=ON FULLMAG_CMAKE="$$cmake_bin" CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-cli --release --features "cuda fem-gpu" >"$$build_log" 2>&1 \
+			&& FULLMAG_USE_MFEM_STACK=ON FULLMAG_CMAKE="$$cmake_bin" CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-api --release --features "cuda fem-gpu" >>"$$build_log" 2>&1; then \
+			echo "Host FEM GPU backend available; installing launcher with CUDA + FEM GPU support..."; \
+			build_mode="cuda-fem-gpu"; \
+		else \
+			echo "Host FEM GPU backend not available; falling back to CUDA-only launcher."; \
+			echo "Probe log: $(PWD)/.fullmag/local/install-cli-build.log"; \
+			CARGO_TARGET_DIR=.fullmag/target cargo +nightly clean -p fullmag-fem-sys >/dev/null 2>&1 || true; \
+			FULLMAG_CMAKE="$$cmake_bin" CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-cli --release --features cuda; \
+			FULLMAG_CMAKE="$$cmake_bin" CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-api --release --features cuda; \
+			build_mode="cuda"; \
+			if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then \
+				if [ ! -x "$$managed_runtime_bin" ] || [ ".fullmag/target/release/fullmag" -nt "$$managed_runtime_bin" ] || [ "./scripts/export_fem_gpu_runtime.sh" -nt "$$managed_runtime_bin" ]; then \
+					echo "Exporting managed FEM GPU host runtime bundle..."; \
+					if ./scripts/export_fem_gpu_runtime.sh >"$$managed_log" 2>&1; then \
+						echo "Managed FEM GPU host runtime exported successfully."; \
+					else \
+						echo "Managed FEM GPU host runtime export failed; staying on local CUDA-only launcher."; \
+						echo "Managed runtime log: $(PWD)/.fullmag/local/install-cli-managed-fem-gpu.log"; \
+					fi; \
+				else \
+					echo "Reusing managed FEM GPU host runtime bundle."; \
+				fi; \
+			fi; \
+			if [ -x "$$managed_runtime_bin" ]; then \
+				build_mode="cuda+managed-fem-gpu-host"; \
+			fi; \
+		fi; \
 	else \
 		echo "Installing Rust launcher without CUDA support..."; \
 		CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-cli --release; \
 		CARGO_TARGET_DIR=.fullmag/target cargo +nightly build -p fullmag-api --release; \
-	fi
+		if [ -x "$$managed_runtime_bin" ]; then \
+			build_mode="managed-fem-gpu-host"; \
+		fi; \
+	fi; \
+	mkdir -p .fullmag/local/lib; \
+	rm -f .fullmag/local/lib/libfullmag_fdm.so* .fullmag/local/lib/libfullmag_fem.so*; \
+	fdm_dir=$$(find .fullmag/target -path '*native-build/backends/fdm' -type d | head -n 1); \
+	if [ -n "$$fdm_dir" ]; then cp -a "$$fdm_dir"/libfullmag_fdm.so* .fullmag/local/lib/ 2>/dev/null || true; fi; \
+	if [ "$$build_mode" = "cuda-fem-gpu" ]; then \
+		fem_dir=$$(find .fullmag/target -path '*native-build/backends/fem' -type d | head -n 1); \
+		if [ -n "$$fem_dir" ]; then cp -a "$$fem_dir"/libfullmag_fem.so* .fullmag/local/lib/ 2>/dev/null || true; fi; \
+	fi; \
+	printf '%s\n' "$$build_mode" > .fullmag/local/launcher-build-mode
 	@mkdir -p .fullmag/local/bin
 	@cp .fullmag/target/release/fullmag .fullmag/local/bin/fullmag-bin.new
 	@mv -f .fullmag/local/bin/fullmag-bin.new .fullmag/local/bin/fullmag-bin
@@ -84,6 +137,16 @@ install-cli install-cli-dev:
 	@mv -f .fullmag/local/bin/fullmag-api.new .fullmag/local/bin/fullmag-api
 	@printf '%s\n' '#!/usr/bin/env bash' \
 		'SELF_DIR="$$(cd "$$(dirname "$$0")" && pwd)"' \
+		'REPO_ROOT="$$(cd "$$SELF_DIR/../../.." && pwd)"' \
+		'export FULLMAG_REPO_ROOT="$$REPO_ROOT"' \
+		'export PYTHONPATH="$$REPO_ROOT/packages/fullmag-py/src$${PYTHONPATH:+:$$PYTHONPATH}"' \
+		'export FULLMAG_FEM_MESH_CACHE_DIR="$$REPO_ROOT/.fullmag/local/cache/fem_mesh_assets"' \
+		'MANAGED_RUNTIME_ROOT="$${SELF_DIR}/../../runtimes/fem-gpu-host"' \
+		'MANAGED_RUNTIME_BIN="$${MANAGED_RUNTIME_ROOT}/bin/fullmag-fem-gpu-bin"' \
+		'if [ "$${FULLMAG_DISABLE_MANAGED_FEM_GPU_RUNTIME:-0}" != "1" ] && [ -x "$$MANAGED_RUNTIME_BIN" ]; then' \
+		'  export LD_LIBRARY_PATH="$$MANAGED_RUNTIME_ROOT/lib:$$SELF_DIR/../lib$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}"' \
+		'  exec "$$MANAGED_RUNTIME_BIN" "$$@"' \
+		'fi' \
 		'export LD_LIBRARY_PATH="$$SELF_DIR/../lib$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}"' \
 		'exec "$$SELF_DIR/fullmag-bin" "$$@"' \
 		> .fullmag/local/bin/fullmag
@@ -92,6 +155,8 @@ install-cli install-cli-dev:
 	@echo ""
 	@echo "Installed repo-local launcher:"
 	@echo "  $(PWD)/.fullmag/local/bin/fullmag"
+	@echo "Build mode:"
+	@echo "  $$(cat .fullmag/local/launcher-build-mode)"
 	@echo ""
 	@echo "Add it to PATH for this shell:"
 	@echo "  export PATH=\"$(PWD)/.fullmag/local/bin:\$$PATH\""
