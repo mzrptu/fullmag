@@ -5,13 +5,13 @@ from dataclasses import dataclass
 from fullmag._validation import require_positive
 
 DEFAULT_GAMMA = 2.211e5
-SUPPORTED_INTEGRATORS = {"heun"}
+SUPPORTED_INTEGRATORS = {"heun", "rk4", "rk23", "rk45", "abm3", "auto"}
 
 
 @dataclass(frozen=True, slots=True)
 class LLG:
     gamma: float = DEFAULT_GAMMA
-    integrator: str = "heun"
+    integrator: str = "auto"
     fixed_timestep: float | None = None
 
     def __post_init__(self) -> None:

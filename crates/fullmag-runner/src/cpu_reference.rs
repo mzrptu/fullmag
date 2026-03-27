@@ -187,6 +187,7 @@ fn execute_reference_fdm_impl(
 
     // --- Create FFT workspace once for the entire simulation ---
     let mut fft_workspace = problem.create_workspace();
+    let mut integrator_bufs = problem.create_integrator_buffers();
     let mut previous_total_energy = Some(observe_state(&problem, &state)?.total_energy);
     let mut last_preview_revision: Option<u64> = None;
 
@@ -241,7 +242,7 @@ fn execute_reference_fdm_impl(
             let dt_step = dt.min(until_seconds - state.time_seconds);
             let wall_start = Instant::now();
             let report = problem
-                .step_with_workspace(&mut state, dt_step, &mut fft_workspace)
+                .step_with_buffers(&mut state, dt_step, &mut fft_workspace, &mut integrator_bufs)
                 .map_err(|e| RunError {
                     message: format!("Step {}: {}", step_count, e),
                 })?;

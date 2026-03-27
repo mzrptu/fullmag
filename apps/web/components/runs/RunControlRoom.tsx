@@ -9,7 +9,10 @@ import EngineConsole from "../panels/EngineConsole";
 import MeshQualityHistogram from "../panels/MeshQualityHistogram";
 import MeshSettingsPanel, { DEFAULT_MESH_OPTIONS } from "../panels/MeshSettingsPanel";
 import type { MeshOptionsState, MeshQualityData } from "../panels/MeshSettingsPanel";
+import SolverSettingsPanel, { DEFAULT_SOLVER_SETTINGS } from "../panels/SolverSettingsPanel";
+import type { SolverSettingsState } from "../panels/SolverSettingsPanel";
 import ModelTree, { buildFullmagModelTree } from "../panels/ModelTree";
+import type { TreeNodeData } from "../panels/ModelTree";
 import MagnetizationSlice2D from "../preview/MagnetizationSlice2D";
 import MagnetizationView3D from "../preview/MagnetizationView3D";
 import FemMeshView3D from "../preview/FemMeshView3D";
@@ -148,6 +151,13 @@ function fmtPreviewEveryN(n: number): string {
   return n <= 1 ? "Every step" : `Every ${n} steps`;
 }
 
+function parseOptionalNumber(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function asVec3(value: unknown): [number, number, number] | null {
   if (!Array.isArray(value) || value.length !== 3) return null;
   const [x, y, z] = value;
@@ -215,6 +225,33 @@ function computeMeshFaceDetail(mesh: FemLiveMesh | null, faceIndex: number | nul
     area,
     aspectRatio,
   };
+}
+
+function findTreeNodeById(nodes: TreeNodeData[], id: string | null): TreeNodeData | null {
+  if (!id) return null;
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    const child = findTreeNodeById(node.children ?? [], id);
+    if (child) return child;
+  }
+  return null;
+}
+
+function previewQuantityForTreeNode(id: string): string | null {
+  switch (id) {
+    case "phys-llg":
+      return "m";
+    case "phys-exchange":
+      return "H_ex";
+    case "phys-demag":
+    case "phys-demag-method":
+    case "phys-demag-open-bc":
+      return "H_demag";
+    case "phys-zeeman":
+      return "H_ext";
+    default:
+      return null;
+  }
 }
 
 
@@ -728,7 +765,7 @@ export default function RunControlRoom() {
   const [meshClipPos, setMeshClipPos] = useState(50);
   const [meshShowArrows, setMeshShowArrows] = useState(true);
   const [runUntilInput, setRunUntilInput] = useState("1e-12");
-  const [relaxMaxStepsInput, setRelaxMaxStepsInput] = useState("5000");
+  const [selectedSidebarNodeId, setSelectedSidebarNodeId] = useState<string | null>(null);
   const [commandBusy, setCommandBusy] = useState(false);
   const [commandMessage, setCommandMessage] = useState<string | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -736,6 +773,8 @@ export default function RunControlRoom() {
   const [meshOptions, setMeshOptions] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
   const [meshQualityData, setMeshQualityData] = useState<MeshQualityData | null>(null);
   const [meshGenerating, setMeshGenerating] = useState(false);
+  const [solverSettings, setSolverSettings] = useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
+  const [solverSetupOpen, setSolverSetupOpen] = useState(false);
   const [meshSelection, setMeshSelection] = useState<MeshSelectionSnapshot>({
     selectedFaceIndices: [],
     primaryFaceIndex: null,
@@ -1375,6 +1414,126 @@ export default function RunControlRoom() {
     };
   }, [femMeshData, isFemBackend, latestEngineMessage, workspaceStatus]);
 
+  const requestPreviewQuantity = useCallback((nextQuantity: string) => {
+    if (isFemBackend && effectiveViewMode === "Mesh") {
+      setViewMode("3D");
+    }
+    if (previewControlsActive) {
+      void updatePreview("/quantity", { quantity: nextQuantity });
+    } else {
+      setSelectedQuantity(nextQuantity);
+    }
+  }, [effectiveViewMode, isFemBackend, previewControlsActive, updatePreview]);
+
+  const quickPreviewTargets = useMemo(
+    () =>
+      [
+        { id: "m", shortLabel: "M" },
+        { id: "H_ex", shortLabel: "H_ex" },
+        { id: "H_demag", shortLabel: "H_demag" },
+        { id: "H_ext", shortLabel: "H_ext" },
+        { id: "H_eff", shortLabel: "H_eff" },
+      ].map((entry) => {
+        const option = previewQuantityOptions.find((candidate) => candidate.value === entry.id);
+        return {
+          ...entry,
+          available: option ? !option.disabled : entry.id === "m",
+        };
+      }),
+    [previewQuantityOptions],
+  );
+
+  const modelTreeNodes = useMemo(
+    () =>
+      buildFullmagModelTree({
+        backend: isFemBackend ? "FEM" : "FDM",
+        geometryKind: mesherSourceKind ?? undefined,
+        materialName:
+          material?.msat != null ? `Msat=${(material.msat / 1e3).toFixed(0)} kA/m` : undefined,
+        meshStatus: effectiveFemMesh ? "ready" : "pending",
+        meshElements: effectiveFemMesh?.elements.length,
+        solverStatus: hasSolverTelemetry ? "active" : "pending",
+        demagMethod: "transfer-grid",
+      }),
+    [
+      effectiveFemMesh,
+      hasSolverTelemetry,
+      isFemBackend,
+      material?.msat,
+      mesherSourceKind,
+    ],
+  );
+
+  const fallbackSidebarNodeId = useMemo(() => {
+    if (isMeshWorkspaceView) {
+      if (femDockTab === "quality") return "mesh-quality";
+      if (femDockTab === "mesher") return "mesh-size";
+      return "mesh";
+    }
+    if (previewControlsActive) return "res-fields";
+    if (interactiveControlsEnabled) return "study-solver";
+    if (material) return "materials";
+    return "geometry";
+  }, [femDockTab, interactiveControlsEnabled, isMeshWorkspaceView, material, previewControlsActive]);
+
+  const activeSidebarNodeId = selectedSidebarNodeId ?? fallbackSidebarNodeId;
+  const activeSidebarNode = useMemo(
+    () => findTreeNodeById(modelTreeNodes, activeSidebarNodeId),
+    [activeSidebarNodeId, modelTreeNodes],
+  );
+
+  const handleModelTreeClick = useCallback((id: string) => {
+    setSelectedSidebarNodeId(id);
+    switch (id) {
+      case "geometry":
+      case "geo-body":
+      case "regions":
+      case "reg-domain":
+      case "reg-boundary":
+        if (isFemBackend) {
+          openFemMeshWorkspace("mesh");
+        } else {
+          setViewMode("3D");
+        }
+        return;
+      case "mesh":
+        if (isFemBackend) openFemMeshWorkspace("mesh");
+        return;
+      case "mesh-size":
+      case "mesh-algorithm":
+        if (isFemBackend) {
+          setViewMode("Mesh");
+          setFemDockTab("mesher");
+          setMeshRenderMode((current) => (current === "surface" ? "surface+edges" : current));
+        }
+        return;
+      case "mesh-quality":
+        if (isFemBackend) openFemMeshWorkspace("quality");
+        return;
+      case "results":
+      case "res-fields":
+        if (isFemBackend && effectiveViewMode === "Mesh") {
+          setViewMode("3D");
+        }
+        return;
+      default: {
+        const previewTarget = previewQuantityForTreeNode(id);
+        if (
+          previewTarget &&
+          quickPreviewTargets.some((target) => target.id === previewTarget && target.available)
+        ) {
+          requestPreviewQuantity(previewTarget);
+        }
+      }
+    }
+  }, [
+    effectiveViewMode,
+    isFemBackend,
+    openFemMeshWorkspace,
+    quickPreviewTargets,
+    requestPreviewQuantity,
+  ]);
+
   /* ── Loading state ─────────────────────────────── */
   if (!state) {
     return (
@@ -1465,6 +1624,7 @@ export default function RunControlRoom() {
           if (action === "pause") void enqueueCommand({ kind: "pause" });
           if (action === "stop") void enqueueCommand({ kind: "stop" });
         }}
+        onSetup={() => setSolverSetupOpen((v) => !v)}
       />
 
       {/* ═══════ BODY: Horizontal PanelGroup (main + sidebar) ═══════ */}
@@ -2137,19 +2297,19 @@ export default function RunControlRoom() {
         <Section title="Solver" badge={workspaceStatus}>
           <div className={s.fieldGrid2}>
             <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>Step</span>
+              <span className={s.fieldLabel} title="Current integration step number">Step</span>
               <span className={s.fieldValue}>{fmtStepValue(effectiveStep, hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>Time</span>
+              <span className={s.fieldLabel} title="Simulated physical time">Time</span>
               <span className={s.fieldValue}>{fmtSIOrDash(effectiveTime, "s", hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>Δt</span>
+              <span className={s.fieldLabel} title="Current time-step size (adaptive solvers adjust this automatically)">Δt</span>
               <span className={s.fieldValue}>{fmtSIOrDash(effectiveDt, "s", hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>max dm/dt</span>
+              <span className={s.fieldLabel} title="Maximum magnetisation rate of change – approaches zero near equilibrium">max dm/dt</span>
               <span className={s.fieldValue} style={{
                 color: hasSolverTelemetry && effectiveDmDt > 0 && effectiveDmDt < 1e-5 ? "var(--status-running)" : undefined
               }}>
@@ -2157,11 +2317,11 @@ export default function RunControlRoom() {
               </span>
             </div>
             <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>max |H_eff|</span>
+              <span className={s.fieldLabel} title="Maximum effective field magnitude – sum of all field contributions">max |H_eff|</span>
               <span className={s.fieldValue}>{fmtExpOrDash(effectiveHEff, hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>max |H_demag|</span>
+              <span className={s.fieldLabel} title="Maximum demagnetising field magnitude – shape-dependent stray field">max |H_demag|</span>
               <span className={s.fieldValue}>{fmtExpOrDash(effectiveHDemag, hasSolverTelemetry)}</span>
             </div>
           </div>
@@ -2176,6 +2336,16 @@ export default function RunControlRoom() {
           {dtSpark.length > 1 && (
             <Sparkline data={dtSpark} width={140} height={20} color="var(--ide-accent)" label="Δt" />
           )}
+        </Section>
+
+        {/* Solver Setup */}
+        <Section title="Solver Setup" defaultOpen={solverSetupOpen}>
+          <SolverSettingsPanel
+            settings={solverSettings}
+            onChange={setSolverSettings}
+            solverRunning={workspaceStatus === "running"}
+            awaitingCommand={awaitingCommand}
+          />
         </Section>
 
         {interactiveControlsEnabled && (
@@ -2224,11 +2394,23 @@ export default function RunControlRoom() {
                   enqueueCommand({
                     kind: "relax",
                     max_steps: Number(relaxMaxStepsInput),
-                    torque_tolerance: 1e-6,
+                    torque_tolerance: solverSettings.torqueTolerance,
+                    ...(solverSettings.energyTolerance != null && { energy_tolerance: solverSettings.energyTolerance }),
                   })
                 }
               >
                 Relax
+              </Button>
+            </div>
+            <div className={s.interactiveBlock}>
+              <Button
+                size="sm"
+                tone="danger"
+                variant="outline"
+                disabled={commandBusy}
+                onClick={() => enqueueCommand({ kind: "stop" })}
+              >
+                Stop
               </Button>
             </div>
             <div className={s.interactiveActions}>
@@ -2330,17 +2512,18 @@ export default function RunControlRoom() {
         {/* Material */}
         {material && (
           <Section title="Material">
+            <p className={s.meshHintText} style={{ margin: "0 0 0.4rem" }}>Magnetic material parameters used by the solver.</p>
             <div className={s.fieldGrid3}>
               <div className={s.fieldCell}>
-                <span className={s.fieldLabel}>M_sat</span>
+                <span className={s.fieldLabel} title="Saturation magnetisation – maximum magnetic moment density">M_sat</span>
                 <span className={s.fieldValue}>{material.msat != null ? fmtSI(material.msat, "A/m") : "—"}</span>
               </div>
               <div className={s.fieldCell}>
-                <span className={s.fieldLabel}>A_ex</span>
+                <span className={s.fieldLabel} title="Exchange stiffness constant – strength of nearest-neighbour coupling">A_ex</span>
                 <span className={s.fieldValue}>{material.aex != null ? fmtSI(material.aex, "J/m") : "—"}</span>
               </div>
               <div className={s.fieldCell}>
-                <span className={s.fieldLabel}>α</span>
+                <span className={s.fieldLabel} title="Gilbert damping parameter – controls energy dissipation rate">α</span>
                 <span className={s.fieldValue}>{material.alpha?.toPrecision(3) ?? "—"}</span>
               </div>
             </div>
@@ -2356,19 +2539,19 @@ export default function RunControlRoom() {
         <Section title="Energy" badge={fmtSIOrDash(effectiveETotal, "J", hasSolverTelemetry)}>
           <div className={s.fieldGrid2}>
             <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>E_exchange</span>
+              <span className={s.fieldLabel} title="Exchange energy – penalty for non-uniform magnetisation">E_exchange</span>
               <span className={s.fieldValue}>{fmtSIOrDash(effectiveEEx, "J", hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>E_demag</span>
+              <span className={s.fieldLabel} title="Demagnetisation energy – self-interaction via stray fields">E_demag</span>
               <span className={s.fieldValue}>{fmtSIOrDash(effectiveEDemag, "J", hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>E_ext</span>
+              <span className={s.fieldLabel} title="External (Zeeman) energy – coupling to applied field">E_ext</span>
               <span className={s.fieldValue}>{fmtSIOrDash(effectiveEExt, "J", hasSolverTelemetry)}</span>
             </div>
             <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>E_total</span>
+              <span className={s.fieldLabel} title="Total micromagnetic energy – sum of all contributions">E_total</span>
               <span className={s.fieldValue} style={{ color: "hsl(210, 70%, 65%)" }}>
                 {fmtSIOrDash(effectiveETotal, "J", hasSolverTelemetry)}
               </span>

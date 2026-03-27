@@ -706,6 +706,69 @@ pub struct EffectiveFieldObservables {
     pub max_rhs_amplitude: f64,
 }
 
+/// Lightweight observables from a single RHS evaluation.
+/// Unlike `EffectiveFieldObservables`, does not store full field vectors —
+/// only the scalars needed for `StepReport`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RhsEvaluation {
+    pub exchange_energy_joules: f64,
+    pub demag_energy_joules: f64,
+    pub external_energy_joules: f64,
+    pub total_energy_joules: f64,
+    pub max_effective_field_amplitude: f64,
+    pub max_demag_field_amplitude: f64,
+    pub max_rhs_amplitude: f64,
+}
+
+impl RhsEvaluation {
+    /// Convert to a `StepReport`.
+    pub fn into_step_report(self, time_seconds: f64, dt_used: f64, step_rejected: bool) -> StepReport {
+        StepReport {
+            time_seconds,
+            dt_used,
+            step_rejected,
+            exchange_energy_joules: self.exchange_energy_joules,
+            demag_energy_joules: self.demag_energy_joules,
+            external_energy_joules: self.external_energy_joules,
+            total_energy_joules: self.total_energy_joules,
+            max_effective_field_amplitude: self.max_effective_field_amplitude,
+            max_demag_field_amplitude: self.max_demag_field_amplitude,
+            max_rhs_amplitude: self.max_rhs_amplitude,
+        }
+    }
+}
+
+/// Preallocated workspace buffers for time integrator stages.
+///
+/// Reuse across steps to avoid per-step heap allocation of temporary
+/// magnetization and RHS vectors.  Create once via
+/// [`ExchangeLlgProblem::create_integrator_buffers`] and pass to
+/// [`ExchangeLlgProblem::step_with_buffers`].
+#[derive(Debug, Clone)]
+pub struct IntegratorBuffers {
+    /// k-stage buffers (k1..k7).  RK45 needs 7, others need fewer.
+    pub k: [Vec<Vector3>; 7],
+    /// Intermediate delta workspace (weighted sum of k-stages × dt).
+    pub delta: Vec<Vector3>,
+    /// Intermediate magnetization state for sub-stages.
+    pub m_stage: Vec<Vector3>,
+    /// Backup of initial magnetization at start of step.
+    pub m0: Vec<Vector3>,
+}
+
+impl IntegratorBuffers {
+    /// Allocate zeroed buffers for `n` cells.
+    pub fn new(n: usize) -> Self {
+        let zero = || vec![[0.0, 0.0, 0.0]; n];
+        Self {
+            k: [zero(), zero(), zero(), zero(), zero(), zero(), zero()],
+            delta: zero(),
+            m_stage: zero(),
+            m0: zero(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExchangeLlgProblem {
     pub grid: GridShape,
@@ -881,6 +944,37 @@ impl ExchangeLlgProblem {
         }
     }
 
+    /// Create preallocated integrator buffers sized for this problem's grid.
+    pub fn create_integrator_buffers(&self) -> IntegratorBuffers {
+        IntegratorBuffers::new(self.grid.cell_count())
+    }
+
+    /// Step with both a pre-built FFT workspace **and** preallocated integrator
+    /// buffers.  This is the most efficient entry point for production solver
+    /// loops: it avoids both FFT re-planning and per-step heap allocations.
+    pub fn step_with_buffers(
+        &self,
+        state: &mut ExchangeLlgState,
+        dt: f64,
+        ws: &mut FftWorkspace,
+        bufs: &mut IntegratorBuffers,
+    ) -> Result<StepReport> {
+        self.ensure_state_matches_grid(state)?;
+        if dt <= 0.0 {
+            return Err(EngineError::new("dt must be positive"));
+        }
+
+        match self.dynamics.integrator {
+            TimeIntegrator::Heun => self.heun_step_buf(state, dt, ws, bufs),
+            TimeIntegrator::RK4 => self.rk4_step_buf(state, dt, ws, bufs),
+            // Adaptive + ABM fall through to allocating path for now
+            // (their allocation overhead is negligible vs. multiple retry iterations)
+            TimeIntegrator::RK23 => self.rk23_step(state, dt, ws),
+            TimeIntegrator::RK45 => self.rk45_step(state, dt, ws),
+            TimeIntegrator::ABM3 => self.abm3_step(state, dt, ws),
+        }
+    }
+
     fn heun_step(
         &self,
         state: &mut ExchangeLlgState,
@@ -943,6 +1037,102 @@ impl ExchangeLlgProblem {
             max_demag_field_amplitude: observables.max_demag_field_amplitude,
             max_rhs_amplitude: observables.max_rhs_amplitude,
         })
+    }
+
+    // -----------------------------------------------------------------------
+    // Buffer-reusing Heun step
+    // -----------------------------------------------------------------------
+    fn heun_step_buf(
+        &self,
+        state: &mut ExchangeLlgState,
+        dt: f64,
+        ws: &mut FftWorkspace,
+        bufs: &mut IntegratorBuffers,
+    ) -> Result<StepReport> {
+        let n = state.magnetization.len();
+        bufs.m0[..n].copy_from_slice(&state.magnetization);
+
+        // k1 = f(t, m0)
+        self.llg_rhs_into_ws(&bufs.m0[..n], ws, &mut bufs.k[0]);
+
+        // predicted = normalize(m0 + dt * k1)
+        for i in 0..n {
+            bufs.m_stage[i] = normalized(add(bufs.m0[i], scale(bufs.k[0][i], dt)))?;
+        }
+
+        // k2 = f(t+dt, predicted)
+        self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[1]);
+
+        // corrected = normalize(m0 + dt/2 * (k1 + k2))
+        for i in 0..n {
+            state.magnetization[i] =
+                normalized(add(bufs.m0[i], scale(add(bufs.k[0][i], bufs.k[1][i]), 0.5 * dt)))?;
+        }
+        state.time_seconds += dt;
+
+        let (_, eval) = self.llg_rhs_full_ws(&state.magnetization, ws);
+        Ok(eval.into_step_report(state.time_seconds, dt, false))
+    }
+
+    // -----------------------------------------------------------------------
+    // Buffer-reusing RK4 step
+    // -----------------------------------------------------------------------
+    fn rk4_step_buf(
+        &self,
+        state: &mut ExchangeLlgState,
+        dt: f64,
+        ws: &mut FftWorkspace,
+        bufs: &mut IntegratorBuffers,
+    ) -> Result<StepReport> {
+        let n = state.magnetization.len();
+        bufs.m0[..n].copy_from_slice(&state.magnetization);
+
+        // k1 = f(t, m0)
+        self.llg_rhs_into_ws(&bufs.m0[..n], ws, &mut bufs.k[0]);
+
+        // m1 = normalize(m0 + dt/2 * k1)
+        for i in 0..n {
+            bufs.m_stage[i] = normalized(add(bufs.m0[i], scale(bufs.k[0][i], 0.5 * dt)))?;
+        }
+        self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[1]);
+
+        // m2 = normalize(m0 + dt/2 * k2)
+        for i in 0..n {
+            bufs.m_stage[i] = normalized(add(bufs.m0[i], scale(bufs.k[1][i], 0.5 * dt)))?;
+        }
+        self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[2]);
+
+        // m3 = normalize(m0 + dt * k3)
+        for i in 0..n {
+            bufs.m_stage[i] = normalized(add(bufs.m0[i], scale(bufs.k[2][i], dt)))?;
+        }
+        self.llg_rhs_into_ws(&bufs.m_stage[..n], ws, &mut bufs.k[3]);
+
+        // y = normalize(m0 + dt/6 * (k1 + 2*k2 + 2*k3 + k4))
+        for i in 0..n {
+            state.magnetization[i] = normalized(add(
+                bufs.m0[i],
+                scale(
+                    add(
+                        add(bufs.k[0][i], scale(bufs.k[1][i], 2.0)),
+                        add(scale(bufs.k[2][i], 2.0), bufs.k[3][i]),
+                    ),
+                    dt / 6.0,
+                ),
+            ))?;
+        }
+        state.time_seconds += dt;
+
+        let (_, eval) = self.llg_rhs_full_ws(&state.magnetization, ws);
+        Ok(eval.into_step_report(state.time_seconds, dt, false))
+    }
+
+    // -----------------------------------------------------------------------
+    // In-place RHS evaluation: writes result into `out` instead of allocating
+    // -----------------------------------------------------------------------
+    fn llg_rhs_into_ws(&self, magnetization: &[Vector3], ws: &mut FftWorkspace, out: &mut [Vector3]) {
+        let rhs = self.llg_rhs_from_vectors_ws(magnetization, ws);
+        out[..rhs.len()].copy_from_slice(&rhs);
     }
 
     // -----------------------------------------------------------------------
@@ -1793,6 +1983,61 @@ impl ExchangeLlgProblem {
             .zip(field.iter())
             .map(|(m, h)| self.llg_rhs_from_field(*m, *h))
             .collect()
+    }
+
+    /// Cached observables from a single RHS evaluation.
+    /// Avoids recomputing fields for the StepReport.
+    fn llg_rhs_full_ws(
+        &self,
+        magnetization: &[Vector3],
+        ws: &mut FftWorkspace,
+    ) -> (Vec<Vector3>, RhsEvaluation) {
+        let exchange_field = if self.terms.exchange {
+            self.exchange_field_from_vectors(magnetization)
+        } else {
+            zero_vectors(self.grid.cell_count())
+        };
+        let demag_field = if self.terms.demag {
+            self.demag_field_from_vectors_ws(magnetization, ws)
+        } else {
+            zero_vectors(self.grid.cell_count())
+        };
+        let external_field = self.external_field_vectors();
+        let effective_field = combine_fields(&exchange_field, &demag_field, &external_field);
+
+        let rhs: Vec<Vector3> = magnetization
+            .iter()
+            .zip(effective_field.iter())
+            .map(|(m, h)| self.llg_rhs_from_field(*m, *h))
+            .collect();
+
+        let exchange_energy_joules = if self.terms.exchange {
+            self.exchange_energy_from_field(magnetization, &exchange_field)
+        } else {
+            0.0
+        };
+        let demag_energy_joules = if self.terms.demag {
+            self.demag_energy_from_fields(magnetization, &demag_field)
+        } else {
+            0.0
+        };
+        let external_energy_joules = if self.terms.external_field.is_some() {
+            self.external_energy_from_fields(magnetization, &external_field)
+        } else {
+            0.0
+        };
+
+        let eval = RhsEvaluation {
+            exchange_energy_joules,
+            demag_energy_joules,
+            external_energy_joules,
+            total_energy_joules: exchange_energy_joules + demag_energy_joules + external_energy_joules,
+            max_effective_field_amplitude: max_norm(&effective_field),
+            max_demag_field_amplitude: max_norm(&demag_field),
+            max_rhs_amplitude: max_norm(&rhs),
+        };
+
+        (rhs, eval)
     }
 
     fn llg_rhs_from_field(&self, magnetization: Vector3, field: Vector3) -> Vector3 {

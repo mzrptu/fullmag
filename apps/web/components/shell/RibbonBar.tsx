@@ -38,6 +38,7 @@ interface RibbonBarProps {
   onViewChange?: (mode: string) => void;
   onSidebarToggle?: () => void;
   onSimAction?: (action: string) => void;
+  onSetup?: () => void;
   onExport?: () => void;
 }
 
@@ -64,7 +65,7 @@ function buildGroups(props: RibbonBarProps): RibbonGroup[] {
       id: "solver",
       title: "Solver",
       actions: [
-        { id: "configure", icon: <Cog size={20} />, label: "Setup", tooltip: "Solver configuration", disabled: true },
+        { id: "configure", icon: <Cog size={20} />, label: "Setup", tooltip: "Configure time integrator, relaxation algorithm, and convergence criteria", action: props.onSetup },
         { id: "solve", icon: <Play size={20} />, label: "Solve", tooltip: "Start solver", accent: true, action: () => props.onSimAction?.("run") },
         { id: "pause", icon: <Pause size={20} />, label: "Pause", tooltip: "Pause solver", disabled: !props.solverRunning, action: () => props.onSimAction?.("pause") },
         { id: "stop", icon: <Square size={20} />, label: "Stop", tooltip: "Stop solver", disabled: !props.solverRunning, action: () => props.onSimAction?.("stop") },
