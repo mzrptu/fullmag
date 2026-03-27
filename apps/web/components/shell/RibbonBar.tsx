@@ -47,7 +47,7 @@ function buildGroups(props: RibbonBarProps): RibbonGroup[] {
       id: "script",
       title: "Script",
       actions: [
-        { id: "open", icon: <FileText size={20} />, label: "Open", tooltip: "Open script file", shortcut: "Ctrl+O" },
+        { id: "open", icon: <FileText size={20} />, label: "Open", tooltip: "Open script file", shortcut: "Ctrl+O", disabled: true },
         { id: "run", icon: <Play size={20} />, label: "Run", tooltip: "Run simulation", shortcut: "F5", accent: true, action: () => props.onSimAction?.("run") },
       ],
     },
@@ -55,8 +55,8 @@ function buildGroups(props: RibbonBarProps): RibbonGroup[] {
       id: "model",
       title: "Model",
       actions: [
-        { id: "geometry", icon: <Shapes size={20} />, label: "Geometry", tooltip: "Define geometry" },
-        { id: "material", icon: <FlaskConical size={20} />, label: "Material", tooltip: "Material properties" },
+        { id: "geometry", icon: <Shapes size={20} />, label: "Geometry", tooltip: "Define geometry", disabled: true },
+        { id: "material", icon: <FlaskConical size={20} />, label: "Material", tooltip: "Material properties", disabled: true },
         { id: "mesh", icon: <Hexagon size={20} />, label: "Mesh", tooltip: "Mesh controls", active: props.viewMode === "Mesh", disabled: !props.isFemBackend, action: () => props.onViewChange?.("Mesh") },
       ],
     },
@@ -64,7 +64,7 @@ function buildGroups(props: RibbonBarProps): RibbonGroup[] {
       id: "solver",
       title: "Solver",
       actions: [
-        { id: "configure", icon: <Cog size={20} />, label: "Setup", tooltip: "Solver configuration" },
+        { id: "configure", icon: <Cog size={20} />, label: "Setup", tooltip: "Solver configuration", disabled: true },
         { id: "solve", icon: <Play size={20} />, label: "Solve", tooltip: "Start solver", accent: true, action: () => props.onSimAction?.("run") },
         { id: "pause", icon: <Pause size={20} />, label: "Pause", tooltip: "Pause solver", disabled: !props.solverRunning, action: () => props.onSimAction?.("pause") },
         { id: "stop", icon: <Square size={20} />, label: "Stop", tooltip: "Stop solver", disabled: !props.solverRunning, action: () => props.onSimAction?.("stop") },
@@ -74,8 +74,8 @@ function buildGroups(props: RibbonBarProps): RibbonGroup[] {
       id: "results",
       title: "Results",
       actions: [
-        { id: "plot", icon: <BarChart3 size={20} />, label: "Plot", tooltip: "Open scalar plot" },
-        { id: "snapshot", icon: <Camera size={20} />, label: "Capture", tooltip: "Take snapshot" },
+        { id: "plot", icon: <BarChart3 size={20} />, label: "Plot", tooltip: "Open scalar plot", disabled: true },
+        { id: "snapshot", icon: <Camera size={20} />, label: "Capture", tooltip: "Take snapshot", disabled: true },
         { id: "exportvtk", icon: <Download size={20} />, label: "Export", tooltip: "Export VTK", action: props.onExport },
       ],
     },
@@ -87,7 +87,7 @@ function buildGroups(props: RibbonBarProps): RibbonGroup[] {
         { id: "2d", icon: <Columns2 size={20} />, label: "2D", tooltip: "2D view", shortcut: "2", active: props.viewMode === "2D", action: () => props.onViewChange?.("2D") },
         { id: "mesh-view", icon: <Grid3X3 size={20} />, label: "Mesh", tooltip: "Mesh view", shortcut: "3", active: props.viewMode === "Mesh", disabled: !props.isFemBackend, action: () => props.onViewChange?.("Mesh") },
         { id: "sidebar", icon: <PanelRight size={20} />, label: "Panel", tooltip: "Toggle sidebar", shortcut: "Ctrl+B", active: props.sidebarVisible, action: props.onSidebarToggle },
-        { id: "eye", icon: <Eye size={20} />, label: "Focus", tooltip: "Focus mode" },
+        { id: "eye", icon: <Eye size={20} />, label: "Focus", tooltip: "Focus mode", disabled: true },
       ],
     },
   ];

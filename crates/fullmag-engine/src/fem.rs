@@ -1,5 +1,5 @@
 use crate::{
-    add, cross, dot, norm, normalized, scale, sub, CellSize, EffectiveFieldObservables,
+    add, cross, dot, norm, normalized, scale, sub, AbmHistory, CellSize, EffectiveFieldObservables,
     EffectiveFieldTerms, EngineError, ExchangeLlgProblem, GridShape, LlgConfig, MaterialParameters,
     Result, StepReport, TimeIntegrator, Vector3, MU0,
 };
@@ -158,6 +158,10 @@ impl MeshTopology {
 pub struct FemLlgState {
     magnetization: Vec<Vector3>,
     pub time_seconds: f64,
+    /// FSAL cache for RK45 (Dormand-Prince): stores k7 from previous accepted step.
+    k_fsal: Option<Vec<Vector3>>,
+    /// History buffer for ABM3 predictor-corrector.
+    abm_history: AbmHistory,
 }
 
 impl FemLlgState {
@@ -176,6 +180,8 @@ impl FemLlgState {
         Ok(Self {
             magnetization,
             time_seconds: 0.0,
+            k_fsal: None,
+            abm_history: AbmHistory::new(),
         })
     }
 
@@ -245,10 +251,10 @@ impl FemLlgProblem {
 
         match self.dynamics.integrator {
             TimeIntegrator::Heun => self.heun_step(state, dt),
-            other => Err(EngineError::new(format!(
-                "FEM solver currently only supports Heun integrator, got {:?}",
-                other
-            ))),
+            TimeIntegrator::RK4 => self.rk4_step(state, dt),
+            TimeIntegrator::RK23 => self.rk23_step(state, dt),
+            TimeIntegrator::RK45 => self.rk45_step(state, dt),
+            TimeIntegrator::ABM3 => self.abm3_step(state, dt),
         }
     }
 
@@ -283,6 +289,372 @@ impl FemLlgProblem {
             max_demag_field_amplitude: observables.max_demag_field_amplitude,
             max_rhs_amplitude: observables.max_rhs_amplitude,
         })
+    }
+
+    // -----------------------------------------------------------------------
+    // RK4 (Classical Runge-Kutta, 4th order, fixed step)
+    // -----------------------------------------------------------------------
+    fn rk4_step(&self, state: &mut FemLlgState, dt: f64) -> Result<StepReport> {
+        let n = state.magnetization.len();
+        let m0 = state.magnetization.clone();
+
+        let k1 = self.llg_rhs_from_vectors(&m0)?;
+
+        let delta: Vec<Vector3> = (0..n).map(|i| scale(k1[i], 0.5 * dt)).collect();
+        let m1: Vec<Vector3> = m0.iter().zip(delta.iter())
+            .map(|(m, d)| normalized(add(*m, *d)))
+            .collect::<Result<Vec<_>>>()?;
+        let k2 = self.llg_rhs_from_vectors(&m1)?;
+
+        let delta: Vec<Vector3> = (0..n).map(|i| scale(k2[i], 0.5 * dt)).collect();
+        let m2: Vec<Vector3> = m0.iter().zip(delta.iter())
+            .map(|(m, d)| normalized(add(*m, *d)))
+            .collect::<Result<Vec<_>>>()?;
+        let k3 = self.llg_rhs_from_vectors(&m2)?;
+
+        let delta: Vec<Vector3> = (0..n).map(|i| scale(k3[i], dt)).collect();
+        let m3: Vec<Vector3> = m0.iter().zip(delta.iter())
+            .map(|(m, d)| normalized(add(*m, *d)))
+            .collect::<Result<Vec<_>>>()?;
+        let k4 = self.llg_rhs_from_vectors(&m3)?;
+
+        let delta: Vec<Vector3> = (0..n)
+            .map(|i| {
+                scale(
+                    add(add(k1[i], scale(k2[i], 2.0)), add(scale(k3[i], 2.0), k4[i])),
+                    dt / 6.0,
+                )
+            })
+            .collect();
+        state.magnetization = m0.iter().zip(delta.iter())
+            .map(|(m, d)| normalized(add(*m, *d)))
+            .collect::<Result<Vec<_>>>()?;
+        state.time_seconds += dt;
+
+        let observables = self.observe_vectors(state.magnetization())?;
+        Ok(StepReport {
+            time_seconds: state.time_seconds,
+            dt_used: dt,
+            step_rejected: false,
+            exchange_energy_joules: observables.exchange_energy_joules,
+            demag_energy_joules: observables.demag_energy_joules,
+            external_energy_joules: observables.external_energy_joules,
+            total_energy_joules: observables.total_energy_joules,
+            max_effective_field_amplitude: observables.max_effective_field_amplitude,
+            max_demag_field_amplitude: observables.max_demag_field_amplitude,
+            max_rhs_amplitude: observables.max_rhs_amplitude,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // RK23 (Bogacki-Shampine 2(3), adaptive)
+    // -----------------------------------------------------------------------
+    fn rk23_step(&self, state: &mut FemLlgState, dt: f64) -> Result<StepReport> {
+        let cfg = self.dynamics.adaptive;
+        let mut dt = dt.min(cfg.dt_max).max(cfg.dt_min);
+        let n = state.magnetization.len();
+        let m0 = state.magnetization.clone();
+
+        loop {
+            let k1 = self.llg_rhs_from_vectors(&m0)?;
+
+            let delta: Vec<Vector3> = (0..n).map(|i| scale(k1[i], 0.5 * dt)).collect();
+            let m1: Vec<Vector3> = m0.iter().zip(delta.iter())
+                .map(|(m, d)| normalized(add(*m, *d)))
+                .collect::<Result<Vec<_>>>()?;
+            let k2 = self.llg_rhs_from_vectors(&m1)?;
+
+            let delta: Vec<Vector3> = (0..n).map(|i| scale(k2[i], 0.75 * dt)).collect();
+            let m2: Vec<Vector3> = m0.iter().zip(delta.iter())
+                .map(|(m, d)| normalized(add(*m, *d)))
+                .collect::<Result<Vec<_>>>()?;
+            let k3 = self.llg_rhs_from_vectors(&m2)?;
+
+            // 3rd-order solution
+            let delta3: Vec<Vector3> = (0..n)
+                .map(|i| {
+                    scale(
+                        add(
+                            add(scale(k1[i], 2.0 / 9.0), scale(k2[i], 1.0 / 3.0)),
+                            scale(k3[i], 4.0 / 9.0),
+                        ),
+                        dt,
+                    )
+                })
+                .collect();
+            let y3: Vec<Vector3> = m0.iter().zip(delta3.iter())
+                .map(|(m, d)| normalized(add(*m, *d)))
+                .collect::<Result<Vec<_>>>()?;
+
+            let k4 = self.llg_rhs_from_vectors(&y3)?;
+
+            let error = Self::max_error_norm_fem(
+                &[(&k1, -5.0 / 72.0), (&k2, 1.0 / 12.0), (&k3, 1.0 / 9.0), (&k4, -1.0 / 8.0)],
+                dt, n,
+            );
+
+            if error <= cfg.max_error || dt <= cfg.dt_min {
+                state.magnetization = y3;
+                state.time_seconds += dt;
+                let observables = self.observe_vectors(state.magnetization())?;
+                return Ok(StepReport {
+                    time_seconds: state.time_seconds,
+                    dt_used: dt,
+                    step_rejected: false,
+                    exchange_energy_joules: observables.exchange_energy_joules,
+                    demag_energy_joules: observables.demag_energy_joules,
+                    external_energy_joules: observables.external_energy_joules,
+                    total_energy_joules: observables.total_energy_joules,
+                    max_effective_field_amplitude: observables.max_effective_field_amplitude,
+                    max_demag_field_amplitude: observables.max_demag_field_amplitude,
+                    max_rhs_amplitude: observables.max_rhs_amplitude,
+                });
+            }
+
+            let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(1.0 / 3.0);
+            dt = dt_new.max(cfg.dt_min).min(cfg.dt_max);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // RK45 (Dormand-Prince 4(5), adaptive) — mumax3 default
+    // -----------------------------------------------------------------------
+    fn rk45_step(&self, state: &mut FemLlgState, dt: f64) -> Result<StepReport> {
+        let cfg = self.dynamics.adaptive;
+        let mut dt = dt.min(cfg.dt_max).max(cfg.dt_min);
+        let n = state.magnetization.len();
+        let m0 = state.magnetization.clone();
+
+        // Dormand-Prince coefficients
+        const A21: f64 = 1.0 / 5.0;
+        const A31: f64 = 3.0 / 40.0;
+        const A32: f64 = 9.0 / 40.0;
+        const A41: f64 = 44.0 / 45.0;
+        const A42: f64 = -56.0 / 15.0;
+        const A43: f64 = 32.0 / 9.0;
+        const A51: f64 = 19372.0 / 6561.0;
+        const A52: f64 = -25360.0 / 2187.0;
+        const A53: f64 = 64448.0 / 6561.0;
+        const A54: f64 = -212.0 / 729.0;
+        const A61: f64 = 9017.0 / 3168.0;
+        const A62: f64 = -355.0 / 33.0;
+        const A63: f64 = 46732.0 / 5247.0;
+        const A64: f64 = 49.0 / 176.0;
+        const A65: f64 = -5103.0 / 18656.0;
+        const B1: f64 = 35.0 / 384.0;
+        const B3: f64 = 500.0 / 1113.0;
+        const B4: f64 = 125.0 / 192.0;
+        const B5: f64 = -2187.0 / 6784.0;
+        const B6: f64 = 11.0 / 84.0;
+        const E1: f64 = 71.0 / 57600.0;
+        const E3: f64 = -71.0 / 16695.0;
+        const E4: f64 = 71.0 / 1920.0;
+        const E5: f64 = -17253.0 / 339200.0;
+        const E6: f64 = 22.0 / 525.0;
+        const E7: f64 = -1.0 / 40.0;
+
+        loop {
+            // Stage 1 — FSAL: reuse k7 from previous accepted step if available
+            let k1 = if let Some(fsal) = state.k_fsal.take() {
+                fsal
+            } else {
+                self.llg_rhs_from_vectors(&m0)?
+            };
+
+            // Stage 2
+            let delta: Vec<Vector3> = (0..n).map(|i| scale(k1[i], A21 * dt)).collect();
+            let ms: Vec<Vector3> = m0.iter().zip(delta.iter())
+                .map(|(m, d)| normalized(add(*m, *d))).collect::<Result<Vec<_>>>()?;
+            let k2 = self.llg_rhs_from_vectors(&ms)?;
+
+            // Stage 3
+            let delta: Vec<Vector3> = (0..n)
+                .map(|i| scale(add(scale(k1[i], A31), scale(k2[i], A32)), dt)).collect();
+            let ms: Vec<Vector3> = m0.iter().zip(delta.iter())
+                .map(|(m, d)| normalized(add(*m, *d))).collect::<Result<Vec<_>>>()?;
+            let k3 = self.llg_rhs_from_vectors(&ms)?;
+
+            // Stage 4
+            let delta: Vec<Vector3> = (0..n)
+                .map(|i| scale(add(add(scale(k1[i], A41), scale(k2[i], A42)), scale(k3[i], A43)), dt))
+                .collect();
+            let ms: Vec<Vector3> = m0.iter().zip(delta.iter())
+                .map(|(m, d)| normalized(add(*m, *d))).collect::<Result<Vec<_>>>()?;
+            let k4 = self.llg_rhs_from_vectors(&ms)?;
+
+            // Stage 5
+            let delta: Vec<Vector3> = (0..n)
+                .map(|i| scale(
+                    add(add(scale(k1[i], A51), scale(k2[i], A52)),
+                        add(scale(k3[i], A53), scale(k4[i], A54))),
+                    dt))
+                .collect();
+            let ms: Vec<Vector3> = m0.iter().zip(delta.iter())
+                .map(|(m, d)| normalized(add(*m, *d))).collect::<Result<Vec<_>>>()?;
+            let k5 = self.llg_rhs_from_vectors(&ms)?;
+
+            // Stage 6
+            let delta: Vec<Vector3> = (0..n)
+                .map(|i| scale(
+                    add(add(add(scale(k1[i], A61), scale(k2[i], A62)), scale(k3[i], A63)),
+                        add(scale(k4[i], A64), scale(k5[i], A65))),
+                    dt))
+                .collect();
+            let ms: Vec<Vector3> = m0.iter().zip(delta.iter())
+                .map(|(m, d)| normalized(add(*m, *d))).collect::<Result<Vec<_>>>()?;
+            let k6 = self.llg_rhs_from_vectors(&ms)?;
+
+            // 5th-order solution
+            let delta5: Vec<Vector3> = (0..n)
+                .map(|i| scale(
+                    add(add(add(scale(k1[i], B1), scale(k3[i], B3)), scale(k4[i], B4)),
+                        add(scale(k5[i], B5), scale(k6[i], B6))),
+                    dt))
+                .collect();
+            let y5: Vec<Vector3> = m0.iter().zip(delta5.iter())
+                .map(|(m, d)| normalized(add(*m, *d))).collect::<Result<Vec<_>>>()?;
+
+            // k7 for error estimate (FSAL)
+            let k7 = self.llg_rhs_from_vectors(&y5)?;
+
+            let error = Self::max_error_norm_fem(
+                &[(&k1, E1), (&k3, E3), (&k4, E4), (&k5, E5), (&k6, E6), (&k7, E7)],
+                dt, n,
+            );
+
+            if error <= cfg.max_error || dt <= cfg.dt_min {
+                state.magnetization = y5;
+                state.time_seconds += dt;
+                state.k_fsal = Some(k7);
+                let observables = self.observe_vectors(state.magnetization())?;
+                return Ok(StepReport {
+                    time_seconds: state.time_seconds,
+                    dt_used: dt,
+                    step_rejected: false,
+                    exchange_energy_joules: observables.exchange_energy_joules,
+                    demag_energy_joules: observables.demag_energy_joules,
+                    external_energy_joules: observables.external_energy_joules,
+                    total_energy_joules: observables.total_energy_joules,
+                    max_effective_field_amplitude: observables.max_effective_field_amplitude,
+                    max_demag_field_amplitude: observables.max_demag_field_amplitude,
+                    max_rhs_amplitude: observables.max_rhs_amplitude,
+                });
+            }
+
+            let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(0.2);
+            dt = dt_new.max(cfg.dt_min).min(cfg.dt_max);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ABM3 (Adams–Bashforth–Moulton 3rd order, multi-step)
+    //
+    // After 3 startup steps (Heun), uses only 1 RHS evaluation per step.
+    // -----------------------------------------------------------------------
+    fn abm3_step(&self, state: &mut FemLlgState, dt: f64) -> Result<StepReport> {
+        let n = state.magnetization.len();
+
+        // During startup, fall back to Heun to build history
+        if !state.abm_history.is_ready() {
+            let m0 = state.magnetization.clone();
+            let k1 = self.llg_rhs_from_vectors(&m0)?;
+            let predicted: Vec<Vector3> = m0.iter().zip(k1.iter())
+                .map(|(m, rhs)| normalized(add(*m, scale(*rhs, dt))))
+                .collect::<Result<Vec<_>>>()?;
+            let k2 = self.llg_rhs_from_vectors(&predicted)?;
+            let corrected: Vec<Vector3> = m0.iter().zip(k1.iter().zip(k2.iter()))
+                .map(|(m, (rhs1, rhs2))| normalized(add(*m, scale(add(*rhs1, *rhs2), 0.5 * dt))))
+                .collect::<Result<Vec<_>>>()?;
+
+            state.magnetization = corrected;
+            state.time_seconds += dt;
+
+            let f_accepted = self.llg_rhs_from_vectors(state.magnetization())?;
+            state.abm_history.push(f_accepted, dt);
+
+            let observables = self.observe_vectors(state.magnetization())?;
+            return Ok(StepReport {
+                time_seconds: state.time_seconds,
+                dt_used: dt,
+                step_rejected: false,
+                exchange_energy_joules: observables.exchange_energy_joules,
+                demag_energy_joules: observables.demag_energy_joules,
+                external_energy_joules: observables.external_energy_joules,
+                total_energy_joules: observables.total_energy_joules,
+                max_effective_field_amplitude: observables.max_effective_field_amplitude,
+                max_demag_field_amplitude: observables.max_demag_field_amplitude,
+                max_rhs_amplitude: observables.max_rhs_amplitude,
+            });
+        }
+
+        // --- Full ABM3 step ---
+        let m0 = state.magnetization.clone();
+        let f_n = state.abm_history.f_n().unwrap();
+        let f_n1 = state.abm_history.f_n_minus_1().unwrap();
+        let f_n2 = state.abm_history.f_n_minus_2().unwrap();
+
+        // Adams–Bashforth predictor (3rd order, explicit)
+        let m_predicted: Vec<Vector3> = (0..n)
+            .map(|i| {
+                let pred = add(
+                    add(scale(f_n[i], 23.0 / 12.0), scale(f_n1[i], -16.0 / 12.0)),
+                    scale(f_n2[i], 5.0 / 12.0),
+                );
+                normalized(add(m0[i], scale(pred, dt)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Evaluate RHS at predicted point — this is the ONLY new RHS eval
+        let f_star = self.llg_rhs_from_vectors(&m_predicted)?;
+
+        // Adams–Moulton corrector (3rd order, implicit one-step)
+        let m_corrected: Vec<Vector3> = (0..n)
+            .map(|i| {
+                let corr = add(
+                    add(scale(f_star[i], 5.0 / 12.0), scale(f_n[i], 8.0 / 12.0)),
+                    scale(f_n1[i], -1.0 / 12.0),
+                );
+                normalized(add(m0[i], scale(corr, dt)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        state.magnetization = m_corrected;
+        state.time_seconds += dt;
+        state.abm_history.push(f_star, dt);
+
+        let observables = self.observe_vectors(state.magnetization())?;
+        Ok(StepReport {
+            time_seconds: state.time_seconds,
+            dt_used: dt,
+            step_rejected: false,
+            exchange_energy_joules: observables.exchange_energy_joules,
+            demag_energy_joules: observables.demag_energy_joules,
+            external_energy_joules: observables.external_energy_joules,
+            total_energy_joules: observables.total_energy_joules,
+            max_effective_field_amplitude: observables.max_effective_field_amplitude,
+            max_demag_field_amplitude: observables.max_demag_field_amplitude,
+            max_rhs_amplitude: observables.max_rhs_amplitude,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Error norm helper for adaptive FEM solvers
+    // -----------------------------------------------------------------------
+    fn max_error_norm_fem(weighted_stages: &[(&Vec<Vector3>, f64)], dt: f64, n: usize) -> f64 {
+        let mut max_err = 0.0f64;
+        for i in 0..n {
+            let mut err = [0.0, 0.0, 0.0];
+            for &(k, w) in weighted_stages {
+                err[0] += w * k[i][0];
+                err[1] += w * k[i][1];
+                err[2] += w * k[i][2];
+            }
+            err[0] *= dt;
+            err[1] *= dt;
+            err[2] *= dt;
+            max_err = max_err.max(norm(err));
+        }
+        max_err
     }
 
     fn ensure_state_matches_topology(&self, state: &FemLlgState) -> Result<()> {
@@ -917,7 +1289,10 @@ fn cell_index_range_for_tet(
     }
 }
 
-pub(crate) fn barycentric_coordinates_tet(point: Vector3, vertices: [Vector3; 4]) -> Option<[f64; 4]> {
+pub(crate) fn barycentric_coordinates_tet(
+    point: Vector3,
+    vertices: [Vector3; 4],
+) -> Option<[f64; 4]> {
     let d1 = sub(vertices[1], vertices[0]);
     let d2 = sub(vertices[2], vertices[0]);
     let d3 = sub(vertices[3], vertices[0]);

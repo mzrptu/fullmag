@@ -143,6 +143,7 @@ export interface PreviewConfig {
   component: string;
   layer: number;
   all_layers: boolean;
+  every_n: number;
   x_chosen_size: number;
   y_chosen_size: number;
   auto_scale_enabled: boolean;
@@ -257,6 +258,7 @@ function normalizeSessionState(raw: any): SessionState {
           component: String(rawPreviewConfig.component ?? "3D"),
           layer: Number(rawPreviewConfig.layer ?? 0),
           all_layers: Boolean(rawPreviewConfig.all_layers),
+          every_n: Number(rawPreviewConfig.every_n ?? 10),
           x_chosen_size: Number(rawPreviewConfig.x_chosen_size ?? 0),
           y_chosen_size: Number(rawPreviewConfig.y_chosen_size ?? 0),
           auto_scale_enabled: Boolean(rawPreviewConfig.auto_scale_enabled ?? true),

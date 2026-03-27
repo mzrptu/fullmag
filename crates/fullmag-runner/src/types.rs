@@ -64,10 +64,16 @@ pub struct LivePreviewRequest {
     pub component: String,
     pub layer: u32,
     pub all_layers: bool,
+    #[serde(default = "default_preview_every_n")]
+    pub every_n: u32,
     pub x_chosen_size: u32,
     pub y_chosen_size: u32,
     pub auto_scale_enabled: bool,
     pub max_points: u32,
+}
+
+const fn default_preview_every_n() -> u32 {
+    10
 }
 
 impl Default for LivePreviewRequest {
@@ -78,6 +84,7 @@ impl Default for LivePreviewRequest {
             component: "3D".to_string(),
             layer: 0,
             all_layers: false,
+            every_n: default_preview_every_n(),
             x_chosen_size: 0,
             y_chosen_size: 0,
             auto_scale_enabled: true,

@@ -16,9 +16,9 @@ use crate::preview::{
     build_grid_preview_field_from_flat_plan, normalize_quantity_id, plan_grid_preview,
 };
 #[cfg(feature = "cuda")]
-use crate::types::{LivePreviewField, LivePreviewRequest, RunError};
-#[cfg(feature = "cuda")]
 use crate::types::StepStats;
+#[cfg(feature = "cuda")]
+use crate::types::{LivePreviewField, LivePreviewRequest, RunError};
 
 #[cfg(feature = "cuda")]
 use std::ffi::CStr;
@@ -163,10 +163,10 @@ impl NativeFdmBackend {
                 .map_or(0, |mask| mask.len() as u64),
             initial_magnetization_xyz: m_flat.as_ptr(),
             initial_magnetization_len: m_flat.len() as u64,
-            adaptive_max_error: 0.0,   // 0 → use backend default 1e-5
-            adaptive_dt_min: 0.0,      // 0 → use backend default 1e-18
-            adaptive_dt_max: 0.0,      // 0 → use backend default 1e-10
-            adaptive_headroom: 0.0,    // 0 → use backend default 0.8
+            adaptive_max_error: 0.0, // 0 → use backend default 1e-5
+            adaptive_dt_min: 0.0,    // 0 → use backend default 1e-18
+            adaptive_dt_max: 0.0,    // 0 → use backend default 1e-10
+            adaptive_headroom: 0.0,  // 0 → use backend default 0.8
         };
 
         let handle = unsafe { ffi::fullmag_fdm_backend_create(&plan_desc) };

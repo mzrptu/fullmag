@@ -28,12 +28,7 @@ pub(crate) fn execute_reference_fem(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
-    execute_reference_fem_impl(
-        plan,
-        until_seconds,
-        outputs,
-        None::<LiveStepConsumer<'_>>,
-    )
+    execute_reference_fem_impl(plan, until_seconds, outputs, None::<LiveStepConsumer<'_>>)
 }
 
 pub(crate) fn execute_reference_fem_with_callback(
@@ -204,9 +199,10 @@ fn execute_reference_fem_impl(
             let preview_due = preview_request
                 .as_ref()
                 .map(|request| {
+                    let preview_emit_every = u64::from(request.every_n.max(1));
                     last_preview_revision != Some(request.revision)
                         || step_count <= 1
-                        || step_count % emit_every == 0
+                        || step_count % preview_emit_every == 0
                 })
                 .unwrap_or(false);
             let magnetization = if live.preview_request.is_none() && step_count % emit_every == 0 {

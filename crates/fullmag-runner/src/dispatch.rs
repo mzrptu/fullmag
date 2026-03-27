@@ -527,9 +527,10 @@ fn execute_cuda_fdm_impl(
             let preview_due = preview_request
                 .as_ref()
                 .map(|request| {
+                    let preview_emit_every = u64::from(request.every_n.max(1));
                     last_preview_revision != Some(request.revision)
                         || stats.step <= 1
-                        || stats.step % emit_every == 0
+                        || stats.step % preview_emit_every == 0
                 })
                 .unwrap_or(false);
             let magnetization = if live.preview_request.is_none() && stats.step % emit_every == 0 {
@@ -672,9 +673,10 @@ fn execute_native_fem_impl(
             let preview_due = preview_request
                 .as_ref()
                 .map(|request| {
+                    let preview_emit_every = u64::from(request.every_n.max(1));
                     last_preview_revision != Some(request.revision)
                         || stats.step <= 1
-                        || stats.step % emit_every == 0
+                        || stats.step % preview_emit_every == 0
                 })
                 .unwrap_or(false);
             let magnetization = if live.preview_request.is_none() && stats.step % emit_every == 0 {

@@ -1,7 +1,10 @@
 pub mod fem;
 pub mod fem_afem_loop;
+pub mod fem_edge_topology;
 pub mod fem_error_estimator;
 pub mod fem_face_topology;
+pub mod fem_goal_estimator;
+pub mod fem_hcurl_estimator;
 pub mod fem_size_field;
 pub mod fem_solution_transfer;
 pub mod multilayer;
@@ -560,7 +563,7 @@ pub struct AbmHistory {
 }
 
 impl AbmHistory {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             f_n: None,
             f_n_minus_1: None,
@@ -570,15 +573,27 @@ impl AbmHistory {
         }
     }
 
-    fn is_ready(&self) -> bool {
+    pub(crate) fn is_ready(&self) -> bool {
         self.startup_steps >= 3
             && self.f_n.is_some()
             && self.f_n_minus_1.is_some()
             && self.f_n_minus_2.is_some()
     }
 
+    pub(crate) fn f_n(&self) -> Option<&[Vector3]> {
+        self.f_n.as_deref()
+    }
+
+    pub(crate) fn f_n_minus_1(&self) -> Option<&[Vector3]> {
+        self.f_n_minus_1.as_deref()
+    }
+
+    pub(crate) fn f_n_minus_2(&self) -> Option<&[Vector3]> {
+        self.f_n_minus_2.as_deref()
+    }
+
     /// Push a new RHS evaluation, rotating the history buffer.
-    fn push(&mut self, f: Vec<Vector3>, dt: f64) {
+    pub(crate) fn push(&mut self, f: Vec<Vector3>, dt: f64) {
         // Check if dt has changed significantly — if so, restart.
         if self.last_dt > 0.0 && (dt - self.last_dt).abs() / self.last_dt > 0.1 {
             self.restart();
@@ -1286,8 +1301,7 @@ impl ExchangeLlgProblem {
 
             let k2 = self.llg_rhs_from_vectors_ws(&predicted, ws);
             let corrected = {
-                let compute =
-                    |i: usize| normalized(add(m0[i], scale(add(k1[i], k2[i]), 0.5 * dt)));
+                let compute = |i: usize| normalized(add(m0[i], scale(add(k1[i], k2[i]), 0.5 * dt)));
                 #[cfg(feature = "parallel")]
                 {
                     (0..n)

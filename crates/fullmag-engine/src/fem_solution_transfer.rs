@@ -34,8 +34,16 @@ impl Aabb {
 
     fn expand(&self, margin: f64) -> Self {
         Self {
-            lo: [self.lo[0] - margin, self.lo[1] - margin, self.lo[2] - margin],
-            hi: [self.hi[0] + margin, self.hi[1] + margin, self.hi[2] + margin],
+            lo: [
+                self.lo[0] - margin,
+                self.lo[1] - margin,
+                self.lo[2] - margin,
+            ],
+            hi: [
+                self.hi[0] + margin,
+                self.hi[1] + margin,
+                self.hi[2] + margin,
+            ],
         }
     }
 
@@ -173,8 +181,7 @@ impl ElementBvh {
                     coords[elem[2] as usize],
                     coords[elem[3] as usize],
                 ];
-                barycentric_coordinates_tet(*point, vertices)
-                    .map(|bary| (*element_idx, bary))
+                barycentric_coordinates_tet(*point, vertices).map(|bary| (*element_idx, bary))
             }
             BvhNode::Internal { aabb, left, right } => {
                 if !aabb.contains_point(point) {
@@ -538,11 +545,7 @@ mod tests {
         // nearest to (5,5,5) among old nodes: node 0 = (0,0,0) dist^2=75
         // node 1 = (1,0,0) dist^2=66, node 2 = (0,1,0) dist^2=66, node 3 = (0,0,1) dist^2=66
         // Any of nodes 1, 2, 3 is valid — they're equidistant
-        assert!(
-            result.values[0] == 20.0
-                || result.values[0] == 30.0
-                || result.values[0] == 40.0
-        );
+        assert!(result.values[0] == 20.0 || result.values[0] == 30.0 || result.values[0] == 40.0);
     }
 
     #[test]
@@ -567,11 +570,7 @@ mod tests {
             [0, 3, 5, 6],
         ];
         let old_topo = make_topo(coords, elements);
-        let old_solution: Vec<f64> = old_topo
-            .coords
-            .iter()
-            .map(|c| c[0] + c[1] + c[2])
-            .collect(); // linear function
+        let old_solution: Vec<f64> = old_topo.coords.iter().map(|c| c[0] + c[1] + c[2]).collect(); // linear function
 
         // Sample at various interior points
         let test_points = vec![
@@ -580,10 +579,7 @@ mod tests {
             [0.9, 0.9, 0.9],
             [0.25, 0.75, 0.5],
         ];
-        let new_topo = make_topo(
-            test_points.clone(),
-            vec![[0, 1, 2, 3]],
-        );
+        let new_topo = make_topo(test_points.clone(), vec![[0, 1, 2, 3]]);
 
         let result = transfer_h1_solution(&old_topo, &old_solution, &new_topo);
 

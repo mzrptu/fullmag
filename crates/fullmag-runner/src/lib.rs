@@ -23,8 +23,8 @@ mod types;
 
 // Public re-exports (unchanged API surface).
 pub use types::{
-    ExecutionProvenance, FemMeshPayload, LivePreviewField, LivePreviewRequest, RunError,
-    RunResult, RunStatus, RuntimeEngineInfo, StepStats, StepUpdate,
+    ExecutionProvenance, FemMeshPayload, LivePreviewField, LivePreviewRequest, RunError, RunResult,
+    RunStatus, RuntimeEngineInfo, StepStats, StepUpdate,
 };
 
 use fullmag_ir::{BackendPlanIR, FdmMultilayerPlanIR, FdmPlanIR, OutputIR, ProblemIR};

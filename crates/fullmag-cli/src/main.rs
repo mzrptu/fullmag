@@ -2087,7 +2087,8 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         &current_stage_artifact_dir,
                         field_every_n,
                         |update| {
-                            let adjusted = offset_step_update(&update, step_offset, time_offset, false);
+                            let adjusted =
+                                offset_step_update(&update, step_offset, time_offset, false);
                             let s = &adjusted.stats;
                             let print_step = s.step <= 10
                                 || (s.step <= 100 && s.step % 10 == 0)
@@ -2108,7 +2109,8 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                 );
                             }
 
-                            if adjusted.stats.step <= 1 || adjusted.stats.step % field_every_n == 0 {
+                            if adjusted.stats.step <= 1 || adjusted.stats.step % field_every_n == 0
+                            {
                                 live_workspace.update(|state| {
                                     state.session.status = "running".to_string();
                                     state.run = running_run_manifest_from_update(
@@ -2118,7 +2120,8 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                         &adjusted,
                                     );
                                     state.live_state = live_state_manifest_from_update(&adjusted);
-                                    state.latest_scalar_row = Some(scalar_row_from_update(&adjusted));
+                                    state.latest_scalar_row =
+                                        Some(scalar_row_from_update(&adjusted));
                                 });
                             }
                         },
@@ -2681,7 +2684,9 @@ fn next_current_live_command() -> Result<Option<SessionCommand>> {
 
 fn current_live_preview_config() -> Result<fullmag_runner::LivePreviewRequest> {
     current_live_api_client()
-        .get(format!("{LOCALHOST_API_BASE}/v1/live/current/preview/config"))
+        .get(format!(
+            "{LOCALHOST_API_BASE}/v1/live/current/preview/config"
+        ))
         .send()
         .context("failed to fetch current live preview config")?
         .error_for_status()

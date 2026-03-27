@@ -1,4 +1,4 @@
-//! CUDA-assisted runner for public multilayer / multi-body FDM problems.
+    //! CUDA-assisted runner for public multilayer / multi-body FDM problems.
 //!
 //! Current scope:
 //! - body-local exchange / local field observables on CUDA per layer,

@@ -137,11 +137,7 @@ pub(crate) fn plan_grid_preview(
         y_chosen_size: requested_y as u32,
         applied_x_chosen_size: applied_x as u32,
         applied_y_chosen_size: applied_y as u32,
-        applied_layer_stride: if request.all_layers {
-            full_z as u32
-        } else {
-            1
-        },
+        applied_layer_stride: if request.all_layers { full_z as u32 } else { 1 },
         z_origin: if request.all_layers {
             0
         } else {
@@ -152,10 +148,7 @@ pub(crate) fn plan_grid_preview(
     }
 }
 
-pub(crate) fn resample_grid_vectors(
-    values: &[[f64; 3]],
-    plan: &GridPreviewPlan,
-) -> Vec<[f64; 3]> {
+pub(crate) fn resample_grid_vectors(values: &[[f64; 3]], plan: &GridPreviewPlan) -> Vec<[f64; 3]> {
     let [full_x, full_y, full_z] = plan.original_grid.map(|value| value.max(1) as usize);
     let [preview_x, preview_y, preview_z] = plan.preview_grid.map(|value| value.max(1) as usize);
     let z_stride = plan.applied_layer_stride.max(1) as usize;
@@ -163,7 +156,9 @@ pub(crate) fn resample_grid_vectors(
     let mut out = Vec::with_capacity(preview_x * preview_y * preview_z);
     for pz in 0..preview_z {
         let z_start = (z_origin + pz * z_stride).min(full_z.saturating_sub(1));
-        let z_end = (z_origin + (pz + 1) * z_stride).min(full_z).max(z_start + 1);
+        let z_end = (z_origin + (pz + 1) * z_stride)
+            .min(full_z)
+            .max(z_start + 1);
         for py in 0..preview_y {
             let y_start = py * full_y / preview_y;
             let y_end = ((py + 1) * full_y / preview_y).max(y_start + 1).min(full_y);

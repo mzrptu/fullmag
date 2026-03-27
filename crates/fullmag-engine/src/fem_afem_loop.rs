@@ -11,8 +11,7 @@ use crate::fem_error_estimator::{
 };
 use crate::fem_face_topology::FaceTopology;
 use crate::fem_size_field::{
-    compute_continuous_size_field, element_to_nodal_size_field, SizeField,
-    SizeFieldConfig,
+    compute_continuous_size_field, element_to_nodal_size_field, SizeField, SizeFieldConfig,
 };
 use crate::Result;
 
@@ -221,11 +220,7 @@ pub fn afem_step(
     let indicators = compute_h1_error_indicators(&params)?;
 
     // Check convergence
-    let stop_reason = history.record_and_check(
-        indicators.eta_global,
-        topo.n_elements,
-        config,
-    );
+    let stop_reason = history.record_and_check(indicators.eta_global, topo.n_elements, config);
 
     let n_elem = topo.n_elements;
 
@@ -392,7 +387,7 @@ mod tests {
         };
         let mut history = AfemHistory::new();
 
-        let result = afem_step(&topo, &solution, &nu, &source, &config, &mut history);
+        let result = afem_step(&topo, &solution, &nu, &source, &config, &mut history).unwrap();
 
         assert_eq!(result.stop_reason, StopReason::Continue);
         assert_eq!(result.iteration, 0);
@@ -422,7 +417,7 @@ mod tests {
         };
         let mut history = AfemHistory::new();
 
-        let result = afem_step(&topo, &solution, &nu, &source, &config, &mut history);
+        let result = afem_step(&topo, &solution, &nu, &source, &config, &mut history).unwrap();
 
         assert_eq!(result.stop_reason, StopReason::Converged);
     }
@@ -443,7 +438,7 @@ mod tests {
         for _ in 0..3 {
             history.record_and_check(1.0, 100, &config);
         }
-        let result = afem_step(&topo, &solution, &nu, &source, &config, &mut history);
+        let result = afem_step(&topo, &solution, &nu, &source, &config, &mut history).unwrap();
 
         assert_eq!(result.stop_reason, StopReason::MaxIterations);
     }
@@ -460,7 +455,7 @@ mod tests {
         };
         let mut history = AfemHistory::new();
 
-        let result = afem_step(&topo, &solution, &nu, &source, &config, &mut history);
+        let result = afem_step(&topo, &solution, &nu, &source, &config, &mut history).unwrap();
 
         assert_eq!(result.stop_reason, StopReason::MaxElements);
     }
@@ -512,7 +507,7 @@ mod tests {
         };
         let mut history = AfemHistory::new();
 
-        let result = afem_step(&topo, &solution, &nu, &source, &config, &mut history);
+        let result = afem_step(&topo, &solution, &nu, &source, &config, &mut history).unwrap();
 
         for &h in &result.nodal_h {
             assert!(

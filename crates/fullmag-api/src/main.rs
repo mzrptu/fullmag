@@ -235,6 +235,12 @@ struct PreviewXChosenSizeRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct PreviewEveryNRequest {
+    #[serde(rename = "everyN")]
+    every_n: usize,
+}
+
+#[derive(Debug, Deserialize)]
 struct PreviewYChosenSizeRequest {
     #[serde(rename = "yChosenSize")]
     y_chosen_size: usize,
@@ -419,6 +425,10 @@ async fn main() {
         .route(
             "/v1/live/current/preview/XChosenSize",
             post(set_current_preview_x_chosen_size),
+        )
+        .route(
+            "/v1/live/current/preview/everyN",
+            post(set_current_preview_every_n),
         )
         .route(
             "/v1/live/current/preview/YChosenSize",
@@ -626,6 +636,16 @@ async fn set_current_preview_x_chosen_size(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     mutate_current_preview(&state, move |config| {
         config.x_chosen_size = req.x_chosen_size as u32;
+    })
+    .await
+}
+
+async fn set_current_preview_every_n(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PreviewEveryNRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    mutate_current_preview(&state, move |config| {
+        config.every_n = req.every_n.clamp(1, u32::MAX as usize) as u32;
     })
     .await
 }
@@ -1081,10 +1101,8 @@ fn build_preview_state(
 
     let x_possible_sizes = candidate_preview_sizes(full_x);
     let y_possible_sizes = candidate_preview_sizes(full_y);
-    let requested_x =
-        choose_preview_size(config.x_chosen_size as usize, &x_possible_sizes, full_x);
-    let requested_y =
-        choose_preview_size(config.y_chosen_size as usize, &y_possible_sizes, full_y);
+    let requested_x = choose_preview_size(config.x_chosen_size as usize, &x_possible_sizes, full_x);
+    let requested_y = choose_preview_size(config.y_chosen_size as usize, &y_possible_sizes, full_y);
 
     if component == "3D" {
         let mut applied_x = requested_x;
@@ -1117,13 +1135,7 @@ fn build_preview_state(
         let auto_downscale_message = auto_downscaled.then(|| {
             format!(
                 "Preview auto-scaled from {}x{}x{} to {}x{}x{} to stay within {} points",
-                full_x,
-                full_y,
-                full_z,
-                applied_x,
-                applied_y,
-                preview_z,
-                config.max_points
+                full_x, full_y, full_z, applied_x, applied_y, preview_z, config.max_points
             )
         });
         return Some(PreviewState {
@@ -1249,7 +1261,12 @@ fn build_preview_state_from_live_field(
         let mesh = current
             .fem_mesh
             .as_ref()
-            .or_else(|| current.live_state.as_ref().and_then(|state| state.latest_step.fem_mesh.as_ref()))?
+            .or_else(|| {
+                current
+                    .live_state
+                    .as_ref()
+                    .and_then(|state| state.latest_step.fem_mesh.as_ref())
+            })?
             .clone();
         let (min, max) = component_min_max(&vectors, component);
         return Some(PreviewState {
@@ -2137,12 +2154,7 @@ fn build_quantities(
         .and_then(|value| value.get("live_preview"))
         .and_then(|value| value.get("supported_quantities"))
         .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-        })
+        .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
         .unwrap_or_default();
     let dynamic_available = |quantity_id: &str| dynamic_supported.contains(&quantity_id);
     let scalar_available = |run_value: Option<f64>| {

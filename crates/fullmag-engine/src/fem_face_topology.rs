@@ -196,10 +196,7 @@ pub fn tet_diameter(coords: &[[f64; 3]], tet: &[u32; 4]) -> f64 {
     let mut max_len = 0.0_f64;
     for i in 0..4 {
         for j in (i + 1)..4 {
-            let d = sub(
-                coords[tet[i] as usize],
-                coords[tet[j] as usize],
-            );
+            let d = sub(coords[tet[i] as usize], coords[tet[j] as usize]);
             max_len = max_len.max(norm(d));
         }
     }
@@ -252,7 +249,7 @@ mod tests {
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0], // apex of tet 0 (above)
+            [0.0, 0.0, 1.0],  // apex of tet 0 (above)
             [0.0, 0.0, -1.0], // apex of tet 1 (below)
         ];
         let elements = vec![[0, 1, 2, 3], [0, 1, 2, 4]];

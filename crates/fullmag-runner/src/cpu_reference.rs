@@ -32,12 +32,7 @@ pub(crate) fn execute_reference_fdm(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_impl(
-        plan,
-        until_seconds,
-        outputs,
-        None::<LiveStepConsumer<'_>>,
-    )
+    execute_reference_fdm_impl(plan, until_seconds, outputs, None::<LiveStepConsumer<'_>>)
 }
 
 /// Execute FDM on CPU with a per-step callback for live streaming.
@@ -287,17 +282,18 @@ fn execute_reference_fdm_impl(
                 let preview_due = preview_request
                     .as_ref()
                     .map(|request| {
+                        let preview_emit_every = u64::from(request.every_n.max(1));
                         last_preview_revision != Some(request.revision)
                             || step_count <= 1
-                            || step_count % emit_every == 0
+                            || step_count % preview_emit_every == 0
                     })
                     .unwrap_or(false);
-                let magnetization = if live.preview_request.is_none() && step_count % emit_every == 0
-                {
-                    Some(flatten_vectors(&observables.magnetization))
-                } else {
-                    None
-                };
+                let magnetization =
+                    if live.preview_request.is_none() && step_count % emit_every == 0 {
+                        Some(flatten_vectors(&observables.magnetization))
+                    } else {
+                        None
+                    };
                 let preview_field = if preview_due {
                     let request = preview_request.as_ref().expect("checked preview_due");
                     last_preview_revision = Some(request.revision);

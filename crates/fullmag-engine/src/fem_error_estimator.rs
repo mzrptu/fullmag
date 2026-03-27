@@ -321,7 +321,11 @@ mod tests {
         .expect("indicators");
 
         for &j in &indicators.eta_jump_sq {
-            assert!(j < 1e-24, "jump should be zero for uniform gradient, got {}", j);
+            assert!(
+                j < 1e-24,
+                "jump should be zero for uniform gradient, got {}",
+                j
+            );
         }
     }
 
@@ -345,7 +349,11 @@ mod tests {
         .expect("indicators");
 
         let total_jump: f64 = indicators.eta_jump_sq.iter().sum();
-        assert!(total_jump > 0.0, "jump must be nonzero when ν differs, got {}", total_jump);
+        assert!(
+            total_jump > 0.0,
+            "jump must be nonzero when ν differs, got {}",
+            total_jump
+        );
     }
 
     #[test]

@@ -71,6 +71,9 @@ const SCALAR_FIELDS: Record<string, string> = {
   E_total: "e_total",
 };
 
+const PREVIEW_EVERY_N_DEFAULT = 10;
+const PREVIEW_EVERY_N_PRESETS = [1, 2, 5, 10, 25, 50, 100] as const;
+
 /* ── Helpers ───────────────────────────────────────────────── */
 
 function fmtSI(v: number, unit: string): string {
@@ -139,6 +142,10 @@ function fmtDuration(ms: number): string {
   if (ms < 60000) return `${(ms / 1000).toFixed(1)} s`;
   if (ms < 3600000) return `${(ms / 60000).toFixed(1)} min`;
   return `${(ms / 3600000).toFixed(2)} h`;
+}
+
+function fmtPreviewEveryN(n: number): string {
+  return n <= 1 ? "Every step" : `Every ${n} steps`;
 }
 
 function asVec3(value: unknown): [number, number, number] | null {
@@ -256,6 +263,449 @@ function DockTabButton({
     >
       {label}
     </button>
+  );
+}
+
+/* ── Viewport Bar (shared between FEM and FDM branches) ───── */
+
+interface ViewportBarProps {
+  isMeshWorkspaceView: boolean;
+  meshName: string | null;
+  effectiveFemMesh: FemLiveMesh | null;
+  meshRenderMode: RenderMode;
+  meshSelection: MeshSelectionSnapshot;
+  previewControlsActive: boolean;
+  requestedPreviewQuantity: string;
+  requestedPreviewComponent: string;
+  requestedPreviewEveryN: number;
+  requestedPreviewXChosenSize: number;
+  requestedPreviewYChosenSize: number;
+  requestedPreviewAutoScale: boolean;
+  requestedPreviewLayer: number;
+  requestedPreviewAllLayers: boolean;
+  previewBusy: boolean;
+  previewQuantityOptions: { value: string; label: string; disabled: boolean }[];
+  quantityOptions: { value: string; label: string; disabled: boolean }[];
+  previewEveryNOptions: number[];
+  preview: ReturnType<typeof useCurrentLiveStream>["state"] extends infer S
+    ? S extends { preview: infer P } ? P : null
+    : null;
+  effectiveViewMode: ViewportMode;
+  solverGrid: [number, number, number];
+  plane: SlicePlane;
+  sliceIndex: number;
+  maxSliceCount: number;
+  component: VectorComponent;
+  updatePreview: (path: string, payload?: Record<string, unknown>) => Promise<void>;
+  setSelectedQuantity: (q: string) => void;
+  setComponent: (c: VectorComponent) => void;
+  setPlane: (p: SlicePlane) => void;
+  setSliceIndex: (i: number) => void;
+}
+
+function ViewportBar(props: ViewportBarProps) {
+  const {
+    isMeshWorkspaceView, meshName, effectiveFemMesh, meshRenderMode, meshSelection,
+    previewControlsActive, requestedPreviewQuantity, requestedPreviewComponent,
+    requestedPreviewEveryN, requestedPreviewXChosenSize, requestedPreviewYChosenSize,
+    requestedPreviewAutoScale, requestedPreviewLayer, requestedPreviewAllLayers,
+    previewBusy, previewQuantityOptions, quantityOptions, previewEveryNOptions,
+    preview, effectiveViewMode, solverGrid, plane, sliceIndex, maxSliceCount, component,
+    updatePreview, setSelectedQuantity, setComponent, setPlane, setSliceIndex,
+  } = props;
+
+  return (
+    <div className={s.viewportBar}>
+      {isMeshWorkspaceView ? (
+        <>
+          <span className={s.viewportBarLabel}>Mesh</span>
+          <span className={s.viewportBarMetric}>{meshName ?? "boundary surface"}</span>
+          <span className={s.viewportBarSep} />
+          <span className={s.viewportBarMetric}>{effectiveFemMesh?.nodes.length.toLocaleString() ?? "0"} nodes</span>
+          <span className={s.viewportBarMetric}>{effectiveFemMesh?.elements.length.toLocaleString() ?? "0"} tets</span>
+          <span className={s.viewportBarMetric}>{effectiveFemMesh?.boundary_faces.length.toLocaleString() ?? "0"} faces</span>
+          <span className={s.viewportBarSep} />
+          <span className={s.viewportBarLabel}>Render</span>
+          <span className={s.viewportBarMetric}>
+            {meshRenderMode === "surface+edges" ? "surface+edges" : meshRenderMode}
+          </span>
+          {meshSelection.primaryFaceIndex != null && (
+            <>
+              <span className={s.viewportBarSep} />
+              <span className={s.viewportBarLabel}>Face</span>
+              <span className={s.viewportBarMetric}>#{meshSelection.primaryFaceIndex}</span>
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          <span className={s.viewportBarLabel}>Qty</span>
+          <select
+            className={s.viewportBarSelect}
+            value={requestedPreviewQuantity}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (previewControlsActive) {
+                void updatePreview("/quantity", { quantity: next });
+              } else {
+                setSelectedQuantity(next);
+              }
+            }}
+            disabled={previewBusy}
+          >
+            {((previewControlsActive ? previewQuantityOptions : quantityOptions).length
+              ? (previewControlsActive ? previewQuantityOptions : quantityOptions)
+              : [{ value: "m", label: "Magnetization", disabled: false }]).map((opt) => (
+              <option key={opt.value} value={opt.value} disabled={opt.disabled}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+
+          <span className={s.viewportBarSep} />
+          <span className={s.viewportBarLabel}>Comp</span>
+          {previewControlsActive ? (
+            <select
+              className={s.viewportBarSelect}
+              value={requestedPreviewComponent}
+              onChange={(e) => void updatePreview("/component", { component: e.target.value as PreviewComponent })}
+              disabled={previewBusy}
+            >
+              <option value="3D">3D</option>
+              <option value="x">x</option>
+              <option value="y">y</option>
+              <option value="z">z</option>
+            </select>
+          ) : (
+            <select
+              className={s.viewportBarSelect}
+              value={component}
+              onChange={(e) => setComponent(e.target.value as VectorComponent)}
+            >
+              <option value="magnitude">|v|</option>
+              <option value="x">x</option>
+              <option value="y">y</option>
+              <option value="z">z</option>
+            </select>
+          )}
+
+          {previewControlsActive && (
+            <>
+              <span className={s.viewportBarSep} />
+              <span className={s.viewportBarLabel}>Every</span>
+              <select
+                className={s.viewportBarSelect}
+                value={requestedPreviewEveryN}
+                onChange={(e) =>
+                  void updatePreview("/everyN", { everyN: Number(e.target.value) })
+                }
+                disabled={previewBusy}
+              >
+                {previewEveryNOptions.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+
+          {preview ? (
+            <>
+              {preview.x_possible_sizes.length > 0 && preview.y_possible_sizes.length > 0 && (
+                <>
+                  <span className={s.viewportBarSep} />
+                  <span className={s.viewportBarLabel}>X</span>
+                  <select
+                    className={s.viewportBarSelect}
+                    value={requestedPreviewXChosenSize}
+                    onChange={(e) =>
+                      void updatePreview("/XChosenSize", { xChosenSize: Number(e.target.value) })
+                    }
+                    disabled={previewBusy}
+                  >
+                    {preview.x_possible_sizes.map((size) => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                  <span className={s.viewportBarLabel}>Y</span>
+                  <select
+                    className={s.viewportBarSelect}
+                    value={requestedPreviewYChosenSize}
+                    onChange={(e) =>
+                      void updatePreview("/YChosenSize", { yChosenSize: Number(e.target.value) })
+                    }
+                    disabled={previewBusy}
+                  >
+                    {preview.y_possible_sizes.map((size) => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+              <label className={s.viewportToggle}>
+                <input
+                  type="checkbox"
+                  checked={requestedPreviewAutoScale}
+                  onChange={(e) =>
+                    void updatePreview("/autoScaleEnabled", {
+                      autoScaleEnabled: e.target.checked,
+                    })
+                  }
+                  disabled={previewBusy}
+                />
+                <span>Auto-scale</span>
+              </label>
+              {preview.spatial_kind === "grid" && solverGrid[2] > 1 && (
+                <>
+                  <span className={s.viewportBarLabel}>Layer</span>
+                  <select
+                    className={s.viewportBarSelect}
+                    value={requestedPreviewLayer}
+                    onChange={(e) => void updatePreview("/layer", { layer: Number(e.target.value) })}
+                    disabled={previewBusy || requestedPreviewAllLayers}
+                  >
+                    {Array.from({ length: solverGrid[2] }, (_, i) => (
+                      <option key={i} value={i}>{i}</option>
+                    ))}
+                  </select>
+                  <label className={s.viewportToggle}>
+                    <input
+                      type="checkbox"
+                      checked={requestedPreviewAllLayers}
+                      onChange={(e) =>
+                        void updatePreview("/allLayers", { allLayers: e.target.checked })
+                      }
+                      disabled={previewBusy}
+                    />
+                    <span>All layers</span>
+                  </label>
+                </>
+              )}
+              {preview.spatial_kind === "mesh" && effectiveViewMode === "2D" && (
+                <>
+                  <span className={s.viewportBarSep} />
+                  <span className={s.viewportBarLabel}>Plane</span>
+                  <select
+                    className={s.viewportBarSelect}
+                    value={plane}
+                    onChange={(e) => setPlane(e.target.value as SlicePlane)}
+                  >
+                    <option value="xy">XY</option>
+                    <option value="xz">XZ</option>
+                    <option value="yz">YZ</option>
+                  </select>
+                  <span className={s.viewportBarLabel}>Slice</span>
+                  <select
+                    className={s.viewportBarSelect}
+                    value={sliceIndex}
+                    onChange={(e) => setSliceIndex(Number(e.target.value))}
+                  >
+                    {Array.from({ length: maxSliceCount }, (_, i) => (
+                      <option key={i} value={i}>{i + 1}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+            </>
+          ) : effectiveViewMode === "2D" && (
+            <>
+              <span className={s.viewportBarSep} />
+              <span className={s.viewportBarLabel}>Plane</span>
+              <select
+                className={s.viewportBarSelect}
+                value={plane}
+                onChange={(e) => setPlane(e.target.value as SlicePlane)}
+              >
+                <option value="xy">XY</option>
+                <option value="xz">XZ</option>
+                <option value="yz">YZ</option>
+              </select>
+              <span className={s.viewportBarLabel}>Slice</span>
+              <select
+                className={s.viewportBarSelect}
+                value={sliceIndex}
+                onChange={(e) => setSliceIndex(Number(e.target.value))}
+              >
+                {Array.from({ length: maxSliceCount }, (_, i) => (
+                  <option key={i} value={i}>{i + 1}</option>
+                ))}
+              </select>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ── Viewport Canvas (shared between FEM and FDM branches) ── */
+
+interface ViewportCanvasAreaProps {
+  effectiveStep: number;
+  effectiveTime: number;
+  effectiveDmDt: number;
+  isVectorQuantity: boolean;
+  quantityDescriptor: { label?: string; unit?: string } | null;
+  selectedScalarValue: number | null;
+  preview: ViewportBarProps["preview"];
+  effectiveViewMode: ViewportMode;
+  isFemBackend: boolean;
+  femMeshData: FemMeshData | null;
+  femTopologyKey: string | null;
+  femColorField: FemColorField;
+  femMagnetization3DActive: boolean;
+  femShouldShowArrows: boolean;
+  meshRenderMode: RenderMode;
+  meshOpacity: number;
+  meshClipEnabled: boolean;
+  meshClipAxis: ClipAxis;
+  meshClipPos: number;
+  meshShowArrows: boolean;
+  selectedQuantity: string;
+  effectiveVectorComponent: VectorComponent;
+  plane: SlicePlane;
+  sliceIndex: number;
+  maxSliceCount: number;
+  selectedVectors: Float64Array | null;
+  previewGrid: [number, number, number];
+  component: VectorComponent;
+  emptyStateMessage: { title: string; description: string };
+  setMeshRenderMode: (m: RenderMode) => void;
+  setMeshOpacity: (o: number) => void;
+  setMeshClipEnabled: (e: boolean) => void;
+  setMeshClipAxis: (a: ClipAxis) => void;
+  setMeshClipPos: (p: number) => void;
+  setMeshShowArrows: (a: boolean) => void;
+  setMeshSelection: (s: MeshSelectionSnapshot) => void;
+}
+
+function ViewportCanvasArea(props: ViewportCanvasAreaProps) {
+  const {
+    effectiveStep, effectiveTime, effectiveDmDt, isVectorQuantity, quantityDescriptor,
+    selectedScalarValue, preview, effectiveViewMode, isFemBackend, femMeshData,
+    femTopologyKey, femColorField, femMagnetization3DActive, femShouldShowArrows,
+    meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos,
+    selectedQuantity, effectiveVectorComponent, plane, sliceIndex, maxSliceCount,
+    selectedVectors, previewGrid, component, emptyStateMessage,
+    setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
+    setMeshClipPos, setMeshShowArrows, setMeshSelection,
+  } = props;
+
+  return (
+    <div className={s.viewportCanvas}>
+      {/* Status overlay */}
+      <div className={s.viewportOverlay}>
+        <span>Step {effectiveStep.toLocaleString()}</span>
+        <span>{fmtSI(effectiveTime, "s")}</span>
+        {effectiveDmDt > 0 && (
+          <span style={{ color: effectiveDmDt < 1e-5 ? "var(--status-running)" : undefined }}>
+            dm/dt {fmtExp(effectiveDmDt)}
+          </span>
+        )}
+      </div>
+      {!isVectorQuantity ? (
+        <div style={{ padding: "1rem" }}>
+          <EmptyState
+            title={quantityDescriptor?.label ?? "Scalar quantity"}
+            description={
+              selectedScalarValue !== null
+                ? `Latest: ${selectedScalarValue.toExponential(4)} ${quantityDescriptor?.unit ?? ""}`
+                : "Scalar — see Scalars in sidebar."
+            }
+            tone="info"
+            compact
+          />
+        </div>
+      ) : preview && preview.spatial_kind === "grid" && preview.type === "2D" && preview.scalar_field.length > 0 ? (
+        <PreviewScalarField2D
+          data={preview.scalar_field}
+          grid={preview.preview_grid}
+          quantityLabel={quantityDescriptor?.label ?? preview.quantity}
+          quantityUnit={preview.unit}
+          component={preview.component}
+          min={preview.min}
+          max={preview.max}
+        />
+      ) : effectiveViewMode === "Mesh" && isFemBackend && femMeshData ? (
+        <FemMeshView3D
+          topologyKey={femTopologyKey ?? undefined}
+          meshData={femMeshData}
+          colorField="quality"
+          toolbarMode="hidden"
+          renderMode={meshRenderMode}
+          opacity={meshOpacity}
+          clipEnabled={meshClipEnabled}
+          clipAxis={meshClipAxis}
+          clipPos={meshClipPos}
+          showArrows={false}
+          onRenderModeChange={setMeshRenderMode}
+          onOpacityChange={setMeshOpacity}
+          onClipEnabledChange={setMeshClipEnabled}
+          onClipAxisChange={setMeshClipAxis}
+          onClipPosChange={setMeshClipPos}
+          onShowArrowsChange={setMeshShowArrows}
+          onSelectionChange={setMeshSelection}
+        />
+      ) : effectiveViewMode === "3D" && isFemBackend && femMeshData ? (
+        <FemMeshView3D
+          topologyKey={femTopologyKey ?? undefined}
+          meshData={femMeshData}
+          fieldLabel={quantityDescriptor?.label ?? selectedQuantity}
+          colorField={femColorField}
+          showOrientationLegend={femMagnetization3DActive}
+          toolbarMode="hidden"
+          renderMode={meshRenderMode}
+          opacity={meshOpacity}
+          clipEnabled={meshClipEnabled}
+          clipAxis={meshClipAxis}
+          clipPos={meshClipPos}
+          showArrows={femShouldShowArrows}
+          onRenderModeChange={setMeshRenderMode}
+          onOpacityChange={setMeshOpacity}
+          onClipEnabledChange={setMeshClipEnabled}
+          onClipAxisChange={setMeshClipAxis}
+          onClipPosChange={setMeshClipPos}
+          onShowArrowsChange={setMeshShowArrows}
+          onSelectionChange={setMeshSelection}
+        />
+      ) : effectiveViewMode === "2D" && isFemBackend && femMeshData ? (
+        <FemMeshSlice2D
+          meshData={femMeshData}
+          quantityLabel={quantityDescriptor?.label ?? selectedQuantity}
+          quantityId={selectedQuantity}
+          component={effectiveVectorComponent}
+          plane={plane}
+          sliceIndex={sliceIndex}
+          sliceCount={maxSliceCount}
+        />
+      ) : !selectedVectors ? (
+        <div style={{ padding: "1rem" }}>
+          <EmptyState
+            title={emptyStateMessage.title}
+            description={emptyStateMessage.description}
+            tone="info"
+            compact
+          />
+        </div>
+      ) : effectiveViewMode === "3D" ? (
+        <MagnetizationView3D
+          grid={previewGrid}
+          vectors={selectedVectors}
+          fieldLabel={quantityDescriptor?.label ?? preview?.quantity ?? selectedQuantity}
+        />
+      ) : (
+        <MagnetizationSlice2D
+          grid={previewGrid}
+          vectors={selectedVectors}
+          quantityLabel={quantityDescriptor?.label ?? preview?.quantity ?? selectedQuantity}
+          quantityId={preview?.quantity ?? selectedQuantity}
+          component={component}
+          plane={plane}
+          sliceIndex={sliceIndex}
+        />
+      )}
+    </div>
   );
 }
 
@@ -512,12 +962,21 @@ export default function RunControlRoom() {
   const requestedPreviewLayer = previewConfig?.layer ?? preview?.layer ?? 0;
   const requestedPreviewAllLayers =
     previewConfig?.all_layers ?? preview?.all_layers ?? false;
+  const requestedPreviewEveryN =
+    previewConfig?.every_n ?? PREVIEW_EVERY_N_DEFAULT;
   const requestedPreviewXChosenSize =
     previewConfig?.x_chosen_size ?? preview?.x_chosen_size ?? 0;
   const requestedPreviewYChosenSize =
     previewConfig?.y_chosen_size ?? preview?.y_chosen_size ?? 0;
   const requestedPreviewAutoScale =
     previewConfig?.auto_scale_enabled ?? preview?.auto_scale_enabled ?? true;
+  const previewEveryNOptions = useMemo(
+    () =>
+      Array.from(new Set([...PREVIEW_EVERY_N_PRESETS, requestedPreviewEveryN])).sort(
+        (a, b) => a - b,
+      ),
+    [requestedPreviewEveryN],
+  );
   const previewIsStale =
     Boolean(preview && previewConfig && preview.config_revision !== previewConfig.revision);
   const previewVectorComponent: VectorComponent =
@@ -927,6 +1386,48 @@ export default function RunControlRoom() {
     );
   }
 
+  /* ── Shared viewport props (avoid duplication) ── */
+  const viewportBarProps: ViewportBarProps = {
+    isMeshWorkspaceView, meshName, effectiveFemMesh, meshRenderMode, meshSelection,
+    previewControlsActive, requestedPreviewQuantity, requestedPreviewComponent,
+    requestedPreviewEveryN, requestedPreviewXChosenSize, requestedPreviewYChosenSize,
+    requestedPreviewAutoScale, requestedPreviewLayer, requestedPreviewAllLayers,
+    previewBusy, previewQuantityOptions, quantityOptions, previewEveryNOptions,
+    preview, effectiveViewMode, solverGrid, plane, sliceIndex, maxSliceCount, component,
+    updatePreview, setSelectedQuantity, setComponent, setPlane, setSliceIndex,
+  };
+
+  const viewportCanvasProps: ViewportCanvasAreaProps = {
+    effectiveStep, effectiveTime, effectiveDmDt, isVectorQuantity, quantityDescriptor,
+    selectedScalarValue, preview, effectiveViewMode, isFemBackend, femMeshData,
+    femTopologyKey, femColorField, femMagnetization3DActive, femShouldShowArrows,
+    meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos,
+    meshShowArrows, selectedQuantity, effectiveVectorComponent, plane, sliceIndex,
+    maxSliceCount, selectedVectors, previewGrid, component, emptyStateMessage,
+    setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
+    setMeshClipPos, setMeshShowArrows, setMeshSelection,
+  };
+
+  const previewNotices = (
+    <>
+      {(preview?.auto_downscaled || liveState?.preview_auto_downscaled) && (
+        <div
+          className={s.previewNotice}
+          title={preview?.auto_downscale_message ?? liveState?.preview_auto_downscale_message ?? undefined}
+        >
+          {preview?.auto_downscale_message ??
+            liveState?.preview_auto_downscale_message ??
+            `Preview auto-scaled to ${previewGrid[0]}×${previewGrid[1]}×${previewGrid[2]}`}
+        </div>
+      )}
+      {(previewMessage || previewIsStale) && (
+        <div className={s.previewStatus}>
+          {previewMessage ?? "Preview update pending"}
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className={s.shell}>
       {/* ═══════ TITLE BAR ════════════════════════════ */}
@@ -1108,6 +1609,7 @@ export default function RunControlRoom() {
                       </div>
                       <div className={s.meshSegmented}>
                         {([
+                          ["surface", "Surface"],
                           ["surface+edges", "Surface+Edges"],
                           ["wireframe", "Wireframe"],
                           ["points", "Points"],
@@ -1301,24 +1803,6 @@ export default function RunControlRoom() {
 
                 {femDockTab === "view" && (
                   <>
-                    <div className={s.meshCard}>
-                      <div className={s.meshCardHeader}>
-                        <span className={s.meshCardTitle}>Display</span>
-                      </div>
-                      <div className={s.meshSegmented}>
-                        {(["Mesh", "3D", "2D"] as ViewportMode[]).map((mode) => (
-                          <button
-                            key={mode}
-                            className={s.meshSegmentBtn}
-                            data-active={viewMode === mode}
-                            onClick={() => handleViewModeChange(mode)}
-                            type="button"
-                          >
-                            {mode}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
 
                     <div className={s.meshCard}>
                       <div className={s.meshCardHeader}>
@@ -1372,6 +1856,25 @@ export default function RunControlRoom() {
                           </select>
                         )}
                       </label>
+                      {previewControlsActive && (
+                        <label className={s.meshControl}>
+                          <span className={s.meshControlLabel}>Refresh</span>
+                          <select
+                            className={s.meshSelect}
+                            value={requestedPreviewEveryN}
+                            onChange={(e) =>
+                              void updatePreview("/everyN", { everyN: Number(e.target.value) })
+                            }
+                            disabled={previewBusy}
+                          >
+                            {previewEveryNOptions.map((value) => (
+                              <option key={value} value={value}>
+                                {fmtPreviewEveryN(value)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
                     </div>
 
                     <div className={s.meshCard}>
@@ -1547,653 +2050,17 @@ export default function RunControlRoom() {
             minSize={PANEL_SIZES.femViewportMin}
           >
             <div className={s.viewport}>
-        {/* Compact selector bar */}
-        <div className={s.viewportBar}>
-          {isMeshWorkspaceView ? (
-            <>
-              <span className={s.viewportBarLabel}>Mesh</span>
-              <span className={s.viewportBarMetric}>{meshName ?? "boundary surface"}</span>
-              <span className={s.viewportBarSep} />
-              <span className={s.viewportBarMetric}>{effectiveFemMesh?.nodes.length.toLocaleString() ?? "0"} nodes</span>
-              <span className={s.viewportBarMetric}>{effectiveFemMesh?.elements.length.toLocaleString() ?? "0"} tets</span>
-              <span className={s.viewportBarMetric}>{effectiveFemMesh?.boundary_faces.length.toLocaleString() ?? "0"} faces</span>
-              <span className={s.viewportBarSep} />
-              <span className={s.viewportBarLabel}>Render</span>
-              <span className={s.viewportBarMetric}>
-                {meshRenderMode === "surface+edges"
-                  ? "surface+edges"
-                  : meshRenderMode}
-              </span>
-              {meshSelection.primaryFaceIndex != null && (
-                <>
-                  <span className={s.viewportBarSep} />
-                  <span className={s.viewportBarLabel}>Face</span>
-                  <span className={s.viewportBarMetric}>#{meshSelection.primaryFaceIndex}</span>
-                </>
-              )}
-            </>
-          ) : (
-            <>
-              <span className={s.viewportBarLabel}>Qty</span>
-              <select
-                className={s.viewportBarSelect}
-                value={requestedPreviewQuantity}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (previewControlsActive) {
-                    void updatePreview("/quantity", { quantity: next });
-                  } else {
-                    setSelectedQuantity(next);
-                  }
-                }}
-                disabled={previewBusy}
-              >
-                {((previewControlsActive ? previewQuantityOptions : quantityOptions).length
-                  ? (previewControlsActive ? previewQuantityOptions : quantityOptions)
-                  : [{ value: "m", label: "Magnetization", disabled: false }]).map((opt) => (
-                  <option key={opt.value} value={opt.value} disabled={opt.disabled}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-
-              <span className={s.viewportBarSep} />
-              <span className={s.viewportBarLabel}>Comp</span>
-              {previewControlsActive ? (
-                <select
-                  className={s.viewportBarSelect}
-                  value={requestedPreviewComponent}
-                  onChange={(e) => void updatePreview("/component", { component: e.target.value as PreviewComponent })}
-                  disabled={previewBusy}
-                >
-                  <option value="3D">3D</option>
-                  <option value="x">x</option>
-                  <option value="y">y</option>
-                  <option value="z">z</option>
-                </select>
-              ) : (
-                <select
-                  className={s.viewportBarSelect}
-                  value={component}
-                  onChange={(e) => setComponent(e.target.value as VectorComponent)}
-                >
-                  <option value="magnitude">|v|</option>
-                  <option value="x">x</option>
-                  <option value="y">y</option>
-                  <option value="z">z</option>
-                </select>
-              )}
-
-              {preview ? (
-                <>
-                  {preview.x_possible_sizes.length > 0 && preview.y_possible_sizes.length > 0 && (
-                    <>
-                      <span className={s.viewportBarSep} />
-                      <span className={s.viewportBarLabel}>X</span>
-                      <select
-                        className={s.viewportBarSelect}
-                        value={requestedPreviewXChosenSize}
-                        onChange={(e) =>
-                          void updatePreview("/XChosenSize", { xChosenSize: Number(e.target.value) })
-                        }
-                        disabled={previewBusy}
-                      >
-                        {preview.x_possible_sizes.map((size) => (
-                          <option key={size} value={size}>{size}</option>
-                        ))}
-                      </select>
-                      <span className={s.viewportBarLabel}>Y</span>
-                      <select
-                        className={s.viewportBarSelect}
-                        value={requestedPreviewYChosenSize}
-                        onChange={(e) =>
-                          void updatePreview("/YChosenSize", { yChosenSize: Number(e.target.value) })
-                        }
-                        disabled={previewBusy}
-                      >
-                        {preview.y_possible_sizes.map((size) => (
-                          <option key={size} value={size}>{size}</option>
-                        ))}
-                      </select>
-                    </>
-                  )}
-                  <label className={s.viewportToggle}>
-                    <input
-                      type="checkbox"
-                      checked={requestedPreviewAutoScale}
-                      onChange={(e) =>
-                        void updatePreview("/autoScaleEnabled", {
-                          autoScaleEnabled: e.target.checked,
-                        })
-                      }
-                      disabled={previewBusy}
-                    />
-                    <span>Auto-scale</span>
-                  </label>
-                  {preview.spatial_kind === "grid" && solverGrid[2] > 1 && (
-                    <>
-                      <span className={s.viewportBarLabel}>Layer</span>
-                      <select
-                        className={s.viewportBarSelect}
-                        value={requestedPreviewLayer}
-                        onChange={(e) => void updatePreview("/layer", { layer: Number(e.target.value) })}
-                        disabled={previewBusy || requestedPreviewAllLayers}
-                      >
-                        {Array.from({ length: solverGrid[2] }, (_, i) => (
-                          <option key={i} value={i}>{i}</option>
-                        ))}
-                      </select>
-                      <label className={s.viewportToggle}>
-                        <input
-                          type="checkbox"
-                          checked={requestedPreviewAllLayers}
-                          onChange={(e) =>
-                            void updatePreview("/allLayers", { allLayers: e.target.checked })
-                          }
-                          disabled={previewBusy}
-                        />
-                        <span>All layers</span>
-                      </label>
-                    </>
-                  )}
-                  {preview.spatial_kind === "mesh" && effectiveViewMode === "2D" && (
-                    <>
-                      <span className={s.viewportBarSep} />
-                      <span className={s.viewportBarLabel}>Plane</span>
-                      <select
-                        className={s.viewportBarSelect}
-                        value={plane}
-                        onChange={(e) => setPlane(e.target.value as SlicePlane)}
-                      >
-                        <option value="xy">XY</option>
-                        <option value="xz">XZ</option>
-                        <option value="yz">YZ</option>
-                      </select>
-                      <span className={s.viewportBarLabel}>Slice</span>
-                      <select
-                        className={s.viewportBarSelect}
-                        value={sliceIndex}
-                        onChange={(e) => setSliceIndex(Number(e.target.value))}
-                      >
-                        {Array.from({ length: maxSliceCount }, (_, i) => (
-                          <option key={i} value={i}>{i + 1}</option>
-                        ))}
-                      </select>
-                    </>
-                  )}
-                </>
-              ) : effectiveViewMode === "2D" && (
-                <>
-                  <span className={s.viewportBarSep} />
-                  <span className={s.viewportBarLabel}>Plane</span>
-                  <select
-                    className={s.viewportBarSelect}
-                    value={plane}
-                    onChange={(e) => setPlane(e.target.value as SlicePlane)}
-                  >
-                    <option value="xy">XY</option>
-                    <option value="xz">XZ</option>
-                    <option value="yz">YZ</option>
-                  </select>
-                  <span className={s.viewportBarLabel}>Slice</span>
-                  <select
-                    className={s.viewportBarSelect}
-                    value={sliceIndex}
-                    onChange={(e) => setSliceIndex(Number(e.target.value))}
-                  >
-                    {Array.from({ length: maxSliceCount }, (_, i) => (
-                      <option key={i} value={i}>{i + 1}</option>
-                    ))}
-                  </select>
-                </>
-              )}
-            </>
-          )}
-        </div>
-        {(preview?.auto_downscaled || liveState?.preview_auto_downscaled) && (
-          <div
-            className={s.previewNotice}
-            title={preview?.auto_downscale_message ?? liveState?.preview_auto_downscale_message ?? undefined}
-          >
-            {preview?.auto_downscale_message ??
-              liveState?.preview_auto_downscale_message ??
-              `Preview auto-scaled to ${previewGrid[0]}×${previewGrid[1]}×${previewGrid[2]}`}
-          </div>
-        )}
-        {(previewMessage || previewIsStale) && (
-          <div className={s.previewStatus}>
-            {previewMessage ?? "Preview update pending"}
-          </div>
-        )}
-
-        {/* Canvas area */}
-        <div className={s.viewportCanvas}>
-          {/* Status overlay */}
-          <div className={s.viewportOverlay}>
-            <span>Step {effectiveStep.toLocaleString()}</span>
-            <span>{fmtSI(effectiveTime, "s")}</span>
-            {effectiveDmDt > 0 && (
-              <span style={{ color: effectiveDmDt < 1e-5 ? "var(--status-running)" : undefined }}>
-                dm/dt {fmtExp(effectiveDmDt)}
-              </span>
-            )}
-          </div>
-          {!isVectorQuantity ? (
-            <div style={{ padding: "1rem" }}>
-              <EmptyState
-                title={quantityDescriptor?.label ?? "Scalar quantity"}
-                description={
-                  selectedScalarValue !== null
-                    ? `Latest: ${selectedScalarValue.toExponential(4)} ${quantityDescriptor?.unit ?? ""}`
-                    : "Scalar — see Scalars in sidebar."
-                }
-                tone="info"
-                compact
-              />
-            </div>
-          ) : preview && preview.spatial_kind === "grid" && preview.type === "2D" && preview.scalar_field.length > 0 ? (
-            <PreviewScalarField2D
-              data={preview.scalar_field}
-              grid={preview.preview_grid}
-              quantityLabel={quantityDescriptor?.label ?? preview.quantity}
-              quantityUnit={preview.unit}
-              component={preview.component}
-              min={preview.min}
-              max={preview.max}
-            />
-          ) : effectiveViewMode === "Mesh" && isFemBackend && femMeshData ? (
-            <FemMeshView3D
-              topologyKey={femTopologyKey ?? undefined}
-              meshData={femMeshData}
-              colorField="quality"
-              toolbarMode="hidden"
-              renderMode={meshRenderMode}
-              opacity={meshOpacity}
-              clipEnabled={meshClipEnabled}
-              clipAxis={meshClipAxis}
-              clipPos={meshClipPos}
-              showArrows={false}
-              onRenderModeChange={setMeshRenderMode}
-              onOpacityChange={setMeshOpacity}
-              onClipEnabledChange={setMeshClipEnabled}
-              onClipAxisChange={setMeshClipAxis}
-              onClipPosChange={setMeshClipPos}
-              onShowArrowsChange={setMeshShowArrows}
-              onSelectionChange={setMeshSelection}
-            />
-          ) : effectiveViewMode === "3D" && isFemBackend && femMeshData ? (
-            <FemMeshView3D
-              topologyKey={femTopologyKey ?? undefined}
-              meshData={femMeshData}
-              fieldLabel={quantityDescriptor?.label ?? selectedQuantity}
-              colorField={femColorField}
-              showOrientationLegend={femMagnetization3DActive}
-              toolbarMode="hidden"
-              renderMode={meshRenderMode}
-              opacity={meshOpacity}
-              clipEnabled={meshClipEnabled}
-              clipAxis={meshClipAxis}
-              clipPos={meshClipPos}
-              showArrows={femShouldShowArrows}
-              onRenderModeChange={setMeshRenderMode}
-              onOpacityChange={setMeshOpacity}
-              onClipEnabledChange={setMeshClipEnabled}
-              onClipAxisChange={setMeshClipAxis}
-              onClipPosChange={setMeshClipPos}
-              onShowArrowsChange={setMeshShowArrows}
-              onSelectionChange={setMeshSelection}
-            />
-          ) : effectiveViewMode === "2D" && isFemBackend && femMeshData ? (
-            <FemMeshSlice2D
-              meshData={femMeshData}
-              quantityLabel={quantityDescriptor?.label ?? selectedQuantity}
-              quantityId={selectedQuantity}
-              component={effectiveVectorComponent}
-              plane={plane}
-              sliceIndex={sliceIndex}
-              sliceCount={maxSliceCount}
-            />
-          ) : !selectedVectors ? (
-            <div style={{ padding: "1rem" }}>
-              <EmptyState
-                title={emptyStateMessage.title}
-                description={emptyStateMessage.description}
-                tone="info"
-                compact
-              />
-            </div>
-          ) : effectiveViewMode === "3D" ? (
-            <MagnetizationView3D
-              grid={previewGrid}
-              vectors={selectedVectors}
-              fieldLabel={quantityDescriptor?.label ?? preview?.quantity ?? selectedQuantity}
-            />
-          ) : (
-            <MagnetizationSlice2D
-              grid={previewGrid}
-              vectors={selectedVectors}
-              quantityLabel={quantityDescriptor?.label ?? preview?.quantity ?? selectedQuantity}
-              quantityId={preview?.quantity ?? selectedQuantity}
-              component={component}
-              plane={plane}
-              sliceIndex={sliceIndex}
-            />
-          )}
-        </div>
+        <ViewportBar {...viewportBarProps} />
+        {previewNotices}
+        <ViewportCanvasArea {...viewportCanvasProps} />
       </div>
           </Panel>
         </PanelGroup>
       ) : (
       <div className={s.viewport}>
-        {/* Compact selector bar */}
-        <div className={s.viewportBar}>
-          {isMeshWorkspaceView ? (
-            <>
-              <span className={s.viewportBarLabel}>Mesh</span>
-              <span className={s.viewportBarMetric}>{meshName ?? "boundary surface"}</span>
-              <span className={s.viewportBarSep} />
-              <span className={s.viewportBarMetric}>{effectiveFemMesh?.nodes.length.toLocaleString() ?? "0"} nodes</span>
-              <span className={s.viewportBarMetric}>{effectiveFemMesh?.elements.length.toLocaleString() ?? "0"} tets</span>
-              <span className={s.viewportBarMetric}>{effectiveFemMesh?.boundary_faces.length.toLocaleString() ?? "0"} faces</span>
-              <span className={s.viewportBarSep} />
-              <span className={s.viewportBarLabel}>Render</span>
-              <span className={s.viewportBarMetric}>
-                {meshRenderMode === "surface+edges"
-                  ? "surface+edges"
-                  : meshRenderMode}
-              </span>
-              {meshSelection.primaryFaceIndex != null && (
-                <>
-                  <span className={s.viewportBarSep} />
-                  <span className={s.viewportBarLabel}>Face</span>
-                  <span className={s.viewportBarMetric}>#{meshSelection.primaryFaceIndex}</span>
-                </>
-              )}
-            </>
-          ) : (
-            <>
-              <span className={s.viewportBarLabel}>Qty</span>
-              <select
-                className={s.viewportBarSelect}
-                value={requestedPreviewQuantity}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (previewControlsActive) {
-                    void updatePreview("/quantity", { quantity: next });
-                  } else {
-                    setSelectedQuantity(next);
-                  }
-                }}
-                disabled={previewBusy}
-              >
-                {((previewControlsActive ? previewQuantityOptions : quantityOptions).length
-                  ? (previewControlsActive ? previewQuantityOptions : quantityOptions)
-                  : [{ value: "m", label: "Magnetization", disabled: false }]).map((opt) => (
-                  <option key={opt.value} value={opt.value} disabled={opt.disabled}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-
-              <span className={s.viewportBarSep} />
-              <span className={s.viewportBarLabel}>Comp</span>
-              {previewControlsActive ? (
-                <select
-                  className={s.viewportBarSelect}
-                  value={requestedPreviewComponent}
-                  onChange={(e) => void updatePreview("/component", { component: e.target.value as PreviewComponent })}
-                  disabled={previewBusy}
-                >
-                  <option value="3D">3D</option>
-                  <option value="x">x</option>
-                  <option value="y">y</option>
-                  <option value="z">z</option>
-                </select>
-              ) : (
-                <select
-                  className={s.viewportBarSelect}
-                  value={component}
-                  onChange={(e) => setComponent(e.target.value as VectorComponent)}
-                >
-                  <option value="magnitude">|v|</option>
-                  <option value="x">x</option>
-                  <option value="y">y</option>
-                  <option value="z">z</option>
-                </select>
-              )}
-
-              {preview ? (
-                <>
-                  {preview.x_possible_sizes.length > 0 && preview.y_possible_sizes.length > 0 && (
-                    <>
-                      <span className={s.viewportBarSep} />
-                      <span className={s.viewportBarLabel}>X</span>
-                      <select
-                        className={s.viewportBarSelect}
-                        value={requestedPreviewXChosenSize}
-                        onChange={(e) =>
-                          void updatePreview("/XChosenSize", { xChosenSize: Number(e.target.value) })
-                        }
-                        disabled={previewBusy}
-                      >
-                        {preview.x_possible_sizes.map((size) => (
-                          <option key={size} value={size}>{size}</option>
-                        ))}
-                      </select>
-                      <span className={s.viewportBarLabel}>Y</span>
-                      <select
-                        className={s.viewportBarSelect}
-                        value={requestedPreviewYChosenSize}
-                        onChange={(e) =>
-                          void updatePreview("/YChosenSize", { yChosenSize: Number(e.target.value) })
-                        }
-                        disabled={previewBusy}
-                      >
-                        {preview.y_possible_sizes.map((size) => (
-                          <option key={size} value={size}>{size}</option>
-                        ))}
-                      </select>
-                    </>
-                  )}
-                  <label className={s.viewportToggle}>
-                    <input
-                      type="checkbox"
-                      checked={requestedPreviewAutoScale}
-                      onChange={(e) =>
-                        void updatePreview("/autoScaleEnabled", {
-                          autoScaleEnabled: e.target.checked,
-                        })
-                      }
-                      disabled={previewBusy}
-                    />
-                    <span>Auto-scale</span>
-                  </label>
-                  {preview.spatial_kind === "grid" && solverGrid[2] > 1 && (
-                    <>
-                      <span className={s.viewportBarLabel}>Layer</span>
-                      <select
-                        className={s.viewportBarSelect}
-                        value={requestedPreviewLayer}
-                        onChange={(e) => void updatePreview("/layer", { layer: Number(e.target.value) })}
-                        disabled={previewBusy || requestedPreviewAllLayers}
-                      >
-                        {Array.from({ length: solverGrid[2] }, (_, i) => (
-                          <option key={i} value={i}>{i}</option>
-                        ))}
-                      </select>
-                      <label className={s.viewportToggle}>
-                        <input
-                          type="checkbox"
-                          checked={requestedPreviewAllLayers}
-                          onChange={(e) =>
-                            void updatePreview("/allLayers", { allLayers: e.target.checked })
-                          }
-                          disabled={previewBusy}
-                        />
-                        <span>All layers</span>
-                      </label>
-                    </>
-                  )}
-                  {preview.spatial_kind === "mesh" && effectiveViewMode === "2D" && (
-                    <>
-                      <span className={s.viewportBarSep} />
-                      <span className={s.viewportBarLabel}>Plane</span>
-                      <select
-                        className={s.viewportBarSelect}
-                        value={plane}
-                        onChange={(e) => setPlane(e.target.value as SlicePlane)}
-                      >
-                        <option value="xy">XY</option>
-                        <option value="xz">XZ</option>
-                        <option value="yz">YZ</option>
-                      </select>
-                      <span className={s.viewportBarLabel}>Slice</span>
-                      <select
-                        className={s.viewportBarSelect}
-                        value={sliceIndex}
-                        onChange={(e) => setSliceIndex(Number(e.target.value))}
-                      >
-                        {Array.from({ length: maxSliceCount }, (_, i) => (
-                          <option key={i} value={i}>{i + 1}</option>
-                        ))}
-                      </select>
-                    </>
-                  )}
-                </>
-              ) : effectiveViewMode === "2D" && (
-                <>
-                  <span className={s.viewportBarSep} />
-                  <span className={s.viewportBarLabel}>Plane</span>
-                  <select
-                    className={s.viewportBarSelect}
-                    value={plane}
-                    onChange={(e) => setPlane(e.target.value as SlicePlane)}
-                  >
-                    <option value="xy">XY</option>
-                    <option value="xz">XZ</option>
-                    <option value="yz">YZ</option>
-                  </select>
-                  <span className={s.viewportBarLabel}>Slice</span>
-                  <select
-                    className={s.viewportBarSelect}
-                    value={sliceIndex}
-                    onChange={(e) => setSliceIndex(Number(e.target.value))}
-                  >
-                    {Array.from({ length: maxSliceCount }, (_, i) => (
-                      <option key={i} value={i}>{i + 1}</option>
-                    ))}
-                  </select>
-                </>
-              )}
-            </>
-          )}
-        </div>
-        {(preview?.auto_downscaled || liveState?.preview_auto_downscaled) && (
-          <div
-            className={s.previewNotice}
-            title={preview?.auto_downscale_message ?? liveState?.preview_auto_downscale_message ?? undefined}
-          >
-            {preview?.auto_downscale_message ??
-              liveState?.preview_auto_downscale_message ??
-              `Preview auto-scaled to ${previewGrid[0]}×${previewGrid[1]}×${previewGrid[2]}`}
-          </div>
-        )}
-        {(previewMessage || previewIsStale) && (
-          <div className={s.previewStatus}>
-            {previewMessage ?? "Preview update pending"}
-          </div>
-        )}
-
-        {/* Canvas area */}
-        <div className={s.viewportCanvas}>
-          {/* Status overlay */}
-          <div className={s.viewportOverlay}>
-            <span>Step {effectiveStep.toLocaleString()}</span>
-            <span>{fmtSI(effectiveTime, "s")}</span>
-            {effectiveDmDt > 0 && (
-              <span style={{ color: effectiveDmDt < 1e-5 ? "var(--status-running)" : undefined }}>
-                dm/dt {fmtExp(effectiveDmDt)}
-              </span>
-            )}
-          </div>
-          {!isVectorQuantity ? (
-            <div style={{ padding: "1rem" }}>
-              <EmptyState
-                title={quantityDescriptor?.label ?? "Scalar quantity"}
-                description={
-                  selectedScalarValue !== null
-                    ? `Latest: ${selectedScalarValue.toExponential(4)} ${quantityDescriptor?.unit ?? ""}`
-                    : "Scalar — see Scalars in sidebar."
-                }
-                tone="info"
-                compact
-              />
-            </div>
-          ) : preview && preview.spatial_kind === "grid" && preview.type === "2D" && preview.scalar_field.length > 0 ? (
-            <PreviewScalarField2D
-              data={preview.scalar_field}
-              grid={preview.preview_grid}
-              quantityLabel={quantityDescriptor?.label ?? preview.quantity}
-              quantityUnit={preview.unit}
-              component={preview.component}
-              min={preview.min}
-              max={preview.max}
-            />
-          ) : effectiveViewMode === "Mesh" && isFemBackend && femMeshData ? (
-            <FemMeshView3D
-              topologyKey={femTopologyKey ?? undefined}
-              meshData={femMeshData}
-              colorField="quality"
-              showArrows={false}
-              onSelectionChange={setMeshSelection}
-            />
-          ) : effectiveViewMode === "3D" && isFemBackend && femMeshData ? (
-            <FemMeshView3D
-              topologyKey={femTopologyKey ?? undefined}
-              meshData={femMeshData}
-              fieldLabel={quantityDescriptor?.label ?? selectedQuantity}
-              colorField={femColorField}
-              showOrientationLegend={femMagnetization3DActive}
-              showArrows={femShouldShowArrows}
-              onSelectionChange={setMeshSelection}
-            />
-          ) : effectiveViewMode === "2D" && isFemBackend && femMeshData ? (
-            <FemMeshSlice2D
-              meshData={femMeshData}
-              quantityLabel={quantityDescriptor?.label ?? selectedQuantity}
-              quantityId={selectedQuantity}
-              component={effectiveVectorComponent}
-              plane={plane}
-              sliceIndex={sliceIndex}
-              sliceCount={maxSliceCount}
-            />
-          ) : !selectedVectors ? (
-            <div style={{ padding: "1rem" }}>
-              <EmptyState
-                title={emptyStateMessage.title}
-                description={emptyStateMessage.description}
-                tone="info"
-                compact
-              />
-            </div>
-          ) : effectiveViewMode === "3D" ? (
-            <MagnetizationView3D
-              grid={previewGrid}
-              vectors={selectedVectors}
-              fieldLabel={quantityDescriptor?.label ?? preview?.quantity ?? selectedQuantity}
-            />
-          ) : (
-            <MagnetizationSlice2D
-              grid={previewGrid}
-              vectors={selectedVectors}
-              quantityLabel={quantityDescriptor?.label ?? preview?.quantity ?? selectedQuantity}
-              quantityId={preview?.quantity ?? selectedQuantity}
-              component={component}
-              plane={plane}
-              sliceIndex={sliceIndex}
-            />
-          )}
-        </div>
+        <ViewportBar {...viewportBarProps} />
+        {previewNotices}
+        <ViewportCanvasArea {...viewportCanvasProps} />
       </div>
       )}
 
@@ -2409,6 +2276,10 @@ export default function RunControlRoom() {
                   <span className={s.fieldValue}>{preview.fem_mesh?.boundary_faces.length.toLocaleString() ?? "0"}</span>
                 </div>
                 <div className={s.fieldCell}>
+                  <span className={s.fieldLabel}>Refresh</span>
+                  <span className={s.fieldValue}>{fmtPreviewEveryN(requestedPreviewEveryN)}</span>
+                </div>
+                <div className={s.fieldCell}>
                   <span className={s.fieldLabel}>Original nodes</span>
                   <span className={s.fieldValue}>{preview.original_node_count?.toLocaleString() ?? "—"}</span>
                 </div>
@@ -2442,6 +2313,10 @@ export default function RunControlRoom() {
                 <div className={s.fieldCell}>
                   <span className={s.fieldLabel}>Points</span>
                   <span className={s.fieldValue}>{preview.data_points_count.toLocaleString()}</span>
+                </div>
+                <div className={s.fieldCell}>
+                  <span className={s.fieldLabel}>Refresh</span>
+                  <span className={s.fieldValue}>{fmtPreviewEveryN(requestedPreviewEveryN)}</span>
                 </div>
                 <div className={s.fieldCell}>
                   <span className={s.fieldLabel}>Layer stride</span>

@@ -94,6 +94,8 @@ struct Context {
     uint32_t *region_mask = nullptr;
     double *reduction_scratch = nullptr;
     uint64_t reduction_scratch_len = 0;
+    double *preview_download_scratch = nullptr;
+    uint64_t preview_download_scratch_len = 0;
     std::vector<uint8_t> active_mask_host;
     std::vector<uint32_t> region_mask_host;
 
@@ -154,7 +156,7 @@ bool context_download_field_f64(
 
 /// Download a downsampled preview of a field observable from device to host.
 bool context_download_field_preview_f64(
-    const Context &ctx,
+    Context &ctx,
     fullmag_fdm_observable observable,
     uint32_t preview_nx,
     uint32_t preview_ny,

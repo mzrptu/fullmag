@@ -146,6 +146,35 @@ static void free_reduction_scratch(Context &ctx) {
     ctx.reduction_scratch_len = 0;
 }
 
+static bool ensure_preview_download_scratch(Context &ctx, uint64_t preview_count) {
+    uint64_t required_len = preview_count * 3;
+    if (ctx.preview_download_scratch && ctx.preview_download_scratch_len >= required_len) {
+        return true;
+    }
+    if (ctx.preview_download_scratch) {
+        cudaFree(ctx.preview_download_scratch);
+        ctx.preview_download_scratch = nullptr;
+        ctx.preview_download_scratch_len = 0;
+    }
+    cudaError_t err = cudaMalloc(
+        reinterpret_cast<void **>(&ctx.preview_download_scratch),
+        required_len * sizeof(double));
+    if (err != cudaSuccess) {
+        set_cuda_error(ctx, "cudaMalloc(preview_download_scratch)", err);
+        return false;
+    }
+    ctx.preview_download_scratch_len = required_len;
+    return true;
+}
+
+static void free_preview_download_scratch(Context &ctx) {
+    if (ctx.preview_download_scratch) {
+        cudaFree(ctx.preview_download_scratch);
+        ctx.preview_download_scratch = nullptr;
+    }
+    ctx.preview_download_scratch_len = 0;
+}
+
 template <typename Scalar>
 __global__ void downsample_field_preview_to_f64_kernel(
     const Scalar *field_x,
@@ -379,6 +408,7 @@ void context_free_device(Context &ctx) {
     free_active_mask(ctx);
     free_region_mask(ctx);
     free_reduction_scratch(ctx);
+    free_preview_download_scratch(ctx);
 }
 
 bool context_upload_active_mask(Context &ctx, const uint8_t *mask, uint64_t len) {
@@ -582,7 +612,7 @@ bool context_download_field_f64(
 }
 
 bool context_download_field_preview_f64(
-    const Context &ctx,
+    Context &ctx,
     fullmag_fdm_observable observable,
     uint32_t preview_nx,
     uint32_t preview_ny,
@@ -678,14 +708,10 @@ bool context_download_field_preview_f64(
             return false;
     }
 
-    double *device_out = nullptr;
-    cudaError_t err =
-        cudaMalloc(reinterpret_cast<void **>(&device_out), preview_count * 3 * sizeof(double));
-    if (err != cudaSuccess) {
-        const_cast<Context &>(ctx).last_error = "cudaMalloc(preview_out) failed";
-        set_cuda_error(const_cast<Context &>(ctx), "cudaMalloc(preview_out)", err);
+    if (!ensure_preview_download_scratch(ctx, preview_count)) {
         return false;
     }
+    double *device_out = ctx.preview_download_scratch;
 
     constexpr uint32_t threads_per_block = 256;
     uint32_t blocks = static_cast<uint32_t>(
@@ -720,10 +746,9 @@ bool context_download_field_preview_f64(
             device_out);
     }
 
-    err = cudaGetLastError();
+    cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
-        set_cuda_error(const_cast<Context &>(ctx), "downsample_field_preview_to_f64_kernel", err);
-        cudaFree(device_out);
+        set_cuda_error(ctx, "downsample_field_preview_to_f64_kernel", err);
         return false;
     }
     err = cudaMemcpy(
@@ -731,9 +756,8 @@ bool context_download_field_preview_f64(
         device_out,
         preview_count * 3 * sizeof(double),
         cudaMemcpyDeviceToHost);
-    cudaFree(device_out);
     if (err != cudaSuccess) {
-        set_cuda_error(const_cast<Context &>(ctx), "cudaMemcpy(preview_out)", err);
+        set_cuda_error(ctx, "cudaMemcpy(preview_out)", err);
         return false;
     }
 

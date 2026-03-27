@@ -266,10 +266,7 @@ pub fn apply_gradation_limit(
 
 /// Convert a per-element size field to per-node values via volume-weighted
 /// averaging.  Suitable for Gmsh NodeData PostView.
-pub fn element_to_nodal_size_field(
-    topology: &MeshTopology,
-    h_element: &[f64],
-) -> Result<Vec<f64>> {
+pub fn element_to_nodal_size_field(topology: &MeshTopology, h_element: &[f64]) -> Result<Vec<f64>> {
     let n_el = topology.n_elements;
     let n_nodes = topology.n_nodes;
 
@@ -417,8 +414,8 @@ mod tests {
             grad_limit: 2.0,
         };
 
-        let sf = compute_continuous_size_field(&topo, &indicators, &faces, &config)
-            .expect("size field");
+        let sf =
+            compute_continuous_size_field(&topo, &indicators, &faces, &config).expect("size field");
 
         assert_eq!(sf.h_target.len(), 2);
         // Element 0 should get a smaller target size than element 1.
@@ -442,8 +439,8 @@ mod tests {
             grad_limit: 100.0, // loose — no effective gradation
         };
 
-        let sf = compute_continuous_size_field(&topo, &indicators, &faces, &config)
-            .expect("size field");
+        let sf =
+            compute_continuous_size_field(&topo, &indicators, &faces, &config).expect("size field");
 
         for h in &sf.h_target {
             assert!(*h >= 0.1 - 1e-15, "h={} < h_min", h);
@@ -492,9 +489,17 @@ mod tests {
         let sf = compute_doerfler_size_field(&topo, &marking, &faces, &config).expect("size field");
 
         // Element 0 marked → h_new ≈ 0.5 · h_old
-        assert!(sf.ratio[0] < 0.6, "marked element ratio should be ~0.5, got {}", sf.ratio[0]);
+        assert!(
+            sf.ratio[0] < 0.6,
+            "marked element ratio should be ~0.5, got {}",
+            sf.ratio[0]
+        );
         // Element 1 not marked → h_new ≈ h_old (ratio ~1, maybe slightly reduced by gradation)
-        assert!(sf.ratio[1] >= 0.5, "unmarked element ratio should be ≥0.5, got {}", sf.ratio[1]);
+        assert!(
+            sf.ratio[1] >= 0.5,
+            "unmarked element ratio should be ≥0.5, got {}",
+            sf.ratio[1]
+        );
     }
 
     #[test]
