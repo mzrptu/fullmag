@@ -625,6 +625,61 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(loaded.stages[0].problem.study.to_ir()["kind"], "relaxation")
         self.assertEqual(loaded.stages[1].problem.study.to_ir()["kind"], "time_evolution")
 
+    def test_flat_geometry_mesh_api_builds_explicit_mesh_asset(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fem")
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        body.mesh(hmax=4e-9, order=2).build()
+        fm.solver(dt=1e-13)
+        fm.relax(max_steps=25)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_flat_geometry_mesh.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with patch("fullmag.world.build_geometry_assets_for_request", return_value=None) as mocked:
+                loaded = fm.load_problem_from_script(path)
+
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual(mocked.call_args.kwargs["requested_backend"], fm.BackendTarget.FEM)
+        fem = mocked.call_args.kwargs["discretization"].fem
+        self.assertIsNotNone(fem)
+        self.assertEqual(fem.order, 2)
+        self.assertEqual(fem.hmax, 4e-9)
+        workflow = loaded.problem.runtime_metadata["mesh_workflow"]
+        self.assertTrue(workflow["explicit_mesh_api"])
+        self.assertTrue(workflow["build_requested"])
+        self.assertEqual(workflow["fem"]["order"], 2)
+        self.assertEqual(workflow["fem"]["hmax"], 4e-9)
+
+    def test_flat_geometry_mesh_api_rejects_conflicting_per_geometry_mesh_settings(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fem")
+        a = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="a")
+        b = fm.geometry(fm.Box(80e-9, 20e-9, 5e-9), name="b")
+        a.Ms = 800e3
+        a.Aex = 13e-12
+        b.Ms = 800e3
+        b.Aex = 13e-12
+        a.mesh(hmax=4e-9, order=1)
+        b.mesh(hmax=8e-9, order=1)
+        fm.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_flat_geometry_mesh_conflict.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Per-geometry FEM mesh settings are not yet supported"):
+                fm.load_problem_from_script(path)
+
     def test_flat_solver_accepts_g_factor(self) -> None:
         script = """
         import fullmag as fm

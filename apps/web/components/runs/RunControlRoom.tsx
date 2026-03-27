@@ -6,6 +6,9 @@ import { currentLiveApiClient } from "../../lib/liveApiClient";
 import { useCurrentLiveStream } from "../../lib/useSessionStream";
 import EngineConsole from "../panels/EngineConsole";
 import MeshQualityHistogram from "../panels/MeshQualityHistogram";
+import MeshSettingsPanel, { DEFAULT_MESH_OPTIONS } from "../panels/MeshSettingsPanel";
+import type { MeshOptionsState, MeshQualityData } from "../panels/MeshSettingsPanel";
+import ModelTree, { buildFullmagModelTree } from "../panels/ModelTree";
 import MagnetizationSlice2D from "../preview/MagnetizationSlice2D";
 import MagnetizationView3D from "../preview/MagnetizationView3D";
 import FemMeshView3D from "../preview/FemMeshView3D";
@@ -227,6 +230,8 @@ export default function RunControlRoom() {
   const [commandMessage, setCommandMessage] = useState<string | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
+  const [meshOptions, setMeshOptions] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
+  const [meshQualityData, setMeshQualityData] = useState<MeshQualityData | null>(null);
 
   const session = state?.session;
   const run = state?.run;
@@ -1057,77 +1062,14 @@ export default function RunControlRoom() {
                               : "—"}
                           </span>
                         </div>
-                        <div className={s.meshInfoRow}>
-                          <span className={s.meshInfoKey}>STL angle</span>
-                          <span className={s.meshInfoValue}>
-                            {typeof mesherCurrentSettings?.surface_classification_angle_deg === "number"
-                              ? `${mesherCurrentSettings.surface_classification_angle_deg}°`
-                              : "—"}
-                          </span>
-                        </div>
-                        <div className={s.meshInfoRow}>
-                          <span className={s.meshInfoKey}>Curve angle</span>
-                          <span className={s.meshInfoValue}>
-                            {typeof mesherCurrentSettings?.surface_curve_angle_deg === "number"
-                              ? `${mesherCurrentSettings.surface_curve_angle_deg}°`
-                              : "—"}
-                          </span>
-                        </div>
                       </div>
                     </div>
 
-                    <div className={s.meshHintBox}>
-                      <div className={s.meshHintTitle}>UI principle</div>
-                      <div className={s.meshHintText}>
-                        Meshing controls should mirror the real Gmsh API surface. Controls below are grouped by what the backend can already do, what is already wired, and what still needs launcher-side integration.
-                      </div>
-                    </div>
-
-                    {mesherGroups.map((group) => (
-                      <div key={group.id} className={s.meshCard}>
-                        <div className={s.meshCardHeader}>
-                          <span className={s.meshCardTitle}>{group.title}</span>
-                          <span className={s.meshCardBadge}>{group.controls.length} controls</span>
-                        </div>
-                        {group.description && (
-                          <div className={s.meshHintText}>{group.description}</div>
-                        )}
-                        <div className={s.mesherControls}>
-                          {group.controls.map((control) => (
-                            <div key={control.id} className={s.mesherControlCard}>
-                              <div className={s.mesherControlHeader}>
-                                <span className={s.mesherControlLabel}>{control.label}</span>
-                                <span
-                                  className={s.mesherStatusBadge}
-                                  data-status={control.status}
-                                >
-                                  {control.status}
-                                </span>
-                              </div>
-                              {control.description && (
-                                <div className={s.mesherControlText}>{control.description}</div>
-                              )}
-                              {(control.ui || control.backend) && (
-                                <div className={s.meshInfoList}>
-                                  {control.ui && (
-                                    <div className={s.meshInfoRow}>
-                                      <span className={s.meshInfoKey}>UI</span>
-                                      <span className={s.meshInfoValue}>{control.ui}</span>
-                                    </div>
-                                  )}
-                                  {control.backend && (
-                                    <div className={s.meshInfoRow}>
-                                      <span className={s.meshInfoKey}>Backend</span>
-                                      <span className={s.meshInfoValue}>{control.backend}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                    <MeshSettingsPanel
+                      options={meshOptions}
+                      onChange={setMeshOptions}
+                      quality={meshQualityData}
+                    />
                   </>
                 )}
 
@@ -2007,6 +1949,24 @@ export default function RunControlRoom() {
           collapsedSize="0%"
         >
       <div className={s.sidebar}>
+        {/* Model Tree */}
+        <ModelTree
+          nodes={buildFullmagModelTree({
+            backend: isFemBackend ? "FEM" : "FDM",
+            geometryKind: mesherSourceKind ?? undefined,
+            materialName: material?.msat != null ? `Msat=${(material.msat / 1e3).toFixed(0)} kA/m` : undefined,
+            meshStatus: effectiveFemMesh ? "ready" : "pending",
+            meshElements: effectiveFemMesh?.elements.length,
+            solverStatus: hasSolverTelemetry ? "active" : "pending",
+            onMeshClick: () => setFemDockTab("mesh"),
+          })}
+          onNodeClick={(id) => {
+            if (id === "mesh" || id === "mesh-size" || id === "mesh-quality") {
+              setFemDockTab(id === "mesh-quality" ? "quality" : "mesh");
+            }
+          }}
+        />
+
         {/* Solver */}
         <Section title="Solver" badge={workspaceStatus}>
           <div className={s.fieldGrid2}>

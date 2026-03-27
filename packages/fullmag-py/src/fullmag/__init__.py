@@ -43,11 +43,14 @@ from .meshing import MeshData, generate_mesh, export_geometry_to_stl as export_s
 
 # ── Flat scripting API (mumax-style) ──────────────────────
 from .world import (
+    GeometryMeshHandle,
     MagnetHandle,
+    build_mesh,
     name,
     engine,
     device,
     cell,
+    mesh,
     hmax,
     fem_order,
     interactive,
@@ -108,11 +111,14 @@ __all__ = [
     "random",
     "uniform",
     # Flat scripting API
+    "GeometryMeshHandle",
     "MagnetHandle",
+    "build_mesh",
     "name",
     "engine",
     "device",
     "cell",
+    "mesh",
     "hmax",
     "fem_order",
     "interactive",

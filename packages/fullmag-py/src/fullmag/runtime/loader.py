@@ -73,7 +73,7 @@ def load_problem_from_script(path: str | Path) -> LoadedProblem:
         raise RuntimeError(f"Could not load script from {source_path}")
 
     module = importlib.util.module_from_spec(spec)
-    world.begin_script_capture()
+    world.begin_script_capture(source_path.parent)
     try:
         spec.loader.exec_module(module)
         script_source = source_path.read_text(encoding="utf-8")

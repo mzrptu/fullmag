@@ -1,0 +1,126 @@
+.tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 0;
+  font-size: 0.75rem;
+  user-select: none;
+}
+
+/* ── Node ── */
+.node {
+  display: flex;
+  flex-direction: column;
+}
+
+.nodeRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px calc(var(--depth, 0) * 14px + 8px);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background 0.12s ease;
+  min-height: 26px;
+}
+.nodeRow:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.nodeRow[data-active="true"] {
+  background: rgba(var(--accent-rgb, 99, 102, 241), 0.12);
+}
+
+/* ── Expand chevron ── */
+.chevron {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  transition: transform 0.15s ease;
+}
+.chevron[data-open="true"] {
+  transform: rotate(90deg);
+}
+.chevronPlaceholder {
+  width: 14px;
+  flex: 0 0 14px;
+}
+
+/* ── Icon ── */
+.icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+/* ── Label ── */
+.label {
+  flex: 1 1 auto;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+/* ── Badge ── */
+.badge {
+  flex: 0 0 auto;
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: var(--text-3);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-family: var(--font-mono);
+}
+
+/* ── Children ── */
+.children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  animation: treeSlideDown 0.15s ease;
+}
+
+@keyframes treeSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Status indicators ── */
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 6px;
+}
+.statusDot[data-status="ready"] { background: var(--status-running); }
+.statusDot[data-status="active"] { background: var(--accent); }
+.statusDot[data-status="pending"] { background: var(--text-3); }
+.statusDot[data-status="error"] { background: var(--status-failed); }
+
+/* ── Section header ── */
+.sectionLabel {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+  padding: 8px 8px 2px;
+}

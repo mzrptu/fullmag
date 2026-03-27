@@ -22,7 +22,7 @@ export interface FemMeshData {
   };
 }
 
-export type FemColorField = "orientation" | "x" | "y" | "z" | "magnitude" | "quality" | "none";
+export type FemColorField = "orientation" | "x" | "y" | "z" | "magnitude" | "quality" | "sicn" | "none";
 export type RenderMode = "surface" | "surface+edges" | "wireframe" | "points";
 export type ClipAxis = "x" | "y" | "z";
 
@@ -40,6 +40,7 @@ interface Props {
   clipPos?: number;
   showArrows?: boolean;
   showOrientationLegend?: boolean;
+  qualityPerFace?: number[] | null;
   onRenderModeChange?: (value: RenderMode) => void;
   onOpacityChange?: (value: number) => void;
   onClipEnabledChange?: (value: boolean) => void;
@@ -73,7 +74,8 @@ const COLOR_OPTIONS: { value: FemColorField; label: string }[] = [
   { value: "x",          label: "Fx" },
   { value: "y",          label: "Fy" },
   { value: "magnitude",  label: "|F|" },
-  { value: "quality",    label: "Q" },
+  { value: "quality",    label: "AR" },
+  { value: "sicn",       label: "SICN" },
   { value: "none",       label: "—" },
 ];
 
@@ -110,6 +112,21 @@ function qualityColor(ar: number, color: THREE.Color): void {
   const t = THREE.MathUtils.clamp((ar - 1) / 9, 0, 1); // 1→0, 10→1
   if (t < 0.5) color.copy(QUALITY_GOOD).lerp(QUALITY_MID, t * 2);
   else         color.copy(QUALITY_MID).lerp(QUALITY_BAD, (t - 0.5) * 2);
+}
+
+function sicnQualityColor(sicn: number, color: THREE.Color): void {
+  // SICN: 1 = perfect, 0 = degenerate, <0 = inverted
+  const t = THREE.MathUtils.clamp(sicn, -1, 1);
+  if (t < 0) {
+    // Inverted: red
+    color.copy(QUALITY_BAD);
+  } else if (t < 0.3) {
+    // Poor: red → yellow
+    color.copy(QUALITY_BAD).lerp(QUALITY_MID, t / 0.3);
+  } else {
+    // Good: yellow → green
+    color.copy(QUALITY_MID).lerp(QUALITY_GOOD, (t - 0.3) / 0.7);
+  }
 }
 
 /* ── Per-face aspect ratio (boundary triangle) ─────────────────────── */
@@ -150,6 +167,7 @@ export default function FemMeshView3D({
   clipPos: controlledClipPos,
   showArrows: controlledShowArrows,
   showOrientationLegend = false,
+  qualityPerFace,
   onRenderModeChange,
   onOpacityChange,
   onClipEnabledChange,
@@ -292,6 +310,50 @@ export default function FemMeshView3D({
         colors[i * 3] = _c.r;
         colors[i * 3 + 1] = _c.g;
         colors[i * 3 + 2] = _c.b;
+      }
+    } else if (field === "sicn") {
+      // Use backend SICN data per face if available, else fall back to AR
+      const perFace = qualityPerFace;
+      if (perFace && perFace.length === nFaces) {
+        const vertexSICN = new Float32Array(nNodes);
+        const vertexCount = new Uint16Array(nNodes);
+        for (let f = 0; f < nFaces; f++) {
+          const val = perFace[f];
+          for (let v = 0; v < 3; v++) {
+            const vi = boundaryFaces[f * 3 + v];
+            vertexSICN[vi] += val;
+            vertexCount[vi]++;
+          }
+        }
+        for (let i = 0; i < nNodes; i++) {
+          const avg = vertexCount[i] > 0 ? vertexSICN[i] / vertexCount[i] : 0;
+          sicnQualityColor(avg, _c);
+          colors[i * 3] = _c.r;
+          colors[i * 3 + 1] = _c.g;
+          colors[i * 3 + 2] = _c.b;
+        }
+      } else {
+        // Fallback: use AR-based quality
+        if (!faceARs.current) {
+          faceARs.current = computeFaceAspectRatios(nodes, boundaryFaces);
+        }
+        const ars = faceARs.current;
+        const vertexAR = new Float32Array(nNodes);
+        const vertexCount = new Uint16Array(nNodes);
+        for (let f = 0; f < nFaces; f++) {
+          for (let v = 0; v < 3; v++) {
+            const vi = boundaryFaces[f * 3 + v];
+            vertexAR[vi] += ars[f];
+            vertexCount[vi]++;
+          }
+        }
+        for (let i = 0; i < nNodes; i++) {
+          const avg = vertexCount[i] > 0 ? vertexAR[i] / vertexCount[i] : 1;
+          qualityColor(avg, _c);
+          colors[i * 3] = _c.r;
+          colors[i * 3 + 1] = _c.g;
+          colors[i * 3 + 2] = _c.b;
+        }
       }
     } else {
       for (let i = 0; i < nNodes; i++) {

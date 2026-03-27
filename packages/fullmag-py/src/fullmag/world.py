@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Sequence
 
+from fullmag._progress import emit_progress
 from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Zeeman
 from fullmag.model.dynamics import DEFAULT_GAMMA, LLG
 from fullmag.model.outputs import SaveField, SaveScalar
@@ -42,11 +44,13 @@ from fullmag.model.study import Relaxation, TimeEvolution
 from fullmag.model.structure import Ferromagnet, Material
 from fullmag.model.problem import (
     BackendTarget,
+    build_geometry_assets_for_request,
     DeviceTarget,
     DiscretizationHints,
     ExecutionMode,
     ExecutionPrecision,
     Problem,
+    resolve_geometry_sources,
     RuntimeSelection,
 )
 from fullmag.model.discretization import FDM, FEM
@@ -76,9 +80,21 @@ class MagnetHandle:
         self.alpha: float = 0.01
         self.Dind: float | None = None
         self.m: Any = None
+        self._mesh_spec = _MeshSpecState()
+        self.mesh = GeometryMeshHandle(self)
 
     def __repr__(self) -> str:
         return f"MagnetHandle({self._name!r}, Ms={self.Ms}, Aex={self.Aex})"
+
+    def _resolved_geometry(self) -> object:
+        """Return geometry with a stable per-magnet geometry asset name."""
+        geom = self._shape
+        if hasattr(geom, "name"):
+            import copy
+
+            geom = copy.copy(geom)
+            object.__setattr__(geom, "name", f"{self._name}_geom")
+        return geom
 
     def _to_ferromagnet(self) -> Ferromagnet:
         """Convert to class-based Ferromagnet."""
@@ -100,20 +116,87 @@ class MagnetHandle:
         else:
             m0 = self.m
 
-        # Give geometry a unique name based on magnet handle name to
-        # prevent collisions in multi-magnet problems.
-        geom = self._shape
-        if hasattr(geom, "name"):
-            import copy
-            geom = copy.copy(geom)
-            object.__setattr__(geom, "name", f"{self._name}_geom")
-
         return Ferromagnet(
             name=self._name,
-            geometry=geom,
+            geometry=self._resolved_geometry(),
             material=mat,
             m0=m0,
         )
+
+
+@dataclass
+class _MeshOperationSpec:
+    kind: str
+    params: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass
+class _MeshSpecState:
+    hmax: float | None = None
+    order: int | None = None
+    source: str | None = None
+    build_requested: bool = False
+    operations: list[_MeshOperationSpec] = field(default_factory=list)
+
+    def is_configured(self) -> bool:
+        return self.hmax is not None or self.order is not None or self.source is not None
+
+
+class GeometryMeshHandle:
+    """Explicit mesh workflow API bound to one flat-script geometry/magnet."""
+
+    def __init__(self, owner: MagnetHandle) -> None:
+        self._owner = owner
+
+    def __call__(
+        self,
+        *,
+        hmax: float | None = None,
+        order: int | None = None,
+        source: str | None = None,
+    ) -> "GeometryMeshHandle":
+        return self.configure(hmax=hmax, order=order, source=source)
+
+    def configure(
+        self,
+        *,
+        hmax: float | None = None,
+        order: int | None = None,
+        source: str | None = None,
+    ) -> "GeometryMeshHandle":
+        if hmax is not None:
+            self._owner._mesh_spec.hmax = hmax
+        if order is not None:
+            self._owner._mesh_spec.order = order
+        if source is not None:
+            self._owner._mesh_spec.source = source
+        return self
+
+    def build(self) -> "GeometryMeshHandle":
+        self._owner._mesh_spec.build_requested = True
+        _build_explicit_mesh_assets()
+        return self
+
+    def optimize(self, method: str | None = None, iterations: int = 1) -> "GeometryMeshHandle":
+        self._owner._mesh_spec.operations.append(
+            _MeshOperationSpec(
+                kind="optimize",
+                params={"method": method or "default", "iterations": iterations},
+            )
+        )
+        return self
+
+    def refine(self, steps: int = 1) -> "GeometryMeshHandle":
+        self._owner._mesh_spec.operations.append(
+            _MeshOperationSpec(kind="refine", params={"steps": steps})
+        )
+        return self
+
+    def smooth(self, iterations: int = 1) -> "GeometryMeshHandle":
+        self._owner._mesh_spec.operations.append(
+            _MeshOperationSpec(kind="smooth", params={"iterations": iterations})
+        )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +217,7 @@ class _WorldState:
     _cell: tuple[float, float, float] | None = None
     _hmax: float | None = None
     _fem_order: int = 1
+    _mesh_source: str | None = None
 
     # Magnets (ordered)
     _magnets: list[MagnetHandle] = field(default_factory=list)
@@ -156,6 +240,8 @@ class _WorldState:
 
     # Shared geometry/mesh asset cache for flat scripts.
     _geometry_asset_cache: dict[str, dict[str, object] | None] = field(default_factory=dict)
+    _default_mesh_spec: _MeshSpecState = field(default_factory=_MeshSpecState)
+    _script_source_root: Path | None = None
 
 
 # Module-level singleton
@@ -187,10 +273,11 @@ def reset() -> None:
     _state = _WorldState()
 
 
-def begin_script_capture() -> None:
+def begin_script_capture(source_root: str | Path | None = None) -> None:
     """Enable loader capture mode for flat scripts."""
     global _capture_enabled, _captured_stages
     reset()
+    _state._script_source_root = Path(source_root).resolve() if source_root is not None else None
     _capture_enabled = True
     _captured_stages = []
 
@@ -246,14 +333,38 @@ def cell(dx: float, dy: float, dz: float) -> None:
     _state._cell = (dx, dy, dz)
 
 
+def mesh(
+    *,
+    hmax: float | None = None,
+    order: int | None = None,
+    source: str | None = None,
+) -> None:
+    """Configure the default explicit FEM mesh workflow for the flat API."""
+    if hmax is not None:
+        _state._default_mesh_spec.hmax = hmax
+        _state._hmax = hmax
+    if order is not None:
+        _state._default_mesh_spec.order = order
+        _state._fem_order = order
+    if source is not None:
+        _state._default_mesh_spec.source = source
+        _state._mesh_source = source
+
+
 def hmax(val: float) -> None:
-    """Set FEM maximum element size in meters."""
-    _state._hmax = val
+    """Compatibility alias for ``fm.mesh(hmax=...)``."""
+    mesh(hmax=val)
 
 
 def fem_order(order: int) -> None:
-    """Set FEM element order (1 or 2)."""
-    _state._fem_order = order
+    """Compatibility alias for ``fm.mesh(order=...)``."""
+    mesh(order=order)
+
+
+def build_mesh() -> None:
+    """Materialize the shared FEM mesh asset for the current flat-script model."""
+    _state._default_mesh_spec.build_requested = True
+    _build_explicit_mesh_assets()
 
 
 def interactive(enabled: bool = True) -> None:
@@ -262,6 +373,127 @@ def interactive(enabled: bool = True) -> None:
     This is the script-owned counterpart of ``fullmag -i``.
     """
     _state._interactive = bool(enabled)
+
+
+def _mesh_source_root() -> Path:
+    if _state._script_source_root is not None:
+        return _state._script_source_root
+    return Path.cwd()
+
+
+def _collect_flat_geometries() -> list[object]:
+    return [handle._resolved_geometry() for handle in _state._magnets]
+
+
+def _resolve_flat_fem_hint() -> FEM | None:
+    s = _state
+
+    explicit_specs = [handle._mesh_spec for handle in s._magnets if handle._mesh_spec.is_configured()]
+    build_requested = any(handle._mesh_spec.build_requested for handle in s._magnets)
+    operation_specs = [handle._mesh_spec for handle in s._magnets if handle._mesh_spec.operations]
+    default_spec = s._default_mesh_spec
+
+    candidate_specs = explicit_specs or ([default_spec] if default_spec.is_configured() else [])
+    if operation_specs and not candidate_specs:
+        candidate_specs = operation_specs
+    if build_requested and not candidate_specs:
+        candidate_specs = [default_spec]
+
+    shared_hmax = candidate_specs[0].hmax if candidate_specs else s._hmax
+    shared_order = candidate_specs[0].order if candidate_specs and candidate_specs[0].order is not None else s._fem_order
+    shared_source = candidate_specs[0].source if candidate_specs else s._mesh_source
+
+    for spec in candidate_specs[1:]:
+        if (
+            spec.hmax is not None and shared_hmax is not None and not math.isclose(spec.hmax, shared_hmax)
+        ) or (
+            spec.order is not None and spec.order != shared_order
+        ) or (
+            spec.source is not None and spec.source != shared_source
+        ):
+            raise ValueError(
+                "Per-geometry FEM mesh settings are not yet supported in the flat-script IR. "
+                "Use one shared mesh configuration for all geometries in this script."
+            )
+
+    resolved_hmax = shared_hmax
+    if resolved_hmax is None:
+        if s._backend == "fem":
+            if s._cell is not None:
+                resolved_hmax = min(s._cell)
+            else:
+                resolved_hmax = 5e-9
+        elif shared_source is not None:
+            resolved_hmax = 5e-9
+
+    if resolved_hmax is None:
+        return None
+
+    return FEM(order=shared_order or 1, hmax=resolved_hmax, mesh=shared_source)
+
+
+def _collect_mesh_workflow_metadata() -> dict[str, object] | None:
+    configured_handles = [handle for handle in _state._magnets if handle._mesh_spec.is_configured()]
+    operations = []
+    for handle in _state._magnets:
+        for operation in handle._mesh_spec.operations:
+            operations.append(
+                {
+                    "geometry": handle._name,
+                    "kind": operation.kind,
+                    "params": dict(operation.params),
+                }
+            )
+    if _state._default_mesh_spec.operations:
+        for operation in _state._default_mesh_spec.operations:
+            operations.append(
+                {
+                    "geometry": "*",
+                    "kind": operation.kind,
+                    "params": dict(operation.params),
+                }
+            )
+    build_requested = _state._default_mesh_spec.build_requested or any(
+        handle._mesh_spec.build_requested for handle in _state._magnets
+    )
+    explicit_mesh_api = bool(configured_handles or _state._default_mesh_spec.is_configured() or build_requested or operations)
+    if not explicit_mesh_api:
+        return None
+    fem_hint = _resolve_flat_fem_hint()
+    return {
+        "explicit_mesh_api": True,
+        "build_requested": build_requested,
+        "fem": fem_hint.to_ir() if fem_hint is not None else None,
+        "operations": operations,
+    }
+
+
+def _build_explicit_mesh_assets() -> None:
+    geometries = _collect_flat_geometries()
+    if not geometries:
+        raise ValueError("No geometries defined — call fm.geometry(...) before build_mesh()")
+
+    fem_hint = _resolve_flat_fem_hint()
+    if fem_hint is None:
+        raise ValueError(
+            "No FEM mesh configuration available. Set fm.mesh(...), call body.mesh(...), "
+            "or choose the FEM backend before build_mesh()."
+        )
+
+    resolved_geometries = [
+        resolve_geometry_sources(geometry, source_root=_mesh_source_root())
+        for geometry in geometries
+    ]
+    discretization_kwargs: dict[str, Any] = {"fem": fem_hint}
+    if _state._cell is not None:
+        discretization_kwargs["fdm"] = FDM(cell=_state._cell)
+    emit_progress("Building explicit FEM mesh asset")
+    build_geometry_assets_for_request(
+        requested_backend=BackendTarget.FEM,
+        geometries=resolved_geometries,
+        discretization=DiscretizationHints(**discretization_kwargs),
+        asset_cache=_state._geometry_asset_cache,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -418,14 +650,9 @@ def _build_problem(
     disc_kwargs: dict[str, Any] = {}
     if s._cell is not None:
         disc_kwargs["fdm"] = FDM(cell=s._cell)
-    if s._hmax is not None:
-        disc_kwargs["fem"] = FEM(order=s._fem_order, hmax=s._hmax)
-    elif s._backend == "fem" and "fem" not in disc_kwargs:
-        # Auto-derive FEM hint: use finest FDM cell edge, or a sensible default.
-        if s._cell is not None:
-            disc_kwargs["fem"] = FEM(order=s._fem_order, hmax=min(s._cell))
-        else:
-            disc_kwargs["fem"] = FEM(order=s._fem_order, hmax=5e-9)
+    fem_hint = _resolve_flat_fem_hint()
+    if fem_hint is not None:
+        disc_kwargs["fem"] = fem_hint
 
     # Runtime
     rt = RuntimeSelection()
@@ -439,6 +666,11 @@ def _build_problem(
         rt = rt.cpu()
     elif s._device == "gpu":
         rt = rt.gpu(s._gpu_count)
+
+    runtime_metadata: dict[str, Any] = {"interactive_session_requested": s._interactive}
+    mesh_workflow = _collect_mesh_workflow_metadata()
+    if mesh_workflow is not None:
+        runtime_metadata["mesh_workflow"] = mesh_workflow
 
     if study_kind == "relaxation":
         study = Relaxation(
@@ -459,7 +691,7 @@ def _build_problem(
         study=study,
         discretization=DiscretizationHints(**disc_kwargs) if disc_kwargs else None,
         runtime=rt,
-        runtime_metadata={"interactive_session_requested": s._interactive},
+        runtime_metadata=runtime_metadata,
         geometry_asset_cache=s._geometry_asset_cache,
     )
 

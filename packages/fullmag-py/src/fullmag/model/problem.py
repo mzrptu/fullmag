@@ -65,6 +65,179 @@ def _fem_mesh_cache_key(geometry: object, hints: FEM) -> str:
     return sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def resolve_geometry_sources(
+    geometry: object,
+    *,
+    source_root: str | Path | None,
+) -> object:
+    if source_root is None:
+        return geometry
+
+    from fullmag.model.geometry import (
+        Difference,
+        ImportedGeometry,
+        Intersection,
+        Translate,
+        Union,
+    )
+
+    root = Path(source_root)
+
+    if isinstance(geometry, ImportedGeometry):
+        source_path = Path(geometry.source)
+        if source_path.is_absolute():
+            return geometry
+        return ImportedGeometry(
+            source=str((root / source_path).resolve()),
+            scale=geometry.scale,
+            name=geometry.name,
+        )
+    if isinstance(geometry, Difference):
+        return Difference(
+            base=resolve_geometry_sources(geometry.base, source_root=source_root),
+            tool=resolve_geometry_sources(geometry.tool, source_root=source_root),
+            name=geometry.name,
+        )
+    if isinstance(geometry, Intersection):
+        return Intersection(
+            a=resolve_geometry_sources(geometry.a, source_root=source_root),
+            b=resolve_geometry_sources(geometry.b, source_root=source_root),
+            name=geometry.name,
+        )
+    if isinstance(geometry, Union):
+        return Union(
+            a=resolve_geometry_sources(geometry.a, source_root=source_root),
+            b=resolve_geometry_sources(geometry.b, source_root=source_root),
+            name=geometry.name,
+        )
+    if isinstance(geometry, Translate):
+        return Translate(
+            geometry=resolve_geometry_sources(geometry.geometry, source_root=source_root),
+            offset=geometry.offset,
+        )
+    return geometry
+
+
+def build_geometry_assets_for_request(
+    *,
+    requested_backend: "BackendTarget",
+    geometries: Sequence[object],
+    discretization: DiscretizationHints | None,
+    asset_cache: dict[str, dict[str, Any] | None] | None = None,
+) -> dict[str, Any] | None:
+    if discretization is None:
+        return None
+
+    asset_cache_key = json.dumps(
+        {
+            "requested_backend": requested_backend.value,
+            "geometries": [geometry.to_ir() for geometry in geometries],
+            "discretization": discretization.to_ir(),
+        },
+        sort_keys=True,
+    )
+    if asset_cache is not None and asset_cache_key in asset_cache:
+        cached = asset_cache[asset_cache_key]
+        return copy.deepcopy(cached)
+
+    assets: dict[str, list[dict[str, object]]] = {
+        "fdm_grid_assets": [],
+        "fem_mesh_assets": [],
+    }
+
+    if discretization.fdm is not None:
+        from fullmag.model.geometry import Cylinder, ImportedGeometry
+        from fullmag.meshing import realize_fdm_grid_asset
+
+        for geometry in geometries:
+            if isinstance(geometry, (Cylinder, ImportedGeometry)):
+                asset = realize_fdm_grid_asset(geometry, discretization.fdm)
+                assets["fdm_grid_assets"].append(asset.to_ir(geometry.geometry_name))
+
+    should_build_fem_assets = (
+        requested_backend == BackendTarget.FEM
+        or (
+            requested_backend == BackendTarget.AUTO
+            and discretization.fem is not None
+            and discretization.fem.mesh is not None
+        )
+    )
+
+    if should_build_fem_assets and discretization.fem is not None:
+        from fullmag._core import validate_mesh_ir
+        from fullmag.model.geometry import ImportedGeometry
+        from fullmag.meshing import realize_fem_mesh_asset
+        from fullmag.meshing.gmsh_bridge import MeshData
+
+        fem_mesh_cache_dir = _fem_mesh_cache_dir()
+
+        for geometry in geometries:
+            mesh_source = discretization.fem.mesh
+            if mesh_source is None and isinstance(geometry, ImportedGeometry):
+                mesh_source = geometry.source
+            if mesh_source is not None and mesh_source.lower().endswith(".json"):
+                emit_progress(
+                    f"Preparing FEM mesh asset for '{geometry.geometry_name}' from MeshIR JSON"
+                )
+                assets["fem_mesh_assets"].append(
+                    {
+                        "geometry_name": geometry.geometry_name,
+                        "mesh_source": mesh_source,
+                    }
+                )
+            else:
+                mesh_cache_key = _fem_mesh_cache_key(geometry, discretization.fem)
+                cache_path = (
+                    fem_mesh_cache_dir.joinpath(f"{mesh_cache_key}.npz")
+                    if fem_mesh_cache_dir is not None
+                    else None
+                )
+                mesh: MeshData | None = None
+                if cache_path is not None and cache_path.exists():
+                    emit_progress(
+                        f"Reusing cached FEM mesh for '{geometry.geometry_name}'"
+                    )
+                    mesh = MeshData.load(cache_path)
+                else:
+                    emit_progress(
+                        f"Preparing FEM mesh asset for '{geometry.geometry_name}'"
+                    )
+                    mesh = realize_fem_mesh_asset(geometry, discretization.fem)
+                    if cache_path is not None:
+                        mesh.save(cache_path)
+                        emit_progress(
+                            f"Cached FEM mesh for '{geometry.geometry_name}'"
+                        )
+                emit_progress(
+                    f"FEM mesh ready for '{geometry.geometry_name}': "
+                    f"{mesh.n_nodes} nodes, {mesh.n_elements} elements, "
+                    f"{mesh.n_boundary_faces} boundary faces"
+                )
+                mesh_ir = mesh.to_ir(geometry.geometry_name)
+                is_valid = validate_mesh_ir(mesh_ir)
+                if is_valid is False:
+                    raise ValueError(
+                        f"generated mesh asset for '{geometry.geometry_name}' failed Rust validation"
+                    )
+                assets["fem_mesh_assets"].append(
+                    {
+                        "geometry_name": geometry.geometry_name,
+                        "mesh_source": None,
+                        "mesh": mesh_ir,
+                    }
+                )
+
+    if not assets["fdm_grid_assets"] and not assets["fem_mesh_assets"]:
+        result = None
+    else:
+        result = assets
+
+    if asset_cache is not None:
+        asset_cache[asset_cache_key] = copy.deepcopy(result)
+
+    return result
+
+
 class ExecutionMode(str, Enum):
     STRICT = "strict"
     EXTENDED = "extended"
@@ -307,13 +480,13 @@ class Problem:
         materials = self._collect_materials()
         regions = self._collect_regions()
         geometries = [
-            self._resolve_geometry_sources(geometry, source_root=source_root)
+            resolve_geometry_sources(geometry, source_root=source_root)
             for geometry in self._collect_geometries()
         ]
         discretization = self._resolve_discretization(runtime.backend_target)
         source_hash = sha256(script_source.encode("utf-8")).hexdigest() if script_source else None
         effective_asset_cache = asset_cache if asset_cache is not None else self.geometry_asset_cache
-        geometry_assets = self._build_geometry_assets(
+        geometry_assets = build_geometry_assets_for_request(
             requested_backend=runtime.backend_target,
             geometries=geometries,
             discretization=discretization,
@@ -469,120 +642,12 @@ class Problem:
         discretization: DiscretizationHints | None,
         asset_cache: dict[str, dict[str, Any] | None] | None = None,
     ) -> dict[str, Any] | None:
-        if discretization is None:
-            return None
-
-        asset_cache_key = json.dumps(
-            {
-                "requested_backend": requested_backend.value,
-                "geometries": [geometry.to_ir() for geometry in geometries],
-                "discretization": discretization.to_ir(),
-            },
-            sort_keys=True,
+        return build_geometry_assets_for_request(
+            requested_backend=requested_backend,
+            geometries=geometries,
+            discretization=discretization,
+            asset_cache=asset_cache,
         )
-        if asset_cache is not None and asset_cache_key in asset_cache:
-            cached = asset_cache[asset_cache_key]
-            return copy.deepcopy(cached)
-
-        assets: dict[str, list[dict[str, object]]] = {
-            "fdm_grid_assets": [],
-            "fem_mesh_assets": [],
-        }
-
-        if discretization.fdm is not None:
-            from fullmag.model.geometry import Cylinder, ImportedGeometry
-            from fullmag.meshing import realize_fdm_grid_asset
-
-            for geometry in geometries:
-                if isinstance(geometry, (Cylinder, ImportedGeometry)):
-                    asset = realize_fdm_grid_asset(geometry, discretization.fdm)
-                    assets["fdm_grid_assets"].append(asset.to_ir(geometry.geometry_name))
-
-        should_build_fem_assets = (
-            requested_backend == BackendTarget.FEM
-            or (
-                requested_backend == BackendTarget.AUTO
-                and discretization.fem is not None
-                and discretization.fem.mesh is not None
-            )
-        )
-
-        if should_build_fem_assets and discretization.fem is not None:
-            from fullmag._core import validate_mesh_ir
-            from fullmag.model.geometry import ImportedGeometry
-            from fullmag.meshing import realize_fem_mesh_asset
-            from fullmag.meshing.gmsh_bridge import MeshData
-
-            fem_mesh_cache_dir = _fem_mesh_cache_dir()
-
-            for geometry in geometries:
-                mesh_source = discretization.fem.mesh
-                if mesh_source is None and isinstance(geometry, ImportedGeometry):
-                    mesh_source = geometry.source
-                if mesh_source is not None and mesh_source.lower().endswith(".json"):
-                    emit_progress(
-                        f"Preparing FEM mesh asset for '{geometry.geometry_name}' from MeshIR JSON"
-                    )
-                    # Rust planner can load .json MeshIR directly
-                    assets["fem_mesh_assets"].append(
-                        {
-                            "geometry_name": geometry.geometry_name,
-                            "mesh_source": mesh_source,
-                        }
-                    )
-                else:
-                    mesh_cache_key = _fem_mesh_cache_key(geometry, discretization.fem)
-                    cache_path = (
-                        fem_mesh_cache_dir.joinpath(f"{mesh_cache_key}.npz")
-                        if fem_mesh_cache_dir is not None
-                        else None
-                    )
-                    mesh: MeshData | None = None
-                    if cache_path is not None and cache_path.exists():
-                        emit_progress(
-                            f"Reusing cached FEM mesh for '{geometry.geometry_name}'"
-                        )
-                        mesh = MeshData.load(cache_path)
-                    else:
-                        # All other formats (STL, STEP, etc.) or no source:
-                        # tetrahedralize via gmsh → inline MeshIR
-                        emit_progress(
-                            f"Preparing FEM mesh asset for '{geometry.geometry_name}'"
-                        )
-                        mesh = realize_fem_mesh_asset(geometry, discretization.fem)
-                        if cache_path is not None:
-                            mesh.save(cache_path)
-                            emit_progress(
-                                f"Cached FEM mesh for '{geometry.geometry_name}'"
-                            )
-                    emit_progress(
-                        f"FEM mesh ready for '{geometry.geometry_name}': "
-                        f"{mesh.n_nodes} nodes, {mesh.n_elements} elements, "
-                        f"{mesh.n_boundary_faces} boundary faces"
-                    )
-                    mesh_ir = mesh.to_ir(geometry.geometry_name)
-                    is_valid = validate_mesh_ir(mesh_ir)
-                    if is_valid is False:
-                        raise ValueError(
-                            f"generated mesh asset for '{geometry.geometry_name}' failed Rust validation"
-                        )
-                    assets["fem_mesh_assets"].append(
-                        {
-                            "geometry_name": geometry.geometry_name,
-                            "mesh_source": None,
-                            "mesh": mesh_ir,
-                        }
-                    )
-
-        if not assets["fdm_grid_assets"] and not assets["fem_mesh_assets"]:
-            result = None
-        else:
-            result = assets
-
-        if asset_cache is not None:
-            asset_cache[asset_cache_key] = copy.deepcopy(result)
-
-        return result
 
     def _resolve_geometry_sources(
         self,
@@ -590,50 +655,4 @@ class Problem:
         *,
         source_root: str | Path | None,
     ) -> object:
-        if source_root is None:
-            return geometry
-
-        from fullmag.model.geometry import (
-            Difference,
-            ImportedGeometry,
-            Intersection,
-            Translate,
-            Union,
-        )
-
-        root = Path(source_root)
-
-        if isinstance(geometry, ImportedGeometry):
-            source_path = Path(geometry.source)
-            if source_path.is_absolute():
-                return geometry
-            return ImportedGeometry(
-                source=str((root / source_path).resolve()),
-                scale=geometry.scale,
-                name=geometry.name,
-            )
-        if isinstance(geometry, Difference):
-            return Difference(
-                base=self._resolve_geometry_sources(geometry.base, source_root=source_root),
-                tool=self._resolve_geometry_sources(geometry.tool, source_root=source_root),
-                name=geometry.name,
-            )
-        if isinstance(geometry, Union):
-            return Union(
-                a=self._resolve_geometry_sources(geometry.a, source_root=source_root),
-                b=self._resolve_geometry_sources(geometry.b, source_root=source_root),
-                name=geometry.name,
-            )
-        if isinstance(geometry, Intersection):
-            return Intersection(
-                a=self._resolve_geometry_sources(geometry.a, source_root=source_root),
-                b=self._resolve_geometry_sources(geometry.b, source_root=source_root),
-                name=geometry.name,
-            )
-        if isinstance(geometry, Translate):
-            return Translate(
-                geometry=self._resolve_geometry_sources(geometry.geometry, source_root=source_root),
-                offset=geometry.offset,
-                name=geometry.name,
-            )
-        return geometry
+        return resolve_geometry_sources(geometry, source_root=source_root)

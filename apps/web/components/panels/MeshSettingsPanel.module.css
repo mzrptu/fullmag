@@ -1,0 +1,209 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 2px;
+}
+
+/* ── Section cards ── */
+.section {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgba(6, 10, 18, 0.45);
+  overflow: hidden;
+}
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(15, 20, 35, 0.5);
+}
+.sectionTitle {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-1);
+}
+.sectionBadge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--text-3);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.sectionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+/* ── Inline row ── */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+.rowLabel {
+  font-size: 0.75rem;
+  color: var(--text-2);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.rowControl {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── Compact select ── */
+.compactSelect {
+  appearance: none;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 0.73rem;
+  padding: 3px 24px 3px 8px;
+  cursor: pointer;
+  max-width: 180px;
+  width: 100%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  transition: border-color 0.15s ease;
+}
+.compactSelect:hover {
+  border-color: var(--accent);
+}
+.compactSelect:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* ── Compact input ── */
+.compactInput {
+  appearance: none;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 0.73rem;
+  padding: 3px 8px;
+  width: 100%;
+  max-width: 120px;
+  transition: border-color 0.15s ease;
+}
+.compactInput:hover { border-color: var(--accent); }
+.compactInput:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* ── Mini toggle ── */
+.toggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+}
+.toggleLabel {
+  font-size: 0.75rem;
+  color: var(--text-2);
+}
+.miniToggle {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+.miniToggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+.miniToggle:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.miniToggle:checked::after {
+  transform: translateX(14px);
+  background: #fff;
+}
+
+/* ── Stats row ── */
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 6px;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.statLabel {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+.statValue {
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  color: var(--text-1);
+}
+
+/* ── Indicator colors ── */
+.good { color: #35b779; }
+.fair { color: #fde725; }
+.poor { color: #cf6256; }
+
+/* ── Histogram bar container ── */
+.histogramCanvas {
+  width: 100%;
+  height: 120px;
+  border-radius: var(--radius-sm);
+  background: rgba(6, 10, 18, 0.6);
+  border: 1px solid var(--border-subtle);
+}
+
+/* ── Legend row ── */
+.legend {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  font-size: 0.68rem;
+  color: var(--text-3);
+}
+.legendDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
