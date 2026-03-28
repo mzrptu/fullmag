@@ -1,191 +1,187 @@
 "use client";
 
 /**
- * HSL Colour Sphere – a 3D colour reference that rotates in sync with the
- * main magnetization view camera.
+ * HSL Colour Sphere – R3F version.
  *
- * The sphere surface is coloured with the exact same `magnetizationHSL`
- * mapping used for arrow colouring:
- *   hue        = atan2(y, x) / 2π
- *   saturation = 1
- *   lightness  = (z + 1) / 2
+ * A small inset 3D colour reference that rotates in sync with the main
+ * viewport camera. The sphere surface uses the exact same magnetizationHSL
+ * colour mapping as arrow/voxel rendering.
  *
- * Three axis labels (X / Y / Z) protrude from the sphere to make the
- * mapping unambiguous. The whole thing rotates with the main viewport camera.
+ * Axis labels (X / Y / Z) protrude from the sphere following the simulation
+ * coordinate convention (sim-Z → scene-Y, sim-Y → scene-Z).
  */
 
-import { useEffect, useRef, useCallback } from "react";
+import { useRef, useMemo, useEffect } from "react";
 import * as THREE from "three";
-import type { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Text, Billboard, Line } from "@react-three/drei";
 import { magnetizationHslColor } from "./magnetizationColor";
-import { cn } from "@/lib/utils";
 
 /* ── Types ─────────────────────────────────────────────────── */
 
 interface HslSphereProps {
   sceneRef: React.MutableRefObject<{
-    camera: THREE.PerspectiveCamera;
-    controls: TrackballControls;
+    camera: THREE.PerspectiveCamera | THREE.Camera;
+    controls: any;
   } | null>;
 }
 
 /* ── Constants ─────────────────────────────────────────────── */
 
-const SIZE = 110; // px  (canvas size)
+const SIZE = 110;
 const SPHERE_RADIUS = 0.9;
 const SEGMENTS = 64;
+const LABEL_DIST = 1.18;
 
-/* ── Build sphere mesh with vertex colours ────────────────── */
+/* ── Vertex-coloured sphere geometry (memoized) ───────────── */
 
-function buildColoredSphere(): THREE.Mesh {
-  const geo = new THREE.SphereGeometry(SPHERE_RADIUS, SEGMENTS, SEGMENTS);
-  const posAttr = geo.attributes.position;
-  const colors = new Float32Array(posAttr.count * 3);
-  const _v = new THREE.Vector3();
+function useColoredSphereGeometry() {
+  return useMemo(() => {
+    const geo = new THREE.SphereGeometry(SPHERE_RADIUS, SEGMENTS, SEGMENTS);
+    const posAttr = geo.attributes.position;
+    const colors = new Float32Array(posAttr.count * 3);
+    const _v = new THREE.Vector3();
 
-  for (let i = 0; i < posAttr.count; i++) {
-    _v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).normalize();
-    // Simulation convention: sim-X → world-X, sim-Z → world-Y, sim-Y → world-Z
-    // The sphere directions map: world (x, y, z) → sim (x, z, y)
-    const c = magnetizationHslColor(_v.x, _v.z, _v.y);
-    colors[i * 3] = c.r;
-    colors[i * 3 + 1] = c.g;
-    colors[i * 3 + 2] = c.b;
-  }
+    for (let i = 0; i < posAttr.count; i++) {
+      _v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).normalize();
+      // Simulation convention: world (x, y, z) → sim (x, z, y)
+      const c = magnetizationHslColor(_v.x, _v.z, _v.y);
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
 
-  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  const mat = new THREE.MeshBasicMaterial({ vertexColors: true });
-  return new THREE.Mesh(geo, mat);
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    return geo;
+  }, []);
 }
 
-/* ── Build axis labels as sprites ─────────────────────────── */
+/* ── Axis label component ─────────────────────────────────── */
 
-function makeLabel(text: string, color: string, pos: THREE.Vector3): THREE.Sprite {
-  const canvas = document.createElement("canvas");
-  canvas.width = 64;
-  canvas.height = 64;
-  const ctx = canvas.getContext("2d")!;
-  ctx.clearRect(0, 0, 64, 64);
+function AxisLabel({ text, color, position }: {
+  text: string;
+  color: string;
+  position: [number, number, number];
+}) {
+  return (
+    <Billboard position={position}>
+      <Text
+        fontSize={0.28}
+        color={color}
+        anchorX="center"
+        anchorY="middle"
+        font="/fonts/inter-medium.woff"
+        fontWeight="bold"
+      >
+        {text}
+      </Text>
+    </Billboard>
+  );
+}
 
-  // Background circle
-  ctx.beginPath();
-  ctx.arc(32, 32, 22, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(10, 15, 30, 0.75)";
-  ctx.fill();
+/* ── Camera sync component ────────────────────────────────── */
 
-  // Border
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.stroke();
+function CameraSync({
+  mainCameraRef,
+}: {
+  mainCameraRef: React.MutableRefObject<{ camera: THREE.Camera } | null>;
+}) {
+  const { camera } = useThree();
 
-  // Text
-  ctx.font = "bold 28px Inter, system-ui, sans-serif";
-  ctx.fillStyle = color;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, 32, 33);
+  useFrame(() => {
+    const main = mainCameraRef.current;
+    if (!main) return;
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false });
-  const sprite = new THREE.Sprite(mat);
-  sprite.position.copy(pos);
-  sprite.scale.set(0.32, 0.32, 1);
-  return sprite;
+    // Copy only the rotation from the main camera
+    camera.quaternion.copy(main.camera.quaternion);
+    camera.position.set(0, 0, 3).applyQuaternion(camera.quaternion);
+    camera.lookAt(0, 0, 0);
+  });
+
+  return null;
 }
 
 /* ── Component ─────────────────────────────────────────────── */
 
 export default function HslSphere({ sceneRef }: HslSphereProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const internalsRef = useRef<{
-    renderer: THREE.WebGLRenderer;
-    scene: THREE.Scene;
-    camera: THREE.OrthographicCamera;
-  } | null>(null);
-  const rafRef = useRef<number | null>(null);
-
-  // ── Setup inset scene once ──
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const renderer = new THREE.WebGLRenderer({
-      canvas,
-      alpha: true,
-      antialias: true,
-    });
-    renderer.setSize(SIZE, SIZE);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-    const scene = new THREE.Scene();
-    const cam = new THREE.OrthographicCamera(-1.4, 1.4, 1.4, -1.4, 0.1, 10);
-    cam.position.set(0, 0, 3);
-    cam.lookAt(0, 0, 0);
-
-    scene.add(buildColoredSphere());
-
-    // Axis labels — using simulation convention (sim-Y → world-Z, sim-Z → world-Y)
-    const labelDist = 1.18;
-    scene.add(makeLabel("X", "#e65050", new THREE.Vector3(labelDist, 0, 0)));
-    scene.add(makeLabel("X", "#e65050", new THREE.Vector3(-labelDist, 0, 0)));
-    scene.add(makeLabel("Z", "#5090e6", new THREE.Vector3(0, labelDist, 0)));
-    scene.add(makeLabel("Z", "#5090e6", new THREE.Vector3(0, -labelDist, 0)));
-    scene.add(makeLabel("Y", "#50c850", new THREE.Vector3(0, 0, labelDist)));
-    scene.add(makeLabel("Y", "#50c850", new THREE.Vector3(0, 0, -labelDist)));
-
-    // Thin axis lines through sphere
-    const lineGeo = (from: THREE.Vector3, to: THREE.Vector3, color: number) => {
-      const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
-      return new THREE.Line(geo, new THREE.LineBasicMaterial({ color, opacity: 0.5, transparent: true }));
-    };
-    scene.add(lineGeo(new THREE.Vector3(-1.05, 0, 0), new THREE.Vector3(1.05, 0, 0), 0xe65050));
-    scene.add(lineGeo(new THREE.Vector3(0, -1.05, 0), new THREE.Vector3(0, 1.05, 0), 0x5090e6));
-    scene.add(lineGeo(new THREE.Vector3(0, 0, -1.05), new THREE.Vector3(0, 0, 1.05), 0x50c850));
-
-    internalsRef.current = { renderer, scene, camera: cam };
-
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-      renderer.dispose();
-    };
-  }, []);
-
-  // ── Sync rotation with main camera ──
-  const syncRotation = useCallback(() => {
-    const inset = internalsRef.current;
-    const main = sceneRef.current;
-    if (!inset || !main) return;
-
-    // Copy camera rotation (orientation only, no translation)
-    inset.camera.quaternion.copy(main.camera.quaternion);
-    inset.camera.position
-      .set(0, 0, 3)
-      .applyQuaternion(inset.camera.quaternion);
-    inset.camera.lookAt(0, 0, 0);
-
-    inset.renderer.render(inset.scene, inset.camera);
-  }, [sceneRef]);
-
-  useEffect(() => {
-    function loop() {
-      syncRotation();
-      rafRef.current = requestAnimationFrame(loop);
-    }
-    rafRef.current = requestAnimationFrame(loop);
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    };
-  }, [syncRotation]);
-
   return (
     <div className="pointer-events-none absolute bottom-4 left-4 z-10 h-[110px] w-[110px]">
-      <canvas
-        ref={canvasRef}
-        width={SIZE}
-        height={SIZE}
-        className={cn("block h-full w-full rounded-full")}
-      />
+      <Canvas
+        orthographic
+        camera={{
+          left: -1.4,
+          right: 1.4,
+          top: 1.4,
+          bottom: -1.4,
+          near: 0.1,
+          far: 10,
+          position: [0, 0, 3],
+        }}
+        gl={{ alpha: true, antialias: true }}
+        dpr={Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)}
+        style={{
+          width: SIZE,
+          height: SIZE,
+          borderRadius: "50%",
+          overflow: "hidden",
+        }}
+      >
+        <HslSphereScene mainCameraRef={sceneRef} />
+      </Canvas>
     </div>
+  );
+}
+
+/* ── Inner scene (must be inside Canvas) ───────────────────── */
+
+function HslSphereScene({
+  mainCameraRef,
+}: {
+  mainCameraRef: React.MutableRefObject<{ camera: THREE.Camera } | null>;
+}) {
+  const sphereGeo = useColoredSphereGeometry();
+  const sphereMat = useMemo(
+    () => new THREE.MeshBasicMaterial({ vertexColors: true }),
+    [],
+  );
+
+  return (
+    <>
+      <CameraSync mainCameraRef={mainCameraRef} />
+
+      {/* Vertex-coloured sphere */}
+      <mesh geometry={sphereGeo} material={sphereMat} />
+
+      {/* Axis labels — sim convention: scene-Y=sim-Z, scene-Z=sim-Y */}
+      <AxisLabel text="X" color="#e65050" position={[LABEL_DIST, 0, 0]} />
+      <AxisLabel text="X" color="#e65050" position={[-LABEL_DIST, 0, 0]} />
+      <AxisLabel text="Z" color="#5090e6" position={[0, LABEL_DIST, 0]} />
+      <AxisLabel text="Z" color="#5090e6" position={[0, -LABEL_DIST, 0]} />
+      <AxisLabel text="Y" color="#50c850" position={[0, 0, LABEL_DIST]} />
+      <AxisLabel text="Y" color="#50c850" position={[0, 0, -LABEL_DIST]} />
+
+      {/* Thin axis lines through sphere */}
+      <Line
+        points={[[-1.05, 0, 0], [1.05, 0, 0]]}
+        color="#e65050"
+        lineWidth={1}
+        transparent
+        opacity={0.5}
+      />
+      <Line
+        points={[[0, -1.05, 0], [0, 1.05, 0]]}
+        color="#5090e6"
+        lineWidth={1}
+        transparent
+        opacity={0.5}
+      />
+      <Line
+        points={[[0, 0, -1.05], [0, 0, 1.05]]}
+        color="#50c850"
+        lineWidth={1}
+        transparent
+        opacity={0.5}
+      />
+    </>
   );
 }
