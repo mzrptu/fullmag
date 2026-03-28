@@ -683,6 +683,39 @@ pub struct FdmPlanIR {
     /// Boundary correction tier: "none" | "volume" (T0) | "full" (T1)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boundary_correction: Option<String>,
+    /// Sub-cell geometry data (computed by planner when boundary_correction is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_geometry: Option<BoundaryGeometryIR>,
+}
+
+/// Sub-cell boundary geometry arrays computed from SDF during planning.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BoundaryGeometryIR {
+    /// Per-cell volume fraction φ ∈ [0,1], length = cell_count.
+    pub volume_fraction: Vec<f64>,
+    /// Face-link fractions per direction, each length = cell_count.
+    pub face_link_xp: Vec<f64>,
+    pub face_link_xm: Vec<f64>,
+    pub face_link_yp: Vec<f64>,
+    pub face_link_ym: Vec<f64>,
+    pub face_link_zp: Vec<f64>,
+    pub face_link_zm: Vec<f64>,
+    /// Intersection distances per direction (T1 only), each length = cell_count.
+    pub delta_xp: Vec<f64>,
+    pub delta_xm: Vec<f64>,
+    pub delta_yp: Vec<f64>,
+    pub delta_ym: Vec<f64>,
+    pub delta_zp: Vec<f64>,
+    pub delta_zm: Vec<f64>,
+    /// Sparse demag correction data (T0+T1).
+    #[serde(default)]
+    pub demag_corr_target_idx: Vec<i32>,
+    #[serde(default)]
+    pub demag_corr_source_idx: Vec<i32>,
+    #[serde(default)]
+    pub demag_corr_tensor: Vec<f64>,
+    #[serde(default)]
+    pub demag_corr_stencil_size: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1498,6 +1531,8 @@ mod tests {
                 adaptive_timestep: None,
                 relaxation: None,
                 boundary_correction: None,
+                boundary_geometry: None,
+                inter_region_exchange: vec![],
             }),
             output_plan: OutputPlanIR {
                 outputs: vec![OutputIR::Field {

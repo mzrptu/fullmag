@@ -454,6 +454,7 @@ dependencies = [
 name = "fullmag-plan"
 version = "0.1.0"
 dependencies = [
+ "fullmag-fdm-demag",
  "fullmag-ir",
  "serde",
  "serde_json",

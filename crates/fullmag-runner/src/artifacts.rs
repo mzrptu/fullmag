@@ -308,6 +308,7 @@ mod tests {
                 adaptive_timestep: None,
                 relaxation: None,
                 boundary_correction: None,
+                boundary_geometry: None,
                 inter_region_exchange: vec![],
             }),
             output_plan: OutputPlanIR {

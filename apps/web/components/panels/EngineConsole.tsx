@@ -412,31 +412,31 @@ export default function EngineConsole({
           <>
             {/* Live telemetry grid */}
             <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2 p-3">
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-primary">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Status</span>
                 <span className={cn("font-mono text-sm font-semibold text-foreground", statusValueClassName)}>
                   {workspaceStatus}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-sky-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Step</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtStepValue(liveState?.step ?? run?.total_steps ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-violet-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Sim Time</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtTimeOrDash(liveState?.time ?? run?.final_time ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-amber-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Δt</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtSIOrDash(liveState?.dt ?? 0, "s", hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-emerald-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">max dm/dt</span>
                 <span
                   className={cn("font-mono text-sm font-semibold text-foreground", hasSolverTelemetry && (liveState?.max_dm_dt ?? 0) < 1e-5 && "text-emerald-500")}
@@ -444,17 +444,17 @@ export default function EngineConsole({
                   {fmtExpOrDash(liveState?.max_dm_dt ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-rose-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">max |H_eff|</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtExpOrDash(liveState?.max_h_eff ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-slate-400">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Elapsed</span>
                 <span className="font-mono text-sm font-semibold text-foreground">{fmtDuration(elapsed)}</span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-orange-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Throughput</span>
                 <span className="font-mono text-sm font-semibold text-foreground">{stepsPerSec > 0 ? `${stepsPerSec.toFixed(1)} st/s` : "—"}</span>
               </div>

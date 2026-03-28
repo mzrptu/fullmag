@@ -172,13 +172,13 @@ export default function RunSidebar() {
           <section className="flex flex-col h-full bg-transparent">
             <button
               type="button"
-              className="flex items-center w-full px-3 py-2 text-left transition-colors hover:bg-muted/50 border-b border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)] shrink-0"
+              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-border/40 border-l-[3px] border-l-primary shadow-[0_1px_2px_rgba(0,0,0,0.02)] shrink-0"
               onClick={handleNavigatorToggle}
               aria-expanded={navigatorOpen}
             >
-              <span className={cn("text-muted-foreground mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", navigatorOpen && "rotate-90")}>▸</span>
+              <span className={cn("text-primary/70 mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", navigatorOpen && "rotate-90")}>▸</span>
               <span className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-foreground">Model</span>
-              <span className="ml-auto text-[0.65rem] font-mono tracking-tight text-muted-foreground/80 bg-muted/60 px-1.5 py-0.5 rounded-sm border border-border/40">{ctx.isFemBackend ? "FEM" : "FDM"}</span>
+              <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-primary-foreground bg-primary/80 px-1.5 py-0.5 rounded-sm">{ctx.isFemBackend ? "FEM" : "FDM"}</span>
             </button>
             {navigatorOpen && (
               <div className="flex-1 min-h-0 min-w-0 pr-1 overflow-hidden isolate relative">
@@ -206,13 +206,13 @@ export default function RunSidebar() {
           <section className="flex flex-col h-full bg-transparent">
             <button
               type="button"
-              className="flex items-center w-full px-3 py-2 text-left transition-colors hover:bg-muted/50 border-b border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)] shrink-0"
+              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-border/40 border-l-[3px] border-l-emerald-500 shadow-[0_1px_2px_rgba(0,0,0,0.02)] shrink-0"
               onClick={handleInspectorToggle}
               aria-expanded={inspectorOpen}
             >
-              <span className={cn("text-muted-foreground mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", inspectorOpen && "rotate-90")}>▸</span>
+              <span className={cn("text-emerald-500/70 mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", inspectorOpen && "rotate-90")}>▸</span>
               <span className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-foreground">Inspector</span>
-              <span className="ml-auto text-[0.65rem] font-mono tracking-tight text-muted-foreground/80 bg-muted/60 px-1.5 py-0.5 rounded-sm border border-border/40">{activeNode?.label ?? "Workspace"}</span>
+              <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-muted-foreground bg-emerald-500/10 px-1.5 py-0.5 rounded-sm border border-emerald-500/20">{activeNode?.label ?? "Workspace"}</span>
             </button>
             {inspectorOpen && (
               <div className="flex-1 min-h-0 min-w-0 overflow-hidden isolate relative">

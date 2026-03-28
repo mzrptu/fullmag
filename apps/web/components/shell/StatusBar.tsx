@@ -42,20 +42,26 @@ export default function StatusBar({
   nodeCount,
 }: StatusBarProps) {
   return (
-    <div className="flex items-center justify-between border-t border-border/40 bg-card/40 px-3 py-1 text-[0.68rem] tracking-wide text-muted-foreground z-40 h-[26px]">
-      {(activityLabel || activityDetail) && (
-        <div className="flex items-center">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-foreground">{activityLabel ?? "Workspace"}</span>
+    <div className="flex items-center justify-between border-t-2 border-border/60 bg-background/80 backdrop-blur-md px-3 py-1.5 text-[0.68rem] tracking-wide text-muted-foreground z-40 min-h-[28px] shadow-[0_-4px_24px_rgba(0,0,0,0.2)]">
+      <div className="flex items-center gap-2 overflow-hidden flex-1 mr-4">
+        {(activityLabel || activityDetail) ? (
+          <>
+            <span className="font-bold uppercase tracking-widest text-[0.6rem] bg-primary text-primary-foreground px-1.5 py-[1px] rounded shadow-sm border border-primary/20 shrink-0">
+              {activityLabel ?? "Workspace"}
+            </span>
             {activityDetail && (
-              <span className="truncate max-w-[200px]" title={activityDetail}>
+              <span className="truncate max-w-full text-foreground/80 font-medium" title={activityDetail}>
                 {activityDetail}
               </span>
             )}
-          </div>
-        </div>
-      )}
-      <div className="flex items-center ml-auto gap-4">
+          </>
+        ) : (
+          <span className="font-bold uppercase tracking-widest text-[0.6rem] bg-muted text-muted-foreground px-1.5 py-[1px] rounded shadow-sm shrink-0">
+            Idle
+          </span>
+        )}
+      </div>
+      <div className="flex items-center shrink-0 ml-auto gap-4">
       {/* Left section: status + connection */}
       <div className="flex items-center gap-2">
         <span className={cn("flex items-center gap-1.5 font-semibold text-muted-foreground", status === "running" && "text-primary", status === "completed" && "text-emerald-500", status === "failed" && "text-destructive")} data-status={status}>

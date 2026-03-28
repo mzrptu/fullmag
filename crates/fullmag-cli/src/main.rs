@@ -4034,6 +4034,7 @@ mod tests {
             adaptive_timestep: None,
             relaxation: None,
             boundary_correction: None,
+                boundary_geometry: None,
             inter_region_exchange: vec![],
         });
 
@@ -4147,6 +4148,7 @@ mod tests {
             adaptive_timestep: None,
             relaxation: None,
             boundary_correction: None,
+                boundary_geometry: None,
             inter_region_exchange: vec![],
         };
 
@@ -4199,6 +4201,7 @@ mod tests {
                 max_steps: 100,
             }),
             boundary_correction: None,
+                boundary_geometry: None,
             inter_region_exchange: vec![],
         };
 

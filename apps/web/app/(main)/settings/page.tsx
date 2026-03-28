@@ -164,27 +164,137 @@ export default function SettingsPage() {
             <h2 className="card-title">GPU Configuration</h2>
           </div>
           <div className="card-body">
-            <SettingRow label="CUDA Device" value="Not yet detected" muted />
-            <SettingRow label="CUDA Toolkit" value="—" muted />
-            <SettingRow label="GPU Backend Status" value="Phase 2" muted />
-            <p className="mt-[var(--sp-2)] text-[length:var(--text-sm)] text-[var(--text-muted)]">
-              GPU acceleration will be available when the CUDA backend is implemented.
-            </p>
+            <SettingRow
+              label="CUDA Device"
+              value={config?.plan_summary?.cuda_device as string ?? "Auto-detect"}
+              muted={!config?.plan_summary?.cuda_device}
+            />
+            <SettingRow
+              label="Backend Mode"
+              value={config?.backend?.toUpperCase() ?? "—"}
+              tone={config?.backend === "fdm" || config?.backend === "fem" ? "info" : undefined}
+              muted={!config}
+            />
+            <SettingRow
+              label="Precision"
+              value={config?.precision ?? "—"}
+              muted={!config}
+            />
           </div>
         </section>
 
-        <section className="card">
-          <div className="card-header">
-            <h2 className="card-title">Appearance</h2>
-          </div>
-          <div className="card-body">
-            <p className="text-[length:var(--text-sm)] text-[var(--text-muted)]">
-              Use the sun/moon icon in the top bar to toggle between dark and light themes.
-            </p>
-          </div>
-        </section>
+        <SettingsPreferences />
       </div>
     </>
+  );
+}
+
+/* ── Local preferences with localStorage persistence ── */
+
+const PREFS_KEY = "fullmag_preferences";
+
+interface Preferences {
+  defaultView: "3D" | "2D" | "Mesh";
+  previewRefreshMs: number;
+  showAxisLabels: boolean;
+}
+
+const DEFAULT_PREFS: Preferences = {
+  defaultView: "3D",
+  previewRefreshMs: 250,
+  showAxisLabels: true,
+};
+
+function loadPrefs(): Preferences {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return DEFAULT_PREFS;
+    return { ...DEFAULT_PREFS, ...JSON.parse(raw) };
+  } catch {
+    return DEFAULT_PREFS;
+  }
+}
+
+function savePrefs(prefs: Preferences) {
+  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+}
+
+function SettingsPreferences() {
+  const [prefs, setPrefs] = useState<Preferences>(DEFAULT_PREFS);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setPrefs(loadPrefs());
+  }, []);
+
+  const update = useCallback((patch: Partial<Preferences>) => {
+    setPrefs((prev) => {
+      const next = { ...prev, ...patch };
+      savePrefs(next);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      return next;
+    });
+  }, []);
+
+  return (
+    <section className="card">
+      <div className="card-header">
+        <h2 className="card-title">Visualization Preferences</h2>
+        {saved && (
+          <span className="text-[length:var(--text-sm)] text-emerald-500 font-medium animate-in fade-in">
+            Saved ✓
+          </span>
+        )}
+      </div>
+      <div className="card-body">
+        <div className="flex items-center justify-between gap-[var(--sp-4)] border-b border-[var(--ide-border-subtle)] py-[var(--sp-3)]">
+          <span className="text-[length:var(--text-base)] text-[var(--text-soft)]">Default View Mode</span>
+          <select
+            value={prefs.defaultView}
+            onChange={(e) => update({ defaultView: e.target.value as Preferences["defaultView"] })}
+            className="font-mono text-[length:var(--text-sm)] bg-[var(--surface-2)] border border-[var(--ide-border-subtle)] rounded-md px-2 py-1 text-[var(--text-1)]"
+          >
+            <option value="3D">3D</option>
+            <option value="2D">2D</option>
+            <option value="Mesh">Mesh</option>
+          </select>
+        </div>
+        <div className="flex items-center justify-between gap-[var(--sp-4)] border-b border-[var(--ide-border-subtle)] py-[var(--sp-3)]">
+          <span className="text-[length:var(--text-base)] text-[var(--text-soft)]">Preview Refresh</span>
+          <select
+            value={prefs.previewRefreshMs}
+            onChange={(e) => update({ previewRefreshMs: Number(e.target.value) })}
+            className="font-mono text-[length:var(--text-sm)] bg-[var(--surface-2)] border border-[var(--ide-border-subtle)] rounded-md px-2 py-1 text-[var(--text-1)]"
+          >
+            <option value={100}>Fast (100ms)</option>
+            <option value={250}>Normal (250ms)</option>
+            <option value={500}>Slow (500ms)</option>
+            <option value={1000}>Very Slow (1s)</option>
+          </select>
+        </div>
+        <div className="flex items-center justify-between gap-[var(--sp-4)] py-[var(--sp-3)]">
+          <span className="text-[length:var(--text-base)] text-[var(--text-soft)]">Show Axis Labels</span>
+          <button
+            onClick={() => update({ showAxisLabels: !prefs.showAxisLabels })}
+            className={cn(
+              "w-10 h-5 rounded-full transition-colors relative",
+              prefs.showAxisLabels ? "bg-primary" : "bg-muted"
+            )}
+          >
+            <span
+              className={cn(
+                "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow-sm",
+                prefs.showAxisLabels ? "translate-x-5" : "translate-x-0.5"
+              )}
+            />
+          </button>
+        </div>
+        <p className="mt-[var(--sp-2)] text-[length:var(--text-sm)] text-[var(--text-muted)]">
+          These preferences are saved locally and persist across sessions.
+        </p>
+      </div>
+    </section>
   );
 }
 

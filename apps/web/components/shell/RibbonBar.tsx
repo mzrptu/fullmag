@@ -271,7 +271,7 @@ export default function RibbonBar(props: RibbonBarProps) {
                     </Tooltip>
                   ))}
                 </div>
-                <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground mt-2 opacity-60">
+                <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground mt-2 opacity-80 border-t border-border/30 pt-1.5 w-full text-center">
                   {group.title}
                 </span>
               </div>

@@ -20,21 +20,21 @@ export function ViewportBar() {
     <div className="flex flex-wrap items-center gap-2 px-2.5 py-1.5 bg-card/30 border-b border-border/40 shrink-0">
       {ctx.isMeshWorkspaceView ? (
         <>
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Mesh</span>
+          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Mesh</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.meshName ?? "boundary surface"}</span>
           <span className="w-[1px] h-4 bg-border/40 shrink-0" />
           <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.effectiveFemMesh?.nodes.length.toLocaleString() ?? "0"} nodes</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.effectiveFemMesh?.elements.length.toLocaleString() ?? "0"} tets</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.effectiveFemMesh?.boundary_faces.length.toLocaleString() ?? "0"} faces</span>
           <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Render</span>
+          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Render</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">
             {ctx.meshRenderMode === "surface+edges" ? "surface+edges" : ctx.meshRenderMode}
           </span>
           {ctx.meshSelection.primaryFaceIndex != null && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Face</span>
+              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Face</span>
               <span className="font-mono text-[0.65rem] text-muted-foreground">#{ctx.meshSelection.primaryFaceIndex}</span>
             </>
           )}
@@ -42,19 +42,19 @@ export function ViewportBar() {
       ) : ctx.isMeshWorkspaceView && !ctx.isFemBackend ? (
         /* FDM geometry bar */
         <>
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Geometry</span>
+          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Geometry</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">
             {ctx.solverGrid[0]}×{ctx.solverGrid[1]}×{ctx.solverGrid[2]}
           </span>
           <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Cells</span>
+          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Cells</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">
             {ctx.totalCells?.toLocaleString() ?? "—"}
           </span>
           {ctx.activeMaskPresent && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Active</span>
+              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Active</span>
               <span className="font-mono text-[0.65rem] text-muted-foreground">
                 {ctx.activeCells?.toLocaleString() ?? "—"}
               </span>
@@ -63,7 +63,7 @@ export function ViewportBar() {
         </>
       ) : (
         <>
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Qty</span>
+          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Qty</span>
           <select
             className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
             value={ctx.requestedPreviewQuantity}
@@ -87,7 +87,7 @@ export function ViewportBar() {
           </select>
 
           <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Comp</span>
+          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Comp</span>
           {ctx.previewControlsActive ? (
             <select
               className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
@@ -116,7 +116,7 @@ export function ViewportBar() {
           {ctx.previewControlsActive && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Every</span>
+              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Every</span>
               <select
                 className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
                 value={ctx.requestedPreviewEveryN}
@@ -131,7 +131,7 @@ export function ViewportBar() {
                   </option>
                 ))}
               </select>
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Pts</span>
+              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Pts</span>
               <select
                 className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
                 value={ctx.requestedPreviewMaxPoints}
@@ -154,7 +154,7 @@ export function ViewportBar() {
               {ctx.preview.x_possible_sizes.length > 0 && ctx.preview.y_possible_sizes.length > 0 && (
                 <>
                   <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">X</span>
+                  <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">X</span>
                   <select
                     className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
                     value={ctx.requestedPreviewXChosenSize}
@@ -167,7 +167,7 @@ export function ViewportBar() {
                       <option key={size} value={size}>{size}</option>
                     ))}
                   </select>
-                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Y</span>
+                  <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Y</span>
                   <select
                     className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
                     value={ctx.requestedPreviewYChosenSize}
@@ -198,7 +198,7 @@ export function ViewportBar() {
               {ctx.preview.spatial_kind === "grid" && ctx.solverGrid[2] > 1 && (
                 <>
                   <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Z-Slice</span>
+                  <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Z-Slice</span>
                   <span className="font-mono text-[0.65rem] tabular-nums text-muted-foreground min-w-[2.5rem] text-center">
                     {ctx.requestedPreviewAllLayers ? "avg" : `${ctx.requestedPreviewLayer}/${ctx.solverGrid[2] - 1}`}
                   </span>
@@ -227,7 +227,7 @@ export function ViewportBar() {
               {ctx.preview.spatial_kind === "mesh" && ctx.effectiveViewMode === "2D" && (
                 <>
                   <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Plane</span>
+                  <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Plane</span>
                   <select
                     className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
                     value={ctx.plane}
@@ -237,7 +237,7 @@ export function ViewportBar() {
                     <option value="xz">XZ</option>
                     <option value="yz">YZ</option>
                   </select>
-                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Slice</span>
+                  <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Slice</span>
                   <select
                     className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
                     value={ctx.sliceIndex}
@@ -253,7 +253,7 @@ export function ViewportBar() {
           ) : ctx.effectiveViewMode === "2D" && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Plane</span>
+              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Plane</span>
               <select
                 className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
                 value={ctx.plane}
@@ -263,7 +263,7 @@ export function ViewportBar() {
                 <option value="xz">XZ</option>
                 <option value="yz">YZ</option>
               </select>
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Slice</span>
+              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Slice</span>
               <select
                 className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
                 value={ctx.sliceIndex}

@@ -136,7 +136,82 @@ __global__ void exchange_field_fp64_kernel(
 
 static const int BLOCK_SIZE = 256;
 
+// T0/T1 boundary-corrected exchange kernels (defined in separate .cu files)
+extern "C" __global__ void exchange_field_t0_fp64_kernel(
+    double *, double *, double *,
+    const double *, const double *, const double *,
+    const double *,
+    const double *, const double *, const double *, const double *,
+    const double *, const double *,
+    double, double, double, double, double, double,
+    uint32_t, uint32_t, uint32_t);
+
+extern "C" __global__ void exchange_field_t1_fp64_kernel(
+    double *, double *, double *,
+    const double *, const double *, const double *,
+    const double *,
+    const double *, const double *, const double *, const double *,
+    const double *, const double *,
+    double, double, double, double, double, double,
+    uint32_t, uint32_t, uint32_t);
+
 void launch_exchange_field_fp64(Context &ctx) {
+    // ── T0: face-link-weighted exchange ──
+    if (ctx.boundary_tier == 1 && ctx.volume_fraction != nullptr
+        && ctx.face_link_xp != nullptr) {
+        dim3 block(8, 8, 4);
+        dim3 grid_3d(
+            (ctx.nx + block.x - 1) / block.x,
+            (ctx.ny + block.y - 1) / block.y,
+            (ctx.nz + block.z - 1) / block.z);
+        double inv_dx2 = 1.0 / (ctx.dx * ctx.dx);
+        double inv_dy2 = 1.0 / (ctx.dy * ctx.dy);
+        double inv_dz2 = 1.0 / (ctx.dz * ctx.dz);
+        exchange_field_t0_fp64_kernel<<<grid_3d, block>>>(
+            static_cast<double*>(ctx.h_ex.x),
+            static_cast<double*>(ctx.h_ex.y),
+            static_cast<double*>(ctx.h_ex.z),
+            static_cast<const double*>(ctx.m.x),
+            static_cast<const double*>(ctx.m.y),
+            static_cast<const double*>(ctx.m.z),
+            ctx.volume_fraction,
+            ctx.face_link_xp, ctx.face_link_xm,
+            ctx.face_link_yp, ctx.face_link_ym,
+            ctx.face_link_zp, ctx.face_link_zm,
+            ctx.Ms, ctx.A,
+            inv_dx2, inv_dy2, inv_dz2,
+            ctx.phi_floor,
+            ctx.nx, ctx.ny, ctx.nz);
+        return;
+    }
+
+    // ── T1: ECB/García boundary stencil ──
+    if (ctx.boundary_tier >= 2 && ctx.volume_fraction != nullptr
+        && ctx.delta_xp != nullptr) {
+        dim3 block(8, 8, 4);
+        dim3 grid_3d(
+            (ctx.nx + block.x - 1) / block.x,
+            (ctx.ny + block.y - 1) / block.y,
+            (ctx.nz + block.z - 1) / block.z);
+        exchange_field_t1_fp64_kernel<<<grid_3d, block>>>(
+            static_cast<double*>(ctx.h_ex.x),
+            static_cast<double*>(ctx.h_ex.y),
+            static_cast<double*>(ctx.h_ex.z),
+            static_cast<const double*>(ctx.m.x),
+            static_cast<const double*>(ctx.m.y),
+            static_cast<const double*>(ctx.m.z),
+            ctx.volume_fraction,
+            ctx.delta_xp, ctx.delta_xm,
+            ctx.delta_yp, ctx.delta_ym,
+            ctx.delta_zp, ctx.delta_zm,
+            ctx.Ms, ctx.A,
+            ctx.dx, ctx.dy, ctx.dz,
+            ctx.delta_min,
+            ctx.nx, ctx.ny, ctx.nz);
+        return;
+    }
+
+    // ── Standard binary-mask exchange (no boundary correction) ──
     int n = static_cast<int>(ctx.cell_count);
     int grid = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
 

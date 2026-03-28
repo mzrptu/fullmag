@@ -6,5 +6,6 @@ publish.workspace = true
 
 [dependencies]
 fullmag-ir = { path = "../fullmag-ir" }
+fullmag-fdm-demag = { path = "../fullmag-fdm-demag" }
 serde = { workspace = true }
 serde_json = { workspace = true }

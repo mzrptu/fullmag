@@ -53,7 +53,7 @@ interface MetricFieldProps {
 
 function MetricField({ label, value, sparkData, sparkColor, title, valueTone }: MetricFieldProps) {
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
       <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground" title={title}>{label}</span>
       <span className={cn("font-mono text-xs text-foreground", valueTone === "success" ? "text-emerald-500" : undefined)}>
         {value}
@@ -243,15 +243,15 @@ function GeometryPanel() {
   const ctx = useControlRoom();
   return (
     <div className="grid grid-cols-2 gap-3">
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
         <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Geometry</span>
         <span className="font-mono text-xs text-foreground">{ctx.meshName ?? ctx.mesherSourceKind ?? "—"}</span>
       </div>
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
         <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Source</span>
         <span className="font-mono text-xs text-foreground">{ctx.meshSource ?? ctx.mesherSourceKind ?? "—"}</span>
       </div>
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
         <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Extent</span>
         <span className="font-mono text-xs text-foreground">
           {ctx.meshExtent
@@ -259,7 +259,7 @@ function GeometryPanel() {
             : "—"}
         </span>
       </div>
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
         <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Bounds</span>
         <span className="font-mono text-xs text-foreground">
           {ctx.meshBoundsMin && ctx.meshBoundsMax
@@ -278,15 +278,15 @@ function MaterialPanel() {
   return (
     <>
       <div className="grid grid-cols-3 gap-3">
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
           <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">M_sat</span>
           <span className="font-mono text-xs text-foreground">{ctx.material.msat != null ? fmtSI(ctx.material.msat, "A/m") : "—"}</span>
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
           <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">A_ex</span>
           <span className="font-mono text-xs text-foreground">{ctx.material.aex != null ? fmtSI(ctx.material.aex, "J/m") : "—"}</span>
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
           <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">α</span>
           <span className="font-mono text-xs text-foreground">{ctx.material.alpha?.toPrecision(3) ?? "—"}</span>
         </div>
@@ -306,19 +306,19 @@ function MeshPanel() {
   return (
     <>
       <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
           <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Backend</span>
           <span className="font-mono text-xs text-foreground">{ctx.mesherBackend ?? "—"}</span>
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
           <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Source</span>
           <span className="font-mono text-xs text-foreground">{ctx.mesherSourceKind ?? ctx.meshSource ?? "—"}</span>
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
           <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Order</span>
           <span className="font-mono text-xs text-foreground">{ctx.meshFeOrder != null ? String(ctx.meshFeOrder) : "—"}</span>
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
           <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">hmax</span>
           <span className="font-mono text-xs text-foreground">{ctx.meshHmax != null ? fmtSI(ctx.meshHmax, "m") : "—"}</span>
         </div>
@@ -406,67 +406,67 @@ function StudyPanel() {
       <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
         <div className="text-[0.6rem] font-black uppercase tracking-[0.2em] text-muted-foreground mb-4">Active Backend Configuration</div>
         <div className="grid grid-cols-3 gap-3">
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">State</span>
             <span className="font-mono text-xs text-foreground">{ctx.workspaceStatus}</span>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Study</span>
             <span className="font-mono text-xs text-foreground">{studyKindForPlan(solverPlan)}</span>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Engine</span>
             <span className="font-mono text-xs text-foreground">{ctx.runtimeEngineLabel ?? ctx.sessionFooter.requestedBackend ?? "—"}</span>
           </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3 mt-4">
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Backend</span>
             <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.resolvedBackend ?? solverPlan?.backendKind ?? ctx.sessionFooter.requestedBackend)}</span>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Mode</span>
             <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.executionMode ?? ctx.session?.execution_mode)}</span>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Precision</span>
             <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.precision ?? ctx.session?.precision)}</span>
           </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3 mt-4">
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Integrator</span>
             <span className="font-mono text-xs text-foreground">{integratorProfile?.label ?? humanizeToken(solverPlan?.integrator)}</span>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Δt control</span>
             <span className="font-mono text-xs text-foreground">{timestepModeForPlan(solverPlan)}</span>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Precession</span>
             <span className="font-mono text-xs text-foreground">{precessionModeForPlan(solverPlan)}</span>
           </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3 mt-4">
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">γ</span>
             <span className="font-mono text-xs text-foreground">{solverPlan?.gyromagneticRatio != null ? `${fmtExp(solverPlan.gyromagneticRatio)} m/(A·s)` : "—"}</span>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Exchange BC</span>
             <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.exchangeBoundary)}</span>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Workload</span>
             <span className="font-mono text-xs text-foreground">{workloadLabel}</span>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3 mt-4">
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Discretization</span>
             <span className="font-mono text-xs text-foreground">
               {!solverPlan
@@ -476,7 +476,7 @@ function StudyPanel() {
                 : `${formatGrid(solverPlan?.gridCells ?? null)} cells · ${formatVector(solverPlan?.cellSize ?? null, "m")}`}
             </span>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">External field</span>
             <span className="font-mono text-xs text-foreground">{formatVector(solverPlan?.externalField ?? null, "T")}</span>
           </div>
@@ -484,19 +484,19 @@ function StudyPanel() {
 
         {(solverPlan?.fixedTimestep != null || solverPlan?.adaptive) && (
           <div className="grid grid-cols-2 gap-3 mt-4">
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Fixed Δt</span>
               <span className="font-mono text-xs text-foreground">{solverPlan?.fixedTimestep != null ? fmtSI(solverPlan.fixedTimestep, "s") : "—"}</span>
             </div>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Adaptive atol</span>
               <span className="font-mono text-xs text-foreground">{solverPlan?.adaptive?.atol != null ? fmtExp(solverPlan.adaptive.atol) : "—"}</span>
             </div>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Adaptive dt₀</span>
               <span className="font-mono text-xs text-foreground">{solverPlan?.adaptive?.dtInitial != null ? fmtSI(solverPlan.adaptive.dtInitial, "s") : "—"}</span>
             </div>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Adaptive range</span>
               <span className="font-mono text-xs text-foreground">
                 {solverPlan?.adaptive
@@ -509,19 +509,19 @@ function StudyPanel() {
 
         {solverPlan?.relaxation && (
           <div className="grid grid-cols-2 gap-3 mt-4">
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Relax algorithm</span>
               <span className="font-mono text-xs text-foreground">{relaxationProfile?.label ?? humanizeToken(solverPlan.relaxation.algorithm)}</span>
             </div>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Max steps</span>
               <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.maxSteps != null ? solverPlan.relaxation.maxSteps.toLocaleString() : "—"}</span>
             </div>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Torque tol.</span>
               <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.torqueTolerance != null ? fmtExp(solverPlan.relaxation.torqueTolerance) : "—"}</span>
             </div>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Energy tol.</span>
               <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.energyTolerance != null ? fmtExp(solverPlan.relaxation.energyTolerance) : "disabled"}</span>
             </div>
@@ -628,11 +628,11 @@ function ResultsPanel() {
   return (
     <>
       <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
           <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Quantity</span>
           <span className="font-mono text-xs text-foreground">{ctx.requestedPreviewQuantity}</span>
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 p-2.5 bg-card/40 border border-border/40 shadow-sm rounded-md">
           <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Component</span>
           <span className="font-mono text-xs text-foreground">{ctx.requestedPreviewComponent}</span>
         </div>

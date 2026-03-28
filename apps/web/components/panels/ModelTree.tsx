@@ -53,8 +53,10 @@ function TreeNode({
     <div className="flex flex-col">
       <div
         className={cn(
-          "flex items-center gap-1.5 pr-2 py-0.5 my-[1px] cursor-pointer rounded-md transition-colors min-h-[26px]",
-          activeId === node.id ? "bg-primary/20 text-primary" : "hover:bg-muted/80 text-foreground"
+          "flex items-center gap-1.5 pr-2 py-1 my-[1px] cursor-pointer rounded-md transition-all min-h-[26px] relative overflow-hidden",
+          activeId === node.id
+            ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-sm after:absolute after:left-0 after:top-0 after:bottom-0 after:w-[3px] after:bg-primary"
+            : "hover:bg-muted/60 text-foreground border border-transparent"
         )}
         style={{ paddingLeft: `${Math.max(8, depth * 14 + 8)}px` }}
         onClick={handleClick}

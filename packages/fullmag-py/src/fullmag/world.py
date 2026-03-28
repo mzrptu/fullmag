@@ -369,6 +369,7 @@ class _WorldState:
     _gpu_count: int = 0
     _device_index: int | None = None
     _precision: str | None = None
+    _boundary_correction: str | None = None  # "none" | "volume" | "full"
 
     # Grid
     _cell: tuple[float, float, float] | None = None
@@ -502,6 +503,22 @@ def device(spec: str, *, precision: str | None = None) -> None:
 def cell(dx: float, dy: float, dz: float) -> None:
     """Set FDM cell size in meters."""
     _state._cell = (dx, dy, dz)
+
+
+def boundary_correction(mode: str) -> None:
+    """Set FDM boundary correction mode.
+
+    Parameters
+    ----------
+    mode : str
+        ``"none"``  — standard binary mask (default).
+        ``"volume"`` — T0: volume-fraction weighted exchange + demag (φ-weighted).
+        ``"full"``   — T1: ECB boundary stencil + sparse demag correction (García-Cervera).
+    """
+    allowed = ("none", "volume", "full")
+    if mode not in allowed:
+        raise ValueError(f"boundary_correction must be one of {allowed!r}, got {mode!r}")
+    _state._boundary_correction = mode
 
 
 def mesh(
@@ -990,7 +1007,10 @@ def _build_problem(
     # Discretization
     disc_kwargs: dict[str, Any] = {}
     if s._cell is not None:
-        disc_kwargs["fdm"] = FDM(cell=s._cell)
+        fdm_kwargs: dict[str, Any] = {"cell": s._cell}
+        if s._boundary_correction is not None:
+            fdm_kwargs["boundary_correction"] = s._boundary_correction
+        disc_kwargs["fdm"] = FDM(**fdm_kwargs)
     fem_hint = _resolve_flat_fem_hint()
     if fem_hint is not None:
         disc_kwargs["fem"] = fem_hint

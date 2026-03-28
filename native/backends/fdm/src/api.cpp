@@ -12,6 +12,7 @@
 #include <cstring>
 #include <new>
 #include <optional>
+#include <algorithm>
 
 using namespace fullmag::fdm;
 
@@ -240,6 +241,50 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
             plan->demag_kernel_spectrum_len))
     {
         return reinterpret_cast<fullmag_fdm_backend *>(ctx);
+    }
+
+    // Upload boundary correction geometry data (T0/T1)
+    if (plan->boundary_correction != FULLMAG_FDM_BOUNDARY_NONE
+        && plan->volume_fraction != nullptr
+        && plan->volume_fraction_len == ctx->cell_count)
+    {
+        uint8_t tier = static_cast<uint8_t>(plan->boundary_correction);
+        double phi_floor = plan->boundary_phi_floor > 0.0
+            ? plan->boundary_phi_floor : 0.05;
+        double delta_min = plan->boundary_delta_min > 0.0
+            ? plan->boundary_delta_min
+            : 0.1 * std::min({ctx->dx, ctx->dy, ctx->dz});
+
+        if (!context_upload_boundary_correction(
+                *ctx, tier, phi_floor, delta_min,
+                plan->volume_fraction,
+                plan->face_link_xp, plan->face_link_xm,
+                plan->face_link_yp, plan->face_link_ym,
+                plan->face_link_zp, plan->face_link_zm,
+                plan->delta_xp, plan->delta_xm,
+                plan->delta_yp, plan->delta_ym,
+                plan->delta_zp, plan->delta_zm,
+                ctx->cell_count))
+        {
+            return reinterpret_cast<fullmag_fdm_backend *>(ctx);
+        }
+
+        // Sparse demag boundary correction tensors
+        if (plan->has_demag_boundary_corr
+            && plan->demag_corr_target_idx != nullptr
+            && plan->demag_corr_target_count > 0)
+        {
+            if (!context_upload_demag_boundary_corr(
+                    *ctx,
+                    plan->demag_corr_target_idx,
+                    plan->demag_corr_source_idx,
+                    plan->demag_corr_tensor,
+                    plan->demag_corr_target_count,
+                    plan->demag_corr_stencil_size))
+            {
+                return reinterpret_cast<fullmag_fdm_backend *>(ctx);
+            }
+        }
     }
 
     // Upload initial magnetization

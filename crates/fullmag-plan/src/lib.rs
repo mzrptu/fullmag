@@ -19,6 +19,8 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
+pub mod boundary_geometry;
+
 const MU0: f64 = 4.0 * std::f64::consts::PI * 1e-7;
 const PLACEMENT_TOLERANCE: f64 = 1e-12;
 const GRID_TOLERANCE: f64 = 1e-6;
@@ -852,7 +854,7 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         ),
     };
 
-    let fdm_plan = FdmPlanIR {
+    let mut fdm_plan = FdmPlanIR {
         grid: GridDimensions { cells: grid_cells },
         cell_size,
         region_mask: vec![0; n_cells],
@@ -881,7 +883,61 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
             .as_ref()
             .and_then(|h| h.fdm.as_ref())
             .and_then(|fdm| fdm.boundary_correction.clone()),
+        boundary_geometry: None,
     };
+
+    // ── Compute sub-cell boundary geometry when boundary correction is enabled ──
+    if fdm_plan.boundary_correction.is_some()
+        && fdm_plan.boundary_correction.as_deref() != Some("none")
+    {
+        let compute_delta = fdm_plan.boundary_correction.as_deref() == Some("full");
+        let sdf_opt: Option<Box<dyn Fn(f64, f64, f64) -> f64>> = match &shape {
+            GeometryShape::Cylinder { radius, .. } => {
+                let cx = grid_cells[0] as f64 * cell_size[0] * 0.5;
+                let cy = grid_cells[1] as f64 * cell_size[1] * 0.5;
+                let r = *radius;
+                Some(Box::new(move |x, y, _z| {
+                    let dx = x - cx;
+                    let dy = y - cy;
+                    (dx * dx + dy * dy).sqrt() - r
+                }))
+            }
+            GeometryShape::Difference { base, tool } => {
+                // CSG difference: max(sdf_base, -sdf_tool)
+                let cx = grid_cells[0] as f64 * cell_size[0] * 0.5;
+                let cy = grid_cells[1] as f64 * cell_size[1] * 0.5;
+                if let (
+                    GeometryShape::Cylinder { radius: base_r, .. },
+                    GeometryShape::Cylinder { radius: tool_r, .. },
+                ) = (base.as_ref(), tool.as_ref())
+                {
+                    let br = *base_r;
+                    let tr = *tool_r;
+                    Some(Box::new(move |x, y, _z| {
+                        let dx = x - cx;
+                        let dy = y - cy;
+                        let d = (dx * dx + dy * dy).sqrt();
+                        (d - br).max(-(d - tr))
+                    }))
+                } else {
+                    None
+                }
+            }
+            _ => None, // Box shape: no curved boundaries, no correction needed
+        };
+
+        if let Some(sdf) = sdf_opt {
+            fdm_plan.boundary_geometry = Some(
+                boundary_geometry::compute_boundary_geometry(
+                    &*sdf,
+                    grid_cells[0], grid_cells[1], grid_cells[2],
+                    cell_size[0], cell_size[1], cell_size[2],
+                    compute_delta,
+                ),
+            );
+        }
+    }
+
     let study_note = if let Some(control) = fdm_plan.relaxation.as_ref() {
         format!(
             "study: relaxation algorithm={} torque_tolerance={:.6e} energy_tolerance={} max_steps={}",
@@ -2629,6 +2685,7 @@ mod tests {
                     common_cells: None,
                     common_cells_xy: None,
                 }),
+                boundary_correction: None,
             }),
             fem: None,
             hybrid: None,
@@ -2711,6 +2768,7 @@ mod tests {
                     common_cells: None,
                     common_cells_xy: None,
                 }),
+                boundary_correction: None,
             }),
             fem: None,
             hybrid: None,
@@ -2794,6 +2852,7 @@ mod tests {
                     common_cells: None,
                     common_cells_xy: None,
                 }),
+                boundary_correction: None,
             }),
             fem: None,
             hybrid: None,

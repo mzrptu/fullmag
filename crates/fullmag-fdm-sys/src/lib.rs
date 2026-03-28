@@ -54,6 +54,14 @@ pub enum fullmag_fdm_snapshot_scalar_type {
     FULLMAG_FDM_SNAPSHOT_SCALAR_F64 = 2,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum fullmag_fdm_boundary_correction {
+    FULLMAG_FDM_BOUNDARY_NONE = 0,
+    FULLMAG_FDM_BOUNDARY_VOLUME = 1,
+    FULLMAG_FDM_BOUNDARY_FULL = 2,
+}
+
 // ── Descriptors ──
 
 #[repr(C)]
@@ -101,6 +109,31 @@ pub struct fullmag_fdm_plan_desc {
     pub region_mask_len: u64,
     pub exchange_lut: *const f64,
     pub exchange_lut_len: u64,
+    // Boundary correction
+    pub boundary_correction: fullmag_fdm_boundary_correction,
+    pub boundary_phi_floor: f64,
+    pub boundary_delta_min: f64,
+    pub volume_fraction: *const f64,
+    pub volume_fraction_len: u64,
+    pub face_link_xp: *const f64,
+    pub face_link_xm: *const f64,
+    pub face_link_yp: *const f64,
+    pub face_link_ym: *const f64,
+    pub face_link_zp: *const f64,
+    pub face_link_zm: *const f64,
+    pub delta_xp: *const f64,
+    pub delta_xm: *const f64,
+    pub delta_yp: *const f64,
+    pub delta_ym: *const f64,
+    pub delta_zp: *const f64,
+    pub delta_zm: *const f64,
+    pub has_demag_boundary_corr: i32,
+    pub demag_corr_target_idx: *const i32,
+    pub demag_corr_source_idx: *const i32,
+    pub demag_corr_tensor: *const f64,
+    pub demag_corr_target_count: u32,
+    pub demag_corr_stencil_size: u32,
+    // Initial magnetization
     pub initial_magnetization_xyz: *const f64,
     pub initial_magnetization_len: u64,
     // Adaptive step configuration (DP45 only)

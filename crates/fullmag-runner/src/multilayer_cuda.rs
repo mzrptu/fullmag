@@ -865,6 +865,7 @@ fn build_native_stacked_cuda_plan(
             adaptive_timestep: None,
             relaxation: plan.relaxation.clone(),
             boundary_correction: None,
+                boundary_geometry: None,
             inter_region_exchange: vec![],
         },
         layers,
@@ -1112,6 +1113,7 @@ fn single_layer_cuda_plan(plan: &FdmMultilayerPlanIR, layer: &FdmLayerPlanIR) ->
         adaptive_timestep: None,
         relaxation: None,
         boundary_correction: None,
+                boundary_geometry: None,
         inter_region_exchange: vec![],
     }
 }
@@ -2369,6 +2371,7 @@ mod tests {
             fixed_timestep: Some(1e-13),
             relaxation: None,
             boundary_correction: None,
+                boundary_geometry: None,
             planner_summary: fullmag_ir::FdmMultilayerSummaryIR {
                 requested_strategy: "multilayer_convolution".to_string(),
                 selected_strategy: "multilayer_convolution".to_string(),
