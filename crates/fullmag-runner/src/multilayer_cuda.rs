@@ -68,7 +68,16 @@ struct NativeStackedCudaPlan {
     global_grid: [u32; 3],
 }
 
+#[allow(dead_code)]
 pub(crate) fn execute_cuda_fdm_multilayer(
+    plan: &FdmMultilayerPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+) -> Result<ExecutedRun, RunError> {
+    execute_cuda_fdm_multilayer_streaming(plan, until_seconds, outputs, None)
+}
+
+pub(crate) fn execute_cuda_fdm_multilayer_streaming(
     plan: &FdmMultilayerPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
@@ -83,7 +92,23 @@ pub(crate) fn execute_cuda_fdm_multilayer(
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn execute_cuda_fdm_multilayer_with_callback(
+    plan: &FdmMultilayerPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
+) -> Result<ExecutedRun, RunError> {
+    execute_cuda_fdm_multilayer_with_callback_streaming(
+        plan,
+        until_seconds,
+        outputs,
+        None,
+        on_step,
+    )
+}
+
+pub(crate) fn execute_cuda_fdm_multilayer_with_callback_streaming(
     plan: &FdmMultilayerPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
@@ -501,6 +526,7 @@ fn execute_cuda_assisted_multilayer_single(
     until_seconds: f64,
     outputs: &[OutputIR],
     mut live: Option<(&[u32; 3], &mut dyn FnMut(StepUpdate) -> StepAction)>,
+    artifact_writer: Option<ArtifactPipelineSender>,
     pure_damping_relax: bool,
     contexts: Vec<LayerContext>,
     mut states: Vec<LayerStateSingle>,
@@ -514,8 +540,13 @@ fn execute_cuda_assisted_multilayer_single(
     let initial_magnetization = flatten_layers_single(&states);
     let dt = plan.fixed_timestep.unwrap_or(1e-13);
     let mut steps: Vec<StepStats> = Vec::new();
-    let mut field_snapshots: Vec<FieldSnapshot> = Vec::new();
     let mut step_count = 0u64;
+    let provenance = assisted_multilayer_provenance(plan, device_info.clone());
+    let mut artifacts = if let Some(writer) = artifact_writer {
+        ArtifactRecorder::streaming(provenance.clone(), writer)
+    } else {
+        ArtifactRecorder::in_memory(provenance.clone())
+    };
 
     let mut scalar_schedules = collect_scalar_schedules(outputs)?;
     let mut field_schedules = collect_field_schedules(outputs)?;
@@ -528,7 +559,9 @@ fn execute_cuda_assisted_multilayer_single(
         demag_runtime.as_ref(),
     )?;
     if default_scalar_trace {
-        steps.push(make_step_stats(0, 0.0, 0.0, 0, &initial_observables));
+        let stats = make_step_stats(0, 0.0, 0.0, 0, &initial_observables);
+        artifacts.record_scalar(&stats)?;
+        steps.push(stats);
     }
     record_due_fields(
         &initial_observables,
@@ -536,7 +569,7 @@ fn execute_cuda_assisted_multilayer_single(
         0.0,
         0.0,
         &mut field_schedules,
-        &mut field_snapshots,
+        &mut artifacts,
     )?;
 
     let mut previous_total_energy = Some(initial_observables.total_energy);
@@ -573,12 +606,9 @@ fn execute_cuda_assisted_multilayer_single(
                 .iter()
                 .any(|schedule| is_due(latest_stats.time, schedule.next_time))
         {
+            artifacts.record_scalar(&latest_stats)?;
             steps.push(latest_stats.clone());
-            for schedule in &mut scalar_schedules {
-                if is_due(latest_stats.time, schedule.next_time) {
-                    schedule.next_time += schedule.every_seconds;
-                }
-            }
+            advance_due_schedules(&mut scalar_schedules, latest_stats.time);
         }
 
         record_due_fields(
@@ -587,7 +617,7 @@ fn execute_cuda_assisted_multilayer_single(
             latest_stats.time,
             latest_stats.dt,
             &mut field_schedules,
-            &mut field_snapshots,
+            &mut artifacts,
         )?;
 
         if let Some((grid, on_step)) = live.as_mut() {
@@ -643,18 +673,28 @@ fn execute_cuda_assisted_multilayer_single(
         .iter()
         .any(|step| step.step == final_stats.step && (step.time - final_stats.time).abs() <= 1e-18)
     {
+        artifacts.record_scalar(&final_stats)?;
         steps.push(final_stats.clone());
     }
     for schedule in &mut field_schedules {
+        if schedule
+            .last_sampled_time
+            .map(|time| same_time(time, final_stats.time))
+            .unwrap_or(false)
+        {
+            continue;
+        }
         let values = select_field_values(&final_observables, &schedule.name)?;
-        field_snapshots.push(FieldSnapshot {
+        artifacts.record_field_snapshot(FieldSnapshot {
             name: schedule.name.clone(),
             step: final_stats.step,
             time: final_stats.time,
             solver_dt: final_stats.dt,
             values,
-        });
+        })?;
     }
+
+    let (field_snapshots, field_snapshot_count, provenance) = artifacts.finish();
 
     Ok(ExecutedRun {
         result: RunResult {
@@ -668,7 +708,8 @@ fn execute_cuda_assisted_multilayer_single(
         },
         initial_magnetization,
         field_snapshots,
-        provenance: assisted_multilayer_provenance(plan, device_info),
+        field_snapshot_count,
+        provenance,
     })
 }
 
@@ -841,12 +882,37 @@ fn execute_native_stacked_cuda_multilayer(
     until_seconds: f64,
     outputs: &[OutputIR],
     mut live: Option<(&[u32; 3], &mut dyn FnMut(StepUpdate) -> StepAction)>,
+    artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     let mut backend = NativeFdmBackend::create(&native.combined_plan)?;
     let device_info = backend.device_info().ok();
     let pure_damping_relax = llg_overdamped_uses_pure_damping(plan.relaxation.as_ref());
     let mut steps: Vec<StepStats> = Vec::new();
-    let mut field_snapshots: Vec<FieldSnapshot> = Vec::new();
+    let provenance = ExecutionProvenance {
+        execution_engine: "cuda_native_multilayer_single_grid".to_string(),
+        precision: precision_name(native.combined_plan.precision).to_string(),
+        demag_operator_kind: if native.combined_plan.enable_demag {
+            Some("tensor_fft_newell".to_string())
+        } else {
+            None
+        },
+        fft_backend: if native.combined_plan.enable_demag {
+            Some("cuFFT".to_string())
+        } else {
+            None
+        },
+        device_name: device_info.as_ref().map(|info| info.name.clone()),
+        compute_capability: device_info
+            .as_ref()
+            .map(|info| info.compute_capability.clone()),
+        cuda_driver_version: device_info.as_ref().map(|info| info.driver_version),
+        cuda_runtime_version: device_info.as_ref().map(|info| info.runtime_version),
+    };
+    let mut artifacts = if let Some(writer) = artifact_writer {
+        ArtifactRecorder::streaming(provenance.clone(), writer)
+    } else {
+        ArtifactRecorder::in_memory(provenance.clone())
+    };
     let mut scalar_schedules = collect_scalar_schedules(outputs)?;
     let mut field_schedules = collect_field_schedules(outputs)?;
     let default_scalar_trace = scalar_schedules.is_empty();
@@ -871,7 +937,9 @@ fn execute_native_stacked_cuda_multilayer(
 
     let initial_observables = observe_native_stacked_cuda(&backend, native)?;
     if default_scalar_trace {
-        steps.push(make_step_stats(0, 0.0, 0.0, 0, &initial_observables));
+        let stats = make_step_stats(0, 0.0, 0.0, 0, &initial_observables);
+        artifacts.record_scalar(&stats)?;
+        steps.push(stats);
     }
     record_due_fields(
         &initial_observables,
@@ -879,7 +947,7 @@ fn execute_native_stacked_cuda_multilayer(
         0.0,
         0.0,
         &mut field_schedules,
-        &mut field_snapshots,
+        &mut artifacts,
     )?;
 
     let mut previous_total_energy = Some(initial_observables.total_energy);
@@ -911,12 +979,9 @@ fn execute_native_stacked_cuda_multilayer(
                 .iter()
                 .any(|schedule| is_due(stats.time, schedule.next_time))
         {
+            artifacts.record_scalar(&stats)?;
             steps.push(stats.clone());
-            for schedule in &mut scalar_schedules {
-                if is_due(stats.time, schedule.next_time) {
-                    schedule.next_time += schedule.every_seconds;
-                }
-            }
+            advance_due_schedules(&mut scalar_schedules, stats.time);
         }
 
         if let Some(observables) = observables.as_ref() {
@@ -926,7 +991,7 @@ fn execute_native_stacked_cuda_multilayer(
                 stats.time,
                 stats.dt,
                 &mut field_schedules,
-                &mut field_snapshots,
+                &mut artifacts,
             )?;
             if let Some((_, on_step)) = live.as_mut() {
                 let action = on_step(StepUpdate {
@@ -986,17 +1051,27 @@ fn execute_native_stacked_cuda_multilayer(
         .iter()
         .any(|step| step.step == final_stats.step && (step.time - final_stats.time).abs() <= 1e-18)
     {
+        artifacts.record_scalar(&final_stats)?;
         steps.push(final_stats.clone());
     }
     for schedule in &mut field_schedules {
-        field_snapshots.push(FieldSnapshot {
+        if schedule
+            .last_sampled_time
+            .map(|time| same_time(time, final_stats.time))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        artifacts.record_field_snapshot(FieldSnapshot {
             name: schedule.name.clone(),
             step: final_stats.step,
             time: final_stats.time,
             solver_dt: final_stats.dt,
             values: select_field_values(&final_observables, &schedule.name)?,
-        });
+        })?;
     }
+
+    let (field_snapshots, field_snapshot_count, provenance) = artifacts.finish();
 
     Ok(ExecutedRun {
         result: RunResult {
@@ -1010,26 +1085,8 @@ fn execute_native_stacked_cuda_multilayer(
         },
         initial_magnetization,
         field_snapshots,
-        provenance: ExecutionProvenance {
-            execution_engine: "cuda_native_multilayer_single_grid".to_string(),
-            precision: precision_name(native.combined_plan.precision).to_string(),
-            demag_operator_kind: if native.combined_plan.enable_demag {
-                Some("tensor_fft_newell".to_string())
-            } else {
-                None
-            },
-            fft_backend: if native.combined_plan.enable_demag {
-                Some("cuFFT".to_string())
-            } else {
-                None
-            },
-            device_name: device_info.as_ref().map(|info| info.name.clone()),
-            compute_capability: device_info
-                .as_ref()
-                .map(|info| info.compute_capability.clone()),
-            cuda_driver_version: device_info.as_ref().map(|info| info.driver_version),
-            cuda_runtime_version: device_info.as_ref().map(|info| info.runtime_version),
-        },
+        field_snapshot_count,
+        provenance,
     })
 }
 
@@ -1801,7 +1858,7 @@ fn record_due_fields(
     time: f64,
     solver_dt: f64,
     field_schedules: &mut [OutputSchedule],
-    field_snapshots: &mut Vec<FieldSnapshot>,
+    artifacts: &mut ArtifactRecorder,
 ) -> Result<(), RunError> {
     let due_field_names = field_schedules
         .iter()
@@ -1809,19 +1866,15 @@ fn record_due_fields(
         .map(|schedule| schedule.name.clone())
         .collect::<Vec<_>>();
     for name in due_field_names {
-        field_snapshots.push(FieldSnapshot {
+        artifacts.record_field_snapshot(FieldSnapshot {
             name: name.clone(),
             step,
             time,
             solver_dt,
             values: select_field_values(observables, &name)?,
-        });
+        })?;
     }
-    for schedule in field_schedules {
-        if is_due(time, schedule.next_time) {
-            schedule.next_time += schedule.every_seconds;
-        }
-    }
+    advance_due_schedules(field_schedules, time);
     Ok(())
 }
 

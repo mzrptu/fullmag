@@ -13,7 +13,9 @@
 use fullmag_ir::{FdmMultilayerPlanIR, FdmPlanIR, FemPlanIR, OutputIR, ProblemIR};
 use serde_json::Value;
 
-use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
+use crate::artifact_pipeline::ArtifactPipelineSender;
+#[cfg(any(feature = "cuda", feature = "fem-gpu"))]
+use crate::artifact_pipeline::ArtifactRecorder;
 use crate::cpu_reference;
 use crate::fem_reference;
 #[cfg(feature = "cuda")]
@@ -255,6 +257,7 @@ fn reject_direct_minimization_on_cuda(problem: &ProblemIR) -> Result<(), RunErro
 }
 
 /// Execute an FDM plan using the selected engine.
+#[allow(dead_code)]
 pub(crate) fn execute_fdm(
     engine: FdmEngine,
     plan: &FdmPlanIR,
@@ -283,6 +286,7 @@ pub(crate) fn execute_fdm_streaming(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn execute_fdm_multilayer(
     engine: FdmEngine,
     plan: &FdmMultilayerPlanIR,
@@ -315,7 +319,7 @@ pub(crate) fn execute_fdm_multilayer_streaming(
         FdmEngine::CudaFdm => {
             #[cfg(feature = "cuda")]
             {
-                return multilayer_cuda::execute_cuda_fdm_multilayer(
+                return multilayer_cuda::execute_cuda_fdm_multilayer_streaming(
                     plan,
                     until_seconds,
                     outputs,
@@ -335,6 +339,7 @@ pub(crate) fn execute_fdm_multilayer_streaming(
 }
 
 /// Execute a FEM plan using the selected engine.
+#[allow(dead_code)]
 pub(crate) fn execute_fem(
     engine: FemEngine,
     plan: &FemPlanIR,
@@ -370,6 +375,7 @@ pub(crate) fn execute_fem_streaming(
 }
 
 /// Execute FEM with a per-step callback for live streaming.
+#[allow(dead_code)]
 pub(crate) fn execute_fem_with_callback(
     engine: FemEngine,
     plan: &FemPlanIR,
@@ -434,6 +440,7 @@ pub(crate) fn execute_fem_with_callback_streaming(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn execute_fem_with_live_preview(
     engine: FemEngine,
     plan: &FemPlanIR,
@@ -504,6 +511,7 @@ pub(crate) fn execute_fem_with_live_preview_streaming(
 }
 
 /// Execute FDM with a per-step callback for live streaming.
+#[allow(dead_code)]
 pub(crate) fn execute_fdm_with_callback(
     engine: FdmEngine,
     plan: &FdmPlanIR,
@@ -573,6 +581,7 @@ pub(crate) fn execute_fdm_with_callback_streaming(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn execute_fdm_with_live_preview(
     engine: FdmEngine,
     plan: &FdmPlanIR,
@@ -647,6 +656,7 @@ pub(crate) fn execute_fdm_with_live_preview_streaming(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn execute_fdm_multilayer_with_callback(
     engine: FdmEngine,
     plan: &FdmMultilayerPlanIR,
@@ -694,7 +704,7 @@ pub(crate) fn execute_fdm_multilayer_with_callback_streaming(
         FdmEngine::CudaFdm => {
             #[cfg(feature = "cuda")]
             {
-                return multilayer_cuda::execute_cuda_fdm_multilayer_with_callback(
+                return multilayer_cuda::execute_cuda_fdm_multilayer_with_callback_streaming(
                     plan,
                     until_seconds,
                     outputs,

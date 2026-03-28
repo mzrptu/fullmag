@@ -8,6 +8,8 @@ import FemMeshSlice2D from "../../preview/FemMeshSlice2D";
 import PreviewScalarField2D from "../../preview/PreviewScalarField2D";
 import EmptyState from "../../ui/EmptyState";
 import DimensionOverlay from "../../preview/DimensionOverlay";
+import { Slider } from "../../ui/slider";
+import { Switch } from "../../ui/switch";
 import { fmtExp, fmtPreviewMaxPoints, fmtSI } from "./shared";
 import { useControlRoom } from "./ControlRoomContext";
 
@@ -195,27 +197,30 @@ export function ViewportBar() {
               </label>
               {ctx.preview.spatial_kind === "grid" && ctx.solverGrid[2] > 1 && (
                 <>
-                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Layer</span>
-                  <select
-                    className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
-                    value={ctx.requestedPreviewLayer}
-                    onChange={(e) => void ctx.updatePreview("/layer", { layer: Number(e.target.value) })}
+                  <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Z-Slice</span>
+                  <span className="font-mono text-[0.65rem] tabular-nums text-muted-foreground min-w-[2.5rem] text-center">
+                    {ctx.requestedPreviewAllLayers ? "avg" : `${ctx.requestedPreviewLayer}/${ctx.solverGrid[2] - 1}`}
+                  </span>
+                  <Slider
+                    className="w-24 shrink-0"
+                    min={0}
+                    max={Math.max(ctx.solverGrid[2] - 1, 0)}
+                    step={1}
+                    value={[ctx.requestedPreviewLayer]}
+                    onValueChange={(v) => void ctx.updatePreview("/layer", { layer: v[0] })}
                     disabled={ctx.previewBusy || ctx.requestedPreviewAllLayers}
-                  >
-                    {Array.from({ length: ctx.solverGrid[2] }, (_, i) => (
-                      <option key={i} value={i}>{i}</option>
-                    ))}
-                  </select>
-                  <label className="inline-flex items-center gap-1.5 text-[0.65rem] text-muted-foreground [accent-color:hsl(var(--primary))]">
-                    <input
-                      type="checkbox"
+                  />
+                  <label className="inline-flex items-center gap-1.5 text-[0.65rem] text-muted-foreground cursor-pointer select-none">
+                    <Switch
                       checked={ctx.requestedPreviewAllLayers}
-                      onChange={(e) =>
-                        void ctx.updatePreview("/allLayers", { allLayers: e.target.checked })
+                      onCheckedChange={(checked) =>
+                        void ctx.updatePreview("/allLayers", { allLayers: checked })
                       }
                       disabled={ctx.previewBusy}
+                      className="h-4 w-7 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted"
                     />
-                    <span>All layers</span>
+                    <span>Average</span>
                   </label>
                 </>
               )}

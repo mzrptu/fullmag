@@ -43,24 +43,66 @@ pub fn run_problem(
     output_dir: &Path,
 ) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
+    let mut artifact_pipeline = artifact_pipeline::ArtifactPipeline::start(
+        output_dir.to_path_buf(),
+        artifacts::build_field_context(problem, &plan),
+        artifact_pipeline::DEFAULT_ARTIFACT_PIPELINE_CAPACITY,
+    )?;
+    let artifact_writer = Some(artifact_pipeline.sender());
 
     let cpu_threads = configured_cpu_threads(problem);
-    let executed = with_cpu_parallelism(cpu_threads, || match &plan.backend_plan {
+    let executed_result = with_cpu_parallelism(cpu_threads, || match &plan.backend_plan {
         BackendPlanIR::Fdm(fdm) => {
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm(engine, fdm, until_seconds, &plan.output_plan.outputs)
+            dispatch::execute_fdm_streaming(
+                engine,
+                fdm,
+                until_seconds,
+                &plan.output_plan.outputs,
+                artifact_writer.clone(),
+            )
         }
         BackendPlanIR::FdmMultilayer(fdm) => {
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_multilayer(engine, fdm, until_seconds, &plan.output_plan.outputs)
+            dispatch::execute_fdm_multilayer_streaming(
+                engine,
+                fdm,
+                until_seconds,
+                &plan.output_plan.outputs,
+                artifact_writer.clone(),
+            )
         }
         BackendPlanIR::Fem(fem) => {
             let engine = dispatch::resolve_fem_engine(problem)?;
-            dispatch::execute_fem(engine, fem, until_seconds, &plan.output_plan.outputs)
+            dispatch::execute_fem_streaming(
+                engine,
+                fem,
+                until_seconds,
+                &plan.output_plan.outputs,
+                artifact_writer.clone(),
+            )
         }
-    })?;
+    });
+    let pipeline_summary = artifact_pipeline.finish();
+    let executed = match executed_result {
+        Ok(executed) => executed,
+        Err(error) => {
+            if let Err(writer_error) = pipeline_summary {
+                return Err(RunError {
+                    message: format!(
+                        "{}\nartifact pipeline shutdown also failed: {}",
+                        error.message, writer_error.message
+                    ),
+                });
+            }
+            return Err(error);
+        }
+    };
+    let pipeline_summary = pipeline_summary?;
 
-    if let Err(e) = artifacts::write_artifacts(output_dir, problem, &plan, &executed) {
+    if let Err(e) =
+        artifacts::write_artifacts(output_dir, problem, &plan, &executed, Some(&pipeline_summary))
+    {
         return Err(RunError {
             message: format!("Failed to write artifacts: {}", e),
         });
@@ -82,46 +124,73 @@ pub fn run_problem_with_callback(
     mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
 ) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
+    let mut artifact_pipeline = artifact_pipeline::ArtifactPipeline::start(
+        output_dir.to_path_buf(),
+        artifacts::build_field_context(problem, &plan),
+        artifact_pipeline::DEFAULT_ARTIFACT_PIPELINE_CAPACITY,
+    )?;
+    let artifact_writer = Some(artifact_pipeline.sender());
 
     let cpu_threads = configured_cpu_threads(problem);
-    let executed = with_cpu_parallelism(cpu_threads, || match &plan.backend_plan {
+    let executed_result = with_cpu_parallelism(cpu_threads, || match &plan.backend_plan {
         BackendPlanIR::Fdm(fdm) => {
             let grid = fdm.grid.cells;
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_with_callback(
+            dispatch::execute_fdm_with_callback_streaming(
                 engine,
                 fdm,
                 until_seconds,
                 &plan.output_plan.outputs,
                 grid,
                 field_every_n,
+                artifact_writer.clone(),
                 &mut on_step,
             )
         }
         BackendPlanIR::FdmMultilayer(fdm) => {
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_multilayer_with_callback(
+            dispatch::execute_fdm_multilayer_with_callback_streaming(
                 engine,
                 fdm,
                 until_seconds,
                 &plan.output_plan.outputs,
+                artifact_writer.clone(),
                 &mut on_step,
             )
         }
         BackendPlanIR::Fem(fem) => {
             let engine = dispatch::resolve_fem_engine(problem)?;
-            dispatch::execute_fem_with_callback(
+            dispatch::execute_fem_with_callback_streaming(
                 engine,
                 fem,
                 until_seconds,
                 &plan.output_plan.outputs,
                 field_every_n,
+                artifact_writer.clone(),
                 &mut on_step,
             )
         }
-    })?;
+    });
+    let pipeline_summary = artifact_pipeline.finish();
+    let executed = match executed_result {
+        Ok(executed) => executed,
+        Err(error) => {
+            if let Err(writer_error) = pipeline_summary {
+                return Err(RunError {
+                    message: format!(
+                        "{}\nartifact pipeline shutdown also failed: {}",
+                        error.message, writer_error.message
+                    ),
+                });
+            }
+            return Err(error);
+        }
+    };
+    let pipeline_summary = pipeline_summary?;
 
-    if let Err(e) = artifacts::write_artifacts(output_dir, problem, &plan, &executed) {
+    if let Err(e) =
+        artifacts::write_artifacts(output_dir, problem, &plan, &executed, Some(&pipeline_summary))
+    {
         return Err(RunError {
             message: format!("Failed to write artifacts: {}", e),
         });
@@ -193,13 +262,19 @@ pub fn run_problem_with_live_preview(
     mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
 ) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
+    let mut artifact_pipeline = artifact_pipeline::ArtifactPipeline::start(
+        output_dir.to_path_buf(),
+        artifacts::build_field_context(problem, &plan),
+        artifact_pipeline::DEFAULT_ARTIFACT_PIPELINE_CAPACITY,
+    )?;
+    let artifact_writer = Some(artifact_pipeline.sender());
 
     let cpu_threads = configured_cpu_threads(problem);
-    let executed = with_cpu_parallelism(cpu_threads, || match &plan.backend_plan {
+    let executed_result = with_cpu_parallelism(cpu_threads, || match &plan.backend_plan {
         BackendPlanIR::Fdm(fdm) => {
             let grid = fdm.grid.cells;
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_with_live_preview(
+            dispatch::execute_fdm_with_live_preview_streaming(
                 engine,
                 fdm,
                 until_seconds,
@@ -207,34 +282,55 @@ pub fn run_problem_with_live_preview(
                 grid,
                 field_every_n,
                 preview_request,
+                artifact_writer.clone(),
                 &mut on_step,
             )
         }
         BackendPlanIR::FdmMultilayer(fdm) => {
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_multilayer_with_callback(
+            dispatch::execute_fdm_multilayer_with_callback_streaming(
                 engine,
                 fdm,
                 until_seconds,
                 &plan.output_plan.outputs,
+                artifact_writer.clone(),
                 &mut on_step,
             )
         }
         BackendPlanIR::Fem(fem) => {
             let engine = dispatch::resolve_fem_engine(problem)?;
-            dispatch::execute_fem_with_live_preview(
+            dispatch::execute_fem_with_live_preview_streaming(
                 engine,
                 fem,
                 until_seconds,
                 &plan.output_plan.outputs,
                 field_every_n,
                 preview_request,
+                artifact_writer.clone(),
                 &mut on_step,
             )
         }
-    })?;
+    });
+    let pipeline_summary = artifact_pipeline.finish();
+    let executed = match executed_result {
+        Ok(executed) => executed,
+        Err(error) => {
+            if let Err(writer_error) = pipeline_summary {
+                return Err(RunError {
+                    message: format!(
+                        "{}\nartifact pipeline shutdown also failed: {}",
+                        error.message, writer_error.message
+                    ),
+                });
+            }
+            return Err(error);
+        }
+    };
+    let pipeline_summary = pipeline_summary?;
 
-    if let Err(e) = artifacts::write_artifacts(output_dir, problem, &plan, &executed) {
+    if let Err(e) =
+        artifacts::write_artifacts(output_dir, problem, &plan, &executed, Some(&pipeline_summary))
+    {
         return Err(RunError {
             message: format!("Failed to write artifacts: {}", e),
         });
@@ -407,10 +503,14 @@ pub fn run_reference_multilayer_fdm(
 mod tests {
     use super::*;
     use fullmag_ir::{
-        ExchangeBoundaryCondition, ExecutionPrecision, FdmGridAssetIR, FdmMaterialIR,
-        GeometryAssetsIR, GeometryEntryIR, GridDimensions, IntegratorChoice,
+        ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, GridDimensions,
+        IntegratorChoice,
     };
+    #[cfg(feature = "cuda")]
+    use fullmag_ir::{FdmGridAssetIR, GeometryAssetsIR, GeometryEntryIR};
     use serde_json::json;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_test_plan() -> FdmPlanIR {
         FdmPlanIR {
@@ -643,6 +743,38 @@ mod tests {
             "exchange energy should scale with A: got ratio {}",
             ratio
         );
+    }
+
+    #[test]
+    fn run_problem_streams_artifacts_and_preserves_layout() {
+        let problem = fullmag_ir::ProblemIR::bootstrap_example();
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        let output_dir = std::env::temp_dir().join(format!(
+            "fullmag-runner-artifacts-{}-{}",
+            std::process::id(),
+            unique_suffix
+        ));
+
+        let result = run_problem(&problem, 2e-13, &output_dir).expect("run_problem should succeed");
+        assert_eq!(result.status, RunStatus::Completed);
+        assert!(output_dir.join("scalars.csv").is_file());
+        assert!(output_dir.join("m_initial.json").is_file());
+        assert!(output_dir.join("m_final.json").is_file());
+        assert!(output_dir.join("fields/m/step_000000.json").is_file());
+        assert!(output_dir.join("fields/H_ex/step_000000.json").is_file());
+
+        let metadata: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(output_dir.join("metadata.json"))
+                .expect("metadata.json should be readable"),
+        )
+        .expect("metadata should parse");
+        assert_eq!(metadata["field_snapshots"].as_u64(), Some(4));
+        assert_eq!(metadata["scalar_rows"].as_u64(), Some(2));
+
+        fs::remove_dir_all(&output_dir).expect("temporary artifact directory should be removable");
     }
 
     #[test]

@@ -13,7 +13,7 @@ use std::path::Path;
 pub(crate) struct FieldArtifactContext {
     pub problem_name: String,
     pub ir_version: String,
-    pub source_hash: String,
+    pub source_hash: Option<String>,
     pub execution_mode: fullmag_ir::ExecutionMode,
     pub layout: serde_json::Value,
 }

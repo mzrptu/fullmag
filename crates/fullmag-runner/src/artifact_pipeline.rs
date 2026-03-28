@@ -91,21 +91,29 @@ impl ArtifactPipeline {
     }
 
     pub(crate) fn finish(&mut self) -> Result<ArtifactPipelineSummary, RunError> {
+        let mut shutdown_send_failed = false;
         if let Some(tx) = self.tx.take() {
-            tx.send(ArtifactJob::Shutdown).map_err(|_| RunError {
-                message: "failed to signal artifact writer shutdown".to_string(),
-            })?;
+            shutdown_send_failed = tx.send(ArtifactJob::Shutdown).is_err();
         }
 
         let Some(handle) = self.handle.take() else {
             return Ok(ArtifactPipelineSummary::default());
         };
-        handle
+        let result = handle
             .join()
             .map_err(|_| RunError {
                 message: "artifact writer thread panicked".to_string(),
             })?
-            .map_err(|message| RunError { message })
+            .map_err(|message| RunError { message });
+        if shutdown_send_failed {
+            return result.map_err(|error| RunError {
+                message: format!(
+                    "artifact writer channel closed before shutdown signal: {}",
+                    error.message
+                ),
+            });
+        }
+        result
     }
 }
 
@@ -147,10 +155,6 @@ impl ArtifactRecorder {
             pipeline: Some(pipeline),
             provenance,
         }
-    }
-
-    pub(crate) fn provenance(&self) -> &ExecutionProvenance {
-        &self.provenance
     }
 
     pub(crate) fn record_scalar(&mut self, stats: &StepStats) -> Result<(), RunError> {
