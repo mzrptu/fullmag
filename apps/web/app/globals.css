@@ -9,170 +9,97 @@
 
 @import "tailwindcss";
 
-/* ----- 1. Design Tokens ----- */
+/* ----- 1. Design Tokens (Shadcn Midnight Theme) ----- */
 
-:root {
-  /* Typography */
-  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system,
-    BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code',
-    'Fira Code', 'Menlo', monospace;
-
-  --text-xs:   0.75rem;   /* 12px */
-  --text-sm:   0.8125rem; /* 13px */
-  --text-base: 0.875rem;  /* 14px */
-  --text-md:   1rem;      /* 16px */
-  --text-lg:   1.125rem;  /* 18px */
-  --text-xl:   1.25rem;   /* 20px */
-  --text-2xl:  1.5rem;    /* 24px */
-  --text-3xl:  1.875rem;  /* 30px */
-
-  --leading-tight:  1.15;
-  --leading-normal: 1.5;
-  --leading-relaxed: 1.7;
-
-  --weight-normal:   400;
-  --weight-medium:   500;
-  --weight-semibold: 600;
-  --weight-bold:     700;
-
-  /* Spacing scale (4px base) */
-  --sp-0:  0;
-  --sp-1:  0.25rem;  /* 4px */
-  --sp-2:  0.5rem;   /* 8px */
-  --sp-3:  0.75rem;  /* 12px */
-  --sp-4:  1rem;     /* 16px */
-  --sp-5:  1.25rem;  /* 20px */
-  --sp-6:  1.5rem;   /* 24px */
-  --sp-8:  2rem;     /* 32px */
-  --sp-10: 2.5rem;   /* 40px */
-  --sp-12: 3rem;     /* 48px */
-  --sp-16: 4rem;     /* 64px */
-  --sp-20: 5rem;     /* 80px */
-
-  /* Radii */
-  --radius-sm:   6px;
-  --radius-md:   10px;
-  --radius-lg:   14px;
-  --radius-xl:   20px;
-  --radius-full: 9999px;
-
-  /* Transitions */
-  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
-  --duration-fast:   120ms;
-  --duration-normal: 200ms;
-  --duration-slow:   350ms;
-
-  /* Sidebar */
-  --sidebar-width:     240px;
-  --sidebar-collapsed: 64px;
-  --topbar-height:     56px;
-  --footer-height:     48px;
-
-  /* Breakpoints (reference only, used in media queries) */
-  /* --bp-sm: 640px; --bp-md: 768px; --bp-lg: 1024px; --bp-xl: 1280px; */
-
-  /* ─── IDE / Control-room tokens ─── */
-  --ide-bg:              #060d18;
-  --ide-surface:         hsla(220, 22%, 7%, 0.95);
-  --ide-surface-raised:  hsla(220, 20%, 10%, 0.8);
-  --ide-surface-input:   hsla(220, 20%, 14%, 0.8);
-  --ide-surface-hover:   hsla(220, 20%, 14%, 0.6);
-  --ide-border:          hsla(220, 20%, 20%, 0.5);
-  --ide-border-subtle:   hsla(220, 20%, 18%, 0.4);
-  --ide-border-strong:   hsla(220, 20%, 25%, 0.5);
-
-  --ide-text-1:          #edf3fb;
-  --ide-text-2:          #a7bad3;
-  --ide-text-3:          #6b7f9f;
-
-  --ide-accent:          hsl(210, 70%, 55%);
-  --ide-accent-text:     hsl(210, 80%, 72%);
-  --ide-accent-bg:       hsl(210, 60%, 25%);
-  --ide-accent-hover:    hsl(210, 70%, 62%);
-
-  /* Status */
-  --status-running:      #35b779;
-  --status-running-glow: rgba(53, 183, 121, 0.5);
-  --status-completed:    hsl(210, 70%, 60%);
-  --status-failed:       #cf6256;
-  --status-idle:         #64748b;
-  --status-warn:         #fde725;
-
-  /* Energy term accents */
-  --energy-exchange:     #4cc9f0;
-  --energy-demag:        #f77f00;
-  --energy-external:     #35b779;
-  --energy-total:        hsl(210, 70%, 65%);
-
-  /* IDE font-size scale (raised minimums for readability) */
-  --ide-text-xs:    0.72rem;  /* 11.5px — minimum for labels */
-  --ide-text-sm:    0.78rem;  /* 12.5px */
-  --ide-text-base:  0.84rem;  /* 13.4px — minimum for values */
-  --ide-text-md:    0.90rem;  /* 14.4px */
-  --ide-text-lg:    1rem;     /* 16px */
-
-  /* ─── Amumax-ported tokens ─── */
-  --surface-1: #0f1728;
-  --surface-2: #141f33;
-  --surface-3: #1b2840;
-  --surface-glass: rgba(15, 23, 40, 0.84);
-
-  --border-interactive: #4d739e;
-
-  --text-1: #edf3fb;
-  --text-2: #a7bad3;
-  --text-3: #6b7f9f;
-
-  --accent-strong: #38b2a2;
-  --am-accent: #57c8b6;
-  --am-info: #6ba7ff;
-  --am-warn: #f2b45a;
-  --am-danger: #ff7c7c;
-  --am-success: #68d39a;
-
-  --shadow-soft: 0 18px 44px rgba(2, 8, 20, 0.42);
-  --shadow-panel: 0 22px 58px rgba(2, 8, 20, 0.55);
-  --focus-ring: 0 0 0 1px var(--bg-root), 0 0 0 3px rgba(87, 200, 182, 0.35);
-
-  --radius-pill: 999px;
-
-  --duration-instant: 100ms;
-  --easing-default: cubic-bezier(0.4, 0, 0.2, 1);
-  --easing-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-
-  --z-base: 0;
-  --z-sticky: 10;
-  --z-overlay: 100;
-  --z-popout: 1000;
-  --z-modal: 2000;
-  --z-toast: 3000;
-
-  --canvas-min-height: 25rem;
-  --panel-gap: 1rem;
-  --terminal-height: 22rem;
+@theme {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* ----- 2. Theme: Dark (default) ----- */
+@layer base {
+  :root {
+    /* Base Shadcn Midnight Theme */
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+    --radius: 0.5rem;
 
-[data-theme='dark'], :root {
-  color-scheme: dark;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background:
-    radial-gradient(circle at top, rgba(56, 189, 248, 0.18), transparent 24%),
-    radial-gradient(circle at 85% 10%, rgba(129, 140, 248, 0.18), transparent 22%),
-    linear-gradient(180deg, #07111f 0%, #040814 100%);
-  color: #edf4ff;
-  --surface: rgba(8, 17, 31, 0.72);
-  --surface-strong: rgba(10, 21, 38, 0.88);
-  --border: rgba(147, 197, 253, 0.16);
-  --border-strong: rgba(148, 163, 184, 0.3);
-  --text-muted: #a7b8d7;
-  --text-soft: #c7d5ee;
-  --accent: #7dd3fc;
-  --accent-strong: #93c5fd;
-  --shadow: 0 30px 90px rgba(2, 8, 23, 0.4);
+    /* Legacy compatibility maps (to prevent total breakage while we migrate) */
+    --ide-bg: hsl(var(--background));
+    --ide-surface: hsl(var(--card));
+    --ide-border: hsl(var(--border));
+    --ide-border-subtle: hsl(var(--border));
+    --ide-text-1: hsl(var(--foreground));
+    --ide-text-2: hsl(var(--muted-foreground));
+    --ide-accent: hsl(var(--primary));
+    --surface-1: hsl(var(--card));
+    --surface-2: hsl(var(--muted));
+    --text-1: hsl(var(--foreground));
+    --text-2: hsl(var(--muted-foreground));
+    --am-accent: hsl(var(--primary));
+
+    /* Typography */
+    --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', 'Menlo', monospace;
+    
+    /* Layout Constants */
+    --sidebar-width: 240px;
+    --sidebar-collapsed: 64px;
+    --topbar-height: 56px;
+    --footer-height: 48px;
+    
+    /* Status Colors */
+    --status-running: 142.1 76.2% 36.3%; /* Green */
+    --status-completed: 210 100% 50%; /* Blue */
+    --status-failed: 0 84.2% 60.2%; /* Red */
+    --status-idle: 215.4 16.3% 46.9%; /* Slate 500 */
+    --status-warn: 47.9 95.8% 53.1%; /* Yellow */
+    
+    /* Z-indexes */
+    --z-base: 0;
+    --z-sticky: 10;
+    --z-overlay: 100;
+    --z-popout: 1000;
+    --z-modal: 2000;
+    --z-toast: 3000;
+  }
 }
 
 /* ----- 4. Reset ----- */

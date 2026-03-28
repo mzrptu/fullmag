@@ -19,26 +19,22 @@ import type { ScalarRow } from "../../lib/useSessionStream";
 
 // ─── Theme — reads CSS custom properties for consistency ───────────
 function getTheme() {
-  const s = typeof document !== "undefined"
-    ? getComputedStyle(document.documentElement)
-    : null;
-  const v = (prop: string, fallback: string) =>
-    s?.getPropertyValue(prop)?.trim() || fallback;
-
+  // Hardcoded to match the exact Shadcn Midnight palette mapped in globals.css
+  // This avoids slow `getComputedStyle` DOM queries which block rendering.
   return {
-    bg:            v("--ide-bg", "#060d18"),
-    surface1:      v("--surface-1", "#0f1728"),
-    border:        v("--ide-border", "#1e2d4a"),
-    text1:         v("--ide-text-1", "#edf3fb"),
-    text2:         v("--ide-text-2", "#a7bad3"),
-    text3:         v("--ide-text-3", "#6b7f9f"),
-    accent:        v("--ide-accent", "#3b82f6"),
-    tooltipBg:     v("--surface-1", "#0f1728"),
-    tooltipBorder: v("--ide-accent", "#3b82f6"),
-    tooltipText:   v("--ide-text-1", "#edf3fb"),
-    toolboxIcon:   v("--ide-text-2", "#a7bad3"),
-    brushBg:       "rgba(59, 130, 246, 0.15)",
-    brushBorder:   v("--ide-accent", "#3b82f6"),
+    bg: "transparent",
+    surface1: "hsla(222.2, 84%, 4.9%, 0.8)", // bg-card
+    border: "hsla(217.2, 32.6%, 17.5%, 0.5)", // border
+    text1: "hsla(210, 40%, 98%, 1)", // foreground
+    text2: "hsla(215, 20.2%, 65.1%, 1)", // muted-foreground
+    text3: "hsla(215, 20.2%, 65.1%, 0.5)",
+    accent: "hsla(217.2, 91.2%, 59.8%, 1)", // primary
+    tooltipBg: "hsla(222.2, 84%, 4.9%, 0.95)", // popover
+    tooltipBorder: "hsla(217.2, 32.6%, 17.5%, 1)", // border
+    tooltipText: "hsla(210, 40%, 98%, 1)",
+    toolboxIcon: "hsla(215, 20.2%, 65.1%, 1)",
+    brushBg: "hsla(217.2, 91.2%, 59.8%, 0.15)",
+    brushBorder: "hsla(217.2, 91.2%, 59.8%, 1)",
   };
 }
 
@@ -322,7 +318,7 @@ const ScalarPlot = memo(function ScalarPlot({
   return (
     <div
       ref={containerRef}
-      className="h-full min-h-0 w-full rounded-[var(--radius-md)] border border-[var(--ide-border-subtle)] bg-[var(--ide-bg)]"
+      className="h-full min-h-0 w-full rounded-md border border-border/50 bg-card/40 backdrop-blur-md"
     />
   );
 });

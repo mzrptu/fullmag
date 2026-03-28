@@ -5,7 +5,6 @@ import {
   Loader2, CheckCircle2, XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import s from "./shell.module.css";
 
 interface StatusBarProps {
   connection: "connecting" | "connected" | "disconnected";
@@ -43,73 +42,73 @@ export default function StatusBar({
   nodeCount,
 }: StatusBarProps) {
   return (
-    <div className={s.statusBar}>
+    <div className="flex items-center justify-between border-t border-border/40 bg-card/40 px-3 py-1 text-[0.68rem] tracking-wide text-muted-foreground z-40 h-[26px]">
       {(activityLabel || activityDetail) && (
-        <div className={s.statusBarActivity}>
-          <div className={s.statusBarActivityRow}>
-            <span className={s.statusBarActivityLabel}>{activityLabel ?? "Workspace"}</span>
+        <div className="flex items-center">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-foreground">{activityLabel ?? "Workspace"}</span>
             {activityDetail && (
-              <span className={s.statusBarActivityDetail} title={activityDetail}>
+              <span className="truncate max-w-[200px]" title={activityDetail}>
                 {activityDetail}
               </span>
             )}
           </div>
         </div>
       )}
-      <div className={s.statusBarMain}>
+      <div className="flex items-center ml-auto gap-4">
       {/* Left section: status + connection */}
-      <div className={s.statusBarSection}>
-        <span className={cn(s.statusBarItem, s.statusBarPrimary)} data-status={status}>
-          {status === "running" ? <Activity size={12} className={s.statusBarSpinner} /> :
+      <div className="flex items-center gap-2">
+        <span className={cn("flex items-center gap-1.5 font-semibold text-muted-foreground", status === "running" && "text-primary", status === "completed" && "text-emerald-500", status === "failed" && "text-destructive")} data-status={status}>
+          {status === "running" ? <Activity size={12} className="animate-spin" /> :
            status === "completed" ? <CheckCircle2 size={12} /> :
            status === "failed" ? <XCircle size={12} /> :
            <Loader2 size={12} />}
           {status}
         </span>
-        <span className={s.statusBarDivider} />
-        <span className={s.statusBarItem} data-connection={connection}>
+        <span className="h-3 w-px bg-border/50" />
+        <span className="flex items-center gap-1.5" data-connection={connection}>
           {connection === "connected" ? <Wifi size={11} /> : 
-           connection === "connecting" ? <Loader2 size={11} className={s.statusBarSpinner} /> : 
+           connection === "connecting" ? <Loader2 size={11} className="animate-spin" /> : 
            <WifiOff size={11} />}
           {connection}
         </span>
       </div>
 
       {/* Center: simulation metrics */}
-      <div className={s.statusBarSection}>
-        <span className={s.statusBarItem}>
+      <div className="flex items-center gap-2">
+        <span className="flex items-center gap-1.5">
           <Clock size={11} />
           {simTime}
         </span>
-        <span className={s.statusBarDivider} />
-        <span className={s.statusBarItem}>
+        <span className="h-3 w-px bg-border/50" />
+        <span className="flex items-center gap-1.5">
           Step {stepDisplay ?? step.toLocaleString()}
         </span>
-        <span className={s.statusBarDivider} />
-        <span className={s.statusBarItem}>
+        <span className="h-3 w-px bg-border/50" />
+        <span className="flex items-center gap-1.5">
           <Activity size={11} />
           {throughput}
         </span>
         {wallTime !== "—" && (
           <>
-            <span className={s.statusBarDivider} />
-            <span className={s.statusBarItem}>Elapsed: {wallTime}</span>
+            <span className="h-3 w-px bg-border/50" />
+            <span className="flex items-center gap-1.5">Elapsed: {wallTime}</span>
           </>
         )}
       </div>
 
       {/* Right: backend info */}
-      <div className={s.statusBarSection}>
+      <div className="flex items-center gap-2">
         {nodeCount && (
           <>
-            <span className={s.statusBarItem}>
+            <span className="flex items-center gap-1.5">
               <HardDrive size={11} />
               {nodeCount}
             </span>
-            <span className={s.statusBarDivider} />
+            <span className="h-3 w-px bg-border/50" />
           </>
         )}
-        <span className={s.statusBarItem}>
+        <span className="flex items-center gap-1.5">
           <Cpu size={11} />
           {runtimeEngine ? `${runtimeEngine} · ${precision}` : `${backend.toUpperCase()} · ${precision}`}
         </span>

@@ -17,8 +17,9 @@
  *   - device metadata.
  *
  * ABI stability rules:
- *   - Host-side transfer buffers use f64 for simplicity.
- *   - Internal conversion to f32 happens only when precision is SINGLE.
+ *   - The ABI exposes explicit f32 and f64 transfer entrypoints.
+ *   - Callers that care about avoiding host-side casts should pick the entrypoint
+ *     matching the requested execution precision.
  *   - Error codes map cleanly to Rust RunError.
  */
 
@@ -187,12 +188,21 @@ int fullmag_fdm_backend_step(
 /**
  * Copy a field observable from device to host as f64.
  * out_xyz must point to at least out_len doubles (= 3 * cell_count).
- * Even in SINGLE precision mode, this exports f64.
  */
 int fullmag_fdm_backend_copy_field_f64(
     fullmag_fdm_backend   *handle,
     fullmag_fdm_observable observable,
     double                *out_xyz,
+    uint64_t               out_len);
+
+/**
+ * Copy a field observable from device to host as f32.
+ * out_xyz must point to at least out_len floats (= 3 * cell_count).
+ */
+int fullmag_fdm_backend_copy_field_f32(
+    fullmag_fdm_backend   *handle,
+    fullmag_fdm_observable observable,
+    float                 *out_xyz,
     uint64_t               out_len);
 
 /**
@@ -213,6 +223,21 @@ int fullmag_fdm_backend_copy_field_preview_f64(
     uint64_t               out_len);
 
 /**
+ * Copy a downsampled preview of a field observable from device to host as f32.
+ * The preview grid is defined by preview_nx * preview_ny * preview_nz bins.
+ */
+int fullmag_fdm_backend_copy_field_preview_f32(
+    fullmag_fdm_backend   *handle,
+    fullmag_fdm_observable observable,
+    uint32_t               preview_nx,
+    uint32_t               preview_ny,
+    uint32_t               preview_nz,
+    uint32_t               z_origin,
+    uint32_t               z_stride,
+    float                 *out_xyz,
+    uint64_t               out_len);
+
+/**
  * Replace the backend magnetization state from host-side f64 AoS storage.
  * This does not advance time; call `fullmag_fdm_backend_refresh_observables`
  * afterwards to recompute H_ex / H_demag / H_eff for the uploaded state.
@@ -220,6 +245,16 @@ int fullmag_fdm_backend_copy_field_preview_f64(
 int fullmag_fdm_backend_upload_magnetization_f64(
     fullmag_fdm_backend   *handle,
     const double          *m_xyz,
+    uint64_t               len);
+
+/**
+ * Replace the backend magnetization state from host-side f32 AoS storage.
+ * This does not advance time; call `fullmag_fdm_backend_refresh_observables`
+ * afterwards to recompute H_ex / H_demag / H_eff for the uploaded state.
+ */
+int fullmag_fdm_backend_upload_magnetization_f32(
+    fullmag_fdm_backend   *handle,
+    const float           *m_xyz,
     uint64_t               len);
 
 /**

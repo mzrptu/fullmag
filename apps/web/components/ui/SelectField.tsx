@@ -1,6 +1,14 @@
 "use client";
 
-import s from "./SelectField.module.css";
+import * as React from "react"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { cn } from "@/lib/utils"
 
 export interface SelectOption {
   value: string;
@@ -9,11 +17,12 @@ export interface SelectOption {
   disabled?: boolean;
 }
 
-interface SelectFieldProps {
+export interface SelectFieldProps {
   label: string;
   value: string | number;
   options: SelectOption[];
   onchange?: (value: string) => void;
+  className?: string;
 }
 
 export default function SelectField({
@@ -21,22 +30,25 @@ export default function SelectField({
   value,
   options,
   onchange,
+  className,
 }: SelectFieldProps) {
   return (
-    <div className={s.uiSelect}>
-      <span className={s.label}>{label}</span>
-      <span className={s.control}>
-        <select
-          value={String(value)}
-          onChange={(e) => onchange?.(e.target.value)}
-        >
+    <div className={cn("flex flex-col gap-1.5 min-w-0", className)}>
+      <label className="text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-[0.06em]">
+        {label}
+      </label>
+      <Select value={String(value)} onValueChange={onchange}>
+        <SelectTrigger>
+          <SelectValue placeholder="Select an option" />
+        </SelectTrigger>
+        <SelectContent>
           {options.map((opt) => (
-            <option key={opt.value} value={opt.value} disabled={opt.disabled}>
+            <SelectItem key={opt.value} value={opt.value} disabled={opt.disabled}>
               {opt.label}
-            </option>
+            </SelectItem>
           ))}
-        </select>
-      </span>
+        </SelectContent>
+      </Select>
     </div>
-  );
+  )
 }

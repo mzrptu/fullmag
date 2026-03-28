@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import s from "./SolverSettingsPanel.module.css";
 
 /* ── Types ─────────────────────────────────────────────────── */
 
@@ -64,7 +63,7 @@ const RELAX_ALGORITHM_OPTIONS = [
 
 function HelpTip({ text }: { text: string }) {
   return (
-    <span className={s.helpTip} title={text}>
+    <span className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-muted text-muted-foreground text-[8px] cursor-help" title={text}>
       ?
     </span>
   );
@@ -89,19 +88,19 @@ export default function SolverSettingsPanel({
   const selectedRelax = RELAX_ALGORITHM_OPTIONS.find((o) => o.value === settings.relaxAlgorithm);
 
   return (
-    <div className={s.root}>
+    <div className="flex flex-col gap-2 p-3">
       {/* ── Time Integration ── */}
-      <div className={s.section}>
-        <div className={s.sectionHeader}>
-          <span className={s.sectionTitle}>Time Integration</span>
+      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
+        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
+          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Time Integration</span>
           <HelpTip text="Controls how the LLG equation is stepped forward in time. Adaptive integrators adjust Δt automatically for accuracy." />
         </div>
-        <div className={s.sectionBody}>
-          <div className={s.row}>
-            <span className={s.rowLabel}>Integrator</span>
-            <div className={s.rowControl}>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Integrator</span>
+            <div className="flex-1 max-w-[140px]">
               <select
-                className={s.compactSelect}
+                className="w-full appearance-none bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary disabled:opacity-50"
                 value={settings.integrator}
                 onChange={(e) => update({ integrator: e.target.value })}
                 disabled={disabled}
@@ -115,17 +114,17 @@ export default function SolverSettingsPanel({
             </div>
           </div>
           {selectedIntegrator && (
-            <div className={s.optionDesc}>{selectedIntegrator.desc}</div>
+            <div className="text-[0.65rem] leading-relaxed text-muted-foreground mt-[-4px] mb-2 p-1.5 bg-black/10 rounded-md border border-border/20 border-l-2 border-l-primary/50">{selectedIntegrator.desc}</div>
           )}
 
-          <div className={s.row}>
-            <span className={s.rowLabel}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
               Fixed Δt
               <HelpTip text="Leave empty for adaptive timestep (recommended for RK2(3)/RK4(5)). Set to e.g. 1e-13 for fixed-step integrators." />
             </span>
-            <div className={s.rowControl}>
+            <div className="flex-1 max-w-[140px]">
               <input
-                className={s.compactInput}
+                className="w-full bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground/30 disabled:opacity-50 text-right font-mono"
                 type="text"
                 value={settings.fixedTimestep}
                 onChange={(e) => update({ fixedTimestep: e.target.value })}
@@ -138,17 +137,17 @@ export default function SolverSettingsPanel({
       </div>
 
       {/* ── Relaxation ── */}
-      <div className={s.section}>
-        <div className={s.sectionHeader}>
-          <span className={s.sectionTitle}>Relaxation</span>
+      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
+        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
+          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Relaxation</span>
           <HelpTip text="Energy minimization to find the ground state. The solver iterates until torque drops below the tolerance or the max step count is reached." />
         </div>
-        <div className={s.sectionBody}>
-          <div className={s.row}>
-            <span className={s.rowLabel}>Algorithm</span>
-            <div className={s.rowControl}>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Algorithm</span>
+            <div className="flex-1 max-w-[140px]">
               <select
-                className={s.compactSelect}
+                className="w-full appearance-none bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary disabled:opacity-50"
                 value={settings.relaxAlgorithm}
                 onChange={(e) => update({ relaxAlgorithm: e.target.value })}
                 disabled={disabled}
@@ -162,17 +161,17 @@ export default function SolverSettingsPanel({
             </div>
           </div>
           {selectedRelax && (
-            <div className={s.optionDesc}>{selectedRelax.desc}</div>
+            <div className="text-[0.65rem] leading-relaxed text-muted-foreground mt-[-4px] mb-2 p-1.5 bg-black/10 rounded-md border border-border/20 border-l-2 border-l-primary/50">{selectedRelax.desc}</div>
           )}
 
-          <div className={s.row}>
-            <span className={s.rowLabel}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
               Torque tol.
               <HelpTip text="Convergence criterion: max|m × H_eff| < tolerance. Typical: 1e-5 (fast) to 1e-7 (precise). Unit: T." />
             </span>
-            <div className={s.rowControl}>
+            <div className="flex-1 max-w-[140px]">
               <input
-                className={s.compactInput}
+                className="w-full bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground/30 disabled:opacity-50 text-right font-mono"
                 type="text"
                 value={settings.torqueTolerance}
                 onChange={(e) => update({ torqueTolerance: e.target.value })}
@@ -182,14 +181,14 @@ export default function SolverSettingsPanel({
             </div>
           </div>
 
-          <div className={s.row}>
-            <span className={s.rowLabel}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
               Energy tol.
               <HelpTip text="Optional secondary criterion: |ΔE_total| < tolerance between steps. Leave empty to use torque-only convergence." />
             </span>
-            <div className={s.rowControl}>
+            <div className="flex-1 max-w-[140px]">
               <input
-                className={s.compactInput}
+                className="w-full bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground/30 disabled:opacity-50 text-right font-mono"
                 type="text"
                 value={settings.energyTolerance}
                 onChange={(e) => update({ energyTolerance: e.target.value })}
@@ -199,14 +198,14 @@ export default function SolverSettingsPanel({
             </div>
           </div>
 
-          <div className={s.row}>
-            <span className={s.rowLabel}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
               Max steps
               <HelpTip text="Maximum number of iterations before giving up. Increase for complex geometries or tight tolerances." />
             </span>
-            <div className={s.rowControl}>
+            <div className="flex-1 max-w-[140px]">
               <input
-                className={s.compactInput}
+                className="w-full bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground/30 disabled:opacity-50 text-right font-mono"
                 type="text"
                 value={settings.maxRelaxSteps}
                 onChange={(e) => update({ maxRelaxSteps: e.target.value })}
@@ -216,14 +215,14 @@ export default function SolverSettingsPanel({
             </div>
           </div>
 
-          <div className={s.row}>
-            <span className={s.rowLabel}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
               Damping α
               <HelpTip text="Override the material damping for relaxation. Leave empty to use the material value. Higher α (e.g. 0.5–1.0) speeds convergence." />
             </span>
-            <div className={s.rowControl}>
+            <div className="flex-1 max-w-[140px]">
               <input
-                className={s.compactInput}
+                className="w-full bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground/30 disabled:opacity-50 text-right font-mono"
                 type="text"
                 value={settings.relaxAlpha}
                 onChange={(e) => update({ relaxAlpha: e.target.value })}
@@ -238,7 +237,7 @@ export default function SolverSettingsPanel({
       {/* ── Apply button ── */}
       {canApply && onApply && (
         <button
-          className={s.applyBtn}
+          className="mt-2 w-full py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-bold uppercase tracking-widest hover:bg-primary/90 transition-colors"
           onClick={onApply}
           type="button"
         >
@@ -247,7 +246,7 @@ export default function SolverSettingsPanel({
       )}
 
       {solverRunning && (
-        <div className={s.runningNote}>
+        <div className="mt-2 text-[0.65rem] text-amber-500 text-center uppercase tracking-widest font-bold p-2 bg-amber-500/10 rounded-md border border-amber-500/20">
           Solver is running. Stop the simulation to modify settings.
         </div>
       )}

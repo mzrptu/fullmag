@@ -225,7 +225,7 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
     }
 
     // Upload initial magnetization
-    if (!context_upload_magnetization(
+    if (!context_upload_magnetization_f64(
             *ctx, plan->initial_magnetization_xyz,
             plan->initial_magnetization_len))
     {
@@ -340,6 +340,32 @@ int fullmag_fdm_backend_copy_field_f64(
 #endif
 }
 
+int fullmag_fdm_backend_copy_field_f32(
+    fullmag_fdm_backend   *handle,
+    fullmag_fdm_observable observable,
+    float                 *out_xyz,
+    uint64_t               out_len)
+{
+#if FULLMAG_HAS_CUDA
+    if (!handle || !out_xyz) return FULLMAG_FDM_ERR_INVALID;
+    auto *ctx = reinterpret_cast<Context *>(handle);
+
+    if (out_len != ctx->cell_count * 3) {
+        ctx->last_error = "out_len mismatch";
+        return FULLMAG_FDM_ERR_INVALID;
+    }
+
+    if (!context_download_field_f32(*ctx, observable, out_xyz, out_len)) {
+        return FULLMAG_FDM_ERR_CUDA;
+    }
+
+    return FULLMAG_FDM_OK;
+#else
+    (void)handle; (void)observable; (void)out_xyz; (void)out_len;
+    return FULLMAG_FDM_ERR_CUDA;
+#endif
+}
+
 int fullmag_fdm_backend_copy_field_preview_f64(
     fullmag_fdm_backend   *handle,
     fullmag_fdm_observable observable,
@@ -395,6 +421,61 @@ int fullmag_fdm_backend_copy_field_preview_f64(
 #endif
 }
 
+int fullmag_fdm_backend_copy_field_preview_f32(
+    fullmag_fdm_backend   *handle,
+    fullmag_fdm_observable observable,
+    uint32_t               preview_nx,
+    uint32_t               preview_ny,
+    uint32_t               preview_nz,
+    uint32_t               z_origin,
+    uint32_t               z_stride,
+    float                 *out_xyz,
+    uint64_t               out_len)
+{
+#if FULLMAG_HAS_CUDA
+    if (!handle || !out_xyz || preview_nx == 0 || preview_ny == 0 || preview_nz == 0
+        || z_stride == 0)
+    {
+        return FULLMAG_FDM_ERR_INVALID;
+    }
+    auto *ctx = reinterpret_cast<Context *>(handle);
+
+    uint64_t expected_len =
+        static_cast<uint64_t>(preview_nx) * preview_ny * preview_nz * 3;
+    if (out_len != expected_len) {
+        ctx->last_error = "preview out_len mismatch";
+        return FULLMAG_FDM_ERR_INVALID;
+    }
+
+    if (!context_download_field_preview_f32(
+            *ctx,
+            observable,
+            preview_nx,
+            preview_ny,
+            preview_nz,
+            z_origin,
+            z_stride,
+            out_xyz,
+            out_len))
+    {
+        return FULLMAG_FDM_ERR_CUDA;
+    }
+
+    return FULLMAG_FDM_OK;
+#else
+    (void)handle;
+    (void)observable;
+    (void)preview_nx;
+    (void)preview_ny;
+    (void)preview_nz;
+    (void)z_origin;
+    (void)z_stride;
+    (void)out_xyz;
+    (void)out_len;
+    return FULLMAG_FDM_ERR_CUDA;
+#endif
+}
+
 int fullmag_fdm_backend_upload_magnetization_f64(
     fullmag_fdm_backend   *handle,
     const double          *m_xyz,
@@ -409,7 +490,32 @@ int fullmag_fdm_backend_upload_magnetization_f64(
         return FULLMAG_FDM_ERR_INVALID;
     }
 
-    if (!context_upload_magnetization(*ctx, m_xyz, len)) {
+    if (!context_upload_magnetization_f64(*ctx, m_xyz, len)) {
+        return FULLMAG_FDM_ERR_CUDA;
+    }
+
+    return FULLMAG_FDM_OK;
+#else
+    (void)handle; (void)m_xyz; (void)len;
+    return FULLMAG_FDM_ERR_CUDA;
+#endif
+}
+
+int fullmag_fdm_backend_upload_magnetization_f32(
+    fullmag_fdm_backend   *handle,
+    const float           *m_xyz,
+    uint64_t               len)
+{
+#if FULLMAG_HAS_CUDA
+    if (!handle || !m_xyz) return FULLMAG_FDM_ERR_INVALID;
+    auto *ctx = reinterpret_cast<Context *>(handle);
+
+    if (len != ctx->cell_count * 3) {
+        ctx->last_error = "magnetization length mismatch";
+        return FULLMAG_FDM_ERR_INVALID;
+    }
+
+    if (!context_upload_magnetization_f32(*ctx, m_xyz, len)) {
         return FULLMAG_FDM_ERR_CUDA;
     }
 

@@ -1,5 +1,6 @@
 //! Artifact writing: metadata, scalars CSV, field snapshots.
 
+use crate::artifact_pipeline::ArtifactPipelineSummary;
 use fullmag_ir::BackendPlanIR;
 
 use crate::types::{ExecutedRun, StepStats};
@@ -8,13 +9,37 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+#[derive(Debug, Clone)]
+pub(crate) struct FieldArtifactContext {
+    pub problem_name: String,
+    pub ir_version: String,
+    pub source_hash: String,
+    pub execution_mode: fullmag_ir::ExecutionMode,
+    pub layout: serde_json::Value,
+}
+
+pub(crate) fn build_field_context(
+    problem: &fullmag_ir::ProblemIR,
+    plan: &fullmag_ir::ExecutionPlanIR,
+) -> FieldArtifactContext {
+    FieldArtifactContext {
+        problem_name: problem.problem_meta.name.clone(),
+        ir_version: problem.ir_version.clone(),
+        source_hash: problem.problem_meta.source_hash.clone(),
+        execution_mode: plan.common.execution_mode,
+        layout: field_layout(plan),
+    }
+}
+
 pub(crate) fn write_artifacts(
     output_dir: &Path,
     problem: &fullmag_ir::ProblemIR,
     plan: &fullmag_ir::ExecutionPlanIR,
     executed: &ExecutedRun,
+    streamed: Option<&ArtifactPipelineSummary>,
 ) -> std::io::Result<()> {
     fs::create_dir_all(output_dir)?;
+    let field_context = build_field_context(problem, plan);
 
     let metadata = serde_json::json!({
         "problem_name": problem.problem_meta.name,
@@ -22,47 +47,24 @@ pub(crate) fn write_artifacts(
         "source_hash": problem.problem_meta.source_hash,
         "problem_meta": problem.problem_meta,
         "execution_plan": plan,
-        "artifact_layout": field_layout(plan),
+        "artifact_layout": field_context.layout.clone(),
         "execution_provenance": executed.provenance,
         "engine_version": env!("CARGO_PKG_VERSION"),
         "status": executed.result.status,
         "scalar_rows": executed.result.steps.len(),
-        "field_snapshots": executed.field_snapshots.len(),
+        "field_snapshots": executed.field_snapshot_count,
     });
     let metadata_path = output_dir.join("metadata.json");
     let mut metadata_file = fs::File::create(&metadata_path)?;
     metadata_file.write_all(serde_json::to_string_pretty(&metadata).unwrap().as_bytes())?;
 
-    let csv_path = output_dir.join("scalars.csv");
-    let mut csv_file = fs::File::create(&csv_path)?;
-    writeln!(
-        csv_file,
-        "step,time,solver_dt,mx,my,mz,E_ex,E_demag,E_ext,E_total,max_dm_dt,max_h_eff,max_h_demag"
-    )?;
-    for step in &executed.result.steps {
-        writeln!(
-            csv_file,
-            "{},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e}",
-            step.step,
-            step.time,
-            step.dt,
-            step.mx,
-            step.my,
-            step.mz,
-            step.e_ex,
-            step.e_demag,
-            step.e_ext,
-            step.e_total,
-            step.max_dm_dt,
-            step.max_h_eff,
-            step.max_h_demag
-        )?;
+    if streamed.is_none_or(|summary| summary.scalar_rows_written == 0) {
+        write_scalars_csv(&output_dir.join("scalars.csv"), &executed.result.steps)?;
     }
 
     write_field_file(
         &output_dir.join("m_initial.json"),
-        problem,
-        plan,
+        &field_context,
         &executed.provenance,
         "m",
         0,
@@ -87,8 +89,7 @@ pub(crate) fn write_artifacts(
     });
     write_field_file(
         &output_dir.join("m_final.json"),
-        problem,
-        plan,
+        &field_context,
         &executed.provenance,
         "m",
         final_stats.step,
@@ -97,31 +98,70 @@ pub(crate) fn write_artifacts(
         &executed.result.final_magnetization,
     )?;
 
-    let fields_dir = output_dir.join("fields");
-    for snapshot in &executed.field_snapshots {
-        let observable_dir = fields_dir.join(&snapshot.name);
-        fs::create_dir_all(&observable_dir)?;
-        let snapshot_path = observable_dir.join(format!("step_{:06}.json", snapshot.step));
-        write_field_file(
-            &snapshot_path,
-            problem,
-            plan,
-            &executed.provenance,
-            &snapshot.name,
-            snapshot.step,
-            snapshot.time,
-            snapshot.solver_dt,
-            &snapshot.values,
-        )?;
+    if streamed.is_none() {
+        let fields_dir = output_dir.join("fields");
+        for snapshot in &executed.field_snapshots {
+            let observable_dir = fields_dir.join(&snapshot.name);
+            fs::create_dir_all(&observable_dir)?;
+            let snapshot_path = observable_dir.join(format!("step_{:06}.json", snapshot.step));
+            write_field_file(
+                &snapshot_path,
+                &field_context,
+                &executed.provenance,
+                &snapshot.name,
+                snapshot.step,
+                snapshot.time,
+                snapshot.solver_dt,
+                &snapshot.values,
+            )?;
+        }
     }
 
     Ok(())
 }
 
-fn write_field_file(
+pub(crate) fn write_scalars_csv(path: &Path, steps: &[StepStats]) -> std::io::Result<()> {
+    let mut csv_file = fs::File::create(path)?;
+    write_scalars_csv_header(&mut csv_file)?;
+    for step in steps {
+        write_scalar_row(&mut csv_file, step)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn write_scalars_csv_header(writer: &mut impl Write) -> std::io::Result<()> {
+    writeln!(
+        writer,
+        "step,time,solver_dt,mx,my,mz,E_ex,E_demag,E_ext,E_total,max_dm_dt,max_h_eff,max_h_demag"
+    )
+}
+
+pub(crate) fn write_scalar_row(
+    writer: &mut impl Write,
+    step: &StepStats,
+) -> std::io::Result<()> {
+    writeln!(
+        writer,
+        "{},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e}",
+        step.step,
+        step.time,
+        step.dt,
+        step.mx,
+        step.my,
+        step.mz,
+        step.e_ex,
+        step.e_demag,
+        step.e_ext,
+        step.e_total,
+        step.max_dm_dt,
+        step.max_h_eff,
+        step.max_h_demag
+    )
+}
+
+pub(crate) fn write_field_file(
     path: &Path,
-    problem: &fullmag_ir::ProblemIR,
-    plan: &fullmag_ir::ExecutionPlanIR,
+    context: &FieldArtifactContext,
     provenance: &crate::types::ExecutionProvenance,
     observable: &str,
     step: u64,
@@ -135,12 +175,12 @@ fn write_field_file(
         "step": step,
         "time": time,
         "solver_dt": solver_dt,
-        "layout": field_layout(plan),
+        "layout": context.layout,
         "provenance": {
-            "problem_name": problem.problem_meta.name,
-            "ir_version": problem.ir_version,
-            "source_hash": problem.problem_meta.source_hash,
-            "execution_mode": plan.common.execution_mode,
+            "problem_name": context.problem_name,
+            "ir_version": context.ir_version,
+            "source_hash": context.source_hash,
+            "execution_mode": context.execution_mode,
             "execution_engine": provenance.execution_engine,
             "precision": provenance.precision,
         },
@@ -149,7 +189,7 @@ fn write_field_file(
     fs::write(path, serde_json::to_string_pretty(&field_json).unwrap())
 }
 
-fn field_layout(plan: &fullmag_ir::ExecutionPlanIR) -> serde_json::Value {
+pub(crate) fn field_layout(plan: &fullmag_ir::ExecutionPlanIR) -> serde_json::Value {
     match &plan.backend_plan {
         BackendPlanIR::Fdm(fdm) => {
             let total_cells = fdm.grid.cells[0] as usize

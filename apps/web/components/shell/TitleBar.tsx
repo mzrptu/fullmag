@@ -1,7 +1,7 @@
 "use client";
 
 import { Pause, Play, Square, Target } from "lucide-react";
-import s from "./shell.module.css";
+import { cn } from "@/lib/utils";
 
 interface TitleBarProps {
   problemName: string;
@@ -33,47 +33,64 @@ export default function TitleBar({
   onSimAction,
 }: TitleBarProps) {
   const controls = [
-    { id: "relax", label: "Relax", icon: <Target size={11} />, tone: "relax", enabled: relaxEnabled },
-    { id: "run", label: "Run", icon: <Play size={11} />, tone: "run", enabled: runEnabled },
-    { id: "pause", label: "Pause", icon: <Pause size={11} />, tone: "pause", enabled: pauseEnabled },
-    { id: "stop", label: "Stop", icon: <Square size={11} />, tone: "stop", enabled: stopEnabled },
+    { id: "relax", label: "Relax", icon: <Target size={14} />, tone: "relax", enabled: relaxEnabled },
+    { id: "run", label: "Run", icon: <Play size={14} fill="currentColor" />, tone: "run", enabled: runEnabled },
+    { id: "pause", label: "Pause", icon: <Pause size={14} fill="currentColor" />, tone: "pause", enabled: pauseEnabled },
+    { id: "stop", label: "Stop", icon: <Square size={14} fill="currentColor" />, tone: "stop", enabled: stopEnabled },
   ] as const;
+  
   const controlsTitle = commandMessage
     ?? (interactiveEnabled ? "Interactive simulation controls" : "Interactive controls are unavailable for this session");
 
   return (
-    <div className={s.titleBar}>
-      <span className={s.titleBarText}>
-        {problemName}
-        {backend && <> — <span className={s.titleBarMuted}>{backend.toUpperCase()}</span></>}
-        {runtimeEngine && <> · <span className={s.titleBarMuted}>{runtimeEngine}</span></>}
+    <div className="flex h-12 w-full shrink-0 items-center justify-between border-b border-border/60 bg-gradient-to-r from-card/80 to-background/50 px-4 text-sm font-medium backdrop-blur-2xl shadow-[0_4px_24px_rgba(0,0,0,0.2)] z-20 relative">
+      <span className="flex items-center gap-1.5 whitespace-nowrap overflow-hidden text-ellipsis">
+        <span className="font-semibold">{problemName}</span>
+        {backend && <><span className="mx-1 text-muted-foreground/50">—</span><span className="text-muted-foreground text-[0.65rem] font-bold tracking-widest">{backend.toUpperCase()}</span></>}
+        {runtimeEngine && <><span className="mx-1 text-muted-foreground/50">·</span><span className="text-muted-foreground text-[0.65rem] font-bold tracking-widest">{runtimeEngine.toUpperCase()}</span></>}
       </span>
 
-      <span className={s.titleBarSpacer} />
+      <span className="flex-1" />
 
-      <div className={s.titleBarControls} title={controlsTitle} aria-label="Simulation controls">
+      <div className="flex items-center gap-1" title={controlsTitle} aria-label="Simulation controls">
         {controls.map((control) => (
           <button
             key={control.id}
             type="button"
-            className={s.titleBarAction}
-            data-tone={control.tone}
+            className={cn(
+              "flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+              control.tone === "run" ? "text-emerald-500 hover:bg-emerald-500/15" :
+              control.tone === "relax" ? "text-amber-500 hover:bg-amber-500/15" :
+              control.tone === "pause" ? "text-blue-500 hover:bg-blue-500/15" :
+              "text-rose-500 hover:bg-rose-500/15"
+            )}
             disabled={!control.enabled}
             onClick={() => onSimAction?.(control.id)}
             title={control.label}
           >
             {control.icon}
-            <span>{control.label}</span>
+            <span className="hidden sm:inline-block">{control.label}</span>
           </button>
         ))}
       </div>
 
-      <span className={s.titleBarStatus} data-connection={connection}>
-        <span className={s.statusDotInline} data-connection={connection} />
-        {status}
-      </span>
+      <div className="ml-4 flex items-center gap-2 border-l border-border/60 pl-4 h-6">
+        <span className={cn(
+          "flex items-center gap-2 text-[0.65rem] font-bold uppercase tracking-widest",
+          connection === "connected" ? "text-emerald-500" :
+          connection === "connecting" ? "text-amber-500" : "text-rose-500"
+        )}>
+          <span className="relative flex h-2 w-2">
+            {connection === "connecting" && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-60" />}
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-current" />
+          </span>
+          {status}
+        </span>
+      </div>
 
-      <span className={s.titleBarBrand}>Fullmag</span>
+      <span className="ml-4 border-l border-border/60 pl-4 text-[0.65rem] font-black tracking-widest text-muted-foreground hidden lg:inline-block h-6 flex items-center">
+        FULLMAG
+      </span>
     </div>
   );
 }

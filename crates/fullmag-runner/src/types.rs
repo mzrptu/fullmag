@@ -241,6 +241,7 @@ pub(crate) struct ExecutedRun {
     pub result: RunResult,
     pub initial_magnetization: Vec<[f64; 3]>,
     pub field_snapshots: Vec<FieldSnapshot>,
+    pub field_snapshot_count: usize,
     pub provenance: ExecutionProvenance,
 }
 

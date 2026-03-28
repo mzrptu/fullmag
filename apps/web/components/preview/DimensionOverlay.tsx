@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import s from "./DimensionOverlay.module.css";
 
 /* ── Types ── */
 
@@ -81,17 +80,17 @@ export default function DimensionOverlay({
   const zTicks = niceTickValues(axes.z.extent);
 
   return (
-    <div className={s.overlay}>
+    <div className="absolute inset-0 pointer-events-none z-[8] overflow-hidden">
       {/* ── Bottom axis (X) ── */}
-      <div className={s.axisBottom}>
-        <div className={s.axisLine}>
-          <svg className={s.axisSvg} viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true">
+      <div className="absolute bottom-[28px] left-[64px] right-[48px] flex items-end gap-1.5">
+        <div className="flex-1 h-[20px] relative border-b border-slate-400/30">
+          <svg className="w-full h-full overflow-visible" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true">
             {xTicks.map((v) => {
               const x = axes.x.extent > 0 ? (v / axes.x.extent) * 100 : 0;
               return (
                 <g key={v}>
-                  <line x1={x} x2={x} y1="0" y2="6" className={s.tickMark} />
-                  <text x={x} y="16" textAnchor="middle" className={`${s.tickLabel} ${s.tickLabelBottom}`}>
+                  <line x1={x} x2={x} y1="0" y2="6" className="stroke-slate-400/50 stroke-1" />
+                  <text x={x} y="16" textAnchor="middle" className="text-[0.55rem] font-semibold font-mono fill-slate-300/70 whitespace-nowrap [dominant-baseline:hanging]">
                     {fmtTickLabel(v)}
                   </text>
                 </g>
@@ -99,19 +98,19 @@ export default function DimensionOverlay({
             })}
           </svg>
         </div>
-        <span className={s.axisLabel}>{axes.unit}</span>
+        <span className="text-[0.6rem] font-bold text-slate-300/60 font-mono whitespace-nowrap mb-[1px]">{axes.unit}</span>
       </div>
 
       {/* ── Left axis (Y) ── */}
-      <div className={s.axisLeft}>
-        <div className={s.axisLine}>
-          <svg className={s.axisSvg} viewBox="0 0 24 100" preserveAspectRatio="none" aria-hidden="true">
+      <div className="absolute left-[28px] top-[16px] bottom-[64px] flex flex-col items-end gap-1.5">
+        <div className="flex-1 w-[20px] relative border-l border-slate-400/30">
+          <svg className="w-full h-full overflow-visible" viewBox="0 0 24 100" preserveAspectRatio="none" aria-hidden="true">
             {yTicks.map((v) => {
               const y = axes.y.extent > 0 ? 100 - (v / axes.y.extent) * 100 : 100;
               return (
                 <g key={v}>
-                  <line x1="0" x2="6" y1={y} y2={y} className={s.tickMark} />
-                  <text x="18" y={y + 2} textAnchor="end" className={`${s.tickLabel} ${s.tickLabelLeft}`}>
+                  <line x1="0" x2="6" y1={y} y2={y} className="stroke-slate-400/50 stroke-1" />
+                  <text x="18" y={y + 2} textAnchor="end" className="text-[0.55rem] font-semibold font-mono fill-slate-300/70 whitespace-nowrap [dominant-baseline:middle]">
                     {fmtTickLabel(v)}
                   </text>
                 </g>
@@ -119,38 +118,20 @@ export default function DimensionOverlay({
             })}
           </svg>
         </div>
-        <span className={s.axisLabel}>{axes.unit}</span>
+        <span className="text-[0.6rem] font-bold text-slate-300/60 font-mono whitespace-nowrap [writing-mode:vertical-lr] rotate-180 mb-[3px]">{axes.unit}</span>
       </div>
 
-      {/* ── Axis gizmo (bottom-left corner) ── */}
-      <div className={s.axisGizmo}>
-        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-          {/* Z axis (up) */}
-          <line x1="12" y1="40" x2="12" y2="12" stroke="var(--axis-z, #4488ff)" strokeWidth="1.5" />
-          <polygon points="12,8 9,14 15,14" fill="var(--axis-z, #4488ff)" />
-          <text x="4" y="8" fontSize="8" fill="var(--axis-z, #4488ff)" fontWeight="700">z</text>
 
-          {/* X axis (right) */}
-          <line x1="12" y1="40" x2="40" y2="40" stroke="var(--axis-x, #ff4444)" strokeWidth="1.5" />
-          <polygon points="44,40 38,37 38,43" fill="var(--axis-x, #ff4444)" />
-          <text x="42" y="36" fontSize="8" fill="var(--axis-x, #ff4444)" fontWeight="700">x</text>
-
-          {/* Y axis (diagonal) */}
-          <line x1="12" y1="40" x2="32" y2="26" stroke="var(--axis-y, #44cc44)" strokeWidth="1.5" />
-          <polygon points="34,24 27,26 30,30" fill="var(--axis-y, #44cc44)" />
-          <text x="34" y="22" fontSize="8" fill="var(--axis-y, #44cc44)" fontWeight="700">y</text>
-        </svg>
-      </div>
 
       {/* ── Grid info badge (top-right) ── */}
       {gridCells && (
-        <div className={s.gridBadge}>
+        <div className="absolute top-2 right-2 text-[0.58rem] font-bold font-mono text-slate-300/60 bg-slate-900/70 py-0.5 px-1.5 rounded border border-slate-400/20">
           {gridCells[0]}×{gridCells[1]}×{gridCells[2]}
         </div>
       )}
 
       {/* ── Dimension summary badge ── */}
-      <div className={s.dimBadge}>
+      <div className="absolute top-2 left-2 text-[0.58rem] font-bold font-mono text-slate-300/60 bg-slate-900/70 py-0.5 px-1.5 rounded border border-slate-400/20">
         {fmtTickLabel(axes.x.extent)} × {fmtTickLabel(axes.y.extent)} × {fmtTickLabel(axes.z.extent)} {axes.unit}
       </div>
     </div>

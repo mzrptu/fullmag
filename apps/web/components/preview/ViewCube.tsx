@@ -14,7 +14,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import * as THREE from "three";
 import type { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
-import s from "./ViewCube.module.css";
 
 type SceneHandle = {
   camera: THREE.PerspectiveCamera;
@@ -195,50 +194,50 @@ export default function ViewCube({ sceneRef, grid, onRotate }: ViewCubeProps) {
   return (
     <>
       {/* ViewCube */}
-      <div className={s.vc}>
+      <div className="absolute top-16 right-8 w-[88px] h-[98px] z-10 flex flex-col items-center pointer-events-none pt-[6px] rounded-xl bg-gradient-to-b from-slate-800/90 to-slate-900/80 border border-slate-500/20 shadow-xl backdrop-blur-md [perspective:220px]">
         <div
           ref={cubeSceneRef}
-          className={s.vcScene}
+          className="relative w-[60px] h-[60px] [transform-style:preserve-3d] cursor-grab active:cursor-grabbing touch-none pointer-events-auto"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerLeave={onPointerUp}
         >
           {faces.map((face, fi) => (
-            <div key={fi} className={`${s.vcFace} ${s[face.cssTransform]}`}>
+            <div key={fi} className={`absolute inset-0 w-[60px] h-[60px] grid grid-cols-[10px_1fr_10px] grid-rows-[10px_1fr_10px] [backface-visibility:visible] bg-gradient-to-br from-card to-muted border border-slate-400/20`} style={{ transform: face.cssTransform === "vcFaceTop" ? "translateZ(30px)" : face.cssTransform === "vcFaceBottom" ? "rotateY(180deg) translateZ(30px)" : face.cssTransform === "vcFaceRight" ? "rotateY(90deg) translateZ(30px)" : face.cssTransform === "vcFaceLeft" ? "rotateY(-90deg) translateZ(30px)" : face.cssTransform === "vcFaceFront" ? "rotateX(90deg) translateZ(30px)" : "rotateX(-90deg) translateZ(30px)" }}>
               {face.zones.flat().map((zone, zi) => (
                 <button
                   key={zi}
-                  className={`${s.vcZone} ${s[`vcZone${zone.type}`]}`}
+                  className={`flex items-center justify-center border-none bg-transparent cursor-pointer p-0 m-0 transition-colors hover:bg-slate-400/20 ${zone.type === "face" ? "text-slate-200/80 hover:bg-slate-400/40 hover:text-white" : zone.type === "edge" ? "hover:bg-teal-500/30" : "hover:bg-amber-500/30"}`}
                   onClick={() => handleZoneClick(zone.dir)}
                   title={zone.label ?? ""}
                 >
-                  {zone.label && <span className={s.vcLabel}>{zone.label}</span>}
+                  {zone.label && <span className="text-[8px] font-bold tracking-wider uppercase">{zone.label}</span>}
                 </button>
               ))}
             </div>
           ))}
         </div>
-        <button className={s.vcHome} onClick={resetCamera} title="Reset view">
+        <button className="mt-[5px] w-[20px] h-[20px] rounded-full bg-slate-800/90 border border-slate-500/30 text-slate-200/70 text-[12px] cursor-pointer flex items-center justify-center transition-all backdrop-blur-md leading-none pointer-events-auto hover:bg-primary/20 hover:border-primary hover:text-white" onClick={resetCamera} title="Reset view">
           ⌂
         </button>
       </div>
 
       {/* Axis Gizmo */}
-      <div className={s.ag}>
-        <div ref={axisSceneRef} className={s.agScene}>
+      <div className="absolute bottom-5 right-5 w-[90px] h-[90px] z-10 pointer-events-none [perspective:200px]">
+        <div ref={axisSceneRef} className="relative w-[90px] h-[90px] [transform-style:preserve-3d]">
           {/* X axis (red) */}
-          <div className={`${s.agShaft} ${s.agShaftX} ${s.agShaftXTransform}`} />
-          <div className={`${s.agTip} ${s.agTipX} ${s.agTipXTransform}`} />
-          <div className={`${s.agLbl} ${s.agLblX} ${s.agLblXTransform}`}>X</div>
+          <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] w-[2px] h-[36px] -ml-[1px] origin-top rounded-[1px] bg-red-500" style={{ transform: "rotateZ(-90deg) translateY(-18px)" }} />
+          <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent -ml-[5px] -mt-[5px] origin-center border-b-[10px] border-b-red-500" style={{ transform: "translateX(26px) rotateZ(-90deg)" }} />
+          <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] text-[13px] font-extrabold pointer-events-none -ml-[5px] -mt-[8px] text-red-500" style={{ transform: "translateX(36px)" }}>X</div>
           {/* Z axis (blue) */}
-          <div className={`${s.agShaft} ${s.agShaftZ} ${s.agShaftZTransform}`} />
-          <div className={`${s.agTip} ${s.agTipZ} ${s.agTipZTransform}`} />
-          <div className={`${s.agLbl} ${s.agLblZ} ${s.agLblZTransform}`}>Z</div>
+          <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] w-[2px] h-[36px] -ml-[1px] origin-top rounded-[1px] bg-blue-500" style={{ transform: "translateY(-18px)" }} />
+          <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent -ml-[5px] -mt-[5px] origin-center border-b-[10px] border-b-blue-500" style={{ transform: "translateY(-26px)" }} />
+          <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] text-[13px] font-extrabold pointer-events-none -ml-[5px] -mt-[8px] text-blue-500" style={{ transform: "translateY(-36px)" }}>Z</div>
           {/* Y axis (green) */}
-          <div className={`${s.agShaft} ${s.agShaftY} ${s.agShaftYTransform}`} />
-          <div className={`${s.agTip} ${s.agTipY} ${s.agTipYTransform}`} />
-          <div className={`${s.agLbl} ${s.agLblY} ${s.agLblYTransform}`}>Y</div>
+          <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] w-[2px] h-[36px] -ml-[1px] origin-top rounded-[1px] bg-green-500" style={{ transform: "rotateX(90deg) translateY(-18px)" }} />
+          <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent -ml-[5px] -mt-[5px] origin-center border-b-[10px] border-b-green-500" style={{ transform: "translateZ(26px) rotateX(90deg)" }} />
+          <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] text-[13px] font-extrabold pointer-events-none -ml-[5px] -mt-[8px] text-green-500" style={{ transform: "translateZ(36px)" }}>Y</div>
         </div>
       </div>
     </>

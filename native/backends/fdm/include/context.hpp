@@ -95,8 +95,8 @@ struct Context {
     uint32_t *region_mask = nullptr;
     double *reduction_scratch = nullptr;
     uint64_t reduction_scratch_len = 0;
-    double *preview_download_scratch = nullptr;
-    uint64_t preview_download_scratch_len = 0;
+    void *preview_download_scratch = nullptr;
+    uint64_t preview_download_scratch_len_bytes = 0;
     std::vector<uint8_t> active_mask_host;
     std::vector<uint32_t> region_mask_host;
 
@@ -129,7 +129,10 @@ bool context_alloc_device(Context &ctx);
 void context_free_device(Context &ctx);
 
 /// Upload initial magnetization (AoS f64 host → SoA device).
-bool context_upload_magnetization(Context &ctx, const double *m_xyz, uint64_t len);
+bool context_upload_magnetization_f64(Context &ctx, const double *m_xyz, uint64_t len);
+
+/// Upload initial magnetization (AoS f32 host → SoA device).
+bool context_upload_magnetization_f32(Context &ctx, const float *m_xyz, uint64_t len);
 
 /// Upload active cell mask (host u8 -> device u8).
 bool context_upload_active_mask(Context &ctx, const uint8_t *mask, uint64_t len);
@@ -155,6 +158,13 @@ bool context_download_field_f64(
     double *out_xyz,
     uint64_t out_len);
 
+/// Download a field observable from device to host as f32 AoS.
+bool context_download_field_f32(
+    const Context &ctx,
+    fullmag_fdm_observable observable,
+    float *out_xyz,
+    uint64_t out_len);
+
 /// Download a downsampled preview of a field observable from device to host.
 bool context_download_field_preview_f64(
     Context &ctx,
@@ -165,6 +175,18 @@ bool context_download_field_preview_f64(
     uint32_t z_origin,
     uint32_t z_stride,
     double *out_xyz,
+    uint64_t out_len);
+
+/// Download a downsampled preview of a field observable from device to host as f32.
+bool context_download_field_preview_f32(
+    Context &ctx,
+    fullmag_fdm_observable observable,
+    uint32_t preview_nx,
+    uint32_t preview_ny,
+    uint32_t preview_nz,
+    uint32_t z_origin,
+    uint32_t z_stride,
+    float *out_xyz,
     uint64_t out_len);
 
 /// Populate device info cache.

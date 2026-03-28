@@ -1,144 +1,82 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import type { FemLiveMesh, PreviewState } from "../../../lib/useSessionStream";
 import MagnetizationSlice2D from "../../preview/MagnetizationSlice2D";
 import MagnetizationView3D from "../../preview/MagnetizationView3D";
 import FemMeshView3D from "../../preview/FemMeshView3D";
 import FemMeshSlice2D from "../../preview/FemMeshSlice2D";
 import PreviewScalarField2D from "../../preview/PreviewScalarField2D";
-import type {
-  ClipAxis,
-  FemColorField,
-  FemMeshData,
-  MeshSelectionSnapshot,
-  RenderMode,
-} from "../../preview/FemMeshView3D";
 import EmptyState from "../../ui/EmptyState";
 import DimensionOverlay from "../../preview/DimensionOverlay";
-import s from "../RunControlRoom.module.css";
-import type {
-  PreviewComponent,
-  SlicePlane,
-  VectorComponent,
-  ViewportMode,
-} from "./shared";
 import { fmtExp, fmtPreviewMaxPoints, fmtSI } from "./shared";
+import { useControlRoom } from "./ControlRoomContext";
 
-export interface ViewportBarProps {
-  isMeshWorkspaceView: boolean;
-  meshName: string | null;
-  effectiveFemMesh: FemLiveMesh | null;
-  meshRenderMode: RenderMode;
-  meshSelection: MeshSelectionSnapshot;
-  previewControlsActive: boolean;
-  requestedPreviewQuantity: string;
-  requestedPreviewComponent: string;
-  requestedPreviewEveryN: number;
-  requestedPreviewMaxPoints: number;
-  requestedPreviewXChosenSize: number;
-  requestedPreviewYChosenSize: number;
-  requestedPreviewAutoScale: boolean;
-  requestedPreviewLayer: number;
-  requestedPreviewAllLayers: boolean;
-  previewBusy: boolean;
-  previewQuantityOptions: { value: string; label: string; disabled: boolean }[];
-  quantityOptions: { value: string; label: string; disabled: boolean }[];
-  previewEveryNOptions: number[];
-  previewMaxPointOptions: number[];
-  preview: PreviewState | null;
-  effectiveViewMode: ViewportMode;
-  solverGrid: [number, number, number];
-  plane: SlicePlane;
-  sliceIndex: number;
-  maxSliceCount: number;
-  component: VectorComponent;
-  updatePreview: (path: string, payload?: Record<string, unknown>) => Promise<void>;
-  setSelectedQuantity: (q: string) => void;
-  setComponent: (c: VectorComponent) => void;
-  setPlane: (p: SlicePlane) => void;
-  setSliceIndex: (i: number) => void;
-  isFemBackend: boolean;
-  totalCells: number | null;
-  activeCells: number | null;
-  activeMaskPresent: boolean;
-}
-
-export function ViewportBar(props: ViewportBarProps) {
-  const {
-    isMeshWorkspaceView, meshName, effectiveFemMesh, meshRenderMode, meshSelection,
-    previewControlsActive, requestedPreviewQuantity, requestedPreviewComponent,
-    requestedPreviewEveryN, requestedPreviewMaxPoints, requestedPreviewXChosenSize, requestedPreviewYChosenSize,
-    requestedPreviewAutoScale, requestedPreviewLayer, requestedPreviewAllLayers,
-    previewBusy, previewQuantityOptions, quantityOptions, previewEveryNOptions, previewMaxPointOptions,
-    preview, effectiveViewMode, solverGrid, plane, sliceIndex, maxSliceCount, component,
-    updatePreview, setSelectedQuantity, setComponent, setPlane, setSliceIndex,
-    isFemBackend, totalCells, activeCells, activeMaskPresent,
-  } = props;
+export function ViewportBar() {
+  const ctx = useControlRoom();
 
   return (
-    <div className={s.viewportBar}>
-      {isMeshWorkspaceView ? (
+    <div className="flex flex-wrap items-center gap-2 px-2.5 py-1.5 bg-card/30 border-b border-border/40 shrink-0">
+      {ctx.isMeshWorkspaceView ? (
         <>
-          <span className={s.viewportBarLabel}>Mesh</span>
-          <span className={s.viewportBarMetric}>{meshName ?? "boundary surface"}</span>
-          <span className={s.viewportBarSep} />
-          <span className={s.viewportBarMetric}>{effectiveFemMesh?.nodes.length.toLocaleString() ?? "0"} nodes</span>
-          <span className={s.viewportBarMetric}>{effectiveFemMesh?.elements.length.toLocaleString() ?? "0"} tets</span>
-          <span className={s.viewportBarMetric}>{effectiveFemMesh?.boundary_faces.length.toLocaleString() ?? "0"} faces</span>
-          <span className={s.viewportBarSep} />
-          <span className={s.viewportBarLabel}>Render</span>
-          <span className={s.viewportBarMetric}>
-            {meshRenderMode === "surface+edges" ? "surface+edges" : meshRenderMode}
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Mesh</span>
+          <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.meshName ?? "boundary surface"}</span>
+          <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+          <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.effectiveFemMesh?.nodes.length.toLocaleString() ?? "0"} nodes</span>
+          <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.effectiveFemMesh?.elements.length.toLocaleString() ?? "0"} tets</span>
+          <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.effectiveFemMesh?.boundary_faces.length.toLocaleString() ?? "0"} faces</span>
+          <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Render</span>
+          <span className="font-mono text-[0.65rem] text-muted-foreground">
+            {ctx.meshRenderMode === "surface+edges" ? "surface+edges" : ctx.meshRenderMode}
           </span>
-          {meshSelection.primaryFaceIndex != null && (
+          {ctx.meshSelection.primaryFaceIndex != null && (
             <>
-              <span className={s.viewportBarSep} />
-              <span className={s.viewportBarLabel}>Face</span>
-              <span className={s.viewportBarMetric}>#{meshSelection.primaryFaceIndex}</span>
+              <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Face</span>
+              <span className="font-mono text-[0.65rem] text-muted-foreground">#{ctx.meshSelection.primaryFaceIndex}</span>
             </>
           )}
         </>
-      ) : isMeshWorkspaceView && !isFemBackend ? (
+      ) : ctx.isMeshWorkspaceView && !ctx.isFemBackend ? (
         /* FDM geometry bar */
         <>
-          <span className={s.viewportBarLabel}>Geometry</span>
-          <span className={s.viewportBarMetric}>
-            {solverGrid[0]}×{solverGrid[1]}×{solverGrid[2]}
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Geometry</span>
+          <span className="font-mono text-[0.65rem] text-muted-foreground">
+            {ctx.solverGrid[0]}×{ctx.solverGrid[1]}×{ctx.solverGrid[2]}
           </span>
-          <span className={s.viewportBarSep} />
-          <span className={s.viewportBarLabel}>Cells</span>
-          <span className={s.viewportBarMetric}>
-            {totalCells?.toLocaleString() ?? "—"}
+          <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Cells</span>
+          <span className="font-mono text-[0.65rem] text-muted-foreground">
+            {ctx.totalCells?.toLocaleString() ?? "—"}
           </span>
-          {activeMaskPresent && (
+          {ctx.activeMaskPresent && (
             <>
-              <span className={s.viewportBarSep} />
-              <span className={s.viewportBarLabel}>Active</span>
-              <span className={s.viewportBarMetric}>
-                {activeCells?.toLocaleString() ?? "—"}
+              <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Active</span>
+              <span className="font-mono text-[0.65rem] text-muted-foreground">
+                {ctx.activeCells?.toLocaleString() ?? "—"}
               </span>
             </>
           )}
         </>
       ) : (
         <>
-          <span className={s.viewportBarLabel}>Qty</span>
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Qty</span>
           <select
-            className={s.viewportBarSelect}
-            value={requestedPreviewQuantity}
+            className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+            value={ctx.requestedPreviewQuantity}
             onChange={(e) => {
               const next = e.target.value;
-              if (previewControlsActive) {
-                void updatePreview("/quantity", { quantity: next });
+              if (ctx.previewControlsActive) {
+                void ctx.updatePreview("/quantity", { quantity: next });
               } else {
-                setSelectedQuantity(next);
+                ctx.setSelectedQuantity(next);
               }
             }}
-            disabled={previewBusy}
+            disabled={ctx.previewBusy}
           >
-            {((previewControlsActive ? previewQuantityOptions : quantityOptions).length
-              ? (previewControlsActive ? previewQuantityOptions : quantityOptions)
+            {((ctx.previewControlsActive ? ctx.previewQuantityOptions : ctx.quantityOptions).length
+              ? (ctx.previewControlsActive ? ctx.previewQuantityOptions : ctx.quantityOptions)
               : [{ value: "m", label: "Magnetization", disabled: false }]).map((opt) => (
               <option key={opt.value} value={opt.value} disabled={opt.disabled}>
                 {opt.label}
@@ -146,14 +84,14 @@ export function ViewportBar(props: ViewportBarProps) {
             ))}
           </select>
 
-          <span className={s.viewportBarSep} />
-          <span className={s.viewportBarLabel}>Comp</span>
-          {previewControlsActive ? (
+          <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Comp</span>
+          {ctx.previewControlsActive ? (
             <select
-              className={s.viewportBarSelect}
-              value={requestedPreviewComponent}
-              onChange={(e) => void updatePreview("/component", { component: e.target.value as PreviewComponent })}
-              disabled={previewBusy}
+              className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+              value={ctx.requestedPreviewComponent}
+              onChange={(e) => void ctx.updatePreview("/component", { component: e.target.value })}
+              disabled={ctx.previewBusy}
             >
               <option value="3D">3D</option>
               <option value="x">x</option>
@@ -162,9 +100,9 @@ export function ViewportBar(props: ViewportBarProps) {
             </select>
           ) : (
             <select
-              className={s.viewportBarSelect}
-              value={component}
-              onChange={(e) => setComponent(e.target.value as VectorComponent)}
+              className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+              value={ctx.component}
+              onChange={(e) => ctx.setComponent(e.target.value as any)}
             >
               <option value="magnitude">|v|</option>
               <option value="x">x</option>
@@ -173,34 +111,34 @@ export function ViewportBar(props: ViewportBarProps) {
             </select>
           )}
 
-          {previewControlsActive && (
+          {ctx.previewControlsActive && (
             <>
-              <span className={s.viewportBarSep} />
-              <span className={s.viewportBarLabel}>Every</span>
+              <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Every</span>
               <select
-                className={s.viewportBarSelect}
-                value={requestedPreviewEveryN}
+                className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+                value={ctx.requestedPreviewEveryN}
                 onChange={(e) =>
-                  void updatePreview("/everyN", { everyN: Number(e.target.value) })
+                  void ctx.updatePreview("/everyN", { everyN: Number(e.target.value) })
                 }
-                disabled={previewBusy}
+                disabled={ctx.previewBusy}
               >
-                {previewEveryNOptions.map((value) => (
+                {ctx.previewEveryNOptions.map((value) => (
                   <option key={value} value={value}>
                     {value}
                   </option>
                 ))}
               </select>
-              <span className={s.viewportBarLabel}>Pts</span>
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Pts</span>
               <select
-                className={s.viewportBarSelect}
-                value={requestedPreviewMaxPoints}
+                className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+                value={ctx.requestedPreviewMaxPoints}
                 onChange={(e) =>
-                  void updatePreview("/maxPoints", { maxPoints: Number(e.target.value) })
+                  void ctx.updatePreview("/maxPoints", { maxPoints: Number(e.target.value) })
                 }
-                disabled={previewBusy}
+                disabled={ctx.previewBusy}
               >
-                {previewMaxPointOptions.map((value) => (
+                {ctx.previewMaxPointOptions.map((value) => (
                   <option key={value} value={value}>
                     {fmtPreviewMaxPoints(value)}
                   </option>
@@ -209,124 +147,124 @@ export function ViewportBar(props: ViewportBarProps) {
             </>
           )}
 
-          {preview ? (
+          {ctx.preview ? (
             <>
-              {preview.x_possible_sizes.length > 0 && preview.y_possible_sizes.length > 0 && (
+              {ctx.preview.x_possible_sizes.length > 0 && ctx.preview.y_possible_sizes.length > 0 && (
                 <>
-                  <span className={s.viewportBarSep} />
-                  <span className={s.viewportBarLabel}>X</span>
+                  <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">X</span>
                   <select
-                    className={s.viewportBarSelect}
-                    value={requestedPreviewXChosenSize}
+                    className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+                    value={ctx.requestedPreviewXChosenSize}
                     onChange={(e) =>
-                      void updatePreview("/XChosenSize", { xChosenSize: Number(e.target.value) })
+                      void ctx.updatePreview("/XChosenSize", { xChosenSize: Number(e.target.value) })
                     }
-                    disabled={previewBusy}
+                    disabled={ctx.previewBusy}
                   >
-                    {preview.x_possible_sizes.map((size) => (
+                    {ctx.preview.x_possible_sizes.map((size) => (
                       <option key={size} value={size}>{size}</option>
                     ))}
                   </select>
-                  <span className={s.viewportBarLabel}>Y</span>
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Y</span>
                   <select
-                    className={s.viewportBarSelect}
-                    value={requestedPreviewYChosenSize}
+                    className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+                    value={ctx.requestedPreviewYChosenSize}
                     onChange={(e) =>
-                      void updatePreview("/YChosenSize", { yChosenSize: Number(e.target.value) })
+                      void ctx.updatePreview("/YChosenSize", { yChosenSize: Number(e.target.value) })
                     }
-                    disabled={previewBusy}
+                    disabled={ctx.previewBusy}
                   >
-                    {preview.y_possible_sizes.map((size) => (
+                    {ctx.preview.y_possible_sizes.map((size) => (
                       <option key={size} value={size}>{size}</option>
                     ))}
                   </select>
                 </>
               )}
-              <label className={s.viewportToggle}>
+              <label className="inline-flex items-center gap-1.5 text-[0.65rem] text-muted-foreground [accent-color:hsl(var(--primary))]">
                 <input
                   type="checkbox"
-                  checked={requestedPreviewAutoScale}
+                  checked={ctx.requestedPreviewAutoScale}
                   onChange={(e) =>
-                    void updatePreview("/autoScaleEnabled", {
+                    void ctx.updatePreview("/autoScaleEnabled", {
                       autoScaleEnabled: e.target.checked,
                     })
                   }
-                  disabled={previewBusy}
+                  disabled={ctx.previewBusy}
                 />
                 <span>Auto-fit</span>
               </label>
-              {preview.spatial_kind === "grid" && solverGrid[2] > 1 && (
+              {ctx.preview.spatial_kind === "grid" && ctx.solverGrid[2] > 1 && (
                 <>
-                  <span className={s.viewportBarLabel}>Layer</span>
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Layer</span>
                   <select
-                    className={s.viewportBarSelect}
-                    value={requestedPreviewLayer}
-                    onChange={(e) => void updatePreview("/layer", { layer: Number(e.target.value) })}
-                    disabled={previewBusy || requestedPreviewAllLayers}
+                    className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+                    value={ctx.requestedPreviewLayer}
+                    onChange={(e) => void ctx.updatePreview("/layer", { layer: Number(e.target.value) })}
+                    disabled={ctx.previewBusy || ctx.requestedPreviewAllLayers}
                   >
-                    {Array.from({ length: solverGrid[2] }, (_, i) => (
+                    {Array.from({ length: ctx.solverGrid[2] }, (_, i) => (
                       <option key={i} value={i}>{i}</option>
                     ))}
                   </select>
-                  <label className={s.viewportToggle}>
+                  <label className="inline-flex items-center gap-1.5 text-[0.65rem] text-muted-foreground [accent-color:hsl(var(--primary))]">
                     <input
                       type="checkbox"
-                      checked={requestedPreviewAllLayers}
+                      checked={ctx.requestedPreviewAllLayers}
                       onChange={(e) =>
-                        void updatePreview("/allLayers", { allLayers: e.target.checked })
+                        void ctx.updatePreview("/allLayers", { allLayers: e.target.checked })
                       }
-                      disabled={previewBusy}
+                      disabled={ctx.previewBusy}
                     />
                     <span>All layers</span>
                   </label>
                 </>
               )}
-              {preview.spatial_kind === "mesh" && effectiveViewMode === "2D" && (
+              {ctx.preview.spatial_kind === "mesh" && ctx.effectiveViewMode === "2D" && (
                 <>
-                  <span className={s.viewportBarSep} />
-                  <span className={s.viewportBarLabel}>Plane</span>
+                  <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Plane</span>
                   <select
-                    className={s.viewportBarSelect}
-                    value={plane}
-                    onChange={(e) => setPlane(e.target.value as SlicePlane)}
+                    className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+                    value={ctx.plane}
+                    onChange={(e) => ctx.setPlane(e.target.value as any)}
                   >
                     <option value="xy">XY</option>
                     <option value="xz">XZ</option>
                     <option value="yz">YZ</option>
                   </select>
-                  <span className={s.viewportBarLabel}>Slice</span>
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Slice</span>
                   <select
-                    className={s.viewportBarSelect}
-                    value={sliceIndex}
-                    onChange={(e) => setSliceIndex(Number(e.target.value))}
+                    className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+                    value={ctx.sliceIndex}
+                    onChange={(e) => ctx.setSliceIndex(Number(e.target.value))}
                   >
-                    {Array.from({ length: maxSliceCount }, (_, i) => (
+                    {Array.from({ length: ctx.maxSliceCount }, (_, i) => (
                       <option key={i} value={i}>{i + 1}</option>
                     ))}
                   </select>
                 </>
               )}
             </>
-          ) : effectiveViewMode === "2D" && (
+          ) : ctx.effectiveViewMode === "2D" && (
             <>
-              <span className={s.viewportBarSep} />
-              <span className={s.viewportBarLabel}>Plane</span>
+              <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Plane</span>
               <select
-                className={s.viewportBarSelect}
-                value={plane}
-                onChange={(e) => setPlane(e.target.value as SlicePlane)}
+                className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+                value={ctx.plane}
+                onChange={(e) => ctx.setPlane(e.target.value as any)}
               >
                 <option value="xy">XY</option>
                 <option value="xz">XZ</option>
                 <option value="yz">YZ</option>
               </select>
-              <span className={s.viewportBarLabel}>Slice</span>
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Slice</span>
               <select
-                className={s.viewportBarSelect}
-                value={sliceIndex}
-                onChange={(e) => setSliceIndex(Number(e.target.value))}
+                className="appearance-none bg-card/30 border border-border/40 rounded text-foreground text-[0.65rem] py-1 px-1.5 cursor-pointer min-w-0 focus:outline-none focus:border-primary"
+                value={ctx.sliceIndex}
+                onChange={(e) => ctx.setSliceIndex(Number(e.target.value))}
               >
-                {Array.from({ length: maxSliceCount }, (_, i) => (
+                {Array.from({ length: ctx.maxSliceCount }, (_, i) => (
                   <option key={i} value={i}>{i + 1}</option>
                 ))}
               </select>
@@ -338,183 +276,133 @@ export function ViewportBar(props: ViewportBarProps) {
   );
 }
 
-export interface ViewportCanvasAreaProps {
-  effectiveStep: number;
-  effectiveTime: number;
-  effectiveDmDt: number;
-  isVectorQuantity: boolean;
-  quantityDescriptor: { label?: string; unit?: string } | null;
-  selectedScalarValue: number | null;
-  preview: PreviewState | null;
-  effectiveViewMode: ViewportMode;
-  isFemBackend: boolean;
-  femMeshData: FemMeshData | null;
-  femTopologyKey: string | null;
-  femColorField: FemColorField;
-  femMagnetization3DActive: boolean;
-  femShouldShowArrows: boolean;
-  meshRenderMode: RenderMode;
-  meshOpacity: number;
-  meshClipEnabled: boolean;
-  meshClipAxis: ClipAxis;
-  meshClipPos: number;
-  selectedQuantity: string;
-  effectiveVectorComponent: VectorComponent;
-  plane: SlicePlane;
-  sliceIndex: number;
-  maxSliceCount: number;
-  selectedVectors: Float64Array | null;
-  previewGrid: [number, number, number];
-  component: VectorComponent;
-  emptyStateMessage: { title: string; description: string };
-  activeMask: boolean[] | null;
-  setMeshRenderMode: (m: RenderMode) => void;
-  setMeshOpacity: (o: number) => void;
-  setMeshClipEnabled: (e: boolean) => void;
-  setMeshClipAxis: (a: ClipAxis) => void;
-  setMeshClipPos: (p: number) => void;
-  setMeshShowArrows: (a: boolean) => void;
-  setMeshSelection: (s: MeshSelectionSnapshot) => void;
-  worldExtent?: [number, number, number] | null;
-  gridCells?: [number, number, number] | null;
-}
-
-export function ViewportCanvasArea(props: ViewportCanvasAreaProps) {
-  const {
-    effectiveStep, effectiveTime, effectiveDmDt, isVectorQuantity, quantityDescriptor,
-    selectedScalarValue, preview, effectiveViewMode, isFemBackend, femMeshData,
-    femTopologyKey, femColorField, femMagnetization3DActive, femShouldShowArrows,
-    meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos,
-    selectedQuantity, effectiveVectorComponent, plane, sliceIndex, maxSliceCount,
-    selectedVectors, previewGrid, component, emptyStateMessage, activeMask,
-    setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
-    setMeshClipPos, setMeshShowArrows, setMeshSelection,
-  } = props;
-
-  const show3DOverlay = (effectiveViewMode === "3D" || effectiveViewMode === "Mesh") && !!props.worldExtent;
+export function ViewportCanvasArea() {
+  const ctx = useControlRoom();
+  const show3DOverlay = (ctx.effectiveViewMode === "3D" || ctx.effectiveViewMode === "Mesh") && !!ctx.worldExtent;
 
   return (
-    <div className={s.viewportCanvas}>
-      <div className={s.viewportOverlay}>
-        <span>Step {effectiveStep.toLocaleString()}</span>
-        <span>{fmtSI(effectiveTime, "s")}</span>
-        {effectiveDmDt > 0 && (
-          <span className={cn(effectiveDmDt < 1e-5 ? s.viewportOverlayMetricConverged : undefined)}>
-            dm/dt {fmtExp(effectiveDmDt)}
+    <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 relative overflow-hidden [&>*]:min-w-0 [&>*]:min-h-0 [&>*:not(.viewportOverlay)]:flex-1 [&>*:not(.viewportOverlay)]:w-full">
+      <div className="viewportOverlay absolute top-2 right-2 flex flex-col gap-1 z-10 pointer-events-none text-right font-mono text-xs text-muted-foreground bg-background/50 backdrop-blur-sm p-1.5 rounded-md border border-border/30 shadow-sm">
+        <span>Step {ctx.effectiveStep.toLocaleString()}</span>
+        <span>{fmtSI(ctx.effectiveTime, "s")}</span>
+        {ctx.effectiveDmDt > 0 && (
+          <span className={cn(ctx.effectiveDmDt < 1e-5 && "text-emerald-500")}>
+            dm/dt {fmtExp(ctx.effectiveDmDt)}
           </span>
         )}
       </div>
       {show3DOverlay && (
         <DimensionOverlay
-          worldExtent={props.worldExtent!}
-          gridCells={props.gridCells}
+          worldExtent={ctx.worldExtent!}
+          gridCells={ctx.solverGrid[0] > 0 ? ctx.solverGrid : null}
           visible
         />
       )}
-      {!isVectorQuantity ? (
-        <div className={s.viewportEmptyState}>
+      {!ctx.isVectorQuantity ? (
+        <div className="flex flex-col items-center justify-center h-full w-full opacity-60">
           <EmptyState
-            title={quantityDescriptor?.label ?? "Scalar quantity"}
+            title={ctx.quantityDescriptor?.label ?? "Scalar quantity"}
             description={
-              selectedScalarValue !== null
-                ? `Latest: ${selectedScalarValue.toExponential(4)} ${quantityDescriptor?.unit ?? ""}`
+              ctx.selectedScalarValue !== null
+                ? `Latest: ${ctx.selectedScalarValue.toExponential(4)} ${ctx.quantityDescriptor?.unit ?? ""}`
                 : "Scalar — see Scalars in sidebar."
             }
             tone="info"
             compact
           />
         </div>
-      ) : preview && preview.spatial_kind === "grid" && preview.type === "2D" && preview.scalar_field.length > 0 ? (
+      ) : ctx.preview && ctx.preview.spatial_kind === "grid" && ctx.preview.type === "2D" && ctx.preview.scalar_field.length > 0 ? (
         <PreviewScalarField2D
-          data={preview.scalar_field}
-          grid={preview.preview_grid}
-          quantityLabel={quantityDescriptor?.label ?? preview.quantity}
-          quantityUnit={preview.unit}
-          component={preview.component}
-          min={preview.min}
-          max={preview.max}
+          data={ctx.preview.scalar_field}
+          grid={ctx.preview.preview_grid}
+          quantityLabel={ctx.quantityDescriptor?.label ?? ctx.preview.quantity}
+          quantityUnit={ctx.preview.unit}
+          component={ctx.preview.component}
+          min={ctx.preview.min}
+          max={ctx.preview.max}
         />
-      ) : effectiveViewMode === "Mesh" && isFemBackend && femMeshData ? (
+      ) : ctx.effectiveViewMode === "Mesh" && ctx.isFemBackend && ctx.femMeshData ? (
         <FemMeshView3D
-          topologyKey={femTopologyKey ?? undefined}
-          meshData={femMeshData}
+          topologyKey={ctx.femTopologyKey ?? undefined}
+          meshData={ctx.femMeshData}
           colorField="none"
           toolbarMode="hidden"
-          renderMode={meshRenderMode}
-          opacity={meshOpacity}
-          clipEnabled={meshClipEnabled}
-          clipAxis={meshClipAxis}
-          clipPos={meshClipPos}
+          renderMode={ctx.meshRenderMode}
+          opacity={ctx.meshOpacity}
+          clipEnabled={ctx.meshClipEnabled}
+          clipAxis={ctx.meshClipAxis}
+          clipPos={ctx.meshClipPos}
           showArrows={false}
-          onRenderModeChange={setMeshRenderMode}
-          onOpacityChange={setMeshOpacity}
-          onClipEnabledChange={setMeshClipEnabled}
-          onClipAxisChange={setMeshClipAxis}
-          onClipPosChange={setMeshClipPos}
-          onShowArrowsChange={setMeshShowArrows}
-          onSelectionChange={setMeshSelection}
+          onRenderModeChange={ctx.setMeshRenderMode}
+          onOpacityChange={ctx.setMeshOpacity}
+          onClipEnabledChange={ctx.setMeshClipEnabled}
+          onClipAxisChange={ctx.setMeshClipAxis}
+          onClipPosChange={ctx.setMeshClipPos}
+          onShowArrowsChange={ctx.setMeshShowArrows}
+          onSelectionChange={ctx.setMeshSelection}
         />
-      ) : effectiveViewMode === "Mesh" && !isFemBackend ? (
+      ) : ctx.effectiveViewMode === "Mesh" && !ctx.isFemBackend ? (
         <MagnetizationView3D
-          grid={previewGrid}
+          grid={ctx.previewGrid}
           vectors={null}
           fieldLabel="Geometry"
           geometryMode
-          activeMask={activeMask}
+          activeMask={ctx.activeMask}
         />
-      ) : effectiveViewMode === "3D" && isFemBackend && femMeshData ? (
+      ) : ctx.effectiveViewMode === "3D" && ctx.isFemBackend && ctx.femMeshData ? (
         <FemMeshView3D
-          topologyKey={femTopologyKey ?? undefined}
-          meshData={femMeshData}
-          fieldLabel={quantityDescriptor?.label ?? selectedQuantity}
-          colorField={femColorField}
-          showOrientationLegend={femMagnetization3DActive}
+          topologyKey={ctx.femTopologyKey ?? undefined}
+          meshData={ctx.femMeshData}
+          fieldLabel={ctx.quantityDescriptor?.label ?? ctx.selectedQuantity}
+          colorField={ctx.femColorField}
+          showOrientationLegend={ctx.femMagnetization3DActive}
           toolbarMode="hidden"
-          renderMode={meshRenderMode}
-          opacity={meshOpacity}
-          clipEnabled={meshClipEnabled}
-          clipAxis={meshClipAxis}
-          clipPos={meshClipPos}
-          showArrows={femShouldShowArrows}
-          onRenderModeChange={setMeshRenderMode}
-          onOpacityChange={setMeshOpacity}
-          onClipEnabledChange={setMeshClipEnabled}
-          onClipAxisChange={setMeshClipAxis}
-          onClipPosChange={setMeshClipPos}
-          onShowArrowsChange={setMeshShowArrows}
-          onSelectionChange={setMeshSelection}
+          renderMode={ctx.meshRenderMode}
+          opacity={ctx.meshOpacity}
+          clipEnabled={ctx.meshClipEnabled}
+          clipAxis={ctx.meshClipAxis}
+          clipPos={ctx.meshClipPos}
+          showArrows={ctx.femShouldShowArrows}
+          onRenderModeChange={ctx.setMeshRenderMode}
+          onOpacityChange={ctx.setMeshOpacity}
+          onClipEnabledChange={ctx.setMeshClipEnabled}
+          onClipAxisChange={ctx.setMeshClipAxis}
+          onClipPosChange={ctx.setMeshClipPos}
+          onShowArrowsChange={ctx.setMeshShowArrows}
+          onSelectionChange={ctx.setMeshSelection}
         />
-      ) : effectiveViewMode === "2D" && isFemBackend && femMeshData ? (
+      ) : ctx.effectiveViewMode === "2D" && ctx.isFemBackend && ctx.femMeshData ? (
         <FemMeshSlice2D
-          meshData={femMeshData}
-          quantityLabel={quantityDescriptor?.label ?? selectedQuantity}
-          quantityId={selectedQuantity}
-          component={effectiveVectorComponent}
-          plane={plane}
-          sliceIndex={sliceIndex}
-          sliceCount={maxSliceCount}
+          meshData={ctx.femMeshData}
+          quantityLabel={ctx.quantityDescriptor?.label ?? ctx.selectedQuantity}
+          quantityId={ctx.selectedQuantity}
+          component={ctx.effectiveVectorComponent}
+          plane={ctx.plane}
+          sliceIndex={ctx.sliceIndex}
+          sliceCount={ctx.maxSliceCount}
         />
-      ) : effectiveViewMode === "3D" ? (
+      ) : ctx.effectiveViewMode === "3D" ? (
         <MagnetizationView3D
-          grid={previewGrid}
-          vectors={selectedVectors}
-          fieldLabel={quantityDescriptor?.label ?? preview?.quantity ?? selectedQuantity}
+          grid={ctx.previewGrid}
+          vectors={ctx.selectedVectors}
+          fieldLabel={ctx.quantityDescriptor?.label ?? ctx.preview?.quantity ?? ctx.selectedQuantity}
+          activeMask={ctx.activeMask}
         />
-      ) : effectiveViewMode === "2D" ? (
+      ) : ctx.effectiveViewMode === "2D" ? (
         <MagnetizationSlice2D
-          grid={previewGrid}
-          vectors={selectedVectors}
-          quantityLabel={quantityDescriptor?.label ?? preview?.quantity ?? selectedQuantity}
-          quantityId={preview?.quantity ?? selectedQuantity}
-          component={component}
-          plane={plane}
-          sliceIndex={sliceIndex}
+          grid={ctx.previewGrid}
+          vectors={ctx.selectedVectors}
+          quantityLabel={ctx.quantityDescriptor?.label ?? ctx.preview?.quantity ?? ctx.selectedQuantity}
+          quantityId={ctx.preview?.quantity ?? ctx.selectedQuantity}
+          component={ctx.component}
+          plane={ctx.plane}
+          sliceIndex={ctx.sliceIndex}
         />
       ) : (
-        <div className={s.viewportEmptyState}>
+        <div className="flex flex-col items-center justify-center h-full w-full opacity-60">
           <EmptyState
-            title={emptyStateMessage.title}
-            description={emptyStateMessage.description}
+            title={ctx.emptyStateMessage.title}
+            description={ctx.emptyStateMessage.description}
             tone="info"
           />
         </div>

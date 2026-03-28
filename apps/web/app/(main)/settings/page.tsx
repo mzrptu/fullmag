@@ -65,7 +65,7 @@ function useServerConfig() {
 
 function badgeVariantForTone(tone?: SettingTone) {
   if (tone === "success") return "success";
-  if (tone === "error") return "danger";
+  if (tone === "error") return "destructive";
   if (tone === "info") return "info";
   return "outline";
 }

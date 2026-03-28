@@ -2,6 +2,9 @@
 
 import { type ReactNode } from 'react';
 import { ThemeToggle } from '../theme';
+import { Menu } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import Link from 'next/link';
 
 interface TopBarProps {
   breadcrumb?: { label: string; href?: string }[];
@@ -11,50 +14,46 @@ interface TopBarProps {
 
 export function TopBar({ breadcrumb, onMobileMenuToggle, actions }: TopBarProps) {
   return (
-    <header className="topbar">
-      <div className="topbar-left">
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between border-b border-border/60 bg-gradient-to-r from-card/80 to-background/50 px-4 backdrop-blur-2xl shadow-[0_4px_24px_rgba(0,0,0,0.2)]">
+      <div className="flex items-center gap-4">
         <button
-          className="topbar-mobile-toggle"
+          className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted md:hidden transition-colors"
           onClick={onMobileMenuToggle}
           aria-label="Toggle navigation"
         >
-          <MenuIcon />
+          <Menu size={20} />
         </button>
 
         {breadcrumb && breadcrumb.length > 0 && (
-          <nav className="topbar-breadcrumb" aria-label="Breadcrumb">
-            {breadcrumb.map((item, i) => (
-              <span key={i}>
-                {i > 0 && (
-                  <span className="topbar-breadcrumb-separator">/</span>
-                )}
-                {i === breadcrumb.length - 1 ? (
-                  <span className="topbar-breadcrumb-current">
-                    {item.label}
-                  </span>
-                ) : (
-                  <span>{item.label}</span>
-                )}
-              </span>
-            ))}
+          <nav className="hidden sm:flex" aria-label="Breadcrumb">
+            <ol className="flex items-center space-x-2 text-sm text-muted-foreground">
+              {breadcrumb.map((item, i) => (
+                <li key={i} className="flex items-center space-x-2">
+                  {i > 0 && <span className="opacity-50">/</span>}
+                  {i === breadcrumb.length - 1 ? (
+                    <span className="font-medium text-foreground">{item.label}</span>
+                  ) : item.href ? (
+                    <Link href={item.href as any} className="hover:text-foreground transition-colors">
+                      {item.label}
+                    </Link>
+                  ) : (
+                    <span>{item.label}</span>
+                  )}
+                </li>
+              ))}
+            </ol>
           </nav>
         )}
       </div>
 
-      <div className="topbar-right">
-        {actions}
+      <div className="flex items-center gap-3">
+        {actions && (
+          <div className="flex items-center border-r border-border/60 pr-3 mr-1">
+            {actions}
+          </div>
+        )}
         <ThemeToggle />
       </div>
     </header>
-  );
-}
-
-function MenuIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <line x1="3" y1="6" x2="21" y2="6" />
-      <line x1="3" y1="12" x2="21" y2="12" />
-      <line x1="3" y1="18" x2="21" y2="18" />
-    </svg>
   );
 }

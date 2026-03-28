@@ -11,6 +11,7 @@ use fullmag_ir::{
     ExecutionPrecision, FdmPlanIR, IntegratorChoice, OutputIR, RelaxationAlgorithmIR,
 };
 
+use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
 use crate::preview::{build_grid_preview_field, flatten_vectors, select_observables};
 use crate::relaxation::{
     execute_nonlinear_cg, execute_projected_gradient_bb, llg_overdamped_uses_pure_damping,
@@ -36,7 +37,13 @@ pub(crate) fn execute_reference_fdm(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_impl(plan, until_seconds, outputs, None::<LiveStepConsumer<'_>>)
+    execute_reference_fdm_impl(
+        plan,
+        until_seconds,
+        outputs,
+        None::<LiveStepConsumer<'_>>,
+        None,
+    )
 }
 
 /// Execute FDM on CPU with a per-step callback for live streaming.
@@ -58,6 +65,7 @@ pub(crate) fn execute_reference_fdm_with_callback(
             preview_request: None,
             on_step,
         }),
+        None,
     )
 }
 
@@ -80,6 +88,69 @@ pub(crate) fn execute_reference_fdm_with_live_preview(
             preview_request: Some(preview_request),
             on_step,
         }),
+        None,
+    )
+}
+
+pub(crate) fn execute_reference_fdm_streaming(
+    plan: &FdmPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    artifact_writer: ArtifactPipelineSender,
+) -> Result<ExecutedRun, RunError> {
+    execute_reference_fdm_impl(
+        plan,
+        until_seconds,
+        outputs,
+        None::<LiveStepConsumer<'_>>,
+        Some(artifact_writer),
+    )
+}
+
+pub(crate) fn execute_reference_fdm_with_callback_streaming(
+    plan: &FdmPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    grid: [u32; 3],
+    field_every_n: u64,
+    artifact_writer: ArtifactPipelineSender,
+    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
+) -> Result<ExecutedRun, RunError> {
+    execute_reference_fdm_impl(
+        plan,
+        until_seconds,
+        outputs,
+        Some(LiveStepConsumer {
+            grid,
+            field_every_n,
+            preview_request: None,
+            on_step,
+        }),
+        Some(artifact_writer),
+    )
+}
+
+pub(crate) fn execute_reference_fdm_with_live_preview_streaming(
+    plan: &FdmPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    grid: [u32; 3],
+    field_every_n: u64,
+    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    artifact_writer: ArtifactPipelineSender,
+    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
+) -> Result<ExecutedRun, RunError> {
+    execute_reference_fdm_impl(
+        plan,
+        until_seconds,
+        outputs,
+        Some(LiveStepConsumer {
+            grid,
+            field_every_n,
+            preview_request: Some(preview_request),
+            on_step,
+        }),
+        Some(artifact_writer),
     )
 }
 
@@ -88,6 +159,7 @@ fn execute_reference_fdm_impl(
     until_seconds: f64,
     outputs: &[OutputIR],
     mut live: Option<LiveStepConsumer<'_>>,
+    artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     if until_seconds <= 0.0 {
         return Err(RunError {
@@ -185,15 +257,56 @@ fn execute_reference_fdm_impl(
         .unwrap_or(1e-13);
     let mut last_solver_dt = 0.0;
     let mut steps: Vec<StepStats> = Vec::new();
-    let mut field_snapshots: Vec<FieldSnapshot> = Vec::new();
     let mut step_count: u64 = 0;
+    let mut artifacts = if let Some(writer) = artifact_writer {
+        ArtifactRecorder::streaming(
+            ExecutionProvenance {
+                execution_engine: "cpu_reference".to_string(),
+                precision: "double".to_string(),
+                demag_operator_kind: if plan.enable_demag {
+                    Some("tensor_fft_newell".to_string())
+                } else {
+                    None
+                },
+                fft_backend: if plan.enable_demag {
+                    Some("rustfft".to_string())
+                } else {
+                    None
+                },
+                device_name: None,
+                compute_capability: None,
+                cuda_driver_version: None,
+                cuda_runtime_version: None,
+            },
+            writer,
+        )
+    } else {
+        ArtifactRecorder::in_memory(ExecutionProvenance {
+            execution_engine: "cpu_reference".to_string(),
+            precision: "double".to_string(),
+            demag_operator_kind: if plan.enable_demag {
+                Some("tensor_fft_newell".to_string())
+            } else {
+                None
+            },
+            fft_backend: if plan.enable_demag {
+                Some("rustfft".to_string())
+            } else {
+                None
+            },
+            device_name: None,
+            compute_capability: None,
+            cuda_driver_version: None,
+            cuda_runtime_version: None,
+        })
+    };
 
     let mut scalar_schedules = collect_scalar_schedules(outputs)?;
     let mut field_schedules = collect_field_schedules(outputs)?;
     let default_scalar_trace = scalar_schedules.is_empty();
 
     if default_scalar_trace {
-        record_scalar_snapshot(&problem, &state, 0, 0.0, 0, &mut steps)?;
+        record_scalar_snapshot(&problem, &state, 0, 0.0, 0, &mut steps, &mut artifacts)?;
     } else {
         record_due_outputs(
             &problem,
@@ -204,7 +317,7 @@ fn execute_reference_fdm_impl(
             &mut scalar_schedules,
             &mut field_schedules,
             &mut steps,
-            &mut field_snapshots,
+            &mut artifacts,
         )?;
     }
 
@@ -306,7 +419,7 @@ fn execute_reference_fdm_impl(
                     &mut scalar_schedules,
                     &mut field_schedules,
                     &mut steps,
-                    &mut field_snapshots,
+                    &mut artifacts,
                 )?;
             }
 
@@ -395,8 +508,10 @@ fn execute_reference_fdm_impl(
         default_scalar_trace,
         &field_schedules,
         &mut steps,
-        &mut field_snapshots,
+        &mut artifacts,
     )?;
+
+    let (field_snapshots, field_snapshot_count, provenance) = artifacts.finish();
 
     Ok(ExecutedRun {
         result: RunResult {
@@ -410,24 +525,8 @@ fn execute_reference_fdm_impl(
         },
         initial_magnetization,
         field_snapshots,
-        provenance: ExecutionProvenance {
-            execution_engine: "cpu_reference".to_string(),
-            precision: "double".to_string(),
-            demag_operator_kind: if plan.enable_demag {
-                Some("tensor_fft_newell".to_string())
-            } else {
-                None
-            },
-            fft_backend: if plan.enable_demag {
-                Some("rustfft".to_string())
-            } else {
-                None
-            },
-            device_name: None,
-            compute_capability: None,
-            cuda_driver_version: None,
-            cuda_runtime_version: None,
-        },
+        field_snapshot_count,
+        provenance,
     })
 }
 
@@ -440,7 +539,7 @@ fn record_due_outputs(
     scalar_schedules: &mut [OutputSchedule],
     field_schedules: &mut [OutputSchedule],
     steps: &mut Vec<StepStats>,
-    field_snapshots: &mut Vec<FieldSnapshot>,
+    artifacts: &mut ArtifactRecorder,
 ) -> Result<(), RunError> {
     let scalar_due = scalar_schedules
         .iter()
@@ -458,25 +557,27 @@ fn record_due_outputs(
     let observables = observe_state(problem, state)?;
 
     if scalar_due {
-        steps.push(make_step_stats(
+        let stats = make_step_stats(
             step,
             state.time_seconds,
             solver_dt,
             wall_time_ns,
             &observables,
-        ));
+        );
+        artifacts.record_scalar(&stats)?;
+        steps.push(stats);
         advance_due_schedules(scalar_schedules, state.time_seconds);
     }
 
     if !due_field_names.is_empty() {
         for name in due_field_names {
-            field_snapshots.push(FieldSnapshot {
+            artifacts.record_field_snapshot(FieldSnapshot {
                 name: name.clone(),
                 step,
                 time: state.time_seconds,
                 solver_dt,
                 values: select_field_values(&observables, &name),
-            });
+            })?;
         }
         advance_due_schedules(field_schedules, state.time_seconds);
     }
@@ -491,15 +592,18 @@ fn record_scalar_snapshot(
     solver_dt: f64,
     wall_time_ns: u64,
     steps: &mut Vec<StepStats>,
+    artifacts: &mut ArtifactRecorder,
 ) -> Result<(), RunError> {
     let observables = observe_state(problem, state)?;
-    steps.push(make_step_stats(
+    let stats = make_step_stats(
         step,
         state.time_seconds,
         solver_dt,
         wall_time_ns,
         &observables,
-    ));
+    );
+    artifacts.record_scalar(&stats)?;
+    steps.push(stats);
     Ok(())
 }
 
@@ -511,7 +615,7 @@ fn record_final_outputs(
     default_scalar_trace: bool,
     field_schedules: &[OutputSchedule],
     steps: &mut Vec<StepStats>,
-    field_snapshots: &mut Vec<FieldSnapshot>,
+    artifacts: &mut ArtifactRecorder,
 ) -> Result<(), RunError> {
     let need_scalar = default_scalar_trace
         || steps
@@ -521,17 +625,24 @@ fn record_final_outputs(
 
     let requested_field_names = field_schedules
         .iter()
+        .filter(|schedule| {
+            schedule
+                .last_sampled_time
+                .map(|time| !same_time(time, state.time_seconds))
+                .unwrap_or(true)
+        })
         .map(|schedule| schedule.name.clone())
         .collect::<Vec<_>>();
     let missing_field_names = requested_field_names
         .into_iter()
         .filter(|name| {
-            field_snapshots
-                .iter()
-                .rev()
-                .find(|snapshot| snapshot.name == *name)
-                .map(|snapshot| !same_time(snapshot.time, state.time_seconds))
-                .unwrap_or(true)
+            !field_schedules.iter().any(|schedule| {
+                schedule.name == *name
+                    && schedule
+                        .last_sampled_time
+                        .map(|time| same_time(time, state.time_seconds))
+                        .unwrap_or(false)
+            })
         })
         .collect::<Vec<_>>();
 
@@ -542,23 +653,25 @@ fn record_final_outputs(
     let observables = observe_state(problem, state)?;
 
     if need_scalar {
-        steps.push(make_step_stats(
+        let stats = make_step_stats(
             step,
             state.time_seconds,
             solver_dt,
             0,
             &observables,
-        ));
+        );
+        artifacts.record_scalar(&stats)?;
+        steps.push(stats);
     }
 
     for name in missing_field_names {
-        field_snapshots.push(FieldSnapshot {
+        artifacts.record_field_snapshot(FieldSnapshot {
             name: name.clone(),
             step,
             time: state.time_seconds,
             solver_dt,
             values: select_field_values(&observables, &name),
-        });
+        })?;
     }
 
     Ok(())

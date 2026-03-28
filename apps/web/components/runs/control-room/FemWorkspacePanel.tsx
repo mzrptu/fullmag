@@ -6,7 +6,6 @@ import MeshSettingsPanel from "../../panels/MeshSettingsPanel";
 import type { MeshOptionsState, MeshQualityData } from "../../panels/MeshSettingsPanel";
 import type { ClipAxis, MeshSelectionSnapshot, RenderMode } from "../../preview/FemMeshView3D";
 import type { FemLiveMesh } from "../../../lib/useSessionStream";
-import type { ViewportBarProps, ViewportCanvasAreaProps } from "./ViewportPanels";
 import { ViewportBar, ViewportCanvasArea } from "./ViewportPanels";
 import {
   type FemDockTab,
@@ -20,7 +19,6 @@ import {
   fmtPreviewEveryN,
   fmtSI,
 } from "./shared";
-import s from "../RunControlRoom.module.css";
 
 interface MesherSettings {
   order?: number;
@@ -43,63 +41,10 @@ interface PreviewOption {
   disabled: boolean;
 }
 
-interface FemWorkspacePanelProps {
-  workspaceStatus: string;
-  femDockTab: FemDockTab;
-  setFemDockTab: React.Dispatch<React.SetStateAction<FemDockTab>>;
-  openFemMeshWorkspace: (tab?: "mesh" | "quality") => void;
-  effectiveFemMesh: FemLiveMesh | null;
-  meshFeOrder: number | null;
-  meshHmax: number | null;
-  isMeshWorkspaceView: boolean;
-  effectiveViewMode: ViewportMode;
-  handleViewModeChange: (mode: ViewportMode) => void;
-  meshRenderMode: RenderMode;
-  setMeshRenderMode: React.Dispatch<React.SetStateAction<RenderMode>>;
-  meshFaceDetail: MeshFaceDetail | null;
-  meshSelection: MeshSelectionSnapshot;
-  setMeshSelection: React.Dispatch<React.SetStateAction<MeshSelectionSnapshot>>;
-  meshName: string | null;
-  meshSource: string | null;
-  meshExtent: [number, number, number] | null;
-  meshBoundsMin: [number, number, number] | null;
-  meshBoundsMax: [number, number, number] | null;
-  mesherBackend: string | null;
-  mesherSourceKind: string | null;
-  mesherCurrentSettings: MesherSettings | null;
-  meshOptions: MeshOptionsState;
-  setMeshOptions: React.Dispatch<React.SetStateAction<MeshOptionsState>>;
-  meshQualityData: MeshQualityData | null;
-  meshGenerating: boolean;
-  handleMeshGenerate: () => Promise<void>;
-  previewControlsActive: boolean;
-  requestedPreviewQuantity: string;
-  previewQuantityOptions: PreviewOption[];
-  previewBusy: boolean;
-  updatePreview: (path: string, payload?: Record<string, unknown>) => Promise<void>;
-  setSelectedQuantity: (value: string) => void;
-  requestedPreviewComponent: string;
-  component: VectorComponent;
-  setComponent: (value: VectorComponent) => void;
-  requestedPreviewEveryN: number;
-  previewEveryNOptions: number[];
-  meshOpacity: number;
-  setMeshOpacity: React.Dispatch<React.SetStateAction<number>>;
-  meshShowArrows: boolean;
-  setMeshShowArrows: React.Dispatch<React.SetStateAction<boolean>>;
-  meshClipEnabled: boolean;
-  setMeshClipEnabled: React.Dispatch<React.SetStateAction<boolean>>;
-  meshClipAxis: ClipAxis;
-  setMeshClipAxis: React.Dispatch<React.SetStateAction<ClipAxis>>;
-  meshClipPos: number;
-  setMeshClipPos: React.Dispatch<React.SetStateAction<number>>;
-  meshQualitySummary: MeshQualitySummary | null;
-  viewportBarProps: ViewportBarProps;
-  viewportCanvasProps: ViewportCanvasAreaProps;
-  previewNotices: ReactNode;
-}
+import { useControlRoom } from "./ControlRoomContext";
 
-export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
+export default function FemWorkspacePanel() {
+  const ctx = useControlRoom();
   const {
     workspaceStatus,
     femDockTab,
@@ -151,10 +96,31 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
     meshClipPos,
     setMeshClipPos,
     meshQualitySummary,
-    viewportBarProps,
-    viewportCanvasProps,
-    previewNotices,
-  } = props;
+  } = ctx;
+  
+  // Build local previewNotices (relocated from RunControlRoom for self-containment)
+  const previewNotices = (
+    <>
+      {(ctx.preview?.auto_downscaled || ctx.liveState?.preview_auto_downscaled) && (
+        <div
+          className="px-2.5 py-1.5 border-b border-amber-500/30 bg-amber-500/10 text-amber-500 text-xs leading-snug"
+          title={ctx.preview?.auto_downscale_message ?? ctx.liveState?.preview_auto_downscale_message ?? undefined}
+        >
+          {ctx.preview?.auto_downscale_message ??
+            ctx.liveState?.preview_auto_downscale_message ??
+            `Preview auto-fit to ${ctx.previewGrid[0]}×${ctx.previewGrid[1]}×${ctx.previewGrid[2]}`}
+        </div>
+      )}
+      {(ctx.previewMessage || ctx.previewIsStale || ctx.previewIsBootstrapStale) && (
+        <div className="px-2.5 py-1.5 border-b border-border/40 bg-card/40 text-muted-foreground text-xs leading-snug">
+          {ctx.previewMessage ??
+            (ctx.previewIsBootstrapStale
+              ? "Showing bootstrap preview until first live preview sample arrives"
+              : "Preview update pending")}
+        </div>
+      )}
+    </>
+  );
 
   return (
     <>
@@ -164,74 +130,74 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
         minSize={PANEL_SIZES.femDockMin}
         maxSize={PANEL_SIZES.femDockMax}
       >
-        <div className={s.meshDock}>
-        <div className={s.meshDockHeader}>
+        <div className="flex flex-col h-full min-h-0 min-w-0 bg-gradient-to-b from-card/30 to-background border-r border-border/40">
+        <div className="flex items-start justify-between gap-3 pt-3 px-3.5 pb-2.5 border-b border-border/40">
           <div>
-            <div className={s.meshDockEyebrow}>Mesh Workspace</div>
-            <div className={s.meshDockTitle}>FEM Setup</div>
+            <div className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Mesh Workspace</div>
+            <div className="mt-0.5 text-base font-bold text-foreground">FEM Setup</div>
           </div>
-          <span className={s.meshDockStatus} data-status={workspaceStatus}>
+          <span className="font-mono text-[0.65rem] uppercase tracking-widest text-muted-foreground data-[status=running]:text-primary data-[status=materializing_script]:text-amber-500" data-status={workspaceStatus}>
             {workspaceStatus}
           </span>
         </div>
 
-        <div className={s.meshDockTabs}>
+        <div className="grid grid-cols-4 gap-1 pt-2.5 px-3.5 pb-0">
           <DockTabButton active={femDockTab === "mesh"} label="Mesh" onClick={() => openFemMeshWorkspace("mesh")} />
           <DockTabButton active={femDockTab === "mesher"} label="Mesher" onClick={() => setFemDockTab("mesher")} />
           <DockTabButton active={femDockTab === "view"} label="View" onClick={() => setFemDockTab("view")} />
           <DockTabButton active={femDockTab === "quality"} label="Quality" onClick={() => openFemMeshWorkspace("quality")} />
         </div>
 
-        <div className={s.meshDockBody}>
+        <div className="min-h-0 overflow-auto pt-3 px-3.5 pb-3.5 grid gap-3 scrollbar-thin scrollbar-thumb-muted-foreground/20">
           {femDockTab === "mesh" && (
             <>
-              <div className={s.meshCard}>
-                <div className={s.meshCardHeader}>
-                  <span className={s.meshCardTitle}>Topology</span>
-                  <span className={s.meshCardBadge}>
+              <div className="grid gap-2.5 p-3 rounded-xl bg-gradient-to-b from-card/40 to-card/20 border border-border/40 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Topology</span>
+                  <span className="text-[0.65rem] font-mono text-muted-foreground/70">
                     {effectiveFemMesh?.elements.length ? "volume mesh" : "surface preview"}
                   </span>
                 </div>
-                <div className={s.meshStatGrid}>
-                  <div className={s.meshStatCard}>
-                    <span className={s.meshStatLabel}>Nodes</span>
-                    <span className={s.meshStatValue}>{effectiveFemMesh?.nodes.length.toLocaleString() ?? "0"}</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-card/30 border border-border/40">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Nodes</span>
+                    <span className="font-mono text-sm text-foreground">{effectiveFemMesh?.nodes.length.toLocaleString() ?? "0"}</span>
                   </div>
-                  <div className={s.meshStatCard}>
-                    <span className={s.meshStatLabel}>Elements</span>
-                    <span className={s.meshStatValue}>{effectiveFemMesh?.elements.length.toLocaleString() ?? "0"}</span>
+                  <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-card/30 border border-border/40">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Elements</span>
+                    <span className="font-mono text-sm text-foreground">{effectiveFemMesh?.elements.length.toLocaleString() ?? "0"}</span>
                   </div>
-                  <div className={s.meshStatCard}>
-                    <span className={s.meshStatLabel}>Boundary faces</span>
-                    <span className={s.meshStatValue}>{effectiveFemMesh?.boundary_faces.length.toLocaleString() ?? "0"}</span>
+                  <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-card/30 border border-border/40">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Boundary faces</span>
+                    <span className="font-mono text-sm text-foreground">{effectiveFemMesh?.boundary_faces.length.toLocaleString() ?? "0"}</span>
                   </div>
-                  <div className={s.meshStatCard}>
-                    <span className={s.meshStatLabel}>Element type</span>
-                    <span className={s.meshStatValue}>{effectiveFemMesh?.elements.length ? "tet4" : "surface"}</span>
+                  <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-card/30 border border-border/40">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Element type</span>
+                    <span className="font-mono text-sm text-foreground">{effectiveFemMesh?.elements.length ? "tet4" : "surface"}</span>
                   </div>
-                  <div className={s.meshStatCard}>
-                    <span className={s.meshStatLabel}>FE order</span>
-                    <span className={s.meshStatValue}>{meshFeOrder != null ? String(meshFeOrder) : "—"}</span>
+                  <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-card/30 border border-border/40">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">FE order</span>
+                    <span className="font-mono text-sm text-foreground">{meshFeOrder != null ? String(meshFeOrder) : "—"}</span>
                   </div>
-                  <div className={s.meshStatCard}>
-                    <span className={s.meshStatLabel}>hmax</span>
-                    <span className={s.meshStatValue}>{meshHmax != null ? fmtSI(meshHmax, "m") : "—"}</span>
+                  <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-card/30 border border-border/40">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">hmax</span>
+                    <span className="font-mono text-sm text-foreground">{meshHmax != null ? fmtSI(meshHmax, "m") : "—"}</span>
                   </div>
                 </div>
               </div>
 
-              <div className={s.meshCard}>
-                <div className={s.meshCardHeader}>
-                  <span className={s.meshCardTitle}>Inspect</span>
-                  <span className={s.meshCardBadge}>
+              <div className="grid gap-2.5 p-3 rounded-xl bg-gradient-to-b from-card/40 to-card/20 border border-border/40 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Inspect</span>
+                  <span className="text-[0.65rem] font-mono text-muted-foreground/70">
                     {isMeshWorkspaceView ? "mesh viewport active" : "mesh viewport hidden"}
                   </span>
                 </div>
-                <div className={s.meshSegmented}>
+                <div className="flex flex-wrap gap-1">
                   {(["Mesh", "3D", "2D"] as ViewportMode[]).map((mode) => (
                     <button
                       key={mode}
-                      className={s.meshSegmentBtn}
+                      className="appearance-none border border-border/40 bg-card/30 text-muted-foreground text-[0.65rem] font-bold uppercase tracking-widest rounded-md py-1.5 px-2 cursor-pointer transition-colors hover:bg-muted/50 data-[active=true]:bg-primary/20 data-[active=true]:border-primary/50 data-[active=true]:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
                       data-active={effectiveViewMode === mode}
                       onClick={() => handleViewModeChange(mode)}
                       type="button"
@@ -240,7 +206,7 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                     </button>
                   ))}
                 </div>
-                <div className={s.meshSegmented}>
+                <div className="flex flex-wrap gap-1">
                   {([
                     ["surface", "Surface"],
                     ["surface+edges", "Surface+Edges"],
@@ -249,7 +215,7 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                   ] as [RenderMode, string][]).map(([mode, label]) => (
                     <button
                       key={mode}
-                      className={s.meshSegmentBtn}
+                      className="appearance-none border border-border/40 bg-card/30 text-muted-foreground text-[0.65rem] font-bold uppercase tracking-widest rounded-md py-1.5 px-2 cursor-pointer transition-colors hover:bg-muted/50 data-[active=true]:bg-primary/20 data-[active=true]:border-primary/50 data-[active=true]:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
                       data-active={meshRenderMode === mode}
                       onClick={() => setMeshRenderMode(mode)}
                       type="button"
@@ -258,57 +224,57 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                     </button>
                   ))}
                 </div>
-                <div className={s.meshHintText}>
+                <div className="text-xs leading-relaxed text-muted-foreground">
                   Hover a boundary face to preview quality. Click to inspect it, and use
                   Shift/Ctrl-click to build a multi-selection like a real mesh workspace.
                 </div>
               </div>
 
               {meshFaceDetail && (
-                <div className={s.meshCard}>
-                  <div className={s.meshCardHeader}>
-                    <span className={s.meshCardTitle}>Selection</span>
-                    <span className={s.meshCardBadge}>
+                <div className="grid gap-2.5 p-3 rounded-xl bg-gradient-to-b from-card/40 to-card/20 border border-border/40 shadow-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Selection</span>
+                    <span className="text-[0.65rem] font-mono text-muted-foreground/70">
                       {meshSelection.selectedFaceIndices.length} face{meshSelection.selectedFaceIndices.length === 1 ? "" : "s"}
                     </span>
                   </div>
-                  <div className={s.meshInfoList}>
-                    <div className={s.meshInfoRow}>
-                      <span className={s.meshInfoKey}>Face</span>
-                      <span className={s.meshInfoValue}>#{meshFaceDetail.faceIndex}</span>
+                  <div className="grid gap-1.5">
+                    <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                      <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Face</span>
+                      <span className="font-mono text-xs text-foreground break-all">#{meshFaceDetail.faceIndex}</span>
                     </div>
-                    <div className={s.meshInfoRow}>
-                      <span className={s.meshInfoKey}>Nodes</span>
-                      <span className={s.meshInfoValue}>{meshFaceDetail.nodeIndices.join(", ")}</span>
+                    <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                      <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Nodes</span>
+                      <span className="font-mono text-xs text-foreground break-all">{meshFaceDetail.nodeIndices.join(", ")}</span>
                     </div>
-                    <div className={s.meshInfoRow}>
-                      <span className={s.meshInfoKey}>Area</span>
-                      <span className={s.meshInfoValue}>{fmtExp(meshFaceDetail.area)} m²</span>
+                    <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                      <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Area</span>
+                      <span className="font-mono text-xs text-foreground break-all">{fmtExp(meshFaceDetail.area)} m²</span>
                     </div>
-                    <div className={s.meshInfoRow}>
-                      <span className={s.meshInfoKey}>Perimeter</span>
-                      <span className={s.meshInfoValue}>{fmtSI(meshFaceDetail.perimeter, "m")}</span>
+                    <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                      <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Perimeter</span>
+                      <span className="font-mono text-xs text-foreground break-all">{fmtSI(meshFaceDetail.perimeter, "m")}</span>
                     </div>
-                    <div className={s.meshInfoRow}>
-                      <span className={s.meshInfoKey}>Aspect Ratio</span>
-                      <span className={s.meshInfoValue}>{meshFaceDetail.aspectRatio.toFixed(2)}</span>
+                    <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                      <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Aspect Ratio</span>
+                      <span className="font-mono text-xs text-foreground break-all">{meshFaceDetail.aspectRatio.toFixed(2)}</span>
                     </div>
-                    <div className={s.meshInfoRow}>
-                      <span className={s.meshInfoKey}>Edges</span>
-                      <span className={s.meshInfoValue}>{meshFaceDetail.edgeLengths.map((value) => fmtSI(value, "m")).join(" · ")}</span>
+                    <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                      <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Edges</span>
+                      <span className="font-mono text-xs text-foreground break-all">{meshFaceDetail.edgeLengths.map((value) => fmtSI(value, "m")).join(" · ")}</span>
                     </div>
-                    <div className={s.meshInfoRow}>
-                      <span className={s.meshInfoKey}>Centroid</span>
-                      <span className={s.meshInfoValue}>{meshFaceDetail.centroid.map((value) => fmtExp(value)).join(", ")}</span>
+                    <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                      <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Centroid</span>
+                      <span className="font-mono text-xs text-foreground break-all">{meshFaceDetail.centroid.map((value) => fmtExp(value)).join(", ")}</span>
                     </div>
-                    <div className={s.meshInfoRow}>
-                      <span className={s.meshInfoKey}>Normal</span>
-                      <span className={s.meshInfoValue}>{meshFaceDetail.normal.map((value) => value.toFixed(3)).join(", ")}</span>
+                    <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                      <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Normal</span>
+                      <span className="font-mono text-xs text-foreground break-all">{meshFaceDetail.normal.map((value) => value.toFixed(3)).join(", ")}</span>
                     </div>
                   </div>
-                  <div className={s.meshSegmented}>
+                  <div className="flex flex-wrap gap-1">
                     <button
-                      className={s.meshSegmentBtn}
+                      className="appearance-none border border-border/40 bg-card/30 text-muted-foreground text-[0.65rem] font-bold uppercase tracking-widest rounded-md py-1.5 px-2 cursor-pointer transition-colors hover:bg-muted/50 data-[active=true]:bg-primary/20 data-[active=true]:border-primary/50 data-[active=true]:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
                       onClick={() => setMeshSelection({ selectedFaceIndices: [], primaryFaceIndex: null })}
                       type="button"
                     >
@@ -318,44 +284,44 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                 </div>
               )}
 
-              <div className={s.meshCard}>
-                <div className={s.meshCardHeader}>
-                  <span className={s.meshCardTitle}>Geometry Bounds</span>
+              <div className="grid gap-2.5 p-3 rounded-xl bg-gradient-to-b from-card/40 to-card/20 border border-border/40 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Geometry Bounds</span>
                 </div>
-                <div className={s.meshInfoList}>
-                  <div className={s.meshInfoRow}>
-                    <span className={s.meshInfoKey}>Mesh name</span>
-                    <span className={s.meshInfoValue}>{meshName ?? "—"}</span>
+                <div className="grid gap-1.5">
+                  <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Mesh name</span>
+                    <span className="font-mono text-xs text-foreground break-all">{meshName ?? "—"}</span>
                   </div>
-                  <div className={s.meshInfoRow}>
-                    <span className={s.meshInfoKey}>Source</span>
-                    <span className={s.meshInfoValue} title={meshSource ?? undefined}>
+                  <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Source</span>
+                    <span className="font-mono text-xs text-foreground break-all" title={meshSource ?? undefined}>
                       {meshSource ? meshSource.split("/").pop() : "generated"}
                     </span>
                   </div>
-                  <div className={s.meshInfoRow}>
-                    <span className={s.meshInfoKey}>Extent X</span>
-                    <span className={s.meshInfoValue}>{meshExtent ? fmtSI(meshExtent[0], "m") : "—"}</span>
+                  <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Extent X</span>
+                    <span className="font-mono text-xs text-foreground break-all">{meshExtent ? fmtSI(meshExtent[0], "m") : "—"}</span>
                   </div>
-                  <div className={s.meshInfoRow}>
-                    <span className={s.meshInfoKey}>Extent Y</span>
-                    <span className={s.meshInfoValue}>{meshExtent ? fmtSI(meshExtent[1], "m") : "—"}</span>
+                  <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Extent Y</span>
+                    <span className="font-mono text-xs text-foreground break-all">{meshExtent ? fmtSI(meshExtent[1], "m") : "—"}</span>
                   </div>
-                  <div className={s.meshInfoRow}>
-                    <span className={s.meshInfoKey}>Extent Z</span>
-                    <span className={s.meshInfoValue}>{meshExtent ? fmtSI(meshExtent[2], "m") : "—"}</span>
+                  <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Extent Z</span>
+                    <span className="font-mono text-xs text-foreground break-all">{meshExtent ? fmtSI(meshExtent[2], "m") : "—"}</span>
                   </div>
-                  <div className={s.meshInfoRow}>
-                    <span className={s.meshInfoKey}>Bounds min</span>
-                    <span className={s.meshInfoValue}>
+                  <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Bounds min</span>
+                    <span className="font-mono text-xs text-foreground break-all">
                       {meshBoundsMin
                         ? `${fmtExp(meshBoundsMin[0])}, ${fmtExp(meshBoundsMin[1])}, ${fmtExp(meshBoundsMin[2])}`
                         : "—"}
                     </span>
                   </div>
-                  <div className={s.meshInfoRow}>
-                    <span className={s.meshInfoKey}>Bounds max</span>
-                    <span className={s.meshInfoValue}>
+                  <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Bounds max</span>
+                    <span className="font-mono text-xs text-foreground break-all">
                       {meshBoundsMax
                         ? `${fmtExp(meshBoundsMax[0])}, ${fmtExp(meshBoundsMax[1])}, ${fmtExp(meshBoundsMax[2])}`
                         : "—"}
@@ -364,9 +330,9 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                 </div>
               </div>
 
-              <div className={s.meshHintBox}>
-                <div className={s.meshHintTitle}>Pipeline</div>
-                <div className={s.meshHintText}>
+              <div className="p-3 rounded-lg bg-gradient-to-b from-card/30 to-card/10 border border-border/40">
+                <div className="text-[0.65rem] font-bold uppercase tracking-widest text-primary mb-1">Pipeline</div>
+                <div className="text-xs leading-relaxed text-muted-foreground">
                   {effectiveFemMesh?.elements.length
                     ? "Surface import completed and tetrahedral volume mesh is active."
                     : "Surface preview is shown before full tetrahedral meshing completes."}
@@ -377,29 +343,29 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
 
           {femDockTab === "mesher" && (
             <>
-              <div className={s.meshCard}>
-                <div className={s.meshCardHeader}>
-                  <span className={s.meshCardTitle}>Mesher Runtime</span>
-                  <span className={s.meshCardBadge}>{mesherBackend ?? "—"}</span>
+              <div className="grid gap-2.5 p-3 rounded-xl bg-gradient-to-b from-card/40 to-card/20 border border-border/40 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Mesher Runtime</span>
+                  <span className="text-[0.65rem] font-mono text-muted-foreground/70">{mesherBackend ?? "—"}</span>
                 </div>
-                <div className={s.meshInfoList}>
-                  <div className={s.meshInfoRow}>
-                    <span className={s.meshInfoKey}>Backend</span>
-                    <span className={s.meshInfoValue}>{mesherBackend ?? "—"}</span>
+                <div className="grid gap-1.5">
+                  <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Backend</span>
+                    <span className="font-mono text-xs text-foreground break-all">{mesherBackend ?? "—"}</span>
                   </div>
-                  <div className={s.meshInfoRow}>
-                    <span className={s.meshInfoKey}>Source kind</span>
-                    <span className={s.meshInfoValue}>{mesherSourceKind ?? "—"}</span>
+                  <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Source kind</span>
+                    <span className="font-mono text-xs text-foreground break-all">{mesherSourceKind ?? "—"}</span>
                   </div>
-                  <div className={s.meshInfoRow}>
-                    <span className={s.meshInfoKey}>Order</span>
-                    <span className={s.meshInfoValue}>
+                  <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Order</span>
+                    <span className="font-mono text-xs text-foreground break-all">
                       {typeof mesherCurrentSettings?.order === "number" ? String(mesherCurrentSettings.order) : "—"}
                     </span>
                   </div>
-                  <div className={s.meshInfoRow}>
-                    <span className={s.meshInfoKey}>hmax</span>
-                    <span className={s.meshInfoValue}>
+                  <div className="grid grid-cols-[92px_1fr] gap-2 items-start">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">hmax</span>
+                    <span className="font-mono text-xs text-foreground break-all">
                       {typeof mesherCurrentSettings?.hmax === "number" ? fmtSI(mesherCurrentSettings.hmax, "m") : "—"}
                     </span>
                   </div>
@@ -418,14 +384,14 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
 
           {femDockTab === "view" && (
             <>
-              <div className={s.meshCard}>
-                <div className={s.meshCardHeader}>
-                  <span className={s.meshCardTitle}>Field</span>
+              <div className="grid gap-2.5 p-3 rounded-xl bg-gradient-to-b from-card/40 to-card/20 border border-border/40 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Field</span>
                 </div>
-                <label className={s.meshControl}>
-                  <span className={s.meshControlLabel}>Quantity</span>
+                <label className="grid gap-1.5">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Quantity</span>
                   <select
-                    className={s.meshSelect}
+                    className="appearance-none w-full bg-card/30 border border-border/40 rounded-md text-foreground text-xs py-1.5 px-2 focus:outline-none focus:border-primary"
                     value={requestedPreviewQuantity}
                     onChange={(event) => {
                       const next = event.target.value;
@@ -443,11 +409,11 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                     ))}
                   </select>
                 </label>
-                <label className={s.meshControl}>
-                  <span className={s.meshControlLabel}>Component</span>
+                <label className="grid gap-1.5">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Component</span>
                   {previewControlsActive ? (
                     <select
-                      className={s.meshSelect}
+                      className="appearance-none w-full bg-card/30 border border-border/40 rounded-md text-foreground text-xs py-1.5 px-2 focus:outline-none focus:border-primary"
                       value={requestedPreviewComponent}
                       onChange={(event) =>
                         void updatePreview("/component", { component: event.target.value as PreviewComponent })
@@ -461,7 +427,7 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                     </select>
                   ) : (
                     <select
-                      className={s.meshSelect}
+                      className="appearance-none w-full bg-card/30 border border-border/40 rounded-md text-foreground text-xs py-1.5 px-2 focus:outline-none focus:border-primary"
                       value={component}
                       onChange={(event) => setComponent(event.target.value as VectorComponent)}
                     >
@@ -473,10 +439,10 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                   )}
                 </label>
                 {previewControlsActive && (
-                  <label className={s.meshControl}>
-                    <span className={s.meshControlLabel}>Refresh</span>
+                  <label className="grid gap-1.5">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Refresh</span>
                     <select
-                      className={s.meshSelect}
+                      className="appearance-none w-full bg-card/30 border border-border/40 rounded-md text-foreground text-xs py-1.5 px-2 focus:outline-none focus:border-primary"
                       value={requestedPreviewEveryN}
                       onChange={(event) => void updatePreview("/everyN", { everyN: Number(event.target.value) })}
                       disabled={previewBusy}
@@ -491,11 +457,11 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                 )}
               </div>
 
-              <div className={s.meshCard}>
-                <div className={s.meshCardHeader}>
-                  <span className={s.meshCardTitle}>Rendering</span>
+              <div className="grid gap-2.5 p-3 rounded-xl bg-gradient-to-b from-card/40 to-card/20 border border-border/40 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Rendering</span>
                 </div>
-                <div className={s.meshSegmented}>
+                <div className="flex flex-wrap gap-1">
                   {([
                     ["surface", "Surface"],
                     ["surface+edges", "Surface+Edges"],
@@ -504,7 +470,7 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                   ] as [RenderMode, string][]).map(([mode, label]) => (
                     <button
                       key={mode}
-                      className={s.meshSegmentBtn}
+                      className="appearance-none border border-border/40 bg-card/30 text-muted-foreground text-[0.65rem] font-bold uppercase tracking-widest rounded-md py-1.5 px-2 cursor-pointer transition-colors hover:bg-muted/50 data-[active=true]:bg-primary/20 data-[active=true]:border-primary/50 data-[active=true]:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
                       data-active={meshRenderMode === mode}
                       onClick={() => setMeshRenderMode(mode)}
                       type="button"
@@ -513,21 +479,21 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                     </button>
                   ))}
                 </div>
-                <label className={s.meshControl}>
-                  <span className={s.meshControlLabel}>Opacity</span>
-                  <div className={s.meshRangeRow}>
+                <label className="grid gap-1.5">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Opacity</span>
+                  <div className="grid grid-cols-[1fr_auto] items-center gap-2">
                     <input
-                      className={s.meshRange}
+                      className="w-full accent-primary"
                       type="range"
                       min={10}
                       max={100}
                       value={meshOpacity}
                       onChange={(event) => setMeshOpacity(Number(event.target.value))}
                     />
-                    <span className={s.meshRangeValue}>{meshOpacity}%</span>
+                    <span className="font-mono text-[0.65rem] text-muted-foreground min-w-[44px] text-right">{meshOpacity}%</span>
                   </div>
                 </label>
-                <label className={s.meshCheckbox}>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground [&>input]:accent-primary">
                   <input
                     type="checkbox"
                     checked={meshShowArrows}
@@ -537,11 +503,11 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                 </label>
               </div>
 
-              <div className={s.meshCard}>
-                <div className={s.meshCardHeader}>
-                  <span className={s.meshCardTitle}>Clipping</span>
+              <div className="grid gap-2.5 p-3 rounded-xl bg-gradient-to-b from-card/40 to-card/20 border border-border/40 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Clipping</span>
                 </div>
-                <label className={s.meshCheckbox}>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground [&>input]:accent-primary">
                   <input
                     type="checkbox"
                     checked={meshClipEnabled}
@@ -549,11 +515,11 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                   />
                   <span>Enable clip plane</span>
                 </label>
-                <div className={s.meshSegmented}>
+                <div className="flex flex-wrap gap-1">
                   {(["x", "y", "z"] as ClipAxis[]).map((axis) => (
                     <button
                       key={axis}
-                      className={s.meshSegmentBtn}
+                      className="appearance-none border border-border/40 bg-card/30 text-muted-foreground text-[0.65rem] font-bold uppercase tracking-widest rounded-md py-1.5 px-2 cursor-pointer transition-colors hover:bg-muted/50 data-[active=true]:bg-primary/20 data-[active=true]:border-primary/50 data-[active=true]:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
                       data-active={meshClipAxis === axis}
                       onClick={() => setMeshClipAxis(axis)}
                       type="button"
@@ -563,9 +529,9 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                     </button>
                   ))}
                 </div>
-                <div className={s.meshRangeRow}>
+                <div className="grid grid-cols-[1fr_auto] items-center gap-2">
                   <input
-                    className={s.meshRange}
+                    className="w-full accent-primary"
                     type="range"
                     min={0}
                     max={100}
@@ -573,7 +539,7 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                     onChange={(event) => setMeshClipPos(Number(event.target.value))}
                     disabled={!meshClipEnabled}
                   />
-                  <span className={s.meshRangeValue}>{meshClipPos}%</span>
+                  <span className="font-mono text-[0.65rem] text-muted-foreground min-w-[44px] text-right">{meshClipPos}%</span>
                 </div>
               </div>
             </>
@@ -581,10 +547,10 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
 
           {femDockTab === "quality" && (
             <>
-              <div className={s.meshCard}>
-                <div className={s.meshCardHeader}>
-                  <span className={s.meshCardTitle}>Boundary Triangle Quality</span>
-                  <span className={s.meshCardBadge}>
+              <div className="grid gap-2.5 p-3 rounded-xl bg-gradient-to-b from-card/40 to-card/20 border border-border/40 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Boundary Triangle Quality</span>
+                  <span className="text-[0.65rem] font-mono text-muted-foreground/70">
                     {meshQualitySummary
                       ? (meshQualitySummary.mean < 3 ? "good" : meshQualitySummary.mean < 6 ? "fair" : "poor")
                       : "pending"}
@@ -592,22 +558,22 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                 </div>
                 {meshQualitySummary ? (
                   <>
-                    <div className={s.meshStatGrid}>
-                      <div className={s.meshStatCard}>
-                        <span className={s.meshStatLabel}>Mean AR</span>
-                        <span className={s.meshStatValue}>{meshQualitySummary.mean.toFixed(2)}</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-card/30 border border-border/40">
+                        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Mean AR</span>
+                        <span className="font-mono text-sm text-foreground">{meshQualitySummary.mean.toFixed(2)}</span>
                       </div>
-                      <div className={s.meshStatCard}>
-                        <span className={s.meshStatLabel}>Min AR</span>
-                        <span className={s.meshStatValue}>{meshQualitySummary.min.toFixed(2)}</span>
+                      <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-card/30 border border-border/40">
+                        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Min AR</span>
+                        <span className="font-mono text-sm text-foreground">{meshQualitySummary.min.toFixed(2)}</span>
                       </div>
-                      <div className={s.meshStatCard}>
-                        <span className={s.meshStatLabel}>Max AR</span>
-                        <span className={s.meshStatValue}>{meshQualitySummary.max.toFixed(2)}</span>
+                      <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-card/30 border border-border/40">
+                        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Max AR</span>
+                        <span className="font-mono text-sm text-foreground">{meshQualitySummary.max.toFixed(2)}</span>
                       </div>
-                      <div className={s.meshStatCard}>
-                        <span className={s.meshStatLabel}>Faces analysed</span>
-                        <span className={s.meshStatValue}>{meshQualitySummary.count.toLocaleString()}</span>
+                      <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-card/30 border border-border/40">
+                        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Faces analysed</span>
+                        <span className="font-mono text-sm text-foreground">{meshQualitySummary.count.toLocaleString()}</span>
                       </div>
                     </div>
                     {([
@@ -617,26 +583,26 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
                     ] as [string, number, "success" | "warn" | "danger"][]).map(([label, count, tone]) => {
                       const pct = meshQualitySummary.count > 0 ? (count / meshQualitySummary.count) * 100 : 0;
                       return (
-                        <div key={label} className={s.meshQualityRow}>
-                          <span className={s.meshQualityLabel}>{label}</span>
-                          <div className={s.meshQualityTrack}>
-                            <progress className={s.meshQualityFill} value={pct} max={100} data-tone={tone} />
+                        <div key={label} className="grid grid-cols-[42px_1fr_48px] items-center gap-2">
+                          <span className="text-[0.65rem] font-bold text-muted-foreground">{label}</span>
+                          <div className="h-2 rounded-full overflow-hidden bg-muted/30">
+                            <progress className="w-full h-full appearance-none border-none rounded-full bg-primary [&::-webkit-progress-bar]:bg-transparent [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary data-[tone=success]:[&::-webkit-progress-value]:bg-emerald-500 data-[tone=success]:[&::-moz-progress-bar]:bg-emerald-500 data-[tone=warn]:[&::-webkit-progress-value]:bg-amber-500 data-[tone=warn]:[&::-moz-progress-bar]:bg-amber-500 data-[tone=danger]:[&::-webkit-progress-value]:bg-destructive data-[tone=danger]:[&::-moz-progress-bar]:bg-destructive" value={pct} max={100} data-tone={tone} />
                           </div>
-                          <span className={s.meshQualityValue}>{pct.toFixed(1)}%</span>
+                          <span className="font-mono text-[0.65rem] text-muted-foreground text-right">{pct.toFixed(1)}%</span>
                         </div>
                       );
                     })}
                   </>
                 ) : (
-                  <div className={s.meshHintText}>
+                  <div className="text-xs leading-relaxed text-muted-foreground">
                     Quality statistics will appear once the FEM boundary surface is available.
                   </div>
                 )}
               </div>
 
-              <div className={s.meshHintBox}>
-                <div className={s.meshHintTitle}>Interpretation</div>
-                <div className={s.meshHintText}>
+              <div className="p-3 rounded-lg bg-gradient-to-b from-card/30 to-card/10 border border-border/40">
+                <div className="text-[0.65rem] font-bold uppercase tracking-widest text-primary mb-1">Interpretation</div>
+                <div className="text-xs leading-relaxed text-muted-foreground">
                   Good meshes cluster near AR≈1-3. If the poor fraction stays high, lower
                   `hmax` or clean the imported surface before tetrahedralization.
                 </div>
@@ -647,17 +613,17 @@ export default function FemWorkspacePanel(props: FemWorkspacePanelProps) {
         </div>
       </Panel>
 
-      <PanelResizeHandle className={s.meshDockResizeHandle} />
+      <PanelResizeHandle className="h-full w-2 bg-transparent cursor-ew-resize flex items-center justify-center transition-colors relative hover:bg-muted/50 active:bg-muted/50 after:content-[''] after:absolute after:top-1/2 after:left-1/2 after:-translate-x-1/2 after:-translate-y-1/2 after:w-[2px] after:h-9 after:rounded-full after:bg-border hover:after:bg-primary active:after:bg-primary z-50" />
 
       <Panel
         id="workspace-fem-viewport"
         defaultSize={PANEL_SIZES.femViewportDefault}
         minSize={PANEL_SIZES.femViewportMin}
       >
-        <div className={s.viewport}>
-          <ViewportBar {...viewportBarProps} />
+        <div className="relative flex flex-col h-full min-h-0 min-w-0 overflow-hidden bg-background flex-1">
+          <ViewportBar />
           {previewNotices}
-          <ViewportCanvasArea {...viewportCanvasProps} />
+          <ViewportCanvasArea />
         </div>
       </Panel>
     </>

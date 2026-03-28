@@ -1,11 +1,12 @@
 "use client";
 
 import { ReactNode } from "react";
-import s from "./Panel.module.css";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./card";
+import { cn } from "@/lib/utils";
 
-type Tone = "default" | "accent" | "info" | "warn" | "danger" | "success";
+export type Tone = "default" | "accent" | "info" | "warn" | "danger" | "success";
 
-interface PanelProps {
+export interface PanelProps {
   title: string;
   subtitle?: string;
   eyebrow?: string;
@@ -13,6 +14,7 @@ interface PanelProps {
   tone?: Tone;
   actions?: ReactNode;
   children: ReactNode;
+  className?: string;
 }
 
 export default function Panel({
@@ -23,20 +25,31 @@ export default function Panel({
   tone = "default",
   actions,
   children,
+  className,
 }: PanelProps) {
   return (
-    <section className={s.uiPanel} data-tone={tone} data-panel={panelId}>
-      <header className={s.header}>
-        <div className={s.heading}>
-          {eyebrow && <p className={s.eyebrow}>{eyebrow}</p>}
-          <div className={s.titles}>
-            <h2>{title}</h2>
-            {subtitle && <p>{subtitle}</p>}
+    <Card 
+      className={cn("bg-card/40 backdrop-blur-md border border-border/50 shadow-sm", className)} 
+      data-tone={tone} 
+      data-panel={panelId}
+    >
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 px-5 pt-5 pb-4">
+        <div className="flex flex-col gap-1.5">
+          {eyebrow && (
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
+              {eyebrow}
+            </span>
+          )}
+          <div className="flex flex-col gap-0.5">
+            <CardTitle className="text-base font-semibold tracking-tight">{title}</CardTitle>
+            {subtitle && <CardDescription className="text-xs">{subtitle}</CardDescription>}
           </div>
         </div>
-        {actions && <div className={s.actions}>{actions}</div>}
-      </header>
-      <div className={s.body}>{children}</div>
-    </section>
+        {actions && <div className="flex items-center gap-2">{actions}</div>}
+      </CardHeader>
+      <CardContent className="px-5 pb-5 pt-0">
+        {children}
+      </CardContent>
+    </Card>
   );
 }

@@ -10,7 +10,6 @@ import {
 import { cn } from "@/lib/utils";
 import ScalarPlot from "../plots/ScalarPlot";
 import ScalarTable from "./ScalarTable";
-import s from "./EngineConsole.module.css";
 
 /* ── Types ─────────────────────────────────────────────────── */
 
@@ -366,22 +365,22 @@ export default function EngineConsole({
       : undefined;
   const statusValueClassName =
     run?.status === "completed"
-      ? s.metricValueSuccess
+      ? "text-emerald-500"
       : workspaceStatus === "running"
-        ? s.metricValueAccent
+        ? "text-primary"
         : workspaceStatus === "materializing_script"
-          ? s.metricValueWarn
+          ? "text-amber-500"
           : run?.status === "failed"
-            ? s.metricValueDanger
+            ? "text-destructive"
             : undefined;
 
   return (
-    <div className={s.console}>
+    <div className="flex flex-col h-full bg-background/50 overflow-hidden isolate">
       {/* ─── Header Bar ──────────────────────────────── */}
-      <div className={s.headerBar}>
-        <span className={s.headerTitle}>Engine Console</span>
-        <span className={s.statusDot} data-status={liveState?.finished || run?.status === "completed" ? "completed" : connection} />
-        <span className={s.statusLabel}>
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-card/30 border-b border-border/40">
+        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground mr-auto">Engine Console</span>
+        <span className={cn("w-2 h-2 rounded-full shrink-0", (liveState?.finished || run?.status === "completed" ? "completed" : connection) === "completed" ? "bg-emerald-500 shadow-[0_0_6px_var(--status-completed)]" : connection === "connected" ? "bg-primary shadow-[0_0_6px_rgba(99,102,241,0.5)]" : connection === "connecting" ? "bg-amber-500 animate-pulse" : "bg-destructive")} />
+        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
           {liveState?.finished || run?.status === "completed"
             ? "Completed"
             : connection === "connected"
@@ -391,102 +390,99 @@ export default function EngineConsole({
             : "Offline"}
         </span>
         {session && (
-          <span className={cn(s.statusLabel, s.statusLabelAuto)}>
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground ml-auto">
             {session.problem_name} · {session.requested_backend.toUpperCase()}
           </span>
         )}
       </div>
 
       {/* ─── Radix Tabs ─────────────────────────────── */}
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ConsoleTab)} className={s.tabsRoot}>
-        <TabsList className={s.tabBar}>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ConsoleTab)} className="flex flex-col min-h-0 flex-1">
+        <TabsList className="flex gap-1 px-2 border-b border-border/40 bg-card/20">
           {TABS.map((tab) => (
-            <TabsTrigger key={tab.value} value={tab.value} className={s.tab}>
+            <TabsTrigger key={tab.value} value={tab.value} className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary pb-2 pt-2.5 px-3 rounded-none bg-transparent shadow-none border-t-0 border-l-0 border-r-0">
               {tab.label}
             </TabsTrigger>
           ))}
         </TabsList>
 
       {/* ─── Tab content ─────────────────────────────── */}
-      <div className={s.tabContent}>
-        <TabsContent value="live" className={s.tabPane}>
+      <div className="min-h-[120px] flex-1 flex flex-col focus-visible:outline-none">
+        <TabsContent value="live" className="min-h-0 flex-1 flex flex-col focus-visible:outline-none data-[state=inactive]:hidden outline-none">
           <>
             {/* Live telemetry grid */}
-            <div className={s.telemetryGrid}>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>Status</span>
-                <span className={cn(s.metricValue, statusValueClassName)}>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2 p-3">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Status</span>
+                <span className={cn("font-mono text-sm font-semibold text-foreground", statusValueClassName)}>
                   {workspaceStatus}
                 </span>
               </div>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>Step</span>
-                <span className={s.metricValue}>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Step</span>
+                <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtStepValue(liveState?.step ?? run?.total_steps ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>Sim Time</span>
-                <span className={s.metricValue}>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Sim Time</span>
+                <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtTimeOrDash(liveState?.time ?? run?.final_time ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>Δt</span>
-                <span className={s.metricValue}>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Δt</span>
+                <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtSIOrDash(liveState?.dt ?? 0, "s", hasSolverTelemetry)}
                 </span>
               </div>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>max dm/dt</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">max dm/dt</span>
                 <span
-                  className={cn(
-                    s.metricValue,
-                    hasSolverTelemetry && (liveState?.max_dm_dt ?? 0) < 1e-5 && s.metricValueSuccess,
-                  )}
+                  className={cn("font-mono text-sm font-semibold text-foreground", hasSolverTelemetry && (liveState?.max_dm_dt ?? 0) < 1e-5 && "text-emerald-500")}
                 >
                   {fmtExpOrDash(liveState?.max_dm_dt ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>max |H_eff|</span>
-                <span className={s.metricValue}>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">max |H_eff|</span>
+                <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtExpOrDash(liveState?.max_h_eff ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>Elapsed</span>
-                <span className={s.metricValue}>{fmtDuration(elapsed)}</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Elapsed</span>
+                <span className="font-mono text-sm font-semibold text-foreground">{fmtDuration(elapsed)}</span>
               </div>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>Throughput</span>
-                <span className={s.metricValue}>{stepsPerSec > 0 ? `${stepsPerSec.toFixed(1)} st/s` : "—"}</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Throughput</span>
+                <span className="font-mono text-sm font-semibold text-foreground">{stepsPerSec > 0 ? `${stepsPerSec.toFixed(1)} st/s` : "—"}</span>
               </div>
             </div>
             {!hasSolverTelemetry && (
-              <div className={s.consoleNotice}>
+              <div className="px-3 pb-3 text-sm text-muted-foreground font-medium">
                 {solverNotStartedMessage}
               </div>
             )}
 
             {/* Convergence bars */}
-            <div className={s.consoleSection}>
-              <div className={s.convergenceRow}>
-                <span className={s.convergenceLabel}>Convergence</span>
+            <div className="px-3 py-2 flex flex-col gap-2">
+              <div className="grid grid-cols-[100px_1fr_70px] gap-2 items-center py-1">
+                <span className="text-xs font-semibold text-muted-foreground">Convergence</span>
                 <progress
-                  className={s.inlineProgress}
+                  className="w-full h-1.5 rounded-full overflow-hidden bg-muted appearance-none fill-primary [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary data-[tone=success]:[&::-webkit-progress-value]:bg-emerald-500 data-[tone=warn]:[&::-webkit-progress-value]:bg-amber-500 data-[tone=danger]:[&::-webkit-progress-value]:bg-destructive"
                   value={convergenceDisplay}
                   max={100}
                   data-tone={convergenceTone}
                 />
-                <span className={s.convergenceValue}>
+                <span className="font-mono text-[0.7rem] font-semibold text-muted-foreground text-right">
                   {convergenceDisplay.toFixed(0)}%
                 </span>
               </div>
-              <div className={s.convergenceRow}>
-                <span className={s.convergenceLabel}>Memory est.</span>
-                <progress className={s.inlineProgress} value={memoryEstimate} max={100} />
-                <span className={s.convergenceValue}>
+              <div className="grid grid-cols-[100px_1fr_70px] gap-2 items-center py-1">
+                <span className="text-xs font-semibold text-muted-foreground">Memory est.</span>
+                <progress className="w-full h-1.5 rounded-full overflow-hidden bg-muted appearance-none fill-primary [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary data-[tone=success]:[&::-webkit-progress-value]:bg-emerald-500 data-[tone=warn]:[&::-webkit-progress-value]:bg-amber-500 data-[tone=danger]:[&::-webkit-progress-value]:bg-destructive" value={memoryEstimate} max={100} />
+                <span className="font-mono text-[0.7rem] font-semibold text-muted-foreground text-right">
                   {artifacts.length} files
                 </span>
               </div>
@@ -494,9 +490,9 @@ export default function EngineConsole({
           </>
         </TabsContent>
 
-        <TabsContent value="log" className={s.tabPane}>
+        <TabsContent value="log" className="min-h-0 flex-1 flex flex-col focus-visible:outline-none data-[state=inactive]:hidden outline-none">
           <div
-            className={s.logContainer}
+            className="max-h-[360px] overflow-y-auto py-2 pr-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/20"
             ref={logContainerRef}
             onScroll={(e) => {
               const el = e.currentTarget;
@@ -505,19 +501,19 @@ export default function EngineConsole({
             }}
           >
             {logEntries.length === 0 ? (
-              <div className={s.consoleNoticeCentered}>
+              <div className="p-4 text-sm text-muted-foreground text-center font-medium">
                 Waiting for events…
               </div>
             ) : (
               logEntries.map((entry, i) => (
-                <div key={i} className={s.logEntry}>
-                  <span className={s.logTime}>
+                <div key={i} className="grid grid-cols-[52px_16px_1fr] gap-1.5 px-3 py-1 items-baseline font-mono text-xs hover:bg-muted/30 transition-colors">
+                  <span className="text-[0.65rem] text-muted-foreground/70 text-right pr-1">
                     {session
                       ? `+${((entry.time - session.started_at_unix_ms) / 1000).toFixed(1)}s`
                       : "—"}
                   </span>
-                  <span className={s.logIcon}>{entry.icon}</span>
-                  <span className={s.logMessage} data-severity={entry.severity}>
+                  <span className="text-center flex justify-center items-center text-muted-foreground/70">{entry.icon}</span>
+                  <span className="text-foreground break-all data-[severity=info]:text-muted-foreground data-[severity=success]:text-emerald-500 data-[severity=warn]:text-amber-500 data-[severity=error]:text-destructive data-[severity=system]:text-primary" data-severity={entry.severity}>
                     {entry.message}
                   </span>
                 </div>
@@ -526,29 +522,29 @@ export default function EngineConsole({
           </div>
         </TabsContent>
 
-        <TabsContent value="energy" className={s.tabPane}>
-          <div className={s.energyGrid}>
-            <div className={s.energyCard} data-tone="exchange">
-              <span className={s.metricLabel}>E_exchange</span>
-              <span className={s.metricValue}>
+        <TabsContent value="energy" className="min-h-0 flex-1 flex flex-col focus-visible:outline-none data-[state=inactive]:hidden outline-none">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 p-3">
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-sky-500">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_exchange</span>
+              <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_ex ?? run?.final_e_ex ?? 0, "J")}
               </span>
             </div>
-            <div className={s.energyCard} data-tone="demag">
-              <span className={s.metricLabel}>E_demag</span>
-              <span className={s.metricValue}>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-amber-500">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_demag</span>
+              <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_demag ?? run?.final_e_demag ?? 0, "J")}
               </span>
             </div>
-            <div className={s.energyCard} data-tone="external">
-              <span className={s.metricLabel}>E_ext</span>
-              <span className={s.metricValue}>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-emerald-500">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_ext</span>
+              <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_ext ?? run?.final_e_ext ?? 0, "J")}
               </span>
             </div>
-            <div className={s.energyCard} data-tone="total">
-              <span className={s.metricLabel}>E_total</span>
-              <span className={s.metricValue}>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-indigo-500">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_total</span>
+              <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_total ?? run?.final_e_total ?? 0, "J")}
               </span>
             </div>
@@ -561,15 +557,15 @@ export default function EngineConsole({
               const dStep = last.step - prev.step;
               return (
                 <>
-                  <div className={s.energyCard} data-tone="neutral">
-                    <span className={s.metricLabel}>ΔE_total / step</span>
-                    <span className={cn(s.metricValue, dE < 0 ? s.metricValueSuccess : s.metricValueDanger)}>
+                  <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-muted-foreground">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">ΔE_total / step</span>
+                    <span className={cn("font-mono text-sm font-semibold text-foreground", dE < 0 ? "text-emerald-500" : "text-destructive")}>
                       {dStep > 0 ? fmtExp(dE / dStep) : "—"}
                     </span>
                   </div>
-                  <div className={s.energyCard} data-tone="neutral">
-                    <span className={s.metricLabel}>History points</span>
-                    <span className={s.metricValue}>{scalarRows.length}</span>
+                  <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-muted-foreground">
+                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">History points</span>
+                    <span className="font-mono text-sm font-semibold text-foreground">{scalarRows.length}</span>
                   </div>
                 </>
               );
@@ -577,13 +573,13 @@ export default function EngineConsole({
           </div>
         </TabsContent>
 
-        <TabsContent value="charts" className={s.tabPane}>
-          <div className={s.consoleColumnFill}>
-            <div className={s.chartPresetBar}>
+        <TabsContent value="charts" className="min-h-0 flex-1 flex flex-col focus-visible:outline-none data-[state=inactive]:hidden outline-none">
+          <div className="flex flex-col h-full bg-card/10">
+            <div className="flex gap-1 px-3 py-2 shrink-0 border-b border-border/40 bg-card/20 overflow-x-auto scrollbar-none">
               {(Object.keys(CHART_PRESETS) as ChartPreset[]).map((key) => (
                 <button
                   key={key}
-                  className={s.chartPresetBtn}
+                  className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-2.5 py-1.5 rounded-md border border-border/40 bg-muted/30 hover:bg-muted/60 transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary data-[active=true]:border-primary/50 whitespace-nowrap"
                   data-active={chartPreset === key}
                   onClick={() => setChartPreset(key)}
                 >
@@ -592,11 +588,11 @@ export default function EngineConsole({
               ))}
             </div>
             {scalarRows.length < 2 ? (
-              <div className={s.consoleNoticeCenteredLg}>
+              <div className="p-6 text-sm text-muted-foreground text-center flex-1 flex items-center justify-center font-medium">
                 Waiting for at least 2 data points to render chart…
               </div>
             ) : (
-              <div className={s.consoleFill}>
+              <div className="flex-1 min-h-0 relative p-2">
                 <ScalarPlot
                   rows={scalarRows}
                   xColumn="time"
@@ -607,12 +603,12 @@ export default function EngineConsole({
           </div>
         </TabsContent>
 
-        <TabsContent value="table" className={s.tabPane}>
+        <TabsContent value="table" className="min-h-0 flex-1 flex flex-col focus-visible:outline-none data-[state=inactive]:hidden outline-none">
           <ScalarTable rows={scalarRows} />
         </TabsContent>
 
-        <TabsContent value="progress" className={s.tabPane}>
-          <div className={s.consoleSectionStack}>
+        <TabsContent value="progress" className="min-h-0 flex-1 flex flex-col focus-visible:outline-none data-[state=inactive]:hidden outline-none">
+          <div className="p-3 flex flex-col gap-3">
             {/* Phase timeline */}
             {[
               { label: "Bootstrap", done: !!session, active: workspaceStatus === "bootstrapping" },
@@ -620,18 +616,14 @@ export default function EngineConsole({
               { label: "Solving", done: workspaceStatus === "completed" || (hasSolverTelemetry && (liveState?.max_dm_dt ?? 1) < 1e-5), active: workspaceStatus === "running" || workspaceStatus === "awaiting_command" },
               { label: "Converged", done: hasSolverTelemetry && (liveState?.max_dm_dt ?? 1) < 1e-5, active: false },
             ].map((phase) => (
-              <div key={phase.label} className={s.convergenceRow}>
+              <div key={phase.label} className="grid grid-cols-[100px_1fr_70px] gap-2 items-center py-1">
                 <span
-                  className={cn(
-                    s.convergenceLabel,
-                    phase.done && s.phaseLabelDone,
-                    !phase.done && phase.active && s.phaseLabelActive,
-                  )}
+                  className={cn("text-xs font-semibold text-muted-foreground", phase.done && "text-emerald-500", !phase.done && phase.active && "text-primary")}
                 >
                   {phase.done ? "✓" : phase.active ? "●" : "○"} {phase.label}
                 </span>
                 <progress
-                  className={s.inlineProgress}
+                  className="w-full h-1.5 rounded-full overflow-hidden bg-muted appearance-none fill-primary [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary data-[tone=success]:[&::-webkit-progress-value]:bg-emerald-500 data-[tone=warn]:[&::-webkit-progress-value]:bg-amber-500 data-[tone=danger]:[&::-webkit-progress-value]:bg-destructive"
                   value={phase.done ? 100 : phase.active ? 50 : 0}
                   max={100}
                   data-tone={phase.done ? "success" : undefined}
@@ -640,38 +632,35 @@ export default function EngineConsole({
             ))}
 
             {/* Convergence metric */}
-            <div className={cn(s.convergenceRow, s.convergenceRowTopGap)}>
-              <span className={s.convergenceLabel}>Convergence</span>
+            <div className="grid grid-cols-[100px_1fr_70px] gap-2 items-center py-1 mt-2">
+              <span className="text-xs font-semibold text-muted-foreground">Convergence</span>
               <progress
-                className={s.inlineProgress}
+                className="w-full h-1.5 rounded-full overflow-hidden bg-muted appearance-none fill-primary [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary data-[tone=success]:[&::-webkit-progress-value]:bg-emerald-500 data-[tone=warn]:[&::-webkit-progress-value]:bg-amber-500 data-[tone=danger]:[&::-webkit-progress-value]:bg-destructive"
                 value={convergenceDisplay}
                 max={100}
                 data-tone={convergenceTone}
               />
-              <span className={s.convergenceValue}>{convergenceDisplay.toFixed(0)}%</span>
+              <span className="font-mono text-[0.7rem] font-semibold text-muted-foreground text-right">{convergenceDisplay.toFixed(0)}%</span>
             </div>
 
             {/* Key metrics */}
-            <div className={cn(s.telemetryGrid, s.telemetryGridTopGap)}>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>Steps</span>
-                <span className={s.metricValue}>{(liveState?.step ?? run?.total_steps ?? 0).toLocaleString()}</span>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2 p-0 mt-2">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Steps</span>
+                <span className="font-mono text-sm font-semibold text-foreground">{(liveState?.step ?? run?.total_steps ?? 0).toLocaleString()}</span>
               </div>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>Sim Time</span>
-                <span className={s.metricValue}>{fmtTimeOrDash(liveState?.time ?? 0, hasSolverTelemetry)}</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Sim Time</span>
+                <span className="font-mono text-sm font-semibold text-foreground">{fmtTimeOrDash(liveState?.time ?? 0, hasSolverTelemetry)}</span>
               </div>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>Elapsed</span>
-                <span className={s.metricValue}>{fmtDuration(elapsed)}</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Elapsed</span>
+                <span className="font-mono text-sm font-semibold text-foreground">{fmtDuration(elapsed)}</span>
               </div>
-              <div className={s.metricCell}>
-                <span className={s.metricLabel}>max dm/dt</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">max dm/dt</span>
                 <span
-                  className={cn(
-                    s.metricValue,
-                    hasSolverTelemetry && (liveState?.max_dm_dt ?? 1) < 1e-5 && s.metricValueSuccess,
-                  )}
+                  className={cn("font-mono text-sm font-semibold text-foreground", hasSolverTelemetry && (liveState?.max_dm_dt ?? 1) < 1e-5 && "text-emerald-500")}
                 >
                   {fmtExpOrDash(liveState?.max_dm_dt ?? 0, hasSolverTelemetry)}
                 </span>
@@ -680,51 +669,51 @@ export default function EngineConsole({
           </div>
         </TabsContent>
 
-        <TabsContent value="perf" className={s.tabPane}>
-          <div className={s.perfGrid}>
-            <div className={s.metricCell}>
-              <span className={s.metricLabel}>Backend</span>
-              <span className={s.metricValue}>{session?.requested_backend?.toUpperCase() ?? "—"}</span>
+        <TabsContent value="perf" className="min-h-0 flex-1 flex flex-col focus-visible:outline-none data-[state=inactive]:hidden outline-none">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 p-3">
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Backend</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{session?.requested_backend?.toUpperCase() ?? "—"}</span>
             </div>
-            <div className={s.metricCell}>
-              <span className={s.metricLabel}>Mode</span>
-              <span className={s.metricValue}>{session?.execution_mode ?? "—"}</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Mode</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{session?.execution_mode ?? "—"}</span>
             </div>
-            <div className={s.metricCell}>
-              <span className={s.metricLabel}>Precision</span>
-              <span className={s.metricValue}>{session?.precision ?? "—"}</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Precision</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{session?.precision ?? "—"}</span>
             </div>
-            <div className={s.metricCell}>
-              <span className={s.metricLabel}>Total Steps</span>
-              <span className={s.metricValue}>{(liveState?.step ?? run?.total_steps ?? 0).toLocaleString()}</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Total Steps</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{(liveState?.step ?? run?.total_steps ?? 0).toLocaleString()}</span>
             </div>
-            <div className={s.metricCell}>
-              <span className={s.metricLabel}>Throughput</span>
-              <span className={s.metricValue}>{stepsPerSec > 0 ? `${stepsPerSec.toFixed(1)} st/s` : "—"}</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Throughput</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{stepsPerSec > 0 ? `${stepsPerSec.toFixed(1)} st/s` : "—"}</span>
             </div>
-            <div className={s.metricCell}>
-              <span className={s.metricLabel}>Wall/step</span>
-              <span className={s.metricValue}>{wallTimePerStep > 0 ? `${wallTimePerStep.toFixed(2)} ms` : "—"}</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Wall/step</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{wallTimePerStep > 0 ? `${wallTimePerStep.toFixed(2)} ms` : "—"}</span>
             </div>
-            <div className={s.metricCell}>
-              <span className={s.metricLabel}>Elapsed</span>
-              <span className={s.metricValue}>{fmtDuration(elapsed)}</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Elapsed</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{fmtDuration(elapsed)}</span>
             </div>
-            <div className={s.metricCell}>
-              <span className={s.metricLabel}>Artifacts</span>
-              <span className={s.metricValue}>{artifacts.length}</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Artifacts</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{artifacts.length}</span>
             </div>
 
             {/* Throughput bar */}
-            <div className={cn(s.metricCell, s.metricCellFull)}>
-              <span className={s.metricLabel}>Throughput (steps/sec)</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm col-span-full">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Throughput (steps/sec)</span>
               <progress
-                className={s.inlineProgress}
+                className="w-full h-1.5 rounded-full overflow-hidden bg-muted appearance-none fill-primary [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary data-[tone=success]:[&::-webkit-progress-value]:bg-emerald-500 data-[tone=warn]:[&::-webkit-progress-value]:bg-amber-500 data-[tone=danger]:[&::-webkit-progress-value]:bg-destructive"
                 value={throughputDisplay}
                 max={100}
                 data-tone={throughputTone}
               />
-              <span className={cn(s.metricValue, s.metricValueCompact)}>
+              <span className="font-mono text-[0.7rem] font-semibold text-foreground mt-1">
                 {stepsPerSec > 0 ? `${stepsPerSec.toFixed(2)} steps/sec` : "Waiting for data…"}
               </span>
             </div>

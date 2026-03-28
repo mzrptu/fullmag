@@ -10,7 +10,6 @@ import {
   Terminal, LayoutGrid, BarChart3,
   BookOpen, Keyboard, Info,
 } from "lucide-react";
-import s from "./shell.module.css";
 
 /* ── Menu definitions ───────────────────────────── */
 
@@ -113,31 +112,31 @@ export default function MenuBar(props: MenuBarProps) {
   const menus = buildMenus(props);
 
   return (
-    <div className={s.menuBar}>
+    <div className="flex items-center gap-1 px-2 py-1 border-b border-border/40 bg-card/30 z-[60]">
       {menus.map((menu) => (
         <DropdownMenu.Root key={menu.label}>
           <DropdownMenu.Trigger asChild>
-            <button className={s.menuTrigger}>
+            <button className="px-2 py-0.5 text-xs text-muted-foreground outline-none cursor-default rounded hover:bg-muted/50 hover:text-foreground data-[state=open]:bg-muted/50 data-[state=open]:text-foreground">
               {menu.label}
             </button>
           </DropdownMenu.Trigger>
 
           <DropdownMenu.Portal>
-            <DropdownMenu.Content className={s.menuContent} sideOffset={2} align="start">
+            <DropdownMenu.Content className="min-w-[220px] rounded-md border border-border/50 bg-popover/95 backdrop-blur-md p-1 shadow-md animate-in fade-in-80 slide-in-from-top-1 z-[100]" sideOffset={2} align="start">
               {menu.items.map((item, i) =>
                 item.separator ? (
-                  <DropdownMenu.Separator key={i} className={s.menuSeparator} />
+                  <DropdownMenu.Separator key={i} className="my-1 h-px bg-border/50" />
                 ) : (
                   <DropdownMenu.Item
                     key={item.label}
-                    className={s.menuItem}
+                    className="relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-muted data-[highlighted]:text-foreground"
                     disabled={item.disabled}
                     onSelect={() => item.action?.()}
                   >
-                    <span className={s.menuItemIcon}>{item.icon}</span>
-                    <span className={s.menuItemLabel}>{item.label}</span>
+                    <span className="mr-2 h-3.5 w-3.5 flex items-center justify-center text-muted-foreground opacity-70">{item.icon}</span>
+                    <span className="flex-1">{item.label}</span>
                     {item.shortcut && (
-                      <span className={s.menuItemShortcut}>{item.shortcut}</span>
+                      <span className="ml-auto text-[0.65rem] tracking-widest text-muted-foreground opacity-60">{item.shortcut}</span>
                     )}
                   </DropdownMenu.Item>
                 ),

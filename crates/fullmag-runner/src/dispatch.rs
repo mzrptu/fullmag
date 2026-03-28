@@ -13,6 +13,7 @@
 use fullmag_ir::{FdmMultilayerPlanIR, FdmPlanIR, FemPlanIR, OutputIR, ProblemIR};
 use serde_json::Value;
 
+use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
 use crate::cpu_reference;
 use crate::fem_reference;
 #[cfg(feature = "cuda")]
@@ -260,11 +261,25 @@ pub(crate) fn execute_fdm(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
+    execute_fdm_streaming(engine, plan, until_seconds, outputs, None)
+}
+
+pub(crate) fn execute_fdm_streaming(
+    engine: FdmEngine,
+    plan: &FdmPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    artifact_writer: Option<ArtifactPipelineSender>,
+) -> Result<ExecutedRun, RunError> {
     match engine {
         FdmEngine::CpuReference => {
-            cpu_reference::execute_reference_fdm(plan, until_seconds, outputs)
+            if let Some(writer) = artifact_writer {
+                cpu_reference::execute_reference_fdm_streaming(plan, until_seconds, outputs, writer)
+            } else {
+                cpu_reference::execute_reference_fdm(plan, until_seconds, outputs)
+            }
         }
-        FdmEngine::CudaFdm => execute_cuda_fdm(plan, until_seconds, outputs),
+        FdmEngine::CudaFdm => execute_cuda_fdm(plan, until_seconds, outputs, artifact_writer),
     }
 }
 
@@ -274,14 +289,38 @@ pub(crate) fn execute_fdm_multilayer(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
+    execute_fdm_multilayer_streaming(engine, plan, until_seconds, outputs, None)
+}
+
+pub(crate) fn execute_fdm_multilayer_streaming(
+    engine: FdmEngine,
+    plan: &FdmMultilayerPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    artifact_writer: Option<ArtifactPipelineSender>,
+) -> Result<ExecutedRun, RunError> {
     match engine {
         FdmEngine::CpuReference => {
-            multilayer_reference::execute_reference_fdm_multilayer(plan, until_seconds, outputs)
+            if let Some(writer) = artifact_writer {
+                multilayer_reference::execute_reference_fdm_multilayer_streaming(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    writer,
+                )
+            } else {
+                multilayer_reference::execute_reference_fdm_multilayer(plan, until_seconds, outputs)
+            }
         }
         FdmEngine::CudaFdm => {
             #[cfg(feature = "cuda")]
             {
-                return multilayer_cuda::execute_cuda_fdm_multilayer(plan, until_seconds, outputs);
+                return multilayer_cuda::execute_cuda_fdm_multilayer(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    artifact_writer,
+                );
             }
             #[cfg(not(feature = "cuda"))]
             {
@@ -302,11 +341,31 @@ pub(crate) fn execute_fem(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
+    execute_fem_streaming(engine, plan, until_seconds, outputs, None)
+}
+
+pub(crate) fn execute_fem_streaming(
+    engine: FemEngine,
+    plan: &FemPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    artifact_writer: Option<ArtifactPipelineSender>,
+) -> Result<ExecutedRun, RunError> {
     match engine {
         FemEngine::CpuReference => {
-            fem_reference::execute_reference_fem(plan, until_seconds, outputs)
+            if let Some(writer) = artifact_writer {
+                fem_reference::execute_reference_fem_streaming(plan, until_seconds, outputs, writer)
+            } else {
+                fem_reference::execute_reference_fem(plan, until_seconds, outputs)
+            }
         }
-        FemEngine::NativeGpu => execute_native_fem_impl(plan, until_seconds, outputs, None),
+        FemEngine::NativeGpu => execute_native_fem_impl(
+            plan,
+            until_seconds,
+            outputs,
+            None,
+            artifact_writer,
+        ),
     }
 }
 
@@ -319,14 +378,47 @@ pub(crate) fn execute_fem_with_callback(
     field_every_n: u64,
     on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
+    execute_fem_with_callback_streaming(
+        engine,
+        plan,
+        until_seconds,
+        outputs,
+        field_every_n,
+        None,
+        on_step,
+    )
+}
+
+pub(crate) fn execute_fem_with_callback_streaming(
+    engine: FemEngine,
+    plan: &FemPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    field_every_n: u64,
+    artifact_writer: Option<ArtifactPipelineSender>,
+    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
+) -> Result<ExecutedRun, RunError> {
     match engine {
-        FemEngine::CpuReference => fem_reference::execute_reference_fem_with_callback(
-            plan,
-            until_seconds,
-            outputs,
-            field_every_n,
-            on_step,
-        ),
+        FemEngine::CpuReference => {
+            if let Some(writer) = artifact_writer {
+                fem_reference::execute_reference_fem_with_callback_streaming(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    field_every_n,
+                    writer,
+                    on_step,
+                )
+            } else {
+                fem_reference::execute_reference_fem_with_callback(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    field_every_n,
+                    on_step,
+                )
+            }
+        }
         FemEngine::NativeGpu => execute_native_fem_impl(
             plan,
             until_seconds,
@@ -337,6 +429,7 @@ pub(crate) fn execute_fem_with_callback(
                 preview_request: None,
                 on_step,
             }),
+            artifact_writer,
         ),
     }
 }
@@ -350,15 +443,51 @@ pub(crate) fn execute_fem_with_live_preview(
     preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
     on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
+    execute_fem_with_live_preview_streaming(
+        engine,
+        plan,
+        until_seconds,
+        outputs,
+        field_every_n,
+        preview_request,
+        None,
+        on_step,
+    )
+}
+
+pub(crate) fn execute_fem_with_live_preview_streaming(
+    engine: FemEngine,
+    plan: &FemPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    field_every_n: u64,
+    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    artifact_writer: Option<ArtifactPipelineSender>,
+    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
+) -> Result<ExecutedRun, RunError> {
     match engine {
-        FemEngine::CpuReference => fem_reference::execute_reference_fem_with_live_preview(
-            plan,
-            until_seconds,
-            outputs,
-            field_every_n,
-            preview_request,
-            on_step,
-        ),
+        FemEngine::CpuReference => {
+            if let Some(writer) = artifact_writer {
+                fem_reference::execute_reference_fem_with_live_preview_streaming(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    field_every_n,
+                    preview_request,
+                    writer,
+                    on_step,
+                )
+            } else {
+                fem_reference::execute_reference_fem_with_live_preview(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    field_every_n,
+                    preview_request,
+                    on_step,
+                )
+            }
+        }
         FemEngine::NativeGpu => execute_native_fem_impl(
             plan,
             until_seconds,
@@ -369,6 +498,7 @@ pub(crate) fn execute_fem_with_live_preview(
                 preview_request: Some(preview_request),
                 on_step,
             }),
+            artifact_writer,
         ),
     }
 }
@@ -383,15 +513,51 @@ pub(crate) fn execute_fdm_with_callback(
     field_every_n: u64,
     on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
+    execute_fdm_with_callback_streaming(
+        engine,
+        plan,
+        until_seconds,
+        outputs,
+        grid,
+        field_every_n,
+        None,
+        on_step,
+    )
+}
+
+pub(crate) fn execute_fdm_with_callback_streaming(
+    engine: FdmEngine,
+    plan: &FdmPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    grid: [u32; 3],
+    field_every_n: u64,
+    artifact_writer: Option<ArtifactPipelineSender>,
+    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
+) -> Result<ExecutedRun, RunError> {
     match engine {
-        FdmEngine::CpuReference => cpu_reference::execute_reference_fdm_with_callback(
-            plan,
-            until_seconds,
-            outputs,
-            grid,
-            field_every_n,
-            on_step,
-        ),
+        FdmEngine::CpuReference => {
+            if let Some(writer) = artifact_writer {
+                cpu_reference::execute_reference_fdm_with_callback_streaming(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    grid,
+                    field_every_n,
+                    writer,
+                    on_step,
+                )
+            } else {
+                cpu_reference::execute_reference_fdm_with_callback(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    grid,
+                    field_every_n,
+                    on_step,
+                )
+            }
+        }
         FdmEngine::CudaFdm => execute_cuda_fdm_impl(
             plan,
             until_seconds,
@@ -402,6 +568,7 @@ pub(crate) fn execute_fdm_with_callback(
                 preview_request: None,
                 on_step,
             }),
+            artifact_writer,
         ),
     }
 }
@@ -416,16 +583,55 @@ pub(crate) fn execute_fdm_with_live_preview(
     preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
     on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
+    execute_fdm_with_live_preview_streaming(
+        engine,
+        plan,
+        until_seconds,
+        outputs,
+        grid,
+        field_every_n,
+        preview_request,
+        None,
+        on_step,
+    )
+}
+
+pub(crate) fn execute_fdm_with_live_preview_streaming(
+    engine: FdmEngine,
+    plan: &FdmPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    grid: [u32; 3],
+    field_every_n: u64,
+    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    artifact_writer: Option<ArtifactPipelineSender>,
+    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
+) -> Result<ExecutedRun, RunError> {
     match engine {
-        FdmEngine::CpuReference => cpu_reference::execute_reference_fdm_with_live_preview(
-            plan,
-            until_seconds,
-            outputs,
-            grid,
-            field_every_n,
-            preview_request,
-            on_step,
-        ),
+        FdmEngine::CpuReference => {
+            if let Some(writer) = artifact_writer {
+                cpu_reference::execute_reference_fdm_with_live_preview_streaming(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    grid,
+                    field_every_n,
+                    preview_request,
+                    writer,
+                    on_step,
+                )
+            } else {
+                cpu_reference::execute_reference_fdm_with_live_preview(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    grid,
+                    field_every_n,
+                    preview_request,
+                    on_step,
+                )
+            }
+        }
         FdmEngine::CudaFdm => execute_cuda_fdm_impl(
             plan,
             until_seconds,
@@ -436,6 +642,7 @@ pub(crate) fn execute_fdm_with_live_preview(
                 preview_request: Some(preview_request),
                 on_step,
             }),
+            artifact_writer,
         ),
     }
 }
@@ -447,14 +654,42 @@ pub(crate) fn execute_fdm_multilayer_with_callback(
     outputs: &[OutputIR],
     on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
+    execute_fdm_multilayer_with_callback_streaming(
+        engine,
+        plan,
+        until_seconds,
+        outputs,
+        None,
+        on_step,
+    )
+}
+
+pub(crate) fn execute_fdm_multilayer_with_callback_streaming(
+    engine: FdmEngine,
+    plan: &FdmMultilayerPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    artifact_writer: Option<ArtifactPipelineSender>,
+    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
+) -> Result<ExecutedRun, RunError> {
     match engine {
         FdmEngine::CpuReference => {
-            multilayer_reference::execute_reference_fdm_multilayer_with_callback(
-                plan,
-                until_seconds,
-                outputs,
-                on_step,
-            )
+            if let Some(writer) = artifact_writer {
+                multilayer_reference::execute_reference_fdm_multilayer_with_callback_streaming(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    writer,
+                    on_step,
+                )
+            } else {
+                multilayer_reference::execute_reference_fdm_multilayer_with_callback(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    on_step,
+                )
+            }
         }
         FdmEngine::CudaFdm => {
             #[cfg(feature = "cuda")]
@@ -463,6 +698,7 @@ pub(crate) fn execute_fdm_multilayer_with_callback(
                     plan,
                     until_seconds,
                     outputs,
+                    artifact_writer,
                     on_step,
                 );
             }
@@ -483,8 +719,9 @@ fn execute_cuda_fdm(
     plan: &FdmPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
+    artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
-    execute_cuda_fdm_impl(plan, until_seconds, outputs, None)
+    execute_cuda_fdm_impl(plan, until_seconds, outputs, None, artifact_writer)
 }
 
 #[cfg(feature = "cuda")]
@@ -493,6 +730,7 @@ fn execute_cuda_fdm_impl(
     until_seconds: f64,
     outputs: &[OutputIR],
     mut live: Option<LiveStepConsumer<'_>>,
+    artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     if until_seconds <= 0.0 {
         return Err(RunError {
@@ -516,7 +754,32 @@ fn execute_cuda_fdm_impl(
         .unwrap_or(1e-13);
 
     let mut steps = Vec::new();
-    let mut field_snapshots = Vec::new();
+    let provenance = ExecutionProvenance {
+        execution_engine: "cuda_fdm".to_string(),
+        precision: match plan.precision {
+            fullmag_ir::ExecutionPrecision::Single => "single".to_string(),
+            fullmag_ir::ExecutionPrecision::Double => "double".to_string(),
+        },
+        demag_operator_kind: if plan.enable_demag {
+            Some("tensor_fft_newell".to_string())
+        } else {
+            None
+        },
+        fft_backend: if plan.enable_demag {
+            Some("cuFFT".to_string())
+        } else {
+            None
+        },
+        device_name: Some(device_info.name.clone()),
+        compute_capability: Some(device_info.compute_capability.clone()),
+        cuda_driver_version: Some(device_info.driver_version),
+        cuda_runtime_version: Some(device_info.runtime_version),
+    };
+    let mut artifacts = if let Some(writer) = artifact_writer {
+        ArtifactRecorder::streaming(provenance.clone(), writer)
+    } else {
+        ArtifactRecorder::in_memory(provenance.clone())
+    };
     let mut scalar_schedules = collect_scalar_schedules(outputs)?;
     let mut field_schedules = collect_field_schedules(outputs)?;
     let default_scalar_trace = scalar_schedules.is_empty();
@@ -524,7 +787,7 @@ fn execute_cuda_fdm_impl(
         &backend,
         cell_count,
         &mut field_schedules,
-        &mut field_snapshots,
+        &mut artifacts,
     )?;
 
     let mut latest_stats: Option<StepStats> = None;
@@ -607,7 +870,7 @@ fn execute_cuda_fdm_impl(
             &mut scalar_schedules,
             &mut field_schedules,
             &mut steps,
-            &mut field_snapshots,
+            &mut artifacts,
         )?;
         let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
             stats.step >= control.max_steps
@@ -634,10 +897,11 @@ fn execute_cuda_fdm_impl(
         &scalar_schedules,
         &field_schedules,
         &mut steps,
-        &mut field_snapshots,
+        &mut artifacts,
     )?;
 
     let final_magnetization = backend.copy_m(cell_count)?;
+    let (field_snapshots, field_snapshot_count, provenance) = artifacts.finish();
 
     Ok(ExecutedRun {
         result: RunResult {
@@ -651,27 +915,8 @@ fn execute_cuda_fdm_impl(
         },
         initial_magnetization,
         field_snapshots,
-        provenance: ExecutionProvenance {
-            execution_engine: "cuda_fdm".to_string(),
-            precision: match plan.precision {
-                fullmag_ir::ExecutionPrecision::Single => "single".to_string(),
-                fullmag_ir::ExecutionPrecision::Double => "double".to_string(),
-            },
-            demag_operator_kind: if plan.enable_demag {
-                Some("tensor_fft_newell".to_string())
-            } else {
-                None
-            },
-            fft_backend: if plan.enable_demag {
-                Some("cuFFT".to_string())
-            } else {
-                None
-            },
-            device_name: Some(device_info.name),
-            compute_capability: Some(device_info.compute_capability),
-            cuda_driver_version: Some(device_info.driver_version),
-            cuda_runtime_version: Some(device_info.runtime_version),
-        },
+        field_snapshot_count,
+        provenance,
     })
 }
 
@@ -680,8 +925,9 @@ fn execute_native_fem(
     plan: &FemPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
+    artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
-    execute_native_fem_impl(plan, until_seconds, outputs, None)
+    execute_native_fem_impl(plan, until_seconds, outputs, None, artifact_writer)
 }
 
 #[cfg(feature = "fem-gpu")]
@@ -690,6 +936,7 @@ fn execute_native_fem_impl(
     until_seconds: f64,
     outputs: &[OutputIR],
     mut live: Option<LiveStepConsumer<'_>>,
+    artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     if until_seconds <= 0.0 {
         return Err(RunError {
@@ -711,7 +958,32 @@ fn execute_native_fem_impl(
         .unwrap_or(1e-13);
 
     let mut steps = Vec::new();
-    let mut field_snapshots = Vec::new();
+    let provenance = ExecutionProvenance {
+        execution_engine: "native_fem_gpu".to_string(),
+        precision: match plan.precision {
+            fullmag_ir::ExecutionPrecision::Single => "single".to_string(),
+            fullmag_ir::ExecutionPrecision::Double => "double".to_string(),
+        },
+        demag_operator_kind: if plan.enable_demag {
+            Some("fem_transfer_grid_fdm_demag".to_string())
+        } else {
+            None
+        },
+        fft_backend: if plan.enable_demag {
+            Some("cuFFT".to_string())
+        } else {
+            None
+        },
+        device_name: Some(device_info.name.clone()),
+        compute_capability: Some(device_info.compute_capability.clone()),
+        cuda_driver_version: Some(device_info.driver_version),
+        cuda_runtime_version: Some(device_info.runtime_version),
+    };
+    let mut artifacts = if let Some(writer) = artifact_writer {
+        ArtifactRecorder::streaming(provenance.clone(), writer)
+    } else {
+        ArtifactRecorder::in_memory(provenance.clone())
+    };
     let scalar_schedules = collect_scalar_schedules(outputs)?;
     let mut field_schedules = collect_field_schedules(outputs)?;
     let default_scalar_trace = scalar_schedules.is_empty();
@@ -772,8 +1044,10 @@ fn execute_native_fem_impl(
             break;
         }
         if default_scalar_trace || scalar_schedules.is_empty() {
+            artifacts.record_scalar(&stats)?;
             steps.push(stats);
         } else {
+            artifacts.record_scalar(&stats)?;
             steps.push(stats);
         }
         let latest = steps.last().expect("just pushed stats");
@@ -822,16 +1096,17 @@ fn execute_native_fem_impl(
                 })
             }
         };
-        field_snapshots.push(FieldSnapshot {
+        artifacts.record_field_snapshot(FieldSnapshot {
             name: schedule.name.clone(),
             step: final_stats.step,
             time: final_stats.time,
             solver_dt: final_stats.dt,
             values,
-        });
+        })?;
     }
 
     let final_magnetization = backend.copy_m(node_count)?;
+    let (field_snapshots, field_snapshot_count, provenance) = artifacts.finish();
 
     Ok(ExecutedRun {
         result: RunResult {
@@ -845,27 +1120,8 @@ fn execute_native_fem_impl(
         },
         initial_magnetization,
         field_snapshots,
-        provenance: ExecutionProvenance {
-            execution_engine: "native_fem_gpu".to_string(),
-            precision: match plan.precision {
-                fullmag_ir::ExecutionPrecision::Single => "single".to_string(),
-                fullmag_ir::ExecutionPrecision::Double => "double".to_string(),
-            },
-            demag_operator_kind: if plan.enable_demag {
-                Some("fem_transfer_grid_fdm_demag".to_string())
-            } else {
-                None
-            },
-            fft_backend: if plan.enable_demag {
-                Some("cuFFT".to_string())
-            } else {
-                None
-            },
-            device_name: Some(device_info.name),
-            compute_capability: Some(device_info.compute_capability),
-            cuda_driver_version: Some(device_info.driver_version),
-            cuda_runtime_version: Some(device_info.runtime_version),
-        },
+        field_snapshot_count,
+        provenance,
     })
 }
 
@@ -874,6 +1130,7 @@ fn execute_native_fem(
     _plan: &FemPlanIR,
     _until_seconds: f64,
     _outputs: &[OutputIR],
+    _artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     Err(RunError {
         message:
@@ -888,8 +1145,9 @@ fn execute_native_fem_impl(
     until_seconds: f64,
     outputs: &[OutputIR],
     _live: Option<LiveStepConsumer<'_>>,
+    _artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
-    execute_native_fem(plan, until_seconds, outputs)
+    execute_native_fem(plan, until_seconds, outputs, None)
 }
 
 #[cfg(not(feature = "cuda"))]
@@ -897,6 +1155,7 @@ fn execute_cuda_fdm(
     _plan: &FdmPlanIR,
     _until_seconds: f64,
     _outputs: &[OutputIR],
+    _artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     Err(RunError {
         message:
@@ -911,8 +1170,9 @@ fn execute_cuda_fdm_impl(
     until_seconds: f64,
     outputs: &[OutputIR],
     _live: Option<LiveStepConsumer<'_>>,
+    _artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
-    execute_cuda_fdm(plan, until_seconds, outputs)
+    execute_cuda_fdm(plan, until_seconds, outputs, None)
 }
 
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
@@ -928,7 +1188,7 @@ fn capture_initial_cuda_fields(
     backend: &NativeFdmBackend,
     cell_count: usize,
     field_schedules: &mut [OutputSchedule],
-    field_snapshots: &mut Vec<FieldSnapshot>,
+    artifacts: &mut ArtifactRecorder,
 ) -> Result<(), RunError> {
     let due_field_names = field_schedules
         .iter()
@@ -949,13 +1209,13 @@ fn capture_initial_cuda_fields(
                 })
             }
         };
-        field_snapshots.push(FieldSnapshot {
+        artifacts.record_field_snapshot(FieldSnapshot {
             name: name.clone(),
             step: 0,
             time: 0.0,
             solver_dt: 0.0,
             values,
-        });
+        })?;
     }
     advance_due_schedules(field_schedules, 0.0);
     Ok(())
@@ -969,12 +1229,13 @@ fn record_cuda_due_outputs(
     scalar_schedules: &mut [OutputSchedule],
     field_schedules: &mut [OutputSchedule],
     steps: &mut Vec<StepStats>,
-    field_snapshots: &mut Vec<FieldSnapshot>,
+    artifacts: &mut ArtifactRecorder,
 ) -> Result<(), RunError> {
     let scalar_due = scalar_schedules
         .iter()
         .any(|schedule| is_due(stats.time, schedule.next_time));
     if scalar_due {
+        artifacts.record_scalar(stats)?;
         steps.push(stats.clone());
         advance_due_schedules(scalar_schedules, stats.time);
     }
@@ -997,13 +1258,13 @@ fn record_cuda_due_outputs(
                 })
             }
         };
-        field_snapshots.push(FieldSnapshot {
+        artifacts.record_field_snapshot(FieldSnapshot {
             name: name.clone(),
             step: stats.step,
             time: stats.time,
             solver_dt: stats.dt,
             values,
-        });
+        })?;
     }
     advance_due_schedules(field_schedules, stats.time);
     Ok(())
@@ -1018,7 +1279,7 @@ fn record_cuda_final_outputs(
     scalar_schedules: &[OutputSchedule],
     field_schedules: &[OutputSchedule],
     steps: &mut Vec<StepStats>,
-    field_snapshots: &mut Vec<FieldSnapshot>,
+    artifacts: &mut ArtifactRecorder,
 ) -> Result<(), RunError> {
     let Some(latest_stats) = latest_stats else {
         return Ok(());
@@ -1035,24 +1296,21 @@ fn record_cuda_final_outputs(
             let magnetization = backend.copy_m(cell_count)?;
             apply_average_m_to_step_stats(&mut final_stats, &magnetization);
         }
+        artifacts.record_scalar(&final_stats)?;
         steps.push(final_stats);
     }
 
     let requested_field_names = field_schedules
         .iter()
-        .map(|schedule| schedule.name.clone())
-        .collect::<Vec<_>>();
-    let missing_field_names = requested_field_names
-        .into_iter()
-        .filter(|name| {
-            field_snapshots
-                .iter()
-                .rev()
-                .find(|snapshot| snapshot.name == *name)
-                .map(|snapshot| !same_time(snapshot.time, latest_stats.time))
+        .filter(|schedule| {
+            schedule
+                .last_sampled_time
+                .map(|time| !same_time(time, latest_stats.time))
                 .unwrap_or(true)
         })
+        .map(|schedule| schedule.name.clone())
         .collect::<Vec<_>>();
+    let missing_field_names = requested_field_names;
 
     for name in missing_field_names {
         let values = match name.as_str() {
@@ -1067,13 +1325,13 @@ fn record_cuda_final_outputs(
                 })
             }
         };
-        field_snapshots.push(FieldSnapshot {
+        artifacts.record_field_snapshot(FieldSnapshot {
             name,
             step: latest_stats.step,
             time: latest_stats.time,
             solver_dt: latest_stats.dt,
             values,
-        });
+        })?;
     }
 
     Ok(())

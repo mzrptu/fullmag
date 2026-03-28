@@ -11,6 +11,7 @@ pub(crate) struct OutputSchedule {
     pub name: String,
     pub every_seconds: f64,
     pub next_time: f64,
+    pub last_sampled_time: Option<f64>,
 }
 
 pub(crate) fn collect_scalar_schedules(
@@ -46,6 +47,7 @@ pub(crate) fn collect_scalar_schedules(
                 name: name.clone(),
                 every_seconds: *every_seconds,
                 next_time: 0.0,
+                last_sampled_time: None,
             });
         }
     }
@@ -71,6 +73,7 @@ pub(crate) fn collect_field_schedules(
                 name: name.clone(),
                 every_seconds: *every_seconds,
                 next_time: 0.0,
+                last_sampled_time: None,
             });
         }
     }
@@ -87,8 +90,13 @@ pub(crate) fn same_time(lhs: f64, rhs: f64) -> bool {
 
 pub(crate) fn advance_due_schedules(schedules: &mut [OutputSchedule], current_time: f64) {
     for schedule in schedules {
+        let mut advanced = false;
         while is_due(current_time, schedule.next_time) {
             schedule.next_time += schedule.every_seconds;
+            advanced = true;
+        }
+        if advanced {
+            schedule.last_sampled_time = Some(current_time);
         }
     }
 }

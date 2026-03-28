@@ -6,7 +6,7 @@
 
 use crate::newell;
 use crate::self_kernel::fft_newell_to_kernel;
-use crate::types::TensorDemagKernel;
+use crate::types::{TensorDemagKernel, TensorDemagKernelF32};
 
 /// Compute a shifted cross-layer demag kernel in FFT domain.
 ///
@@ -41,6 +41,15 @@ pub fn compute_shifted_kernel(
     let pz = nk.pz;
 
     fft_newell_to_kernel(nk, px, py, pz)
+}
+
+/// `f32` variant of [`compute_shifted_kernel`].
+pub fn compute_shifted_kernel_f32(
+    conv_cells: [usize; 3],
+    conv_cell_size: [f64; 3],
+    z_shift: f64,
+) -> TensorDemagKernelF32 {
+    TensorDemagKernelF32::from(&compute_shifted_kernel(conv_cells, conv_cell_size, z_shift))
 }
 
 #[cfg(test)]

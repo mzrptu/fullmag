@@ -21,8 +21,16 @@ pub mod transfer;
 pub mod types;
 
 // Re-export the main public types for convenience
-pub use multiply::accumulate_tensor_convolution;
-pub use self_kernel::{compute_exact_self_kernel, compute_exact_self_kernel_2d};
-pub use shifted_kernel::compute_shifted_kernel;
-pub use transfer::{pull_h, push_m};
-pub use types::{KernelReuseKey, TensorDemagKernel, TransferKind, VectorFieldFft};
+pub use multiply::{
+    accumulate_tensor_convolution, accumulate_tensor_convolution_f32, negate_field_f32,
+};
+pub use self_kernel::{
+    compute_exact_self_kernel, compute_exact_self_kernel_2d, compute_exact_self_kernel_2d_f32,
+    compute_exact_self_kernel_f32,
+};
+pub use shifted_kernel::{compute_shifted_kernel, compute_shifted_kernel_f32};
+pub use transfer::{pull_h, pull_h_f32, push_m, push_m_f32};
+pub use types::{
+    KernelReuseKey, TensorDemagKernel, TensorDemagKernelF32, TransferKind, VectorFieldFft,
+    VectorFieldFftF32,
+};

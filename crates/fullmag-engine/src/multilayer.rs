@@ -12,8 +12,8 @@ use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 
 use fullmag_fdm_demag::{
-    self, pull_h, push_m,
-    types::{TensorDemagKernel, VectorFieldFft},
+    self, pull_h, pull_h_f32, push_m, push_m_f32,
+    types::{TensorDemagKernel, TensorDemagKernelF32, VectorFieldFft, VectorFieldFftF32},
 };
 
 // ---------------------------------------------------------------------------
@@ -51,12 +51,50 @@ impl FdmLayerRuntime {
     }
 }
 
+/// `f32` multilayer runtime state used by calibrated single-precision paths.
+#[derive(Debug, Clone)]
+pub struct FdmLayerRuntimeF32 {
+    pub magnet_name: String,
+    pub grid: [usize; 3],
+    pub cell_size: [f64; 3],
+    pub origin: [f64; 3],
+    pub ms: f64,
+    pub exchange_stiffness: f64,
+    pub damping: f64,
+    pub active_mask: Option<Vec<bool>>,
+    pub m: Vec<[f32; 3]>,
+    pub h_ex: Vec<[f32; 3]>,
+    pub h_demag: Vec<[f32; 3]>,
+    pub h_eff: Vec<[f32; 3]>,
+    pub conv_grid: [usize; 3],
+    pub conv_cell_size: [f64; 3],
+    pub needs_transfer: bool,
+}
+
+impl FdmLayerRuntimeF32 {
+    pub fn cell_count(&self) -> usize {
+        self.grid[0] * self.grid[1] * self.grid[2]
+    }
+
+    pub fn is_active(&self, idx: usize) -> bool {
+        self.active_mask.as_ref().map_or(true, |m| m[idx])
+    }
+}
+
 /// Kernel pair: precomputed FFT-domain demag kernel between two layers.
 #[derive(Debug, Clone)]
 pub struct KernelPair {
     pub src_layer: usize,
     pub dst_layer: usize,
     pub kernel: TensorDemagKernel,
+}
+
+/// `f32` kernel pair for calibrated single-precision multilayer demag.
+#[derive(Debug, Clone)]
+pub struct KernelPairF32 {
+    pub src_layer: usize,
+    pub dst_layer: usize,
+    pub kernel: TensorDemagKernelF32,
 }
 
 /// Multilayer demag operator runtime.
@@ -72,6 +110,20 @@ pub struct MultilayerDemagRuntime {
     inv_x: std::sync::Arc<dyn rustfft::Fft<f64>>,
     inv_y: std::sync::Arc<dyn rustfft::Fft<f64>>,
     inv_z: std::sync::Arc<dyn rustfft::Fft<f64>>,
+}
+
+/// `f32` multilayer demag runtime used by host-side single-precision FFT paths.
+pub struct MultilayerDemagRuntimeF32 {
+    pub kernel_pairs: Vec<KernelPairF32>,
+    pub conv_grid: [usize; 3],
+    pub conv_cell_size: [f64; 3],
+    pub fft_shape: [usize; 3],
+    fwd_x: std::sync::Arc<dyn rustfft::Fft<f32>>,
+    fwd_y: std::sync::Arc<dyn rustfft::Fft<f32>>,
+    fwd_z: std::sync::Arc<dyn rustfft::Fft<f32>>,
+    inv_x: std::sync::Arc<dyn rustfft::Fft<f32>>,
+    inv_y: std::sync::Arc<dyn rustfft::Fft<f32>>,
+    inv_z: std::sync::Arc<dyn rustfft::Fft<f32>>,
 }
 
 impl MultilayerDemagRuntime {
@@ -263,6 +315,175 @@ impl MultilayerDemagRuntime {
     }
 }
 
+impl MultilayerDemagRuntimeF32 {
+    pub fn new(
+        kernel_pairs: Vec<KernelPairF32>,
+        conv_grid: [usize; 3],
+        conv_cell_size: [f64; 3],
+    ) -> Self {
+        let px = conv_grid[0] * 2;
+        let py = conv_grid[1] * 2;
+        let pz = conv_grid[2] * 2;
+        let mut planner = FftPlanner::<f32>::new();
+
+        Self {
+            kernel_pairs,
+            conv_grid,
+            conv_cell_size,
+            fft_shape: [px, py, pz],
+            fwd_x: planner.plan_fft_forward(px),
+            fwd_y: planner.plan_fft_forward(py),
+            fwd_z: planner.plan_fft_forward(pz),
+            inv_x: planner.plan_fft_inverse(px),
+            inv_y: planner.plan_fft_inverse(py),
+            inv_z: planner.plan_fft_inverse(pz),
+        }
+    }
+
+    fn padded_len(&self) -> usize {
+        self.fft_shape[0] * self.fft_shape[1] * self.fft_shape[2]
+    }
+
+    pub fn compute_demag_fields(&self, layers: &mut [FdmLayerRuntimeF32]) {
+        let n_layers = layers.len();
+        let padded_len = self.padded_len();
+        let [px, py, _pz] = self.fft_shape;
+
+        let mut m_fft: Vec<VectorFieldFftF32> = Vec::with_capacity(n_layers);
+        for layer in layers.iter() {
+            let conv_m = if layer.needs_transfer {
+                push_m_f32(
+                    &layer.m,
+                    layer.grid,
+                    layer.cell_size,
+                    layer.conv_grid,
+                    layer.conv_cell_size,
+                )
+            } else {
+                layer.m.clone()
+            };
+
+            let mut buf = VectorFieldFftF32::zeros(padded_len);
+            let [cx, cy, cz] = layer.conv_grid;
+            let ms = layer.ms as f32;
+            for z in 0..cz {
+                for y in 0..cy {
+                    for x in 0..cx {
+                        let src = z * cy * cx + y * cx + x;
+                        let dst = z * py * px + y * px + x;
+                        let m = conv_m[src];
+                        buf.x[dst] = Complex::new(m[0] * ms, 0.0);
+                        buf.y[dst] = Complex::new(m[1] * ms, 0.0);
+                        buf.z[dst] = Complex::new(m[2] * ms, 0.0);
+                    }
+                }
+            }
+
+            self.fft3_forward(&mut buf);
+            m_fft.push(buf);
+        }
+
+        let mut h_fft: Vec<VectorFieldFftF32> = (0..n_layers)
+            .map(|_| VectorFieldFftF32::zeros(padded_len))
+            .collect();
+
+        for pair in &self.kernel_pairs {
+            fullmag_fdm_demag::accumulate_tensor_convolution_f32(
+                &mut h_fft[pair.dst_layer],
+                &m_fft[pair.src_layer],
+                &pair.kernel,
+            );
+        }
+
+        let normalisation = 1.0f32 / padded_len as f32;
+        for (li, layer) in layers.iter_mut().enumerate() {
+            fullmag_fdm_demag::negate_field_f32(&mut h_fft[li]);
+            self.fft3_inverse(&mut h_fft[li]);
+
+            let [cx, cy, cz] = layer.conv_grid;
+            let conv_total = cx * cy * cz;
+            let mut conv_h = vec![[0.0f32, 0.0f32, 0.0f32]; conv_total];
+            for z in 0..cz {
+                for y in 0..cy {
+                    for x in 0..cx {
+                        let src = z * py * px + y * px + x;
+                        let dst = z * cy * cx + y * cx + x;
+                        conv_h[dst] = [
+                            h_fft[li].x[src].re * normalisation,
+                            h_fft[li].y[src].re * normalisation,
+                            h_fft[li].z[src].re * normalisation,
+                        ];
+                    }
+                }
+            }
+
+            if layer.needs_transfer {
+                layer.h_demag = pull_h_f32(
+                    &conv_h,
+                    layer.conv_grid,
+                    layer.conv_cell_size,
+                    layer.grid,
+                    layer.cell_size,
+                );
+            } else {
+                layer.h_demag = conv_h;
+            }
+        }
+    }
+
+    fn fft3_forward(&self, field: &mut VectorFieldFftF32) {
+        self.fft3_component(&mut field.x, true);
+        self.fft3_component(&mut field.y, true);
+        self.fft3_component(&mut field.z, true);
+    }
+
+    fn fft3_inverse(&self, field: &mut VectorFieldFftF32) {
+        self.fft3_component(&mut field.x, false);
+        self.fft3_component(&mut field.y, false);
+        self.fft3_component(&mut field.z, false);
+    }
+
+    fn fft3_component(&self, buf: &mut [Complex<f32>], forward: bool) {
+        let [px, py, pz] = self.fft_shape;
+        let (fx, fy, fz) = if forward {
+            (&self.fwd_x, &self.fwd_y, &self.fwd_z)
+        } else {
+            (&self.inv_x, &self.inv_y, &self.inv_z)
+        };
+
+        for z in 0..pz {
+            for y in 0..py {
+                let offset = z * py * px + y * px;
+                fx.process(&mut buf[offset..offset + px]);
+            }
+        }
+        let mut line_y = vec![Complex::new(0.0f32, 0.0f32); py];
+        for z in 0..pz {
+            for x in 0..px {
+                for y in 0..py {
+                    line_y[y] = buf[z * py * px + y * px + x];
+                }
+                fy.process(&mut line_y);
+                for y in 0..py {
+                    buf[z * py * px + y * px + x] = line_y[y];
+                }
+            }
+        }
+        let mut line_z = vec![Complex::new(0.0f32, 0.0f32); pz];
+        for y in 0..py {
+            for x in 0..px {
+                for z in 0..pz {
+                    line_z[z] = buf[z * py * px + y * px + x];
+                }
+                fz.process(&mut line_z);
+                for z in 0..pz {
+                    buf[z * py * px + y * px + x] = line_z[z];
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -323,14 +544,123 @@ mod tests {
         // should have a strong negative Hz (demagnetizing in z).
         // Just verify it's non-zero and negative.
         let center = 4 * 2 + 2; // cell (2, 2, 0) in a 4×4×1 grid
-        let hz = layer.h_demag[center][2];
-        // Hmm, layer was cloned but demag modifies the slice in place...
-        // Let's test by re-running on the actual mutable layer
+                                // Hmm, layer was cloned but demag modifies the slice in place...
+                                // Let's test by re-running on the actual mutable layer
         demag.compute_demag_fields(std::slice::from_mut(&mut layer));
         let hz = layer.h_demag[center][2];
         assert!(
             hz < 0.0,
             "Demag Hz for out-of-plane thin film should be negative, got {hz}"
+        );
+    }
+
+    #[test]
+    fn single_precision_multilayer_runtime_stays_close_to_double() {
+        let grid = [4, 4, 1];
+        let cell_size = [2e-9, 2e-9, 1e-9];
+        let ms = 800e3;
+        let n_cells = grid[0] * grid[1] * grid[2];
+
+        let kernel_f64 = fullmag_fdm_demag::compute_exact_self_kernel(
+            grid[0],
+            grid[1],
+            grid[2],
+            cell_size[0],
+            cell_size[1],
+            cell_size[2],
+        );
+        let kernel_f32 = fullmag_fdm_demag::compute_exact_self_kernel_f32(
+            grid[0],
+            grid[1],
+            grid[2],
+            cell_size[0],
+            cell_size[1],
+            cell_size[2],
+        );
+
+        let mut layer_f64 = FdmLayerRuntime {
+            magnet_name: "test".into(),
+            grid,
+            cell_size,
+            origin: [0.0, 0.0, 0.0],
+            ms,
+            exchange_stiffness: 13e-12,
+            damping: 0.02,
+            active_mask: None,
+            m: (0..n_cells)
+                .map(|index| {
+                    let theta = 0.07 * index as f64;
+                    [theta.cos(), theta.sin(), 0.1]
+                })
+                .collect(),
+            h_ex: vec![[0.0; 3]; n_cells],
+            h_demag: vec![[0.0; 3]; n_cells],
+            h_eff: vec![[0.0; 3]; n_cells],
+            conv_grid: grid,
+            conv_cell_size: cell_size,
+            needs_transfer: false,
+        };
+        let mut layer_f32 = FdmLayerRuntimeF32 {
+            magnet_name: "test".into(),
+            grid,
+            cell_size,
+            origin: [0.0, 0.0, 0.0],
+            ms,
+            exchange_stiffness: 13e-12,
+            damping: 0.02,
+            active_mask: None,
+            m: layer_f64
+                .m
+                .iter()
+                .map(|m| [m[0] as f32, m[1] as f32, m[2] as f32])
+                .collect(),
+            h_ex: vec![[0.0; 3]; n_cells],
+            h_demag: vec![[0.0; 3]; n_cells],
+            h_eff: vec![[0.0; 3]; n_cells],
+            conv_grid: grid,
+            conv_cell_size: cell_size,
+            needs_transfer: false,
+        };
+
+        let runtime_f64 = MultilayerDemagRuntime::new(
+            vec![KernelPair {
+                src_layer: 0,
+                dst_layer: 0,
+                kernel: kernel_f64,
+            }],
+            grid,
+            cell_size,
+        );
+        let runtime_f32 = MultilayerDemagRuntimeF32::new(
+            vec![KernelPairF32 {
+                src_layer: 0,
+                dst_layer: 0,
+                kernel: kernel_f32,
+            }],
+            grid,
+            cell_size,
+        );
+
+        runtime_f64.compute_demag_fields(std::slice::from_mut(&mut layer_f64));
+        runtime_f32.compute_demag_fields(std::slice::from_mut(&mut layer_f32));
+
+        let max_diff = layer_f64
+            .h_demag
+            .iter()
+            .zip(layer_f32.h_demag.iter())
+            .flat_map(|(a, b)| {
+                (0..3).map(move |component| (a[component] - b[component] as f64).abs())
+            })
+            .fold(0.0, f64::max);
+        let max_ref = layer_f64
+            .h_demag
+            .iter()
+            .flat_map(|value| (0..3).map(move |component| value[component].abs()))
+            .fold(0.0, f64::max);
+        let rel_diff = max_diff / max_ref.max(1.0);
+        assert!(
+            rel_diff <= 1e-5 || max_diff <= 5e-2,
+            "single-precision multilayer demag drift too large: abs={max_diff:.6e} rel={rel_diff:.6e}"
         );
     }
 }

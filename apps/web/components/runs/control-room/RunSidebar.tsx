@@ -12,7 +12,8 @@ import ModelTree, { buildFullmagModelTree } from "../../panels/ModelTree";
 import SettingsPanel from "../../panels/SettingsPanel";
 import { useControlRoom } from "./ControlRoomContext";
 import { findTreeNodeById, previewQuantityForTreeNode } from "./shared";
-import s from "../RunControlRoom.module.css";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 
 /**
  * RunSidebar — two-zone panel: narrow ModelTree + wider SettingsPanel.
@@ -153,65 +154,73 @@ export default function RunSidebar() {
   }, []);
 
   return (
-    <div className={s.sidebar}>
+    <div className="flex w-full h-full border-l border-border/60 bg-gradient-to-br from-card/80 to-background/50 backdrop-blur-xl shadow-[-8px_0_30px_rgba(0,0,0,0.3)] z-30">
       <PanelGroup
         orientation="vertical"
-        className={s.sidebarStack}
+        className="flex w-full h-full flex-col"
         resizeTargetMinimumSize={{ coarse: 32, fine: 10 }}
       >
         <Panel
           id="sidebar-model-outline"
-          defaultSize="34%"
-          minSize="92px"
+          defaultSize={34}
+          minSize={15}
           collapsible
-          collapsedSize="44px"
+          collapsedSize={4}
           panelRef={navigatorPanelRef}
           onResize={handleNavigatorResize}
         >
-          <section className={s.sidebarPanelSection}>
+          <section className="flex flex-col h-full bg-transparent">
             <button
               type="button"
-              className={s.sectionHeaderButton}
+              className="flex items-center w-full px-3 py-2 text-left transition-colors hover:bg-muted/50 border-b border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)] shrink-0"
               onClick={handleNavigatorToggle}
               aria-expanded={navigatorOpen}
             >
-              <span className={s.sectionChevron} data-open={navigatorOpen}>▸</span>
-              <span className={s.sectionTitle}>Model</span>
-              <span className={s.sectionBadge}>{ctx.isFemBackend ? "FEM" : "FDM"}</span>
+              <span className={cn("text-muted-foreground mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", navigatorOpen && "rotate-90")}>▸</span>
+              <span className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-foreground">Model</span>
+              <span className="ml-auto text-[0.65rem] font-mono tracking-tight text-muted-foreground/80 bg-muted/60 px-1.5 py-0.5 rounded-sm border border-border/40">{ctx.isFemBackend ? "FEM" : "FDM"}</span>
             </button>
             {navigatorOpen && (
-              <div className={s.sidebarPanelBody}>
-                <ModelTree nodes={modelTreeNodes} activeId={activeNodeId} onNodeClick={handleTreeClick} />
+              <div className="flex-1 min-h-0 min-w-0 pr-1 overflow-hidden isolate relative">
+                <ScrollArea className="h-full w-full">
+                  <div className="p-2 select-none">
+                    <ModelTree nodes={modelTreeNodes} activeId={activeNodeId} onNodeClick={handleTreeClick} />
+                  </div>
+                </ScrollArea>
               </div>
             )}
           </section>
         </Panel>
 
-        <PanelResizeHandle className={s.sidebarSectionResizeHandle} />
+        <PanelResizeHandle className="flex shrink-0 items-center justify-center bg-transparent h-1.5 cursor-row-resize relative z-10 hover:bg-primary/20 transition-colors after:absolute after:inset-x-0 after:top-1/2 after:-translate-y-1/2 after:h-px after:w-8 after:mx-auto after:bg-border/60 hover:after:bg-primary" />
 
         <Panel
           id="sidebar-inspector"
-          defaultSize="66%"
-          minSize="140px"
+          defaultSize={66}
+          minSize={20}
           collapsible
-          collapsedSize="44px"
+          collapsedSize={4}
           panelRef={inspectorPanelRef}
           onResize={handleInspectorResize}
         >
-          <section className={s.sidebarPanelSection}>
+          <section className="flex flex-col h-full bg-transparent">
             <button
               type="button"
-              className={s.sectionHeaderButton}
+              className="flex items-center w-full px-3 py-2 text-left transition-colors hover:bg-muted/50 border-b border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)] shrink-0"
               onClick={handleInspectorToggle}
               aria-expanded={inspectorOpen}
             >
-              <span className={s.sectionChevron} data-open={inspectorOpen}>▸</span>
-              <span className={s.sectionTitle}>Inspector</span>
-              <span className={s.sectionBadge}>{activeNode?.label ?? "Workspace"}</span>
+              <span className={cn("text-muted-foreground mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", inspectorOpen && "rotate-90")}>▸</span>
+              <span className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-foreground">Inspector</span>
+              <span className="ml-auto text-[0.65rem] font-mono tracking-tight text-muted-foreground/80 bg-muted/60 px-1.5 py-0.5 rounded-sm border border-border/40">{activeNode?.label ?? "Workspace"}</span>
             </button>
             {inspectorOpen && (
-              <div className={s.sidebarPanelBody}>
-                <SettingsPanel nodeId={activeNodeId} nodeLabel={activeNode?.label ?? null} />
+              <div className="flex-1 min-h-0 min-w-0 overflow-hidden isolate relative">
+                <ScrollArea className="h-full w-full">
+                  <div className="p-0 select-none">
+                    <SettingsPanel nodeId={activeNodeId} nodeLabel={activeNode?.label ?? null} />
+                  </div>
+                </ScrollArea>
               </div>
             )}
           </section>

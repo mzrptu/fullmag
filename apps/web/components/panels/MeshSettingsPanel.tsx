@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import s from "./MeshSettingsPanel.module.css";
+import { cn } from "@/lib/utils";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -221,10 +221,10 @@ export default function MeshSettingsPanel({
   // Rating based on SICN p5
   const qualityRating = useMemo(() => {
     if (!quality) return null;
-    if (quality.sicnP5 >= 0.5) return { label: "Excellent", cls: s.good };
-    if (quality.sicnP5 >= 0.3) return { label: "Good", cls: s.good };
-    if (quality.sicnP5 >= 0.1) return { label: "Fair", cls: s.fair };
-    return { label: "Poor", cls: s.poor };
+    if (quality.sicnP5 >= 0.5) return { label: "Excellent", cls: "good" };
+    if (quality.sicnP5 >= 0.3) return { label: "Good", cls: "good" };
+    if (quality.sicnP5 >= 0.1) return { label: "Fair", cls: "fair" };
+    return { label: "Poor", cls: "poor" };
   }, [quality]);
 
   // Draw SICN histogram
@@ -252,19 +252,19 @@ export default function MeshSettingsPanel({
   }, [quality?.gammaHistogram]);
 
   return (
-    <div className={s.root}>
+    <div className="flex flex-col gap-2 p-3">
       {/* ── Algorithm Selection ── */}
-      <div className={s.section}>
-        <div className={s.sectionHeader}>
-          <span className={s.sectionTitle}>Algorithm</span>
-          <span className={s.sectionBadge}>Gmsh</span>
+      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
+        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
+          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Algorithm</span>
+          <span className="text-[0.65rem] font-mono text-muted-foreground/70 bg-muted px-1.5 py-0.5 rounded">Gmsh</span>
         </div>
-        <div className={s.sectionBody}>
-          <div className={s.row}>
-            <span className={s.rowLabel}>2D surface</span>
-            <div className={s.rowControl}>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">2D surface</span>
+            <div className="flex-1 max-w-[140px]">
               <select
-                className={s.compactSelect}
+                className="w-full appearance-none bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary disabled:opacity-50"
                 value={String(options.algorithm2d)}
                 onChange={(e) => set({ algorithm2d: Number(e.target.value) })}
                 disabled={disabled}
@@ -275,11 +275,11 @@ export default function MeshSettingsPanel({
               </select>
             </div>
           </div>
-          <div className={s.row}>
-            <span className={s.rowLabel}>3D volume</span>
-            <div className={s.rowControl}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">3D volume</span>
+            <div className="flex-1 max-w-[140px]">
               <select
-                className={s.compactSelect}
+                className="w-full appearance-none bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary disabled:opacity-50"
                 value={String(options.algorithm3d)}
                 onChange={(e) => set({ algorithm3d: Number(e.target.value) })}
                 disabled={disabled}
@@ -294,16 +294,16 @@ export default function MeshSettingsPanel({
       </div>
 
       {/* ── Size Control ── */}
-      <div className={s.section}>
-        <div className={s.sectionHeader}>
-          <span className={s.sectionTitle}>Element Size</span>
+      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
+        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
+          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Element Size</span>
         </div>
-        <div className={s.sectionBody}>
-          <div className={s.row}>
-            <span className={s.rowLabel}>hmin</span>
-            <div className={s.rowControl}>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">hmin</span>
+            <div className="flex-1 max-w-[140px]">
               <input
-                className={s.compactInput}
+                className="w-full bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground/30 disabled:opacity-50 text-right font-mono"
                 type="text"
                 placeholder="auto"
                 value={options.hmin}
@@ -312,11 +312,11 @@ export default function MeshSettingsPanel({
               />
             </div>
           </div>
-          <div className={s.row}>
-            <span className={s.rowLabel}>Size factor</span>
-            <div className={s.rowControl}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Size factor</span>
+            <div className="flex-1 max-w-[140px]">
               <input
-                className={s.compactInput}
+                className="w-full bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground/30 disabled:opacity-50 text-right font-mono"
                 type="number"
                 step="0.1"
                 min="0.1"
@@ -327,11 +327,11 @@ export default function MeshSettingsPanel({
               />
             </div>
           </div>
-          <div className={s.row}>
-            <span className={s.rowLabel}>From curvature</span>
-            <div className={s.rowControl}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">From curvature</span>
+            <div className="flex-1 max-w-[140px]">
               <input
-                className={s.compactInput}
+                className="w-full bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground/30 disabled:opacity-50 text-right font-mono"
                 type="number"
                 step="1"
                 min="0"
@@ -346,16 +346,16 @@ export default function MeshSettingsPanel({
       </div>
 
       {/* ── Optimization ── */}
-      <div className={s.section}>
-        <div className={s.sectionHeader}>
-          <span className={s.sectionTitle}>Optimization</span>
+      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
+        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
+          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Optimization</span>
         </div>
-        <div className={s.sectionBody}>
-          <div className={s.row}>
-            <span className={s.rowLabel}>Method</span>
-            <div className={s.rowControl}>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Method</span>
+            <div className="flex-1 max-w-[140px]">
               <select
-                className={s.compactSelect}
+                className="w-full appearance-none bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary disabled:opacity-50"
                 value={options.optimize}
                 onChange={(e) => set({ optimize: e.target.value })}
                 disabled={disabled}
@@ -367,11 +367,11 @@ export default function MeshSettingsPanel({
             </div>
           </div>
           {options.optimize !== "" && (
-            <div className={s.row}>
-              <span className={s.rowLabel}>Iterations</span>
-              <div className={s.rowControl}>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Iterations</span>
+              <div className="flex-1 max-w-[140px]">
                 <input
-                  className={s.compactInput}
+                  className="w-full bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground/30 disabled:opacity-50 text-right font-mono"
                   type="number"
                   step="1"
                   min="1"
@@ -383,11 +383,11 @@ export default function MeshSettingsPanel({
               </div>
             </div>
           )}
-          <div className={s.row}>
-            <span className={s.rowLabel}>Smoothing</span>
-            <div className={s.rowControl}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Smoothing</span>
+            <div className="flex-1 max-w-[140px]">
               <input
-                className={s.compactInput}
+                className="w-full bg-card border border-border/50 rounded-md py-1 px-2 text-xs text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground/30 disabled:opacity-50 text-right font-mono"
                 type="number"
                 step="1"
                 min="0"
@@ -402,32 +402,32 @@ export default function MeshSettingsPanel({
       </div>
 
       {/* ── Quality ── */}
-      <div className={s.section}>
-        <div className={s.sectionHeader}>
-          <span className={s.sectionTitle}>Quality Analysis</span>
+      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
+        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
+          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Quality Analysis</span>
           {qualityRating && (
-            <span className={`${s.sectionBadge} ${qualityRating.cls}`}>
+            <span className={cn("text-[0.65rem] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded text-white", qualityRating.cls === "good" ? "bg-emerald-600" : qualityRating.cls === "fair" ? "bg-amber-600" : "bg-destructive")}>
               {qualityRating.label}
             </span>
           )}
         </div>
-        <div className={s.sectionBody}>
-          <div className={s.toggleRow}>
-            <span className={s.toggleLabel}>Extract quality metrics</span>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between py-1">
+            <span className="text-xs font-medium text-foreground">Extract quality metrics</span>
             <input
               type="checkbox"
-              className={s.miniToggle}
+              className="accent-primary w-3 h-3"
               checked={options.computeQuality}
               onChange={(e) => set({ computeQuality: e.target.checked })}
               disabled={disabled}
             />
           </div>
           {options.computeQuality && (
-            <div className={s.toggleRow}>
-              <span className={s.toggleLabel}>Per-element data</span>
+            <div className="flex items-center justify-between py-1">
+              <span className="text-xs font-medium text-foreground">Per-element data</span>
               <input
                 type="checkbox"
-                className={s.miniToggle}
+                className="accent-primary w-3 h-3"
                 checked={options.perElementQuality}
                 onChange={(e) => set({ perElementQuality: e.target.checked })}
                 disabled={disabled}
@@ -437,38 +437,38 @@ export default function MeshSettingsPanel({
 
           {quality && (
             <>
-              <div className={s.statsGrid}>
-                <div className={s.stat}>
-                  <span className={s.statLabel}>Elements</span>
-                  <span className={s.statValue}>{quality.nElements.toLocaleString()}</span>
+              <div className="grid grid-cols-2 gap-2 mt-2 p-2 bg-black/10 rounded-md border border-border/20">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">Elements</span>
+                  <span className="font-mono text-xs text-foreground">{quality.nElements.toLocaleString()}</span>
                 </div>
-                <div className={s.stat}>
-                  <span className={s.statLabel}>SICN min</span>
-                  <span className={s.statValue}>{quality.sicnMin.toFixed(3)}</span>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">SICN min</span>
+                  <span className="font-mono text-xs text-foreground">{quality.sicnMin.toFixed(3)}</span>
                 </div>
-                <div className={s.stat}>
-                  <span className={s.statLabel}>SICN mean</span>
-                  <span className={s.statValue}>{quality.sicnMean.toFixed(3)}</span>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">SICN mean</span>
+                  <span className="font-mono text-xs text-foreground">{quality.sicnMean.toFixed(3)}</span>
                 </div>
-                <div className={s.stat}>
-                  <span className={s.statLabel}>SICN p5</span>
-                  <span className={s.statValue}>{quality.sicnP5.toFixed(3)}</span>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">SICN p5</span>
+                  <span className="font-mono text-xs text-foreground">{quality.sicnP5.toFixed(3)}</span>
                 </div>
-                <div className={s.stat}>
-                  <span className={s.statLabel}>γ min</span>
-                  <span className={s.statValue}>{quality.gammaMin.toFixed(3)}</span>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">γ min</span>
+                  <span className="font-mono text-xs text-foreground">{quality.gammaMin.toFixed(3)}</span>
                 </div>
-                <div className={s.stat}>
-                  <span className={s.statLabel}>γ mean</span>
-                  <span className={s.statValue}>{quality.gammaMean.toFixed(3)}</span>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">γ mean</span>
+                  <span className="font-mono text-xs text-foreground">{quality.gammaMean.toFixed(3)}</span>
                 </div>
-                <div className={s.stat}>
-                  <span className={s.statLabel}>Avg ICN</span>
-                  <span className={s.statValue}>{quality.avgQuality.toFixed(3)}</span>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">Avg ICN</span>
+                  <span className="font-mono text-xs text-foreground">{quality.avgQuality.toFixed(3)}</span>
                 </div>
-                <div className={s.stat}>
-                  <span className={s.statLabel}>Vol σ/μ</span>
-                  <span className={s.statValue}>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">Vol σ/μ</span>
+                  <span className="font-mono text-xs text-foreground">
                     {quality.volumeMean > 0
                       ? (quality.volumeStd / quality.volumeMean).toFixed(2)
                       : "—"
@@ -478,19 +478,19 @@ export default function MeshSettingsPanel({
               </div>
 
               {/* SICN Histogram */}
-              <canvas ref={sicnCanvasRef} className={s.histogramCanvas} />
-              <div className={s.legend}>
-                <span><span className={`${s.legendDot} ${s.legendDotDanger}`} />SICN &lt; 0 (inverted)</span>
-                <span><span className={`${s.legendDot} ${s.legendDotWarn}`} />0–0.5 (fair)</span>
-                <span><span className={`${s.legendDot} ${s.legendDotGood}`} />&gt; 0.5 (good)</span>
+              <canvas ref={sicnCanvasRef} className="w-full h-16 mt-3 bg-card/30 rounded border border-border/30" />
+              <div className="flex items-center justify-center gap-3 mt-1.5 text-[0.6rem] text-muted-foreground">
+                <span><span className="inline-block w-1.5 h-1.5 rounded-full mr-1 bg-destructive" />SICN &lt; 0 (inverted)</span>
+                <span><span className="inline-block w-1.5 h-1.5 rounded-full mr-1 bg-amber-500" />0–0.5 (fair)</span>
+                <span><span className="inline-block w-1.5 h-1.5 rounded-full mr-1 bg-emerald-500" />&gt; 0.5 (good)</span>
               </div>
 
               {/* Gamma Histogram */}
-              <canvas ref={gammaCanvasRef} className={s.histogramCanvas} />
-              <div className={s.legend}>
-                <span><span className={`${s.legendDot} ${s.legendDotDanger}`} />γ &lt; 0.3 (poor)</span>
-                <span><span className={`${s.legendDot} ${s.legendDotWarn}`} />0.3–0.6 (fair)</span>
-                <span><span className={`${s.legendDot} ${s.legendDotGood}`} />&gt; 0.6 (good)</span>
+              <canvas ref={gammaCanvasRef} className="w-full h-16 mt-3 bg-card/30 rounded border border-border/30" />
+              <div className="flex items-center justify-center gap-3 mt-1.5 text-[0.6rem] text-muted-foreground">
+                <span><span className="inline-block w-1.5 h-1.5 rounded-full mr-1 bg-destructive" />γ &lt; 0.3 (poor)</span>
+                <span><span className="inline-block w-1.5 h-1.5 rounded-full mr-1 bg-amber-500" />0.3–0.6 (fair)</span>
+                <span><span className="inline-block w-1.5 h-1.5 rounded-full mr-1 bg-emerald-500" />&gt; 0.6 (good)</span>
               </div>
             </>
           )}
@@ -498,14 +498,14 @@ export default function MeshSettingsPanel({
       </div>
       {/* ── Generate button ── */}
       {onGenerate && (
-        <div className={s.section}>
+        <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
           <button
-            className={s.generateBtn}
+            className="w-full flex items-center justify-center gap-2 py-2 text-sm font-semibold rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none transition-colors"
             onClick={onGenerate}
             disabled={disabled || generating}
           >
             {generating ? (
-              <><span className={s.spinner} /> Generating…</>
+              <><span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" /> Generating…</>
             ) : (
               "⚡ Generate Mesh"
             )}

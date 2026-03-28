@@ -158,6 +158,13 @@ extern "C" {
         out_len: u64,
     ) -> i32;
 
+    pub fn fullmag_fdm_backend_copy_field_f32(
+        handle: *mut fullmag_fdm_backend,
+        observable: fullmag_fdm_observable,
+        out_xyz: *mut f32,
+        out_len: u64,
+    ) -> i32;
+
     pub fn fullmag_fdm_backend_copy_field_preview_f64(
         handle: *mut fullmag_fdm_backend,
         observable: fullmag_fdm_observable,
@@ -170,9 +177,27 @@ extern "C" {
         out_len: u64,
     ) -> i32;
 
+    pub fn fullmag_fdm_backend_copy_field_preview_f32(
+        handle: *mut fullmag_fdm_backend,
+        observable: fullmag_fdm_observable,
+        preview_nx: u32,
+        preview_ny: u32,
+        preview_nz: u32,
+        z_origin: u32,
+        z_stride: u32,
+        out_xyz: *mut f32,
+        out_len: u64,
+    ) -> i32;
+
     pub fn fullmag_fdm_backend_upload_magnetization_f64(
         handle: *mut fullmag_fdm_backend,
         m_xyz: *const f64,
+        len: u64,
+    ) -> i32;
+
+    pub fn fullmag_fdm_backend_upload_magnetization_f32(
+        handle: *mut fullmag_fdm_backend,
+        m_xyz: *const f32,
         len: u64,
     ) -> i32;
 

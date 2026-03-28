@@ -14,9 +14,13 @@ use fullmag_engine::{
 use fullmag_fdm_demag::{compute_exact_self_kernel, compute_shifted_kernel};
 use fullmag_ir::{ExecutionPrecision, FdmMultilayerPlanIR, IntegratorChoice, OutputIR};
 
+use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
 use crate::relaxation::{llg_overdamped_uses_pure_damping, relaxation_converged};
 use crate::scalar_metrics::apply_average_m_to_step_stats;
-use crate::schedules::{collect_field_schedules, collect_scalar_schedules, is_due, OutputSchedule};
+use crate::schedules::{
+    advance_due_schedules, collect_field_schedules, collect_scalar_schedules, is_due, same_time,
+    OutputSchedule,
+};
 use crate::types::{
     ExecutedRun, ExecutionProvenance, FieldSnapshot, RunError, RunResult, RunStatus,
     StateObservables, StepAction, StepStats, StepUpdate,
@@ -44,6 +48,7 @@ pub(crate) fn execute_reference_fdm_multilayer(
         until_seconds,
         outputs,
         None::<(&[u32; 3], &mut dyn FnMut(StepUpdate) -> StepAction)>,
+        None,
     )
 }
 
@@ -58,6 +63,38 @@ pub(crate) fn execute_reference_fdm_multilayer_with_callback(
         until_seconds,
         outputs,
         Some((&plan.common_cells, on_step)),
+        None,
+    )
+}
+
+pub(crate) fn execute_reference_fdm_multilayer_streaming(
+    plan: &FdmMultilayerPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    artifact_writer: ArtifactPipelineSender,
+) -> Result<ExecutedRun, RunError> {
+    execute_reference_fdm_multilayer_impl(
+        plan,
+        until_seconds,
+        outputs,
+        None::<(&[u32; 3], &mut dyn FnMut(StepUpdate) -> StepAction)>,
+        Some(artifact_writer),
+    )
+}
+
+pub(crate) fn execute_reference_fdm_multilayer_with_callback_streaming(
+    plan: &FdmMultilayerPlanIR,
+    until_seconds: f64,
+    outputs: &[OutputIR],
+    artifact_writer: ArtifactPipelineSender,
+    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
+) -> Result<ExecutedRun, RunError> {
+    execute_reference_fdm_multilayer_impl(
+        plan,
+        until_seconds,
+        outputs,
+        Some((&plan.common_cells, on_step)),
+        Some(artifact_writer),
     )
 }
 
@@ -66,6 +103,7 @@ fn execute_reference_fdm_multilayer_impl(
     until_seconds: f64,
     outputs: &[OutputIR],
     mut live: Option<(&[u32; 3], &mut dyn FnMut(StepUpdate) -> StepAction)>,
+    artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     if until_seconds <= 0.0 {
         return Err(RunError {
@@ -101,8 +139,30 @@ fn execute_reference_fdm_multilayer_impl(
     );
     let dt = plan.fixed_timestep.unwrap_or(1e-13);
     let mut steps: Vec<StepStats> = Vec::new();
-    let mut field_snapshots: Vec<FieldSnapshot> = Vec::new();
     let mut step_count = 0u64;
+    let provenance = ExecutionProvenance {
+        execution_engine: "cpu_reference_multilayer".to_string(),
+        precision: "double".to_string(),
+        demag_operator_kind: if plan.enable_demag {
+            Some("multilayer_tensor_fft_newell".to_string())
+        } else {
+            None
+        },
+        fft_backend: if plan.enable_demag {
+            Some("rustfft".to_string())
+        } else {
+            None
+        },
+        device_name: None,
+        compute_capability: None,
+        cuda_driver_version: None,
+        cuda_runtime_version: None,
+    };
+    let mut artifacts = if let Some(writer) = artifact_writer {
+        ArtifactRecorder::streaming(provenance.clone(), writer)
+    } else {
+        ArtifactRecorder::in_memory(provenance.clone())
+    };
 
     let mut scalar_schedules = collect_scalar_schedules(outputs)?;
     let mut field_schedules = collect_field_schedules(outputs)?;
@@ -110,7 +170,9 @@ fn execute_reference_fdm_multilayer_impl(
 
     let initial_observables = observe_multilayer(&contexts, &states, demag_runtime.as_ref())?;
     if default_scalar_trace {
-        steps.push(make_step_stats(0, 0.0, 0.0, 0, &initial_observables));
+        let stats = make_step_stats(0, 0.0, 0.0, 0, &initial_observables);
+        artifacts.record_scalar(&stats)?;
+        steps.push(stats);
     }
     record_due_fields(
         &initial_observables,
@@ -118,7 +180,7 @@ fn execute_reference_fdm_multilayer_impl(
         0.0,
         0.0,
         &mut field_schedules,
-        &mut field_snapshots,
+        &mut artifacts,
     )?;
 
     let mut previous_total_energy = Some(initial_observables.total_energy);
@@ -144,12 +206,9 @@ fn execute_reference_fdm_multilayer_impl(
                 .iter()
                 .any(|s| is_due(latest_stats.time, s.next_time))
         {
+            artifacts.record_scalar(&latest_stats)?;
             steps.push(latest_stats.clone());
-            for schedule in &mut scalar_schedules {
-                if is_due(latest_stats.time, schedule.next_time) {
-                    schedule.next_time += schedule.every_seconds;
-                }
-            }
+            advance_due_schedules(&mut scalar_schedules, latest_stats.time);
         }
 
         record_due_fields(
@@ -158,7 +217,7 @@ fn execute_reference_fdm_multilayer_impl(
             latest_stats.time,
             latest_stats.dt,
             &mut field_schedules,
-            &mut field_snapshots,
+            &mut artifacts,
         )?;
 
         if let Some((grid, on_step)) = live.as_mut() {
@@ -209,18 +268,28 @@ fn execute_reference_fdm_multilayer_impl(
         .iter()
         .any(|step| step.step == final_stats.step && (step.time - final_stats.time).abs() <= 1e-18)
     {
+        artifacts.record_scalar(&final_stats)?;
         steps.push(final_stats.clone());
     }
     for schedule in &mut field_schedules {
+        if schedule
+            .last_sampled_time
+            .map(|time| same_time(time, final_stats.time))
+            .unwrap_or(false)
+        {
+            continue;
+        }
         let values = select_field_values(&final_observables, &schedule.name)?;
-        field_snapshots.push(FieldSnapshot {
+        artifacts.record_field_snapshot(FieldSnapshot {
             name: schedule.name.clone(),
             step: final_stats.step,
             time: final_stats.time,
             solver_dt: final_stats.dt,
             values,
-        });
+        })?;
     }
+
+    let (field_snapshots, field_snapshot_count, provenance) = artifacts.finish();
 
     Ok(ExecutedRun {
         result: RunResult {
@@ -239,24 +308,8 @@ fn execute_reference_fdm_multilayer_impl(
         },
         initial_magnetization,
         field_snapshots,
-        provenance: ExecutionProvenance {
-            execution_engine: "cpu_reference_multilayer".to_string(),
-            precision: "double".to_string(),
-            demag_operator_kind: if plan.enable_demag {
-                Some("multilayer_tensor_fft_newell".to_string())
-            } else {
-                None
-            },
-            fft_backend: if plan.enable_demag {
-                Some("rustfft".to_string())
-            } else {
-                None
-            },
-            device_name: None,
-            compute_capability: None,
-            cuda_driver_version: None,
-            cuda_runtime_version: None,
-        },
+        field_snapshot_count,
+        provenance,
     })
 }
 
@@ -652,7 +705,7 @@ fn record_due_fields(
     time: f64,
     solver_dt: f64,
     field_schedules: &mut [OutputSchedule],
-    field_snapshots: &mut Vec<FieldSnapshot>,
+    artifacts: &mut ArtifactRecorder,
 ) -> Result<(), RunError> {
     let due_field_names = field_schedules
         .iter()
@@ -660,19 +713,15 @@ fn record_due_fields(
         .map(|schedule| schedule.name.clone())
         .collect::<Vec<_>>();
     for name in due_field_names {
-        field_snapshots.push(FieldSnapshot {
+        artifacts.record_field_snapshot(FieldSnapshot {
             name: name.clone(),
             step,
             time,
             solver_dt,
             values: select_field_values(observables, &name)?,
-        });
+        })?;
     }
-    for schedule in field_schedules {
-        if is_due(time, schedule.next_time) {
-            schedule.next_time += schedule.every_seconds;
-        }
-    }
+    advance_due_schedules(field_schedules, time);
     Ok(())
 }
 

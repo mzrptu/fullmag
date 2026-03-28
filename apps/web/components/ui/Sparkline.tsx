@@ -84,7 +84,7 @@ export default function Sparkline({
           x={width / 2}
           y={height / 2 + 3}
           textAnchor="middle"
-          fill="var(--ide-text-3)"
+          fill="hsl(var(--muted-foreground))"
           fontSize="11"
           fontFamily="var(--font-mono, monospace)"
         >
@@ -133,7 +133,7 @@ export default function Sparkline({
           x={width - 2}
           y={height / 2 + 3}
           textAnchor="end"
-          fill="var(--ide-text-2)"
+          fill="hsl(var(--muted-foreground))"
           fontSize="10"
           fontFamily="var(--font-mono, monospace)"
         >

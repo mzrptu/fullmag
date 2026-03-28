@@ -146,24 +146,23 @@ static void free_reduction_scratch(Context &ctx) {
     ctx.reduction_scratch_len = 0;
 }
 
-static bool ensure_preview_download_scratch(Context &ctx, uint64_t preview_count) {
-    uint64_t required_len = preview_count * 3;
-    if (ctx.preview_download_scratch && ctx.preview_download_scratch_len >= required_len) {
+static bool ensure_preview_download_scratch(Context &ctx, size_t required_bytes) {
+    if (ctx.preview_download_scratch
+        && ctx.preview_download_scratch_len_bytes >= required_bytes)
+    {
         return true;
     }
     if (ctx.preview_download_scratch) {
         cudaFree(ctx.preview_download_scratch);
         ctx.preview_download_scratch = nullptr;
-        ctx.preview_download_scratch_len = 0;
+        ctx.preview_download_scratch_len_bytes = 0;
     }
-    cudaError_t err = cudaMalloc(
-        reinterpret_cast<void **>(&ctx.preview_download_scratch),
-        required_len * sizeof(double));
+    cudaError_t err = cudaMalloc(&ctx.preview_download_scratch, required_bytes);
     if (err != cudaSuccess) {
         set_cuda_error(ctx, "cudaMalloc(preview_download_scratch)", err);
         return false;
     }
-    ctx.preview_download_scratch_len = required_len;
+    ctx.preview_download_scratch_len_bytes = required_bytes;
     return true;
 }
 
@@ -172,14 +171,14 @@ static void free_preview_download_scratch(Context &ctx) {
         cudaFree(ctx.preview_download_scratch);
         ctx.preview_download_scratch = nullptr;
     }
-    ctx.preview_download_scratch_len = 0;
+    ctx.preview_download_scratch_len_bytes = 0;
 }
 
-template <typename Scalar>
-__global__ void downsample_field_preview_to_f64_kernel(
-    const Scalar *field_x,
-    const Scalar *field_y,
-    const Scalar *field_z,
+template <typename InputScalar, typename OutputScalar>
+__global__ void downsample_field_preview_kernel(
+    const InputScalar *field_x,
+    const InputScalar *field_y,
+    const InputScalar *field_z,
     uint32_t full_x,
     uint32_t full_y,
     uint32_t full_z,
@@ -188,7 +187,7 @@ __global__ void downsample_field_preview_to_f64_kernel(
     uint32_t preview_z,
     uint32_t z_origin,
     uint32_t z_stride,
-    double *out_xyz)
+    OutputScalar *out_xyz)
 {
     uint64_t preview_count =
         static_cast<uint64_t>(preview_x) * preview_y * preview_z;
@@ -236,9 +235,9 @@ __global__ void downsample_field_preview_to_f64_kernel(
         }
     }
 
-    out_xyz[preview_index * 3 + 0] = accum_x / count;
-    out_xyz[preview_index * 3 + 1] = accum_y / count;
-    out_xyz[preview_index * 3 + 2] = accum_z / count;
+    out_xyz[preview_index * 3 + 0] = static_cast<OutputScalar>(accum_x / count);
+    out_xyz[preview_index * 3 + 1] = static_cast<OutputScalar>(accum_y / count);
+    out_xyz[preview_index * 3 + 2] = static_cast<OutputScalar>(accum_z / count);
 }
 
 static bool alloc_fft_workspace(Context &ctx) {
@@ -527,43 +526,125 @@ bool context_upload_demag_kernel_spectra(
         && convert_and_upload(ctx.demag_kernel.yz, kyz, "cudaMemcpy(kern_yz)");
 }
 
-bool context_upload_magnetization(Context &ctx, const double *m_xyz, uint64_t len) {
+template <typename HostScalar>
+static bool context_upload_magnetization_impl(Context &ctx, const HostScalar *m_xyz, uint64_t len) {
     uint64_t n = ctx.cell_count;
-    if (len != n * 3) {
+    if (!m_xyz || len != n * 3) {
         ctx.last_error = "magnetization length mismatch";
         return false;
     }
 
-    // Convert AoS f64 host → SoA device
     size_t bytes = n * scalar_size(ctx.precision);
+    auto upload_component = [&](void *dst, const void *src, const char *label) -> bool {
+        cudaError_t err = cudaMemcpy(dst, src, bytes, cudaMemcpyHostToDevice);
+        if (err != cudaSuccess) {
+            set_cuda_error(ctx, label, err);
+            return false;
+        }
+        return true;
+    };
 
     if (ctx.precision == FULLMAG_FDM_PRECISION_DOUBLE) {
-        // Deinterleave on host, then copy
         std::vector<double> hx(n), hy(n), hz(n);
         for (uint64_t i = 0; i < n; i++) {
             bool is_active = !ctx.has_active_mask || ctx.active_mask_host[i] != 0;
-            hx[i] = is_active ? m_xyz[3 * i + 0] : 0.0;
-            hy[i] = is_active ? m_xyz[3 * i + 1] : 0.0;
-            hz[i] = is_active ? m_xyz[3 * i + 2] : 0.0;
+            hx[i] = is_active ? static_cast<double>(m_xyz[3 * i + 0]) : 0.0;
+            hy[i] = is_active ? static_cast<double>(m_xyz[3 * i + 1]) : 0.0;
+            hz[i] = is_active ? static_cast<double>(m_xyz[3 * i + 2]) : 0.0;
         }
-        cudaMemcpy(ctx.m.x, hx.data(), bytes, cudaMemcpyHostToDevice);
-        cudaMemcpy(ctx.m.y, hy.data(), bytes, cudaMemcpyHostToDevice);
-        cudaMemcpy(ctx.m.z, hz.data(), bytes, cudaMemcpyHostToDevice);
-    } else {
-        // f64 → f32 conversion + deinterleave
-        std::vector<float> hx(n), hy(n), hz(n);
-        for (uint64_t i = 0; i < n; i++) {
-            bool is_active = !ctx.has_active_mask || ctx.active_mask_host[i] != 0;
-            hx[i] = is_active ? static_cast<float>(m_xyz[3 * i + 0]) : 0.0f;
-            hy[i] = is_active ? static_cast<float>(m_xyz[3 * i + 1]) : 0.0f;
-            hz[i] = is_active ? static_cast<float>(m_xyz[3 * i + 2]) : 0.0f;
-        }
-        cudaMemcpy(ctx.m.x, hx.data(), bytes, cudaMemcpyHostToDevice);
-        cudaMemcpy(ctx.m.y, hy.data(), bytes, cudaMemcpyHostToDevice);
-        cudaMemcpy(ctx.m.z, hz.data(), bytes, cudaMemcpyHostToDevice);
+        return upload_component(ctx.m.x, hx.data(), "cudaMemcpy(m.x)")
+            && upload_component(ctx.m.y, hy.data(), "cudaMemcpy(m.y)")
+            && upload_component(ctx.m.z, hz.data(), "cudaMemcpy(m.z)");
     }
 
-    return true;
+    std::vector<float> hx(n), hy(n), hz(n);
+    for (uint64_t i = 0; i < n; i++) {
+        bool is_active = !ctx.has_active_mask || ctx.active_mask_host[i] != 0;
+        hx[i] = is_active ? static_cast<float>(m_xyz[3 * i + 0]) : 0.0f;
+        hy[i] = is_active ? static_cast<float>(m_xyz[3 * i + 1]) : 0.0f;
+        hz[i] = is_active ? static_cast<float>(m_xyz[3 * i + 2]) : 0.0f;
+    }
+    return upload_component(ctx.m.x, hx.data(), "cudaMemcpy(m.x)")
+        && upload_component(ctx.m.y, hy.data(), "cudaMemcpy(m.y)")
+        && upload_component(ctx.m.z, hz.data(), "cudaMemcpy(m.z)");
+}
+
+bool context_upload_magnetization_f64(Context &ctx, const double *m_xyz, uint64_t len) {
+    return context_upload_magnetization_impl(ctx, m_xyz, len);
+}
+
+bool context_upload_magnetization_f32(Context &ctx, const float *m_xyz, uint64_t len) {
+    return context_upload_magnetization_impl(ctx, m_xyz, len);
+}
+
+template <typename HostScalar>
+static bool context_download_field_impl(
+    const Context &ctx,
+    fullmag_fdm_observable observable,
+    HostScalar *out_xyz,
+    uint64_t out_len)
+{
+    uint64_t n = ctx.cell_count;
+    if (!out_xyz || out_len != n * 3) {
+        return false;
+    }
+
+    const DeviceVectorField *field;
+    switch (observable) {
+        case FULLMAG_FDM_OBSERVABLE_M: field = &ctx.m; break;
+        case FULLMAG_FDM_OBSERVABLE_H_EX: field = &ctx.h_ex; break;
+        case FULLMAG_FDM_OBSERVABLE_H_DEMAG: field = &ctx.h_demag; break;
+        case FULLMAG_FDM_OBSERVABLE_H_EFF: field = &ctx.work; break;
+        case FULLMAG_FDM_OBSERVABLE_H_EXT: {
+            for (uint64_t i = 0; i < n; i++) {
+                bool is_active = !ctx.has_active_mask || ctx.active_mask_host[i] != 0;
+                out_xyz[3 * i + 0] = (ctx.has_external_field && is_active)
+                    ? static_cast<HostScalar>(ctx.external_field[0])
+                    : static_cast<HostScalar>(0.0);
+                out_xyz[3 * i + 1] = (ctx.has_external_field && is_active)
+                    ? static_cast<HostScalar>(ctx.external_field[1])
+                    : static_cast<HostScalar>(0.0);
+                out_xyz[3 * i + 2] = (ctx.has_external_field && is_active)
+                    ? static_cast<HostScalar>(ctx.external_field[2])
+                    : static_cast<HostScalar>(0.0);
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+
+    auto copy_components = [&](auto tag) -> bool {
+        using DeviceScalar = decltype(tag);
+        std::vector<DeviceScalar> hx(n), hy(n), hz(n);
+        size_t bytes = n * sizeof(DeviceScalar);
+        cudaError_t err = cudaMemcpy(hx.data(), field->x, bytes, cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess) {
+            set_cuda_error(const_cast<Context &>(ctx), "cudaMemcpy(field.x)", err);
+            return false;
+        }
+        err = cudaMemcpy(hy.data(), field->y, bytes, cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess) {
+            set_cuda_error(const_cast<Context &>(ctx), "cudaMemcpy(field.y)", err);
+            return false;
+        }
+        err = cudaMemcpy(hz.data(), field->z, bytes, cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess) {
+            set_cuda_error(const_cast<Context &>(ctx), "cudaMemcpy(field.z)", err);
+            return false;
+        }
+        for (uint64_t i = 0; i < n; i++) {
+            out_xyz[3 * i + 0] = static_cast<HostScalar>(hx[i]);
+            out_xyz[3 * i + 1] = static_cast<HostScalar>(hy[i]);
+            out_xyz[3 * i + 2] = static_cast<HostScalar>(hz[i]);
+        }
+        return true;
+    };
+
+    if (ctx.precision == FULLMAG_FDM_PRECISION_DOUBLE) {
+        return copy_components(double{});
+    }
+    return copy_components(float{});
 }
 
 bool context_download_field_f64(
@@ -572,58 +653,20 @@ bool context_download_field_f64(
     double *out_xyz,
     uint64_t out_len)
 {
-    uint64_t n = ctx.cell_count;
-    if (out_len != n * 3) return false;
-
-    const DeviceVectorField *field;
-    switch (observable) {
-        case FULLMAG_FDM_OBSERVABLE_M:    field = &ctx.m;    break;
-        case FULLMAG_FDM_OBSERVABLE_H_EX: field = &ctx.h_ex; break;
-        case FULLMAG_FDM_OBSERVABLE_H_DEMAG: field = &ctx.h_demag; break;
-        case FULLMAG_FDM_OBSERVABLE_H_EFF: field = &ctx.work; break;
-        case FULLMAG_FDM_OBSERVABLE_H_EXT: {
-            for (uint64_t i = 0; i < n; i++) {
-                bool is_active = !ctx.has_active_mask || ctx.active_mask_host[i] != 0;
-                out_xyz[3 * i + 0] =
-                    (ctx.has_external_field && is_active) ? ctx.external_field[0] : 0.0;
-                out_xyz[3 * i + 1] =
-                    (ctx.has_external_field && is_active) ? ctx.external_field[1] : 0.0;
-                out_xyz[3 * i + 2] =
-                    (ctx.has_external_field && is_active) ? ctx.external_field[2] : 0.0;
-            }
-            return true;
-        }
-        default: return false;
-    }
-
-    size_t bytes = n * scalar_size(ctx.precision);
-
-    if (ctx.precision == FULLMAG_FDM_PRECISION_DOUBLE) {
-        std::vector<double> hx(n), hy(n), hz(n);
-        cudaMemcpy(hx.data(), field->x, bytes, cudaMemcpyDeviceToHost);
-        cudaMemcpy(hy.data(), field->y, bytes, cudaMemcpyDeviceToHost);
-        cudaMemcpy(hz.data(), field->z, bytes, cudaMemcpyDeviceToHost);
-        for (uint64_t i = 0; i < n; i++) {
-            out_xyz[3 * i + 0] = hx[i];
-            out_xyz[3 * i + 1] = hy[i];
-            out_xyz[3 * i + 2] = hz[i];
-        }
-    } else {
-        std::vector<float> hx(n), hy(n), hz(n);
-        cudaMemcpy(hx.data(), field->x, bytes, cudaMemcpyDeviceToHost);
-        cudaMemcpy(hy.data(), field->y, bytes, cudaMemcpyDeviceToHost);
-        cudaMemcpy(hz.data(), field->z, bytes, cudaMemcpyDeviceToHost);
-        for (uint64_t i = 0; i < n; i++) {
-            out_xyz[3 * i + 0] = static_cast<double>(hx[i]);
-            out_xyz[3 * i + 1] = static_cast<double>(hy[i]);
-            out_xyz[3 * i + 2] = static_cast<double>(hz[i]);
-        }
-    }
-
-    return true;
+    return context_download_field_impl(ctx, observable, out_xyz, out_len);
 }
 
-bool context_download_field_preview_f64(
+bool context_download_field_f32(
+    const Context &ctx,
+    fullmag_fdm_observable observable,
+    float *out_xyz,
+    uint64_t out_len)
+{
+    return context_download_field_impl(ctx, observable, out_xyz, out_len);
+}
+
+template <typename HostScalar>
+static bool context_download_field_preview_impl(
     Context &ctx,
     fullmag_fdm_observable observable,
     uint32_t preview_nx,
@@ -631,26 +674,22 @@ bool context_download_field_preview_f64(
     uint32_t preview_nz,
     uint32_t z_origin,
     uint32_t z_stride,
-    double *out_xyz,
+    HostScalar *out_xyz,
     uint64_t out_len)
 {
     if (!out_xyz || preview_nx == 0 || preview_ny == 0 || preview_nz == 0 || z_stride == 0) {
         return false;
     }
 
-    uint64_t preview_count =
-        static_cast<uint64_t>(preview_nx) * preview_ny * preview_nz;
-    if (out_len != preview_count * 3) {
-        return false;
-    }
-    if (z_origin >= ctx.nz) {
+    uint64_t preview_count = static_cast<uint64_t>(preview_nx) * preview_ny * preview_nz;
+    if (out_len != preview_count * 3 || z_origin >= ctx.nz) {
         return false;
     }
 
     if (preview_nx == ctx.nx && preview_ny == ctx.ny && preview_nz == ctx.nz
         && z_origin == 0 && z_stride == 1)
     {
-        return context_download_field_f64(ctx, observable, out_xyz, out_len);
+        return context_download_field_impl(ctx, observable, out_xyz, out_len);
     }
 
     const DeviceVectorField *field = nullptr;
@@ -708,9 +747,12 @@ bool context_download_field_preview_f64(
                             (static_cast<uint64_t>(pz) * preview_ny + py) * preview_nx + px;
                         double scale =
                             (ctx.has_external_field && count > 0.0) ? (active_count / count) : 0.0;
-                        out_xyz[preview_index * 3 + 0] = ctx.external_field[0] * scale;
-                        out_xyz[preview_index * 3 + 1] = ctx.external_field[1] * scale;
-                        out_xyz[preview_index * 3 + 2] = ctx.external_field[2] * scale;
+                        out_xyz[preview_index * 3 + 0] =
+                            static_cast<HostScalar>(ctx.external_field[0] * scale);
+                        out_xyz[preview_index * 3 + 1] =
+                            static_cast<HostScalar>(ctx.external_field[1] * scale);
+                        out_xyz[preview_index * 3 + 2] =
+                            static_cast<HostScalar>(ctx.external_field[2] * scale);
                     }
                 }
             }
@@ -720,16 +762,16 @@ bool context_download_field_preview_f64(
             return false;
     }
 
-    if (!ensure_preview_download_scratch(ctx, preview_count)) {
+    if (!ensure_preview_download_scratch(ctx, preview_count * 3 * sizeof(HostScalar))) {
         return false;
     }
-    double *device_out = ctx.preview_download_scratch;
+    auto *device_out = reinterpret_cast<HostScalar *>(ctx.preview_download_scratch);
 
     constexpr uint32_t threads_per_block = 256;
-    uint32_t blocks = static_cast<uint32_t>(
-        (preview_count + threads_per_block - 1) / threads_per_block);
+    uint32_t blocks =
+        static_cast<uint32_t>((preview_count + threads_per_block - 1) / threads_per_block);
     if (ctx.precision == FULLMAG_FDM_PRECISION_DOUBLE) {
-        downsample_field_preview_to_f64_kernel<<<blocks, threads_per_block>>>(
+        downsample_field_preview_kernel<double, HostScalar><<<blocks, threads_per_block>>>(
             reinterpret_cast<const double *>(field->x),
             reinterpret_cast<const double *>(field->y),
             reinterpret_cast<const double *>(field->z),
@@ -743,7 +785,7 @@ bool context_download_field_preview_f64(
             z_stride,
             device_out);
     } else {
-        downsample_field_preview_to_f64_kernel<<<blocks, threads_per_block>>>(
+        downsample_field_preview_kernel<float, HostScalar><<<blocks, threads_per_block>>>(
             reinterpret_cast<const float *>(field->x),
             reinterpret_cast<const float *>(field->y),
             reinterpret_cast<const float *>(field->z),
@@ -760,13 +802,13 @@ bool context_download_field_preview_f64(
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
-        set_cuda_error(ctx, "downsample_field_preview_to_f64_kernel", err);
+        set_cuda_error(ctx, "downsample_field_preview_kernel", err);
         return false;
     }
     err = cudaMemcpy(
         out_xyz,
         device_out,
-        preview_count * 3 * sizeof(double),
+        preview_count * 3 * sizeof(HostScalar),
         cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         set_cuda_error(ctx, "cudaMemcpy(preview_out)", err);
@@ -774,6 +816,52 @@ bool context_download_field_preview_f64(
     }
 
     return true;
+}
+
+bool context_download_field_preview_f64(
+    Context &ctx,
+    fullmag_fdm_observable observable,
+    uint32_t preview_nx,
+    uint32_t preview_ny,
+    uint32_t preview_nz,
+    uint32_t z_origin,
+    uint32_t z_stride,
+    double *out_xyz,
+    uint64_t out_len)
+{
+    return context_download_field_preview_impl(
+        ctx,
+        observable,
+        preview_nx,
+        preview_ny,
+        preview_nz,
+        z_origin,
+        z_stride,
+        out_xyz,
+        out_len);
+}
+
+bool context_download_field_preview_f32(
+    Context &ctx,
+    fullmag_fdm_observable observable,
+    uint32_t preview_nx,
+    uint32_t preview_ny,
+    uint32_t preview_nz,
+    uint32_t z_origin,
+    uint32_t z_stride,
+    float *out_xyz,
+    uint64_t out_len)
+{
+    return context_download_field_preview_impl(
+        ctx,
+        observable,
+        preview_nx,
+        preview_ny,
+        preview_nz,
+        z_origin,
+        z_stride,
+        out_xyz,
+        out_len);
 }
 
 bool context_query_device_info(Context &ctx) {

@@ -2,12 +2,12 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import * as THREE from "three";
+import { cn } from "@/lib/utils";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import ViewCube from "./ViewCube";
 import HslSphere from "./HslSphere";
 import { applyMagnetizationHsl } from "./magnetizationColor";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
-import t from "./Toolbar3D.module.css";
 
 // ─── Types (mirroring amumax preview3D.ts) ──────────────────────────
 interface Props {
@@ -452,10 +452,11 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
 
           if (isVoxel) {
             // ─── Voxel mode (amumax updateVoxelMesh) ────────
+            const cellActive = !activeMask || activeMask[idx];
             const metric = voxelColorMode === "orientation"
               ? mag
               : Math.abs(componentValue(mx, my, mz, voxelColorMode as "x" | "y" | "z"));
-            const isVisible = sampled && metric >= voxelThreshold;
+            const isVisible = cellActive && sampled && metric >= voxelThreshold;
 
             // Position: sim-Y → world-Z, sim-Z → world-Y (amumax convention)
             let worldY = iz;
@@ -483,7 +484,8 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
             applyVoxelColor(mx, my, mz, voxelColorMode, _color);
           } else {
             // ─── Glyph mode (amumax updateGlyphMesh) ────────
-            const isVisible = (mx !== 0 || my !== 0 || mz !== 0) && sampled;
+            const cellActive = !activeMask || activeMask[idx];
+            const isVisible = cellActive && (mx !== 0 || my !== 0 || mz !== 0) && sampled;
 
             // Position: sim-Y → world-Z, sim-Z → world-Y
             _dummy.position.set(ix, iz, iy);
@@ -547,10 +549,10 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
   };
 
   return (
-    <div className={t.viewportRoot}>
-      <div className={t.toolbar}>
+    <div className="relative flex flex-col h-full">
+      <div className="absolute left-3 top-3 z-10 flex flex-col">
         <button
-          className={t.toggleBtn}
+          className="w-8 h-8 flex items-center justify-center rounded-md bg-card/40 border border-border/50 text-muted-foreground text-base cursor-pointer backdrop-blur-md transition-all hover:bg-muted/50 hover:text-foreground"
           onClick={() => setExpanded(!expanded)}
           title="3D Controls"
         >
@@ -558,7 +560,7 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
         </button>
 
         {expanded ? (
-          <div className={t.toolbarContent}>
+          <div className="mt-2 p-3 min-w-[200px] max-w-[220px] max-h-[360px] overflow-y-auto flex flex-col gap-3 rounded-lg bg-gradient-to-b from-card to-background border border-border/50 backdrop-blur-md shadow-lg scrollbar-thin scrollbar-thumb-muted-foreground/30">
             {!geometryMode ? (
               <ControlGroup label="Render mode">
                 <SegmentedGroup
@@ -643,11 +645,11 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
 
             {!geometryMode ? (
               <>
-                <div className={t.divider} />
+                <div className="h-px bg-border/50 my-0.5" />
 
                 <ControlGroup label="Topography">
                   <button
-                    className={`${t.actionBtn} ${settings.topoEnabled ? t.topoActive : ""}`}
+                    className={cn("w-full py-2 text-[0.65rem] font-bold tracking-wider text-muted-foreground bg-white/5 border border-border/50 rounded-md cursor-pointer transition-all hover:bg-primary/10 hover:border-primary/50 hover:text-foreground", settings.topoEnabled && "bg-gradient-to-br from-emerald-500/85 to-emerald-700/85 text-white border-emerald-500/50 hover:text-white")}
                     onClick={() => update({ topoEnabled: !settings.topoEnabled })}
                   >
                     {settings.topoEnabled ? "⛰ ON" : "OFF"}
@@ -682,7 +684,7 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
               </>
             ) : null}
 
-            <button className={t.actionBtn} onClick={resetCamera}>
+            <button className="w-full py-2 text-[0.65rem] font-bold tracking-wider text-muted-foreground bg-white/5 border border-border/50 rounded-md cursor-pointer transition-all hover:bg-primary/10 hover:border-primary/50 hover:text-foreground" onClick={resetCamera}>
               Reset Camera
             </button>
           </div>
@@ -691,7 +693,7 @@ export default function MagnetizationView3D({ grid, vectors, fieldLabel = "Vecto
 
       <div
         ref={containerRef}
-        className={t.viewportCanvas}
+        className="w-full flex-1 min-h-0 bg-[#0c121f]"
       />
 
       <ViewCube sceneRef={sceneRef} grid={grid} />
@@ -707,10 +709,10 @@ function ControlGroup({ label, value, children }: {
   label: string; value?: string; children: React.ReactNode;
 }) {
   return (
-    <div className={t.controlGroup}>
-      <div className={t.controlLabel}>
+    <div className="flex flex-col gap-[3px]">
+      <div className="flex justify-between items-center text-[0.65rem] uppercase tracking-widest text-muted-foreground">
         {label}
-        {value && <span className={t.controlValue}>{value}</span>}
+        {value && <span className="font-semibold font-mono text-foreground">{value}</span>}
       </div>
       {children}
     </div>
@@ -723,13 +725,12 @@ function SegmentedGroup({ options, value, onChange, columns }: {
   onChange: (v: string) => void;
   columns: number;
 }) {
-  const gridClass = columns === 2 ? t.btnGroup2 : columns === 3 ? t.btnGroupWide : "";
   return (
-    <div className={`${t.btnGroup} ${gridClass}`}>
+    <div className={cn("grid rounded-md overflow-hidden border border-border/50 bg-white/5", columns === 2 ? "grid-cols-2" : columns === 3 ? "grid-cols-3" : "grid-cols-4")}>
       {options.map(([k, label]) => (
         <button
           key={k}
-          className={`${t.segBtn} ${value === k ? t.segBtnActive : ""}`}
+          className={cn("py-1.5 text-[0.65rem] font-bold tracking-wider text-muted-foreground bg-transparent border-none cursor-pointer transition-colors border-r border-border/50 last:border-r-0 hover:bg-primary/10 hover:text-foreground", value === k && "bg-gradient-to-br from-primary to-blue-600 text-white")}
           onClick={() => onChange(k)}
         >
           {label}
@@ -746,7 +747,7 @@ function Slider({ min, max, step, value, onChange }: {
   return (
     <input
       type="range"
-      className={t.slider}
+      className="w-full h-1 appearance-none bg-gradient-to-r from-teal-500/20 to-blue-500/20 rounded-full outline-none cursor-pointer border-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-background [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer"
       min={min} max={max} step={step} value={value}
       onChange={(e) => onChange(parseFloat(e.target.value))}
     />

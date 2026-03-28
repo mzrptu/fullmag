@@ -1,28 +1,24 @@
-"use client";
-
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[length:var(--ide-text-xs)] font-semibold tracking-wide uppercase transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--ide-accent)] focus:ring-offset-2",
+  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[0.7rem] font-semibold tracking-wider uppercase transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
   {
     variants: {
       variant: {
         default:
-          "border-[var(--ide-border-subtle)] bg-[hsla(0,0%,100%,0.03)] text-[var(--ide-text-2)]",
-        accent:
-          "border-[hsla(170,50%,55%,0.3)] bg-[hsla(170,50%,55%,0.12)] text-[var(--am-accent)]",
-        info:
-          "border-[hsla(215,60%,60%,0.3)] bg-[hsla(215,60%,60%,0.12)] text-[var(--am-info)]",
-        success:
-          "border-[hsla(145,60%,48%,0.3)] bg-[hsla(145,60%,30%,0.18)] text-[var(--status-running)]",
-        warn:
-          "border-[hsla(40,65%,60%,0.3)] bg-[hsla(40,75%,27%,0.18)] text-[var(--status-warn)]",
-        danger:
-          "border-[hsla(347,80%,55%,0.3)] bg-[hsla(347,80%,30%,0.18)] text-[var(--am-danger)]",
-        outline:
-          "border-[var(--ide-border)] text-[var(--ide-text-2)]",
+          "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
+        secondary:
+          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        destructive:
+          "border-transparent bg-destructive/20 text-destructive hover:bg-destructive/30",
+        outline: "text-foreground",
+        // Custom semantic variants for Fullmag Status
+        info: "border-transparent bg-blue-500/15 text-blue-400 hover:bg-blue-500/25",
+        success: "border-transparent bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25",
+        warn: "border-transparent bg-amber-500/15 text-amber-500 hover:bg-amber-500/25",
+        accent: "border-transparent bg-teal-500/15 text-teal-400 hover:bg-teal-500/25",
       },
     },
     defaultVariants: {
@@ -35,15 +31,18 @@ export interface BadgeProps
   extends React.HTMLAttributes<HTMLDivElement>,
     VariantProps<typeof badgeVariants> {
   pulse?: boolean;
+  showDot?: boolean;
 }
 
-function Badge({ className, variant, pulse, ...props }: BadgeProps) {
+function Badge({ className, variant, pulse, showDot, ...props }: BadgeProps) {
+  const hasDot = pulse || showDot;
+  
   return (
     <div className={cn(badgeVariants({ variant }), className)} {...props}>
-      {pulse && (
-        <span className="relative flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-60" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-current" />
+      {hasDot && (
+        <span className="relative flex h-1.5 w-1.5">
+          {pulse && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-60" />}
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
         </span>
       )}
       {props.children}

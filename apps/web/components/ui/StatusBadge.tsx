@@ -1,8 +1,8 @@
 "use client";
 
-import s from "./StatusBadge.module.css";
+import { Badge } from "./badge";
 
-type Tone = "default" | "accent" | "info" | "warn" | "danger" | "success";
+export type Tone = "default" | "accent" | "info" | "warn" | "danger" | "success";
 
 interface StatusBadgeProps {
   label: string;
@@ -15,10 +15,18 @@ export default function StatusBadge({
   tone = "default",
   pulse = false,
 }: StatusBadgeProps) {
+  const variantMap: Record<Tone, any> = {
+    default: "secondary",
+    accent: "accent",
+    info: "info",
+    warn: "warn",
+    danger: "destructive",
+    success: "success",
+  };
+
   return (
-    <span className={s.uiBadge} data-tone={tone} data-pulse={pulse}>
-      <span className={s.dot} aria-hidden="true" />
-      <span>{label}</span>
-    </span>
+    <Badge variant={variantMap[tone]} showDot pulse={pulse}>
+      {label}
+    </Badge>
   );
 }

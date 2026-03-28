@@ -10,7 +10,6 @@ import ColorLegend from "../preview/ColorLegend";
 import FemWorkspacePanel from "./control-room/FemWorkspacePanel";
 import RunSidebar from "./control-room/RunSidebar";
 import { ViewportBar, ViewportCanvasArea } from "./control-room/ViewportPanels";
-import type { ViewportBarProps, ViewportCanvasAreaProps } from "./control-room/ViewportPanels";
 import {
   ControlRoomProvider,
   useControlRoom,
@@ -23,7 +22,6 @@ import {
 } from "./control-room/shared";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { cn } from "@/lib/utils";
-import s from "./RunControlRoom.module.css";
 
 /* ── Inner shell (consumes context) ── */
 
@@ -34,7 +32,7 @@ function ControlRoomShell() {
   /* ── Loading state ── */
   if (!ctx.session) {
     return (
-      <div className={s.loadingShell}>
+      <div className="flex flex-col items-center justify-center p-8 text-sm text-muted-foreground h-full bg-background">
         {ctx.error
           ? `Connection error: ${ctx.error}`
           : "Connecting to local live workspace…"}
@@ -42,92 +40,11 @@ function ControlRoomShell() {
     );
   }
 
-  /* ── Build prop bags for existing child components ── */
-  const viewportBarProps: ViewportBarProps = {
-    isMeshWorkspaceView: ctx.isMeshWorkspaceView,
-    meshName: ctx.meshName,
-    effectiveFemMesh: ctx.effectiveFemMesh,
-    meshRenderMode: ctx.meshRenderMode,
-    meshSelection: ctx.meshSelection,
-    previewControlsActive: ctx.previewControlsActive,
-    requestedPreviewQuantity: ctx.requestedPreviewQuantity,
-    requestedPreviewComponent: ctx.requestedPreviewComponent,
-    requestedPreviewEveryN: ctx.requestedPreviewEveryN,
-    requestedPreviewMaxPoints: ctx.requestedPreviewMaxPoints,
-    requestedPreviewXChosenSize: ctx.requestedPreviewXChosenSize,
-    requestedPreviewYChosenSize: ctx.requestedPreviewYChosenSize,
-    requestedPreviewAutoScale: ctx.requestedPreviewAutoScale,
-    requestedPreviewLayer: ctx.requestedPreviewLayer,
-    requestedPreviewAllLayers: ctx.requestedPreviewAllLayers,
-    previewBusy: ctx.previewBusy,
-    previewQuantityOptions: ctx.previewQuantityOptions,
-    quantityOptions: ctx.quantityOptions,
-    previewEveryNOptions: ctx.previewEveryNOptions,
-    previewMaxPointOptions: ctx.previewMaxPointOptions,
-    preview: ctx.preview,
-    effectiveViewMode: ctx.effectiveViewMode,
-    solverGrid: ctx.solverGrid,
-    plane: ctx.plane,
-    sliceIndex: ctx.sliceIndex,
-    maxSliceCount: ctx.maxSliceCount,
-    component: ctx.component,
-    updatePreview: ctx.updatePreview,
-    setSelectedQuantity: ctx.setSelectedQuantity,
-    setComponent: ctx.setComponent,
-    setPlane: ctx.setPlane,
-    setSliceIndex: ctx.setSliceIndex,
-    isFemBackend: ctx.isFemBackend,
-    totalCells: ctx.totalCells,
-    activeCells: ctx.activeCells,
-    activeMaskPresent: ctx.activeMaskPresent,
-  };
-
-  const viewportCanvasProps: ViewportCanvasAreaProps = {
-    effectiveStep: ctx.effectiveStep,
-    effectiveTime: ctx.effectiveTime,
-    effectiveDmDt: ctx.effectiveDmDt,
-    isVectorQuantity: ctx.isVectorQuantity,
-    quantityDescriptor: ctx.quantityDescriptor,
-    selectedScalarValue: ctx.selectedScalarValue,
-    preview: ctx.preview,
-    effectiveViewMode: ctx.effectiveViewMode,
-    isFemBackend: ctx.isFemBackend,
-    femMeshData: ctx.femMeshData,
-    femTopologyKey: ctx.femTopologyKey,
-    femColorField: ctx.femColorField,
-    femMagnetization3DActive: ctx.femMagnetization3DActive,
-    femShouldShowArrows: ctx.femShouldShowArrows,
-    meshRenderMode: ctx.meshRenderMode,
-    meshOpacity: ctx.meshOpacity,
-    meshClipEnabled: ctx.meshClipEnabled,
-    meshClipAxis: ctx.meshClipAxis,
-    meshClipPos: ctx.meshClipPos,
-    selectedQuantity: ctx.selectedQuantity,
-    effectiveVectorComponent: ctx.effectiveVectorComponent,
-    plane: ctx.plane,
-    sliceIndex: ctx.sliceIndex,
-    maxSliceCount: ctx.maxSliceCount,
-    selectedVectors: ctx.selectedVectors,
-    previewGrid: ctx.previewGrid,
-    component: ctx.component,
-    emptyStateMessage: ctx.emptyStateMessage,
-    activeMask: ctx.activeMask,
-    setMeshRenderMode: ctx.setMeshRenderMode,
-    setMeshOpacity: ctx.setMeshOpacity,
-    setMeshClipEnabled: ctx.setMeshClipEnabled,
-    setMeshClipAxis: ctx.setMeshClipAxis,
-    setMeshClipPos: ctx.setMeshClipPos,
-    setMeshShowArrows: ctx.setMeshShowArrows,
-    setMeshSelection: ctx.setMeshSelection,
-    worldExtent: ctx.worldExtent,
-    gridCells: ctx.solverGrid[0] > 0 ? ctx.solverGrid : null,
-  };
-
   const previewNotices = (
     <>
       {(ctx.preview?.auto_downscaled || ctx.liveState?.preview_auto_downscaled) && (
         <div
-          className={s.previewNotice}
+          className="px-2.5 py-1.5 border-b border-amber-500/30 bg-amber-500/10 text-amber-500 text-xs leading-snug"
           title={ctx.preview?.auto_downscale_message ?? ctx.liveState?.preview_auto_downscale_message ?? undefined}
         >
           {ctx.preview?.auto_downscale_message ??
@@ -136,7 +53,7 @@ function ControlRoomShell() {
         </div>
       )}
       {(ctx.previewMessage || ctx.previewIsStale || ctx.previewIsBootstrapStale) && (
-        <div className={s.previewStatus}>
+        <div className="px-2.5 py-1.5 border-b border-border/40 bg-card/40 text-muted-foreground text-xs leading-snug">
           {ctx.previewMessage ??
             (ctx.previewIsBootstrapStale
               ? "Showing bootstrap preview until first live preview sample arrives"
@@ -145,62 +62,6 @@ function ControlRoomShell() {
       )}
     </>
   );
-
-  const femWorkspaceProps = {
-    workspaceStatus: ctx.workspaceStatus,
-    femDockTab: ctx.femDockTab,
-    setFemDockTab: ctx.setFemDockTab,
-    openFemMeshWorkspace: ctx.openFemMeshWorkspace,
-    effectiveFemMesh: ctx.effectiveFemMesh,
-    meshFeOrder: ctx.meshFeOrder,
-    meshHmax: ctx.meshHmax,
-    isMeshWorkspaceView: ctx.isMeshWorkspaceView,
-    effectiveViewMode: ctx.effectiveViewMode,
-    handleViewModeChange: ctx.handleViewModeChange,
-    meshRenderMode: ctx.meshRenderMode,
-    setMeshRenderMode: ctx.setMeshRenderMode,
-    meshFaceDetail: ctx.meshFaceDetail,
-    meshSelection: ctx.meshSelection,
-    setMeshSelection: ctx.setMeshSelection,
-    meshName: ctx.meshName,
-    meshSource: ctx.meshSource,
-    meshExtent: ctx.meshExtent,
-    meshBoundsMin: ctx.meshBoundsMin,
-    meshBoundsMax: ctx.meshBoundsMax,
-    mesherBackend: ctx.mesherBackend,
-    mesherSourceKind: ctx.mesherSourceKind,
-    mesherCurrentSettings: ctx.mesherCurrentSettings,
-    meshOptions: ctx.meshOptions,
-    setMeshOptions: ctx.setMeshOptions,
-    meshQualityData: ctx.meshQualityData,
-    meshGenerating: ctx.meshGenerating,
-    handleMeshGenerate: ctx.handleMeshGenerate,
-    previewControlsActive: ctx.previewControlsActive,
-    requestedPreviewQuantity: ctx.requestedPreviewQuantity,
-    previewQuantityOptions: ctx.previewQuantityOptions,
-    previewBusy: ctx.previewBusy,
-    updatePreview: ctx.updatePreview,
-    setSelectedQuantity: ctx.setSelectedQuantity,
-    requestedPreviewComponent: ctx.requestedPreviewComponent,
-    component: ctx.component,
-    setComponent: ctx.setComponent,
-    requestedPreviewEveryN: ctx.requestedPreviewEveryN,
-    previewEveryNOptions: ctx.previewEveryNOptions,
-    meshOpacity: ctx.meshOpacity,
-    setMeshOpacity: ctx.setMeshOpacity,
-    meshShowArrows: ctx.meshShowArrows,
-    setMeshShowArrows: ctx.setMeshShowArrows,
-    meshClipEnabled: ctx.meshClipEnabled,
-    setMeshClipEnabled: ctx.setMeshClipEnabled,
-    meshClipAxis: ctx.meshClipAxis,
-    setMeshClipAxis: ctx.setMeshClipAxis,
-    meshClipPos: ctx.meshClipPos,
-    setMeshClipPos: ctx.setMeshClipPos,
-    meshQualitySummary: ctx.meshQualitySummary,
-    viewportBarProps,
-    viewportCanvasProps,
-    previewNotices,
-  };
 
   const canRun = ctx.interactiveEnabled && ctx.awaitingCommand && !ctx.commandBusy;
   const canRelax = ctx.interactiveEnabled && ctx.awaitingCommand && !ctx.commandBusy;
@@ -211,7 +72,7 @@ function ControlRoomShell() {
 
 
   return (
-    <div className={s.shell}>
+    <div className="fixed inset-0 flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
       <TitleBar
         problemName={ctx.session?.problem_name ?? "Local Live Workspace"}
         backend={ctx.session?.requested_backend ?? ""}
@@ -256,7 +117,7 @@ function ControlRoomShell() {
       />
       <PanelGroup
         orientation="horizontal"
-        className={s.body}
+        className="flex flex-row flex-1 min-h-0 min-w-0 overflow-hidden"
         resizeTargetMinimumSize={{ coarse: 40, fine: 12 }}
       >
         <Panel
@@ -266,7 +127,7 @@ function ControlRoomShell() {
         >
           <PanelGroup
             orientation="vertical"
-            className={s.main}
+            className="relative flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden"
             resizeTargetMinimumSize={{ coarse: 40, fine: 10 }}
           >
             <Panel
@@ -277,24 +138,24 @@ function ControlRoomShell() {
               {ctx.isFemBackend ? (
                 <PanelGroup
                   orientation="horizontal"
-                  className={s.workspaceSplit}
+                  className="w-full h-full min-h-0 min-w-0"
                   resizeTargetMinimumSize={{ coarse: 40, fine: 12 }}
                 >
-                  <FemWorkspacePanel {...femWorkspaceProps} />
+                  <FemWorkspacePanel />
                 </PanelGroup>
               ) : (
-                <div className={cn(s.viewport, s.viewportRow)}>
-                  <div className={s.viewportMainColumn}>
-                    <ViewportBar {...viewportBarProps} />
+                <div className="flex flex-row h-full min-h-0 min-w-0 overflow-hidden bg-black flex-1 relative shadow-[inset_0_0_60px_rgba(0,0,0,0.5)]">
+                  <div className="flex flex-col flex-1 min-w-0 min-h-0">
+                    <ViewportBar />
                     {previewNotices}
-                    <ViewportCanvasArea {...viewportCanvasProps} />
+                    <ViewportCanvasArea />
                   </div>
                   <ColorLegend />
                 </div>
               )}
             </Panel>
 
-            <PanelResizeHandle className={s.resizeHandle} />
+            <PanelResizeHandle className="w-full h-1 bg-transparent cursor-ns-resize flex items-center justify-center transition-colors relative hover:bg-muted/50 active:bg-muted/50 after:content-[''] after:absolute after:top-1/2 after:left-1/2 after:-translate-x-1/2 after:-translate-y-1/2 after:h-[2px] after:w-9 after:rounded-full after:bg-border hover:after:bg-primary active:after:bg-primary z-50" />
 
             <Panel
               id="workspace-console"
@@ -304,7 +165,7 @@ function ControlRoomShell() {
               collapsible
               collapsedSize="3%"
             >
-              <div className={s.console}>
+              <div className="flex flex-col h-full bg-card/50 backdrop-blur-xl isolate overflow-hidden relative z-40 border-t border-border/60 shadow-[0_-8px_30px_rgba(0,0,0,0.3)]">
                 <EngineConsole
                   session={ctx.session ?? null}
                   run={ctx.run ?? null}
@@ -323,7 +184,7 @@ function ControlRoomShell() {
 
         {!ctx.sidebarCollapsed && (
           <>
-            <PanelResizeHandle className={s.sidebarResizeHandle} />
+            <PanelResizeHandle className="h-full w-2 bg-transparent cursor-ew-resize flex items-center justify-center transition-colors relative hover:bg-muted/50 active:bg-muted/50 after:content-[''] after:absolute after:top-1/2 after:left-1/2 after:-translate-x-1/2 after:-translate-y-1/2 after:w-[2px] after:h-9 after:rounded-full after:bg-border hover:after:bg-primary active:after:bg-primary z-50" />
             <Panel
               id="workspace-sidebar"
               defaultSize={PANEL_SIZES.sidebarDefault}

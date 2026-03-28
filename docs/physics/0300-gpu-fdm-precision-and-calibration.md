@@ -179,9 +179,17 @@ so the runner and native backend do not infer or silently override precision.
   reference path.
 - `execution_precision="single"` is legal in Python API and `ProblemIR`, but currently
   planning-only for the CPU reference runner.
-- Phase 2 CUDA work upgrades:
-  - FDM `double` to public-executable on GPU first,
-  - then FDM `single` to public-executable on GPU after calibration.
+- Current CUDA execution state:
+  - FDM `double` is public-executable on GPU,
+  - FDM `single` is public-executable on GPU after calibration,
+  - public multilayer CUDA paths also accept `execution_precision="single"`;
+    both the native single-grid fast path and the general `cuda-assisted`
+    multilayer path execute at the requested precision, including the host-side
+    multilayer demag FFT runtime used by the assisted path,
+  - the native CUDA FDM transfer ABI also exposes precision-matched `f32` and
+    `f64` upload/export entrypoints, so calibrated `single` execution no longer
+    has to round-trip runtime magnetization and field buffers through host `f64`
+    unless a higher-level caller explicitly requests `f64` artifacts.
 
 This means the capability matrix must distinguish:
 

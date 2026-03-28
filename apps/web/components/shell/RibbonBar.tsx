@@ -10,7 +10,7 @@ import {
 import {
   Tooltip, TooltipTrigger, TooltipContent, TooltipProvider,
 } from "@/components/ui/tooltip";
-import s from "./shell.module.css";
+import { cn } from "@/lib/utils";
 
 /* ── Types ──────────────────────────────────────── */
 
@@ -69,7 +69,7 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
       id: "script", title: "Script",
       actions: [
         { id: "open", icon: <FileText size={20} />, label: "Open", tooltip: "Open script file", shortcut: "Ctrl+O", disabled: true },
-        { id: "run", icon: <Play size={20} />, label: "Run", tooltip: "Run simulation", shortcut: "F5", accent: true, disabled: !p.canRun, action: () => p.onSimAction?.("run") },
+        { id: "run", icon: <Play size={20} fill="currentColor" />, label: "Run", tooltip: "Run simulation", shortcut: "F5", accent: true, disabled: !p.canRun, action: () => p.onSimAction?.("run") },
       ],
     },
     {
@@ -85,9 +85,9 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
       actions: [
         { id: "configure", icon: <Cog size={20} />, label: "Setup", tooltip: "Configure time integrator, relaxation, and convergence", action: p.onSetup },
         { id: "relax", icon: <Target size={20} />, label: "Relax", tooltip: "Run relaxation to equilibrium", disabled: !p.canRelax, action: () => p.onSimAction?.("relax") },
-        { id: "run-solve", icon: <Play size={20} />, label: "Run", tooltip: "Run until the configured stop time", accent: true, disabled: !p.canRun, action: () => p.onSimAction?.("run") },
-        { id: "pause", icon: <Pause size={20} />, label: "Pause", tooltip: "Pause solver", disabled: !p.canPause, action: () => p.onSimAction?.("pause") },
-        { id: "stop", icon: <Square size={20} />, label: "Stop", tooltip: "Stop solver", disabled: !p.canStop, action: () => p.onSimAction?.("stop") },
+        { id: "run-solve", icon: <Play size={20} fill="currentColor" />, label: "Run", tooltip: "Run until the configured stop time", accent: true, disabled: !p.canRun, action: () => p.onSimAction?.("run") },
+        { id: "pause", icon: <Pause size={20} fill="currentColor" />, label: "Pause", tooltip: "Pause solver", disabled: !p.canPause, action: () => p.onSimAction?.("pause") },
+        { id: "stop", icon: <Square size={20} fill="currentColor" />, label: "Stop", tooltip: "Stop solver", disabled: !p.canStop, action: () => p.onSimAction?.("stop") },
       ],
     },
     buildViewGroup(p),
@@ -133,9 +133,9 @@ function buildStudyGroups(p: RibbonBarProps): RibbonGroup[] {
       id: "execution", title: "Execution",
       actions: [
         { id: "relax", icon: <Target size={20} />, label: "Relax", tooltip: "Run relaxation to equilibrium", disabled: !p.canRelax, action: () => p.onSimAction?.("relax") },
-        { id: "run", icon: <Play size={20} />, label: "Run", tooltip: "Run until the configured stop time", shortcut: "F5", accent: true, disabled: !p.canRun, action: () => p.onSimAction?.("run") },
-        { id: "pause", icon: <Pause size={20} />, label: "Pause", tooltip: "Pause solver", disabled: !p.canPause, action: () => p.onSimAction?.("pause") },
-        { id: "stop", icon: <Square size={20} />, label: "Stop", tooltip: "Stop solver", disabled: !p.canStop, action: () => p.onSimAction?.("stop") },
+        { id: "run", icon: <Play size={20} fill="currentColor" />, label: "Run", tooltip: "Run until the configured stop time", shortcut: "F5", accent: true, disabled: !p.canRun, action: () => p.onSimAction?.("run") },
+        { id: "pause", icon: <Pause size={20} fill="currentColor" />, label: "Pause", tooltip: "Pause solver", disabled: !p.canPause, action: () => p.onSimAction?.("pause") },
+        { id: "stop", icon: <Square size={20} fill="currentColor" />, label: "Stop", tooltip: "Stop solver", disabled: !p.canStop, action: () => p.onSimAction?.("stop") },
       ],
     },
     buildViewGroup(p),
@@ -206,53 +206,74 @@ export default function RibbonBar(props: RibbonBarProps) {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className={s.ribbonWrapper}>
+      <div className="flex flex-col w-full border-b border-border/60 bg-gradient-to-br from-card/80 to-background/50 backdrop-blur-2xl shadow-[0_4px_24px_rgba(0,0,0,0.2)] shrink-0 z-30">
         {/* ── Tab row ── */}
-        <div className={s.ribbonTabs}>
+        <div className="flex px-3 pt-2 gap-1 border-b border-border/20">
           {TABS.map((tab) => (
-            <span
+            <button
               key={tab}
-              className={s.ribbonTabBtn}
-              data-active={tab === inferredTab}
+              className={cn(
+                "px-5 py-2 min-w-[80px] text-[0.65rem] font-bold uppercase tracking-[0.1em] transition-colors rounded-t-lg border-b-2",
+                tab === inferredTab 
+                  ? "border-primary bg-primary/10 text-primary" 
+                  : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+              )}
+              disabled={tab !== inferredTab}
             >
               {tab}
-            </span>
+            </button>
           ))}
         </div>
 
         {/* ── Actions row ── */}
-        <div className={s.ribbonBar}>
+        <div className="flex items-stretch overflow-x-auto scrollbar-none py-2 px-2 gap-1 min-h-[96px]">
           {groups.map((group, gi) => (
-            <div key={group.id} className={s.ribbonGroup}>
-              {gi > 0 && <div className={s.ribbonSep} />}
-              <div className={s.ribbonGroupInner}>
-                <div className={s.ribbonActions}>
+            <div key={group.id} className="flex items-stretch shrink-0">
+              {gi > 0 && <div className="w-px bg-border/40 mx-2 self-stretch my-3 shadow-[1px_0_0_hsla(0,0%,100%,0.02)]" />}
+              <div className="flex flex-col justify-between items-center px-1 shrink-0">
+                <div className="flex items-center gap-1">
                   {group.actions.map((action) => (
                     <Tooltip key={action.id}>
                       <TooltipTrigger asChild>
                         <button
-                          className={s.ribbonBtn}
-                          data-active={action.active ?? false}
-                          data-accent={action.accent ?? false}
+                          className={cn(
+                            "flex flex-col items-center justify-center rounded-md p-1 min-w-[60px] min-h-[56px] transition-all gap-1.5",
+                            action.active ? "bg-primary/10 text-primary shadow-inner border border-primary/20" : 
+                            action.accent ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm border border-transparent" :
+                            "text-foreground hover:bg-muted/80 border border-transparent hover:border-border/50",
+                            action.disabled && "opacity-40 cursor-not-allowed pointer-events-none"
+                          )}
                           disabled={action.disabled}
                           onClick={action.action}
                         >
-                          <span className={s.ribbonIcon}>{action.icon}</span>
-                          <span className={s.ribbonLabel}>{action.label}</span>
+                          <span className={cn(
+                            "flex flex-col items-center", 
+                            action.accent ? "text-primary-foreground" : action.active ? "text-primary" : "text-muted-foreground"
+                          )}>
+                            {action.icon}
+                          </span>
+                          <span className={cn(
+                            "text-[0.65rem] font-bold leading-none tracking-tight",
+                            action.accent ? "text-primary-foreground" : action.active ? "text-primary" : "text-foreground"
+                          )}>
+                            {action.label}
+                          </span>
                         </button>
                       </TooltipTrigger>
                       {action.tooltip && (
-                        <TooltipContent side="bottom" className={s.ribbonTooltip}>
-                          <span className={s.ribbonTooltipText}>{action.tooltip}</span>
+                        <TooltipContent side="bottom" className="text-xs border border-border shadow-xl">
+                          <span className="font-semibold">{action.tooltip}</span>
                           {action.shortcut && (
-                            <kbd className={s.ribbonTooltipKbd}>{action.shortcut}</kbd>
+                            <kbd className="opacity-80 font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded ml-2 border border-border">{action.shortcut}</kbd>
                           )}
                         </TooltipContent>
                       )}
                     </Tooltip>
                   ))}
                 </div>
-                <span className={s.ribbonGroupTitle}>{group.title}</span>
+                <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground mt-2 opacity-60">
+                  {group.title}
+                </span>
               </div>
             </div>
           ))}

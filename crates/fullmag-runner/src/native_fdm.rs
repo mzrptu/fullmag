@@ -41,6 +41,7 @@ pub(crate) fn is_cuda_available() -> bool {
 #[cfg(feature = "cuda")]
 pub(crate) struct NativeFdmBackend {
     handle: *mut ffi::fullmag_fdm_backend,
+    precision: fullmag_ir::ExecutionPrecision,
 }
 
 #[cfg(feature = "cuda")]
@@ -200,7 +201,10 @@ impl NativeFdmBackend {
             return Err(RunError { message: msg });
         }
 
-        Ok(Self { handle })
+        Ok(Self {
+            handle,
+            precision: plan.precision,
+        })
     }
 
     /// Execute one Heun time step.
@@ -267,10 +271,31 @@ impl NativeFdmBackend {
             return Err(self.last_error_or("copy_field failed"));
         }
 
-        // Re-pack flat f64 → [f64; 3]
-        let result: Vec<[f64; 3]> = flat.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+        Ok(unpack_flat_f64(&flat))
+    }
 
-        Ok(result)
+    /// Copy a field observable from device to host as [f32; 3] AoS.
+    pub fn copy_field_f32(
+        &self,
+        observable: ffi::fullmag_fdm_observable,
+        cell_count: usize,
+    ) -> Result<Vec<[f32; 3]>, RunError> {
+        let len = cell_count * 3;
+        let mut flat = vec![0.0f32; len];
+
+        let rc = unsafe {
+            ffi::fullmag_fdm_backend_copy_field_f32(
+                self.handle as *mut _,
+                observable,
+                flat.as_mut_ptr(),
+                len as u64,
+            )
+        };
+        if rc != ffi::FULLMAG_FDM_OK {
+            return Err(self.last_error_or("copy_field_f32 failed"));
+        }
+
+        Ok(unpack_flat_f32(&flat))
     }
 
     pub fn copy_m(&self, cell_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
@@ -308,6 +333,45 @@ impl NativeFdmBackend {
         )
     }
 
+    #[allow(dead_code)]
+    pub fn copy_m_f32(&self, cell_count: usize) -> Result<Vec<[f32; 3]>, RunError> {
+        self.copy_field_f32(
+            ffi::fullmag_fdm_observable::FULLMAG_FDM_OBSERVABLE_M,
+            cell_count,
+        )
+    }
+
+    pub fn copy_h_ex_f32(&self, cell_count: usize) -> Result<Vec<[f32; 3]>, RunError> {
+        self.copy_field_f32(
+            ffi::fullmag_fdm_observable::FULLMAG_FDM_OBSERVABLE_H_EX,
+            cell_count,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub fn copy_h_demag_f32(&self, cell_count: usize) -> Result<Vec<[f32; 3]>, RunError> {
+        self.copy_field_f32(
+            ffi::fullmag_fdm_observable::FULLMAG_FDM_OBSERVABLE_H_DEMAG,
+            cell_count,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub fn copy_h_ext_f32(&self, cell_count: usize) -> Result<Vec<[f32; 3]>, RunError> {
+        self.copy_field_f32(
+            ffi::fullmag_fdm_observable::FULLMAG_FDM_OBSERVABLE_H_EXT,
+            cell_count,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub fn copy_h_eff_f32(&self, cell_count: usize) -> Result<Vec<[f32; 3]>, RunError> {
+        self.copy_field_f32(
+            ffi::fullmag_fdm_observable::FULLMAG_FDM_OBSERVABLE_H_EFF,
+            cell_count,
+        )
+    }
+
     pub fn copy_live_preview_field(
         &self,
         request: &LivePreviewRequest,
@@ -332,33 +396,52 @@ impl NativeFdmBackend {
             _ => ffi::fullmag_fdm_observable::FULLMAG_FDM_OBSERVABLE_M,
         };
         let len = preview_count * 3;
-        let mut flat = vec![0.0f64; len];
-        let rc = unsafe {
-            ffi::fullmag_fdm_backend_copy_field_preview_f64(
-                self.handle as *mut _,
-                observable,
-                plan.preview_grid[0],
-                plan.preview_grid[1],
-                plan.preview_grid[2],
-                plan.z_origin,
-                plan.applied_layer_stride,
-                flat.as_mut_ptr(),
-                len as u64,
-            )
+        let flat = if self.precision == fullmag_ir::ExecutionPrecision::Single {
+            let mut flat = vec![0.0f32; len];
+            let rc = unsafe {
+                ffi::fullmag_fdm_backend_copy_field_preview_f32(
+                    self.handle as *mut _,
+                    observable,
+                    plan.preview_grid[0],
+                    plan.preview_grid[1],
+                    plan.preview_grid[2],
+                    plan.z_origin,
+                    plan.applied_layer_stride,
+                    flat.as_mut_ptr(),
+                    len as u64,
+                )
+            };
+            if rc != ffi::FULLMAG_FDM_OK {
+                return Err(self.last_error_or("copy_field_preview_f32 failed"));
+            }
+            flat.into_iter().map(f64::from).collect()
+        } else {
+            let mut flat = vec![0.0f64; len];
+            let rc = unsafe {
+                ffi::fullmag_fdm_backend_copy_field_preview_f64(
+                    self.handle as *mut _,
+                    observable,
+                    plan.preview_grid[0],
+                    plan.preview_grid[1],
+                    plan.preview_grid[2],
+                    plan.z_origin,
+                    plan.applied_layer_stride,
+                    flat.as_mut_ptr(),
+                    len as u64,
+                )
+            };
+            if rc != ffi::FULLMAG_FDM_OK {
+                return Err(self.last_error_or("copy_field_preview failed"));
+            }
+            flat
         };
-        if rc != ffi::FULLMAG_FDM_OK {
-            return Err(self.last_error_or("copy_field_preview failed"));
-        }
         Ok(build_grid_preview_field_from_flat_plan(
             request, &plan, flat, quantity,
         ))
     }
 
     pub fn upload_magnetization(&mut self, magnetization: &[[f64; 3]]) -> Result<(), RunError> {
-        let flat: Vec<f64> = magnetization
-            .iter()
-            .flat_map(|vector| vector.iter().copied())
-            .collect();
+        let flat = flatten_vectors_f64(magnetization);
         let rc = unsafe {
             ffi::fullmag_fdm_backend_upload_magnetization_f64(
                 self.handle as *mut _,
@@ -368,6 +451,21 @@ impl NativeFdmBackend {
         };
         if rc != ffi::FULLMAG_FDM_OK {
             return Err(self.last_error_or("upload_magnetization failed"));
+        }
+        Ok(())
+    }
+
+    pub fn upload_magnetization_f32(&mut self, magnetization: &[[f32; 3]]) -> Result<(), RunError> {
+        let flat = flatten_vectors_f32(magnetization);
+        let rc = unsafe {
+            ffi::fullmag_fdm_backend_upload_magnetization_f32(
+                self.handle as *mut _,
+                flat.as_ptr(),
+                flat.len() as u64,
+            )
+        };
+        if rc != ffi::FULLMAG_FDM_OK {
+            return Err(self.last_error_or("upload_magnetization_f32 failed"));
         }
         Ok(())
     }
@@ -442,6 +540,36 @@ pub(crate) struct DeviceInfo {
     pub runtime_version: i32,
 }
 
+#[cfg(feature = "cuda")]
+fn unpack_flat_f64(flat: &[f64]) -> Vec<[f64; 3]> {
+    flat.chunks_exact(3)
+        .map(|chunk| [chunk[0], chunk[1], chunk[2]])
+        .collect()
+}
+
+#[cfg(feature = "cuda")]
+fn unpack_flat_f32(flat: &[f32]) -> Vec<[f32; 3]> {
+    flat.chunks_exact(3)
+        .map(|chunk| [chunk[0], chunk[1], chunk[2]])
+        .collect()
+}
+
+#[cfg(feature = "cuda")]
+fn flatten_vectors_f64(vectors: &[[f64; 3]]) -> Vec<f64> {
+    vectors
+        .iter()
+        .flat_map(|vector| vector.iter().copied())
+        .collect()
+}
+
+#[cfg(feature = "cuda")]
+fn flatten_vectors_f32(vectors: &[[f32; 3]]) -> Vec<f32> {
+    vectors
+        .iter()
+        .flat_map(|vector| vector.iter().copied())
+        .collect()
+}
+
 #[cfg(all(test, feature = "cuda"))]
 mod tests {
     use super::*;
@@ -454,7 +582,7 @@ mod tests {
         IntegratorChoice, RelaxationAlgorithmIR, RelaxationControlIR,
     };
 
-    fn make_masked_test_plan(enable_demag: bool) -> FdmPlanIR {
+    fn make_masked_test_plan(enable_demag: bool, precision: ExecutionPrecision) -> FdmPlanIR {
         FdmPlanIR {
             grid: GridDimensions { cells: [3, 3, 1] },
             cell_size: [5e-9, 5e-9, 10e-9],
@@ -482,7 +610,7 @@ mod tests {
                 damping: 0.1,
             },
             gyromagnetic_ratio: 2.211e5,
-            precision: ExecutionPrecision::Double,
+            precision,
             exchange_bc: ExchangeBoundaryCondition::Neumann,
             integrator: IntegratorChoice::Heun,
             fixed_timestep: Some(2.5e-13),
@@ -603,6 +731,24 @@ mod tests {
         }
     }
 
+    fn max_vector_component_diff(actual: &[[f64; 3]], expected: &[[f64; 3]]) -> f64 {
+        actual
+            .iter()
+            .zip(expected.iter())
+            .flat_map(|(a, e)| (0..3).map(move |component| (a[component] - e[component]).abs()))
+            .fold(0.0, f64::max)
+    }
+
+    fn max_vector_component_diff_f32(actual: &[[f32; 3]], expected: &[[f64; 3]]) -> f64 {
+        actual
+            .iter()
+            .zip(expected.iter())
+            .flat_map(|(a, e)| {
+                (0..3).map(move |component| (f64::from(a[component]) - e[component]).abs())
+            })
+            .fold(0.0, f64::max)
+    }
+
     fn cpu_reference_single_step(
         plan: &FdmPlanIR,
     ) -> (
@@ -682,7 +828,7 @@ mod tests {
             return;
         }
 
-        let plan = make_masked_test_plan(false);
+        let plan = make_masked_test_plan(false, ExecutionPrecision::Double);
         let active_mask = plan.active_mask.clone().expect("active mask");
         let cell_count = plan.initial_magnetization.len();
         let (
@@ -786,7 +932,7 @@ mod tests {
             return;
         }
 
-        let plan = make_masked_test_plan(true);
+        let plan = make_masked_test_plan(true, ExecutionPrecision::Double);
         let active_mask = plan.active_mask.clone().expect("active mask");
         let cell_count = plan.initial_magnetization.len();
 
@@ -838,6 +984,156 @@ mod tests {
                 .any(|(value, is_active)| *is_active && *value != [0.0, 0.0, 0.0]),
             "expected at least one active cell to carry non-zero H_demag"
         );
+    }
+
+    #[test]
+    fn native_fdm_single_precision_stays_close_to_double_when_cuda_is_available() {
+        if !is_cuda_available() {
+            eprintln!(
+                "skipping native CUDA FDM single-precision parity test: CUDA backend is not available on this host"
+            );
+            return;
+        }
+
+        let double_plan = make_masked_test_plan(true, ExecutionPrecision::Double);
+        let mut single_plan = double_plan.clone();
+        single_plan.precision = ExecutionPrecision::Single;
+        let cell_count = double_plan.initial_magnetization.len();
+
+        let mut backend_double =
+            NativeFdmBackend::create(&double_plan).expect("native fdm create double");
+        let stats_double = backend_double
+            .step(double_plan.fixed_timestep.expect("fixed dt"))
+            .expect("native fdm double step");
+        let m_double = backend_double.copy_m(cell_count).expect("copy m double");
+        let h_eff_double = backend_double
+            .copy_h_eff(cell_count)
+            .expect("copy H_eff double");
+
+        let mut backend_single =
+            NativeFdmBackend::create(&single_plan).expect("native fdm create single");
+        let stats_single = backend_single
+            .step(single_plan.fixed_timestep.expect("fixed dt"))
+            .expect("native fdm single step");
+        let m_single = backend_single.copy_m(cell_count).expect("copy m single");
+        let h_eff_single = backend_single
+            .copy_h_eff(cell_count)
+            .expect("copy H_eff single");
+
+        let max_m_diff = max_vector_component_diff(&m_single, &m_double);
+        assert!(
+            max_m_diff <= 1e-5,
+            "single precision magnetization drift too large: {max_m_diff:.6e}"
+        );
+
+        let max_h_eff_diff = max_vector_component_diff(&h_eff_single, &h_eff_double);
+        assert!(
+            max_h_eff_diff <= 5e-1,
+            "single precision H_eff drift too large: {max_h_eff_diff:.6e}"
+        );
+
+        assert_scalar_close(
+            "single_vs_double.exchange_energy",
+            stats_single.e_ex,
+            stats_double.e_ex,
+            1e-4,
+            1e-18,
+        );
+        assert_scalar_close(
+            "single_vs_double.demag_energy",
+            stats_single.e_demag,
+            stats_double.e_demag,
+            1e-4,
+            1e-18,
+        );
+        assert_scalar_close(
+            "single_vs_double.total_energy",
+            stats_single.e_total,
+            stats_double.e_total,
+            1e-4,
+            1e-18,
+        );
+        assert_scalar_close(
+            "single_vs_double.max_rhs",
+            stats_single.max_dm_dt,
+            stats_double.max_dm_dt,
+            1e-4,
+            1e-8,
+        );
+    }
+
+    #[test]
+    fn native_fdm_single_precision_f32_transfers_match_f64_exports_when_cuda_is_available() {
+        if !is_cuda_available() {
+            eprintln!(
+                "skipping native CUDA FDM single-precision transfer test: CUDA backend is not available on this host"
+            );
+            return;
+        }
+
+        let plan = make_masked_test_plan(true, ExecutionPrecision::Single);
+        let active_mask = plan.active_mask.clone().expect("active mask");
+        let cell_count = plan.initial_magnetization.len();
+
+        let mut backend = NativeFdmBackend::create(&plan).expect("native fdm create single");
+        backend
+            .step(plan.fixed_timestep.expect("fixed dt"))
+            .expect("native fdm single step");
+
+        let m_f64 = backend.copy_m(cell_count).expect("copy m f64");
+        let h_eff_f64 = backend.copy_h_eff(cell_count).expect("copy H_eff f64");
+        let m_f32 = backend.copy_m_f32(cell_count).expect("copy m f32");
+        let h_eff_f32 = backend.copy_h_eff_f32(cell_count).expect("copy H_eff f32");
+
+        assert!(
+            max_vector_component_diff_f32(&m_f32, &m_f64) <= 1e-6,
+            "f32 m export diverged from f64 export"
+        );
+        assert!(
+            max_vector_component_diff_f32(&h_eff_f32, &h_eff_f64) <= 1e-3,
+            "f32 H_eff export diverged from f64 export"
+        );
+
+        let upload = plan
+            .initial_magnetization
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let sign = if index % 2 == 0 { -1.0f32 } else { 1.0f32 };
+                [
+                    sign * value[0] as f32,
+                    sign * value[1] as f32,
+                    sign * value[2] as f32,
+                ]
+            })
+            .collect::<Vec<_>>();
+
+        backend
+            .upload_magnetization_f32(&upload)
+            .expect("upload f32 magnetization");
+        backend
+            .refresh_observables()
+            .expect("refresh observables after f32 upload");
+        let roundtrip = backend
+            .copy_m_f32(cell_count)
+            .expect("roundtrip copy m f32");
+
+        for (index, is_active) in active_mask.iter().enumerate() {
+            let expected = if *is_active {
+                upload[index]
+            } else {
+                [0.0, 0.0, 0.0]
+            };
+            for component in 0..3 {
+                let diff = (roundtrip[index][component] - expected[component]).abs();
+                assert!(
+                    diff <= 1e-6,
+                    "roundtrip mismatch at cell {index} component {component}: actual={} expected={}",
+                    roundtrip[index][component],
+                    expected[component]
+                );
+            }
+        }
     }
 
     #[test]

@@ -23,6 +23,17 @@ const MU0: f64 = 4.0 * std::f64::consts::PI * 1e-7;
 const PLACEMENT_TOLERANCE: f64 = 1e-12;
 const GRID_TOLERANCE: f64 = 1e-6;
 
+/// Returns `true` when the user requested a CUDA device via `runtime_metadata`.
+fn runtime_requests_cuda(problem: &ProblemIR) -> bool {
+    problem
+        .problem_meta
+        .runtime_metadata
+        .get("runtime_selection")
+        .and_then(|v| v.get("device"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|d| d == "cuda" || d == "gpu")
+}
+
 #[derive(Debug, Clone)]
 enum GeometryShape {
     Box {
@@ -573,9 +584,11 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         external_field.is_some(),
         &mut errors,
     );
-    if problem.backend_policy.execution_precision != ExecutionPrecision::Double {
+    if problem.backend_policy.execution_precision != ExecutionPrecision::Double
+        && !runtime_requests_cuda(problem)
+    {
         errors.push(
-            "execution_precision='single' is reserved for the Phase 2 CUDA path; the current CPU reference runner supports only 'double'"
+            "execution_precision='single' requires a CUDA device; the CPU reference runner supports only 'double'"
                 .to_string(),
         );
     }
@@ -980,9 +993,11 @@ fn plan_fdm_multilayer(
         external_field.is_some(),
         &mut errors,
     );
-    if problem.backend_policy.execution_precision != ExecutionPrecision::Double {
+    if problem.backend_policy.execution_precision != ExecutionPrecision::Double
+        && !runtime_requests_cuda(problem)
+    {
         errors.push(
-            "execution_precision='single' is reserved for the Phase 2 CUDA path; the current public multilayer FDM runner supports only 'double'"
+            "execution_precision='single' requires a CUDA device; the CPU reference multilayer FDM runner supports only 'double'"
                 .to_string(),
         );
     }
@@ -1587,9 +1602,11 @@ fn plan_fem(
         external_field.is_some(),
         &mut errors,
     );
-    if problem.backend_policy.execution_precision != ExecutionPrecision::Double {
+    if problem.backend_policy.execution_precision != ExecutionPrecision::Double
+        && !runtime_requests_cuda(problem)
+    {
         errors.push(
-            "execution_precision='single' is not yet supported by the FEM planning baseline"
+            "execution_precision='single' is not yet supported by the FEM planning baseline on CPU"
                 .to_string(),
         );
     }
@@ -2485,6 +2502,196 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason.contains("execution_precision='single'")));
+    }
+
+    #[test]
+    fn single_precision_is_accepted_when_cuda_device_requested() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.backend_policy.execution_precision = ExecutionPrecision::Single;
+        ir.problem_meta.runtime_metadata.insert(
+            "runtime_selection".to_string(),
+            serde_json::json!({"device": "cuda", "device_index": 0}),
+        );
+
+        let result = plan(&ir);
+        // Planning should succeed (no precision error); execution may still
+        // fail later if the machine has no GPU, but that is the runner's job.
+        assert!(
+            result.is_ok()
+                || !result
+                    .as_ref()
+                    .unwrap_err()
+                    .reasons
+                    .iter()
+                    .any(|r| r.contains("execution_precision='single'")),
+            "planner should not reject single precision when CUDA device is requested"
+        );
+    }
+
+    #[test]
+    fn multilayer_single_precision_is_rejected_without_cuda_device_request() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.geometry.entries = vec![
+            GeometryEntryIR::Translate {
+                name: "free_geom".to_string(),
+                base: std::boxed::Box::new(GeometryEntryIR::Box {
+                    name: "free_base".to_string(),
+                    size: [40e-9, 20e-9, 2e-9],
+                }),
+                by: [0.0, 0.0, 0.0],
+            },
+            GeometryEntryIR::Translate {
+                name: "ref_geom".to_string(),
+                base: std::boxed::Box::new(GeometryEntryIR::Box {
+                    name: "ref_base".to_string(),
+                    size: [40e-9, 20e-9, 2e-9],
+                }),
+                by: [0.0, 0.0, 4e-9],
+            },
+        ];
+        ir.regions = vec![
+            fullmag_ir::RegionIR {
+                name: "free_region".to_string(),
+                geometry: "free_geom".to_string(),
+            },
+            fullmag_ir::RegionIR {
+                name: "ref_region".to_string(),
+                geometry: "ref_geom".to_string(),
+            },
+        ];
+        ir.magnets = vec![
+            fullmag_ir::MagnetIR {
+                name: "free".to_string(),
+                region: "free_region".to_string(),
+                material: "Py".to_string(),
+                initial_magnetization: Some(InitialMagnetizationIR::Uniform {
+                    value: [1.0, 0.0, 0.0],
+                }),
+            },
+            fullmag_ir::MagnetIR {
+                name: "ref".to_string(),
+                region: "ref_region".to_string(),
+                material: "Py".to_string(),
+                initial_magnetization: Some(InitialMagnetizationIR::Uniform {
+                    value: [0.0, 1.0, 0.0],
+                }),
+            },
+        ];
+        ir.energy_terms = vec![
+            fullmag_ir::EnergyTermIR::Exchange,
+            fullmag_ir::EnergyTermIR::Demag { realization: None },
+        ];
+        ir.backend_policy.execution_precision = ExecutionPrecision::Single;
+        ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+            fdm: Some(fullmag_ir::FdmHintsIR {
+                cell: [2e-9, 2e-9, 2e-9],
+                default_cell: Some([2e-9, 2e-9, 2e-9]),
+                per_magnet: None,
+                demag: Some(fullmag_ir::FdmDemagHintsIR {
+                    strategy: "multilayer_convolution".to_string(),
+                    mode: "two_d_stack".to_string(),
+                    allow_single_grid_fallback: false,
+                    common_cells: None,
+                    common_cells_xy: None,
+                }),
+            }),
+            fem: None,
+            hybrid: None,
+        });
+
+        let err = plan(&ir).expect_err("multilayer single precision should be rejected on CPU");
+        assert!(err.reasons.iter().any(|reason| {
+            reason.contains("execution_precision='single'")
+                && reason.contains("CPU reference multilayer FDM runner")
+        }));
+    }
+
+    #[test]
+    fn multilayer_single_precision_is_accepted_when_cuda_device_requested() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.geometry.entries = vec![
+            GeometryEntryIR::Translate {
+                name: "free_geom".to_string(),
+                base: std::boxed::Box::new(GeometryEntryIR::Box {
+                    name: "free_base".to_string(),
+                    size: [40e-9, 20e-9, 2e-9],
+                }),
+                by: [0.0, 0.0, 0.0],
+            },
+            GeometryEntryIR::Translate {
+                name: "ref_geom".to_string(),
+                base: std::boxed::Box::new(GeometryEntryIR::Box {
+                    name: "ref_base".to_string(),
+                    size: [40e-9, 20e-9, 2e-9],
+                }),
+                by: [0.0, 0.0, 4e-9],
+            },
+        ];
+        ir.regions = vec![
+            fullmag_ir::RegionIR {
+                name: "free_region".to_string(),
+                geometry: "free_geom".to_string(),
+            },
+            fullmag_ir::RegionIR {
+                name: "ref_region".to_string(),
+                geometry: "ref_geom".to_string(),
+            },
+        ];
+        ir.magnets = vec![
+            fullmag_ir::MagnetIR {
+                name: "free".to_string(),
+                region: "free_region".to_string(),
+                material: "Py".to_string(),
+                initial_magnetization: Some(InitialMagnetizationIR::Uniform {
+                    value: [1.0, 0.0, 0.0],
+                }),
+            },
+            fullmag_ir::MagnetIR {
+                name: "ref".to_string(),
+                region: "ref_region".to_string(),
+                material: "Py".to_string(),
+                initial_magnetization: Some(InitialMagnetizationIR::Uniform {
+                    value: [0.0, 1.0, 0.0],
+                }),
+            },
+        ];
+        ir.energy_terms = vec![
+            fullmag_ir::EnergyTermIR::Exchange,
+            fullmag_ir::EnergyTermIR::Demag { realization: None },
+        ];
+        ir.backend_policy.execution_precision = ExecutionPrecision::Single;
+        ir.problem_meta.runtime_metadata.insert(
+            "runtime_selection".to_string(),
+            serde_json::json!({"device": "cuda", "device_index": 0}),
+        );
+        ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+            fdm: Some(fullmag_ir::FdmHintsIR {
+                cell: [2e-9, 2e-9, 2e-9],
+                default_cell: Some([2e-9, 2e-9, 2e-9]),
+                per_magnet: None,
+                demag: Some(fullmag_ir::FdmDemagHintsIR {
+                    strategy: "multilayer_convolution".to_string(),
+                    mode: "two_d_stack".to_string(),
+                    allow_single_grid_fallback: false,
+                    common_cells: None,
+                    common_cells_xy: None,
+                }),
+            }),
+            fem: None,
+            hybrid: None,
+        });
+
+        let result = plan(&ir);
+        assert!(
+            result.is_ok()
+                || !result
+                    .as_ref()
+                    .unwrap_err()
+                    .reasons
+                    .iter()
+                    .any(|reason| reason.contains("execution_precision='single'")),
+            "planner should not reject multilayer single precision when CUDA device is requested"
+        );
     }
 
     #[test]

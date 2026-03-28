@@ -21,6 +21,18 @@ pub struct TensorDemagKernel {
     pub k_yz: Vec<Complex<f64>>,
 }
 
+/// `f32` variant of the FFT-domain demag tensor kernel.
+#[derive(Debug, Clone)]
+pub struct TensorDemagKernelF32 {
+    pub fft_shape: [usize; 3],
+    pub k_xx: Vec<Complex<f32>>,
+    pub k_yy: Vec<Complex<f32>>,
+    pub k_zz: Vec<Complex<f32>>,
+    pub k_xy: Vec<Complex<f32>>,
+    pub k_xz: Vec<Complex<f32>>,
+    pub k_yz: Vec<Complex<f32>>,
+}
+
 impl TensorDemagKernel {
     /// Total number of elements in each component array.
     pub fn len(&self) -> usize {
@@ -33,6 +45,36 @@ impl TensorDemagKernel {
     }
 }
 
+impl TensorDemagKernelF32 {
+    pub fn len(&self) -> usize {
+        self.fft_shape[0] * self.fft_shape[1] * self.fft_shape[2]
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl From<&TensorDemagKernel> for TensorDemagKernelF32 {
+    fn from(value: &TensorDemagKernel) -> Self {
+        let convert = |values: &[Complex<f64>]| -> Vec<Complex<f32>> {
+            values
+                .iter()
+                .map(|v| Complex::new(v.re as f32, v.im as f32))
+                .collect()
+        };
+        Self {
+            fft_shape: value.fft_shape,
+            k_xx: convert(&value.k_xx),
+            k_yy: convert(&value.k_yy),
+            k_zz: convert(&value.k_zz),
+            k_xy: convert(&value.k_xy),
+            k_xz: convert(&value.k_xz),
+            k_yz: convert(&value.k_yz),
+        }
+    }
+}
+
 /// FFT-domain vector field (M or H) with 3 components.
 #[derive(Debug, Clone)]
 pub struct VectorFieldFft {
@@ -41,10 +83,29 @@ pub struct VectorFieldFft {
     pub z: Vec<Complex<f64>>,
 }
 
+/// `f32` variant of the FFT-domain vector field.
+#[derive(Debug, Clone)]
+pub struct VectorFieldFftF32 {
+    pub x: Vec<Complex<f32>>,
+    pub y: Vec<Complex<f32>>,
+    pub z: Vec<Complex<f32>>,
+}
+
 impl VectorFieldFft {
     /// Create a zeroed vector field FFT of the given length.
     pub fn zeros(len: usize) -> Self {
         let zero = Complex::new(0.0, 0.0);
+        Self {
+            x: vec![zero; len],
+            y: vec![zero; len],
+            z: vec![zero; len],
+        }
+    }
+}
+
+impl VectorFieldFftF32 {
+    pub fn zeros(len: usize) -> Self {
+        let zero = Complex::new(0.0f32, 0.0f32);
         Self {
             x: vec![zero; len],
             y: vec![zero; len],

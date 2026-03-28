@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import s from "./ModelTree.module.css";
+import { cn } from "@/lib/utils";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -50,32 +50,64 @@ function TreeNode({
   }, [hasChildren, node, onNodeClick]);
 
   return (
-    <div className={s.node}>
+    <div className="flex flex-col">
       <div
-        className={s.nodeRow}
-        data-depth={depth}
-        data-active={activeId === node.id ? "true" : undefined}
+        className={cn(
+          "flex items-center gap-1.5 pr-2 py-0.5 my-[1px] cursor-pointer rounded-md transition-colors min-h-[26px]",
+          activeId === node.id ? "bg-primary/20 text-primary" : "hover:bg-muted/80 text-foreground"
+        )}
+        style={{ paddingLeft: `${Math.max(8, depth * 14 + 8)}px` }}
         onClick={handleClick}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(e, node.id, node.label); }}
         role="treeitem"
         aria-expanded={hasChildren ? open : undefined}
       >
         {hasChildren ? (
-          <span className={s.chevron} data-open={open ? "true" : "false"}>
+          <span 
+            className={cn(
+              "flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground transition-transform duration-150", 
+              open && "rotate-90"
+            )}
+          >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
               <path d="M3 1.5L7 5L3 8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </span>
         ) : (
-          <span className={s.chevronPlaceholder} />
+          <span className="flex h-3.5 w-3.5 shrink-0" />
         )}
-        {node.icon && <span className={s.icon}>{node.icon}</span>}
-        <span className={s.label}>{node.label}</span>
-        {node.status && <span className={s.statusDot} data-status={node.status} />}
-        {node.badge && <span className={s.badge}>{node.badge}</span>}
+        
+        {node.icon && (
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-xs opacity-70">
+            {node.icon}
+          </span>
+        )}
+        
+        <span className="flex-1 truncate font-medium text-sm">
+          {node.label}
+        </span>
+        
+        {node.status && (
+          <span 
+            className={cn(
+              "h-1.5 w-1.5 shrink-0 rounded-full",
+              node.status === "ready" ? "bg-emerald-500" :
+              node.status === "active" ? "bg-primary" :
+              node.status === "error" ? "bg-destructive" :
+              "bg-muted-foreground"
+            )} 
+          />
+        )}
+        
+        {node.badge && (
+          <span className="shrink-0 rounded-full bg-muted px-1.5 py-[1px] text-[0.6rem] font-semibold text-muted-foreground font-mono">
+            {node.badge}
+          </span>
+        )}
       </div>
+      
       {hasChildren && open && (
-        <div className={s.children} role="group">
+        <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-150" role="group">
           {node.children!.map((child) => (
             <TreeNode
               key={child.id}
@@ -132,7 +164,7 @@ export default function ModelTree({
   }, [ctxMenu, onContextAction, onNodeClick]);
 
   return (
-    <div className={`${s.tree} ${className ?? ""}`} role="tree">
+    <div className={cn("flex flex-col gap-[1px] py-1 select-none", className)} role="tree">
       {nodes.map((node) => (
         <TreeNode
           key={node.id}
@@ -148,14 +180,16 @@ export default function ModelTree({
       {ctxMenu && (
         <div
           ref={menuRef}
-          className={s.contextMenu}
+          className="fixed z-[200] min-w-[160px] p-1 rounded-md bg-popover border border-border shadow-md animate-in fade-in zoom-in-95 duration-100"
         >
-          <div className={s.ctxHeader}>{ctxMenu.label}</div>
-          <button className={s.ctxItem} onClick={() => handleAction("select")}>Select</button>
-          <button className={s.ctxItem} onClick={() => handleAction("copy-name")}>Copy Name</button>
-          <div className={s.ctxSep} />
-          <button className={s.ctxItem} onClick={() => handleAction("expand-all")}>Expand All</button>
-          <button className={s.ctxItem} onClick={() => handleAction("collapse-all")}>Collapse All</button>
+          <div className="px-2 py-1 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground border-b border-border/50 mb-1">
+            {ctxMenu.label}
+          </div>
+          <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("select")}>Select</button>
+          <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("copy-name")}>Copy Name</button>
+          <div className="h-px bg-border/50 my-1 mx-1" />
+          <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("expand-all")}>Expand All</button>
+          <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("collapse-all")}>Collapse All</button>
         </div>
       )}
     </div>

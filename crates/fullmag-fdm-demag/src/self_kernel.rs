@@ -7,7 +7,7 @@ use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 
 use crate::newell::{self, NewellKernels};
-use crate::types::TensorDemagKernel;
+use crate::types::{TensorDemagKernel, TensorDemagKernelF32};
 
 /// Compute the exact self-interaction demag kernel in FFT domain.
 ///
@@ -34,6 +34,18 @@ pub fn compute_exact_self_kernel(
     fft_newell_to_kernel(nk, px, py, pz)
 }
 
+/// `f32` variant of [`compute_exact_self_kernel`].
+pub fn compute_exact_self_kernel_f32(
+    nx: usize,
+    ny: usize,
+    nz: usize,
+    dx: f64,
+    dy: f64,
+    dz: f64,
+) -> TensorDemagKernelF32 {
+    TensorDemagKernelF32::from(&compute_exact_self_kernel(nx, ny, nz, dx, dy, dz))
+}
+
 /// Compute a 2D thin-film self kernel (nz=1 slice).
 pub fn compute_exact_self_kernel_2d(
     nx: usize,
@@ -50,6 +62,17 @@ pub fn compute_exact_self_kernel_2d(
     let pz = nk.pz;
 
     fft_newell_to_kernel(nk, px, py, pz)
+}
+
+/// `f32` variant of [`compute_exact_self_kernel_2d`].
+pub fn compute_exact_self_kernel_2d_f32(
+    nx: usize,
+    ny: usize,
+    dx: f64,
+    dy: f64,
+    dz: f64,
+) -> TensorDemagKernelF32 {
+    TensorDemagKernelF32::from(&compute_exact_self_kernel_2d(nx, ny, dx, dy, dz))
 }
 
 /// Transform a real-space Newell kernel to FFT-domain TensorDemagKernel.

@@ -3,7 +3,6 @@
 import { useMemo } from "react";
 import { useControlRoom } from "../runs/control-room/ControlRoomContext";
 import { fmtExp } from "../runs/control-room/shared";
-import css from "./ColorLegend.module.css";
 
 type LegendGradient = "orientation" | "diverging" | "magnitude";
 
@@ -68,11 +67,11 @@ export default function ColorLegend() {
   if (!ctx.hasSolverTelemetry && !ctx.femMeshData) return null;
 
   return (
-    <div className={css.root}>
-      <span className={css.label}>{formatValue(maxVal)}</span>
-      <div className={css.track} data-gradient={gradient} />
-      <span className={css.label}>{formatValue(minVal)}</span>
-      <span className={css.indicator}>{label}</span>
+    <div className="flex flex-col items-center justify-between w-[52px] py-2 px-1.5 bg-background border-l border-border/40 shrink-0 gap-1.5 select-none z-10">
+      <span className="font-mono text-[9px] font-semibold text-muted-foreground text-center leading-tight whitespace-nowrap overflow-hidden text-ellipsis max-w-[48px]">{formatValue(maxVal)}</span>
+      <div className="flex-1 w-[14px] min-h-[48px] rounded-[3px] border border-border/50" style={{ background: gradient === "diverging" ? "linear-gradient(to top, #2166ac, #67a9cf, #d1e5f0, #f7f7f7, #fddbc7, #ef8a62, #b2182b)" : gradient === "orientation" ? "linear-gradient(to top, hsl(0, 80%, 50%), hsl(60, 80%, 50%), hsl(120, 80%, 50%), hsl(180, 80%, 50%), hsl(240, 80%, 50%), hsl(300, 80%, 50%), hsl(360, 80%, 50%))" : "linear-gradient(to top, #000428, #004e92, #428bca, #73d0ff, #ffffff)" }} />
+      <span className="font-mono text-[9px] font-semibold text-muted-foreground text-center leading-tight whitespace-nowrap overflow-hidden text-ellipsis max-w-[48px]">{formatValue(minVal)}</span>
+      <span className="text-[8px] font-bold uppercase tracking-widest text-muted-foreground text-center py-0.5 px-1 rounded-[3px] bg-card/50 border border-border/40 cursor-default">{label}</span>
     </div>
   );
 }

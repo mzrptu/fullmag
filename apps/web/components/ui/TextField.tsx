@@ -1,33 +1,42 @@
 "use client";
 
-import { InputHTMLAttributes } from "react";
-import s from "./TextField.module.css";
+import * as React from "react"
+import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 
-interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "onChange"> {
+export interface TextFieldProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange"> {
   label?: string;
   unit?: string;
   mono?: boolean;
   onchange?: (event: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
-export default function TextField({
-  label,
-  unit,
-  mono = false,
-  onchange,
-  ...rest
-}: TextFieldProps) {
-  return (
-    <label className={s.uiTextfield}>
-      {label && (
-        <span className={s.label}>
-          <span>{label}</span>
-        </span>
-      )}
-      <span className={`${s.control} ${mono ? s.mono : ""}`}>
-        <input onChange={onchange} {...rest} />
-        {unit && <span className={s.unit}>{unit}</span>}
-      </span>
-    </label>
-  );
-}
+export const TextField = React.forwardRef<HTMLInputElement, TextFieldProps>(
+  ({ label, unit, mono = false, className, onchange, ...rest }, ref) => {
+    return (
+      <div className={cn("flex flex-col gap-1.5 min-w-0", className)}>
+        {label && (
+          <label className="flex justify-between gap-3 text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-[0.06em]">
+            {label}
+          </label>
+        )}
+        <div className="relative flex items-center">
+          <Input
+            ref={ref}
+            className={cn(mono && "font-mono", unit && "pr-8")}
+            onChange={onchange}
+            {...rest}
+          />
+          {unit && (
+            <span className="absolute right-3 text-muted-foreground text-sm pointer-events-none">
+              {unit}
+            </span>
+          )}
+        </div>
+      </div>
+    )
+  }
+)
+TextField.displayName = "TextField"
+
+export default TextField;

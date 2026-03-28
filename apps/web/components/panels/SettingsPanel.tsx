@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ScalarRow } from "../../lib/useSessionStream";
 import { cn } from "@/lib/utils";
 import { useControlRoom, type SolverPlanSummary } from "../runs/control-room/ControlRoomContext";
-import Button from "../ui/Button";
+import { Button } from "../ui/button";
 import Sparkline from "../ui/Sparkline";
 import {
   type PreviewComponent,
@@ -16,7 +16,6 @@ import {
   fmtSIOrDash,
   fmtStepValue,
 } from "../runs/control-room/shared";
-import s from "../runs/RunControlRoom.module.css";
 
 const SPARK_HISTORY_LIMIT = 40;
 
@@ -46,28 +45,30 @@ function buildSparkSeries(
 interface MetricFieldProps {
   label: string;
   value: string;
-  sparkData: number[];
-  sparkColor: string;
+  sparkData?: number[];
+  sparkColor?: string;
   title?: string;
   valueTone?: "success";
 }
 
 function MetricField({ label, value, sparkData, sparkColor, title, valueTone }: MetricFieldProps) {
   return (
-    <div className={s.fieldCell}>
-      <span className={s.fieldLabel} title={title}>{label}</span>
-      <span className={cn(s.fieldValue, valueTone === "success" ? s.fieldValueSuccess : undefined)}>
+    <div className="flex flex-col gap-1">
+      <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground" title={title}>{label}</span>
+      <span className={cn("font-mono text-xs text-foreground", valueTone === "success" ? "text-emerald-500" : undefined)}>
         {value}
       </span>
-      <div className={s.metricSparkline}>
-        <Sparkline
-          data={sparkData}
-          height={20}
-          color={sparkColor}
-          fill={false}
-          responsive
-        />
-      </div>
+      {sparkData && sparkColor && (
+        <div className="h-6 w-full mt-1.5 opacity-80" style={{position: "relative"}}>
+          <Sparkline
+            data={sparkData}
+            height={20}
+            color={sparkColor}
+            fill={false}
+            responsive
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -94,18 +95,18 @@ function SidebarSection({
   }, [autoOpenKey]);
 
   return (
-    <section className={s.section}>
+    <section className="flex flex-col border-b border-border/40 last:border-0">
       <button
         type="button"
-        className={s.sectionHeaderButton}
+        className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 group"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
       >
-        <span className={s.sectionChevron} data-open={open}>▸</span>
-        <span className={s.sectionTitle}>{title}</span>
-        {badge ? <span className={s.sectionBadge}>{badge}</span> : null}
+        <span className={cn("text-muted-foreground transition-transform duration-150 mr-2 flex items-center justify-center w-4 h-4 text-[10px] font-black", open && "rotate-90")}>▸</span>
+        <span className="text-xs font-bold uppercase tracking-[0.15em] text-foreground">{title}</span>
+        {badge ? <span className="ml-auto text-[0.65rem] font-mono tracking-tight text-muted-foreground/80 bg-muted/60 px-1.5 py-0.5 rounded-sm border border-border/40">{badge}</span> : null}
       </button>
-      {open ? <div className={s.sectionBody}>{children}</div> : null}
+      {open ? <div className="px-3 pb-4 pt-1 mb-1 flex flex-col gap-5">{children}</div> : null}
     </section>
   );
 }
@@ -241,26 +242,26 @@ function precessionModeForPlan(plan: SolverPlanSummary | null): string {
 function GeometryPanel() {
   const ctx = useControlRoom();
   return (
-    <div className={s.fieldGrid2}>
-      <div className={s.fieldCell}>
-        <span className={s.fieldLabel}>Geometry</span>
-        <span className={s.fieldValue}>{ctx.meshName ?? ctx.mesherSourceKind ?? "—"}</span>
+    <div className="grid grid-cols-2 gap-3">
+      <div className="flex flex-col gap-1">
+        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Geometry</span>
+        <span className="font-mono text-xs text-foreground">{ctx.meshName ?? ctx.mesherSourceKind ?? "—"}</span>
       </div>
-      <div className={s.fieldCell}>
-        <span className={s.fieldLabel}>Source</span>
-        <span className={s.fieldValue}>{ctx.meshSource ?? ctx.mesherSourceKind ?? "—"}</span>
+      <div className="flex flex-col gap-1">
+        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Source</span>
+        <span className="font-mono text-xs text-foreground">{ctx.meshSource ?? ctx.mesherSourceKind ?? "—"}</span>
       </div>
-      <div className={s.fieldCell}>
-        <span className={s.fieldLabel}>Extent</span>
-        <span className={s.fieldValue}>
+      <div className="flex flex-col gap-1">
+        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Extent</span>
+        <span className="font-mono text-xs text-foreground">
           {ctx.meshExtent
             ? `${fmtSI(ctx.meshExtent[0], "m")} · ${fmtSI(ctx.meshExtent[1], "m")} · ${fmtSI(ctx.meshExtent[2], "m")}`
             : "—"}
         </span>
       </div>
-      <div className={s.fieldCell}>
-        <span className={s.fieldLabel}>Bounds</span>
-        <span className={s.fieldValue}>
+      <div className="flex flex-col gap-1">
+        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Bounds</span>
+        <span className="font-mono text-xs text-foreground">
           {ctx.meshBoundsMin && ctx.meshBoundsMax
             ? `${fmtSI(ctx.meshBoundsMin[0], "m")} → ${fmtSI(ctx.meshBoundsMax[0], "m")}`
             : "—"}
@@ -273,27 +274,27 @@ function GeometryPanel() {
 /* ── Material Section ── */
 function MaterialPanel() {
   const ctx = useControlRoom();
-  if (!ctx.material) return <div className={s.fieldValue}>Material metadata not available yet.</div>;
+  if (!ctx.material) return <div className="font-mono text-xs text-foreground">Material metadata not available yet.</div>;
   return (
     <>
-      <div className={s.fieldGrid3}>
-        <div className={s.fieldCell}>
-          <span className={s.fieldLabel}>M_sat</span>
-          <span className={s.fieldValue}>{ctx.material.msat != null ? fmtSI(ctx.material.msat, "A/m") : "—"}</span>
+      <div className="grid grid-cols-3 gap-3">
+        <div className="flex flex-col gap-1">
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">M_sat</span>
+          <span className="font-mono text-xs text-foreground">{ctx.material.msat != null ? fmtSI(ctx.material.msat, "A/m") : "—"}</span>
         </div>
-        <div className={s.fieldCell}>
-          <span className={s.fieldLabel}>A_ex</span>
-          <span className={s.fieldValue}>{ctx.material.aex != null ? fmtSI(ctx.material.aex, "J/m") : "—"}</span>
+        <div className="flex flex-col gap-1">
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">A_ex</span>
+          <span className="font-mono text-xs text-foreground">{ctx.material.aex != null ? fmtSI(ctx.material.aex, "J/m") : "—"}</span>
         </div>
-        <div className={s.fieldCell}>
-          <span className={s.fieldLabel}>α</span>
-          <span className={s.fieldValue}>{ctx.material.alpha?.toPrecision(3) ?? "—"}</span>
+        <div className="flex flex-col gap-1">
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">α</span>
+          <span className="font-mono text-xs text-foreground">{ctx.material.alpha?.toPrecision(3) ?? "—"}</span>
         </div>
       </div>
-      <div className={s.pillRow}>
-        {ctx.material.exchangeEnabled && <span className={s.termPill}>Exchange</span>}
-        {ctx.material.demagEnabled && <span className={s.termPill}>Demag</span>}
-        {ctx.material.zeemanField?.some((v) => v !== 0) && <span className={s.termPill}>Zeeman</span>}
+      <div className="flex flex-wrap gap-1.5 mt-3">
+        {ctx.material.exchangeEnabled && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Exchange</span>}
+        {ctx.material.demagEnabled && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Demag</span>}
+        {ctx.material.zeemanField?.some((v) => v !== 0) && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Zeeman</span>}
       </div>
     </>
   );
@@ -304,25 +305,25 @@ function MeshPanel() {
   const ctx = useControlRoom();
   return (
     <>
-      <div className={s.fieldGrid2}>
-        <div className={s.fieldCell}>
-          <span className={s.fieldLabel}>Backend</span>
-          <span className={s.fieldValue}>{ctx.mesherBackend ?? "—"}</span>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1">
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Backend</span>
+          <span className="font-mono text-xs text-foreground">{ctx.mesherBackend ?? "—"}</span>
         </div>
-        <div className={s.fieldCell}>
-          <span className={s.fieldLabel}>Source</span>
-          <span className={s.fieldValue}>{ctx.mesherSourceKind ?? ctx.meshSource ?? "—"}</span>
+        <div className="flex flex-col gap-1">
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Source</span>
+          <span className="font-mono text-xs text-foreground">{ctx.mesherSourceKind ?? ctx.meshSource ?? "—"}</span>
         </div>
-        <div className={s.fieldCell}>
-          <span className={s.fieldLabel}>Order</span>
-          <span className={s.fieldValue}>{ctx.meshFeOrder != null ? String(ctx.meshFeOrder) : "—"}</span>
+        <div className="flex flex-col gap-1">
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Order</span>
+          <span className="font-mono text-xs text-foreground">{ctx.meshFeOrder != null ? String(ctx.meshFeOrder) : "—"}</span>
         </div>
-        <div className={s.fieldCell}>
-          <span className={s.fieldLabel}>hmax</span>
-          <span className={s.fieldValue}>{ctx.meshHmax != null ? fmtSI(ctx.meshHmax, "m") : "—"}</span>
+        <div className="flex flex-col gap-1">
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">hmax</span>
+          <span className="font-mono text-xs text-foreground">{ctx.meshHmax != null ? fmtSI(ctx.meshHmax, "m") : "—"}</span>
         </div>
       </div>
-      <div className={cn(s.interactiveActions, s.interactiveActionsWrapStart)}>
+      <div className="flex flex-wrap gap-2 items-center justify-start mt-4">
         <Button size="sm" variant="outline" onClick={() => ctx.openFemMeshWorkspace("mesh")} disabled={!ctx.isFemBackend}>
           Mesh
         </Button>
@@ -402,72 +403,72 @@ function StudyPanel() {
 
   return (
     <>
-      <div className={s.inspectorBlock}>
-        <div className={s.inspectorBlockTitle}>Active Backend Configuration</div>
-        <div className={s.fieldGrid3}>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>State</span>
-            <span className={s.fieldValue}>{ctx.workspaceStatus}</span>
+      <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
+        <div className="text-[0.6rem] font-black uppercase tracking-[0.2em] text-muted-foreground mb-4">Active Backend Configuration</div>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">State</span>
+            <span className="font-mono text-xs text-foreground">{ctx.workspaceStatus}</span>
           </div>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>Study</span>
-            <span className={s.fieldValue}>{studyKindForPlan(solverPlan)}</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Study</span>
+            <span className="font-mono text-xs text-foreground">{studyKindForPlan(solverPlan)}</span>
           </div>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>Engine</span>
-            <span className={s.fieldValue}>{ctx.runtimeEngineLabel ?? ctx.sessionFooter.requestedBackend ?? "—"}</span>
-          </div>
-        </div>
-
-        <div className={cn(s.fieldGrid3, s.fieldGridTopSpace)}>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>Backend</span>
-            <span className={s.fieldValue}>{humanizeToken(solverPlan?.resolvedBackend ?? solverPlan?.backendKind ?? ctx.sessionFooter.requestedBackend)}</span>
-          </div>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>Mode</span>
-            <span className={s.fieldValue}>{humanizeToken(solverPlan?.executionMode ?? ctx.session?.execution_mode)}</span>
-          </div>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>Precision</span>
-            <span className={s.fieldValue}>{humanizeToken(solverPlan?.precision ?? ctx.session?.precision)}</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Engine</span>
+            <span className="font-mono text-xs text-foreground">{ctx.runtimeEngineLabel ?? ctx.sessionFooter.requestedBackend ?? "—"}</span>
           </div>
         </div>
 
-        <div className={cn(s.fieldGrid3, s.fieldGridTopSpace)}>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>Integrator</span>
-            <span className={s.fieldValue}>{integratorProfile?.label ?? humanizeToken(solverPlan?.integrator)}</span>
+        <div className="grid grid-cols-3 gap-3 mt-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Backend</span>
+            <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.resolvedBackend ?? solverPlan?.backendKind ?? ctx.sessionFooter.requestedBackend)}</span>
           </div>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>Δt control</span>
-            <span className={s.fieldValue}>{timestepModeForPlan(solverPlan)}</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Mode</span>
+            <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.executionMode ?? ctx.session?.execution_mode)}</span>
           </div>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>Precession</span>
-            <span className={s.fieldValue}>{precessionModeForPlan(solverPlan)}</span>
-          </div>
-        </div>
-
-        <div className={cn(s.fieldGrid3, s.fieldGridTopSpace)}>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>γ</span>
-            <span className={s.fieldValue}>{solverPlan?.gyromagneticRatio != null ? `${fmtExp(solverPlan.gyromagneticRatio)} m/(A·s)` : "—"}</span>
-          </div>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>Exchange BC</span>
-            <span className={s.fieldValue}>{humanizeToken(solverPlan?.exchangeBoundary)}</span>
-          </div>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>Workload</span>
-            <span className={s.fieldValue}>{workloadLabel}</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Precision</span>
+            <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.precision ?? ctx.session?.precision)}</span>
           </div>
         </div>
 
-        <div className={cn(s.fieldGrid2, s.fieldGridTopSpace)}>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>Discretization</span>
-            <span className={s.fieldValue}>
+        <div className="grid grid-cols-3 gap-3 mt-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Integrator</span>
+            <span className="font-mono text-xs text-foreground">{integratorProfile?.label ?? humanizeToken(solverPlan?.integrator)}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Δt control</span>
+            <span className="font-mono text-xs text-foreground">{timestepModeForPlan(solverPlan)}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Precession</span>
+            <span className="font-mono text-xs text-foreground">{precessionModeForPlan(solverPlan)}</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3 mt-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">γ</span>
+            <span className="font-mono text-xs text-foreground">{solverPlan?.gyromagneticRatio != null ? `${fmtExp(solverPlan.gyromagneticRatio)} m/(A·s)` : "—"}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Exchange BC</span>
+            <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.exchangeBoundary)}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Workload</span>
+            <span className="font-mono text-xs text-foreground">{workloadLabel}</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mt-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Discretization</span>
+            <span className="font-mono text-xs text-foreground">
               {!solverPlan
                 ? "—"
                 : solverPlan.backendKind === "fem"
@@ -475,29 +476,29 @@ function StudyPanel() {
                 : `${formatGrid(solverPlan?.gridCells ?? null)} cells · ${formatVector(solverPlan?.cellSize ?? null, "m")}`}
             </span>
           </div>
-          <div className={s.fieldCell}>
-            <span className={s.fieldLabel}>External field</span>
-            <span className={s.fieldValue}>{formatVector(solverPlan?.externalField ?? null, "T")}</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">External field</span>
+            <span className="font-mono text-xs text-foreground">{formatVector(solverPlan?.externalField ?? null, "T")}</span>
           </div>
         </div>
 
         {(solverPlan?.fixedTimestep != null || solverPlan?.adaptive) && (
-          <div className={cn(s.fieldGrid2, s.fieldGridTopSpace)}>
-            <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>Fixed Δt</span>
-              <span className={s.fieldValue}>{solverPlan?.fixedTimestep != null ? fmtSI(solverPlan.fixedTimestep, "s") : "—"}</span>
+          <div className="grid grid-cols-2 gap-3 mt-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Fixed Δt</span>
+              <span className="font-mono text-xs text-foreground">{solverPlan?.fixedTimestep != null ? fmtSI(solverPlan.fixedTimestep, "s") : "—"}</span>
             </div>
-            <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>Adaptive atol</span>
-              <span className={s.fieldValue}>{solverPlan?.adaptive?.atol != null ? fmtExp(solverPlan.adaptive.atol) : "—"}</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Adaptive atol</span>
+              <span className="font-mono text-xs text-foreground">{solverPlan?.adaptive?.atol != null ? fmtExp(solverPlan.adaptive.atol) : "—"}</span>
             </div>
-            <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>Adaptive dt₀</span>
-              <span className={s.fieldValue}>{solverPlan?.adaptive?.dtInitial != null ? fmtSI(solverPlan.adaptive.dtInitial, "s") : "—"}</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Adaptive dt₀</span>
+              <span className="font-mono text-xs text-foreground">{solverPlan?.adaptive?.dtInitial != null ? fmtSI(solverPlan.adaptive.dtInitial, "s") : "—"}</span>
             </div>
-            <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>Adaptive range</span>
-              <span className={s.fieldValue}>
+            <div className="flex flex-col gap-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Adaptive range</span>
+              <span className="font-mono text-xs text-foreground">
                 {solverPlan?.adaptive
                   ? `${solverPlan.adaptive.dtMin != null ? fmtSI(solverPlan.adaptive.dtMin, "s") : "—"} → ${solverPlan.adaptive.dtMax != null ? fmtSI(solverPlan.adaptive.dtMax, "s") : "—"}`
                   : "—"}
@@ -507,63 +508,63 @@ function StudyPanel() {
         )}
 
         {solverPlan?.relaxation && (
-          <div className={cn(s.fieldGrid2, s.fieldGridTopSpace)}>
-            <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>Relax algorithm</span>
-              <span className={s.fieldValue}>{relaxationProfile?.label ?? humanizeToken(solverPlan.relaxation.algorithm)}</span>
+          <div className="grid grid-cols-2 gap-3 mt-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Relax algorithm</span>
+              <span className="font-mono text-xs text-foreground">{relaxationProfile?.label ?? humanizeToken(solverPlan.relaxation.algorithm)}</span>
             </div>
-            <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>Max steps</span>
-              <span className={s.fieldValue}>{solverPlan.relaxation.maxSteps != null ? solverPlan.relaxation.maxSteps.toLocaleString() : "—"}</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Max steps</span>
+              <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.maxSteps != null ? solverPlan.relaxation.maxSteps.toLocaleString() : "—"}</span>
             </div>
-            <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>Torque tol.</span>
-              <span className={s.fieldValue}>{solverPlan.relaxation.torqueTolerance != null ? fmtExp(solverPlan.relaxation.torqueTolerance) : "—"}</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Torque tol.</span>
+              <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.torqueTolerance != null ? fmtExp(solverPlan.relaxation.torqueTolerance) : "—"}</span>
             </div>
-            <div className={s.fieldCell}>
-              <span className={s.fieldLabel}>Energy tol.</span>
-              <span className={s.fieldValue}>{solverPlan.relaxation.energyTolerance != null ? fmtExp(solverPlan.relaxation.energyTolerance) : "disabled"}</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Energy tol.</span>
+              <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.energyTolerance != null ? fmtExp(solverPlan.relaxation.energyTolerance) : "disabled"}</span>
             </div>
           </div>
         )}
 
-        <div className={s.inspectorPills}>
-          {solverPlan?.exchangeEnabled && <span className={s.termPill}>Exchange</span>}
-          {solverPlan?.demagEnabled && <span className={s.termPill}>Demag</span>}
-          {solverPlan?.externalField?.some((value) => value !== 0) && <span className={s.termPill}>Zeeman</span>}
-          {solverPlan?.adaptive && <span className={s.termPill}>Adaptive Δt</span>}
-          {solverPlan?.relaxation && <span className={s.termPill}>Relaxation stage</span>}
+        <div className="flex flex-wrap gap-1.5 mt-5">
+          {solverPlan?.exchangeEnabled && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Exchange</span>}
+          {solverPlan?.demagEnabled && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Demag</span>}
+          {solverPlan?.externalField?.some((value) => value !== 0) && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Zeeman</span>}
+          {solverPlan?.adaptive && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Adaptive Δt</span>}
+          {solverPlan?.relaxation && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Relaxation stage</span>}
         </div>
 
         {solverPlan?.notes.length ? (
-          <div className={s.inspectorNoteList}>
+          <div className="mt-5 flex flex-col gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-md shadow-sm">
             {solverPlan.notes.map((note) => (
-              <div key={note} className={s.inspectorNoteItem}>{note}</div>
+              <div key={note} className="text-xs text-amber-600/90 font-medium leading-relaxed">{note}</div>
             ))}
           </div>
         ) : null}
       </div>
 
-      <div className={s.inspectorBlock}>
-        <div className={s.inspectorBlockTitle}>Performance And Physics</div>
-        <div className={s.inspectorCardGrid}>
+      <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
+        <div className="text-[0.6rem] font-black uppercase tracking-[0.2em] text-muted-foreground mb-4">Performance And Physics</div>
+        <div className="grid gap-3">
           {insightCards.map((card) => (
-            <div key={card.title} className={s.inspectorCard}>
-              <div className={s.inspectorCardTitle}>{card.title}</div>
-              <div className={s.inspectorCardSubtitle}>{card.subtitle}</div>
-              <div className={s.inspectorCardBody}>{card.body}</div>
+            <div key={card.title} className="bg-card/50 border border-border/50 shadow-sm rounded-lg p-3.5 flex flex-col gap-1 inline-flex">
+              <div className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground/70">{card.title}</div>
+              <div className="font-bold text-[0.8rem] text-foreground mt-0.5 tracking-tight">{card.subtitle}</div>
+              <div className="text-xs text-muted-foreground leading-relaxed mt-1.5">{card.body}</div>
             </div>
           ))}
         </div>
       </div>
 
-      <div className={s.inspectorBlock}>
-        <div className={s.inspectorBlockTitle}>Next Interactive Command</div>
-        <div className={s.interactiveBlock}>
-          <label className={s.interactiveLabel}>
+      <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
+        <div className="text-[0.6rem] font-black uppercase tracking-[0.2em] text-muted-foreground mb-4">Next Interactive Command</div>
+        <div className="flex flex-col gap-3 p-3 bg-muted/30 border border-border/50 rounded-lg shadow-inner">
+          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
             Run until [s]
             <input
-              className={s.interactiveInput}
+              className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
               value={ctx.runUntilInput}
               onChange={(e) => ctx.setRunUntilInput(e.target.value)}
               disabled={ctx.commandBusy || !ctx.awaitingCommand}
@@ -579,27 +580,27 @@ function StudyPanel() {
             Run
           </Button>
         </div>
-        <div className={cn(s.fieldGrid2, s.fieldGridTopSpaceSm)}>
-          <label className={s.interactiveLabel}>
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
             Relax steps
-            <input className={s.interactiveInput} value={ctx.solverSettings.maxRelaxSteps}
+            <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.maxRelaxSteps}
               onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, maxRelaxSteps: e.target.value }))}
               disabled={ctx.commandBusy || !ctx.awaitingCommand} />
           </label>
-          <label className={s.interactiveLabel}>
+          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
             Torque tol.
-            <input className={s.interactiveInput} value={ctx.solverSettings.torqueTolerance}
+            <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.torqueTolerance}
               onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, torqueTolerance: e.target.value }))}
               disabled={ctx.commandBusy || !ctx.awaitingCommand} />
           </label>
-          <label className={cn(s.interactiveLabel, s.fullWidthLabel)}>
+          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground col-span-2">
             Energy tol.
-            <input className={s.interactiveInput} value={ctx.solverSettings.energyTolerance}
+            <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.energyTolerance}
               onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, energyTolerance: e.target.value }))}
               placeholder="disabled" disabled={ctx.commandBusy || !ctx.awaitingCommand} />
           </label>
         </div>
-        <div className={cn(s.interactiveActions, s.interactiveActionsSpread)}>
+        <div className="flex flex-wrap gap-2 items-center justify-between mt-4">
           <Button
             size="sm"
             tone="success"
@@ -626,17 +627,17 @@ function ResultsPanel() {
   const ctx = useControlRoom();
   return (
     <>
-      <div className={s.fieldGrid2}>
-        <div className={s.fieldCell}>
-          <span className={s.fieldLabel}>Quantity</span>
-          <span className={s.fieldValue}>{ctx.requestedPreviewQuantity}</span>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1">
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Quantity</span>
+          <span className="font-mono text-xs text-foreground">{ctx.requestedPreviewQuantity}</span>
         </div>
-        <div className={s.fieldCell}>
-          <span className={s.fieldLabel}>Component</span>
-          <span className={s.fieldValue}>{ctx.requestedPreviewComponent}</span>
+        <div className="flex flex-col gap-1">
+          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Component</span>
+          <span className="font-mono text-xs text-foreground">{ctx.requestedPreviewComponent}</span>
         </div>
       </div>
-      <div className={cn(s.interactiveActions, s.interactiveActionsWrapStartCompact)}>
+      <div className="flex flex-wrap gap-1.5 items-center justify-start mt-3">
         {ctx.quickPreviewTargets.map((target) => (
           <Button key={target.id} size="sm"
             variant={ctx.requestedPreviewQuantity === target.id ? "solid" : "outline"}
@@ -649,19 +650,19 @@ function ResultsPanel() {
         ))}
       </div>
       {ctx.previewControlsActive && (
-        <div className={cn(s.fieldGrid2, s.fieldGridTopSpaceLg)}>
-          <label className={s.interactiveLabel}>
+        <div className="grid grid-cols-2 gap-3 mt-5 p-3 rounded-lg border border-border/30 bg-muted/10">
+          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
             Quantity
-            <select className={s.interactiveInput} value={ctx.requestedPreviewQuantity}
+            <select className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.requestedPreviewQuantity}
               onChange={(e) => void ctx.updatePreview("/quantity", { quantity: e.target.value })}
               disabled={ctx.previewBusy}
             >
               {ctx.previewQuantityOptions.map((o) => <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}
             </select>
           </label>
-          <label className={s.interactiveLabel}>
+          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
             Component
-            <select className={s.interactiveInput} value={ctx.requestedPreviewComponent}
+            <select className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.requestedPreviewComponent}
               onChange={(e) => void ctx.updatePreview("/component", { component: e.target.value as PreviewComponent })}
               disabled={ctx.previewBusy}
             >
@@ -671,26 +672,26 @@ function ResultsPanel() {
               <option value="z">z</option>
             </select>
           </label>
-          <label className={s.interactiveLabel}>
+          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
             Refresh
-            <select className={s.interactiveInput} value={ctx.requestedPreviewEveryN}
+            <select className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.requestedPreviewEveryN}
               onChange={(e) => void ctx.updatePreview("/everyN", { everyN: Number(e.target.value) })}
               disabled={ctx.previewBusy}
             >
               {ctx.previewEveryNOptions.map((v) => <option key={v} value={v}>{fmtPreviewEveryN(v)}</option>)}
             </select>
           </label>
-          <label className={s.interactiveLabel}>
+          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
             Points
-            <select className={s.interactiveInput} value={ctx.requestedPreviewMaxPoints}
+            <select className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.requestedPreviewMaxPoints}
               onChange={(e) => void ctx.updatePreview("/maxPoints", { maxPoints: Number(e.target.value) })}
               disabled={ctx.previewBusy}
             >
               {ctx.previewMaxPointOptions.map((v) => <option key={v} value={v}>{fmtPreviewMaxPoints(v)}</option>)}
             </select>
           </label>
-          <label className={cn(s.interactiveLabel, s.interactiveLabelEnd)}>
-            <span className={s.checkboxInlineRow}>
+          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground items-end justify-center">
+            <span className="flex items-center gap-2 mt-1 text-xs text-foreground font-medium select-none">
               <input type="checkbox" checked={ctx.requestedPreviewAutoScale}
                 onChange={(e) => void ctx.updatePreview("/autoScaleEnabled", { autoScaleEnabled: e.target.checked })}
                 disabled={ctx.previewBusy} />
@@ -751,7 +752,7 @@ function SolverTelemetryPanel() {
 
   return (
     <>
-      <div className={s.fieldGrid2}>
+      <div className="grid grid-cols-2 gap-3">
         <MetricField
           label="Step"
           title="Current integration step number"
@@ -763,22 +764,20 @@ function SolverTelemetryPanel() {
           label="Time"
           title="Simulated physical time"
           value={fmtSIOrDash(ctx.effectiveTime, "s", ctx.hasSolverTelemetry)}
-          sparkData={sparkSeries.time}
-          sparkColor="var(--ide-text-2)"
         />
         <MetricField
           label="Δt"
           title="Current time-step size"
           value={fmtSIOrDash(ctx.effectiveDt, "s", ctx.hasSolverTelemetry)}
           sparkData={sparkSeries.dt}
-          sparkColor="var(--ide-accent)"
+          sparkColor="#8b5cf6"
         />
         <MetricField
           label="max dm/dt"
           title="Maximum magnetisation rate of change"
           value={fmtExpOrDash(ctx.effectiveDmDt, ctx.hasSolverTelemetry)}
           sparkData={sparkSeries.dmDt}
-          sparkColor="var(--status-running)"
+          sparkColor="#10b981"
           valueTone={
             ctx.hasSolverTelemetry && ctx.effectiveDmDt > 0 && ctx.effectiveDmDt < 1e-5
               ? "success"
@@ -790,18 +789,18 @@ function SolverTelemetryPanel() {
           title="Maximum effective field magnitude"
           value={fmtExpOrDash(ctx.effectiveHEff, ctx.hasSolverTelemetry)}
           sparkData={sparkSeries.hEff}
-          sparkColor="var(--ide-accent-text)"
+          sparkColor="#3b82f6"
         />
         <MetricField
           label="max |H_demag|"
           title="Maximum demagnetising field magnitude"
           value={fmtExpOrDash(ctx.effectiveHDemag, ctx.hasSolverTelemetry)}
           sparkData={sparkSeries.hDemag}
-          sparkColor="var(--status-warn)"
+          sparkColor="#f59e0b"
         />
       </div>
       {!ctx.hasSolverTelemetry && (
-        <div className={cn(s.meshHintText, s.hintTopSpace)}>{ctx.solverNotStartedMessage}</div>
+        <div className="text-xs text-muted-foreground leading-relaxed mt-4 p-3 rounded-md bg-muted/30 border border-border/40">{ctx.solverNotStartedMessage}</div>
       )}
     </>
   );
@@ -842,30 +841,30 @@ function EnergyPanel() {
 
   return (
     <>
-      <div className={s.fieldGrid2}>
+      <div className="grid grid-cols-2 gap-3">
         <MetricField
           label="E_exchange"
           value={fmtExpOrDash(ctx.effectiveEEx, ctx.hasSolverTelemetry)}
           sparkData={sparkSeries.eEx}
-          sparkColor="var(--ide-accent)"
+          sparkColor="#0ea5e9"
         />
         <MetricField
           label="E_demag"
           value={fmtExpOrDash(ctx.effectiveEDemag, ctx.hasSolverTelemetry)}
           sparkData={sparkSeries.eDemag}
-          sparkColor="var(--status-warn)"
+          sparkColor="#f59e0b"
         />
         <MetricField
           label="E_ext"
           value={fmtExpOrDash(ctx.effectiveEExt, ctx.hasSolverTelemetry)}
           sparkData={sparkSeries.eExt}
-          sparkColor="var(--status-running)"
+          sparkColor="#10b981"
         />
         <MetricField
           label="E_total"
           value={fmtExpOrDash(ctx.effectiveETotal, ctx.hasSolverTelemetry)}
           sparkData={sparkSeries.eTotal}
-          sparkColor="var(--ide-accent-text)"
+          sparkColor="#8b5cf6"
         />
       </div>
     </>
@@ -891,7 +890,7 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
   };
 
   return (
-    <div className={s.sidebarPanelContentStack}>
+    <div className="flex flex-col pb-6">
       <SidebarSection
         title="Selection"
         badge={nodeLabel ?? "Workspace"}
@@ -917,19 +916,19 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
         badge={ctx.sessionFooter.requestedBackend ?? null}
         defaultOpen={false}
       >
-        <div className={s.fieldGrid}>
-          <div className={s.footerRow}>
-            <span className={s.fieldLabel}>Backend</span>
-            <span className={s.footerValue}>{ctx.sessionFooter.requestedBackend ?? "—"}</span>
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between py-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Backend</span>
+            <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">{ctx.sessionFooter.requestedBackend ?? "—"}</span>
           </div>
-          <div className={s.footerRow}>
-            <span className={s.fieldLabel}>Runtime</span>
-            <span className={s.footerValue}>{ctx.runtimeEngineLabel ?? "—"}</span>
+          <div className="flex items-center justify-between py-1">
+            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Runtime</span>
+            <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">{ctx.runtimeEngineLabel ?? "—"}</span>
           </div>
           {ctx.sessionFooter.scriptPath && (
-            <div className={s.footerRow}>
-              <span className={s.fieldLabel}>Script</span>
-              <span className={s.footerValue} title={ctx.sessionFooter.scriptPath}>
+            <div className="flex items-center justify-between py-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Script</span>
+              <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right" title={ctx.sessionFooter.scriptPath}>
                 {ctx.sessionFooter.scriptPath.split("/").pop()}
               </span>
             </div>

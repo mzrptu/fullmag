@@ -5,7 +5,7 @@
 
 use rustfft::num_complex::Complex;
 
-use crate::types::{TensorDemagKernel, VectorFieldFft};
+use crate::types::{TensorDemagKernel, TensorDemagKernelF32, VectorFieldFft, VectorFieldFftF32};
 
 /// Accumulate the tensor convolution `H_dst += K * M_src` in FFT domain.
 ///
@@ -102,6 +102,88 @@ pub fn accumulate_tensor_convolution(
 /// layer have been made and the result is ready to be inverse-FFT'd.
 pub fn negate_field(field: &mut VectorFieldFft) {
     let neg = |v: &mut Complex<f64>| *v = -*v;
+    field.x.iter_mut().for_each(neg);
+    field.y.iter_mut().for_each(neg);
+    field.z.iter_mut().for_each(neg);
+}
+
+/// `f32` variant of [`accumulate_tensor_convolution`].
+pub fn accumulate_tensor_convolution_f32(
+    dst_h_fft: &mut VectorFieldFftF32,
+    src_m_fft: &VectorFieldFftF32,
+    kernel_fft: &TensorDemagKernelF32,
+) {
+    let n = kernel_fft.len();
+    debug_assert_eq!(src_m_fft.x.len(), n);
+    debug_assert_eq!(dst_h_fft.x.len(), n);
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        let chunk_size = (n / rayon::current_num_threads()).max(256);
+
+        dst_h_fft
+            .x
+            .par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(chunk_idx, hx_chunk)| {
+                let start = chunk_idx * chunk_size;
+                for (local_i, hx) in hx_chunk.iter_mut().enumerate() {
+                    let i = start + local_i;
+                    *hx += kernel_fft.k_xx[i] * src_m_fft.x[i]
+                        + kernel_fft.k_xy[i] * src_m_fft.y[i]
+                        + kernel_fft.k_xz[i] * src_m_fft.z[i];
+                }
+            });
+
+        dst_h_fft
+            .y
+            .par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(chunk_idx, hy_chunk)| {
+                let start = chunk_idx * chunk_size;
+                for (local_i, hy) in hy_chunk.iter_mut().enumerate() {
+                    let i = start + local_i;
+                    *hy += kernel_fft.k_xy[i] * src_m_fft.x[i]
+                        + kernel_fft.k_yy[i] * src_m_fft.y[i]
+                        + kernel_fft.k_yz[i] * src_m_fft.z[i];
+                }
+            });
+
+        dst_h_fft
+            .z
+            .par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(chunk_idx, hz_chunk)| {
+                let start = chunk_idx * chunk_size;
+                for (local_i, hz) in hz_chunk.iter_mut().enumerate() {
+                    let i = start + local_i;
+                    *hz += kernel_fft.k_xz[i] * src_m_fft.x[i]
+                        + kernel_fft.k_yz[i] * src_m_fft.y[i]
+                        + kernel_fft.k_zz[i] * src_m_fft.z[i];
+                }
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        for i in 0..n {
+            let mx = src_m_fft.x[i];
+            let my = src_m_fft.y[i];
+            let mz = src_m_fft.z[i];
+            dst_h_fft.x[i] +=
+                kernel_fft.k_xx[i] * mx + kernel_fft.k_xy[i] * my + kernel_fft.k_xz[i] * mz;
+            dst_h_fft.y[i] +=
+                kernel_fft.k_xy[i] * mx + kernel_fft.k_yy[i] * my + kernel_fft.k_yz[i] * mz;
+            dst_h_fft.z[i] +=
+                kernel_fft.k_xz[i] * mx + kernel_fft.k_yz[i] * my + kernel_fft.k_zz[i] * mz;
+        }
+    }
+}
+
+/// `f32` variant of [`negate_field`].
+pub fn negate_field_f32(field: &mut VectorFieldFftF32) {
+    let neg = |v: &mut Complex<f32>| *v = -*v;
     field.x.iter_mut().for_each(neg);
     field.y.iter_mut().for_each(neg);
     field.z.iter_mut().for_each(neg);

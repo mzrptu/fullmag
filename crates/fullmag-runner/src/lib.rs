@@ -407,8 +407,8 @@ pub fn run_reference_multilayer_fdm(
 mod tests {
     use super::*;
     use fullmag_ir::{
-        ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, GridDimensions,
-        IntegratorChoice,
+        ExchangeBoundaryCondition, ExecutionPrecision, FdmGridAssetIR, FdmMaterialIR,
+        GeometryAssetsIR, GeometryEntryIR, GridDimensions, IntegratorChoice,
     };
     use serde_json::json;
 

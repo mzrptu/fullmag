@@ -4,7 +4,6 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import type { FemLiveMesh } from "../../../lib/useSessionStream";
 import type { TreeNodeData } from "../../panels/ModelTree";
-import s from "../RunControlRoom.module.css";
 
 export type ViewportMode = "3D" | "2D" | "Mesh";
 export type VectorComponent = "x" | "y" | "z" | "magnitude";
@@ -254,13 +253,13 @@ export function Section({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className={s.section}>
-      <div className={s.sectionHeader} onClick={() => setOpen((v) => !v)}>
-        <span className={s.sectionChevron} data-open={open}>▸</span>
-        <span className={s.sectionTitle}>{title}</span>
-        {badge && <span className={s.sectionBadge}>{badge}</span>}
+    <div className="border-b border-border/40 last:border-0">
+      <div className="flex items-center gap-2 py-2 px-3 cursor-pointer select-none hover:bg-muted/30 transition-colors" onClick={() => setOpen((v) => !v)}>
+        <span className="text-[0.65rem] text-muted-foreground transition-transform data-[open=true]:rotate-90" data-open={open}>▸</span>
+        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-foreground mr-auto">{title}</span>
+        {badge && <span className="text-[0.65rem] font-mono text-muted-foreground/70 bg-muted px-1.5 py-0.5 rounded">{badge}</span>}
       </div>
-      {open && <div className={s.sectionBody}>{children}</div>}
+      {open && <div className="px-3 pb-3 grid gap-2">{children}</div>}
     </div>
   );
 }
@@ -276,7 +275,7 @@ export function DockTabButton({
 }) {
   return (
     <button
-      className={s.meshDockTab}
+      className="appearance-none border border-border/40 bg-card/30 text-muted-foreground text-[0.65rem] font-bold uppercase tracking-widest rounded-md py-1.5 px-2 cursor-pointer transition-all hover:bg-muted/50 data-[active=true]:bg-primary/20 data-[active=true]:border-primary/50 data-[active=true]:text-primary"
       data-active={active}
       onClick={onClick}
       type="button"
