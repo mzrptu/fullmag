@@ -984,18 +984,29 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     return [effectiveFemMesh.nodes.flatMap((n) => n), effectiveFemMesh.boundary_faces.flatMap((f) => f)];
   }, [effectiveFemMesh]);
 
-  const femMeshData = useMemo<FemMeshData | null>(() => {
+  // Topology base: stable reference that only changes when mesh structure changes.
+  // This prevents full geometry rebuild (and camera reset) on every field data update.
+  const femMeshBase = useMemo<Omit<FemMeshData, "fieldData"> | null>(() => {
     if (!isFemBackend || !effectiveFemMesh || !flatNodes || !flatFaces) return null;
     const nNodes = effectiveFemMesh.nodes.length;
     const nElements = femMesh?.elements.length ?? effectiveFemMesh.elements.length;
-    let fieldData: FemMeshData["fieldData"] | undefined;
-    if (selectedVectors && selectedVectors.length >= nNodes * 3) {
-      const x = new Array<number>(nNodes), y = new Array<number>(nNodes), z = new Array<number>(nNodes);
-      for (let i = 0; i < nNodes; i++) { x[i] = selectedVectors[i * 3] ?? 0; y[i] = selectedVectors[i * 3 + 1] ?? 0; z[i] = selectedVectors[i * 3 + 2] ?? 0; }
-      fieldData = { x, y, z };
-    }
-    return { nodes: flatNodes, boundaryFaces: flatFaces, nNodes, nElements, fieldData };
-  }, [isFemBackend, effectiveFemMesh, femMesh?.elements.length, flatNodes, flatFaces, selectedVectors]);
+    return { nodes: flatNodes, boundaryFaces: flatFaces, nNodes, nElements };
+  }, [isFemBackend, effectiveFemMesh, femMesh?.elements.length, flatNodes, flatFaces]);
+
+  // Field data: updated on every solver tick when selectedVectors changes.
+  const femFieldData = useMemo<FemMeshData["fieldData"] | undefined>(() => {
+    if (!femMeshBase || !selectedVectors || selectedVectors.length < femMeshBase.nNodes * 3) return undefined;
+    const nNodes = femMeshBase.nNodes;
+    const x = new Array<number>(nNodes), y = new Array<number>(nNodes), z = new Array<number>(nNodes);
+    for (let i = 0; i < nNodes; i++) { x[i] = selectedVectors[i * 3] ?? 0; y[i] = selectedVectors[i * 3 + 1] ?? 0; z[i] = selectedVectors[i * 3 + 2] ?? 0; }
+    return { x, y, z };
+  }, [femMeshBase, selectedVectors]);
+
+  // Combined: new object only when topology OR field data changes
+  const femMeshData = useMemo<FemMeshData | null>(() => {
+    if (!femMeshBase) return null;
+    return { ...femMeshBase, fieldData: femFieldData };
+  }, [femMeshBase, femFieldData]);
 
   const femHasFieldData = Boolean(femMeshData?.fieldData);
   const femMagnetization3DActive = isFemBackend && effectiveViewMode === "3D" && activeQuantityId === "m" && femHasFieldData;

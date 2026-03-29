@@ -286,8 +286,15 @@ function mergeSessionState(prev: SessionState | null, next: SessionState): Sessi
   const nextScalarStep = lastScalarStep(next.scalar_rows);
   if (nextScalarStep < prevScalarStep) {
     merged.scalar_rows = prev.scalar_rows;
-  } else if (next.scalar_rows.length === prev.scalar_rows.length) {
-    merged.scalar_rows = prev.scalar_rows;
+  } else if (next.scalar_rows.length === prev.scalar_rows.length && nextScalarStep === prevScalarStep) {
+    // Only reuse the previous array if the last row hasn't changed.
+    // Compare a representative value (e_total) to detect in-place updates
+    // (e.g. energy values going from 0 → real values within the same step).
+    const prevLast = prev.scalar_rows[prev.scalar_rows.length - 1];
+    const nextLast = next.scalar_rows[next.scalar_rows.length - 1];
+    if (prevLast?.e_total === nextLast?.e_total && prevLast?.max_dm_dt === nextLast?.max_dm_dt) {
+      merged.scalar_rows = prev.scalar_rows;
+    }
   }
 
   const prevLogTs = lastLogTimestamp(prev.engine_log);

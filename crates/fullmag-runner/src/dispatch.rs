@@ -220,6 +220,18 @@ pub(crate) fn snapshot_fem_preview(
     }
 }
 
+pub(crate) fn snapshot_fem_vector_fields(
+    engine: FemEngine,
+    plan: &FemPlanIR,
+    quantities: &[&str],
+    request: &LivePreviewRequest,
+) -> Result<Vec<crate::LivePreviewField>, RunError> {
+    match engine {
+        FemEngine::CpuReference => fem_reference::snapshot_vector_fields(plan, quantities, request),
+        FemEngine::NativeGpu => snapshot_native_fem_vector_fields(plan, quantities, request),
+    }
+}
+
 #[cfg(feature = "cuda")]
 fn snapshot_native_fdm_preview(
     plan: &FdmPlanIR,
@@ -284,6 +296,31 @@ fn snapshot_native_fem_preview(
     backend.copy_live_preview_field(request, plan.mesh.nodes.len())
 }
 
+#[cfg(feature = "fem-gpu")]
+fn snapshot_native_fem_vector_fields(
+    plan: &FemPlanIR,
+    quantities: &[&str],
+    request: &LivePreviewRequest,
+) -> Result<Vec<crate::LivePreviewField>, RunError> {
+    let backend = NativeFemBackend::create(plan)?;
+    let mut cached = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for quantity in quantities
+        .iter()
+        .map(|quantity| crate::preview::normalize_quantity_id(quantity))
+    {
+        if !seen.insert(quantity) {
+            continue;
+        }
+        let mut preview_request = request.clone();
+        preview_request.quantity = quantity.to_string();
+        cached.push(backend.copy_live_preview_field(&preview_request, plan.mesh.nodes.len())?);
+    }
+
+    Ok(cached)
+}
+
 #[cfg(not(feature = "fem-gpu"))]
 fn snapshot_native_fem_preview(
     _plan: &FemPlanIR,
@@ -291,6 +328,19 @@ fn snapshot_native_fem_preview(
 ) -> Result<crate::LivePreviewField, RunError> {
     Err(RunError {
         message: "native FEM preview snapshot requested but fullmag-runner was built without the 'fem-gpu' feature".to_string(),
+    })
+}
+
+#[cfg(not(feature = "fem-gpu"))]
+fn snapshot_native_fem_vector_fields(
+    _plan: &FemPlanIR,
+    _quantities: &[&str],
+    _request: &LivePreviewRequest,
+) -> Result<Vec<crate::LivePreviewField>, RunError> {
+    Err(RunError {
+        message:
+            "native FEM vector-field cache requested but fullmag-runner was built without the 'fem-gpu' feature"
+                .to_string(),
     })
 }
 

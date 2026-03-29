@@ -13,7 +13,9 @@ use fullmag_engine::{
 use fullmag_ir::{ExecutionPrecision, FemPlanIR, IntegratorChoice, OutputIR};
 
 use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
-use crate::preview::{build_mesh_preview_field, flatten_vectors, select_observables};
+use crate::preview::{
+    build_mesh_preview_field, flatten_vectors, normalize_quantity_id, select_observables,
+};
 use crate::relaxation::{llg_overdamped_uses_pure_damping, relaxation_converged};
 use crate::scalar_metrics::{
     apply_average_m_to_step_stats, scalar_outputs_request_average_m, scalar_row_due,
@@ -150,6 +152,43 @@ pub(crate) fn snapshot_preview(
     plan: &FemPlanIR,
     request: &LivePreviewRequest,
 ) -> Result<crate::LivePreviewField, RunError> {
+    let (problem, state) = build_problem_and_state(plan)?;
+    let observables = observe_state(&problem, &state)?;
+    Ok(build_mesh_preview_field(
+        request,
+        select_observables(&observables, &request.quantity),
+    ))
+}
+
+pub(crate) fn snapshot_vector_fields(
+    plan: &FemPlanIR,
+    quantities: &[&str],
+    request: &LivePreviewRequest,
+) -> Result<Vec<crate::LivePreviewField>, RunError> {
+    let (problem, state) = build_problem_and_state(plan)?;
+    let observables = observe_state(&problem, &state)?;
+    let mut cached = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for quantity in quantities
+        .iter()
+        .map(|quantity| normalize_quantity_id(quantity))
+    {
+        if !seen.insert(quantity) {
+            continue;
+        }
+        let mut preview_request = request.clone();
+        preview_request.quantity = quantity.to_string();
+        cached.push(build_mesh_preview_field(
+            &preview_request,
+            select_observables(&observables, quantity),
+        ));
+    }
+    Ok(cached)
+}
+
+pub(crate) fn build_problem_and_state(
+    plan: &FemPlanIR,
+) -> Result<(FemLlgProblem, FemLlgState), RunError> {
     let topology = MeshTopology::from_ir(&plan.mesh).map_err(|error| RunError {
         message: format!("MeshTopology: {}", error),
     })?;
@@ -198,11 +237,24 @@ pub(crate) fn snapshot_preview(
         .map_err(|e| RunError {
             message: format!("State: {}", e),
         })?;
-    let observables = observe_state(&problem, &state)?;
-    Ok(build_mesh_preview_field(
-        request,
-        select_observables(&observables, &request.quantity),
-    ))
+    Ok((problem, state))
+}
+
+pub(crate) fn execution_provenance(plan: &FemPlanIR) -> ExecutionProvenance {
+    ExecutionProvenance {
+        execution_engine: "cpu_reference_fem".to_string(),
+        precision: "double".to_string(),
+        demag_operator_kind: if plan.enable_demag {
+            Some("fem_transfer_grid_tensor_fft_newell".to_string())
+        } else {
+            None
+        },
+        fft_backend: None,
+        device_name: None,
+        compute_capability: None,
+        cuda_driver_version: None,
+        cuda_runtime_version: None,
+    }
 }
 
 fn execute_reference_fem_impl(
@@ -223,55 +275,7 @@ fn execute_reference_fem_impl(
         });
     }
 
-    let topology = MeshTopology::from_ir(&plan.mesh).map_err(|e| RunError {
-        message: format!("MeshTopology: {}", e),
-    })?;
-    let material = MaterialParameters::new(
-        plan.material.saturation_magnetisation,
-        plan.material.exchange_stiffness,
-        plan.material.damping,
-    )
-    .map_err(|e| RunError {
-        message: format!("Material: {}", e),
-    })?;
-    let integrator = match plan.integrator {
-        IntegratorChoice::Heun => TimeIntegrator::Heun,
-        IntegratorChoice::Rk4 => TimeIntegrator::RK4,
-        IntegratorChoice::Rk23 => TimeIntegrator::RK23,
-        IntegratorChoice::Rk45 => TimeIntegrator::RK45,
-        IntegratorChoice::Abm3 => TimeIntegrator::ABM3,
-    };
-    let pure_damping_relax = llg_overdamped_uses_pure_damping(plan.relaxation.as_ref());
-    let mut dynamics = LlgConfig::new(plan.gyromagnetic_ratio, integrator)
-        .map_err(|e| RunError {
-            message: format!("LLG: {}", e),
-        })?
-        .with_precession_enabled(!pure_damping_relax);
-    if let Some(adaptive) = plan.adaptive_timestep.as_ref() {
-        dynamics = dynamics.with_adaptive(AdaptiveStepConfig {
-            max_error: adaptive.atol,
-            dt_min: adaptive.dt_min,
-            dt_max: adaptive.dt_max.unwrap_or(1e-10),
-            headroom: adaptive.safety,
-        });
-    }
-
-    let problem = FemLlgProblem::with_terms_and_demag_transfer_grid(
-        topology,
-        material,
-        dynamics,
-        EffectiveFieldTerms {
-            exchange: plan.enable_exchange,
-            demag: plan.enable_demag,
-            external_field: plan.external_field,
-        },
-        Some([plan.hmax, plan.hmax, plan.hmax]),
-    );
-    let mut state = problem
-        .new_state(plan.initial_magnetization.clone())
-        .map_err(|e| RunError {
-            message: format!("State: {}", e),
-        })?;
+    let (problem, mut state) = build_problem_and_state(plan)?;
     let initial_magnetization = state.magnetization().to_vec();
 
     let mut dt = plan
@@ -280,20 +284,7 @@ fn execute_reference_fem_impl(
         .unwrap_or(1e-13);
     let mut steps = Vec::new();
     let mut step_count = 0u64;
-    let provenance = ExecutionProvenance {
-        execution_engine: "cpu_reference_fem".to_string(),
-        precision: "double".to_string(),
-        demag_operator_kind: if plan.enable_demag {
-            Some("fem_transfer_grid_tensor_fft_newell".to_string())
-        } else {
-            None
-        },
-        fft_backend: None,
-        device_name: None,
-        compute_capability: None,
-        cuda_driver_version: None,
-        cuda_runtime_version: None,
-    };
+    let provenance = execution_provenance(plan);
     let mut artifacts = if let Some(writer) = artifact_writer {
         ArtifactRecorder::streaming(provenance.clone(), writer)
     } else {
@@ -603,7 +594,7 @@ fn record_final_outputs(
     Ok(())
 }
 
-fn observe_state(
+pub(crate) fn observe_state(
     problem: &FemLlgProblem,
     state: &FemLlgState,
 ) -> Result<StateObservables, RunError> {

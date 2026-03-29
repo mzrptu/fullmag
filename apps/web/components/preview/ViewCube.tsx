@@ -89,21 +89,37 @@ export default function ViewCube({
     return `matrix3d(${e[0]},${e[1]},${e[2]},0,${e[4]},${e[5]},${e[6]},0,${e[8]},${e[9]},${e[10]},0,0,0,0,1)`;
   }, [sceneRef]);
 
-  // ─── Sync loop ────────────────────────────────────────────────────
+  // ─── Sync loop (only updates when camera matrix changes) ──────────
+  const lastTransformRef = useRef<string>("");
+  const idleCounterRef = useRef(0);
+  
   useEffect(() => {
+    let active = true;
     function loop() {
+      if (!active) return;
       const transform = getCameraMatrix();
-      if (cubeSceneRef.current && cubeSceneRef.current.style.transform !== transform) {
-        cubeSceneRef.current.style.transform = transform;
+      if (transform !== lastTransformRef.current) {
+        lastTransformRef.current = transform;
+        idleCounterRef.current = 0;
+        if (cubeSceneRef.current) cubeSceneRef.current.style.transform = transform;
+        if (axisSceneRef.current) axisSceneRef.current.style.transform = transform;
+      } else {
+        idleCounterRef.current++;
       }
-      if (axisSceneRef.current && axisSceneRef.current.style.transform !== transform) {
-        axisSceneRef.current.style.transform = transform;
+      // After 120 idle frames (~2s at 60fps), slow down to 4fps polling
+      if (idleCounterRef.current < 120) {
+        rafRef.current = requestAnimationFrame(loop);
+      } else {
+        rafRef.current = window.setTimeout(loop, 250) as unknown as number;
       }
-      rafRef.current = requestAnimationFrame(loop);
     }
     rafRef.current = requestAnimationFrame(loop);
     return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      active = false;
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        clearTimeout(rafRef.current);
+      }
     };
   }, [getCameraMatrix]);
 

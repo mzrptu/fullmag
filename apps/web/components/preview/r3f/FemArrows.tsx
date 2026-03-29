@@ -14,52 +14,110 @@ interface FemArrowsProps {
   visible: boolean;
 }
 
+/* ── Arrow template geometry — only depends on maxDim ───────────────── */
+function useArrowTemplate(maxDim: number) {
+  const templateRef = useRef<THREE.BufferGeometry | null>(null);
+  const prevMaxDimRef = useRef<number>(-1);
+
+  return useMemo(() => {
+    // Dispose previous template
+    templateRef.current?.dispose();
+
+    const arrowLen = maxDim * 0.035;
+    const shaftRadius = arrowLen * 0.08;
+    const headRadius = arrowLen * 0.20;
+    const headLen = arrowLen * 0.35;
+    const shaftLen = arrowLen - headLen;
+
+    const shaft = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLen, 6);
+    shaft.rotateX(Math.PI / 2);
+    shaft.translate(0, 0, shaftLen / 2);
+    const head = new THREE.ConeGeometry(headRadius, headLen, 6);
+    head.rotateX(Math.PI / 2);
+    head.translate(0, 0, shaftLen + headLen / 2);
+
+    // Merge shaft + head into single geometry
+    const shaftPos = shaft.getAttribute("position") as THREE.BufferAttribute;
+    const headPos = head.getAttribute("position") as THREE.BufferAttribute;
+    const totalVerts = shaftPos.count + headPos.count;
+    const positions = new Float32Array(totalVerts * 3);
+    const normals = new Float32Array(totalVerts * 3);
+    positions.set(new Float32Array(shaftPos.array), 0);
+    positions.set(new Float32Array(headPos.array), shaftPos.count * 3);
+    const shaftNorm = shaft.getAttribute("normal") as THREE.BufferAttribute;
+    const headNorm = head.getAttribute("normal") as THREE.BufferAttribute;
+    normals.set(new Float32Array(shaftNorm.array), 0);
+    normals.set(new Float32Array(headNorm.array), shaftPos.count * 3);
+
+    const merged = new THREE.BufferGeometry();
+    merged.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    merged.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+
+    const shaftIdx = shaft.getIndex()!;
+    const headIdx = head.getIndex()!;
+    const indexArr = new Uint32Array(shaftIdx.count + headIdx.count);
+    for (let i = 0; i < shaftIdx.count; i++) indexArr[i] = shaftIdx.array[i];
+    for (let i = 0; i < headIdx.count; i++) indexArr[shaftIdx.count + i] = headIdx.array[i] + shaftPos.count;
+    merged.setIndex(new THREE.BufferAttribute(indexArr, 1));
+
+    shaft.dispose();
+    head.dispose();
+
+    templateRef.current = merged;
+    prevMaxDimRef.current = maxDim;
+    return merged;
+  }, [maxDim]);
+}
+
+/* ── Sample boundary nodes spatially ────────────────────────────────── */
+function sampleBoundaryNodes(nodes: number[], boundaryFaces: number[], arrowDensity: number): number[] {
+  const uniqueNodeSet = new Set<number>();
+  for (let i = 0; i < boundaryFaces.length; i++) uniqueNodeSet.add(boundaryFaces[i]);
+  const allBoundaryNodes = Array.from(uniqueNodeSet);
+
+  if (allBoundaryNodes.length <= arrowDensity) return allBoundaryNodes;
+
+  let bMinX = Infinity, bMinY = Infinity, bMinZ = Infinity;
+  let bMaxX = -Infinity, bMaxY = -Infinity, bMaxZ = -Infinity;
+  for (const ni of allBoundaryNodes) {
+    const x = nodes[ni * 3], y = nodes[ni * 3 + 1], z = nodes[ni * 3 + 2];
+    bMinX = Math.min(bMinX, x); bMaxX = Math.max(bMaxX, x);
+    bMinY = Math.min(bMinY, y); bMaxY = Math.max(bMaxY, y);
+    bMinZ = Math.min(bMinZ, z); bMaxZ = Math.max(bMaxZ, z);
+  }
+  const volume = Math.max(1e-30, (bMaxX - bMinX) * (bMaxY - bMinY) * (bMaxZ - bMinZ));
+  const cellSize = Math.pow(volume / arrowDensity, 1 / 3);
+  const invCell = 1 / Math.max(cellSize, 1e-30);
+  const nBinsX = Math.max(1, Math.ceil((bMaxX - bMinX) * invCell));
+  const nBinsY = Math.max(1, Math.ceil((bMaxY - bMinY) * invCell));
+
+  const occupied = new Map<number, number>();
+  for (const ni of allBoundaryNodes) {
+    const ix = Math.min(nBinsX - 1, Math.floor((nodes[ni * 3] - bMinX) * invCell));
+    const iy = Math.min(nBinsY - 1, Math.floor((nodes[ni * 3 + 1] - bMinY) * invCell));
+    const iz = Math.floor((nodes[ni * 3 + 2] - bMinZ) * invCell);
+    const key = ix + iy * nBinsX + iz * nBinsX * nBinsY;
+    if (!occupied.has(key)) occupied.set(key, ni);
+  }
+  return Array.from(occupied.values());
+}
+
 export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visible }: FemArrowsProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const { invalidate } = useThree();
 
-  const { mergedGeometry, scales, quaternions, colors, count, positions } = useMemo(() => {
-    const emptyRet = { count: 0, mergedGeometry: null, scales: new Float32Array(), quaternions: new Float32Array(), colors: new Float32Array(), positions: [] };
+  // Template geometry — only rebuilt when maxDim changes
+  const templateGeometry = useArrowTemplate(maxDim);
+
+  // Instance data (positions, rotations, colors) — depends on field data
+  const { count, instancePositions, quaternions, scales, colors } = useMemo(() => {
+    const emptyRet = { count: 0, instancePositions: [] as number[][], quaternions: new Float32Array(), scales: new Float32Array(), colors: new Float32Array() };
     if (!visible) return emptyRet;
     const fld = meshData.fieldData;
     if (!fld) return emptyRet;
 
-    const { nodes, boundaryFaces } = meshData;
-    
-    // 1. Unique boundary nodes
-    const uniqueNodeSet = new Set<number>();
-    for (let i = 0; i < boundaryFaces.length; i++) uniqueNodeSet.add(boundaryFaces[i]);
-    const allBoundaryNodes = Array.from(uniqueNodeSet);
-
-    let sampledNodes: number[];
-    if (allBoundaryNodes.length <= arrowDensity) {
-      sampledNodes = allBoundaryNodes;
-    } else {
-      let bMinX = Infinity, bMinY = Infinity, bMinZ = Infinity;
-      let bMaxX = -Infinity, bMaxY = -Infinity, bMaxZ = -Infinity;
-      for (const ni of allBoundaryNodes) {
-        const x = nodes[ni * 3], y = nodes[ni * 3 + 1], z = nodes[ni * 3 + 2];
-        bMinX = Math.min(bMinX, x); bMaxX = Math.max(bMaxX, x);
-        bMinY = Math.min(bMinY, y); bMaxY = Math.max(bMaxY, y);
-        bMinZ = Math.min(bMinZ, z); bMaxZ = Math.max(bMaxZ, z);
-      }
-      const volume = Math.max(1e-30, (bMaxX - bMinX) * (bMaxY - bMinY) * (bMaxZ - bMinZ));
-      const cellSize = Math.pow(volume / arrowDensity, 1 / 3);
-      const invCell = 1 / Math.max(cellSize, 1e-30);
-      const nBinsX = Math.max(1, Math.ceil((bMaxX - bMinX) * invCell));
-      const nBinsY = Math.max(1, Math.ceil((bMaxY - bMinY) * invCell));
-      const nBinsZ = Math.max(1, Math.ceil((bMaxZ - bMinZ) * invCell));
-
-      const occupied = new Map<number, number>();
-      for (const ni of allBoundaryNodes) {
-        const ix = Math.min(nBinsX - 1, Math.floor((nodes[ni * 3] - bMinX) * invCell));
-        const iy = Math.min(nBinsY - 1, Math.floor((nodes[ni * 3 + 1] - bMinY) * invCell));
-        const iz = Math.min(nBinsZ - 1, Math.floor((nodes[ni * 3 + 2] - bMinZ) * invCell));
-        const key = ix + iy * nBinsX + iz * nBinsX * nBinsY;
-        if (!occupied.has(key)) occupied.set(key, ni);
-      }
-      sampledNodes = Array.from(occupied.values());
-    }
+    const sampledNodes = sampleBoundaryNodes(meshData.nodes, meshData.boundaryFaces, arrowDensity);
+    const resultCount = sampledNodes.length;
 
     let maxAbsX = 0, maxAbsY = 0, maxAbsZ = 0, maxMag = 0;
     for (const ni of sampledNodes) {
@@ -74,46 +132,10 @@ export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visib
     const scaleZ = Math.max(maxAbsZ, 1e-12);
     const scaleMag = Math.max(maxMag, 1e-12);
 
-    const arrowLen = maxDim * 0.035;
-    const shaftRadius = arrowLen * 0.08;
-    const headRadius = arrowLen * 0.20;
-    const headLen = arrowLen * 0.35;
-    const shaftLen = arrowLen - headLen;
-    const shaft = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLen, 6);
-    shaft.rotateX(Math.PI / 2);
-    shaft.translate(0, 0, shaftLen / 2);
-    const head = new THREE.ConeGeometry(headRadius, headLen, 6);
-    head.rotateX(Math.PI / 2);
-    head.translate(0, 0, shaftLen + headLen / 2);
-
-    const mergedGeometry = new THREE.BufferGeometry();
-    const shaftPos = shaft.getAttribute("position") as THREE.BufferAttribute;
-    const headPos = head.getAttribute("position") as THREE.BufferAttribute;
-    const totalVerts = shaftPos.count + headPos.count;
-    const positions = new Float32Array(totalVerts * 3);
-    const normals = new Float32Array(totalVerts * 3);
-    positions.set(new Float32Array(shaftPos.array), 0);
-    positions.set(new Float32Array(headPos.array), shaftPos.count * 3);
-    const shaftNorm = shaft.getAttribute("normal") as THREE.BufferAttribute;
-    const headNorm = head.getAttribute("normal") as THREE.BufferAttribute;
-    normals.set(new Float32Array(shaftNorm.array), 0);
-    normals.set(new Float32Array(headNorm.array), shaftPos.count * 3);
-    mergedGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    mergedGeometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
-    const shaftIdx = shaft.getIndex()!;
-    const headIdx = head.getIndex()!;
-    const totalIdx = shaftIdx.count + headIdx.count;
-    const indexArr = new Uint32Array(totalIdx);
-    for (let i = 0; i < shaftIdx.count; i++) indexArr[i] = shaftIdx.array[i];
-    for (let i = 0; i < headIdx.count; i++) indexArr[shaftIdx.count + i] = headIdx.array[i] + shaftPos.count;
-    mergedGeometry.setIndex(new THREE.BufferAttribute(indexArr, 1));
-    shaft.dispose();
-    head.dispose();
-
-    const resultCount = sampledNodes.length;
     const quaternionsList = new Float32Array(resultCount * 4);
     const scalesList = new Float32Array(resultCount * 3);
     const colorsList = new Float32Array(resultCount * 3);
+    const positions: number[][] = [];
 
     const _dir = new THREE.Vector3();
     const _defaultUp = new THREE.Vector3(0, 0, 1);
@@ -122,12 +144,12 @@ export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visib
 
     for (let i = 0; i < resultCount; i++) {
       const ni = sampledNodes[i];
-      const px = nodes[ni * 3] - center.x;
-      const py = nodes[ni * 3 + 1] - center.y;
-      const pz = nodes[ni * 3 + 2] - center.z;
-      const vx = fld.x[ni] ?? 0;
-      const vy = fld.y[ni] ?? 0;
-      const vz = fld.z[ni] ?? 0;
+      positions.push([
+        meshData.nodes[ni * 3] - center.x,
+        meshData.nodes[ni * 3 + 1] - center.y,
+        meshData.nodes[ni * 3 + 2] - center.z,
+      ]);
+      const vx = fld.x[ni] ?? 0, vy = fld.y[ni] ?? 0, vz = fld.z[ni] ?? 0;
       const len = Math.sqrt(vx * vx + vy * vy + vz * vz);
 
       if (len < 1e-12) {
@@ -138,7 +160,7 @@ export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visib
         _dir.set(vx, vy, vz).normalize();
         _dummyQ.setFromUnitVectors(_defaultUp, _dir);
       }
-      
+
       quaternionsList[i * 4] = _dummyQ.x;
       quaternionsList[i * 4 + 1] = _dummyQ.y;
       quaternionsList[i * 4 + 2] = _dummyQ.z;
@@ -156,43 +178,34 @@ export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visib
       colorsList[i * 3] = _color.r;
       colorsList[i * 3 + 1] = _color.g;
       colorsList[i * 3 + 2] = _color.b;
-      
-      // We also need positions for the InstancedMesh, let's embed them into a positionsList
-      // wait, where's positionsList? I'll merge positions, quaternions, scales into a matrix update in useEffect
     }
 
-    return { 
-      mergedGeometry, 
-      scales: scalesList, 
-      quaternions: quaternionsList, 
-      colors: colorsList, 
-      count: resultCount,
-      positions: sampledNodes.map(ni => [nodes[ni * 3] - center.x, nodes[ni * 3 + 1] - center.y, nodes[ni * 3 + 2] - center.z])
-    };
-  }, [meshData, field, arrowDensity, center, maxDim, visible]);
+    return { count: resultCount, instancePositions: positions, quaternions: quaternionsList, scales: scalesList, colors: colorsList };
+  }, [meshData, field, arrowDensity, center, visible]);
 
+  // Apply instance matrices
   useEffect(() => {
-    if (!meshRef.current || count === 0 || !mergedGeometry) return;
-    
+    if (!meshRef.current || count === 0) return;
+
     const dummy = new THREE.Object3D();
     for (let i = 0; i < count; i++) {
-        dummy.position.set(positions[i][0], positions[i][1], positions[i][2]);
-        dummy.quaternion.set(quaternions[i * 4], quaternions[i * 4 + 1], quaternions[i * 4 + 2], quaternions[i * 4 + 3]);
-        dummy.scale.set(scales[i * 3], scales[i * 3 + 1], scales[i * 3 + 2]);
-        dummy.updateMatrix();
-        meshRef.current.setMatrixAt(i, dummy.matrix);
+      dummy.position.set(instancePositions[i][0], instancePositions[i][1], instancePositions[i][2]);
+      dummy.quaternion.set(quaternions[i * 4], quaternions[i * 4 + 1], quaternions[i * 4 + 2], quaternions[i * 4 + 3]);
+      dummy.scale.set(scales[i * 3], scales[i * 3 + 1], scales[i * 3 + 2]);
+      dummy.updateMatrix();
+      meshRef.current.setMatrixAt(i, dummy.matrix);
     }
     meshRef.current.instanceMatrix.needsUpdate = true;
     if (meshRef.current.instanceColor) {
-        meshRef.current.instanceColor.needsUpdate = true;
+      meshRef.current.instanceColor.needsUpdate = true;
     }
     invalidate();
-  }, [count, mergedGeometry, positions, quaternions, scales, invalidate]);
+  }, [count, instancePositions, quaternions, scales, invalidate]);
 
   if (!visible || count === 0) return null;
 
   return (
-    <instancedMesh ref={meshRef} args={[mergedGeometry!, undefined, count]} frustumCulled={false}>
+    <instancedMesh ref={meshRef} args={[templateGeometry!, undefined, count]} frustumCulled={false}>
       <meshPhongMaterial shininess={60} />
       <instancedBufferAttribute attach="instanceColor" args={[colors!, 3]} />
     </instancedMesh>

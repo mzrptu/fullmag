@@ -140,6 +140,24 @@ int fullmag_fem_backend_copy_field_f64(
         handle->last_error);
 }
 
+int fullmag_fem_backend_upload_magnetization_f64(
+    fullmag_fem_backend *handle,
+    const double *m_xyz,
+    uint64_t len
+) {
+    if (handle == nullptr) {
+        fullmag_fem_set_global_error(
+            "fullmag_fem_backend_upload_magnetization_f64 received null handle");
+        return FULLMAG_FEM_ERR_INVALID;
+    }
+    handle->last_error.clear();
+    return fullmag::fem::context_upload_magnetization_f64(
+        handle->context,
+        m_xyz,
+        len,
+        handle->last_error);
+}
+
 int fullmag_fem_backend_get_device_info(
     fullmag_fem_backend *handle,
     fullmag_fem_device_info *out_info

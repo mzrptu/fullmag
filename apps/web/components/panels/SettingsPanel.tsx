@@ -638,15 +638,6 @@ function StudyPanel() {
               disabled={ctx.commandBusy || !ctx.awaitingCommand}
             />
           </label>
-          <Button
-            size="sm"
-            tone="accent"
-            variant="solid"
-            disabled={ctx.commandBusy || !ctx.awaitingCommand}
-            onClick={() => ctx.handleSimulationAction("run")}
-          >
-            Run
-          </Button>
         </div>
         <div className="grid grid-cols-2 gap-3 mt-3">
           <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
@@ -667,23 +658,6 @@ function StudyPanel() {
               onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, energyTolerance: e.target.value }))}
               placeholder="disabled" disabled={ctx.commandBusy || !ctx.awaitingCommand} />
           </label>
-        </div>
-        <div className="flex flex-wrap gap-2 items-center justify-between mt-4">
-          <Button
-            size="sm"
-            tone="success"
-            variant="solid"
-            disabled={ctx.commandBusy || !ctx.awaitingCommand}
-            onClick={() => ctx.handleSimulationAction("relax")}
-          >
-            Relax
-          </Button>
-          <Button size="sm" tone="warn" variant="outline"
-            disabled={ctx.commandBusy}
-            onClick={() => ctx.enqueueCommand({ kind: "close" })}
-          >
-            Close
-          </Button>
         </div>
       </div>
     </>

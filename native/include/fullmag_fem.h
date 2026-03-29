@@ -166,6 +166,12 @@ int fullmag_fem_backend_copy_field_f64(
     uint64_t out_len
 );
 
+int fullmag_fem_backend_upload_magnetization_f64(
+    fullmag_fem_backend *handle,
+    const double *m_xyz,
+    uint64_t len
+);
+
 int fullmag_fem_backend_get_device_info(
     fullmag_fem_backend *handle,
     fullmag_fem_device_info *out_info

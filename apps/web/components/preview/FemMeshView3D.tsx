@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { TrackballControls } from "@react-three/drei";
@@ -108,11 +108,11 @@ function CameraAutoFit({ maxDim, generation }: { maxDim: number; generation: num
 }
 
 function SyncedControls({ 
-  controlsRefObject, viewCubeBridgeRef, setCameraPresetEvent 
+  controlsRefObject, viewCubeBridgeRef
 }: { 
-  controlsRefObject: any, viewCubeBridgeRef: any, setCameraPresetEvent: string | null 
+  controlsRefObject: any, viewCubeBridgeRef: any
 }) {
-  const { camera, gl } = useThree();
+  const { camera } = useThree();
   useEffect(() => {
     viewCubeBridgeRef.current = { camera, controls: controlsRefObject.current };
   }, [camera, controlsRefObject, viewCubeBridgeRef]);
@@ -121,7 +121,7 @@ function SyncedControls({
 
 /* ── Component ─────────────────────────────────────────────────────── */
 
-export default function FemMeshView3D({
+function FemMeshView3DInner({
   meshData,
   colorField = "z",
   toolbarMode = "visible",
@@ -160,7 +160,6 @@ export default function FemMeshView3D({
   const [maxDim, setMaxDim] = useState<number>(0);
   const [geomSize, setGeomSize] = useState<[number, number, number]>([1, 1, 1]);
   const [cameraFitGeneration, setCameraFitGeneration] = useState(0);
-  const [cameraPresetEvent, setCameraPresetEvent] = useState<string | null>(null);
 
   const controlsRef = useRef<any>(null);
   const viewCubeSceneRef = useRef<any>(null);
@@ -179,6 +178,11 @@ export default function FemMeshView3D({
   useEffect(() => {
     setSelectedFaces([]); setHoveredFace(null); setCtxMenu(null);
     faceARsRef.current = null;
+    // Only auto-fit camera when topology actually changes
+    if (lastFittedTopologyRef.current !== topologySignature) {
+      lastFittedTopologyRef.current = topologySignature;
+      setCameraFitGeneration((g) => g + 1);
+    }
   }, [topologySignature]);
 
   useEffect(() => {
@@ -217,9 +221,12 @@ export default function FemMeshView3D({
     return () => window.removeEventListener("click", dismiss);
   }, [ctxMenu]);
 
+  const lastFittedTopologyRef = useRef<string | null>(null);
+
   const handleGeometryCenter = useCallback((c: THREE.Vector3, m: number, s: THREE.Vector3) => {
     setGeomCenter(c); setMaxDim(m); setGeomSize([s.x, s.y, s.z]);
-    setCameraFitGeneration((g) => g + 1);
+    // Only auto-fit camera on the very first geometry or when topology changes.
+    // Field data updates (new magnetization vectors) must NOT reset camera.
   }, []);
 
   const setCameraPreset = useCallback((view: "reset" | "front" | "top" | "right") => {
@@ -258,12 +265,17 @@ export default function FemMeshView3D({
     a.click();
   }, []);
 
+  // Pre-compute face aspect ratios when topology changes (fix #7: no first-hover jank)
+  useEffect(() => {
+    faceARsRef.current = computeFaceAspectRatios(meshData.nodes, meshData.boundaryFaces);
+  }, [topologySignature, meshData.nodes, meshData.boundaryFaces]);
+
   const hoveredFaceInfo = useMemo(() => {
     if (!hoveredFace) return null;
     const idx = hoveredFace.idx;
-    if (!faceARsRef.current) faceARsRef.current = computeFaceAspectRatios(meshData.nodes, meshData.boundaryFaces);
-    return { faceIdx: idx, ar: faceARsRef.current[idx], sicn: qualityPerFace?.[idx] };
-  }, [hoveredFace, meshData, qualityPerFace]);
+    const ar = faceARsRef.current ? faceARsRef.current[idx] : 0;
+    return { faceIdx: idx, ar, sicn: qualityPerFace?.[idx] };
+  }, [hoveredFace, qualityPerFace]);
 
   return (
     <div className="relative flex flex-1 w-[100%] h-[100%] min-w-0 min-h-0 bg-background overflow-hidden rounded-md fem-canvas-container">
@@ -291,7 +303,7 @@ export default function FemMeshView3D({
         <FemHighlightView meshData={meshData} selectedFaces={selectedFaces} center={geomCenter} />
         <SceneAxes3D worldExtent={geomSize} center={[0, 0, 0]} sceneScale={[1, 1, 1]} />
         
-        <SyncedControls controlsRefObject={controlsRef} viewCubeBridgeRef={viewCubeSceneRef} setCameraPresetEvent={cameraPresetEvent} />
+        <SyncedControls controlsRefObject={controlsRef} viewCubeBridgeRef={viewCubeSceneRef} />
       </Canvas>
 
       {/* ─── Toolbar ────────────────────────────────── */}
@@ -383,3 +395,5 @@ export default function FemMeshView3D({
     </div>
   );
 }
+
+export default memo(FemMeshView3DInner);

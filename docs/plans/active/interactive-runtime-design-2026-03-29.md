@@ -692,7 +692,8 @@ Stan po ostatnim slice:
    - CLI przed wykonaniem komendy sprawdza zgodność `FdmPlanIR`,
    - przy mismatchu odbudowuje runtime z nowego `stage.ir` i ładuje `continuation_magnetization`,
    - po zgodności wykonuje komendę bez rematerializacji backendu i bez utraty idle-preview state,
-5. stary file-backed preview cache nadal istnieje jako fallback / reconnect path, ale nie jest już jedyną drogą dla idle preview.
+5. runtime-backed execute path zachowuje już output scheduling dla scalar rows i field snapshots, więc interaktywne etapy nie produkują już „okrojonych” artefaktów względem one-shot runnera,
+6. stary file-backed preview cache nadal istnieje jako fallback / reconnect path, ale nie jest już jedyną drogą dla idle preview.
 
 To jest już pierwszy prawdziwy `InteractiveRuntime` z własnym execute path dla FDM, a nie tylko "persistent preview cache". Fullmag przeszedł z modelu "cache-based preview" do modelu "live backend owned by CLI" także dla interactive commands.
 
@@ -700,7 +701,7 @@ Największe brakujące elementy:
 
 - brak jednej actorowej pętli ownership dla całego backend lifecycle,
 - brak first-class runtime queries dla global scalar / energy display,
-- fast path runtime-backed zapisuje dziś podstawowe artefakty etapu (`metadata`, `scalars`, `m_initial`, `m_final`), ale nie ma jeszcze pełnej parity z one-shot output scheduling dla wszystkich field snapshots.
+- runtime host nadal żyje jeszcze w dużym `fullmag-cli/src/main.rs`, a nie w wydzielonym actorze / module ownership.
 
 ---
 

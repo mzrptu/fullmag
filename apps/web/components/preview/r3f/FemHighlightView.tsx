@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useEffect, useRef } from "react";
 import * as THREE from "three";
 import { FemMeshData } from "../FemMeshView3D";
 
@@ -32,6 +32,16 @@ export function FemHighlightView({ meshData, selectedFaces, center }: FemHighlig
 
     return geom;
   }, [selectedFaces, meshData, center]);
+
+  // Dispose old geometry to prevent GPU memory leaks
+  const prevGeomRef = useRef<THREE.BufferGeometry | null>(null);
+  useEffect(() => {
+    if (prevGeomRef.current && prevGeomRef.current !== geometry) {
+      prevGeomRef.current.dispose();
+    }
+    prevGeomRef.current = geometry;
+    return () => { geometry?.dispose(); };
+  }, [geometry]);
 
   if (!geometry) return null;
 

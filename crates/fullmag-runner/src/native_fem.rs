@@ -350,6 +350,24 @@ impl NativeFemBackend {
         )
     }
 
+    pub fn upload_magnetization(&mut self, magnetization: &[[f64; 3]]) -> Result<(), RunError> {
+        let flat = magnetization
+            .iter()
+            .flat_map(|value| value.iter().copied())
+            .collect::<Vec<_>>();
+        let rc = unsafe {
+            ffi::fullmag_fem_backend_upload_magnetization_f64(
+                self.handle,
+                flat.as_ptr(),
+                flat.len() as u64,
+            )
+        };
+        if rc != ffi::FULLMAG_FEM_OK {
+            return Err(self.last_error_or("FEM GPU upload magnetization failed"));
+        }
+        Ok(())
+    }
+
     pub fn copy_h_ex(&self, node_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
         self.copy_field(
             ffi::fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_EX,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useDeferredValue, useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { TrackballControls } from "@react-three/drei";
@@ -142,7 +142,7 @@ function SceneConfig({ toneMapping }: { toneMapping: boolean }) {
 // ═══════════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════════
-export default function MagnetizationView3D({
+function MagnetizationView3DInner({
   grid,
   vectors,
   fieldLabel = "Vector Field",
@@ -161,8 +161,10 @@ export default function MagnetizationView3D({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [nx, ny, nz] = grid;
-  const cx = nx / 2, cy = nz / 2, cz = ny / 2;
-  const orbitDist = Math.max(nx, ny, nz) * 1.5;
+  const { cx, cy, cz, orbitDist } = useMemo(() => ({
+    cx: nx / 2, cy: nz / 2, cz: ny / 2,
+    orbitDist: Math.max(nx, ny, nz) * 1.5,
+  }), [nx, ny, nz]);
 
   // Persist settings changes
   const update = (patch: Partial<Settings>) => {
@@ -515,3 +517,5 @@ function Slider({ min, max, step, value, onChange }: {
     />
   );
 }
+
+export default memo(MagnetizationView3DInner);

@@ -286,6 +286,55 @@ int context_copy_field_f64(
     return FULLMAG_FEM_OK;
 }
 
+int context_upload_magnetization_f64(
+    Context &ctx,
+    const double *m_xyz,
+    uint64_t len,
+    std::string &error)
+{
+    if (m_xyz == nullptr) {
+        error = "input magnetization pointer is null";
+        return FULLMAG_FEM_ERR_INVALID;
+    }
+
+    const uint64_t expected_len = static_cast<uint64_t>(ctx.n_nodes) * 3ull;
+    if (len != expected_len) {
+        error = "input magnetization length mismatch";
+        return FULLMAG_FEM_ERR_INVALID;
+    }
+
+    ctx.m_xyz.assign(m_xyz, m_xyz + static_cast<size_t>(len));
+    ctx.stepper.fsal_valid = false;
+    ctx.prev_error_norm = 1.0;
+
+#if FULLMAG_HAS_MFEM_STACK
+    if ((ctx.enable_exchange || ctx.enable_demag) &&
+        !context_refresh_exchange_field_mfem(ctx, error)) {
+        return FULLMAG_FEM_ERR_UNAVAILABLE;
+    }
+#endif
+
+    if (!ctx.enable_exchange) {
+        fill_zero_vector_field(ctx.h_ex_xyz, ctx.n_nodes);
+    }
+    if (!ctx.enable_demag) {
+        fill_zero_vector_field(ctx.h_demag_xyz, ctx.n_nodes);
+    }
+    if (ctx.has_external_field) {
+        ctx.h_eff_xyz = ctx.h_ext_xyz;
+        for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
+            ctx.h_eff_xyz[i] += ctx.h_ex_xyz[i] + ctx.h_demag_xyz[i];
+        }
+    } else {
+        ctx.h_eff_xyz = ctx.h_ex_xyz;
+        for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
+            ctx.h_eff_xyz[i] += ctx.h_demag_xyz[i];
+        }
+    }
+
+    return FULLMAG_FEM_OK;
+}
+
 void context_populate_device_info(Context &ctx) {
     std::memset(&ctx.device_info_cache, 0, sizeof(ctx.device_info_cache));
 #if FULLMAG_HAS_MFEM_STACK

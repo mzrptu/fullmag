@@ -193,6 +193,12 @@ extern "C" {
         out_len: u64,
     ) -> i32;
 
+    pub fn fullmag_fem_backend_upload_magnetization_f64(
+        handle: *mut fullmag_fem_backend,
+        m_xyz: *const f64,
+        len: u64,
+    ) -> i32;
+
     pub fn fullmag_fem_backend_get_device_info(
         handle: *mut fullmag_fem_backend,
         out_info: *mut fullmag_fem_device_info,

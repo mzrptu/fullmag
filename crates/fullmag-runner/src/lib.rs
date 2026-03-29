@@ -414,29 +414,49 @@ pub fn run_problem_with_interactive_fdm_runtime_live_preview(
         });
     };
 
-    let result = runtime.execute_with_live_preview(
+    let mut artifact_pipeline = artifact_pipeline::ArtifactPipeline::start(
+        output_dir.to_path_buf(),
+        artifacts::build_field_context(problem, &plan),
+        artifact_pipeline::DEFAULT_ARTIFACT_PIPELINE_CAPACITY,
+    )?;
+    let artifact_writer = Some(artifact_pipeline.sender());
+
+    let executed_result = runtime.execute_with_live_preview_streaming(
         fdm,
         until_seconds,
+        &plan.output_plan.outputs,
         fdm.grid.cells,
         field_every_n,
         preview_request,
+        artifact_writer,
         &mut on_step,
-    )?;
-
-    let executed = types::ExecutedRun {
-        result: result.clone(),
-        initial_magnetization: fdm.initial_magnetization.clone(),
-        field_snapshots: Vec::new(),
-        field_snapshot_count: 0,
-        provenance: runtime.execution_provenance(),
+    );
+    let pipeline_summary = artifact_pipeline.finish();
+    let executed = match executed_result {
+        Ok(executed) => executed,
+        Err(error) => {
+            if let Err(writer_error) = pipeline_summary {
+                return Err(RunError {
+                    message: format!(
+                        "{}\nartifact pipeline shutdown also failed: {}",
+                        error.message, writer_error.message
+                    ),
+                });
+            }
+            return Err(error);
+        }
     };
-    if let Err(error) = artifacts::write_artifacts(output_dir, problem, &plan, &executed, None) {
+    let pipeline_summary = pipeline_summary?;
+
+    if let Err(error) =
+        artifacts::write_artifacts(output_dir, problem, &plan, &executed, Some(&pipeline_summary))
+    {
         return Err(RunError {
             message: format!("Failed to write artifacts: {}", error),
         });
     }
 
-    let final_stats = result.steps.last().cloned().unwrap_or(StepStats {
+    let final_stats = executed.result.steps.last().cloned().unwrap_or(StepStats {
         step: 0,
         time: 0.0,
         dt: 0.0,
@@ -450,7 +470,8 @@ pub fn run_problem_with_interactive_fdm_runtime_live_preview(
         wall_time_ns: 0,
         ..StepStats::default()
     });
-    let final_m: Vec<f64> = result
+    let final_m: Vec<f64> = executed
+        .result
         .final_magnetization
         .iter()
         .flat_map(|vector| vector.iter().copied())
@@ -465,7 +486,7 @@ pub fn run_problem_with_interactive_fdm_runtime_live_preview(
         finished: true,
     });
 
-    Ok(result)
+    Ok(executed.result)
 }
 
 pub fn snapshot_problem_preview(

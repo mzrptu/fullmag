@@ -188,6 +188,23 @@ impl FemLlgState {
     pub fn magnetization(&self) -> &[Vector3] {
         &self.magnetization
     }
+
+    pub fn set_magnetization(&mut self, magnetization: Vec<Vector3>) -> Result<()> {
+        if magnetization.len() != self.magnetization.len() {
+            return Err(EngineError::new(format!(
+                "magnetization length {} does not match FEM node count {}",
+                magnetization.len(),
+                self.magnetization.len()
+            )));
+        }
+        self.magnetization = magnetization
+            .into_iter()
+            .map(normalized)
+            .collect::<Result<Vec<_>>>()?;
+        self.k_fsal = None;
+        self.abm_history = AbmHistory::new();
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

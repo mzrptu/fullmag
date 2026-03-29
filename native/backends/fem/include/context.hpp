@@ -211,6 +211,11 @@ int context_copy_field_f64(
     double *out_xyz,
     uint64_t out_len,
     std::string &error);
+int context_upload_magnetization_f64(
+    Context &ctx,
+    const double *m_xyz,
+    uint64_t len,
+    std::string &error);
 void context_populate_device_info(Context &ctx);
 #if FULLMAG_HAS_MFEM_STACK
 bool context_initialize_mfem(Context &ctx, std::string &error);
