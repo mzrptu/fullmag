@@ -238,7 +238,7 @@ fn snapshot_native_fdm_preview(
     request: &LivePreviewRequest,
 ) -> Result<crate::LivePreviewField, RunError> {
     let backend = NativeFdmBackend::create(plan)?;
-    backend.copy_live_preview_field(request, plan.grid.cells)
+    backend.copy_live_preview_field(request, plan.grid.cells, plan.active_mask.as_deref())
 }
 
 #[cfg(feature = "cuda")]
@@ -260,7 +260,11 @@ fn snapshot_native_fdm_vector_fields(
         }
         let mut preview_request = request.clone();
         preview_request.quantity = quantity.to_string();
-        cached.push(backend.copy_live_preview_field(&preview_request, plan.grid.cells)?);
+        cached.push(backend.copy_live_preview_field(
+            &preview_request,
+            plan.grid.cells,
+            plan.active_mask.as_deref(),
+        )?);
     }
 
     Ok(cached)
@@ -1019,7 +1023,11 @@ fn execute_cuda_fdm_impl(
             };
             let preview_field = if preview_due {
                 let request = preview_request.as_ref().expect("checked preview_due");
-                let preview = backend.copy_live_preview_field(request, plan.grid.cells)?;
+                let preview = backend.copy_live_preview_field(
+                    request,
+                    plan.grid.cells,
+                    plan.active_mask.as_deref(),
+                )?;
                 last_preview_revision = Some(request.revision);
                 Some(preview)
             } else {
@@ -1253,6 +1261,7 @@ fn execute_native_fem_impl(
         e_ex: 0.0,
         e_demag: 0.0,
         e_ext: 0.0,
+        e_ani: 0.0,
         e_total: 0.0,
         max_dm_dt: 0.0,
         max_h_eff: 0.0,

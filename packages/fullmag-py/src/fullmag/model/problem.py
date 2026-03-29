@@ -428,6 +428,85 @@ EnergyTerm = Exchange | Demag | InterfacialDMI | Zeeman
 OutputSpec = SaveField | SaveScalar | Snapshot
 
 
+def _builder_source_kind(entrypoint_kind: str) -> str:
+    if entrypoint_kind.startswith("flat_"):
+        return "flat_script"
+    if entrypoint_kind == "build":
+        return "build_function"
+    if entrypoint_kind == "problem":
+        return "problem_object"
+    if entrypoint_kind.startswith("interactive_"):
+        return "interactive_command"
+    return "problem_model"
+
+
+def _builder_editable_scopes(
+    problem: "Problem",
+    *,
+    mesh_workflow: dict[str, object] | None,
+) -> list[str]:
+    scopes = ["runtime", "geometry", "materials", "energies", "study", "outputs"]
+    if mesh_workflow is not None or (
+        problem.discretization is not None and problem.discretization.fem is not None
+    ):
+        scopes.append("meshing")
+    return scopes
+
+
+def build_problem_builder_manifest(
+    problem: "Problem",
+    *,
+    runtime: "RuntimeSelection",
+    entrypoint_kind: str,
+    source_root: str | Path | None,
+    mesh_workflow: dict[str, object] | None,
+) -> dict[str, object]:
+    materials = problem._collect_materials()
+    regions = problem._collect_regions()
+    geometries = [
+        resolve_geometry_sources(geometry, source_root=source_root)
+        for geometry in problem._collect_geometries()
+    ]
+    editable_scopes = _builder_editable_scopes(problem, mesh_workflow=mesh_workflow)
+    return {
+        "schema_version": "model_builder.v1",
+        "source_kind": _builder_source_kind(entrypoint_kind),
+        "entrypoint_kind": entrypoint_kind,
+        "editable_via_ui": True,
+        "editable_scopes": editable_scopes,
+        "canonical_script_strategy": "canonical_rewrite",
+        "problem": {
+            "name": problem.name,
+            "description": problem.description,
+            "runtime": runtime.to_runtime_metadata(),
+            "geometry": [geometry.to_ir() for geometry in geometries],
+            "regions": [region.to_ir() for region in regions],
+            "materials": [material.to_ir() for material in materials],
+            "magnets": [magnet.to_ir() for magnet in problem.magnets],
+            "energy_terms": [term.to_ir() for term in problem.energy],
+            "study": problem.study.to_ir(),
+            "discretization": problem.discretization.to_ir() if problem.discretization else None,
+            "mesh_workflow": mesh_workflow,
+        },
+    }
+
+
+def build_script_sync_manifest(
+    *,
+    entrypoint_kind: str,
+    editable_scopes: Sequence[str],
+) -> dict[str, object]:
+    return {
+        "schema_version": "script_sync.v1",
+        "source_kind": _builder_source_kind(entrypoint_kind),
+        "entrypoint_kind": entrypoint_kind,
+        "source_of_truth": "model_builder",
+        "rewrite_strategy": "canonical_rewrite",
+        "editable_scopes": list(editable_scopes),
+        "phase": "round_trip_canonical_sync",
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class Problem:
     name: str
@@ -471,6 +550,7 @@ class Problem:
         source_root: str | Path | None = None,
         entrypoint_kind: str = "direct",
         asset_cache: dict[str, dict[str, Any] | None] | None = None,
+        include_geometry_assets: bool = True,
     ) -> dict[str, object]:
         runtime = self.runtime.resolved(
             backend=requested_backend,
@@ -486,12 +566,6 @@ class Problem:
         discretization = self._resolve_discretization(runtime.backend_target)
         source_hash = sha256(script_source.encode("utf-8")).hexdigest() if script_source else None
         effective_asset_cache = asset_cache if asset_cache is not None else self.geometry_asset_cache
-        geometry_assets = build_geometry_assets_for_request(
-            requested_backend=runtime.backend_target,
-            geometries=geometries,
-            discretization=discretization,
-            asset_cache=effective_asset_cache,
-        )
         runtime_metadata = dict(self.runtime_metadata)
         runtime_metadata["runtime_selection"] = runtime.to_runtime_metadata()
         if self.discretization is not None and discretization is not self.discretization:
@@ -499,6 +573,29 @@ class Problem:
                 "policy": "fem_from_fdm_cell",
                 "fem": discretization.fem.to_ir() if discretization.fem else None,
             }
+        mesh_workflow = runtime_metadata.get("mesh_workflow")
+        if not isinstance(mesh_workflow, dict):
+            mesh_workflow = None
+        builder_manifest = build_problem_builder_manifest(
+            self,
+            runtime=runtime,
+            entrypoint_kind=entrypoint_kind,
+            source_root=source_root,
+            mesh_workflow=mesh_workflow,
+        )
+        runtime_metadata["model_builder"] = builder_manifest
+        runtime_metadata["script_sync"] = build_script_sync_manifest(
+            entrypoint_kind=entrypoint_kind,
+            editable_scopes=builder_manifest.get("editable_scopes", []),
+        )
+        geometry_assets = None
+        if include_geometry_assets:
+            geometry_assets = build_geometry_assets_for_request(
+                requested_backend=runtime.backend_target,
+                geometries=geometries,
+                discretization=discretization,
+                asset_cache=effective_asset_cache,
+            )
 
         return {
             "ir_version": IR_VERSION,

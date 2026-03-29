@@ -561,6 +561,53 @@ void zero_non_magnetic_nodes_aos(
     }
 }
 
+void compute_uniaxial_anisotropy_field(
+    const Context &ctx,
+    const std::vector<double> &m_xyz,
+    std::vector<double> &h_ani_xyz,
+    double *anisotropy_energy)
+{
+    const size_t n = ctx.n_nodes;
+    h_ani_xyz.assign(n * 3u, 0.0);
+    if (!ctx.enable_anisotropy || ctx.anisotropy_Ku == 0.0) {
+        if (anisotropy_energy != nullptr) {
+            *anisotropy_energy = 0.0;
+        }
+        return;
+    }
+
+    const double ux = ctx.anisotropy_axis[0];
+    const double uy = ctx.anisotropy_axis[1];
+    const double uz = ctx.anisotropy_axis[2];
+    const double prefactor = 2.0 * ctx.anisotropy_Ku /
+                             (kMu0 * ctx.material.saturation_magnetisation);
+    double energy = 0.0;
+
+    for (size_t i = 0; i < n; ++i) {
+        if (!ctx.magnetic_node_mask.empty() && ctx.magnetic_node_mask[i] == 0u) {
+            continue;
+        }
+        const size_t base = i * 3u;
+        const double mx = m_xyz[base + 0];
+        const double my = m_xyz[base + 1];
+        const double mz = m_xyz[base + 2];
+        const double m_dot_u = mx * ux + my * uy + mz * uz;
+
+        h_ani_xyz[base + 0] = prefactor * m_dot_u * ux;
+        h_ani_xyz[base + 1] = prefactor * m_dot_u * uy;
+        h_ani_xyz[base + 2] = prefactor * m_dot_u * uz;
+
+        if (anisotropy_energy != nullptr && !ctx.mfem_lumped_mass.empty()) {
+            energy += -ctx.anisotropy_Ku * (1.0 - m_dot_u * m_dot_u) *
+                      ctx.mfem_lumped_mass[i];
+        }
+    }
+
+    if (anisotropy_energy != nullptr) {
+        *anisotropy_energy = energy;
+    }
+}
+
 double external_energy_from_field(
     const Context &ctx,
     const std::vector<double> &m_xyz)
@@ -924,8 +971,17 @@ bool compute_effective_fields_for_magnetization(
         }
     }
 
+    double anisotropy = 0.0;
+    if (ctx.enable_anisotropy) {
+        compute_uniaxial_anisotropy_field(
+            ctx, m_xyz, ctx.h_ani_xyz,
+            &anisotropy);
+    } else {
+        ctx.h_ani_xyz.assign(m_xyz.size(), 0.0);
+    }
+
     for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
-        h_eff_xyz[i] = h_ex_xyz[i] + h_demag_xyz[i] + ctx.h_ext_xyz[i];
+        h_eff_xyz[i] = h_ex_xyz[i] + h_demag_xyz[i] + ctx.h_ext_xyz[i] + ctx.h_ani_xyz[i];
     }
 
     if (exchange_energy != nullptr) {
@@ -1827,8 +1883,16 @@ bool context_step_exchange_heun_mfem(
     stats.exchange_energy_joules = exchange_energy_final;
     stats.demag_energy_joules = demag_energy_final;
     stats.external_energy_joules = external_energy_from_field(ctx, ctx.m_xyz);
+    {
+        double ani_e = 0.0;
+        if (ctx.enable_anisotropy) {
+            compute_uniaxial_anisotropy_field(ctx, ctx.m_xyz, ctx.h_ani_xyz, &ani_e);
+        }
+        stats.anisotropy_energy_joules = ani_e;
+    }
     stats.total_energy_joules =
-        stats.exchange_energy_joules + stats.demag_energy_joules + stats.external_energy_joules;
+        stats.exchange_energy_joules + stats.demag_energy_joules +
+        stats.external_energy_joules + stats.anisotropy_energy_joules;
     stats.max_effective_field_amplitude = max_norm_aos(ctx.h_eff_xyz);
     stats.max_demag_field_amplitude = max_norm_aos(ctx.h_demag_xyz);
     stats.max_rhs_amplitude = max_rhs_final;
@@ -2127,8 +2191,16 @@ bool context_step_explicit_rk_mfem(
     stats.exchange_energy_joules = exchange_energy_final;
     stats.demag_energy_joules = demag_energy_final;
     stats.external_energy_joules = external_energy_from_field(ctx, ctx.m_xyz);
+    {
+        double ani_e = 0.0;
+        if (ctx.enable_anisotropy) {
+            compute_uniaxial_anisotropy_field(ctx, ctx.m_xyz, ctx.h_ani_xyz, &ani_e);
+        }
+        stats.anisotropy_energy_joules = ani_e;
+    }
     stats.total_energy_joules =
-        stats.exchange_energy_joules + stats.demag_energy_joules + stats.external_energy_joules;
+        stats.exchange_energy_joules + stats.demag_energy_joules +
+        stats.external_energy_joules + stats.anisotropy_energy_joules;
     stats.max_effective_field_amplitude = max_norm_aos(ctx.h_eff_xyz);
     stats.max_demag_field_amplitude = max_norm_aos(ctx.h_demag_xyz);
     stats.max_rhs_amplitude = max_rhs_final;

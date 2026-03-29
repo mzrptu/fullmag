@@ -12,16 +12,18 @@ use axum::{
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::sync::Arc;
 use tokio::sync::{broadcast, watch, Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 
+use fullmag_runner::quantities::{quantity_spec, quantity_specs, QuantityKind};
 use fullmag_runner::{FemMeshPayload, LivePreviewField, LivePreviewRequest, StepUpdate};
 
 #[derive(Debug, Clone)]
@@ -123,6 +125,38 @@ struct LiveState {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+struct ScriptBuilderSolverState {
+    integrator: String,
+    fixed_timestep: String,
+    relax_algorithm: String,
+    torque_tolerance: String,
+    energy_tolerance: String,
+    max_relax_steps: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct ScriptBuilderMeshState {
+    algorithm_2d: i64,
+    algorithm_3d: i64,
+    hmax: String,
+    hmin: String,
+    size_factor: f64,
+    size_from_curvature: i64,
+    smoothing_steps: i64,
+    optimize: String,
+    optimize_iterations: i64,
+    compute_quality: bool,
+    per_element_quality: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct ScriptBuilderState {
+    revision: u64,
+    solver: ScriptBuilderSolverState,
+    mesh: ScriptBuilderMeshState,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct EngineLogEntry {
     timestamp_unix_ms: u128,
     level: String,
@@ -159,6 +193,8 @@ struct SessionStateResponse {
     run: Option<RunManifest>,
     live_state: Option<LiveState>,
     metadata: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    script_builder: Option<ScriptBuilderState>,
     scalar_rows: Vec<ScalarRow>,
     engine_log: Vec<EngineLogEntry>,
     quantities: Vec<QuantityDescriptor>,
@@ -192,10 +228,12 @@ struct SessionStateEventView<'a> {
     run: Option<&'a RunManifest>,
     live_state: Option<&'a LiveState>,
     metadata: Option<&'a Value>,
+    script_builder: Option<&'a ScriptBuilderState>,
     scalar_rows: &'a [ScalarRow],
     engine_log: &'a [EngineLogEntry],
     quantities: &'a [QuantityDescriptor],
     fem_mesh: Option<&'a FemMeshPayload>,
+    latest_fields: &'a LatestFields,
     artifacts: &'a [ArtifactEntry],
     preview_config: &'a CurrentPreviewConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -208,10 +246,12 @@ struct SessionStateResponseView<'a> {
     run: Option<&'a RunManifest>,
     live_state: Option<&'a LiveState>,
     metadata: Option<&'a Value>,
+    script_builder: Option<&'a ScriptBuilderState>,
     scalar_rows: &'a [ScalarRow],
     engine_log: &'a [EngineLogEntry],
     quantities: &'a [QuantityDescriptor],
     fem_mesh: Option<&'a FemMeshPayload>,
+    latest_fields: &'a LatestFields,
     artifacts: &'a [ArtifactEntry],
     preview_config: &'a CurrentPreviewConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -226,23 +266,38 @@ struct QuantityDescriptor {
     unit: String,
     location: String,
     available: bool,
+    interactive_preview: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quick_access_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scalar_metric_key: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
-struct LatestFields {
-    m: Option<Value>,
-    h_ex: Option<Value>,
-    h_demag: Option<Value>,
-    h_ext: Option<Value>,
-    h_eff: Option<Value>,
-}
+#[serde(transparent)]
+struct LatestFields(BTreeMap<String, Value>);
 
 #[derive(Debug, Default, Clone)]
-struct CachedPreviewFields {
-    h_ex: Option<LivePreviewField>,
-    h_demag: Option<LivePreviewField>,
-    h_ext: Option<LivePreviewField>,
-    h_eff: Option<LivePreviewField>,
+struct CachedPreviewFields(BTreeMap<String, LivePreviewField>);
+
+impl LatestFields {
+    fn get(&self, quantity: &str) -> Option<&Value> {
+        self.0.get(quantity)
+    }
+
+    fn extend(&mut self, incoming: Self) {
+        self.0.extend(incoming.0);
+    }
+}
+
+impl CachedPreviewFields {
+    fn get(&self, quantity: &str) -> Option<&LivePreviewField> {
+        self.0.get(quantity)
+    }
+
+    fn insert(&mut self, field: LivePreviewField) {
+        self.0.insert(field.quantity.clone(), field);
+    }
 }
 
 type CurrentPreviewConfig = LivePreviewRequest;
@@ -286,6 +341,8 @@ struct PreviewState {
     original_node_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     original_face_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    active_mask: Option<Vec<bool>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -381,6 +438,29 @@ struct SessionAssetImportResponse {
     stored_path: String,
     target_realization: String,
     summary: ImportedAssetSummary,
+}
+
+#[derive(Debug, Deserialize)]
+struct ScriptSyncRequest {
+    #[serde(default)]
+    overrides: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ScriptBuilderUpdateRequest {
+    #[serde(default)]
+    solver: Option<ScriptBuilderSolverState>,
+    #[serde(default)]
+    mesh: Option<ScriptBuilderMeshState>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ScriptSyncResponse {
+    script_path: String,
+    source_kind: String,
+    entrypoint_kind: String,
+    written: bool,
+    bytes_written: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -593,6 +673,14 @@ async fn main() {
         .route(
             "/v1/live/current/assets/import",
             post(import_current_live_asset),
+        )
+        .route(
+            "/v1/live/current/script/sync",
+            post(sync_current_live_script),
+        )
+        .route(
+            "/v1/live/current/script/builder",
+            post(update_current_live_script_builder),
         )
         .route(
             "/v1/live/current/artifacts",
@@ -857,6 +945,15 @@ async fn publish_current_live_state(
     let previous_preview = next.preview.clone();
     apply_current_live_publish(&mut next, req)?;
     next.preview_config = preview_config.clone();
+    if next.script_builder.is_none() && !next.session.script_path.trim().is_empty() {
+        if let Ok(builder_state) = load_script_builder_state(
+            &state.repo_root,
+            &state.current_workspace_root,
+            Path::new(next.session.script_path.trim()),
+        ) {
+            next.script_builder = Some(builder_state);
+        }
+    }
     let has_fresh_preview = live_state_has_fresh_preview(next.live_state.as_ref());
     let should_rebuild_preview =
         has_fresh_preview || has_latest_fields_update || has_cached_preview_update;
@@ -1321,6 +1418,86 @@ fn import_asset_into_dir(
     Ok(response)
 }
 
+async fn sync_current_live_script(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ScriptSyncRequest>,
+) -> Result<Json<ScriptSyncResponse>, ApiError> {
+    let (script_path, builder_state) = {
+        let current = state.current_live_state.read().await;
+        let snapshot = current
+            .as_ref()
+            .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
+        let script_path = snapshot.session.script_path.trim();
+        if script_path.is_empty() {
+            return Err(ApiError::bad_request(
+                "active local live workspace does not expose a script path",
+            ));
+        }
+        (PathBuf::from(script_path), snapshot.script_builder.clone())
+    };
+
+    if !script_path.is_file() {
+        return Err(ApiError::bad_request(format!(
+            "script path does not exist: {}",
+            script_path.display()
+        )));
+    }
+
+    let overrides = req
+        .overrides
+        .clone()
+        .or_else(|| builder_state.as_ref().map(script_builder_overrides));
+    let response = rewrite_script_via_python_helper(
+        &state.repo_root,
+        &state.current_workspace_root,
+        &script_path,
+        overrides.as_ref(),
+    )?;
+    Ok(Json(response))
+}
+
+async fn update_current_live_script_builder(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ScriptBuilderUpdateRequest>,
+) -> Result<Json<ScriptBuilderState>, ApiError> {
+    let (builder_state, snapshot_json, public_json) = {
+        let mut current = state.current_live_state.write().await;
+        let snapshot = current
+            .as_mut()
+            .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
+        if snapshot.script_builder.is_none() && !snapshot.session.script_path.trim().is_empty() {
+            snapshot.script_builder = Some(load_script_builder_state(
+                &state.repo_root,
+                &state.current_workspace_root,
+                Path::new(snapshot.session.script_path.trim()),
+            )?);
+        }
+        let builder = snapshot.script_builder.as_mut().ok_or_else(|| {
+            ApiError::bad_request("script builder is not available for this workspace")
+        })?;
+        let mut changed = false;
+        if let Some(solver) = req.solver {
+            builder.solver = solver;
+            changed = true;
+        }
+        if let Some(mesh) = req.mesh {
+            builder.mesh = mesh;
+            changed = true;
+        }
+        if changed {
+            builder.revision = builder.revision.saturating_add(1);
+        }
+        let builder_state = builder.clone();
+        let snapshot_json = serialize_current_live_snapshot_event(snapshot, false)?;
+        let public_json = serialize_current_live_response(snapshot, true)?;
+        (builder_state, snapshot_json, public_json)
+    };
+
+    *state.current_live_public_snapshot.write().await = Some(public_json);
+    let _ = state.current_live_events.send(snapshot_json);
+    Ok(Json(builder_state))
+}
+
 async fn list_physics_docs(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<String>>, ApiError> {
@@ -1408,10 +1585,12 @@ fn serialize_current_live_snapshot_event(
             run: snapshot.run.as_ref(),
             live_state: snapshot.live_state.as_ref(),
             metadata: snapshot.metadata.as_ref(),
+            script_builder: snapshot.script_builder.as_ref(),
             scalar_rows: &snapshot.scalar_rows,
             engine_log: &snapshot.engine_log,
             quantities: &snapshot.quantities,
             fem_mesh: snapshot.fem_mesh.as_ref(),
+            latest_fields: &snapshot.latest_fields,
             artifacts: &snapshot.artifacts,
             preview_config: &snapshot.preview_config,
             preview: include_preview
@@ -1431,10 +1610,12 @@ fn serialize_current_live_response(
         run: snapshot.run.as_ref(),
         live_state: snapshot.live_state.as_ref(),
         metadata: snapshot.metadata.as_ref(),
+        script_builder: snapshot.script_builder.as_ref(),
         scalar_rows: &snapshot.scalar_rows,
         engine_log: &snapshot.engine_log,
         quantities: &snapshot.quantities,
         fem_mesh: snapshot.fem_mesh.as_ref(),
+        latest_fields: &snapshot.latest_fields,
         artifacts: &snapshot.artifacts,
         preview_config: &snapshot.preview_config,
         preview: include_preview
@@ -1565,6 +1746,7 @@ fn build_preview_state(
             fem_mesh: Some(mesh.clone()),
             original_node_count: Some(mesh.nodes.len()),
             original_face_count: Some(mesh.boundary_faces.len()),
+            active_mask: None,
         });
     }
 
@@ -1635,6 +1817,7 @@ fn build_preview_state(
             fem_mesh: None,
             original_node_count: None,
             original_face_count: None,
+            active_mask: None,
         });
     }
 
@@ -1697,6 +1880,7 @@ fn build_preview_state(
         fem_mesh: None,
         original_node_count: None,
         original_face_count: None,
+        active_mask: None,
     })
 }
 
@@ -1768,6 +1952,7 @@ fn build_preview_state_from_live_field(
             fem_mesh: Some(mesh.clone()),
             original_node_count: Some(mesh.nodes.len()),
             original_face_count: Some(mesh.boundary_faces.len()),
+            active_mask: None,
         });
     }
 
@@ -1816,6 +2001,7 @@ fn build_preview_state_from_live_field(
             fem_mesh: None,
             original_node_count: None,
             original_face_count: None,
+            active_mask: field.active_mask.clone(),
         });
     }
 
@@ -1853,19 +2039,23 @@ fn build_preview_state_from_live_field(
         fem_mesh: None,
         original_node_count: None,
         original_face_count: None,
+        active_mask: field.active_mask.clone(),
     })
 }
 
 fn resolve_preview_quantity(current: &SessionStateResponse, requested: &str) -> Option<String> {
+    let is_preview_compatible = |quantity_id: &str| {
+        quantity_spec(quantity_id).is_some_and(|spec| spec.kind != QuantityKind::GlobalScalar)
+    };
     if current.quantities.iter().any(|quantity| {
-        quantity.kind == "vector_field" && quantity.available && quantity.id == requested
+        quantity.available && quantity.id == requested && is_preview_compatible(&quantity.id)
     }) {
         return Some(requested.to_string());
     }
     current
         .quantities
         .iter()
-        .find(|quantity| quantity.kind == "vector_field" && quantity.available)
+        .find(|quantity| quantity.available && is_preview_compatible(&quantity.id))
         .map(|quantity| quantity.id.clone())
 }
 
@@ -1877,11 +2067,7 @@ fn normalize_preview_component(component: &str) -> &str {
 }
 
 fn quantity_unit(quantity: &str) -> &'static str {
-    match quantity {
-        "m" => "dimensionless",
-        "H_ex" | "H_demag" | "H_ext" | "H_eff" => "A/m",
-        _ => "",
-    }
+    fullmag_runner::quantities::quantity_unit(quantity)
 }
 
 fn current_vector_field(
@@ -1889,41 +2075,31 @@ fn current_vector_field(
     quantity: &str,
 ) -> Option<(Vec<[f64; 3]>, [usize; 3])> {
     if quantity == "m" {
-        let live = current.live_state.as_ref()?;
-        let values = live.latest_step.magnetization.as_ref()?;
-        let vectors = values
-            .chunks_exact(3)
-            .map(|chunk| [chunk[0], chunk[1], chunk[2]])
-            .collect::<Vec<_>>();
-        let grid = [
-            live.latest_step.grid[0] as usize,
-            live.latest_step.grid[1] as usize,
-            live.latest_step.grid[2] as usize,
-        ];
-        return Some((vectors, grid));
+        if let Some(live) = current.live_state.as_ref() {
+            if let Some(values) = live.latest_step.magnetization.as_ref() {
+                let vectors = values
+                    .chunks_exact(3)
+                    .map(|chunk| [chunk[0], chunk[1], chunk[2]])
+                    .collect::<Vec<_>>();
+                let grid = [
+                    live.latest_step.grid[0] as usize,
+                    live.latest_step.grid[1] as usize,
+                    live.latest_step.grid[2] as usize,
+                ];
+                return Some((vectors, grid));
+            }
+        }
     }
-    let raw = match quantity {
-        "H_ex" => current.latest_fields.h_ex.as_ref()?,
-        "H_demag" => current.latest_fields.h_demag.as_ref()?,
-        "H_ext" => current.latest_fields.h_ext.as_ref()?,
-        "H_eff" => current.latest_fields.h_eff.as_ref()?,
-        _ => return None,
-    };
-    parse_field_value(raw)
+    parse_field_value(current.latest_fields.get(quantity)?)
 }
 
 fn cached_preview_field_owned(
     current: &SessionStateResponse,
     quantity: &str,
 ) -> Option<LivePreviewField> {
-    let in_memory = match quantity {
-        "H_ex" => current.preview_cache.h_ex.as_ref(),
-        "H_demag" => current.preview_cache.h_demag.as_ref(),
-        "H_ext" => current.preview_cache.h_ext.as_ref(),
-        "H_eff" => current.preview_cache.h_eff.as_ref(),
-        _ => None,
-    };
-    in_memory
+    current
+        .preview_cache
+        .get(quantity)
         .cloned()
         .or_else(|| load_cached_preview_field_from_artifacts(current, quantity))
 }
@@ -2282,6 +2458,7 @@ fn default_current_live_state(req: &CurrentLivePublishRequest) -> SessionStateRe
         run: None,
         live_state: None,
         metadata: None,
+        script_builder: None,
         scalar_rows: Vec::new(),
         engine_log: Vec::new(),
         quantities: Vec::new(),
@@ -2424,32 +2601,12 @@ fn upsert_scalar_row(rows: &mut Vec<ScalarRow>, row: ScalarRow) {
 }
 
 fn merge_latest_fields(current: &mut LatestFields, incoming: LatestFields) {
-    if incoming.m.is_some() {
-        current.m = incoming.m;
-    }
-    if incoming.h_ex.is_some() {
-        current.h_ex = incoming.h_ex;
-    }
-    if incoming.h_demag.is_some() {
-        current.h_demag = incoming.h_demag;
-    }
-    if incoming.h_ext.is_some() {
-        current.h_ext = incoming.h_ext;
-    }
-    if incoming.h_eff.is_some() {
-        current.h_eff = incoming.h_eff;
-    }
+    current.extend(incoming);
 }
 
 fn merge_cached_preview_fields(current: &mut CachedPreviewFields, incoming: Vec<LivePreviewField>) {
     for field in incoming {
-        match field.quantity.as_str() {
-            "H_ex" => current.h_ex = Some(field),
-            "H_demag" => current.h_demag = Some(field),
-            "H_ext" => current.h_ext = Some(field),
-            "H_eff" => current.h_eff = Some(field),
-            _ => {}
-        }
+        current.insert(field);
     }
 }
 
@@ -2793,107 +2950,59 @@ fn build_quantities(
         !scalar_rows.is_empty() || live_state.is_some() || run_value.is_some()
     };
 
-    vec![
-        QuantityDescriptor {
-            id: "m".to_string(),
-            label: "Magnetization".to_string(),
-            kind: "vector_field".to_string(),
-            unit: "dimensionless".to_string(),
-            location: field_location.to_string(),
-            available: dynamic_available("m")
-                || latest_fields.m.is_some()
-                || live_state
-                    .and_then(|state| state.latest_step.magnetization.as_ref())
-                    .is_some()
-                || live_state
-                    .and_then(|state| state.latest_step.preview_field.as_ref())
-                    .is_some_and(|field| field.quantity == "m"),
-        },
-        QuantityDescriptor {
-            id: "H_ex".to_string(),
-            label: "Exchange Field".to_string(),
-            kind: "vector_field".to_string(),
-            unit: "A/m".to_string(),
-            location: field_location.to_string(),
-            available: dynamic_available("H_ex")
-                || latest_fields.h_ex.is_some()
-                || preview_cache.h_ex.is_some()
-                || live_state
-                    .and_then(|state| state.latest_step.preview_field.as_ref())
-                    .is_some_and(|field| field.quantity == "H_ex"),
-        },
-        QuantityDescriptor {
-            id: "H_demag".to_string(),
-            label: "Demagnetization Field".to_string(),
-            kind: "vector_field".to_string(),
-            unit: "A/m".to_string(),
-            location: field_location.to_string(),
-            available: dynamic_available("H_demag")
-                || latest_fields.h_demag.is_some()
-                || preview_cache.h_demag.is_some()
-                || live_state
-                    .and_then(|state| state.latest_step.preview_field.as_ref())
-                    .is_some_and(|field| field.quantity == "H_demag"),
-        },
-        QuantityDescriptor {
-            id: "H_ext".to_string(),
-            label: "External Field".to_string(),
-            kind: "vector_field".to_string(),
-            unit: "A/m".to_string(),
-            location: field_location.to_string(),
-            available: dynamic_available("H_ext")
-                || latest_fields.h_ext.is_some()
-                || preview_cache.h_ext.is_some()
-                || live_state
-                    .and_then(|state| state.latest_step.preview_field.as_ref())
-                    .is_some_and(|field| field.quantity == "H_ext"),
-        },
-        QuantityDescriptor {
-            id: "H_eff".to_string(),
-            label: "Effective Field".to_string(),
-            kind: "vector_field".to_string(),
-            unit: "A/m".to_string(),
-            location: field_location.to_string(),
-            available: dynamic_available("H_eff")
-                || latest_fields.h_eff.is_some()
-                || preview_cache.h_eff.is_some()
-                || live_state
-                    .and_then(|state| state.latest_step.preview_field.as_ref())
-                    .is_some_and(|field| field.quantity == "H_eff"),
-        },
-        QuantityDescriptor {
-            id: "E_ex".to_string(),
-            label: "Exchange Energy".to_string(),
-            kind: "global_scalar".to_string(),
-            unit: "J".to_string(),
-            location: "global".to_string(),
-            available: scalar_available(run.and_then(|manifest| manifest.final_e_ex)),
-        },
-        QuantityDescriptor {
-            id: "E_demag".to_string(),
-            label: "Demagnetization Energy".to_string(),
-            kind: "global_scalar".to_string(),
-            unit: "J".to_string(),
-            location: "global".to_string(),
-            available: scalar_available(run.and_then(|manifest| manifest.final_e_demag)),
-        },
-        QuantityDescriptor {
-            id: "E_ext".to_string(),
-            label: "External Energy".to_string(),
-            kind: "global_scalar".to_string(),
-            unit: "J".to_string(),
-            location: "global".to_string(),
-            available: scalar_available(run.and_then(|manifest| manifest.final_e_ext)),
-        },
-        QuantityDescriptor {
-            id: "E_total".to_string(),
-            label: "Total Energy".to_string(),
-            kind: "global_scalar".to_string(),
-            unit: "J".to_string(),
-            location: "global".to_string(),
-            available: scalar_available(run.and_then(|manifest| manifest.final_e_total)),
-        },
-    ]
+    quantity_specs()
+        .iter()
+        .filter(|spec| spec.ui_exposed)
+        .map(|spec| {
+            let interactive_preview = spec.interactive_preview
+                && (dynamic_supported.is_empty() || dynamic_available(spec.id));
+            let available = match spec.kind {
+                QuantityKind::VectorField | QuantityKind::SpatialScalar => {
+                    dynamic_available(spec.id)
+                        || latest_fields.get(spec.id).is_some()
+                        || preview_cache.get(spec.id).is_some()
+                        || (spec.id == "m"
+                            && live_state
+                                .and_then(|state| state.latest_step.magnetization.as_ref())
+                                .is_some())
+                        || live_state
+                            .and_then(|state| state.latest_step.preview_field.as_ref())
+                            .is_some_and(|field| field.quantity == spec.id)
+                }
+                QuantityKind::GlobalScalar => scalar_available(
+                    spec.scalar_metric_key
+                        .and_then(|metric_key| run_manifest_scalar_value(run, metric_key)),
+                ),
+            };
+
+            QuantityDescriptor {
+                id: spec.id.to_string(),
+                label: spec.label.to_string(),
+                kind: spec.kind.as_api_kind().to_string(),
+                unit: spec.unit.to_string(),
+                location: match spec.kind {
+                    QuantityKind::GlobalScalar => "global".to_string(),
+                    QuantityKind::VectorField | QuantityKind::SpatialScalar => {
+                        field_location.to_string()
+                    }
+                },
+                available,
+                interactive_preview,
+                quick_access_label: spec.quick_access_label.map(str::to_string),
+                scalar_metric_key: spec.scalar_metric_key.map(str::to_string),
+            }
+        })
+        .collect()
+}
+
+fn run_manifest_scalar_value(run: Option<&RunManifest>, metric_key: &str) -> Option<f64> {
+    match metric_key {
+        "e_ex" => run.and_then(|manifest| manifest.final_e_ex),
+        "e_demag" => run.and_then(|manifest| manifest.final_e_demag),
+        "e_ext" => run.and_then(|manifest| manifest.final_e_ext),
+        "e_total" => run.and_then(|manifest| manifest.final_e_total),
+        _ => None,
+    }
 }
 
 fn extract_fem_mesh_from_metadata(metadata: &Value) -> Option<FemMeshPayload> {
@@ -2915,6 +3024,194 @@ fn repo_root() -> PathBuf {
         .parent()
         .expect("workspace root should exist")
         .to_path_buf()
+}
+
+fn rewrite_script_via_python_helper(
+    repo_root: &Path,
+    workspace_root: &Path,
+    script_path: &Path,
+    overrides: Option<&Value>,
+) -> Result<ScriptSyncResponse, ApiError> {
+    let mut helper_args = vec![
+        "-m".to_string(),
+        "fullmag.runtime.helper".to_string(),
+        "rewrite-script".to_string(),
+        "--script".to_string(),
+        script_path.display().to_string(),
+        "--write".to_string(),
+    ];
+
+    let overrides_path = if let Some(overrides) = overrides {
+        std::fs::create_dir_all(workspace_root).map_err(|error| {
+            ApiError::internal(format!("failed to prepare workspace: {}", error))
+        })?;
+        let path = workspace_root.join(format!("script-sync-{}.json", uuid_v4_hex()));
+        let body = serde_json::to_string_pretty(overrides).map_err(|error| {
+            ApiError::internal(format!("failed to serialize overrides: {}", error))
+        })?;
+        std::fs::write(&path, body).map_err(|error| {
+            ApiError::internal(format!("failed to persist overrides: {}", error))
+        })?;
+        helper_args.push("--overrides-json".to_string());
+        helper_args.push(path.display().to_string());
+        Some(path)
+    } else {
+        None
+    };
+
+    let output = run_python_helper(repo_root, &helper_args);
+    if let Some(path) = overrides_path {
+        let _ = std::fs::remove_file(path);
+    }
+    let output = output?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::internal(format!(
+            "python rewrite helper failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    serde_json::from_slice::<ScriptSyncResponse>(&output.stdout).map_err(|error| {
+        ApiError::internal(format!(
+            "failed to deserialize rewrite helper response: {}",
+            error
+        ))
+    })
+}
+
+fn load_script_builder_state(
+    repo_root: &Path,
+    _workspace_root: &Path,
+    script_path: &Path,
+) -> Result<ScriptBuilderState, ApiError> {
+    let helper_args = vec![
+        "-m".to_string(),
+        "fullmag.runtime.helper".to_string(),
+        "export-builder-draft".to_string(),
+        "--script".to_string(),
+        script_path.display().to_string(),
+    ];
+    let output = run_python_helper(repo_root, &helper_args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::internal(format!(
+            "python builder helper failed: {}",
+            stderr.trim()
+        )));
+    }
+    serde_json::from_slice::<ScriptBuilderState>(&output.stdout).map_err(|error| {
+        ApiError::internal(format!(
+            "failed to deserialize builder draft response: {}",
+            error
+        ))
+    })
+}
+
+fn script_builder_overrides(builder: &ScriptBuilderState) -> Value {
+    serde_json::json!({
+        "solver": {
+            "integrator": if builder.solver.integrator.trim().is_empty() { Value::Null } else { Value::String(builder.solver.integrator.clone()) },
+            "fixed_timestep": parse_optional_text_f64(&builder.solver.fixed_timestep),
+            "relax": {
+                "algorithm": if builder.solver.relax_algorithm.trim().is_empty() { Value::Null } else { Value::String(builder.solver.relax_algorithm.clone()) },
+                "torque_tolerance": parse_optional_text_f64(&builder.solver.torque_tolerance),
+                "energy_tolerance": parse_optional_text_f64(&builder.solver.energy_tolerance),
+                "max_steps": parse_optional_text_u64(&builder.solver.max_relax_steps),
+            },
+        },
+        "mesh": {
+            "algorithm_2d": builder.mesh.algorithm_2d,
+            "algorithm_3d": builder.mesh.algorithm_3d,
+            "hmax": parse_optional_text_f64(&builder.mesh.hmax),
+            "hmin": parse_optional_text_f64(&builder.mesh.hmin),
+            "size_factor": builder.mesh.size_factor,
+            "size_from_curvature": builder.mesh.size_from_curvature,
+            "smoothing_steps": builder.mesh.smoothing_steps,
+            "optimize": if builder.mesh.optimize.trim().is_empty() { Value::Null } else { Value::String(builder.mesh.optimize.clone()) },
+            "optimize_iterations": builder.mesh.optimize_iterations,
+            "compute_quality": builder.mesh.compute_quality,
+            "per_element_quality": builder.mesh.per_element_quality,
+        },
+    })
+}
+
+fn parse_optional_text_f64(raw: &str) -> Value {
+    raw.trim()
+        .parse::<f64>()
+        .ok()
+        .map_or(Value::Null, Value::from)
+}
+
+fn parse_optional_text_u64(raw: &str) -> Value {
+    raw.trim()
+        .parse::<u64>()
+        .ok()
+        .map_or(Value::Null, Value::from)
+}
+
+fn run_python_helper(repo_root: &Path, args: &[String]) -> Result<std::process::Output, ApiError> {
+    let local_python = repo_root
+        .join(".fullmag")
+        .join("local")
+        .join("python")
+        .join("bin")
+        .join("python");
+    let repo_python = repo_root.join(".venv").join("bin").join("python");
+    let mut candidates = Vec::new();
+
+    if let Ok(preferred) = std::env::var("FULLMAG_PYTHON") {
+        candidates.push(preferred);
+    } else {
+        for candidate in [local_python, repo_python] {
+            if candidate.is_file() {
+                candidates.push(candidate.display().to_string());
+            }
+        }
+    }
+    for fallback in ["python3", "python"] {
+        if !candidates.iter().any(|candidate| candidate == fallback) {
+            candidates.push(fallback.to_string());
+        }
+    }
+
+    let pythonpath = repo_root.join("packages").join("fullmag-py").join("src");
+    let fem_mesh_cache_dir = repo_root
+        .join(".fullmag")
+        .join("local")
+        .join("cache")
+        .join("fem_mesh_assets");
+    let inherited_pythonpath = std::env::var("PYTHONPATH").ok();
+    let mut last_error = None;
+
+    for candidate in candidates {
+        let mut command = ProcessCommand::new(&candidate);
+        command.args(args);
+        command.env("PYTHONUNBUFFERED", "1");
+        command.env("FULLMAG_FEM_MESH_CACHE_DIR", &fem_mesh_cache_dir);
+        if pythonpath.exists() {
+            let mut merged = pythonpath.display().to_string();
+            if let Some(existing) = &inherited_pythonpath {
+                if !existing.is_empty() {
+                    merged.push(':');
+                    merged.push_str(existing);
+                }
+            }
+            command.env("PYTHONPATH", merged);
+        }
+
+        match command.output() {
+            Ok(output) => return Ok(output),
+            Err(error) => {
+                last_error = Some(format!("{}: {}", candidate, error));
+            }
+        }
+    }
+
+    Err(ApiError::internal(format!(
+        "failed to spawn python helper ({})",
+        last_error.unwrap_or_else(|| "unknown error".to_string())
+    )))
 }
 
 #[derive(Debug)]

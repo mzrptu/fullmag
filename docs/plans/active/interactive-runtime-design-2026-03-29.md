@@ -695,14 +695,18 @@ Stan po ostatnim slice:
    - po zgodności wykonuje komendę bez rematerializacji backendu i bez utraty idle-preview state,
 5. runtime-backed execute path zachowuje już output scheduling dla scalar rows i field snapshots, więc interaktywne etapy nie produkują już „okrojonych” artefaktów względem one-shot runnera,
 6. stary file-backed preview cache nadal istnieje jako fallback / reconnect path, ale nie jest już jedyną drogą dla idle preview.
+7. pierwszy kawałek ownershipu został już wyciągnięty z monolitu CLI do osobnego modułu:
+   - `crates/fullmag-cli/src/interactive_runtime_host.rs`,
+   - przenosi queue consumer, idle preview refresh, runtime ownership i cache refresh,
+   - `fullmag-cli/src/main.rs` przestał zawierać te definicje inline i spadł z ~5390 LOC do ~4825 LOC.
 
 To jest już pierwszy prawdziwy `InteractiveRuntime` z własnym execute path dla FDM, a nie tylko "persistent preview cache". Fullmag przeszedł z modelu "cache-based preview" do modelu "live backend owned by CLI" także dla interactive commands.
 
 Największe brakujące elementy:
 
-- brak jednej actorowej pętli ownership dla całego backend lifecycle,
+- brak pełnej actorowej pętli ownership dla całego backend lifecycle,
 - brak first-class runtime queries dla global scalar / energy display,
-- runtime host nadal żyje jeszcze w dużym `fullmag-cli/src/main.rs`, a nie w wydzielonym actorze / module ownership.
+- runtime host jest już wydzielony modułowo, ale nie jest jeszcze samodzielnym actorem odseparowanym od orchestration flow `run_script_mode()`.
 
 ---
 

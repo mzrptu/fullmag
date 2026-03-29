@@ -189,12 +189,7 @@ impl InteractiveRuntime {
         }
 
         // Emit the final "finished" StepUpdate.
-        let final_stats = executed
-            .result
-            .steps
-            .last()
-            .cloned()
-            .unwrap_or_default();
+        let final_stats = executed.result.steps.last().cloned().unwrap_or_default();
         let final_m: Vec<f64> = executed
             .result
             .final_magnetization

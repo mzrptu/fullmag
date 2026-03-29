@@ -17,10 +17,8 @@ interface FemArrowsProps {
 /* ── Arrow template geometry — only depends on maxDim ───────────────── */
 function useArrowTemplate(maxDim: number) {
   const templateRef = useRef<THREE.BufferGeometry | null>(null);
-  const prevMaxDimRef = useRef<number>(-1);
 
   return useMemo(() => {
-    // Dispose previous template
     templateRef.current?.dispose();
 
     const arrowLen = maxDim * 0.035;
@@ -31,12 +29,14 @@ function useArrowTemplate(maxDim: number) {
 
     const shaft = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLen, 6);
     shaft.rotateX(Math.PI / 2);
-    shaft.translate(0, 0, shaftLen / 2);
+    // Center the shaft
+    shaft.translate(0, 0, shaftLen / 2 - arrowLen / 2);
+    
     const head = new THREE.ConeGeometry(headRadius, headLen, 6);
     head.rotateX(Math.PI / 2);
-    head.translate(0, 0, shaftLen + headLen / 2);
+    // Position head precisely at the end of the centered shaft
+    head.translate(0, 0, shaftLen + headLen / 2 - arrowLen / 2);
 
-    // Merge shaft + head into single geometry
     const shaftPos = shaft.getAttribute("position") as THREE.BufferAttribute;
     const headPos = head.getAttribute("position") as THREE.BufferAttribute;
     const totalVerts = shaftPos.count + headPos.count;
@@ -64,18 +64,22 @@ function useArrowTemplate(maxDim: number) {
     head.dispose();
 
     templateRef.current = merged;
-    prevMaxDimRef.current = maxDim;
     return merged;
   }, [maxDim]);
 }
 
-/* ── Sample boundary nodes spatially ────────────────────────────────── */
-function sampleBoundaryNodes(nodes: number[], boundaryFaces: number[], arrowDensity: number): number[] {
+/* ── Sample boundary nodes adaptively ───────────────────────────────── */
+function sampleBoundaryNodes(
+  nodes: number[], 
+  boundaryFaces: number[], 
+  targetDensity: number,
+  fld?: { x: number[], y: number[], z: number[] }
+): number[] {
   const uniqueNodeSet = new Set<number>();
   for (let i = 0; i < boundaryFaces.length; i++) uniqueNodeSet.add(boundaryFaces[i]);
   const allBoundaryNodes = Array.from(uniqueNodeSet);
 
-  if (allBoundaryNodes.length <= arrowDensity) return allBoundaryNodes;
+  if (allBoundaryNodes.length <= targetDensity) return allBoundaryNodes;
 
   let bMinX = Infinity, bMinY = Infinity, bMinZ = Infinity;
   let bMaxX = -Infinity, bMaxY = -Infinity, bMaxZ = -Infinity;
@@ -85,21 +89,95 @@ function sampleBoundaryNodes(nodes: number[], boundaryFaces: number[], arrowDens
     bMinY = Math.min(bMinY, y); bMaxY = Math.max(bMaxY, y);
     bMinZ = Math.min(bMinZ, z); bMaxZ = Math.max(bMaxZ, z);
   }
+  
   const volume = Math.max(1e-30, (bMaxX - bMinX) * (bMaxY - bMinY) * (bMaxZ - bMinZ));
-  const cellSize = Math.pow(volume / arrowDensity, 1 / 3);
+  // Oversample to create a large candidate pool
+  const nCandidateCells = targetDensity * 4;
+  const cellSize = Math.pow(volume / nCandidateCells, 1 / 3);
   const invCell = 1 / Math.max(cellSize, 1e-30);
   const nBinsX = Math.max(1, Math.ceil((bMaxX - bMinX) * invCell));
   const nBinsY = Math.max(1, Math.ceil((bMaxY - bMinY) * invCell));
 
-  const occupied = new Map<number, number>();
+  const cellMap = new Map<number, { 
+    cx: number, cy: number, cz: number, 
+    bestDistSq: number, bestNi: number, 
+    sumX: number, sumY: number, sumZ: number, count: number 
+  }>();
+
   for (const ni of allBoundaryNodes) {
-    const ix = Math.min(nBinsX - 1, Math.floor((nodes[ni * 3] - bMinX) * invCell));
-    const iy = Math.min(nBinsY - 1, Math.floor((nodes[ni * 3 + 1] - bMinY) * invCell));
-    const iz = Math.floor((nodes[ni * 3 + 2] - bMinZ) * invCell);
+    const x = nodes[ni * 3], y = nodes[ni * 3 + 1], z = nodes[ni * 3 + 2];
+    const ix = Math.min(nBinsX - 1, Math.floor((x - bMinX) * invCell));
+    const iy = Math.min(nBinsY - 1, Math.floor((y - bMinY) * invCell));
+    const iz = Math.floor((z - bMinZ) * invCell);
     const key = ix + iy * nBinsX + iz * nBinsX * nBinsY;
-    if (!occupied.has(key)) occupied.set(key, ni);
+
+    let cell = cellMap.get(key);
+    if (!cell) {
+      cell = {
+        cx: bMinX + (ix + 0.5) * cellSize, cy: bMinY + (iy + 0.5) * cellSize, cz: bMinZ + (iz + 0.5) * cellSize,
+        bestDistSq: Infinity, bestNi: -1, sumX: 0, sumY: 0, sumZ: 0, count: 0
+      };
+      cellMap.set(key, cell);
+    }
+    
+    // Pick node closest to cell center to eliminate random visual jitter
+    const dx = x - cell.cx, dy = y - cell.cy, dz = z - cell.cz;
+    const distSq = dx*dx + dy*dy + dz*dz;
+    if (distSq < cell.bestDistSq) {
+      cell.bestDistSq = distSq;
+      cell.bestNi = ni;
+    }
+
+    if (fld) {
+      let vx = fld.x[ni] ?? 0, vy = fld.y[ni] ?? 0, vz = fld.z[ni] ?? 0;
+      const len = Math.sqrt(vx*vx + vy*vy + vz*vz);
+      if (len > 1e-12) { vx /= len; vy /= len; vz /= len; }
+      cell.sumX += vx; cell.sumY += vy; cell.sumZ += vz;
+    }
+    cell.count++;
   }
-  return Array.from(occupied.values());
+
+  interface Candidate { ni: number; score: number; hash: number; }
+  const candidates: Candidate[] = [];
+  
+  // Deterministic noise for sub-grid distribution
+  const hashFn = (k: number) => { let x = Math.sin(k * 12.9898) * 43758.5453; return x - Math.floor(x); };
+
+  for (const [key, cell] of cellMap.entries()) {
+    let score = 0;
+    if (cell.count > 0 && fld) {
+      // alignment = length of sum of unit vectors / count
+      const avgLen = Math.sqrt(cell.sumX * cell.sumX + cell.sumY * cell.sumY + cell.sumZ * cell.sumZ);
+      // High score = low alignment (domain wall)
+      score = 1.0 - (avgLen / cell.count); 
+    }
+    candidates.push({ ni: cell.bestNi, score, hash: hashFn(key) });
+  }
+
+  if (candidates.length <= targetDensity) return candidates.map((c) => c.ni);
+
+  // 1. Allocate 20% of the target density to random spatial cells for a uniform baseline
+  candidates.sort((a, b) => a.hash - b.hash);
+  const result: number[] = [];
+  const baseQuota = Math.floor(targetDensity * 0.2);
+  for (let i = 0; i < baseQuota; i++) {
+    if (i < candidates.length) {
+      result.push(candidates[i].ni);
+      candidates[i].score = -1; // Mark used
+    }
+  }
+  
+  // 2. Allocate remaining 80% to cells with the highest field variance
+  candidates.sort((a, b) => b.score - a.score);
+  let added = 0;
+  for (let i = 0; i < candidates.length && added < (targetDensity - baseQuota); i++) {
+    if (candidates[i].score !== -1) {
+      result.push(candidates[i].ni);
+      added++;
+    }
+  }
+  
+  return result;
 }
 
 export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visible }: FemArrowsProps) {
@@ -116,7 +194,7 @@ export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visib
     const fld = meshData.fieldData;
     if (!fld) return emptyRet;
 
-    const sampledNodes = sampleBoundaryNodes(meshData.nodes, meshData.boundaryFaces, arrowDensity);
+    const sampledNodes = sampleBoundaryNodes(meshData.nodes, meshData.boundaryFaces, arrowDensity, fld);
     const resultCount = sampledNodes.length;
 
     let maxAbsX = 0, maxAbsY = 0, maxAbsZ = 0, maxMag = 0;

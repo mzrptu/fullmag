@@ -24,7 +24,7 @@ flower = fm.geometry(
 flower.Ms = 752e3       # saturation magnetisation [A/m]
 flower.Aex = 15.5e-12   # exchange stiffness [J/m]
 flower.alpha = 0.1      # Gilbert damping
-flower.m = fm.random(seed=7)
+flower.m = fm.uniform(0.1,0.0001,0.99)
 
 # ── External field ──────────────────────────────────────────
 # Cartesian:  fm.b_ext(0, 0, 0.1)          # 0.1 T along z
@@ -34,7 +34,7 @@ fm.b_ext(0.1, theta=0, phi=0)  # 0.1 T along +z
 # ── Solver ──────────────────────────────────────────────────
 # fm.solver(dt=1e-15, g=2.115)
 fm.solver(
-    dt=1e-15,            # initial timestep [s] when max_error is enabled
+    # dt=1e-15,            # initial timestep [s] when max_error is enabled
     max_error=1e-6,      # tolerancja adaptywnego kroku (atol)
     integrator="rk23",   # nazwa integratora
     g=2.115,             # g-faktor elektronu (→ gamma = μ₀·g·μ_B/ℏ)

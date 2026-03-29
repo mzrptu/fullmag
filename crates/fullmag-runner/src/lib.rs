@@ -20,6 +20,7 @@ mod multilayer_reference;
 mod native_fdm;
 mod native_fem;
 mod preview;
+pub mod quantities;
 mod relaxation;
 mod scalar_metrics;
 mod schedules;
@@ -42,6 +43,14 @@ use interactive::InteractiveBackend;
 use serde_json::Value;
 
 use std::path::Path;
+
+pub fn is_native_fdm_cuda_available() -> bool {
+    native_fdm::is_cuda_available()
+}
+
+pub fn is_native_fem_gpu_available() -> bool {
+    native_fem::is_gpu_available()
+}
 
 /// Plan and run a problem, writing artifacts to `output_dir`.
 ///
@@ -221,6 +230,7 @@ pub fn run_problem_with_callback(
         e_ex: 0.0,
         e_demag: 0.0,
         e_ext: 0.0,
+        e_ani: 0.0,
         e_total: 0.0,
         max_dm_dt: 0.0,
         max_h_eff: 0.0,
@@ -364,6 +374,7 @@ pub fn run_problem_with_live_preview(
         e_ex: 0.0,
         e_demag: 0.0,
         e_ext: 0.0,
+        e_ani: 0.0,
         e_total: 0.0,
         max_dm_dt: 0.0,
         max_h_eff: 0.0,
@@ -473,6 +484,7 @@ pub fn run_problem_with_interactive_fdm_runtime_live_preview(
         e_ex: 0.0,
         e_demag: 0.0,
         e_ext: 0.0,
+        e_ani: 0.0,
         e_total: 0.0,
         max_dm_dt: 0.0,
         max_h_eff: 0.0,
@@ -570,6 +582,7 @@ pub fn run_problem_with_interactive_fem_runtime_live_preview(
         e_ex: 0.0,
         e_demag: 0.0,
         e_ext: 0.0,
+        e_ani: 0.0,
         e_total: 0.0,
         max_dm_dt: 0.0,
         max_h_eff: 0.0,
@@ -615,12 +628,8 @@ pub fn create_interactive_runtime(
 ) -> Result<InteractiveRuntime, RunError> {
     let plan = fullmag_plan::plan(problem)?;
     let backend: Box<dyn InteractiveBackend> = match &plan.backend_plan {
-        BackendPlanIR::Fdm(_) => {
-            Box::new(InteractiveFdmPreviewRuntime::create(problem)?)
-        }
-        BackendPlanIR::Fem(_) => {
-            Box::new(InteractiveFemPreviewRuntime::create(problem)?)
-        }
+        BackendPlanIR::Fdm(_) => Box::new(InteractiveFdmPreviewRuntime::create(problem)?),
+        BackendPlanIR::Fem(_) => Box::new(InteractiveFemPreviewRuntime::create(problem)?),
         _ => {
             return Err(RunError {
                 message: "interactive runtime requires FDM or FEM execution plan".to_string(),

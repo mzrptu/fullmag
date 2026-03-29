@@ -320,6 +320,8 @@ class GeometryMeshHandle:
 
     def build(self) -> "GeometryMeshHandle":
         self._owner._mesh_spec.build_requested = True
+        if _capture_enabled and _capture_skip_geometry_assets:
+            return self
         _build_explicit_mesh_assets()
         return self
 
@@ -406,6 +408,7 @@ class _WorldState:
 # Module-level singleton
 _state = _WorldState()
 _capture_enabled = False
+_capture_skip_geometry_assets = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -434,18 +437,25 @@ def reset() -> None:
 
 def begin_script_capture(source_root: str | Path | None = None) -> None:
     """Enable loader capture mode for flat scripts."""
-    global _capture_enabled, _captured_stages
+    global _capture_enabled, _captured_stages, _capture_skip_geometry_assets
     reset()
     _state._script_source_root = Path(source_root).resolve() if source_root is not None else None
     _capture_enabled = True
+    _capture_skip_geometry_assets = False
     _captured_stages = []
+
+
+def set_script_capture_lightweight_assets(enabled: bool) -> None:
+    global _capture_skip_geometry_assets
+    _capture_skip_geometry_assets = bool(enabled)
 
 
 def finish_script_capture() -> list[CapturedStage]:
     """Return captured flat-script execution data and clear capture mode."""
-    global _capture_enabled, _captured_stages
+    global _capture_enabled, _captured_stages, _capture_skip_geometry_assets
     captured = list(_captured_stages)
     _capture_enabled = False
+    _capture_skip_geometry_assets = False
     _captured_stages = []
     reset()
     return captured
@@ -553,6 +563,8 @@ def fem_order(order: int) -> None:
 def build_mesh() -> None:
     """Materialize the shared FEM mesh asset for the current flat-script model."""
     _state._default_mesh_spec.build_requested = True
+    if _capture_enabled and _capture_skip_geometry_assets:
+        return
     _build_explicit_mesh_assets()
 
 

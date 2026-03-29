@@ -9,6 +9,7 @@ from typing import Sequence
 from fullmag._progress import emit_progress
 from fullmag.model import BackendTarget, ExecutionMode, ExecutionPrecision
 from fullmag.runtime.loader import load_problem_from_script
+from fullmag.runtime.script_builder import export_builder_draft, rewrite_loaded_problem_script
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,6 +57,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--precision",
         choices=[precision.value for precision in ExecutionPrecision],
     )
+    export_run_config.add_argument(
+        "--skip-geometry-assets",
+        action="store_true",
+        help="Export a lightweight IR without materializing geometry assets.",
+    )
+
+    rewrite_script = subparsers.add_parser(
+        "rewrite-script",
+        help="Render a canonical Python script from the model builder and optionally write it in place.",
+    )
+    rewrite_script.add_argument("--script", required=True, help="Path to Python script.")
+    rewrite_script.add_argument(
+        "--overrides-json",
+        help="Path to a JSON file with UI-side builder overrides.",
+    )
+    rewrite_script.add_argument(
+        "--write",
+        action="store_true",
+        help="Write the canonical script back to the original path.",
+    )
+
+    export_builder = subparsers.add_parser(
+        "export-builder-draft",
+        help="Load a script and export session-local builder draft state for the control room.",
+    )
+    export_builder.add_argument("--script", required=True, help="Path to Python script.")
     return parser
 
 
@@ -72,7 +99,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command in {"export-ir", "export-run-config"}:
         emit_progress(f"Loading Python script {Path(args.script).name}")
-        loaded = load_problem_from_script(Path(args.script))
+        loaded = load_problem_from_script(
+            Path(args.script),
+            lightweight_assets=getattr(args, "skip_geometry_assets", False),
+        )
         asset_cache = loaded.problem.geometry_asset_cache
         requested_backend = BackendTarget(args.backend) if args.backend is not None else None
         execution_mode = ExecutionMode(args.mode) if args.mode is not None else None
@@ -85,6 +115,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             execution_mode=execution_mode,
             execution_precision=execution_precision,
             asset_cache=asset_cache,
+            include_geometry_assets=not getattr(args, "skip_geometry_assets", False),
         )
         shared_geometry_assets = copy.deepcopy(ir.get("geometry_assets"))
         if loaded.stages and shared_geometry_assets is not None:
@@ -110,6 +141,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                     script_source=loaded.script_source,
                                     source_root=loaded.source_path.parent,
                                     asset_cache=asset_cache,
+                                    include_geometry_assets=not getattr(args, "skip_geometry_assets", False),
                                 ),
                                 shared_geometry_assets=shared_geometry_assets,
                             ),
@@ -122,6 +154,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         emit_progress("Run configuration exported")
+        return 0
+
+    if args.command == "rewrite-script":
+        emit_progress(f"Loading Python script {Path(args.script).name}")
+        loaded = load_problem_from_script(Path(args.script), lightweight_assets=True)
+        overrides = None
+        if args.overrides_json:
+            overrides = json.loads(Path(args.overrides_json).read_text(encoding="utf-8"))
+        emit_progress("Rendering canonical Python from model builder")
+        print(
+            json.dumps(
+                rewrite_loaded_problem_script(
+                    loaded,
+                    overrides=overrides,
+                    write=bool(args.write),
+                )
+            )
+        )
+        emit_progress("Canonical script rewrite completed")
+        return 0
+
+    if args.command == "export-builder-draft":
+        emit_progress(f"Loading Python script {Path(args.script).name}")
+        loaded = load_problem_from_script(Path(args.script), lightweight_assets=True)
+        print(json.dumps(export_builder_draft(loaded)))
+        emit_progress("Builder draft exported")
         return 0
 
     parser.error(f"Unsupported helper command: {args.command}")

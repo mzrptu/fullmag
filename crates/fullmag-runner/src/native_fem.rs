@@ -217,6 +217,13 @@ impl NativeFemBackend {
             initial_magnetization_len: m_flat.len() as u64,
             dt_seconds: plan.fixed_timestep.unwrap_or(1e-13),
             adaptive_config: std::ptr::null(),
+            has_uniaxial_anisotropy: if plan.material.uniaxial_anisotropy.is_some() {
+                1
+            } else {
+                0
+            },
+            uniaxial_anisotropy_constant: plan.material.uniaxial_anisotropy.unwrap_or(0.0),
+            anisotropy_axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
         };
 
         // Build adaptive config if present
@@ -264,6 +271,7 @@ impl NativeFemBackend {
             exchange_energy_joules: 0.0,
             demag_energy_joules: 0.0,
             external_energy_joules: 0.0,
+            anisotropy_energy_joules: 0.0,
             total_energy_joules: 0.0,
             max_effective_field_amplitude: 0.0,
             max_demag_field_amplitude: 0.0,
@@ -290,6 +298,7 @@ impl NativeFemBackend {
             e_ex: stats.exchange_energy_joules,
             e_demag: stats.demag_energy_joules,
             e_ext: stats.external_energy_joules,
+            e_ani: stats.anisotropy_energy_joules,
             e_total: stats.total_energy_joules,
             max_dm_dt: stats.max_rhs_amplitude,
             max_h_eff: stats.max_effective_field_amplitude,
@@ -306,18 +315,9 @@ impl NativeFemBackend {
             } else {
                 None
             },
-            rhs_evaluations: stats.rhs_evaluations,
+            rhs_evals: stats.rhs_evaluations,
             fsal_reused: stats.fsal_reused != 0,
-            demag_iterations: if stats.demag_linear_iterations > 0 {
-                Some(stats.demag_linear_iterations)
-            } else {
-                None
-            },
-            demag_residual: if stats.demag_linear_residual > 0.0 {
-                Some(stats.demag_linear_residual)
-            } else {
-                None
-            },
+            demag_solves: stats.demag_linear_iterations,
             ..StepStats::default()
         })
     }
@@ -396,6 +396,13 @@ impl NativeFemBackend {
         )
     }
 
+    pub fn copy_h_ani(&self, node_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
+        self.copy_field(
+            ffi::fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_ANI,
+            node_count,
+        )
+    }
+
     pub fn copy_live_preview_field(
         &self,
         request: &LivePreviewRequest,
@@ -406,6 +413,7 @@ impl NativeFemBackend {
             "H_demag" => self.copy_h_demag(node_count)?,
             "H_ext" => self.copy_h_ext(node_count)?,
             "H_eff" => self.copy_h_eff(node_count)?,
+            "H_ani" => self.copy_h_ani(node_count)?,
             _ => self.copy_m(node_count)?,
         };
         Ok(build_mesh_preview_field(request, &values))

@@ -41,13 +41,6 @@ export const PANEL_SIZES = {
   sidebarMax: "50%",
 } as const;
 
-export const SCALAR_FIELDS: Record<string, string> = {
-  E_ex: "e_ex",
-  E_demag: "e_demag",
-  E_ext: "e_ext",
-  E_total: "e_total",
-};
-
 export const PREVIEW_EVERY_N_DEFAULT = 10;
 export const PREVIEW_EVERY_N_PRESETS = [1, 2, 5, 10, 25, 50, 100] as const;
 export const PREVIEW_MAX_POINTS_DEFAULT = 16_384;

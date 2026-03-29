@@ -201,6 +201,46 @@ const PRECISION_PROFILES: Record<string, { label: string; performance: string; p
   },
 };
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function asStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+interface BuilderContractSummary {
+  sourceKind: string | null;
+  entrypointKind: string | null;
+  rewriteStrategy: string | null;
+  phase: string | null;
+  editableScopes: string[];
+}
+
+function readBuilderContract(metadata: Record<string, unknown> | null): BuilderContractSummary | null {
+  const problemMeta = asRecord(metadata?.problem_meta);
+  const runtimeMetadata = asRecord(problemMeta?.runtime_metadata);
+  const builderModel = asRecord(runtimeMetadata?.model_builder);
+  const scriptSync = asRecord(runtimeMetadata?.script_sync);
+  if (!builderModel && !scriptSync) return null;
+  return {
+    sourceKind:
+      (typeof builderModel?.source_kind === "string" ? builderModel.source_kind : null)
+      ?? (typeof scriptSync?.source_kind === "string" ? scriptSync.source_kind : null),
+    entrypointKind:
+      (typeof builderModel?.entrypoint_kind === "string" ? builderModel.entrypoint_kind : null)
+      ?? (typeof scriptSync?.entrypoint_kind === "string" ? scriptSync.entrypoint_kind : null),
+    rewriteStrategy: typeof scriptSync?.rewrite_strategy === "string" ? scriptSync.rewrite_strategy : null,
+    phase: typeof scriptSync?.phase === "string" ? scriptSync.phase : null,
+    editableScopes:
+      asStringList(builderModel?.editable_scopes).length > 0
+        ? asStringList(builderModel?.editable_scopes)
+        : asStringList(scriptSync?.editable_scopes),
+  };
+}
+
 function humanizeToken(value: string | null | undefined): string {
   if (!value) return "—";
   return value
@@ -821,7 +861,7 @@ function SolverTelemetryPanel() {
           sparkData={sparkSeries.dmDt}
           sparkColor="#10b981"
           valueTone={
-            ctx.hasSolverTelemetry && ctx.effectiveDmDt > 0 && ctx.effectiveDmDt < 1e-5
+            ctx.hasSolverTelemetry && ctx.effectiveDmDt > 0 && ctx.effectiveDmDt < (Number(ctx.solverSettings.torqueTolerance) || 1e-5)
               ? "success"
               : undefined
           }
@@ -922,6 +962,9 @@ interface SettingsPanelProps {
 export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps) {
   const ctx = useControlRoom();
   const showTelemetrySections = ctx.effectiveViewMode !== "Mesh";
+  const builderContract = useMemo(() => readBuilderContract(ctx.metadata), [ctx.metadata]);
+  const canSyncScriptBuilder =
+    Boolean(builderContract?.rewriteStrategy === "canonical_rewrite" && ctx.sessionFooter.scriptPath);
 
   const renderNodeContent = () => {
     if (nodeId === "study" || nodeId.startsWith("study-")) return <StudyPanel />;
@@ -991,6 +1034,69 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
           )}
         </div>
       </SidebarSection>
+
+      {builderContract && (
+        <SidebarSection
+          title="Script Builder"
+          badge={builderContract.sourceKind ? humanizeToken(builderContract.sourceKind) : null}
+          defaultOpen={false}
+        >
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between py-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Entrypoint</span>
+              <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">
+                {builderContract.entrypointKind ?? "—"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between py-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Sync strategy</span>
+              <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">
+                {builderContract.rewriteStrategy ?? "—"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between py-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Phase</span>
+              <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">
+                {builderContract.phase ? humanizeToken(builderContract.phase) : "—"}
+              </span>
+            </div>
+            <div className="grid gap-1 pt-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Editable scopes</span>
+              <div className="flex flex-wrap gap-1.5">
+                {builderContract.editableScopes.length > 0 ? builderContract.editableScopes.map((scope) => (
+                  <span
+                    key={scope}
+                    className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit"
+                  >
+                    {humanizeToken(scope)}
+                  </span>
+                )) : (
+                  <span className="font-mono text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+            </div>
+            <div className="grid gap-2 pt-2">
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                disabled={!canSyncScriptBuilder || ctx.scriptSyncBusy}
+                onClick={() => { void ctx.syncScriptBuilder(); }}
+              >
+                {ctx.scriptSyncBusy ? "Syncing Script…" : "Sync UI To Script"}
+              </Button>
+              <div className="text-[0.68rem] leading-relaxed text-muted-foreground">
+                Rewrites the source `.py` file in canonical Fullmag form using the current builder contract plus solver and mesh settings from this control room.
+              </div>
+              {ctx.scriptSyncMessage && (
+                <div className="text-[0.68rem] leading-relaxed text-muted-foreground p-2 rounded-md bg-muted/30 border border-border/40">
+                  {ctx.scriptSyncMessage}
+                </div>
+              )}
+            </div>
+          </div>
+        </SidebarSection>
+      )}
     </div>
   );
 }

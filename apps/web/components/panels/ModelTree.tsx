@@ -232,19 +232,31 @@ export function buildFullmagModelTree(opts: {
 }): TreeNodeData[] {
   const physicsChildren: TreeNodeData[] = [
     { id: "phys-llg", label: "LLG Dynamics", icon: "∂", status: "ready" },
-    { id: "phys-exchange", label: "Exchange", icon: "↔", status: "ready" },
+    { 
+      id: "phys-exchange", 
+      label: "Exchange", 
+      icon: "↔", 
+      status: opts.exchangeEnabled === false ? "pending" : "ready",
+      badge: opts.exchangeEnabled === false ? "disabled" : undefined
+    },
     {
       id: "phys-demag",
       label: "Demagnetization",
       icon: "🧲",
-      status: "ready",
-      badge: opts.demagMethod ?? "transfer-grid",
+      status: opts.demagEnabled === false ? "pending" : "ready",
+      badge: opts.demagEnabled === false ? "disabled" : (opts.demagMethod ?? "transfer-grid"),
       children: [
         { id: "phys-demag-method", label: `Method: ${opts.demagMethod ?? "transfer-grid"}`, icon: "⚙" },
         { id: "phys-demag-open-bc", label: "Open boundary", icon: "∞" },
       ],
     },
-    { id: "phys-zeeman", label: "Zeeman (external H)", icon: "→", status: "ready" },
+    { 
+      id: "phys-zeeman", 
+      label: "Zeeman (external H)", 
+      icon: "→", 
+      status: opts.zeemanField ? "ready" : "pending",
+      badge: opts.zeemanField ? undefined : "disabled" 
+    },
     { id: "phys-bc", label: "Boundary Conditions", icon: "▢" },
   ];
 

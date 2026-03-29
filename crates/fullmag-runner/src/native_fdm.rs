@@ -14,6 +14,7 @@ use fullmag_fdm_sys as ffi;
 #[cfg(feature = "cuda")]
 use crate::preview::{
     build_grid_preview_field_from_flat_plan, normalize_quantity_id, plan_grid_preview,
+    resample_grid_mask,
 };
 #[cfg(feature = "cuda")]
 use crate::relaxation::llg_overdamped_uses_pure_damping;
@@ -560,6 +561,7 @@ impl NativeFdmBackend {
         &self,
         request: &LivePreviewRequest,
         original_grid: [u32; 3],
+        active_mask: Option<&[bool]>,
     ) -> Result<LivePreviewField, RunError> {
         let plan = plan_grid_preview(request, original_grid);
         let quantity = normalize_quantity_id(&request.quantity);
@@ -620,7 +622,11 @@ impl NativeFdmBackend {
             flat
         };
         Ok(build_grid_preview_field_from_flat_plan(
-            request, &plan, flat, quantity,
+            request,
+            &plan,
+            flat,
+            quantity,
+            active_mask.map(|mask| resample_grid_mask(mask, &plan)),
         ))
     }
 

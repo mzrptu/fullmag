@@ -85,39 +85,43 @@ export function ViewportBar() {
             </SelectContent>
           </Select>
 
-          <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Comp</span>
-          {ctx.previewControlsActive ? (
-            <Select
-              value={ctx.requestedPreviewComponent}
-              onValueChange={(val) => void ctx.updatePreview("/component", { component: val })}
-              disabled={ctx.previewBusy}
-            >
-              <SelectTrigger className="h-6 w-[60px] border-border/40 bg-card/30 text-[0.65rem] justify-between">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="3D">3D</SelectItem>
-                <SelectItem value="x">x</SelectItem>
-                <SelectItem value="y">y</SelectItem>
-                <SelectItem value="z">z</SelectItem>
-              </SelectContent>
-            </Select>
-          ) : (
-            <Select
-              value={ctx.component}
-              onValueChange={(val) => ctx.setComponent(val as any)}
-            >
-              <SelectTrigger className="h-6 w-[60px] border-border/40 bg-card/30 text-[0.65rem] justify-between">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="magnitude">|v|</SelectItem>
-                <SelectItem value="x">x</SelectItem>
-                <SelectItem value="y">y</SelectItem>
-                <SelectItem value="z">z</SelectItem>
-              </SelectContent>
-            </Select>
+          {ctx.isVectorQuantity && (
+            <>
+              <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Comp</span>
+              {ctx.previewControlsActive ? (
+                <Select
+                  value={ctx.requestedPreviewComponent}
+                  onValueChange={(val) => void ctx.updatePreview("/component", { component: val })}
+                  disabled={ctx.previewBusy}
+                >
+                  <SelectTrigger className="h-6 w-[60px] border-border/40 bg-card/30 text-[0.65rem] justify-between">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="3D">3D</SelectItem>
+                    <SelectItem value="x">x</SelectItem>
+                    <SelectItem value="y">y</SelectItem>
+                    <SelectItem value="z">z</SelectItem>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Select
+                  value={ctx.component}
+                  onValueChange={(val) => ctx.setComponent(val as any)}
+                >
+                  <SelectTrigger className="h-6 w-[60px] border-border/40 bg-card/30 text-[0.65rem] justify-between">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="magnitude">|v|</SelectItem>
+                    <SelectItem value="x">x</SelectItem>
+                    <SelectItem value="y">y</SelectItem>
+                    <SelectItem value="z">z</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            </>
           )}
 
           {ctx.previewControlsActive && (
@@ -305,7 +309,7 @@ export function ViewportCanvasArea() {
         <span>Step {ctx.effectiveStep.toLocaleString()}</span>
         <span>{fmtSI(ctx.effectiveTime, "s")}</span>
         {ctx.effectiveDmDt > 0 && (
-          <span className={cn(ctx.effectiveDmDt < 1e-5 ? "text-emerald-400" : "text-amber-400")}>
+          <span className={cn(ctx.effectiveDmDt < (Number(ctx.solverSettings.torqueTolerance) || 1e-5) ? "text-emerald-400" : "text-amber-400")}>
             dm/dt {fmtExp(ctx.effectiveDmDt)}
           </span>
         )}

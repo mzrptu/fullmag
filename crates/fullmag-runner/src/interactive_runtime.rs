@@ -473,6 +473,7 @@ impl CpuInteractiveFdmPreviewRuntime {
             request,
             select_observables(&observables, &request.quantity),
             self.original_grid,
+            self.plan_signature.active_mask.as_deref(),
         ))
     }
 
@@ -497,6 +498,7 @@ impl CpuInteractiveFdmPreviewRuntime {
                 &preview_request,
                 select_observables(&observables, quantity),
                 self.original_grid,
+                self.plan_signature.active_mask.as_deref(),
             ));
         }
         Ok(cached)
@@ -595,6 +597,7 @@ impl CpuInteractiveFdmPreviewRuntime {
                     &preview_cfg,
                     select_observables(&observables, &preview_cfg.quantity),
                     grid,
+                    self.plan_signature.active_mask.as_deref(),
                 ))
             } else {
                 None
@@ -819,6 +822,7 @@ impl CpuInteractiveFdmPreviewRuntime {
                     &preview_cfg,
                     select_observables(&observables, &preview_cfg.quantity),
                     grid,
+                    self.plan_signature.active_mask.as_deref(),
                 ))
             } else {
                 None
@@ -892,8 +896,11 @@ impl CudaInteractiveFdmPreviewRuntime {
         &mut self,
         request: &LivePreviewRequest,
     ) -> Result<LivePreviewField, RunError> {
-        self.backend
-            .copy_live_preview_field(request, self.original_grid)
+        self.backend.copy_live_preview_field(
+            request,
+            self.original_grid,
+            self.plan_signature.active_mask.as_deref(),
+        )
     }
 
     fn snapshot_vector_fields(
@@ -913,10 +920,11 @@ impl CudaInteractiveFdmPreviewRuntime {
             }
             let mut preview_request = request.clone();
             preview_request.quantity = quantity.to_string();
-            cached.push(
-                self.backend
-                    .copy_live_preview_field(&preview_request, self.original_grid)?,
-            );
+            cached.push(self.backend.copy_live_preview_field(
+                &preview_request,
+                self.original_grid,
+                self.plan_signature.active_mask.as_deref(),
+            )?);
         }
 
         Ok(cached)
@@ -981,7 +989,11 @@ impl CudaInteractiveFdmPreviewRuntime {
                 || local_stats.step % preview_emit_every == 0;
             let preview_field = if preview_due {
                 last_preview_revision = Some(preview_cfg.revision);
-                Some(self.backend.copy_live_preview_field(&preview_cfg, grid)?)
+                Some(self.backend.copy_live_preview_field(
+                    &preview_cfg,
+                    grid,
+                    self.plan_signature.active_mask.as_deref(),
+                )?)
             } else {
                 None
             };
@@ -1110,7 +1122,11 @@ impl CudaInteractiveFdmPreviewRuntime {
                 || local_stats.step % preview_emit_every == 0;
             let preview_field = if preview_due {
                 last_preview_revision = Some(preview_cfg.revision);
-                Some(self.backend.copy_live_preview_field(&preview_cfg, grid)?)
+                Some(self.backend.copy_live_preview_field(
+                    &preview_cfg,
+                    grid,
+                    self.plan_signature.active_mask.as_deref(),
+                )?)
             } else {
                 None
             };

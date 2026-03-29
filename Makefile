@@ -186,18 +186,28 @@ install-cli install-cli-dev install-cli-static:
 			'export FULLMAG_REPO_ROOT="$$REPO_ROOT"' \
 			'export PYTHONPATH="$$REPO_ROOT/packages/fullmag-py/src$${PYTHONPATH:+:$$PYTHONPATH}"' \
 			'export FULLMAG_FEM_MESH_CACHE_DIR="$$REPO_ROOT/.fullmag/local/cache/fem_mesh_assets"' \
-			'BUILD_MODE_FILE="$${SELF_DIR}/../launcher-build-mode"' \
-			'BUILD_MODE=""' \
-			'if [ -f "$$BUILD_MODE_FILE" ]; then' \
-			'  BUILD_MODE="$$(cat "$$BUILD_MODE_FILE")"' \
-			'fi' \
+			'LOCAL_LD_LIBRARY_PATH="$$SELF_DIR/../lib$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}"' \
 			'MANAGED_RUNTIME_ROOT="$${SELF_DIR}/../../runtimes/fem-gpu-host"' \
 			'MANAGED_RUNTIME_BIN="$${MANAGED_RUNTIME_ROOT}/bin/fullmag-fem-gpu-bin"' \
-			'if [ "$${FULLMAG_DISABLE_MANAGED_FEM_GPU_RUNTIME:-0}" != "1" ] && [ -x "$$MANAGED_RUNTIME_BIN" ] && { [ "$$BUILD_MODE" = "managed-fem-gpu-host" ] || [ "$$BUILD_MODE" = "cuda+managed-fem-gpu-host" ]; }; then' \
-			'  export LD_LIBRARY_PATH="$$MANAGED_RUNTIME_ROOT/lib:$$SELF_DIR/../lib$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}"' \
+			'RESOLVE_RUNTIME_OUTPUT=""' \
+			'if [ "$${FULLMAG_DISABLE_MANAGED_FEM_GPU_RUNTIME:-0}" != "1" ] && [ -x "$$MANAGED_RUNTIME_BIN" ]; then' \
+			'  RESOLVE_RUNTIME_OUTPUT="$$(LD_LIBRARY_PATH="$$LOCAL_LD_LIBRARY_PATH" "$$SELF_DIR/fullmag-bin" resolve-runtime-invocation --shell -- "$$@" 2>/dev/null || true)"' \
+			'fi' \
+			'PREFERRED_RUNTIME_FAMILY=""' \
+			'REQUIRES_MANAGED_RUNTIME="0"' \
+			'if [ -n "$$RESOLVE_RUNTIME_OUTPUT" ]; then' \
+			'  while IFS="=" read -r key value; do' \
+			'    case "$$key" in' \
+			'      preferred_runtime_family) PREFERRED_RUNTIME_FAMILY="$$value" ;;' \
+			'      requires_managed_runtime) REQUIRES_MANAGED_RUNTIME="$$value" ;;' \
+			'    esac' \
+			'  done <<< "$$RESOLVE_RUNTIME_OUTPUT"' \
+			'fi' \
+			'if [ "$$REQUIRES_MANAGED_RUNTIME" = "1" ] && [ "$$PREFERRED_RUNTIME_FAMILY" = "fem-gpu" ] && [ "$${FULLMAG_DISABLE_MANAGED_FEM_GPU_RUNTIME:-0}" != "1" ] && [ -x "$$MANAGED_RUNTIME_BIN" ]; then' \
+			'  export LD_LIBRARY_PATH="$$MANAGED_RUNTIME_ROOT/lib:$$LOCAL_LD_LIBRARY_PATH"' \
 			'  exec "$$MANAGED_RUNTIME_BIN" "$$@"' \
 			'fi' \
-		'export LD_LIBRARY_PATH="$$SELF_DIR/../lib$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}"' \
+		'export LD_LIBRARY_PATH="$$LOCAL_LD_LIBRARY_PATH"' \
 		'exec "$$SELF_DIR/fullmag-bin" "$$@"' \
 		> .fullmag/local/bin/fullmag
 	@chmod +x .fullmag/local/bin/fullmag

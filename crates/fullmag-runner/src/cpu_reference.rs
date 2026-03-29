@@ -164,6 +164,7 @@ pub(crate) fn snapshot_preview(
         request,
         select_observables(&observables, &request.quantity),
         plan.grid.cells,
+        plan.active_mask.as_deref(),
     ))
 }
 
@@ -190,6 +191,7 @@ pub(crate) fn snapshot_vector_fields(
             &preview_request,
             select_observables(&observables, quantity),
             plan.grid.cells,
+            plan.active_mask.as_deref(),
         ));
     }
 
@@ -559,6 +561,7 @@ fn execute_reference_fdm_impl(
                         request,
                         select_observables(&observables, &request.quantity),
                         live.grid,
+                        plan.active_mask.as_deref(),
                     ))
                 } else {
                     None

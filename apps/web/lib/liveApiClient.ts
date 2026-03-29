@@ -38,6 +38,8 @@ export function currentLiveApiClient() {
       commands: `${baseUrl}/v1/live/current/commands`,
       preview: (path: string) => `${baseUrl}/v1/live/current/preview${path}`,
       importAsset: `${baseUrl}/v1/live/current/assets/import`,
+      scriptSync: `${baseUrl}/v1/live/current/script/sync`,
+      scriptBuilder: `${baseUrl}/v1/live/current/script/builder`,
     },
     fetchBootstrap() {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/bootstrap`, {
@@ -63,6 +65,20 @@ export function currentLiveApiClient() {
     },
     importAsset(payload: JsonObject) {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/assets/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
+    syncScript(payload: JsonObject = {}) {
+      return requestJson<JsonObject>(`${baseUrl}/v1/live/current/script/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
+    updateScriptBuilder(payload: JsonObject) {
+      return requestJson<JsonObject>(`${baseUrl}/v1/live/current/script/builder`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

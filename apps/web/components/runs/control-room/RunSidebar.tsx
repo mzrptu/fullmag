@@ -51,7 +51,7 @@ export default function RunSidebar() {
         demagEnabled: ctx.material?.demagEnabled,
         zeemanField: ctx.material?.zeemanField,
         convergenceStatus:
-          ctx.hasSolverTelemetry && ctx.effectiveDmDt > 0 && ctx.effectiveDmDt < 1e-5
+          ctx.hasSolverTelemetry && ctx.effectiveDmDt > 0 && ctx.effectiveDmDt < (Number(ctx.solverSettings.torqueTolerance) || 1e-5)
             ? "ready"
             : ctx.hasSolverTelemetry
               ? "active"

@@ -70,7 +70,7 @@ const ALGO_3D_OPTIONS = [
 ];
 
 const OPTIMIZE_OPTIONS = [
-  { value: "",            label: "None" },
+  { value: "none",            label: "None" },
   { value: "Netgen",      label: "Netgen" },
   { value: "HighOrder",   label: "High Order" },
   { value: "Laplace2D",   label: "Laplace 2D" },
@@ -389,8 +389,8 @@ export default function MeshSettingsPanel({
             <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Method</span>
             <div className="flex-1 max-w-[140px]">
               <Select
-                value={options.optimize}
-                onValueChange={(val) => set({ optimize: val })}
+                value={options.optimize || "none"}
+                onValueChange={(val) => set({ optimize: val === "none" ? "" : val })}
                 disabled={disabled}
               >
                 <SelectTrigger className="h-7 w-full border-border/50 bg-card text-xs">

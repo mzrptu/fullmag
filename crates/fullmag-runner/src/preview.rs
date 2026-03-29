@@ -20,6 +20,7 @@ pub(crate) fn normalize_quantity_id(requested: &str) -> &'static str {
         "H_demag" => "H_demag",
         "H_ext" => "H_ext",
         "H_eff" => "H_eff",
+        "H_ani" => "H_ani",
         _ => "m",
     }
 }
@@ -27,7 +28,7 @@ pub(crate) fn normalize_quantity_id(requested: &str) -> &'static str {
 pub(crate) fn quantity_unit(quantity: &str) -> &'static str {
     match normalize_quantity_id(quantity) {
         "m" => "dimensionless",
-        "H_ex" | "H_demag" | "H_ext" | "H_eff" => "A/m",
+        "H_ex" | "H_demag" | "H_ext" | "H_eff" | "H_ani" => "A/m",
         _ => "",
     }
 }
@@ -173,15 +174,55 @@ pub(crate) fn resample_grid_vectors(values: &[[f64; 3]], plan: &GridPreviewPlan)
     out
 }
 
+/// Resample a full-grid boolean mask to preview-grid dimensions.
+/// A preview cell is active if ANY original cell in its block is active.
+pub(crate) fn resample_grid_mask(mask: &[bool], plan: &GridPreviewPlan) -> Vec<bool> {
+    let [full_x, full_y, full_z] = plan.original_grid.map(|v| v.max(1) as usize);
+    let [preview_x, preview_y, preview_z] = plan.preview_grid.map(|v| v.max(1) as usize);
+    let z_stride = plan.applied_layer_stride.max(1) as usize;
+    let z_origin = plan.z_origin as usize;
+    let mut out = Vec::with_capacity(preview_x * preview_y * preview_z);
+    for pz in 0..preview_z {
+        let z_start = (z_origin + pz * z_stride).min(full_z.saturating_sub(1));
+        let z_end = (z_origin + (pz + 1) * z_stride)
+            .min(full_z)
+            .max(z_start + 1);
+        for py in 0..preview_y {
+            let y_start = py * full_y / preview_y;
+            let y_end = ((py + 1) * full_y / preview_y).max(y_start + 1).min(full_y);
+            for px in 0..preview_x {
+                let x_start = px * full_x / preview_x;
+                let x_end = ((px + 1) * full_x / preview_x).max(x_start + 1).min(full_x);
+                let mut any_active = false;
+                'block: for z in z_start..z_end {
+                    for y in y_start..y_end {
+                        for x in x_start..x_end {
+                            let idx = (z * full_y + y) * full_x + x;
+                            if idx < mask.len() && mask[idx] {
+                                any_active = true;
+                                break 'block;
+                            }
+                        }
+                    }
+                }
+                out.push(any_active);
+            }
+        }
+    }
+    out
+}
+
 pub(crate) fn build_grid_preview_field(
     request: &LivePreviewRequest,
     values: &[[f64; 3]],
     original_grid: [u32; 3],
+    active_mask: Option<&[bool]>,
 ) -> LivePreviewField {
     let quantity = normalize_quantity_id(&request.quantity);
     let plan = plan_grid_preview(request, original_grid);
     let sampled = resample_grid_vectors(values, &plan);
-    build_grid_preview_field_from_plan(request, &plan, &sampled, quantity)
+    let resampled_mask = active_mask.map(|mask| resample_grid_mask(mask, &plan));
+    build_grid_preview_field_from_plan(request, &plan, &sampled, quantity, resampled_mask)
 }
 
 pub(crate) fn build_grid_preview_field_from_plan(
@@ -189,8 +230,15 @@ pub(crate) fn build_grid_preview_field_from_plan(
     plan: &GridPreviewPlan,
     sampled: &[[f64; 3]],
     quantity: &str,
+    active_mask: Option<Vec<bool>>,
 ) -> LivePreviewField {
-    build_grid_preview_field_from_flat_plan(request, plan, flatten_vectors(sampled), quantity)
+    build_grid_preview_field_from_flat_plan(
+        request,
+        plan,
+        flatten_vectors(sampled),
+        quantity,
+        active_mask,
+    )
 }
 
 pub(crate) fn build_grid_preview_field_from_flat_plan(
@@ -198,6 +246,7 @@ pub(crate) fn build_grid_preview_field_from_flat_plan(
     plan: &GridPreviewPlan,
     vector_field_values: Vec<f64>,
     quantity: &str,
+    active_mask: Option<Vec<bool>>,
 ) -> LivePreviewField {
     LivePreviewField {
         config_revision: request.revision,
@@ -214,6 +263,7 @@ pub(crate) fn build_grid_preview_field_from_flat_plan(
         applied_layer_stride: plan.applied_layer_stride,
         auto_downscaled: plan.auto_downscaled,
         auto_downscale_message: plan.auto_downscale_message.clone(),
+        active_mask,
     }
 }
 
@@ -237,6 +287,7 @@ pub(crate) fn build_mesh_preview_field(
         applied_layer_stride: 1,
         auto_downscaled: false,
         auto_downscale_message: None,
+        active_mask: None,
     }
 }
 

@@ -171,6 +171,13 @@ main.rs          ←── args.rs, orchestrator.rs (routing only)
 - **Przenieś**: `CurrentLivePreviewConfigHandle` + Drop impl (linie ~3185-3240)
 - **Test**: `cargo check -p fullmag-cli`
 
+Status 2026-03-29:
+
+- pierwszy slice został wykonany jako `crates/fullmag-cli/src/interactive_runtime_host.rs`,
+- wydzielono control queue consumer, preview config handle, idle preview refresh i runtime ownership helpers,
+- `run_script_mode()` korzysta już z nowego hosta przy `awaiting_command` i interactive execute path,
+- pełne domknięcie fazy 1.7 nadal wymaga dalszego rozbicia orchestration flow i wydzielenia actorowego hosta.
+
 #### 1.8 Wydzielenie `formatting.rs`
 - **Przenieś**: `format_length_m()`, `format_extent()`, `fem_mesh_bbox()` (linie 369-397)
 - **Przenieś**: `log_execution_plan()`, `plan_summary_json()` (linie 399-414)

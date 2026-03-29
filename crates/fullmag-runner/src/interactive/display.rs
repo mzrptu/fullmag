@@ -1,3 +1,4 @@
+use crate::quantities::{global_scalar_value, quantity_spec, QuantityKind};
 use crate::types::{LivePreviewField, StepStats};
 use serde::{Deserialize, Serialize};
 
@@ -51,9 +52,10 @@ impl Default for DisplaySelection {
 impl DisplaySelection {
     /// Classify a quantity string into its display kind.
     pub fn kind_for_quantity(quantity: &str) -> DisplayKind {
-        match quantity {
-            "E_total" | "E_ex" | "E_demag" | "E_ext" => DisplayKind::GlobalScalar,
-            _ => DisplayKind::VectorField,
+        match quantity_spec(quantity).map(|spec| spec.kind) {
+            Some(QuantityKind::GlobalScalar) => DisplayKind::GlobalScalar,
+            Some(QuantityKind::SpatialScalar) => DisplayKind::SpatialScalar,
+            Some(QuantityKind::VectorField) | None => DisplayKind::VectorField,
         }
     }
 
@@ -114,17 +116,12 @@ impl DisplayPayload {
 
     /// Create a global scalar payload from step stats.
     pub fn from_global_scalar(quantity: &str, stats: &StepStats) -> Option<Self> {
-        let (value, unit) = match quantity {
-            "E_total" => (stats.e_total, "J"),
-            "E_ex" => (stats.e_ex, "J"),
-            "E_demag" => (stats.e_demag, "J"),
-            "E_ext" => (stats.e_ext, "J"),
-            _ => return None,
-        };
+        let spec = quantity_spec(quantity)?;
+        let value = global_scalar_value(quantity, stats)?;
         Some(Self::GlobalScalar {
             quantity: quantity.to_string(),
             value,
-            unit: unit.to_string(),
+            unit: spec.unit.to_string(),
         })
     }
 }

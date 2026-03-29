@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { ReactNode } from "react";
@@ -21,6 +22,7 @@ import type {
   QuantityDescriptor,
   RunManifest,
   ScalarRow,
+  ScriptBuilderState,
   SessionManifest,
 } from "../../../lib/useSessionStream";
 import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
@@ -44,7 +46,6 @@ import {
   PREVIEW_EVERY_N_PRESETS,
   PREVIEW_MAX_POINTS_DEFAULT,
   PREVIEW_MAX_POINTS_PRESETS,
-  SCALAR_FIELDS,
   asVec3,
   computeMeshFaceDetail,
   fmtDuration,
@@ -57,10 +58,6 @@ import {
 /* ── Stable empty arrays ── */
 const EMPTY_SCALAR_ROWS: ScalarRow[] = [];
 const EMPTY_ENGINE_LOG: EngineLogEntry[] = [];
-
-function isGlobalScalarQuantity(quantity: string | null | undefined): boolean {
-  return Boolean(quantity && SCALAR_FIELDS[quantity]);
-}
 
 /* ── Activity descriptor ── */
 export interface ActivityInfo {
@@ -140,6 +137,68 @@ function asNumber(value: unknown): number | null {
 
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function solverSettingsFromBuilder(
+  builder: ScriptBuilderState["solver"],
+): SolverSettingsState {
+  return {
+    ...DEFAULT_SOLVER_SETTINGS,
+    integrator: builder.integrator || DEFAULT_SOLVER_SETTINGS.integrator,
+    fixedTimestep: builder.fixed_timestep,
+    relaxAlgorithm: builder.relax_algorithm || DEFAULT_SOLVER_SETTINGS.relaxAlgorithm,
+    torqueTolerance: builder.torque_tolerance,
+    energyTolerance: builder.energy_tolerance,
+    maxRelaxSteps: builder.max_relax_steps,
+  };
+}
+
+function meshOptionsFromBuilder(
+  builder: ScriptBuilderState["mesh"],
+): MeshOptionsState {
+  return {
+    ...DEFAULT_MESH_OPTIONS,
+    algorithm2d: builder.algorithm_2d,
+    algorithm3d: builder.algorithm_3d,
+    hmax: builder.hmax,
+    hmin: builder.hmin,
+    sizeFactor: builder.size_factor,
+    sizeFromCurvature: builder.size_from_curvature,
+    smoothingSteps: builder.smoothing_steps,
+    optimize: builder.optimize,
+    optimizeIters: builder.optimize_iterations,
+    computeQuality: builder.compute_quality,
+    perElementQuality: builder.per_element_quality,
+  };
+}
+
+function buildScriptBuilderUpdatePayload(
+  solverSettings: SolverSettingsState,
+  meshOptions: MeshOptionsState,
+) {
+  return {
+    solver: {
+      integrator: solverSettings.integrator || "",
+      fixed_timestep: solverSettings.fixedTimestep,
+      relax_algorithm: solverSettings.relaxAlgorithm || "",
+      torque_tolerance: solverSettings.torqueTolerance,
+      energy_tolerance: solverSettings.energyTolerance,
+      max_relax_steps: solverSettings.maxRelaxSteps,
+    },
+    mesh: {
+      algorithm_2d: meshOptions.algorithm2d,
+      algorithm_3d: meshOptions.algorithm3d,
+      hmax: meshOptions.hmax,
+      hmin: meshOptions.hmin,
+      size_factor: meshOptions.sizeFactor,
+      size_from_curvature: meshOptions.sizeFromCurvature,
+      smoothing_steps: meshOptions.smoothingSteps,
+      optimize: meshOptions.optimize,
+      optimize_iterations: meshOptions.optimizeIters,
+      compute_quality: meshOptions.computeQuality,
+      per_element_quality: meshOptions.perElementQuality,
+    },
+  };
 }
 
 function extractSolverPlan(
@@ -318,6 +377,8 @@ export interface ControlRoomState {
   awaitingCommand: boolean;
   commandBusy: boolean;
   commandMessage: string | null;
+  scriptSyncBusy: boolean;
+  scriptSyncMessage: string | null;
   runUntilInput: string;
 
   /* Preview config */
@@ -433,6 +494,7 @@ export interface ControlRoomActions {
   handleCapture: () => void;
   handleExport: () => void;
   requestPreviewQuantity: (nextQuantity: string) => void;
+  syncScriptBuilder: () => Promise<void>;
 }
 
 export type ControlRoomContextValue = ControlRoomState & ControlRoomActions;
@@ -469,6 +531,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [selectedSidebarNodeId, setSelectedSidebarNodeId] = useState<string | null>(null);
   const [commandBusy, setCommandBusy] = useState(false);
   const [commandMessage, setCommandMessage] = useState<string | null>(null);
+  const [scriptSyncBusy, setScriptSyncBusy] = useState(false);
+  const [scriptSyncMessage, setScriptSyncMessage] = useState<string | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
   const [meshOptions, setMeshOptions] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
@@ -476,6 +540,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [meshGenerating, setMeshGenerating] = useState(false);
   const [solverSettings, setSolverSettings] = useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
   const [solverSetupOpen, setSolverSetupOpen] = useState(false);
+  const builderHydratedSessionRef = useRef<string | null>(null);
+  const builderPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBuilderPushSignatureRef = useRef<string | null>(null);
   const [meshSelection, setMeshSelection] = useState<MeshSelectionSnapshot>({
     selectedFaceIndices: [],
     primaryFaceIndex: null,
@@ -488,6 +555,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const previewConfig = state?.preview_config ?? null;
   const preview = state?.preview ?? null;
   const femMesh = state?.fem_mesh ?? null;
+  const scriptBuilder = state?.script_builder ?? null;
   const scalarRows = state?.scalar_rows ?? EMPTY_SCALAR_ROWS;
   const engineLog = state?.engine_log ?? EMPTY_ENGINE_LOG;
   const quantities = state?.quantities ?? [];
@@ -558,11 +626,37 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const runtimeEngine = (metadata?.runtime_engine as Record<string, unknown> | undefined) ?? undefined;
   const runtimeEngineLabel = typeof runtimeEngine?.engine_label === "string" ? runtimeEngine.engine_label : null;
   const solverPlan = useMemo(() => extractSolverPlan(metadata, session), [metadata, session]);
+  const liveApi = useMemo(() => currentLiveApiClient(), []);
+  const localBuilderDraft = useMemo(
+    () => buildScriptBuilderUpdatePayload(solverSettings, meshOptions),
+    [meshOptions, solverSettings],
+  );
+  const localBuilderSignature = useMemo(
+    () => JSON.stringify(localBuilderDraft),
+    [localBuilderDraft],
+  );
+  const remoteBuilderSignature = useMemo(
+    () =>
+      scriptBuilder
+        ? JSON.stringify({ solver: scriptBuilder.solver, mesh: scriptBuilder.mesh })
+        : null,
+    [scriptBuilder],
+  );
 
   /* Hydrate solver-settings panel from the actual backend plan on first load. */
   const [solverSettingsHydrated, setSolverSettingsHydrated] = useState(false);
   useEffect(() => {
-    if (solverSettingsHydrated || !solverPlan) return;
+    builderHydratedSessionRef.current = null;
+    lastBuilderPushSignatureRef.current = null;
+    setSolverSettingsHydrated(false);
+    if (builderPushTimerRef.current) {
+      clearTimeout(builderPushTimerRef.current);
+      builderPushTimerRef.current = null;
+    }
+  }, [session?.session_id]);
+
+  useEffect(() => {
+    if (solverSettingsHydrated || !solverPlan || scriptBuilder) return;
     setSolverSettings((prev) => ({
       ...prev,
       integrator: solverPlan.integrator ?? prev.integrator,
@@ -583,7 +677,83 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
           : prev.maxRelaxSteps,
     }));
     setSolverSettingsHydrated(true);
-  }, [solverPlan, solverSettingsHydrated]);
+  }, [scriptBuilder, solverPlan, solverSettingsHydrated]);
+
+  useEffect(() => {
+    const sessionId = session?.session_id ?? null;
+    if (!sessionId || !scriptBuilder) {
+      return;
+    }
+    if (builderHydratedSessionRef.current === sessionId) {
+      return;
+    }
+    setSolverSettings((prev) => ({
+      ...prev,
+      ...solverSettingsFromBuilder(scriptBuilder.solver),
+    }));
+    setMeshOptions((prev) => ({
+      ...prev,
+      ...meshOptionsFromBuilder(scriptBuilder.mesh),
+    }));
+    builderHydratedSessionRef.current = sessionId;
+    lastBuilderPushSignatureRef.current = JSON.stringify({
+      solver: scriptBuilder.solver,
+      mesh: scriptBuilder.mesh,
+    });
+    setSolverSettingsHydrated(true);
+  }, [scriptBuilder, session?.session_id]);
+
+  useEffect(() => {
+    const sessionId = session?.session_id ?? null;
+    if (!sessionId || !scriptBuilder) {
+      return;
+    }
+    if (builderHydratedSessionRef.current !== sessionId) {
+      return;
+    }
+    if (remoteBuilderSignature === localBuilderSignature) {
+      lastBuilderPushSignatureRef.current = localBuilderSignature;
+      return;
+    }
+    if (lastBuilderPushSignatureRef.current === localBuilderSignature) {
+      return;
+    }
+    if (builderPushTimerRef.current) {
+      clearTimeout(builderPushTimerRef.current);
+    }
+    builderPushTimerRef.current = setTimeout(() => {
+      void liveApi
+        .updateScriptBuilder(localBuilderDraft)
+        .then(() => {
+          lastBuilderPushSignatureRef.current = localBuilderSignature;
+        })
+        .catch((builderError) => {
+          console.warn("Failed to persist script builder draft", builderError);
+          lastBuilderPushSignatureRef.current = null;
+        });
+    }, 250);
+    return () => {
+      if (builderPushTimerRef.current) {
+        clearTimeout(builderPushTimerRef.current);
+        builderPushTimerRef.current = null;
+      }
+    };
+  }, [
+    liveApi,
+    localBuilderDraft,
+    localBuilderSignature,
+    remoteBuilderSignature,
+    scriptBuilder,
+    session?.session_id,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (builderPushTimerRef.current) {
+        clearTimeout(builderPushTimerRef.current);
+      }
+    };
+  }, []);
 
   const currentStage = useMemo(() => parseStageExecutionMessage(latestEngineMessage), [latestEngineMessage]);
 
@@ -672,18 +842,19 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     if (activeCells != null && totalCells != null) return Math.max(totalCells - activeCells, 0);
     return null;
   }, [activeCells, artifactLayout, totalCells]);
-  const activeMaskPresent = artifactLayout?.active_mask_present === true;
+  const activeMaskPresent = artifactLayout?.active_mask_present === true || preview?.active_mask != null;
   const activeMask = useMemo<boolean[] | null>(() => {
+    // Prefer live preview mask (resampled to preview grid) over static artifact layout mask.
+    if (preview?.active_mask != null) return preview.active_mask;
     const raw = artifactLayout?.active_mask;
     if (!Array.isArray(raw)) return null;
     return raw.map((v: unknown) => Boolean(v));
-  }, [artifactLayout]);
+  }, [preview?.active_mask, artifactLayout]);
 
   /* Interactive */
   const interactiveEnabled = session?.interactive_session_requested === true;
   const awaitingCommand = session?.status === "awaiting_command";
   const interactiveControlsEnabled = interactiveEnabled && (awaitingCommand || session?.status === "running");
-  const liveApi = useMemo(() => currentLiveApiClient(), []);
 
   /* Preview derived — respect user's explicit 2D/Mesh choice */
   const previewDrivenMode: ViewportMode | null =
@@ -709,6 +880,15 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     return Array.from(values).sort((a, b) => { if (a === 0) return 1; if (b === 0) return -1; return a - b; });
   }, [requestedPreviewMaxPoints]);
 
+  const quantityDescriptorById = useMemo(
+    () => new Map(quantities.map((quantity) => [quantity.id, quantity] as const)),
+    [quantities],
+  );
+  const isGlobalScalarQuantity = useCallback(
+    (quantity: string | null | undefined) =>
+      Boolean(quantity && quantityDescriptorById.get(quantity)?.kind === "global_scalar"),
+    [quantityDescriptorById],
+  );
   const previewIsStale = Boolean(preview && previewConfig && preview.config_revision !== previewConfig.revision);
   const previewIsBootstrapStale = Boolean(previewControlsActive && preview && effectiveStep > 0 && preview.source_step === 0);
   const renderPreview = preview;
@@ -866,6 +1046,35 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   const handleExport = useCallback(() => { void enqueueCommand({ kind: "save_vtk" }); }, [enqueueCommand]);
 
+  const syncScriptBuilder = useCallback(async () => {
+    const scriptPath = session?.script_path ?? null;
+    if (!scriptPath) {
+      setScriptSyncMessage("No script path is available for the active workspace");
+      return;
+    }
+
+    setScriptSyncBusy(true);
+    setScriptSyncMessage(null);
+    try {
+      if (builderPushTimerRef.current) {
+        clearTimeout(builderPushTimerRef.current);
+        builderPushTimerRef.current = null;
+      }
+      await liveApi.updateScriptBuilder(localBuilderDraft);
+      lastBuilderPushSignatureRef.current = localBuilderSignature;
+      const response = await liveApi.syncScript();
+      const syncedPath =
+        typeof response.script_path === "string" && response.script_path.trim().length > 0
+          ? response.script_path
+          : scriptPath;
+      setScriptSyncMessage(`Synced ${syncedPath.split("/").pop() ?? "script"} to canonical Python`);
+    } catch (error) {
+      setScriptSyncMessage(error instanceof Error ? error.message : "Failed to sync script");
+    } finally {
+      setScriptSyncBusy(false);
+    }
+  }, [liveApi, localBuilderDraft, localBuilderSignature, session?.script_path]);
+
   const requestPreviewQuantity = useCallback((nextQuantity: string) => {
     startTransition(() => {
       if (isFemBackend && effectiveViewMode === "Mesh") setViewMode("3D");
@@ -876,7 +1085,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     if (previewControlsActive) {
       void updatePreview("/quantity", { quantity: nextQuantity });
     }
-  }, [awaitingCommand, effectiveViewMode, isFemBackend, previewControlsActive, updatePreview]);
+  }, [awaitingCommand, effectiveViewMode, isFemBackend, isGlobalScalarQuantity, previewControlsActive, updatePreview]);
 
   /* Keyboard shortcuts */
   useEffect(() => {
@@ -906,7 +1115,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     [quantities],
   );
   const previewQuantityOptions = useMemo(
-    () => (quantities).filter((q) => q.kind === "vector_field").map((q) => ({
+    () => (quantities).filter((q) => q.interactive_preview).map((q) => ({
       value: q.id,
       label: q.available ? `${q.label} (${q.unit})` : `${q.label} (${q.unit}) — waiting for data`,
       disabled: !q.available,
@@ -928,8 +1137,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [requestedPreviewQuantity, selectedQuantityUsesLocalData]);
 
   const quantityDescriptor = useMemo(
-    () => quantities.find((q) => q.id === activeQuantityId) ?? null,
-    [activeQuantityId, quantities],
+    () => (activeQuantityId ? quantityDescriptorById.get(activeQuantityId) ?? null : null),
+    [activeQuantityId, quantityDescriptorById],
   );
   // Default to true (vector) when descriptors haven't arrived yet — the default
   // quantity "m" is always a vector field and we don't want to gate the 3D
@@ -937,42 +1146,39 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const isVectorQuantity = quantityDescriptor ? quantityDescriptor.kind === "vector_field" : true;
 
   const quickPreviewTargets = useMemo(
-    () => [
-      { id: "m", shortLabel: "M" }, { id: "H_ex", shortLabel: "H_ex" },
-      { id: "H_demag", shortLabel: "H_demag" }, { id: "H_ext", shortLabel: "H_ext" },
-      { id: "H_eff", shortLabel: "H_eff" },
-    ].map((entry) => {
-      const option = previewQuantityOptions.find((c) => c.value === entry.id);
-      return { ...entry, available: option ? !option.disabled : entry.id === "m" };
-    }),
-    [previewQuantityOptions],
+    () => quantities
+      .filter((quantity) => quantity.interactive_preview && quantity.quick_access_label)
+      .map((quantity) => ({
+        id: quantity.id,
+        shortLabel: quantity.quick_access_label ?? quantity.label,
+        available: quantity.available,
+      })),
+    [quantities],
   );
 
   const selectedScalarValue = useMemo(() => {
-    const scalarKey = SCALAR_FIELDS[activeQuantityId];
+    const scalarKey = quantityDescriptor?.scalar_metric_key;
     if (!scalarKey) return null;
     const lastRow = scalarRows[scalarRows.length - 1];
-    return lastRow ? (lastRow[scalarKey as keyof typeof lastRow] as number) ?? null : null;
-  }, [activeQuantityId, scalarRows]);
+    if (!lastRow) return null;
+    const value = lastRow[scalarKey as keyof ScalarRow];
+    return typeof value === "number" ? value : null;
+  }, [quantityDescriptor, scalarRows]);
 
   /* Field data */
-  const fieldMap = useMemo(
+  const fieldMap = useMemo<Record<string, Float64Array | null>>(
     () => ({
-      m: liveState?.magnetization ?? state?.latest_fields.m ?? null,
-      H_ex: state?.latest_fields.h_ex ?? null,
-      H_demag: state?.latest_fields.h_demag ?? null,
-      H_ext: state?.latest_fields.h_ext ?? null,
-      H_eff: state?.latest_fields.h_eff ?? null,
+      ...(state?.latest_fields.fields ?? {}),
+      m: liveState?.magnetization ?? state?.latest_fields.fields.m ?? null,
     }),
-    [liveState?.magnetization, state?.latest_fields.h_demag, state?.latest_fields.h_eff,
-     state?.latest_fields.h_ex, state?.latest_fields.h_ext, state?.latest_fields.m],
+    [liveState?.magnetization, state?.latest_fields.fields],
   );
 
   const selectedVectors = useMemo(() => {
     if (isGlobalScalarQuantity(activeQuantityId)) return null;
     if (!previewIsStale && renderPreview?.vector_field_values) return renderPreview.vector_field_values;
-    return fieldMap[activeQuantityId as keyof typeof fieldMap] ?? null;
-  }, [activeQuantityId, fieldMap, previewIsStale, renderPreview?.vector_field_values]);
+    return fieldMap[activeQuantityId] ?? null;
+  }, [activeQuantityId, fieldMap, isGlobalScalarQuantity, previewIsStale, renderPreview?.vector_field_values]);
 
   /* FEM mesh data */
   const effectiveFemMesh = useMemo(
@@ -1141,6 +1347,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshSelection, meshOptions, meshQualityData, meshGenerating,
     femDockTab, solverSettings, solverSetupOpen,
     interactiveEnabled, interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage,
+    scriptSyncBusy, scriptSyncMessage,
     runUntilInput, previewBusy, previewMessage,
     previewControlsActive, requestedPreviewQuantity, requestedPreviewComponent,
     requestedPreviewLayer, requestedPreviewAllLayers, requestedPreviewEveryN,
@@ -1166,7 +1373,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setSolverSettings, setSolverSetupOpen, setRunUntilInput, setSelectedSidebarNodeId,
     enqueueCommand, handleCompute, updatePreview, handleMeshGenerate, openFemMeshWorkspace,
     handleViewModeChange, handleSimulationAction, handleCapture, handleExport,
-    requestPreviewQuantity,
+    requestPreviewQuantity, syncScriptBuilder,
   }), [
     connection, error, session, run, liveState, effectiveLiveState, preview, femMesh, scalarRows,
     engineLog, quantities, artifactsArr, metadata, workspaceStatus, hasSolverTelemetry,
@@ -1177,7 +1384,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     consoleCollapsed, sidebarCollapsed, meshRenderMode, meshOpacity, meshClipEnabled,
     meshClipAxis, meshClipPos, meshShowArrows, meshSelection, meshOptions, meshQualityData,
     meshGenerating, femDockTab, solverSettings, solverSetupOpen, interactiveEnabled,
-    interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage, runUntilInput,
+    interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage, scriptSyncBusy,
+    scriptSyncMessage, runUntilInput,
     previewBusy, previewMessage, previewControlsActive, requestedPreviewQuantity,
     requestedPreviewComponent, requestedPreviewLayer, requestedPreviewAllLayers,
     requestedPreviewEveryN, requestedPreviewXChosenSize, requestedPreviewYChosenSize,
@@ -1193,7 +1401,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     selectedSidebarNodeId, emptyStateMessage,
     enqueueCommand, handleCompute, updatePreview, handleMeshGenerate, openFemMeshWorkspace,
     handleViewModeChange, handleSimulationAction, handleCapture, handleExport,
-    requestPreviewQuantity,
+    requestPreviewQuantity, syncScriptBuilder,
   ]);
 
   if (!state) {

@@ -24,6 +24,7 @@ class LoadedStage:
         script_source: str,
         source_root: str | Path | None = None,
         asset_cache: dict[str, dict[str, object] | None] | None = None,
+        include_geometry_assets: bool = True,
     ) -> dict[str, object]:
         return self.problem.to_ir(
             requested_backend=requested_backend,
@@ -33,6 +34,7 @@ class LoadedStage:
             source_root=source_root,
             entrypoint_kind=self.entrypoint_kind,
             asset_cache=asset_cache,
+            include_geometry_assets=include_geometry_assets,
         )
 
 
@@ -52,6 +54,7 @@ class LoadedProblem:
         execution_mode,
         execution_precision,
         asset_cache: dict[str, dict[str, object] | None] | None = None,
+        include_geometry_assets: bool = True,
     ) -> dict[str, object]:
         return self.problem.to_ir(
             requested_backend=requested_backend,
@@ -61,10 +64,15 @@ class LoadedProblem:
             source_root=self.source_path.parent,
             entrypoint_kind=self.entrypoint_kind,
             asset_cache=asset_cache,
+            include_geometry_assets=include_geometry_assets,
         )
 
 
-def load_problem_from_script(path: str | Path) -> LoadedProblem:
+def load_problem_from_script(
+    path: str | Path,
+    *,
+    lightweight_assets: bool = False,
+) -> LoadedProblem:
     import fullmag.world as world
 
     source_path = Path(path).resolve()
@@ -74,6 +82,7 @@ def load_problem_from_script(path: str | Path) -> LoadedProblem:
 
     module = importlib.util.module_from_spec(spec)
     world.begin_script_capture(source_path.parent)
+    world.set_script_capture_lightweight_assets(lightweight_assets)
     try:
         spec.loader.exec_module(module)
         script_source = source_path.read_text(encoding="utf-8")

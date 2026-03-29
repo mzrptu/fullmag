@@ -92,6 +92,9 @@ export interface QuantityDescriptor {
   unit: string;
   location: string;
   available: boolean;
+  interactive_preview: boolean;
+  quick_access_label: string | null;
+  scalar_metric_key: string | null;
 }
 
 export interface ArtifactEntry {
@@ -100,11 +103,7 @@ export interface ArtifactEntry {
 }
 
 export interface LatestFields {
-  m: Float64Array | null;
-  h_ex: Float64Array | null;
-  h_demag: Float64Array | null;
-  h_ext: Float64Array | null;
-  h_eff: Float64Array | null;
+  fields: Record<string, Float64Array | null>;
   grid: [number, number, number] | null;
 }
 
@@ -140,6 +139,7 @@ export interface PreviewState {
   fem_mesh: FemLiveMesh | null;
   original_node_count: number | null;
   original_face_count: number | null;
+  active_mask: boolean[] | null;
 }
 
 export interface PreviewConfig {
@@ -155,11 +155,41 @@ export interface PreviewConfig {
   max_points: number;
 }
 
+export interface ScriptBuilderSolverState {
+  integrator: string;
+  fixed_timestep: string;
+  relax_algorithm: string;
+  torque_tolerance: string;
+  energy_tolerance: string;
+  max_relax_steps: string;
+}
+
+export interface ScriptBuilderMeshState {
+  algorithm_2d: number;
+  algorithm_3d: number;
+  hmax: string;
+  hmin: string;
+  size_factor: number;
+  size_from_curvature: number;
+  smoothing_steps: number;
+  optimize: string;
+  optimize_iterations: number;
+  compute_quality: boolean;
+  per_element_quality: boolean;
+}
+
+export interface ScriptBuilderState {
+  revision: number;
+  solver: ScriptBuilderSolverState;
+  mesh: ScriptBuilderMeshState;
+}
+
 export interface SessionState {
   session: SessionManifest;
   run: RunManifest | null;
   live_state: LiveState | null;
   metadata: Record<string, unknown> | null;
+  script_builder: ScriptBuilderState | null;
   scalar_rows: ScalarRow[];
   engine_log: EngineLogEntry[];
   quantities: QuantityDescriptor[];
@@ -282,6 +312,16 @@ function mergeSessionState(prev: SessionState | null, next: SessionState): Sessi
     merged.preview = prev.preview;
   }
 
+  if (
+    prev.script_builder &&
+    (
+      !next.script_builder ||
+      next.script_builder.revision < prev.script_builder.revision
+    )
+  ) {
+    merged.script_builder = prev.script_builder;
+  }
+
   const prevScalarStep = lastScalarStep(prev.scalar_rows);
   const nextScalarStep = lastScalarStep(next.scalar_rows);
   if (nextScalarStep < prevScalarStep) {
@@ -365,6 +405,27 @@ function fieldGrid(raw: any): [number, number, number] | null {
   return [Number(grid[0]), Number(grid[1]), Number(grid[2])];
 }
 
+function normalizeLatestFields(raw: any): LatestFields {
+  if (!raw || typeof raw !== "object") {
+    return { fields: {}, grid: null };
+  }
+
+  const fields: Record<string, Float64Array | null> = {};
+  let grid: [number, number, number] | null = null;
+
+  for (const [quantity, value] of Object.entries(raw)) {
+    const flattened = flattenField(value);
+    if (flattened) {
+      fields[quantity] = flattened;
+    }
+    if (!grid) {
+      grid = fieldGrid(value);
+    }
+  }
+
+  return { fields, grid };
+}
+
 function normalizePreviewConfig(raw: any): PreviewConfig | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -443,6 +504,39 @@ function normalizePreviewState(raw: any): PreviewState | null {
       raw.original_node_count != null ? Number(raw.original_node_count) : null,
     original_face_count:
       raw.original_face_count != null ? Number(raw.original_face_count) : null,
+    active_mask: Array.isArray(raw.active_mask)
+      ? raw.active_mask.map((v: unknown) => Boolean(v))
+      : null,
+  };
+}
+
+function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  return {
+    revision: Number(raw.revision ?? 0),
+    solver: {
+      integrator: String(raw.solver?.integrator ?? ""),
+      fixed_timestep: String(raw.solver?.fixed_timestep ?? ""),
+      relax_algorithm: String(raw.solver?.relax_algorithm ?? ""),
+      torque_tolerance: String(raw.solver?.torque_tolerance ?? ""),
+      energy_tolerance: String(raw.solver?.energy_tolerance ?? ""),
+      max_relax_steps: String(raw.solver?.max_relax_steps ?? ""),
+    },
+    mesh: {
+      algorithm_2d: Number(raw.mesh?.algorithm_2d ?? 6),
+      algorithm_3d: Number(raw.mesh?.algorithm_3d ?? 1),
+      hmax: String(raw.mesh?.hmax ?? ""),
+      hmin: String(raw.mesh?.hmin ?? ""),
+      size_factor: Number(raw.mesh?.size_factor ?? 1),
+      size_from_curvature: Number(raw.mesh?.size_from_curvature ?? 0),
+      smoothing_steps: Number(raw.mesh?.smoothing_steps ?? 1),
+      optimize: String(raw.mesh?.optimize ?? ""),
+      optimize_iterations: Number(raw.mesh?.optimize_iterations ?? 1),
+      compute_quality: Boolean(raw.mesh?.compute_quality),
+      per_element_quality: Boolean(raw.mesh?.per_element_quality),
+    },
   };
 }
 
@@ -481,15 +575,10 @@ function mergePreviewEvent(
 
 function normalizeSessionState(raw: any): SessionState {
   const rawLive = raw.live_state;
-  const rawLatest = raw.latest_fields ?? {};
+  const latestFields = normalizeLatestFields(raw.latest_fields);
   const rawPreview = raw.preview ?? null;
   const rawPreviewConfig = raw.preview_config ?? null;
-  const fallbackGrid =
-    fieldGrid(rawLatest.m) ??
-    fieldGrid(rawLatest.h_ex) ??
-    fieldGrid(rawLatest.h_demag) ??
-    fieldGrid(rawLatest.h_ext) ??
-    fieldGrid(rawLatest.h_eff);
+  const fallbackGrid = latestFields.grid;
 
   const liveState: LiveState | null = rawLive
     ? {
@@ -523,6 +612,7 @@ function normalizeSessionState(raw: any): SessionState {
     run: raw.run ?? null,
     live_state: liveState,
     metadata: raw.metadata ?? null,
+    script_builder: normalizeScriptBuilder(raw.script_builder),
     scalar_rows: Array.isArray(raw.scalar_rows)
       ? raw.scalar_rows.map((row: any) => ({
           step: Number(row?.step ?? 0),
@@ -541,16 +631,23 @@ function normalizeSessionState(raw: any): SessionState {
         }))
       : [],
     engine_log: Array.isArray(raw.engine_log) ? raw.engine_log : [],
-    quantities: Array.isArray(raw.quantities) ? raw.quantities : [],
+    quantities: Array.isArray(raw.quantities)
+      ? raw.quantities.map((quantity: any) => ({
+          id: String(quantity?.id ?? ""),
+          label: String(quantity?.label ?? ""),
+          kind: String(quantity?.kind ?? ""),
+          unit: String(quantity?.unit ?? ""),
+          location: String(quantity?.location ?? ""),
+          available: Boolean(quantity?.available),
+          interactive_preview: Boolean(quantity?.interactive_preview),
+          quick_access_label:
+            typeof quantity?.quick_access_label === "string" ? quantity.quick_access_label : null,
+          scalar_metric_key:
+            typeof quantity?.scalar_metric_key === "string" ? quantity.scalar_metric_key : null,
+        }))
+      : [],
     fem_mesh: raw.fem_mesh ?? raw.live_state?.latest_step?.fem_mesh ?? null,
-    latest_fields: {
-      m: flattenField(rawLatest.m),
-      h_ex: flattenField(rawLatest.h_ex),
-      h_demag: flattenField(rawLatest.h_demag),
-      h_ext: flattenField(rawLatest.h_ext),
-      h_eff: flattenField(rawLatest.h_eff),
-      grid: fallbackGrid,
-    },
+    latest_fields: latestFields,
     artifacts: Array.isArray(raw.artifacts) ? raw.artifacts : [],
     preview_config: normalizePreviewConfig(rawPreviewConfig),
     preview: normalizePreviewState(rawPreview),

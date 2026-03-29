@@ -40,6 +40,7 @@ pub struct StepStats {
     pub e_ex: f64,
     pub e_demag: f64,
     pub e_ext: f64,
+    pub e_ani: f64,
     pub e_total: f64,
     pub max_dm_dt: f64,
     pub max_h_eff: f64,
@@ -72,6 +73,7 @@ impl Default for StepStats {
             e_ex: 0.0,
             e_demag: 0.0,
             e_ext: 0.0,
+            e_ani: 0.0,
             e_total: 0.0,
             max_dm_dt: 0.0,
             max_h_eff: 0.0,
@@ -166,6 +168,11 @@ pub struct LivePreviewField {
     pub auto_downscaled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_downscale_message: Option<String>,
+    /// Per-preview-cell boolean mask: `true` = geometry-active, `false` = empty.
+    /// Resampled to match `preview_grid` dimensions (a preview cell is active if
+    /// ANY original cell in its block is active).  `None` means all cells active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_mask: Option<Vec<bool>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
