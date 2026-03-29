@@ -57,7 +57,7 @@ pub(crate) trait InteractiveBackend {
         problem: &ProblemIR,
         until_seconds: f64,
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> crate::DisplaySelectionState + Send + Sync),
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError>;

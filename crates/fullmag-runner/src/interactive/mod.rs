@@ -14,5 +14,5 @@ pub mod runtime;
 pub use backend::BackendGeometry;
 pub(crate) use backend::InteractiveBackend;
 pub use commands::LiveControlCommand;
-pub use display::{DisplayKind, DisplayPayload, DisplaySelection};
+pub use display::{DisplayKind, DisplayPayload, DisplaySelection, DisplaySelectionState};
 pub use runtime::InteractiveRuntime;

@@ -43,6 +43,7 @@ typedef enum {
     FULLMAG_FEM_OBSERVABLE_H_EXT = 4,
     FULLMAG_FEM_OBSERVABLE_H_EFF = 5,
     FULLMAG_FEM_OBSERVABLE_H_ANI = 6,
+    FULLMAG_FEM_OBSERVABLE_H_DMI = 7,
 } fullmag_fem_observable;
 
 typedef enum {
@@ -117,6 +118,8 @@ typedef struct {
     int has_uniaxial_anisotropy;
     double uniaxial_anisotropy_constant;
     double anisotropy_axis[3];
+    int has_interfacial_dmi;
+    double dmi_constant;
 } fullmag_fem_plan_desc;
 
 typedef struct {
@@ -127,6 +130,7 @@ typedef struct {
     double demag_energy_joules;
     double external_energy_joules;
     double anisotropy_energy_joules;
+    double dmi_energy_joules;
     double total_energy_joules;
     double max_effective_field_amplitude;
     double max_demag_field_amplitude;

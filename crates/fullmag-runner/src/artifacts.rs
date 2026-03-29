@@ -133,14 +133,14 @@ pub(crate) fn write_scalars_csv(path: &Path, steps: &[StepStats]) -> std::io::Re
 pub(crate) fn write_scalars_csv_header(writer: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         writer,
-        "step,time,solver_dt,mx,my,mz,E_ex,E_demag,E_ext,E_ani,E_total,max_dm_dt,max_h_eff,max_h_demag"
+        "step,time,solver_dt,mx,my,mz,E_ex,E_demag,E_ext,E_ani,E_dmi,E_total,max_dm_dt,max_h_eff,max_h_demag"
     )
 }
 
 pub(crate) fn write_scalar_row(writer: &mut impl Write, step: &StepStats) -> std::io::Result<()> {
     writeln!(
         writer,
-        "{},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e}",
+        "{},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e}",
         step.step,
         step.time,
         step.dt,
@@ -151,6 +151,7 @@ pub(crate) fn write_scalar_row(writer: &mut impl Write, step: &StepStats) -> std
         step.e_demag,
         step.e_ext,
         step.e_ani,
+        step.e_dmi,
         step.e_total,
         step.max_dm_dt,
         step.max_h_eff,
@@ -265,7 +266,7 @@ pub(crate) fn field_layout(plan: &fullmag_ir::ExecutionPlanIR) -> serde_json::Va
 pub(crate) fn field_unit(observable: &str) -> &'static str {
     match observable {
         "m" => "dimensionless",
-        "H_ex" | "H_demag" | "H_ext" | "H_eff" | "H_ani" => "A/m",
+        "H_ex" | "H_demag" | "H_ext" | "H_eff" | "H_ani" | "H_dmi" => "A/m",
         other => panic!("unsupported observable '{}'", other),
     }
 }

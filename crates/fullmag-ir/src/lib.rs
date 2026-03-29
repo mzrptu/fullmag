@@ -759,6 +759,8 @@ pub struct FemPlanIR {
     pub demag_realization: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub air_box_config: Option<AirBoxConfigIR>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interfacial_dmi: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

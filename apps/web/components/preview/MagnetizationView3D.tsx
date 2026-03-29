@@ -126,7 +126,7 @@ function SyncedControls({
 
 // ─── R3F scene background ───────────────────────────────────────────
 
-const BG_COLOR = 0x0c121f;
+const BG_COLOR = 0x1e1e2e; // Catppuccin Mocha Base
 
 function SceneConfig({ toneMapping }: { toneMapping: boolean }) {
   const { gl } = useThree();

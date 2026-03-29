@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import type { FemMeshData } from "./FemMeshView3D";
+import { DIVERGING_PALETTE, POSITIVE_PALETTE } from "../../lib/colorPalettes";
 
 type SlicePlane = "xy" | "xz" | "yz";
 type VectorComponent = "x" | "y" | "z" | "magnitude";
@@ -26,14 +27,14 @@ interface Segment2D {
   vb: number;
 }
 
-const BG = "#0c121f";
-const BORDER = "#273753";
-const TEXT = "#a7bad3";
-const TEXT_STRONG = "#edf3fb";
-const GRID = "rgba(120, 150, 185, 0.08)";
-const EMPTY = "rgba(255,255,255,0.08)";
-const DIVERGING = ["#15315f", "#2f6caa", "#90b9df", "#f4f1ed", "#efb09d", "#cf6256", "#7d1d34"];
-const POSITIVE = ["#0a1220", "#143d67", "#1c6d8f", "#24a0a4", "#8ed6ac", "#f1f7bb"];
+const BG = "#1e1e2e";
+const BORDER = "#313244"; /* Catppuccin Surface0 */
+const TEXT = "#a6adc8"; /* Catppuccin Subtext0 */
+const TEXT_STRONG = "#cdd6f4"; /* Catppuccin Text */
+const GRID = "rgba(108, 112, 134, 0.08)"; /* Catppuccin Overlay0 */
+const EMPTY = "rgba(205, 214, 244, 0.08)"; /* Catppuccin Text */
+const DIVERGING = DIVERGING_PALETTE as unknown as string[];
+const POSITIVE = POSITIVE_PALETTE as unknown as string[];
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -425,7 +426,7 @@ export default function FemMeshSlice2D({
   }, [component, plane, quantityId, quantityLabel, slice, sliceCount]);
 
   return (
-    <div className="relative h-full min-h-[360px] w-full overflow-hidden rounded-[8px] bg-[#0c121f]">
+    <div className="relative h-full min-h-[360px] w-full overflow-hidden rounded-[8px] bg-[#1e1e2e]">
       <canvas
         ref={canvasRef}
         className="block h-full w-full"

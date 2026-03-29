@@ -42,7 +42,7 @@ export default function StatusBar({
   nodeCount,
 }: StatusBarProps) {
   return (
-    <div className="flex items-center justify-between border-t-2 border-border/60 bg-background/80 backdrop-blur-md px-3 py-1.5 text-[0.68rem] tracking-wide text-muted-foreground z-40 min-h-[28px] shadow-[0_-4px_24px_rgba(0,0,0,0.2)]">
+    <div className="flex items-center justify-between border-t border-white/5 bg-background/40 backdrop-blur-xl px-3 py-1.5 text-[0.68rem] tracking-wide text-muted-foreground z-40 min-h-[28px] shadow-[0_-8px_32px_rgba(0,0,0,0.4)]">
       <div className="flex items-center gap-2 overflow-hidden flex-1 mr-4">
         {(activityLabel || activityDetail) ? (
           <>

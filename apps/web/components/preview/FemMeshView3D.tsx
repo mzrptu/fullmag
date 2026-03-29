@@ -285,7 +285,7 @@ function FemMeshView3DInner({
         onPointerMissed={() => setSelectedFaces([])}
         onContextMenu={(e) => e.preventDefault()}
       >
-        <color attach="background" args={[0x0c121f]} />
+        <color attach="background" args={[0x1e1e2e]} /> {/* Catppuccin Mocha Base */}
         <ambientLight intensity={0.4} />
         <directionalLight position={[1, 2, 3]} intensity={0.9} />
         <directionalLight position={[-1, -1, -2]} intensity={0.3} color={0x6688cc} />

@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import * as echarts from "echarts";
+import { DIVERGING_PALETTE, SEQUENTIAL_BLUE_PALETTE, POSITIVE_PALETTE } from "../../lib/colorPalettes";
+import { ECHARTS_THEME } from "../../lib/echartsTheme";
 
 interface Props {
   data: [number, number, number][];
@@ -13,24 +15,8 @@ interface Props {
   max: number;
 }
 
-const DIVERGING_PALETTE = [
-  "#15315f", "#2f6caa", "#90b9df", "#f4f1ed", "#efb09d", "#cf6256", "#7d1d34",
-];
-const NEGATIVE_PALETTE = [
-  "#f3f7fd", "#cfdef1", "#91b8dd", "#5688bd", "#285b93", "#14365f",
-];
-const POSITIVE_PALETTE = [
-  "#0a1220", "#143d67", "#1c6d8f", "#24a0a4", "#8ed6ac", "#f1f7bb",
-];
-
-const THEME = {
-  border: "#273753",
-  text2: "#a7bad3",
-  tooltipBg: "rgba(15, 22, 42, 0.92)",
-  tooltipBorder: "#273753",
-  tooltipText: "#edf3fb",
-  accent: "#57c8b6",
-};
+const NEGATIVE_PALETTE = SEQUENTIAL_BLUE_PALETTE;
+const THEME = ECHARTS_THEME;
 
 function getColorScale(min: number, max: number) {
   if (min < 0 && max > 0) {

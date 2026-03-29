@@ -47,6 +47,7 @@ use crate::types::{
 };
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
 use crate::types::{ExecutionProvenance, FieldSnapshot, RunResult, RunStatus, StepStats};
+use crate::DisplaySelectionState;
 
 /// Which execution engine to use for FDM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -609,7 +610,7 @@ pub(crate) fn execute_fem_with_callback_streaming(
             Some(LiveStepConsumer {
                 grid: [0, 0, 0],
                 field_every_n,
-                preview_request: None,
+                display_selection: None,
                 on_step,
             }),
             artifact_writer,
@@ -624,7 +625,7 @@ pub(crate) fn execute_fem_with_live_preview(
     until_seconds: f64,
     outputs: &[OutputIR],
     field_every_n: u64,
-    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
     execute_fem_with_live_preview_streaming(
@@ -633,7 +634,7 @@ pub(crate) fn execute_fem_with_live_preview(
         until_seconds,
         outputs,
         field_every_n,
-        preview_request,
+        display_selection,
         None,
         on_step,
     )
@@ -645,7 +646,7 @@ pub(crate) fn execute_fem_with_live_preview_streaming(
     until_seconds: f64,
     outputs: &[OutputIR],
     field_every_n: u64,
-    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     artifact_writer: Option<ArtifactPipelineSender>,
     on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
@@ -657,7 +658,7 @@ pub(crate) fn execute_fem_with_live_preview_streaming(
                     until_seconds,
                     outputs,
                     field_every_n,
-                    preview_request,
+                    display_selection,
                     writer,
                     on_step,
                 )
@@ -667,7 +668,7 @@ pub(crate) fn execute_fem_with_live_preview_streaming(
                     until_seconds,
                     outputs,
                     field_every_n,
-                    preview_request,
+                    display_selection,
                     on_step,
                 )
             }
@@ -679,7 +680,7 @@ pub(crate) fn execute_fem_with_live_preview_streaming(
             Some(LiveStepConsumer {
                 grid: [0, 0, 0],
                 field_every_n,
-                preview_request: Some(preview_request),
+                display_selection: Some(display_selection),
                 on_step,
             }),
             artifact_writer,
@@ -750,7 +751,7 @@ pub(crate) fn execute_fdm_with_callback_streaming(
             Some(LiveStepConsumer {
                 grid,
                 field_every_n,
-                preview_request: None,
+                display_selection: None,
                 on_step,
             }),
             artifact_writer,
@@ -766,7 +767,7 @@ pub(crate) fn execute_fdm_with_live_preview(
     outputs: &[OutputIR],
     grid: [u32; 3],
     field_every_n: u64,
-    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
     execute_fdm_with_live_preview_streaming(
@@ -776,7 +777,7 @@ pub(crate) fn execute_fdm_with_live_preview(
         outputs,
         grid,
         field_every_n,
-        preview_request,
+        display_selection,
         None,
         on_step,
     )
@@ -789,7 +790,7 @@ pub(crate) fn execute_fdm_with_live_preview_streaming(
     outputs: &[OutputIR],
     grid: [u32; 3],
     field_every_n: u64,
-    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     artifact_writer: Option<ArtifactPipelineSender>,
     on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
@@ -802,7 +803,7 @@ pub(crate) fn execute_fdm_with_live_preview_streaming(
                     outputs,
                     grid,
                     field_every_n,
-                    preview_request,
+                    display_selection,
                     writer,
                     on_step,
                 )
@@ -813,7 +814,7 @@ pub(crate) fn execute_fdm_with_live_preview_streaming(
                     outputs,
                     grid,
                     field_every_n,
-                    preview_request,
+                    display_selection,
                     on_step,
                 )
             }
@@ -825,7 +826,7 @@ pub(crate) fn execute_fdm_with_live_preview_streaming(
             Some(LiveStepConsumer {
                 grid,
                 field_every_n,
-                preview_request: Some(preview_request),
+                display_selection: Some(display_selection),
                 on_step,
             }),
             artifact_writer,
@@ -999,17 +1000,18 @@ fn execute_cuda_fdm_impl(
         }
         if let Some(live) = live.as_mut() {
             let emit_every = live.field_every_n.max(1);
-            let preview_request = live.preview_request.map(|get| get());
-            let preview_due = preview_request
+            let display_selection = live.display_selection.map(|get| get());
+            let preview_due = display_selection
                 .as_ref()
-                .map(|request| {
-                    let preview_emit_every = u64::from(request.every_n.max(1));
-                    last_preview_revision != Some(request.revision)
+                .map(|selection| {
+                    let preview_emit_every = u64::from(selection.selection.every_n.max(1));
+                    last_preview_revision != Some(selection.revision)
                         || stats.step <= 1
                         || stats.step % preview_emit_every == 0
                 })
                 .unwrap_or(false);
-            let magnetization = if live.preview_request.is_none() && stats.step % emit_every == 0 {
+            let magnetization = if live.display_selection.is_none() && stats.step % emit_every == 0
+            {
                 if magnetization_cache.is_none() {
                     magnetization_cache = Some(backend.copy_m(cell_count)?);
                 }
@@ -1022,13 +1024,14 @@ fn execute_cuda_fdm_impl(
                 None
             };
             let preview_field = if preview_due {
-                let request = preview_request.as_ref().expect("checked preview_due");
+                let selection = display_selection.as_ref().expect("checked preview_due");
+                let request = selection.preview_request();
                 let preview = backend.copy_live_preview_field(
-                    request,
+                    &request,
                     plan.grid.cells,
                     plan.active_mask.as_deref(),
                 )?;
-                last_preview_revision = Some(request.revision);
+                last_preview_revision = Some(selection.revision);
                 Some(preview)
             } else {
                 None
@@ -1186,25 +1189,27 @@ fn execute_native_fem_impl(
         latest_stats = Some(stats.clone());
         if let Some(live) = live.as_mut() {
             let emit_every = live.field_every_n.max(1);
-            let preview_request = live.preview_request.map(|get| get());
-            let preview_due = preview_request
+            let display_selection = live.display_selection.map(|get| get());
+            let preview_due = display_selection
                 .as_ref()
-                .map(|request| {
-                    let preview_emit_every = u64::from(request.every_n.max(1));
-                    last_preview_revision != Some(request.revision)
+                .map(|selection| {
+                    let preview_emit_every = u64::from(selection.selection.every_n.max(1));
+                    last_preview_revision != Some(selection.revision)
                         || stats.step <= 1
                         || stats.step % preview_emit_every == 0
                 })
                 .unwrap_or(false);
-            let magnetization = if live.preview_request.is_none() && stats.step % emit_every == 0 {
+            let magnetization = if live.display_selection.is_none() && stats.step % emit_every == 0
+            {
                 Some(flatten_vectors(&backend.copy_m(node_count)?))
             } else {
                 None
             };
             let preview_field = if preview_due {
-                let request = preview_request.as_ref().expect("checked preview_due");
-                let preview = backend.copy_live_preview_field(request, node_count)?;
-                last_preview_revision = Some(request.revision);
+                let selection = display_selection.as_ref().expect("checked preview_due");
+                let request = selection.preview_request();
+                let preview = backend.copy_live_preview_field(&request, node_count)?;
+                last_preview_revision = Some(selection.revision);
                 Some(preview)
             } else {
                 None

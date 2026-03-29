@@ -8,7 +8,7 @@ use crate::types::{
 use fullmag_ir::ProblemIR;
 
 use super::backend::{BackendGeometry, InteractiveBackend};
-use super::display::{DisplayKind, DisplayPayload, DisplaySelection};
+use super::display::{DisplayKind, DisplayPayload, DisplaySelection, DisplaySelectionState};
 
 /// Unified interactive runtime facade.
 ///
@@ -138,7 +138,7 @@ impl InteractiveRuntime {
         until_seconds: f64,
         output_dir: &Path,
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
     ) -> Result<RunResult, RunError> {
         let plan = fullmag_plan::plan(problem)?;
@@ -154,7 +154,7 @@ impl InteractiveRuntime {
             problem,
             until_seconds,
             field_every_n,
-            preview_request,
+            display_selection,
             artifact_writer,
             &mut on_step,
         );

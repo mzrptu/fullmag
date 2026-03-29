@@ -29,7 +29,9 @@ mod types;
 // Public re-exports (unchanged API surface).
 pub use interactive::backend::BackendGeometry;
 pub use interactive::commands::LiveControlCommand;
-pub use interactive::display::{DisplayKind, DisplayPayload, DisplaySelection};
+pub use interactive::display::{
+    DisplayKind, DisplayPayload, DisplaySelection, DisplaySelectionState,
+};
 pub use interactive::runtime::InteractiveRuntime;
 pub use interactive_runtime::{InteractiveFdmPreviewRuntime, InteractiveFemPreviewRuntime};
 pub use types::{
@@ -285,7 +287,7 @@ pub fn run_problem_with_live_preview(
     until_seconds: f64,
     output_dir: &Path,
     field_every_n: u64,
-    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
 ) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
@@ -308,7 +310,7 @@ pub fn run_problem_with_live_preview(
                 &plan.output_plan.outputs,
                 grid,
                 field_every_n,
-                preview_request,
+                display_selection,
                 artifact_writer.clone(),
                 &mut on_step,
             )
@@ -332,7 +334,7 @@ pub fn run_problem_with_live_preview(
                 until_seconds,
                 &plan.output_plan.outputs,
                 field_every_n,
-                preview_request,
+                display_selection,
                 artifact_writer.clone(),
                 &mut on_step,
             )
@@ -419,7 +421,7 @@ pub fn run_problem_with_interactive_fdm_runtime_live_preview(
     until_seconds: f64,
     output_dir: &Path,
     field_every_n: u64,
-    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
 ) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
@@ -444,7 +446,7 @@ pub fn run_problem_with_interactive_fdm_runtime_live_preview(
         &plan.output_plan.outputs,
         fdm.grid.cells,
         field_every_n,
-        preview_request,
+        display_selection,
         artifact_writer,
         &mut on_step,
     );
@@ -519,7 +521,7 @@ pub fn run_problem_with_interactive_fem_runtime_live_preview(
     until_seconds: f64,
     output_dir: &Path,
     field_every_n: u64,
-    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
 ) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
@@ -543,7 +545,7 @@ pub fn run_problem_with_interactive_fem_runtime_live_preview(
         &plan.output_plan.outputs,
         field_every_n,
         artifact_writer,
-        preview_request,
+        display_selection,
         &mut on_step,
     );
     let pipeline_summary = artifact_pipeline.finish();
@@ -653,7 +655,7 @@ pub fn run_problem_with_interactive_runtime_live_preview(
     until_seconds: f64,
     output_dir: &Path,
     field_every_n: u64,
-    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     on_step: impl FnMut(StepUpdate) -> StepAction + Send,
 ) -> Result<RunResult, RunError> {
     runtime.execute_streaming(
@@ -661,7 +663,7 @@ pub fn run_problem_with_interactive_runtime_live_preview(
         until_seconds,
         output_dir,
         field_every_n,
-        preview_request,
+        display_selection,
         on_step,
     )
 }

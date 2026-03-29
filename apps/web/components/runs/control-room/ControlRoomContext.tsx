@@ -15,6 +15,7 @@ import { currentLiveApiClient } from "../../../lib/liveApiClient";
 import { useCurrentLiveStream } from "../../../lib/useSessionStream";
 import type {
   ArtifactEntry,
+  DisplaySelection,
   EngineLogEntry,
   FemLiveMesh,
   LiveState,
@@ -552,6 +553,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const session = state?.session ?? null;
   const run = state?.run ?? null;
   const liveState = state?.live_state ?? null;
+  const displaySelection = state?.display_selection ?? null;
   const previewConfig = state?.preview_config ?? null;
   const preview = state?.preview ?? null;
   const femMesh = state?.fem_mesh ?? null;
@@ -627,6 +629,20 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const runtimeEngineLabel = typeof runtimeEngine?.engine_label === "string" ? runtimeEngine.engine_label : null;
   const solverPlan = useMemo(() => extractSolverPlan(metadata, session), [metadata, session]);
   const liveApi = useMemo(() => currentLiveApiClient(), []);
+  const quantityDescriptorById = useMemo(
+    () => new Map(quantities.map((quantity) => [quantity.id, quantity] as const)),
+    [quantities],
+  );
+  const kindForQuantity = useCallback((quantity: string): DisplaySelection["kind"] => {
+    switch (quantityDescriptorById.get(quantity)?.kind) {
+      case "spatial_scalar":
+        return "spatial_scalar";
+      case "global_scalar":
+        return "global_scalar";
+      default:
+        return "vector_field";
+    }
+  }, [quantityDescriptorById]);
   const localBuilderDraft = useMemo(
     () => buildScriptBuilderUpdatePayload(solverSettings, meshOptions),
     [meshOptions, solverSettings],
@@ -860,16 +876,41 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const previewDrivenMode: ViewportMode | null =
     preview && !isFemBackend && viewMode === "3D" ? (preview.type === "3D" ? "3D" : "2D") : null;
   const effectiveViewMode = previewDrivenMode ?? viewMode;
-  const previewControlsActive = Boolean(previewConfig ?? preview);
-  const requestedPreviewQuantity = previewConfig?.quantity ?? preview?.quantity ?? "m";
-  const requestedPreviewComponent = previewConfig?.component ?? preview?.component ?? "3D";
-  const requestedPreviewLayer = previewConfig?.layer ?? preview?.layer ?? 0;
-  const requestedPreviewAllLayers = previewConfig?.all_layers ?? preview?.all_layers ?? false;
-  const requestedPreviewEveryN = previewConfig?.every_n ?? PREVIEW_EVERY_N_DEFAULT;
-  const requestedPreviewXChosenSize = previewConfig?.x_chosen_size ?? preview?.x_chosen_size ?? 0;
-  const requestedPreviewYChosenSize = previewConfig?.y_chosen_size ?? preview?.y_chosen_size ?? 0;
-  const requestedPreviewAutoScale = previewConfig?.auto_scale_enabled ?? preview?.auto_scale_enabled ?? true;
-  const requestedPreviewMaxPoints = previewConfig?.max_points ?? preview?.max_points ?? PREVIEW_MAX_POINTS_DEFAULT;
+  const requestedDisplaySelection = useMemo<DisplaySelection>(() => {
+    const quantity = displaySelection?.selection.quantity ?? previewConfig?.quantity ?? preview?.quantity ?? "m";
+    return {
+      quantity,
+      kind: displaySelection?.selection.kind ?? kindForQuantity(quantity),
+      component: displaySelection?.selection.component ?? previewConfig?.component ?? preview?.component ?? "3D",
+      layer: displaySelection?.selection.layer ?? previewConfig?.layer ?? preview?.layer ?? 0,
+      all_layers:
+        displaySelection?.selection.all_layers ?? previewConfig?.all_layers ?? preview?.all_layers ?? false,
+      x_chosen_size:
+        displaySelection?.selection.x_chosen_size ?? previewConfig?.x_chosen_size ?? preview?.x_chosen_size ?? 0,
+      y_chosen_size:
+        displaySelection?.selection.y_chosen_size ?? previewConfig?.y_chosen_size ?? preview?.y_chosen_size ?? 0,
+      every_n:
+        displaySelection?.selection.every_n ?? previewConfig?.every_n ?? PREVIEW_EVERY_N_DEFAULT,
+      max_points:
+        displaySelection?.selection.max_points ?? previewConfig?.max_points ?? preview?.max_points ?? PREVIEW_MAX_POINTS_DEFAULT,
+      auto_scale_enabled:
+        displaySelection?.selection.auto_scale_enabled ??
+        previewConfig?.auto_scale_enabled ??
+        preview?.auto_scale_enabled ??
+        true,
+    };
+  }, [displaySelection, kindForQuantity, preview, previewConfig]);
+  const currentPreviewRevision = displaySelection?.revision ?? previewConfig?.revision ?? null;
+  const previewControlsActive = Boolean(displaySelection ?? previewConfig ?? preview);
+  const requestedPreviewQuantity = requestedDisplaySelection.quantity;
+  const requestedPreviewComponent = requestedDisplaySelection.component;
+  const requestedPreviewLayer = requestedDisplaySelection.layer;
+  const requestedPreviewAllLayers = requestedDisplaySelection.all_layers;
+  const requestedPreviewEveryN = requestedDisplaySelection.every_n;
+  const requestedPreviewXChosenSize = requestedDisplaySelection.x_chosen_size;
+  const requestedPreviewYChosenSize = requestedDisplaySelection.y_chosen_size;
+  const requestedPreviewAutoScale = requestedDisplaySelection.auto_scale_enabled;
+  const requestedPreviewMaxPoints = requestedDisplaySelection.max_points;
 
   const previewEveryNOptions = useMemo(
     () => Array.from(new Set([...PREVIEW_EVERY_N_PRESETS, requestedPreviewEveryN])).sort((a, b) => a - b),
@@ -880,16 +921,16 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     return Array.from(values).sort((a, b) => { if (a === 0) return 1; if (b === 0) return -1; return a - b; });
   }, [requestedPreviewMaxPoints]);
 
-  const quantityDescriptorById = useMemo(
-    () => new Map(quantities.map((quantity) => [quantity.id, quantity] as const)),
-    [quantities],
-  );
   const isGlobalScalarQuantity = useCallback(
     (quantity: string | null | undefined) =>
       Boolean(quantity && quantityDescriptorById.get(quantity)?.kind === "global_scalar"),
     [quantityDescriptorById],
   );
-  const previewIsStale = Boolean(preview && previewConfig && preview.config_revision !== previewConfig.revision);
+  const previewIsStale = Boolean(
+    preview &&
+    currentPreviewRevision != null &&
+    preview.config_revision !== currentPreviewRevision,
+  );
   const previewIsBootstrapStale = Boolean(previewControlsActive && preview && effectiveStep > 0 && preview.source_step === 0);
   const renderPreview = preview;
   const selectedQuantityIsScalar = isGlobalScalarQuantity(selectedQuantity);
@@ -917,11 +958,48 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [liveApi]);
 
   const updatePreview = useCallback(async (path: string, payload: Record<string, unknown> = {}) => {
+    const nextSelection: DisplaySelection = { ...requestedDisplaySelection };
+    switch (path) {
+      case "/quantity":
+        nextSelection.quantity = typeof payload.quantity === "string" ? payload.quantity : nextSelection.quantity;
+        nextSelection.kind = kindForQuantity(nextSelection.quantity);
+        break;
+      case "/component":
+        nextSelection.component = typeof payload.component === "string" ? payload.component : nextSelection.component;
+        break;
+      case "/layer":
+        nextSelection.layer = Number(payload.layer ?? nextSelection.layer);
+        break;
+      case "/allLayers":
+        nextSelection.all_layers = Boolean(payload.allLayers ?? nextSelection.all_layers);
+        break;
+      case "/everyN":
+        nextSelection.every_n = Number(payload.everyN ?? nextSelection.every_n);
+        break;
+      case "/XChosenSize":
+        nextSelection.x_chosen_size = Number(payload.xChosenSize ?? nextSelection.x_chosen_size);
+        break;
+      case "/YChosenSize":
+        nextSelection.y_chosen_size = Number(payload.yChosenSize ?? nextSelection.y_chosen_size);
+        break;
+      case "/autoScaleEnabled":
+        nextSelection.auto_scale_enabled = Boolean(payload.autoScaleEnabled ?? nextSelection.auto_scale_enabled);
+        break;
+      case "/maxPoints":
+        nextSelection.max_points = Number(payload.maxPoints ?? nextSelection.max_points);
+        break;
+      default:
+        setPreviewBusy(true); setPreviewMessage(null);
+        try { await liveApi.updatePreview(path, payload); }
+        catch (e) { setPreviewMessage(e instanceof Error ? e.message : "Failed to update preview"); }
+        finally { setPreviewBusy(false); }
+        return;
+    }
     setPreviewBusy(true); setPreviewMessage(null);
-    try { await liveApi.updatePreview(path, payload); }
+    try { await liveApi.updateDisplaySelection(nextSelection as unknown as Record<string, unknown>); }
     catch (e) { setPreviewMessage(e instanceof Error ? e.message : "Failed to update preview"); }
     finally { setPreviewBusy(false); }
-  }, [liveApi]);
+  }, [kindForQuantity, liveApi, requestedDisplaySelection]);
 
   const handleMeshGenerate = useCallback(async () => {
     setMeshGenerating(true);
@@ -1023,8 +1101,6 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     // Fallback: try any echarts instance on the page
     const echartsContainer = document.querySelector<HTMLDivElement>("[_echarts_instance_]");
     if (echartsContainer) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const echarts = (window as any).echarts ?? null;
       const echartsCanvas = echartsContainer.querySelector<HTMLCanvasElement>("canvas");
       if (echartsCanvas) {
         const link = document.createElement("a");

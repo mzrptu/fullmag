@@ -21,6 +21,7 @@ pub(crate) fn normalize_quantity_id(requested: &str) -> &'static str {
         "H_ext" => "H_ext",
         "H_eff" => "H_eff",
         "H_ani" => "H_ani",
+        "H_dmi" => "H_dmi",
         _ => "m",
     }
 }
@@ -28,7 +29,7 @@ pub(crate) fn normalize_quantity_id(requested: &str) -> &'static str {
 pub(crate) fn quantity_unit(quantity: &str) -> &'static str {
     match normalize_quantity_id(quantity) {
         "m" => "dimensionless",
-        "H_ex" | "H_demag" | "H_ext" | "H_eff" | "H_ani" => "A/m",
+        "H_ex" | "H_demag" | "H_ext" | "H_eff" | "H_ani" | "H_dmi" => "A/m",
         _ => "",
     }
 }

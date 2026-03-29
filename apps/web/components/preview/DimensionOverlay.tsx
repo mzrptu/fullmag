@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { pickUnitScale } from "../../lib/units";
 
 /* ── Types ── */
 
@@ -16,11 +17,8 @@ interface DimensionOverlayProps {
 /* ── Helpers ── */
 
 /** Pick SI prefix for a length in metres */
-function pickUnit(extent: number): { scale: number; unit: string } {
-  const abs = Math.abs(extent);
-  if (abs >= 1e-2) return { scale: 1e3, unit: "mm" };
-  if (abs >= 1e-5) return { scale: 1e6, unit: "µm" };
-  return { scale: 1e9, unit: "nm" };
+function pickUnit(extent: number) {
+  return pickUnitScale(extent);
 }
 
 /** Generate nice tick values for an axis from 0 to `maxVal` (already scaled) */

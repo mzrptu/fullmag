@@ -100,6 +100,8 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
         plan.anisotropy_axis[1],
         plan.anisotropy_axis[2],
     };
+    ctx.enable_dmi = plan.has_interfacial_dmi != 0;
+    ctx.dmi_D = plan.dmi_constant;
     ctx.material = plan.material;
     ctx.demag_solver = plan.demag_solver;
 
@@ -222,6 +224,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     fill_zero_vector_field(ctx.h_ex_xyz, ctx.n_nodes);
     fill_zero_vector_field(ctx.h_demag_xyz, ctx.n_nodes);
     fill_zero_vector_field(ctx.h_ani_xyz, ctx.n_nodes);
+    fill_zero_vector_field(ctx.h_dmi_xyz, ctx.n_nodes);
     if (ctx.has_external_field) {
         fill_repeated_vector_field(ctx.h_ext_xyz, ctx.n_nodes, ctx.external_field_am);
         ctx.h_eff_xyz = ctx.h_ext_xyz;
@@ -287,6 +290,9 @@ int context_copy_field_f64(
             break;
         case FULLMAG_FEM_OBSERVABLE_H_ANI:
             source = &ctx.h_ani_xyz;
+            break;
+        case FULLMAG_FEM_OBSERVABLE_H_DMI:
+            source = &ctx.h_dmi_xyz;
             break;
         default:
             error = "unsupported FEM observable";

@@ -22,6 +22,7 @@ use crate::types::{
     ExecutedRun, ExecutionProvenance, FieldSnapshot, LivePreviewField, LivePreviewRequest,
     RunError, RunResult, RunStatus, StateObservables, StepAction, StepStats, StepUpdate,
 };
+use crate::DisplaySelectionState;
 
 pub struct InteractiveFdmPreviewRuntime {
     inner: InteractiveFdmPreviewRuntimeInner,
@@ -206,7 +207,7 @@ impl InteractiveFdmPreviewRuntime {
         until_seconds: f64,
         grid: [u32; 3],
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         match &mut self.inner {
@@ -215,7 +216,7 @@ impl InteractiveFdmPreviewRuntime {
                 until_seconds,
                 grid,
                 field_every_n,
-                preview_request,
+                display_selection,
                 on_step,
             ),
             #[cfg(feature = "cuda")]
@@ -224,7 +225,7 @@ impl InteractiveFdmPreviewRuntime {
                 until_seconds,
                 grid,
                 field_every_n,
-                preview_request,
+                display_selection,
                 on_step,
             ),
         }
@@ -237,7 +238,7 @@ impl InteractiveFdmPreviewRuntime {
         outputs: &[OutputIR],
         grid: [u32; 3],
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
@@ -249,7 +250,7 @@ impl InteractiveFdmPreviewRuntime {
                     outputs,
                     grid,
                     field_every_n,
-                    preview_request,
+                    display_selection,
                     artifact_writer,
                     on_step,
                 ),
@@ -261,7 +262,7 @@ impl InteractiveFdmPreviewRuntime {
                     outputs,
                     grid,
                     field_every_n,
-                    preview_request,
+                    display_selection,
                     artifact_writer,
                     on_step,
                 ),
@@ -397,7 +398,7 @@ impl InteractiveFemPreviewRuntime {
         plan: &FemPlanIR,
         until_seconds: f64,
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         match &mut self.inner {
@@ -405,7 +406,7 @@ impl InteractiveFemPreviewRuntime {
                 plan,
                 until_seconds,
                 field_every_n,
-                preview_request,
+                display_selection,
                 on_step,
             ),
             #[cfg(feature = "fem-gpu")]
@@ -413,7 +414,7 @@ impl InteractiveFemPreviewRuntime {
                 plan,
                 until_seconds,
                 field_every_n,
-                preview_request,
+                display_selection,
                 on_step,
             ),
         }
@@ -426,7 +427,7 @@ impl InteractiveFemPreviewRuntime {
         outputs: &[OutputIR],
         field_every_n: u64,
         artifact_writer: Option<ArtifactPipelineSender>,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
         match &mut self.inner {
@@ -437,7 +438,7 @@ impl InteractiveFemPreviewRuntime {
                     outputs,
                     field_every_n,
                     artifact_writer,
-                    preview_request,
+                    display_selection,
                     on_step,
                 ),
             #[cfg(feature = "fem-gpu")]
@@ -448,7 +449,7 @@ impl InteractiveFemPreviewRuntime {
                     outputs,
                     field_every_n,
                     artifact_writer,
-                    preview_request,
+                    display_selection,
                     on_step,
                 ),
         }
@@ -510,7 +511,7 @@ impl CpuInteractiveFdmPreviewRuntime {
         until_seconds: f64,
         grid: [u32; 3],
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         if !self.plan_signature.eq(&normalize_plan_signature(plan)) {
@@ -586,13 +587,14 @@ impl CpuInteractiveFdmPreviewRuntime {
             let mut local_stats = total_stats.clone();
             local_stats.step -= base_step;
             local_stats.time -= base_time;
-            let preview_cfg = preview_request();
-            let preview_emit_every = u64::from(preview_cfg.every_n.max(1));
-            let preview_due = last_preview_revision != Some(preview_cfg.revision)
+            let display_state = display_selection();
+            let preview_cfg = display_state.preview_request();
+            let preview_emit_every = u64::from(display_state.selection.every_n.max(1));
+            let preview_due = last_preview_revision != Some(display_state.revision)
                 || local_stats.step <= 1
                 || local_stats.step % preview_emit_every == 0;
             let preview_field = if preview_due {
-                last_preview_revision = Some(preview_cfg.revision);
+                last_preview_revision = Some(display_state.revision);
                 Some(build_grid_preview_field(
                     &preview_cfg,
                     select_observables(&observables, &preview_cfg.quantity),
@@ -654,7 +656,7 @@ impl CpuInteractiveFdmPreviewRuntime {
         outputs: &[OutputIR],
         grid: [u32; 3],
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
@@ -716,7 +718,7 @@ impl CpuInteractiveFdmPreviewRuntime {
             until_seconds,
             grid,
             field_every_n,
-            preview_request,
+            display_selection,
             on_step,
             default_scalar_trace,
             &mut scalar_schedules,
@@ -741,7 +743,7 @@ impl CpuInteractiveFdmPreviewRuntime {
         until_seconds: f64,
         grid: [u32; 3],
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
         default_scalar_trace: bool,
         scalar_schedules: &mut [OutputSchedule],
@@ -811,13 +813,14 @@ impl CpuInteractiveFdmPreviewRuntime {
                 artifacts,
             )?;
 
-            let preview_cfg = preview_request();
-            let preview_emit_every = u64::from(preview_cfg.every_n.max(1));
-            let preview_due = last_preview_revision != Some(preview_cfg.revision)
+            let display_state = display_selection();
+            let preview_cfg = display_state.preview_request();
+            let preview_emit_every = u64::from(display_state.selection.every_n.max(1));
+            let preview_due = last_preview_revision != Some(display_state.revision)
                 || local_stats.step <= 1
                 || local_stats.step % preview_emit_every == 0;
             let preview_field = if preview_due {
-                last_preview_revision = Some(preview_cfg.revision);
+                last_preview_revision = Some(display_state.revision);
                 Some(build_grid_preview_field(
                     &preview_cfg,
                     select_observables(&observables, &preview_cfg.quantity),
@@ -936,7 +939,7 @@ impl CudaInteractiveFdmPreviewRuntime {
         until_seconds: f64,
         grid: [u32; 3],
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         if !self.plan_signature.eq(&normalize_plan_signature(plan)) {
@@ -982,13 +985,14 @@ impl CudaInteractiveFdmPreviewRuntime {
             let mut local_stats = total_stats.clone();
             local_stats.step -= base_step;
             local_stats.time -= base_time;
-            let preview_cfg = preview_request();
-            let preview_emit_every = u64::from(preview_cfg.every_n.max(1));
-            let preview_due = last_preview_revision != Some(preview_cfg.revision)
+            let display_state = display_selection();
+            let preview_cfg = display_state.preview_request();
+            let preview_emit_every = u64::from(display_state.selection.every_n.max(1));
+            let preview_due = last_preview_revision != Some(display_state.revision)
                 || local_stats.step <= 1
                 || local_stats.step % preview_emit_every == 0;
             let preview_field = if preview_due {
-                last_preview_revision = Some(preview_cfg.revision);
+                last_preview_revision = Some(display_state.revision);
                 Some(self.backend.copy_live_preview_field(
                     &preview_cfg,
                     grid,
@@ -1049,7 +1053,7 @@ impl CudaInteractiveFdmPreviewRuntime {
         outputs: &[OutputIR],
         grid: [u32; 3],
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
@@ -1115,13 +1119,14 @@ impl CudaInteractiveFdmPreviewRuntime {
             local_stats.step -= base_step;
             local_stats.time -= base_time;
             latest_local_stats = Some(local_stats.clone());
-            let preview_cfg = preview_request();
-            let preview_emit_every = u64::from(preview_cfg.every_n.max(1));
-            let preview_due = last_preview_revision != Some(preview_cfg.revision)
+            let display_state = display_selection();
+            let preview_cfg = display_state.preview_request();
+            let preview_emit_every = u64::from(display_state.selection.every_n.max(1));
+            let preview_due = last_preview_revision != Some(display_state.revision)
                 || local_stats.step <= 1
                 || local_stats.step % preview_emit_every == 0;
             let preview_field = if preview_due {
-                last_preview_revision = Some(preview_cfg.revision);
+                last_preview_revision = Some(display_state.revision);
                 Some(self.backend.copy_live_preview_field(
                     &preview_cfg,
                     grid,
@@ -1257,7 +1262,7 @@ impl CpuInteractiveFemPreviewRuntime {
         plan: &FemPlanIR,
         until_seconds: f64,
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         if !self.plan_signature.eq(&normalize_fem_plan_signature(plan)) {
@@ -1316,13 +1321,14 @@ impl CpuInteractiveFemPreviewRuntime {
             let mut local_stats = total_stats.clone();
             local_stats.step -= base_step;
             local_stats.time -= base_time;
-            let preview_cfg = preview_request();
-            let preview_emit_every = u64::from(preview_cfg.every_n.max(1));
-            let preview_due = last_preview_revision != Some(preview_cfg.revision)
+            let display_state = display_selection();
+            let preview_cfg = display_state.preview_request();
+            let preview_emit_every = u64::from(display_state.selection.every_n.max(1));
+            let preview_due = last_preview_revision != Some(display_state.revision)
                 || local_stats.step <= 1
                 || local_stats.step % preview_emit_every == 0;
             let preview_field = if preview_due {
-                last_preview_revision = Some(preview_cfg.revision);
+                last_preview_revision = Some(display_state.revision);
                 Some(crate::preview::build_mesh_preview_field(
                     &preview_cfg,
                     select_observables(&observables, &preview_cfg.quantity),
@@ -1382,7 +1388,7 @@ impl CpuInteractiveFemPreviewRuntime {
         outputs: &[OutputIR],
         field_every_n: u64,
         artifact_writer: Option<ArtifactPipelineSender>,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
         if !self.plan_signature.eq(&normalize_fem_plan_signature(plan)) {
@@ -1484,13 +1490,14 @@ impl CpuInteractiveFemPreviewRuntime {
                 &mut artifacts,
             )?;
 
-            let preview_cfg = preview_request();
-            let preview_emit_every = u64::from(preview_cfg.every_n.max(1));
-            let preview_due = last_preview_revision != Some(preview_cfg.revision)
+            let display_state = display_selection();
+            let preview_cfg = display_state.preview_request();
+            let preview_emit_every = u64::from(display_state.selection.every_n.max(1));
+            let preview_due = last_preview_revision != Some(display_state.revision)
                 || local_stats.step <= 1
                 || local_stats.step % preview_emit_every == 0;
             let preview_field = if preview_due {
-                last_preview_revision = Some(preview_cfg.revision);
+                last_preview_revision = Some(display_state.revision);
                 Some(crate::preview::build_mesh_preview_field(
                     &preview_cfg,
                     select_observables(&observables, &preview_cfg.quantity),
@@ -1609,7 +1616,7 @@ impl GpuInteractiveFemPreviewRuntime {
         plan: &FemPlanIR,
         until_seconds: f64,
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         if !self.plan_signature.eq(&normalize_fem_plan_signature(plan)) {
@@ -1653,13 +1660,14 @@ impl GpuInteractiveFemPreviewRuntime {
             let mut local_stats = total_stats.clone();
             local_stats.step -= base_step;
             local_stats.time -= base_time;
-            let preview_cfg = preview_request();
-            let preview_emit_every = u64::from(preview_cfg.every_n.max(1));
-            let preview_due = last_preview_revision != Some(preview_cfg.revision)
+            let display_state = display_selection();
+            let preview_cfg = display_state.preview_request();
+            let preview_emit_every = u64::from(display_state.selection.every_n.max(1));
+            let preview_due = last_preview_revision != Some(display_state.revision)
                 || local_stats.step <= 1
                 || local_stats.step % preview_emit_every == 0;
             let preview_field = if preview_due {
-                last_preview_revision = Some(preview_cfg.revision);
+                last_preview_revision = Some(display_state.revision);
                 Some(
                     self.backend
                         .copy_live_preview_field(&preview_cfg, self.node_count)?,
@@ -1719,7 +1727,7 @@ impl GpuInteractiveFemPreviewRuntime {
         outputs: &[OutputIR],
         field_every_n: u64,
         artifact_writer: Option<ArtifactPipelineSender>,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
         if !self.plan_signature.eq(&normalize_fem_plan_signature(plan)) {
@@ -1781,13 +1789,14 @@ impl GpuInteractiveFemPreviewRuntime {
             local_stats.step -= base_step;
             local_stats.time -= base_time;
             latest_local_stats = Some(local_stats.clone());
-            let preview_cfg = preview_request();
-            let preview_emit_every = u64::from(preview_cfg.every_n.max(1));
-            let preview_due = last_preview_revision != Some(preview_cfg.revision)
+            let display_state = display_selection();
+            let preview_cfg = display_state.preview_request();
+            let preview_emit_every = u64::from(display_state.selection.every_n.max(1));
+            let preview_due = last_preview_revision != Some(display_state.revision)
                 || local_stats.step <= 1
                 || local_stats.step % preview_emit_every == 0;
             let preview_field = if preview_due {
-                last_preview_revision = Some(preview_cfg.revision);
+                last_preview_revision = Some(display_state.revision);
                 Some(
                     self.backend
                         .copy_live_preview_field(&preview_cfg, self.node_count)?,
@@ -2505,7 +2514,7 @@ impl InteractiveBackend for InteractiveFdmPreviewRuntime {
         problem: &ProblemIR,
         until_seconds: f64,
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
@@ -2521,7 +2530,7 @@ impl InteractiveBackend for InteractiveFdmPreviewRuntime {
             &plan.output_plan.outputs,
             fdm.grid.cells,
             field_every_n,
-            preview_request,
+            display_selection,
             artifact_writer,
             on_step,
         )
@@ -2574,7 +2583,7 @@ impl InteractiveBackend for InteractiveFemPreviewRuntime {
         problem: &ProblemIR,
         until_seconds: f64,
         field_every_n: u64,
-        preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+        display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
@@ -2590,7 +2599,7 @@ impl InteractiveBackend for InteractiveFemPreviewRuntime {
             &plan.output_plan.outputs,
             field_every_n,
             artifact_writer,
-            preview_request,
+            display_selection,
             on_step,
         )
     }

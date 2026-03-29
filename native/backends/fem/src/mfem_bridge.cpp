@@ -608,6 +608,161 @@ void compute_uniaxial_anisotropy_field(
     }
 }
 
+/// Compute interfacial DMI effective field using element-loop gradient.
+/// H_dmi_x =  (2D / μ₀Ms) ∂m_z/∂x
+/// H_dmi_y =  (2D / μ₀Ms) ∂m_z/∂y
+/// H_dmi_z = -(2D / μ₀Ms) (∂m_x/∂x + ∂m_y/∂y)
+/// Energy: e_dmi = D [mz(∂mx/∂x + ∂my/∂y) - mx ∂mz/∂x - my ∂mz/∂y] (integrated)
+bool compute_interfacial_dmi_field(
+    Context &ctx,
+    const std::vector<double> &m_xyz,
+    std::vector<double> &h_dmi_xyz,
+    double *dmi_energy,
+    std::string &error)
+{
+    const size_t n = ctx.n_nodes;
+    h_dmi_xyz.assign(n * 3u, 0.0);
+    if (!ctx.enable_dmi || ctx.dmi_D == 0.0) {
+        if (dmi_energy != nullptr) {
+            *dmi_energy = 0.0;
+        }
+        return true;
+    }
+
+#if FULLMAG_HAS_MFEM_STACK
+    if (!ctx.mfem_ready) {
+        error = "MFEM context not ready for DMI computation";
+        return false;
+    }
+
+    auto *fes = static_cast<mfem::FiniteElementSpace *>(ctx.mfem_fes);
+    auto *mesh = static_cast<mfem::Mesh *>(ctx.mfem_mesh);
+    if (fes == nullptr || mesh == nullptr) {
+        error = "MFEM FE space or mesh is null during DMI computation";
+        return false;
+    }
+
+    const double prefactor = 2.0 * ctx.dmi_D /
+                             (kMu0 * ctx.material.saturation_magnetisation);
+    double energy = 0.0;
+
+    // Node-accumulated weighted contributions
+    std::vector<double> node_weight(n, 0.0);
+    // h_dmi_xyz already zeroed above
+
+    // Unpack m components for element-loop access
+    unpack_aos_to_existing_components(m_xyz, ctx.mfem_mx, ctx.mfem_my, ctx.mfem_mz);
+
+    // Set up GridFunctions for reading
+    auto *gf_mx = static_cast<mfem::GridFunction *>(ctx.mfem_gf_mx);
+    auto *gf_my = static_cast<mfem::GridFunction *>(ctx.mfem_gf_my);
+    auto *gf_mz = static_cast<mfem::GridFunction *>(ctx.mfem_gf_mz);
+
+    for (int elem = 0; elem < mesh->GetNE(); ++elem) {
+        // Skip non-magnetic elements
+        if (!ctx.magnetic_element_mask.empty() &&
+            static_cast<size_t>(elem) < ctx.magnetic_element_mask.size() &&
+            ctx.magnetic_element_mask[elem] == 0u) {
+            continue;
+        }
+
+        const mfem::FiniteElement *fe = fes->GetFE(elem);
+        mfem::ElementTransformation *T = mesh->GetElementTransformation(elem);
+        mfem::Array<int> dofs;
+        fes->GetElementDofs(elem, dofs);
+        const int local_ndof = dofs.Size();
+
+        // Extract local m_x, m_y, m_z
+        mfem::Vector mx_elem(local_ndof), my_elem(local_ndof), mz_elem(local_ndof);
+        for (int i = 0; i < local_ndof; ++i) {
+            const int gdof = dofs[i] >= 0 ? dofs[i] : -1 - dofs[i];
+            const double sign = dofs[i] >= 0 ? 1.0 : -1.0;
+            mx_elem(i) = sign * (*gf_mx)(gdof);
+            my_elem(i) = sign * (*gf_my)(gdof);
+            mz_elem(i) = sign * (*gf_mz)(gdof);
+        }
+
+        const mfem::IntegrationRule &ir =
+            mfem::IntRules.Get(fe->GetGeomType(), 2 * fe->GetOrder());
+
+        for (int q = 0; q < ir.GetNPoints(); ++q) {
+            const mfem::IntegrationPoint &ip = ir.IntPoint(q);
+            T->SetIntPoint(&ip);
+            const double w = ip.weight * T->Weight();
+
+            // Gradient of shape functions in physical coordinates
+            mfem::DenseMatrix dshape(local_ndof, 3);
+            fe->CalcPhysDShape(*T, dshape);
+
+            // Compute spatial derivatives: ∂m_x/∂x, ∂m_y/∂y, ∂m_z/∂x, ∂m_z/∂y
+            double dmx_dx = 0.0, dmy_dy = 0.0;
+            double dmz_dx = 0.0, dmz_dy = 0.0;
+            for (int i = 0; i < local_ndof; ++i) {
+                dmx_dx += mx_elem(i) * dshape(i, 0);
+                dmy_dy += my_elem(i) * dshape(i, 1);
+                dmz_dx += mz_elem(i) * dshape(i, 0);
+                dmz_dy += mz_elem(i) * dshape(i, 1);
+            }
+
+            // H_dmi at this quadrature point
+            const double hx = prefactor * dmz_dx;
+            const double hy = prefactor * dmz_dy;
+            const double hz = -prefactor * (dmx_dx + dmy_dy);
+
+            // Distribute to DOFs weighted by shape function
+            mfem::Vector shape(local_ndof);
+            fe->CalcShape(ip, shape);
+            for (int i = 0; i < local_ndof; ++i) {
+                const int gdof = dofs[i] >= 0 ? dofs[i] : -1 - dofs[i];
+                if (gdof < 0 || static_cast<uint32_t>(gdof) >= ctx.n_nodes) {
+                    continue;
+                }
+                const double phi_w = std::abs(shape(i)) * w;
+                const size_t base = static_cast<size_t>(gdof) * 3u;
+                h_dmi_xyz[base + 0] += phi_w * hx;
+                h_dmi_xyz[base + 1] += phi_w * hy;
+                h_dmi_xyz[base + 2] += phi_w * hz;
+                node_weight[gdof] += phi_w;
+            }
+
+            // Energy contribution: e_dmi = D [mz(∂mx/∂x + ∂my/∂y) - mx ∂mz/∂x - my ∂mz/∂y]
+            if (dmi_energy != nullptr) {
+                // Interpolate m at quadrature point
+                double mx_q = 0.0, my_q = 0.0, mz_q = 0.0;
+                for (int i = 0; i < local_ndof; ++i) {
+                    mx_q += mx_elem(i) * shape(i);
+                    my_q += my_elem(i) * shape(i);
+                    mz_q += mz_elem(i) * shape(i);
+                }
+                energy += ctx.dmi_D * (mz_q * (dmx_dx + dmy_dy) -
+                                       mx_q * dmz_dx - my_q * dmz_dy) * w;
+            }
+        }
+    }
+
+    // Normalize by accumulated weight (lumped-mass style)
+    for (size_t i = 0; i < n; ++i) {
+        if (node_weight[i] > kGeomEps) {
+            const size_t base = i * 3u;
+            const double inv_w = 1.0 / node_weight[i];
+            h_dmi_xyz[base + 0] *= inv_w;
+            h_dmi_xyz[base + 1] *= inv_w;
+            h_dmi_xyz[base + 2] *= inv_w;
+        }
+    }
+
+    if (dmi_energy != nullptr) {
+        *dmi_energy = energy;
+    }
+
+    return true;
+#else
+    // No MFEM stack — DMI requires element-loop gradient
+    error = "DMI computation requires MFEM stack";
+    return false;
+#endif
+}
+
 double external_energy_from_field(
     const Context &ctx,
     const std::vector<double> &m_xyz)
@@ -980,8 +1135,19 @@ bool compute_effective_fields_for_magnetization(
         ctx.h_ani_xyz.assign(m_xyz.size(), 0.0);
     }
 
+    double dmi = 0.0;
+    if (ctx.enable_dmi) {
+        if (!compute_interfacial_dmi_field(
+                ctx, m_xyz, ctx.h_dmi_xyz, &dmi, error)) {
+            return false;
+        }
+    } else {
+        ctx.h_dmi_xyz.assign(m_xyz.size(), 0.0);
+    }
+
     for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
-        h_eff_xyz[i] = h_ex_xyz[i] + h_demag_xyz[i] + ctx.h_ext_xyz[i] + ctx.h_ani_xyz[i];
+        h_eff_xyz[i] = h_ex_xyz[i] + h_demag_xyz[i] + ctx.h_ext_xyz[i] +
+                       ctx.h_ani_xyz[i] + ctx.h_dmi_xyz[i];
     }
 
     if (exchange_energy != nullptr) {
@@ -1890,9 +2056,18 @@ bool context_step_exchange_heun_mfem(
         }
         stats.anisotropy_energy_joules = ani_e;
     }
+    {
+        double dmi_e = 0.0;
+        if (ctx.enable_dmi) {
+            std::string dmi_err;
+            compute_interfacial_dmi_field(ctx, ctx.m_xyz, ctx.h_dmi_xyz, &dmi_e, dmi_err);
+        }
+        stats.dmi_energy_joules = dmi_e;
+    }
     stats.total_energy_joules =
         stats.exchange_energy_joules + stats.demag_energy_joules +
-        stats.external_energy_joules + stats.anisotropy_energy_joules;
+        stats.external_energy_joules + stats.anisotropy_energy_joules +
+        stats.dmi_energy_joules;
     stats.max_effective_field_amplitude = max_norm_aos(ctx.h_eff_xyz);
     stats.max_demag_field_amplitude = max_norm_aos(ctx.h_demag_xyz);
     stats.max_rhs_amplitude = max_rhs_final;
@@ -2198,9 +2373,18 @@ bool context_step_explicit_rk_mfem(
         }
         stats.anisotropy_energy_joules = ani_e;
     }
+    {
+        double dmi_e = 0.0;
+        if (ctx.enable_dmi) {
+            std::string dmi_err;
+            compute_interfacial_dmi_field(ctx, ctx.m_xyz, ctx.h_dmi_xyz, &dmi_e, dmi_err);
+        }
+        stats.dmi_energy_joules = dmi_e;
+    }
     stats.total_energy_joules =
         stats.exchange_energy_joules + stats.demag_energy_joules +
-        stats.external_energy_joules + stats.anisotropy_energy_joules;
+        stats.external_energy_joules + stats.anisotropy_energy_joules +
+        stats.dmi_energy_joules;
     stats.max_effective_field_amplitude = max_norm_aos(ctx.h_eff_xyz);
     stats.max_demag_field_amplitude = max_norm_aos(ctx.h_demag_xyz);
     stats.max_rhs_amplitude = max_rhs_final;

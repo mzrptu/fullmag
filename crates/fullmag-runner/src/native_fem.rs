@@ -224,6 +224,8 @@ impl NativeFemBackend {
             },
             uniaxial_anisotropy_constant: plan.material.uniaxial_anisotropy.unwrap_or(0.0),
             anisotropy_axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
+            has_interfacial_dmi: if plan.interfacial_dmi.is_some() { 1 } else { 0 },
+            dmi_constant: plan.interfacial_dmi.unwrap_or(0.0),
         };
 
         // Build adaptive config if present
@@ -272,6 +274,7 @@ impl NativeFemBackend {
             demag_energy_joules: 0.0,
             external_energy_joules: 0.0,
             anisotropy_energy_joules: 0.0,
+            dmi_energy_joules: 0.0,
             total_energy_joules: 0.0,
             max_effective_field_amplitude: 0.0,
             max_demag_field_amplitude: 0.0,
@@ -299,6 +302,7 @@ impl NativeFemBackend {
             e_demag: stats.demag_energy_joules,
             e_ext: stats.external_energy_joules,
             e_ani: stats.anisotropy_energy_joules,
+            e_dmi: stats.dmi_energy_joules,
             e_total: stats.total_energy_joules,
             max_dm_dt: stats.max_rhs_amplitude,
             max_h_eff: stats.max_effective_field_amplitude,
@@ -403,6 +407,13 @@ impl NativeFemBackend {
         )
     }
 
+    pub fn copy_h_dmi(&self, node_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
+        self.copy_field(
+            ffi::fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_DMI,
+            node_count,
+        )
+    }
+
     pub fn copy_live_preview_field(
         &self,
         request: &LivePreviewRequest,
@@ -414,6 +425,7 @@ impl NativeFemBackend {
             "H_ext" => self.copy_h_ext(node_count)?,
             "H_eff" => self.copy_h_eff(node_count)?,
             "H_ani" => self.copy_h_ani(node_count)?,
+            "H_dmi" => self.copy_h_dmi(node_count)?,
             _ => self.copy_m(node_count)?,
         };
         Ok(build_mesh_preview_field(request, &values))
@@ -541,6 +553,7 @@ mod tests {
             relaxation: None,
             demag_realization: None,
             air_box_config: None,
+            interfacial_dmi: None,
         }
     }
 
@@ -598,6 +611,7 @@ mod tests {
             relaxation: None,
             demag_realization: None,
             air_box_config: None,
+            interfacial_dmi: None,
         }
     }
 

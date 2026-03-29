@@ -41,6 +41,7 @@ pub struct StepStats {
     pub e_demag: f64,
     pub e_ext: f64,
     pub e_ani: f64,
+    pub e_dmi: f64,
     pub e_total: f64,
     pub max_dm_dt: f64,
     pub max_h_eff: f64,
@@ -74,6 +75,7 @@ impl Default for StepStats {
             e_demag: 0.0,
             e_ext: 0.0,
             e_ani: 0.0,
+            e_dmi: 0.0,
             e_total: 0.0,
             max_dm_dt: 0.0,
             max_h_eff: 0.0,
@@ -271,7 +273,7 @@ pub(crate) struct FieldSnapshot {
 pub(crate) struct LiveStepConsumer<'a> {
     pub grid: [u32; 3],
     pub field_every_n: u64,
-    pub preview_request: Option<&'a (dyn Fn() -> LivePreviewRequest + Send + Sync)>,
+    pub display_selection: Option<&'a (dyn Fn() -> crate::DisplaySelectionState + Send + Sync)>,
     pub on_step: &'a mut dyn FnMut(StepUpdate) -> StepAction,
 }
 

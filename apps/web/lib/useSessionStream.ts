@@ -155,6 +155,26 @@ export interface PreviewConfig {
   max_points: number;
 }
 
+export type DisplayKind = "vector_field" | "spatial_scalar" | "global_scalar";
+
+export interface DisplaySelection {
+  quantity: string;
+  kind: DisplayKind;
+  component: string;
+  layer: number;
+  all_layers: boolean;
+  x_chosen_size: number;
+  y_chosen_size: number;
+  every_n: number;
+  max_points: number;
+  auto_scale_enabled: boolean;
+}
+
+export interface CurrentDisplaySelection {
+  revision: number;
+  selection: DisplaySelection;
+}
+
 export interface ScriptBuilderSolverState {
   integrator: string;
   fixed_timestep: string;
@@ -196,6 +216,7 @@ export interface SessionState {
   fem_mesh: FemLiveMesh | null;
   latest_fields: LatestFields;
   artifacts: ArtifactEntry[];
+  display_selection: CurrentDisplaySelection | null;
   preview_config: PreviewConfig | null;
   preview: PreviewState | null;
 }
@@ -216,6 +237,7 @@ interface SnapshotCurrentLiveEvent {
 interface PreviewCurrentLiveEvent {
   kind: "preview";
   session_id: string;
+  display_selection?: unknown;
   preview_config: unknown;
   preview?: unknown;
 }
@@ -290,6 +312,16 @@ function mergeSessionState(prev: SessionState | null, next: SessionState): Sessi
   const nextRunSteps = next.run?.total_steps ?? -1;
   if (prev.run && next.run && nextRunSteps < prevRunSteps) {
     merged.run = prev.run;
+  }
+
+  if (
+    prev.display_selection &&
+    (
+      !next.display_selection ||
+      next.display_selection.revision < prev.display_selection.revision
+    )
+  ) {
+    merged.display_selection = prev.display_selection;
   }
 
   if (
@@ -426,6 +458,42 @@ function normalizeLatestFields(raw: any): LatestFields {
   return { fields, grid };
 }
 
+function normalizeDisplayKind(raw: unknown): DisplayKind {
+  switch (raw) {
+    case "spatial_scalar":
+      return "spatial_scalar";
+    case "global_scalar":
+      return "global_scalar";
+    default:
+      return "vector_field";
+  }
+}
+
+function normalizeDisplaySelection(raw: any): CurrentDisplaySelection | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const selection = raw.selection;
+  if (!selection || typeof selection !== "object") {
+    return null;
+  }
+  return {
+    revision: Number(raw.revision ?? 0),
+    selection: {
+      quantity: String(selection.quantity ?? "m"),
+      kind: normalizeDisplayKind(selection.kind),
+      component: String(selection.component ?? "3D"),
+      layer: Number(selection.layer ?? 0),
+      all_layers: Boolean(selection.all_layers),
+      x_chosen_size: Number(selection.x_chosen_size ?? 0),
+      y_chosen_size: Number(selection.y_chosen_size ?? 0),
+      every_n: Number(selection.every_n ?? 10),
+      max_points: Number(selection.max_points ?? 16384),
+      auto_scale_enabled: Boolean(selection.auto_scale_enabled ?? true),
+    },
+  };
+}
+
 function normalizePreviewConfig(raw: any): PreviewConfig | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -441,6 +509,26 @@ function normalizePreviewConfig(raw: any): PreviewConfig | null {
     y_chosen_size: Number(raw.y_chosen_size ?? 0),
     auto_scale_enabled: Boolean(raw.auto_scale_enabled ?? true),
     max_points: Number(raw.max_points ?? 0),
+  };
+}
+
+function previewConfigFromDisplaySelection(
+  displaySelection: CurrentDisplaySelection | null,
+): PreviewConfig | null {
+  if (!displaySelection) {
+    return null;
+  }
+  return {
+    revision: displaySelection.revision,
+    quantity: displaySelection.selection.quantity,
+    component: displaySelection.selection.component,
+    layer: displaySelection.selection.layer,
+    all_layers: displaySelection.selection.all_layers,
+    every_n: displaySelection.selection.every_n,
+    x_chosen_size: displaySelection.selection.x_chosen_size,
+    y_chosen_size: displaySelection.selection.y_chosen_size,
+    auto_scale_enabled: displaySelection.selection.auto_scale_enabled,
+    max_points: displaySelection.selection.max_points,
   };
 }
 
@@ -548,13 +636,32 @@ function mergePreviewEvent(
     return prev;
   }
 
-  let previewConfig = normalizePreviewConfig(raw.preview_config) ?? prev.preview_config;
+  let displaySelection =
+    normalizeDisplaySelection(raw.display_selection) ?? prev.display_selection;
+  if (
+    displaySelection &&
+    prev.display_selection &&
+    displaySelection.revision < prev.display_selection.revision
+  ) {
+    displaySelection = prev.display_selection;
+  }
+
+  let previewConfig =
+    normalizePreviewConfig(raw.preview_config) ??
+    previewConfigFromDisplaySelection(displaySelection) ??
+    prev.preview_config;
   if (
     previewConfig &&
     prev.preview_config &&
     previewConfig.revision < prev.preview_config.revision
   ) {
     previewConfig = prev.preview_config;
+  }
+  if (
+    displaySelection &&
+    (!previewConfig || displaySelection.revision > previewConfig.revision)
+  ) {
+    previewConfig = previewConfigFromDisplaySelection(displaySelection);
   }
 
   let preview = normalizePreviewState(raw.preview);
@@ -568,6 +675,7 @@ function mergePreviewEvent(
 
   return {
     ...prev,
+    display_selection: displaySelection,
     preview_config: previewConfig,
     preview,
   };
@@ -578,6 +686,7 @@ function normalizeSessionState(raw: any): SessionState {
   const latestFields = normalizeLatestFields(raw.latest_fields);
   const rawPreview = raw.preview ?? null;
   const rawPreviewConfig = raw.preview_config ?? null;
+  const displaySelection = normalizeDisplaySelection(raw.display_selection);
   const fallbackGrid = latestFields.grid;
 
   const liveState: LiveState | null = rawLive
@@ -649,7 +758,10 @@ function normalizeSessionState(raw: any): SessionState {
     fem_mesh: raw.fem_mesh ?? raw.live_state?.latest_step?.fem_mesh ?? null,
     latest_fields: latestFields,
     artifacts: Array.isArray(raw.artifacts) ? raw.artifacts : [],
-    preview_config: normalizePreviewConfig(rawPreviewConfig),
+    display_selection: displaySelection,
+    preview_config:
+      normalizePreviewConfig(rawPreviewConfig) ??
+      previewConfigFromDisplaySelection(displaySelection),
     preview: normalizePreviewState(rawPreview),
   };
 }

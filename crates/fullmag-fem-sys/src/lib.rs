@@ -50,6 +50,7 @@ pub enum fullmag_fem_observable {
     FULLMAG_FEM_OBSERVABLE_H_EXT = 4,
     FULLMAG_FEM_OBSERVABLE_H_EFF = 5,
     FULLMAG_FEM_OBSERVABLE_H_ANI = 6,
+    FULLMAG_FEM_OBSERVABLE_H_DMI = 7,
 }
 
 #[repr(C)]
@@ -136,6 +137,8 @@ pub struct fullmag_fem_plan_desc {
     pub has_uniaxial_anisotropy: i32,
     pub uniaxial_anisotropy_constant: f64,
     pub anisotropy_axis: [f64; 3],
+    pub has_interfacial_dmi: i32,
+    pub dmi_constant: f64,
 }
 
 #[repr(C)]
@@ -148,6 +151,7 @@ pub struct fullmag_fem_step_stats {
     pub demag_energy_joules: f64,
     pub external_energy_joules: f64,
     pub anisotropy_energy_joules: f64,
+    pub dmi_energy_joules: f64,
     pub total_energy_joules: f64,
     pub max_effective_field_amplitude: f64,
     pub max_demag_field_amplitude: f64,

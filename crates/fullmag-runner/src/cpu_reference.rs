@@ -28,6 +28,7 @@ use crate::types::{
     ExecutedRun, ExecutionProvenance, FieldSnapshot, LivePreviewRequest, LiveStepConsumer,
     RunError, RunResult, RunStatus, StateObservables, StepAction, StepStats, StepUpdate,
 };
+use crate::DisplaySelectionState;
 
 use std::time::Instant;
 
@@ -62,7 +63,7 @@ pub(crate) fn execute_reference_fdm_with_callback(
         Some(LiveStepConsumer {
             grid,
             field_every_n,
-            preview_request: None,
+            display_selection: None,
             on_step,
         }),
         None,
@@ -75,7 +76,7 @@ pub(crate) fn execute_reference_fdm_with_live_preview(
     outputs: &[OutputIR],
     grid: [u32; 3],
     field_every_n: u64,
-    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
     execute_reference_fdm_impl(
@@ -85,7 +86,7 @@ pub(crate) fn execute_reference_fdm_with_live_preview(
         Some(LiveStepConsumer {
             grid,
             field_every_n,
-            preview_request: Some(preview_request),
+            display_selection: Some(display_selection),
             on_step,
         }),
         None,
@@ -123,7 +124,7 @@ pub(crate) fn execute_reference_fdm_with_callback_streaming(
         Some(LiveStepConsumer {
             grid,
             field_every_n,
-            preview_request: None,
+            display_selection: None,
             on_step,
         }),
         Some(artifact_writer),
@@ -136,7 +137,7 @@ pub(crate) fn execute_reference_fdm_with_live_preview_streaming(
     outputs: &[OutputIR],
     grid: [u32; 3],
     field_every_n: u64,
-    preview_request: &(dyn Fn() -> LivePreviewRequest + Send + Sync),
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     artifact_writer: ArtifactPipelineSender,
     on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
@@ -147,7 +148,7 @@ pub(crate) fn execute_reference_fdm_with_live_preview_streaming(
         Some(LiveStepConsumer {
             grid,
             field_every_n,
-            preview_request: Some(preview_request),
+            display_selection: Some(display_selection),
             on_step,
         }),
         Some(artifact_writer),
@@ -538,27 +539,28 @@ fn execute_reference_fdm_impl(
             if let Some(live) = live.as_mut() {
                 let observables = observe_state(&problem, &state)?;
                 let emit_every = live.field_every_n.max(1);
-                let preview_request = live.preview_request.map(|get| get());
-                let preview_due = preview_request
+                let display_selection = live.display_selection.map(|get| get());
+                let preview_due = display_selection
                     .as_ref()
-                    .map(|request| {
-                        let preview_emit_every = u64::from(request.every_n.max(1));
-                        last_preview_revision != Some(request.revision)
+                    .map(|selection| {
+                        let preview_emit_every = u64::from(selection.selection.every_n.max(1));
+                        last_preview_revision != Some(selection.revision)
                             || step_count <= 1
                             || step_count % preview_emit_every == 0
                     })
                     .unwrap_or(false);
                 let magnetization =
-                    if live.preview_request.is_none() && step_count % emit_every == 0 {
+                    if live.display_selection.is_none() && step_count % emit_every == 0 {
                         Some(flatten_vectors(&observables.magnetization))
                     } else {
                         None
                     };
                 let preview_field = if preview_due {
-                    let request = preview_request.as_ref().expect("checked preview_due");
-                    last_preview_revision = Some(request.revision);
+                    let selection = display_selection.as_ref().expect("checked preview_due");
+                    let request = selection.preview_request();
+                    last_preview_revision = Some(selection.revision);
                     Some(build_grid_preview_field(
-                        request,
+                        &request,
                         select_observables(&observables, &request.quantity),
                         live.grid,
                         plan.active_mask.as_deref(),

@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import * as THREE from "three";
 import { Text, Line, Billboard } from "@react-three/drei";
+import { pickUnitScale } from "../../../lib/units";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -27,13 +28,10 @@ interface SceneAxes3DProps {
   visible?: boolean;
 }
 
-/* ── SI prefix logic (reused from DimensionOverlay) ─────────────── */
+/* ── SI prefix logic (from shared lib/units.ts) ─────────────── */
 
-function pickUnit(extent: number): { scale: number; unit: string } {
-  const abs = Math.abs(extent);
-  if (abs >= 1e-2) return { scale: 1e3, unit: "mm" };
-  if (abs >= 1e-5) return { scale: 1e6, unit: "µm" };
-  return { scale: 1e9, unit: "nm" };
+function pickUnit(extent: number) {
+  return pickUnitScale(extent);
 }
 
 function niceTickValues(maxVal: number, maxTicks = 5): number[] {

@@ -37,6 +37,7 @@ export function currentLiveApiClient() {
       ws: `${wsBaseUrl}/ws/live/current`,
       commands: `${baseUrl}/v1/live/current/commands`,
       preview: (path: string) => `${baseUrl}/v1/live/current/preview${path}`,
+      previewSelection: `${baseUrl}/v1/live/current/preview/selection`,
       importAsset: `${baseUrl}/v1/live/current/assets/import`,
       scriptSync: `${baseUrl}/v1/live/current/script/sync`,
       scriptBuilder: `${baseUrl}/v1/live/current/script/builder`,
@@ -58,6 +59,13 @@ export function currentLiveApiClient() {
     },
     updatePreview(path: string, payload: JsonObject = {}) {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/preview${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
+    updateDisplaySelection(payload: JsonObject) {
+      return requestJson<JsonObject>(`${baseUrl}/v1/live/current/preview/selection`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

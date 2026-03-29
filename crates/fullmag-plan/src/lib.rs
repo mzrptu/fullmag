@@ -1624,6 +1624,7 @@ fn plan_fem(
     let mut enable_demag = false;
     let mut external_field = None;
     let mut demag_realization: Option<String> = None;
+    let mut interfacial_dmi: Option<f64> = None;
     for term in &problem.energy_terms {
         match term {
             fullmag_ir::EnergyTermIR::Exchange => {
@@ -1645,17 +1646,17 @@ fn plan_fem(
                 }
                 external_field = Some([b[0] / MU0, b[1] / MU0, b[2] / MU0]);
             }
-            other => {
-                errors.push(format!(
-                    "energy term '{:?}' is semantic-only in the current FEM planning baseline",
-                    other
-                ));
+            fullmag_ir::EnergyTermIR::InterfacialDmi { d } => {
+                if interfacial_dmi.is_some() {
+                    errors.push("InterfacialDmi is declared more than once".to_string());
+                }
+                interfacial_dmi = Some(*d);
             }
         }
     }
-    if !(enable_exchange || enable_demag || external_field.is_some()) {
+    if !(enable_exchange || enable_demag || external_field.is_some() || interfacial_dmi.is_some()) {
         errors.push(
-            "the current FEM planning baseline requires at least one of Exchange, Demag, or Zeeman"
+            "the current FEM planning baseline requires at least one of Exchange, Demag, Zeeman, or InterfacialDmi"
                 .to_string(),
         );
     }
@@ -1737,6 +1738,7 @@ fn plan_fem(
         relaxation,
         demag_realization: resolved_demag_realization,
         air_box_config: None,
+        interfacial_dmi,
     };
     let study_note = if let Some(control) = fem_plan.relaxation.as_ref() {
         format!(
@@ -1815,11 +1817,13 @@ fn validate_executable_outputs(
     enable_zeeman: bool,
     errors: &mut Vec<String>,
 ) {
-    let allowed_fields = ["m", "H_ex", "H_demag", "H_ext", "H_eff"];
+    let allowed_fields = ["m", "H_ex", "H_demag", "H_ext", "H_eff", "H_ani", "H_dmi"];
     let allowed_scalars = [
         "E_ex",
         "E_demag",
         "E_ext",
+        "E_ani",
+        "E_dmi",
         "E_total",
         "time",
         "step",

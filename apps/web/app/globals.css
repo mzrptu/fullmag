@@ -39,27 +39,28 @@
 
 @layer base {
   :root {
-    /* Base Shadcn Midnight Theme */
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --radius: 0.5rem;
+    /* Catppuccin Mocha Theme */
+    --background: 240 21.1% 14.9%; /* Base #1e1e2e */
+    --foreground: 226 64.3% 88.2%; /* Text #cdd6f4 */
+    --card: 240 21.3% 12%; /* Mantle #181825 */
+    --card-foreground: 226 64.3% 88.2%;
+    --popover: 240 21.3% 12%;
+    --popover-foreground: 226 64.3% 88.2%;
+    --primary: 217 92.1% 75.9%; /* Blue #89b4fa */
+    --primary-foreground: 240 23.1% 8.6%; /* Crust #11111b */
+    --secondary: 236.8 16.3% 22.9%; /* Surface0 #313244 */
+    --secondary-foreground: 226 64.3% 88.2%;
+    --muted: 236.8 16.3% 22.9%; 
+    --muted-foreground: 227.6 24.3% 72.2%; /* Subtext0 #a6adc8 */
+    --accent: 231.1 97.4% 85.1%; /* Lavender #b4befe */
+    --accent-foreground: 240 23.1% 8.6%;
+    --destructive: 343.3 80.9% 74.5%; /* Red #f38ba8 */
+    --destructive-foreground: 240 23.1% 8.6%;
+    --border: 236.8 16.3% 22.9%; /* Surface0 */
+    --border-subtle: 240 21.3% 12%; /* Mantle */
+    --input: 236.8 16.3% 22.9%;
+    --ring: 231.1 97.4% 85.1%; /* Lavender */
+    --radius: 0.6rem;
 
     /* Legacy compatibility maps (to prevent total breakage while we migrate) */
     --ide-bg: hsl(var(--background));
@@ -116,8 +117,7 @@ html {
 }
 
 body {
-  background: var(--bg-root);
-  color: var(--text-primary);
+  @apply bg-background text-foreground;
   min-height: 100vh;
   overflow-x: hidden;
 }
@@ -720,8 +720,8 @@ body,
 
 .hero-surface {
   background:
-    linear-gradient(145deg, rgba(11, 23, 42, 0.92), rgba(7, 15, 28, 0.74)),
-    linear-gradient(180deg, rgba(125, 211, 252, 0.06), transparent);
+    linear-gradient(145deg, rgba(30, 30, 46, 0.92), rgba(17, 17, 27, 0.88)),
+    linear-gradient(180deg, rgba(137, 180, 250, 0.06), transparent);
   border: 1px solid var(--border-strong);
   border-radius: 32px;
   box-shadow: var(--shadow);
@@ -834,8 +834,8 @@ pre {
 .hero-metrics article {
   padding: 18px;
   border-radius: 20px;
-  background: rgba(15, 27, 48, 0.76);
-  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(24, 24, 37, 0.76); /* Catppuccin Mantle */
+  border: 1px solid rgba(69, 71, 90, 0.3); /* Surface1 */
 }
 
 .hero-metrics span,
@@ -879,8 +879,8 @@ pre {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #7dd3fc, #a78bfa);
-  box-shadow: 0 0 12px rgba(125, 211, 252, 0.55);
+  background: linear-gradient(135deg, #b4befe, #cba6f7); /* Lavender → Mauve */
+  box-shadow: 0 0 12px rgba(180, 190, 254, 0.4);
 }
 
 .tab-rail {
@@ -892,17 +892,17 @@ pre {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   padding: 12px;
-  background: rgba(6, 14, 26, 0.74);
+  background: rgba(17, 17, 27, 0.74); /* Catppuccin Crust */
   border: 1px solid var(--border);
   border-radius: 22px;
-  box-shadow: 0 18px 48px rgba(2, 8, 23, 0.24);
+  box-shadow: 0 18px 48px rgba(17, 17, 27, 0.4);
 }
 
 .tab-chip {
   padding: 14px 16px;
   border-radius: 18px;
-  background: rgba(12, 23, 42, 0.72);
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(24, 24, 37, 0.72); /* Catppuccin Mantle */
+  border: 1px solid rgba(69, 71, 90, 0.25);
   transition:
     transform 180ms ease,
     border-color 180ms ease,
@@ -912,8 +912,8 @@ pre {
 .tab-chip:hover,
 .tab-chip:focus-visible {
   transform: translateY(-1px);
-  border-color: rgba(125, 211, 252, 0.38);
-  background: rgba(18, 31, 54, 0.9);
+  border-color: rgba(180, 190, 254, 0.38); /* Lavender */
+  background: rgba(30, 30, 46, 0.9); /* Base */
   outline: none;
 }
 
@@ -930,8 +930,8 @@ pre {
 .dashboard-section {
   margin-top: 24px;
   padding: 32px;
-  background: rgba(5, 12, 24, 0.6);
-  border: 1px solid rgba(148, 163, 184, 0.11);
+  background: rgba(17, 17, 27, 0.6); /* Crust */
+  border: 1px solid rgba(69, 71, 90, 0.2); /* Surface1 */
   border-radius: 28px;
 }
 
@@ -985,15 +985,15 @@ pre {
 }
 
 .accent-cyan::after {
-  background: #22d3ee;
+  background: #cba6f7; /* Catppuccin Mauve */
 }
 
 .accent-violet::after {
-  background: #8b5cf6;
+  background: #b4befe; /* Catppuccin Lavender */
 }
 
 .accent-amber::after {
-  background: #f59e0b;
+  background: #fab387; /* Catppuccin Peach */
 }
 
 .split-grid {
@@ -1025,9 +1025,9 @@ pre {
 
 .timeline-marker {
   min-height: 56px;
-  background: linear-gradient(135deg, rgba(125, 211, 252, 0.18), rgba(167, 139, 250, 0.22));
-  border: 1px solid rgba(125, 211, 252, 0.2);
-  color: #dff4ff;
+  background: linear-gradient(135deg, rgba(180, 190, 254, 0.18), rgba(203, 166, 247, 0.22));
+  border: 1px solid rgba(180, 190, 254, 0.2);
+  color: #cdd6f4; /* Catppuccin Text */
 }
 
 .timeline-item h4 {
@@ -1039,8 +1039,8 @@ pre {
   margin-top: 18px;
   padding: 18px;
   border-radius: 20px;
-  background: rgba(2, 6, 23, 0.84);
-  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(17, 17, 27, 0.84); /* Crust */
+  border: 1px solid rgba(69, 71, 90, 0.25); /* Surface1 */
   overflow-x: auto;
   line-height: 1.65;
 }
@@ -1056,9 +1056,9 @@ pre {
 
 .status-pill {
   padding: 8px 12px;
-  background: rgba(125, 211, 252, 0.14);
-  border: 1px solid rgba(125, 211, 252, 0.18);
-  color: #dff4ff;
+  background: rgba(180, 190, 254, 0.14); /* Lavender */
+  border: 1px solid rgba(180, 190, 254, 0.18);
+  color: #cdd6f4; /* Text */
   white-space: nowrap;
 }
 
@@ -1088,12 +1088,12 @@ th,
 td {
   text-align: left;
   padding: 16px 14px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid rgba(69, 71, 90, 0.2); /* Surface1 */
   vertical-align: top;
 }
 
 th {
-  color: #f7fbff;
+  color: #cdd6f4; /* Catppuccin Text */
   font-size: 0.84rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -1109,8 +1109,8 @@ th {
 .provenance-grid div {
   padding: 18px;
   border-radius: 18px;
-  background: rgba(10, 20, 37, 0.78);
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(24, 24, 37, 0.78); /* Mantle */
+  border: 1px solid rgba(69, 71, 90, 0.2); /* Surface1 */
 }
 
 .provenance-grid strong {

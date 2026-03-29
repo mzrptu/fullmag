@@ -25,7 +25,7 @@ flower.Ms = 752e3       # saturation magnetisation [A/m]
 flower.Aex = 15.5e-12   # exchange stiffness [J/m]
 flower.alpha = 0.1      # Gilbert damping
 flower.m = fm.uniform(0.1,0.0001,0.99)
-
+flower.m.loadfile()
 # ── External field ──────────────────────────────────────────
 # Cartesian:  fm.b_ext(0, 0, 0.1)          # 0.1 T along z
 # Spherical:  fm.b_ext(0.1, theta=0, phi=0) # same, via angles (degrees)
@@ -49,7 +49,7 @@ fm.tableautosave(1e-13)
 # ── Run ─────────────────────────────────────────────────────
 fm.relax(
     tol=1e-6,                       # torque tolerance (max_dm_dt)
-    max_steps=50_000,               # limit kroków
+    max_steps=100_000,               # limit kroków
     algorithm="llg_overdamped",     # algorytm relaksacji
     energy_tolerance=None,          # opcjonalnie: tolerancja energetyczna
 )

@@ -31,10 +31,32 @@ function ControlRoomShell() {
   /* ── Loading state ── */
   if (!ctx.session) {
     return (
-      <div className="flex flex-col items-center justify-center p-8 text-sm text-muted-foreground h-full bg-background">
-        {ctx.error
-          ? `Connection error: ${ctx.error}`
-          : "Connecting to local live workspace…"}
+      <div className="flex flex-col items-center justify-center p-8 text-sm text-muted-foreground h-full bg-background relative overflow-hidden">
+        {/* Subtle background glow */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[40vw] h-[40vw] max-w-[500px] max-h-[500px] bg-primary/5 blur-[100px] rounded-full pointer-events-none" />
+        
+        <div className="flex flex-col items-center gap-8 relative z-10 w-full max-w-sm">
+          <div className="relative flex items-center justify-center w-24 h-24">
+            <div className="absolute inset-0 rounded-full border border-primary/20 bg-card/40 backdrop-blur-xl shadow-2xl" />
+            <img 
+              src="/logo.png" 
+              alt="Fullmag Logo" 
+              className="w-16 h-16 drop-shadow-[0_0_15px_rgba(137,180,250,0.5)] animate-pulse" 
+            />
+          </div>
+          
+          <div className="flex flex-col items-center gap-3 text-center">
+            <span className="flex items-center gap-3">
+              <span className="w-5 h-5 rounded-full border-[3px] border-primary/20 border-t-primary animate-spin" />
+              <span className="font-bold tracking-[0.2em] text-primary/90 uppercase text-xs">
+                {ctx.error ? "Connection Error" : "Initializing Workspace"}
+              </span>
+            </span>
+            <span className="text-muted-foreground/70 text-xs font-medium">
+              {ctx.error ? ctx.error : "Connecting to local Fullmag session..."}
+            </span>
+          </div>
+        </div>
       </div>
     );
   }
@@ -150,7 +172,7 @@ function ControlRoomShell() {
               defaultSize={PANEL_SIZES.viewportDefault}
               minSize={PANEL_SIZES.viewportMin}
             >
-                <div className="flex flex-row h-full min-h-0 min-w-0 overflow-hidden bg-black flex-1 relative shadow-[inset_0_0_60px_rgba(0,0,0,0.5)]">
+                <div className="flex flex-row h-full min-h-0 min-w-0 overflow-hidden bg-background flex-1 relative shadow-[inset_0_0_120px_rgba(0,0,0,0.6)] ring-1 ring-inset ring-white/5">
                   <div className="flex flex-col flex-1 min-w-0 min-h-0">
                     <ViewportBar />
                     {previewNotices}
@@ -181,6 +203,7 @@ function ControlRoomShell() {
                   connection={ctx.connection}
                   error={ctx.error}
                   presentationMode="current"
+                  convergenceThreshold={Number(ctx.solverSettings.torqueTolerance) || 1e-5}
                 />
               </div>
             </Panel>

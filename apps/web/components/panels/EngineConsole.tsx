@@ -8,6 +8,7 @@ import {
   ArrowRight, CheckCircle2, XCircle, AlertTriangle, Dot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fmtSI, fmtExp, fmtTime, fmtDuration, fmtStepValue, fmtSIOrDash, fmtExpOrDash } from "@/lib/format";
 import ScalarPlot from "../plots/ScalarPlot";
 import ScalarTable from "./ScalarTable";
 
@@ -34,57 +35,11 @@ interface EngineConsoleProps {
   connection: "connecting" | "connected" | "disconnected";
   error: string | null;
   presentationMode?: "session" | "current";
-}
-
-/* ── Formatting ────────────────────────────────────────────── */
-
-function fmtSI(v: number, unit: string): string {
-  if (!Number.isFinite(v) || v === 0) return `0 ${unit}`;
-  const abs = Math.abs(v);
-  if (abs >= 1e12) return `${(v / 1e12).toPrecision(3)} T${unit}`;
-  if (abs >= 1e9) return `${(v / 1e9).toPrecision(3)} G${unit}`;
-  if (abs >= 1e6) return `${(v / 1e6).toPrecision(3)} M${unit}`;
-  if (abs >= 1e3) return `${(v / 1e3).toPrecision(3)} k${unit}`;
-  if (abs >= 1) return `${v.toPrecision(3)} ${unit}`;
-  if (abs >= 1e-3) return `${(v * 1e3).toPrecision(3)} m${unit}`;
-  if (abs >= 1e-6) return `${(v * 1e6).toPrecision(3)} µ${unit}`;
-  if (abs >= 1e-9) return `${(v * 1e9).toPrecision(3)} n${unit}`;
-  if (abs >= 1e-12) return `${(v * 1e12).toPrecision(3)} p${unit}`;
-  return `${v.toExponential(2)} ${unit}`;
-}
-
-function fmtTime(t: number): string {
-  if (t === 0) return "0 s";
-  return fmtSI(t, "s");
-}
-
-function fmtDuration(ms: number): string {
-  if (ms < 1000) return `${ms.toFixed(0)} ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)} s`;
-  if (ms < 3600000) return `${(ms / 60000).toFixed(1)} min`;
-  return `${(ms / 3600000).toFixed(2)} h`;
-}
-
-function fmtExp(v: number): string {
-  if (!Number.isFinite(v)) return "—";
-  if (v === 0) return "0";
-  return v.toExponential(3);
-}
-
-function fmtStepValue(v: number, enabled: boolean): string {
-  return enabled ? v.toLocaleString() : "—";
+  convergenceThreshold?: number;
 }
 
 function fmtTimeOrDash(v: number, enabled: boolean): string {
   return enabled ? fmtTime(v) : "—";
-}
-
-function fmtSIOrDash(v: number, unit: string, enabled: boolean): string {
-  return enabled ? fmtSI(v, unit) : "—";
-}
-
-function fmtExpOrDash(v: number, enabled: boolean): string {
-  return enabled ? fmtExp(v) : "—";
 }
 
 /* ── Log entry type ────────────────────────────────────────── */
@@ -105,6 +60,7 @@ function buildLogEntries(
   connection: string,
   error: string | null,
   presentationMode: "session" | "current",
+  convergenceThreshold: number,
 ): LogEntry[] {
   const entries: LogEntry[] = [];
   const now = Date.now();
@@ -229,15 +185,12 @@ function buildLogEntries(
     });
   }
 
-  // Convergence check — threshold matches the default torque_tolerance
-  // in ProblemIR::Relaxation. Shows only when solver is clearly approaching
-  // equilibrium (step > 10 avoids false positive on initial conditions).
-  const CONVERGENCE_THRESHOLD = 1e-5;
-  if (liveState && liveState.max_dm_dt < CONVERGENCE_THRESHOLD && liveState.step > 10) {
+  // Convergence check — uses user-configured threshold from solver settings
+  if (liveState && convergenceThreshold > 0 && liveState.max_dm_dt < convergenceThreshold && liveState.step > 10) {
     entries.push({
       time: liveState.updated_at_unix_ms || now,
       icon: <CheckCircle2 size={12} />,
-      message: `Convergence criterion: max_dm/dt = ${fmtExp(liveState.max_dm_dt)} < ${CONVERGENCE_THRESHOLD.toExponential(0)} — approaching equilibrium`,
+      message: `Convergence criterion: max_dm/dt = ${fmtExp(liveState.max_dm_dt)} < ${convergenceThreshold.toExponential(1)} — approaching equilibrium`,
       severity: "success",
     });
   }
@@ -299,7 +252,9 @@ export default function EngineConsole({
   connection,
   error,
   presentationMode = "current",
+  convergenceThreshold: convergenceThresholdProp,
 }: EngineConsoleProps) {
+  const convergenceThreshold = convergenceThresholdProp ?? 1e-5;
   const [activeTab, setActiveTab] = useState<ConsoleTab>("live");
   const [chartPreset, setChartPreset] = useState<ChartPreset>("energy");
   /* Note: we keep state manually for backwards compat; Radix Tabs controlled via value/onValueChange */
@@ -307,8 +262,8 @@ export default function EngineConsole({
   const [autoScroll, setAutoScroll] = useState(true);
 
   const logEntries = useMemo(
-    () => buildLogEntries(session, run, liveState, scalarRows, engineLog, connection, error, presentationMode),
-    [session, run, liveState, scalarRows, engineLog, connection, error, presentationMode],
+    () => buildLogEntries(session, run, liveState, scalarRows, engineLog, connection, error, presentationMode, convergenceThreshold),
+    [session, run, liveState, scalarRows, engineLog, connection, error, presentationMode, convergenceThreshold],
   );
 
   const workspaceStatus = liveState?.status ?? session?.status ?? run?.status ?? "idle";
@@ -346,7 +301,7 @@ export default function EngineConsole({
         : "Solver telemetry is not available yet.";
 
   // Convergence metric: normalize max_dm_dt to a 0-100 progress bar
-  // max_dm_dt < 1e-5 is "converged", > 1e2 is "diverged"
+  // max_dm_dt < convergenceThreshold is "converged", > 1e2 is "diverged"
   const dmDtLog = liveState?.max_dm_dt
     ? Math.log10(Math.max(liveState.max_dm_dt, 1e-12))
     : 0;
@@ -377,7 +332,7 @@ export default function EngineConsole({
   return (
     <div className="flex flex-col h-full bg-background/50 overflow-hidden isolate">
       {/* ─── Header Bar ──────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-card/30 border-b border-border/40">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-background/50 backdrop-blur-md border-b border-white/5 shadow-sm">
         <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground mr-auto">Engine Console</span>
         <span className={cn("w-2 h-2 rounded-full shrink-0", (liveState?.finished || run?.status === "completed" ? "completed" : connection) === "completed" ? "bg-emerald-500 shadow-[0_0_6px_var(--status-completed)]" : connection === "connected" ? "bg-primary shadow-[0_0_6px_rgba(99,102,241,0.5)]" : connection === "connecting" ? "bg-amber-500 animate-pulse" : "bg-destructive")} />
         <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
@@ -398,7 +353,7 @@ export default function EngineConsole({
 
       {/* ─── Radix Tabs ─────────────────────────────── */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ConsoleTab)} className="flex flex-col min-h-0 flex-1">
-        <TabsList className="flex gap-1 px-2 border-b border-border/40 bg-card/20">
+        <TabsList className="flex gap-1 px-2 border-b border-white/5 bg-background/40 backdrop-blur-md">
           {TABS.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value} className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary pb-2 pt-2.5 px-3 rounded-none bg-transparent shadow-none border-t-0 border-l-0 border-r-0">
               {tab.label}
@@ -412,49 +367,49 @@ export default function EngineConsole({
           <>
             {/* Live telemetry grid */}
             <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2 p-3">
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-primary">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-primary">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Status</span>
                 <span className={cn("font-mono text-sm font-semibold text-foreground", statusValueClassName)}>
                   {workspaceStatus}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-sky-500">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-sky-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Step</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtStepValue(liveState?.step ?? run?.total_steps ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-violet-500">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-violet-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Sim Time</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtTimeOrDash(liveState?.time ?? run?.final_time ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-amber-500">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-amber-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Δt</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtSIOrDash(liveState?.dt ?? 0, "s", hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-emerald-500">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-emerald-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">max dm/dt</span>
                 <span
-                  className={cn("font-mono text-sm font-semibold text-foreground", hasSolverTelemetry && (liveState?.max_dm_dt ?? 0) < 1e-5 && "text-emerald-500")}
+                  className={cn("font-mono text-sm font-semibold text-foreground", hasSolverTelemetry && (liveState?.max_dm_dt ?? 0) < convergenceThreshold && "text-emerald-500")}
                 >
                   {fmtExpOrDash(liveState?.max_dm_dt ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-rose-500">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-rose-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">max |H_eff|</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtExpOrDash(liveState?.max_h_eff ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-slate-400">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-slate-400">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Elapsed</span>
                 <span className="font-mono text-sm font-semibold text-foreground">{fmtDuration(elapsed)}</span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-orange-500">
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-orange-500">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Throughput</span>
                 <span className="font-mono text-sm font-semibold text-foreground">{stepsPerSec > 0 ? `${stepsPerSec.toFixed(1)} st/s` : "—"}</span>
               </div>
@@ -524,25 +479,25 @@ export default function EngineConsole({
 
         <TabsContent value="energy" className="min-h-0 flex-1 flex flex-col focus-visible:outline-none data-[state=inactive]:hidden outline-none">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 p-3">
-            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-sky-500">
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-sky-500">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_exchange</span>
               <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_ex ?? run?.final_e_ex ?? 0, "J")}
               </span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-amber-500">
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-amber-500">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_demag</span>
               <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_demag ?? run?.final_e_demag ?? 0, "J")}
               </span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-emerald-500">
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-emerald-500">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_ext</span>
               <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_ext ?? run?.final_e_ext ?? 0, "J")}
               </span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-indigo-500">
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-indigo-500">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_total</span>
               <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_total ?? run?.final_e_total ?? 0, "J")}
@@ -557,13 +512,13 @@ export default function EngineConsole({
               const dStep = last.step - prev.step;
               return (
                 <>
-                  <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-muted-foreground">
+                  <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-muted-foreground">
                     <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">ΔE_total / step</span>
                     <span className={cn("font-mono text-sm font-semibold text-foreground", dE < 0 ? "text-emerald-500" : "text-destructive")}>
                       {dStep > 0 ? fmtExp(dE / dStep) : "—"}
                     </span>
                   </div>
-                  <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm border-l-[3px] border-l-muted-foreground">
+                  <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-muted-foreground">
                     <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">History points</span>
                     <span className="font-mono text-sm font-semibold text-foreground">{scalarRows.length}</span>
                   </div>
@@ -615,8 +570,8 @@ export default function EngineConsole({
             {[
               { label: "Bootstrap", done: !!session, active: workspaceStatus === "bootstrapping" },
               { label: "Materialize", done: workspaceStatus !== "materializing_script" && workspaceStatus !== "bootstrapping" && !!session, active: workspaceStatus === "materializing_script" },
-              { label: "Solving", done: workspaceStatus === "completed" || (hasSolverTelemetry && (liveState?.max_dm_dt ?? 1) < 1e-5), active: workspaceStatus === "running" || workspaceStatus === "awaiting_command" },
-              { label: "Converged", done: hasSolverTelemetry && (liveState?.max_dm_dt ?? 1) < 1e-5, active: false },
+              { label: "Solving", done: workspaceStatus === "completed" || (hasSolverTelemetry && (liveState?.max_dm_dt ?? 1) < convergenceThreshold), active: workspaceStatus === "running" || workspaceStatus === "awaiting_command" },
+              { label: "Converged", done: hasSolverTelemetry && (liveState?.max_dm_dt ?? 1) < convergenceThreshold, active: false },
             ].map((phase) => (
               <div key={phase.label} className="grid grid-cols-[100px_1fr_70px] gap-2 items-center py-1">
                 <span
@@ -662,7 +617,7 @@ export default function EngineConsole({
               <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
                 <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">max dm/dt</span>
                 <span
-                  className={cn("font-mono text-sm font-semibold text-foreground", hasSolverTelemetry && (liveState?.max_dm_dt ?? 1) < 1e-5 && "text-emerald-500")}
+                  className={cn("font-mono text-sm font-semibold text-foreground", hasSolverTelemetry && (liveState?.max_dm_dt ?? 1) < convergenceThreshold && "text-emerald-500")}
                 >
                   {fmtExpOrDash(liveState?.max_dm_dt ?? 0, hasSolverTelemetry)}
                 </span>

@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useMemo } from "react";
 import * as echarts from "echarts";
+import { DIVERGING_PALETTE, SEQUENTIAL_BLUE_PALETTE, POSITIVE_PALETTE } from "../../lib/colorPalettes";
+import { ECHARTS_THEME } from "../../lib/echartsTheme";
 
 type SlicePlane = "xy" | "xz" | "yz";
 type VectorComponent = "x" | "y" | "z" | "magnitude";
@@ -17,30 +19,9 @@ interface Props {
   sliceIndex: number;
 }
 
-// ─── Color palettes (1:1 from amumax preview2D.ts) ─────────────────
-const DIVERGING_PALETTE = [
-  "#15315f", "#2f6caa", "#90b9df", "#f4f1ed", "#efb09d", "#cf6256", "#7d1d34",
-];
-const NEGATIVE_PALETTE = [
-  "#f3f7fd", "#cfdef1", "#91b8dd", "#5688bd", "#285b93", "#14365f",
-];
-const POSITIVE_PALETTE = [
-  "#0a1220", "#143d67", "#1c6d8f", "#24a0a4", "#8ed6ac", "#f1f7bb",
-];
-
-// ─── Theme constants (from amumax echarts-theme.ts) ────────────────
-const THEME = {
-  border: "#273753",
-  text2: "#a7bad3",
-  tooltipBg: "rgba(15, 22, 42, 0.92)",
-  tooltipBorder: "#273753",
-  tooltipText: "#edf3fb",
-  accent: "#57c8b6",
-  toolboxIcon: "rgba(107, 167, 255, 0.55)",
-  text1: "#edf3fb",
-  brushBg: "rgba(87, 200, 182, 0.1)",
-  brushBorder: "rgba(87, 200, 182, 0.45)",
-};
+// Alias for local use
+const NEGATIVE_PALETTE = SEQUENTIAL_BLUE_PALETTE;
+const THEME = ECHARTS_THEME;
 
 function getColorScale(min: number, max: number) {
   if (min < 0 && max > 0) {
@@ -380,7 +361,7 @@ export default function MagnetizationSlice2D({
   return (
     <div
       ref={containerRef}
-      className="h-full w-full bg-[#0c121f]"
+      className="h-full w-full bg-[#1e1e2e]"
     />
   );
 }

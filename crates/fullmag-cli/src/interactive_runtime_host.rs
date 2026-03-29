@@ -2,23 +2,23 @@ use super::*;
 
 #[derive(Debug, Default)]
 struct CurrentLiveControlState {
-    preview_request: fullmag_runner::LivePreviewRequest,
+    display_selection: CurrentDisplaySelection,
     queue: VecDeque<SessionCommand>,
 }
 
 #[derive(Clone)]
-pub(super) struct CurrentLivePreviewConfigHandle {
+pub(super) struct CurrentLiveDisplaySelectionHandle {
     shared: Arc<(Mutex<CurrentLiveControlState>, Condvar)>,
     stop: Arc<AtomicBool>,
 }
 
-impl CurrentLivePreviewConfigHandle {
+impl CurrentLiveDisplaySelectionHandle {
     pub(super) fn spawn() -> Self {
-        let initial_preview_request = current_live_preview_config().unwrap_or_default();
+        let initial_display_selection = current_live_display_selection().unwrap_or_default();
         let handle = Self {
             shared: Arc::new((
                 Mutex::new(CurrentLiveControlState {
-                    preview_request: initial_preview_request,
+                    display_selection: initial_display_selection,
                     queue: VecDeque::new(),
                 }),
                 Condvar::new(),
@@ -48,20 +48,29 @@ impl CurrentLivePreviewConfigHandle {
         handle
     }
 
-    pub(super) fn snapshot(&self) -> fullmag_runner::LivePreviewRequest {
+    pub(super) fn display_selection_snapshot(&self) -> CurrentDisplaySelection {
         let (lock, _) = &*self.shared;
         lock.lock()
-            .map(|state| state.preview_request.clone())
+            .map(|state| state.display_selection.clone())
             .unwrap_or_default()
     }
 
+    pub(super) fn preview_request(&self) -> fullmag_runner::LivePreviewRequest {
+        self.display_selection_snapshot().preview_request()
+    }
+
     pub(super) fn apply_preview_command(&self, command: &SessionCommand) {
-        let Some(preview_config) = command.preview_config.clone() else {
+        let Some(display_selection) = command.display_selection.clone().or_else(|| {
+            command
+                .preview_config
+                .as_ref()
+                .map(CurrentDisplaySelection::from_preview_request)
+        }) else {
             return;
         };
         let (lock, _) = &*self.shared;
         if let Ok(mut state) = lock.lock() {
-            state.preview_request = preview_config;
+            state.display_selection = display_selection;
         }
     }
 
@@ -112,7 +121,7 @@ impl CurrentLivePreviewConfigHandle {
     }
 }
 
-impl Drop for CurrentLivePreviewConfigHandle {
+impl Drop for CurrentLiveDisplaySelectionHandle {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         let (_, cvar) = &*self.shared;
@@ -135,7 +144,7 @@ struct InteractivePreviewSourceState {
 }
 
 pub(super) struct InteractiveRuntimeHost {
-    control: CurrentLivePreviewConfigHandle,
+    control: CurrentLiveDisplaySelectionHandle,
     preview_source: Arc<Mutex<InteractivePreviewSourceState>>,
     runtime: Option<fullmag_runner::InteractiveRuntime>,
     base_problem: ProblemIR,
@@ -147,7 +156,7 @@ pub(super) struct InteractiveRuntimeHost {
 
 impl InteractiveRuntimeHost {
     pub(super) fn new(
-        control: CurrentLivePreviewConfigHandle,
+        control: CurrentLiveDisplaySelectionHandle,
         base_problem: ProblemIR,
         artifact_dir: PathBuf,
         backend_plan: &BackendPlanIR,
@@ -168,7 +177,7 @@ impl InteractiveRuntimeHost {
         }
     }
 
-    pub(super) fn control(&self) -> CurrentLivePreviewConfigHandle {
+    pub(super) fn control(&self) -> CurrentLiveDisplaySelectionHandle {
         self.control.clone()
     }
 
@@ -207,7 +216,7 @@ impl InteractiveRuntimeHost {
         self.ensure_base_runtime_ready(continuation_slice, live_workspace);
 
         if self.latest_field_cache_supported {
-            let preview_request = self.control.snapshot();
+            let preview_request = self.control.preview_request();
             spawn_interactive_preview_cache_refresh(
                 self.artifact_dir.clone(),
                 self.base_problem.clone(),
@@ -239,7 +248,7 @@ impl InteractiveRuntimeHost {
             .unwrap_or(0);
 
         if self.latest_field_cache_supported {
-            let preview_request = self.control.snapshot();
+            let preview_request = self.control.preview_request();
             spawn_interactive_preview_cache_refresh(
                 self.artifact_dir.clone(),
                 self.base_problem.clone(),
@@ -320,10 +329,10 @@ impl InteractiveRuntimeHost {
         live_workspace: &LocalLiveWorkspace,
     ) {
         if let Some(runtime) = self.runtime.as_mut() {
-            let preview_request = self.control.snapshot();
-            if let Err(error) = refresh_interactive_preview_runtime_snapshot(
+            let display_selection = self.control.display_selection_snapshot();
+            if let Err(error) = refresh_interactive_preview_runtime_display(
                 runtime,
-                &preview_request,
+                &display_selection,
                 live_workspace,
             ) {
                 eprintln!("interactive preview runtime warning: {}", error);
@@ -338,7 +347,7 @@ impl InteractiveRuntimeHost {
         }
 
         if self.dynamic_idle_preview_supported {
-            let preview_request = self.control.snapshot();
+            let preview_request = self.control.preview_request();
             if let Err(error) = refresh_interactive_preview_snapshot(
                 &self.base_problem,
                 continuation_magnetization,
@@ -399,12 +408,23 @@ fn ensure_interactive_preview_runtime(
     Ok(())
 }
 
-fn refresh_interactive_preview_runtime_snapshot(
+fn refresh_interactive_preview_runtime_display(
     runtime: &mut fullmag_runner::InteractiveRuntime,
-    request: &fullmag_runner::LivePreviewRequest,
+    display_selection: &CurrentDisplaySelection,
     live_workspace: &LocalLiveWorkspace,
 ) -> Result<()> {
-    let preview_field = runtime.snapshot_preview(request)?;
+    let payload = runtime.set_display_selection(display_selection.selection.clone())?;
+    let mut preview_field = match payload {
+        fullmag_runner::DisplayPayload::VectorField(field)
+        | fullmag_runner::DisplayPayload::SpatialScalar(field) => field,
+        fullmag_runner::DisplayPayload::GlobalScalar { quantity, .. } => {
+            bail!(
+                "unsupported global scalar '{}' for interactive spatial preview runtime refresh",
+                quantity
+            );
+        }
+    };
+    preview_field.config_revision = display_selection.revision;
     live_workspace.update(|state| {
         state.live_state.updated_at_unix_ms = unix_time_millis().unwrap_or(0);
         state.live_state.latest_step.preview_field = Some(preview_field.clone());
@@ -421,9 +441,11 @@ fn refresh_interactive_preview_fields(
     if let Some(previous_final_magnetization) = continuation_magnetization {
         apply_continuation_initial_state(&mut problem, previous_final_magnetization)?;
     }
+    let quantities = fullmag_runner::quantities::cached_preview_quantity_ids();
+
     Ok(fullmag_runner::snapshot_problem_vector_fields(
         &problem,
-        &["H_ex", "H_demag", "H_ext", "H_eff"],
+        &quantities,
         request,
     )?)
 }
@@ -489,7 +511,7 @@ fn spawn_interactive_preview_cache_refresh(
         }
 
         live_workspace.update(|state| {
-            state.preview_fields = preview_fields.clone();
+            replace_cached_preview_fields(state, preview_fields.clone());
         });
 
         if let Err(error) = write_interactive_preview_cache(&artifact_dir, &preview_fields) {
@@ -528,13 +550,16 @@ fn wait_for_current_live_control(
     }
 }
 
-fn current_live_preview_config() -> Result<fullmag_runner::LivePreviewRequest> {
+fn current_live_display_selection() -> Result<CurrentDisplaySelection> {
     current_live_api_client()
-        .get(format!("{}/v1/live/current/preview/config", api_base_url()))
+        .get(format!(
+            "{}/v1/live/current/preview/selection",
+            api_base_url()
+        ))
         .send()
-        .context("failed to fetch current live preview config")?
+        .context("failed to fetch current live display selection")?
         .error_for_status()
-        .context("current live preview config endpoint returned error")?
-        .json::<fullmag_runner::LivePreviewRequest>()
-        .context("failed to decode current live preview config")
+        .context("current live display selection endpoint returned error")?
+        .json::<CurrentDisplaySelection>()
+        .context("failed to decode current live display selection")
 }

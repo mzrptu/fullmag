@@ -110,6 +110,9 @@ struct Context {
     double anisotropy_Ku = 0.0;
     std::array<double, 3> anisotropy_axis{0.0, 0.0, 1.0};
 
+    bool enable_dmi = false;
+    double dmi_D = 0.0;
+
     fullmag_fem_material_desc material{};
     fullmag_fem_solver_config demag_solver{};
 
@@ -130,6 +133,7 @@ struct Context {
     std::vector<double> h_demag_xyz;
     std::vector<double> h_ext_xyz;
     std::vector<double> h_ani_xyz;
+    std::vector<double> h_dmi_xyz;
     std::vector<double> h_eff_xyz;
     TransferGridState transfer_grid{};
 

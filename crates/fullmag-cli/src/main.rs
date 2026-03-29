@@ -24,7 +24,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod interactive_runtime_host;
 
-use interactive_runtime_host::{CurrentLivePreviewConfigHandle, InteractiveRuntimeHost};
+use interactive_runtime_host::{CurrentLiveDisplaySelectionHandle, InteractiveRuntimeHost};
 
 #[derive(Parser)]
 #[command(name = "fullmag")]
@@ -269,8 +269,12 @@ struct SessionCommand {
     #[serde(default)]
     mesh_options: Option<serde_json::Value>,
     #[serde(default)]
+    display_selection: Option<CurrentDisplaySelection>,
+    #[serde(default)]
     preview_config: Option<fullmag_runner::LivePreviewRequest>,
 }
+
+type CurrentDisplaySelection = fullmag_runner::DisplaySelectionState;
 
 #[derive(Debug, Clone, Serialize)]
 struct CurrentLiveScalarRow {
@@ -299,6 +303,7 @@ struct CurrentLivePublishPayload {
     latest_scalar_row: Option<CurrentLiveScalarRow>,
     latest_fields: Option<CurrentLiveLatestFields>,
     preview_fields: Option<Vec<fullmag_runner::LivePreviewField>>,
+    clear_preview_cache: bool,
     engine_log: Option<Vec<EngineLogEntry>>,
 }
 
@@ -309,6 +314,38 @@ struct CurrentLiveLatestFields(BTreeMap<String, serde_json::Value>);
 impl CurrentLiveLatestFields {
     fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct CurrentLivePreviewFieldCache(BTreeMap<String, fullmag_runner::LivePreviewField>);
+
+impl CurrentLivePreviewFieldCache {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    fn insert(&mut self, field: fullmag_runner::LivePreviewField) {
+        self.0.insert(field.quantity.clone(), field);
+    }
+
+    fn replace_all(&mut self, fields: impl IntoIterator<Item = fullmag_runner::LivePreviewField>) {
+        self.clear();
+        for field in fields {
+            self.insert(field);
+        }
+    }
+
+    fn to_vec(&self) -> Vec<fullmag_runner::LivePreviewField> {
+        self.0.values().cloned().collect()
+    }
+
+    fn take_vec(&mut self) -> Vec<fullmag_runner::LivePreviewField> {
+        std::mem::take(&mut self.0).into_values().collect()
     }
 }
 
@@ -331,6 +368,7 @@ struct CurrentLivePublishRequest<'a> {
     latest_fields: Option<&'a CurrentLiveLatestFields>,
     #[serde(skip_serializing_if = "Option::is_none")]
     preview_fields: Option<&'a [fullmag_runner::LivePreviewField]>,
+    clear_preview_cache: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     engine_log: Option<&'a [EngineLogEntry]>,
 }
@@ -366,12 +404,18 @@ struct LocalLiveWorkspaceState {
     metadata: Option<serde_json::Value>,
     latest_scalar_row: Option<CurrentLiveScalarRow>,
     latest_fields: CurrentLiveLatestFields,
-    preview_fields: Vec<fullmag_runner::LivePreviewField>,
+    preview_fields: CurrentLivePreviewFieldCache,
+    pending_preview_fields: CurrentLivePreviewFieldCache,
+    clear_preview_cache: bool,
     engine_log: Vec<EngineLogEntry>,
 }
 
 impl LocalLiveWorkspaceState {
-    fn snapshot(&self) -> CurrentLivePublishPayload {
+    fn build_publish_payload(
+        &self,
+        preview_fields: Option<Vec<fullmag_runner::LivePreviewField>>,
+        clear_preview_cache: bool,
+    ) -> CurrentLivePublishPayload {
         let mut live_state = self.live_state.clone();
         let mut metadata = self.metadata.clone();
 
@@ -388,10 +432,24 @@ impl LocalLiveWorkspaceState {
             live_state: Some(live_state),
             latest_scalar_row: self.latest_scalar_row.clone(),
             latest_fields: (!self.latest_fields.is_empty()).then_some(self.latest_fields.clone()),
-            preview_fields: (!self.preview_fields.is_empty())
-                .then_some(self.preview_fields.clone()),
+            preview_fields,
+            clear_preview_cache,
             engine_log: Some(self.engine_log.clone()),
         }
+    }
+
+    fn snapshot(&self) -> CurrentLivePublishPayload {
+        self.build_publish_payload(
+            (!self.preview_fields.is_empty()).then_some(self.preview_fields.to_vec()),
+            self.clear_preview_cache,
+        )
+    }
+
+    fn publish_delta(&mut self) -> CurrentLivePublishPayload {
+        let preview_fields = (!self.pending_preview_fields.is_empty())
+            .then_some(self.pending_preview_fields.take_vec());
+        let clear_preview_cache = std::mem::take(&mut self.clear_preview_cache);
+        self.build_publish_payload(preview_fields, clear_preview_cache)
     }
 }
 
@@ -437,7 +495,7 @@ impl LocalLiveWorkspace {
         let snapshot = self
             .state
             .lock()
-            .map(|state| state.snapshot())
+            .map(|mut state| state.publish_delta())
             .unwrap_or_default();
         self.publisher.replace(snapshot);
     }
@@ -450,9 +508,24 @@ impl LocalLiveWorkspace {
     }
 }
 
+fn merge_preview_field_payloads(
+    existing: Option<Vec<fullmag_runner::LivePreviewField>>,
+    incoming: Option<Vec<fullmag_runner::LivePreviewField>>,
+) -> Option<Vec<fullmag_runner::LivePreviewField>> {
+    let mut merged = BTreeMap::new();
+    for field in existing.into_iter().flatten() {
+        merged.insert(field.quantity.clone(), field);
+    }
+    for field in incoming.into_iter().flatten() {
+        merged.insert(field.quantity.clone(), field);
+    }
+    (!merged.is_empty()).then(|| merged.into_values().collect())
+}
+
 #[derive(Clone)]
 struct CurrentLivePublisher {
     pending: Arc<AtomicBool>,
+    sending: Arc<AtomicBool>,
     payload: Arc<Mutex<CurrentLivePublishPayload>>,
     wake_tx: mpsc::SyncSender<()>,
 }
@@ -463,8 +536,10 @@ impl CurrentLivePublisher {
     fn spawn(session_id: &str) -> Self {
         let (wake_tx, wake_rx) = mpsc::sync_channel(1);
         let pending = Arc::new(AtomicBool::new(false));
+        let sending = Arc::new(AtomicBool::new(false));
         let payload = Arc::new(Mutex::new(CurrentLivePublishPayload::default()));
         let worker_pending = Arc::clone(&pending);
+        let worker_sending = Arc::clone(&sending);
         let worker_payload = Arc::clone(&payload);
         let worker_session_id = session_id.to_string();
         let thread_name = format!("fullmag-live-publisher-{session_id}");
@@ -474,6 +549,7 @@ impl CurrentLivePublisher {
                 current_live_publisher_loop(
                     worker_session_id,
                     worker_pending,
+                    worker_sending,
                     worker_payload,
                     wake_rx,
                 )
@@ -482,6 +558,7 @@ impl CurrentLivePublisher {
 
         Self {
             pending,
+            sending,
             payload,
             wake_tx,
         }
@@ -497,7 +574,23 @@ impl CurrentLivePublisher {
 
     fn replace(&self, payload: CurrentLivePublishPayload) {
         if let Ok(mut slot) = self.payload.lock() {
+            let should_merge_preview =
+                self.pending.load(Ordering::Acquire) || self.sending.load(Ordering::Acquire);
+            let merged_preview_fields = if payload.clear_preview_cache {
+                payload.preview_fields.clone()
+            } else if should_merge_preview {
+                merge_preview_field_payloads(
+                    slot.preview_fields.take(),
+                    payload.preview_fields.clone(),
+                )
+            } else {
+                payload.preview_fields.clone()
+            };
+            let clear_preview_cache =
+                (should_merge_preview && slot.clear_preview_cache) || payload.clear_preview_cache;
             *slot = payload;
+            slot.preview_fields = merged_preview_fields;
+            slot.clear_preview_cache = clear_preview_cache;
         }
         self.request_publish();
     }
@@ -506,6 +599,7 @@ impl CurrentLivePublisher {
 fn current_live_publisher_loop(
     session_id: String,
     pending: Arc<AtomicBool>,
+    sending: Arc<AtomicBool>,
     payload: Arc<Mutex<CurrentLivePublishPayload>>,
     wake_rx: mpsc::Receiver<()>,
 ) {
@@ -519,7 +613,11 @@ fn current_live_publisher_loop(
                 }
             }
             let snapshot = payload.lock().map(|slot| slot.clone()).unwrap_or_default();
-            if let Err(error) = publish_current_live_state(&session_id, &snapshot) {
+            sending.store(true, Ordering::Release);
+            let publish_result = publish_current_live_state(&session_id, &snapshot);
+            sending.store(false, Ordering::Release);
+            if let Err(error) = publish_result {
+                pending.store(true, Ordering::Release);
                 if api_is_ready(api_port()) {
                     eprintln!("fullmag live publish warning: {}", error);
                 }
@@ -530,7 +628,10 @@ fn current_live_publisher_loop(
 
     if pending.swap(false, Ordering::AcqRel) {
         let snapshot = payload.lock().map(|slot| slot.clone()).unwrap_or_default();
-        if let Err(error) = publish_current_live_state(&session_id, &snapshot) {
+        sending.store(true, Ordering::Release);
+        let publish_result = publish_current_live_state(&session_id, &snapshot);
+        sending.store(false, Ordering::Release);
+        if let Err(error) = publish_result {
             if api_is_ready(api_port()) {
                 eprintln!("fullmag live publish warning: {}", error);
             }
@@ -596,6 +697,29 @@ fn set_latest_scalar_row_if_due(
     if update.scalar_row_due {
         state.latest_scalar_row = Some(scalar_row_from_update(update));
     }
+}
+
+fn clear_cached_preview_fields(state: &mut LocalLiveWorkspaceState) {
+    state.preview_fields.clear();
+    state.pending_preview_fields.clear();
+    state.clear_preview_cache = true;
+}
+
+fn replace_cached_preview_fields(
+    state: &mut LocalLiveWorkspaceState,
+    fields: impl IntoIterator<Item = fullmag_runner::LivePreviewField>,
+) {
+    state.preview_fields.replace_all(fields);
+    state.pending_preview_fields = state.preview_fields.clone();
+    state.clear_preview_cache = true;
+}
+
+fn upsert_cached_preview_field(
+    state: &mut LocalLiveWorkspaceState,
+    field: &fullmag_runner::LivePreviewField,
+) {
+    state.preview_fields.insert(field.clone());
+    state.pending_preview_fields.insert(field.clone());
 }
 
 impl From<BackendArg> for BackendTarget {
@@ -1142,11 +1266,7 @@ fn current_live_metadata(
 ) -> serde_json::Value {
     let live_preview_supported_quantities = match &plan.backend_plan {
         BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_) => {
-            fullmag_runner::quantities::quantity_specs()
-                .iter()
-                .filter(|spec| spec.ui_exposed && spec.interactive_preview)
-                .map(|spec| spec.id)
-                .collect::<Vec<_>>()
+            fullmag_runner::quantities::interactive_preview_quantity_ids()
         }
         BackendPlanIR::FdmMultilayer(_) => vec!["m"],
     };
@@ -1485,12 +1605,14 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             metadata: None,
             latest_scalar_row: None,
             latest_fields: CurrentLiveLatestFields::default(),
-            preview_fields: Vec::new(),
+            preview_fields: CurrentLivePreviewFieldCache::default(),
+            pending_preview_fields: CurrentLivePreviewFieldCache::default(),
+            clear_preview_cache: false,
             engine_log: Vec::new(),
         },
         current_live_publisher.clone(),
     );
-    let preview_config_handle = CurrentLivePreviewConfigHandle::spawn();
+    let display_selection_handle = CurrentLiveDisplaySelectionHandle::spawn();
     live_workspace.push_log(
         "system",
         format!(
@@ -1586,7 +1708,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 metadata: None,
                 latest_scalar_row: None,
                 latest_fields: CurrentLiveLatestFields::default(),
-                preview_fields: Vec::new(),
+                preview_fields: CurrentLivePreviewFieldCache::default(),
+                pending_preview_fields: CurrentLivePreviewFieldCache::default(),
+                clear_preview_cache: false,
                 engine_log: previous_engine_log,
             });
             live_workspace.push_log("error", format!("Script materialization failed: {}", error));
@@ -1681,7 +1805,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         )),
         latest_scalar_row: None,
         latest_fields: CurrentLiveLatestFields::default(),
-        preview_fields: Vec::new(),
+        preview_fields: CurrentLivePreviewFieldCache::default(),
+        pending_preview_fields: CurrentLivePreviewFieldCache::default(),
+        clear_preview_cache: false,
         engine_log: previous_engine_log,
     });
     live_workspace.push_log(
@@ -1856,14 +1982,14 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         }
 
         loop {
-            let Some(cmd) = preview_config_handle.wait_next_command(Duration::from_millis(250))
+            let Some(cmd) = display_selection_handle.wait_next_command(Duration::from_millis(250))
             else {
                 continue;
             };
 
             match cmd.kind.as_str() {
                 "preview_update" | "preview_refresh" => {
-                    preview_config_handle.apply_preview_command(&cmd);
+                    display_selection_handle.apply_preview_command(&cmd);
                     continue;
                 }
                 "solve" | "compute" => {
@@ -1873,7 +1999,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         state.session.status = "running".to_string();
                         state.run.status = "running".to_string();
                         set_live_state_status(&mut state.live_state, "running", Some(false));
-                        state.preview_fields.clear();
+                        clear_cached_preview_fields(state);
                     });
                     break;
                 }
@@ -2054,17 +2180,18 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 &stage_initial_update,
             );
             state.live_state = live_state_manifest_from_update(&stage_initial_update);
+            clear_cached_preview_fields(state);
         });
 
         let stage_result = match if use_live_callback {
             if supports_dynamic_live_preview(&execution_plan.backend_plan) {
-                let preview_request = || preview_config_handle.snapshot();
+                let display_selection = || display_selection_handle.display_selection_snapshot();
                 fullmag_runner::run_problem_with_live_preview(
                     &stage.ir,
                     stage.until_seconds,
                     &current_stage_artifact_dir,
                     field_every_n,
-                    &preview_request,
+                    &display_selection,
                     |update| {
                         let adjusted = offset_step_update(
                             &update,
@@ -2115,6 +2242,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                 );
                                 state.live_state = live_state_manifest_from_update(&adjusted);
                                 set_latest_scalar_row_if_due(state, &adjusted);
+                                if let Some(preview_field) = adjusted.preview_field.as_ref() {
+                                    upsert_cached_preview_field(state, preview_field);
+                                }
                             });
                         }
                         fullmag_runner::StepAction::Continue
@@ -2363,7 +2493,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         eprintln!("- queue: submit commands through the control room or API");
 
         let mut interactive_runtime_host = InteractiveRuntimeHost::new(
-            preview_config_handle.clone(),
+            display_selection_handle.clone(),
             interactive_template_ir.clone(),
             artifact_dir.clone(),
             &initial_execution_plan.backend_plan,
@@ -2463,13 +2593,13 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 );
                 state.metadata = Some(current_live_metadata(&stage.ir, &execution_plan, "running"));
                 state.live_state = live_state_manifest_from_update(&stage_initial_update);
-                state.preview_fields.clear();
+                clear_cached_preview_fields(state);
             });
 
             let stage_result = match if use_live_callback {
                 let running_control = interactive_runtime_host.control();
                 if supports_dynamic_live_preview(&execution_plan.backend_plan) {
-                    let preview_request = || running_control.snapshot();
+                    let display_selection = || running_control.display_selection_snapshot();
                     let mut on_step = |update| {
                         let adjusted = offset_step_update(&update, step_offset, time_offset, false);
                         let s = &adjusted.stats;
@@ -2507,6 +2637,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                 );
                                 state.live_state = live_state_manifest_from_update(&adjusted);
                                 set_latest_scalar_row_if_due(state, &adjusted);
+                                if let Some(preview_field) = adjusted.preview_field.as_ref() {
+                                    upsert_cached_preview_field(state, preview_field);
+                                }
                             });
                         }
 
@@ -2542,7 +2675,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             stage.until_seconds,
                             &current_stage_artifact_dir,
                             field_every_n,
-                            &preview_request,
+                            &display_selection,
                             &mut on_step,
                         )
                     } else {
@@ -2551,7 +2684,7 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             stage.until_seconds,
                             &current_stage_artifact_dir,
                             field_every_n,
-                            &preview_request,
+                            &display_selection,
                             &mut on_step,
                         )
                     }
@@ -2598,6 +2731,9 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                     );
                                     state.live_state = live_state_manifest_from_update(&adjusted);
                                     set_latest_scalar_row_if_due(state, &adjusted);
+                                    if let Some(preview_field) = adjusted.preview_field.as_ref() {
+                                        upsert_cached_preview_field(state, preview_field);
+                                    }
                                 });
                             }
 
@@ -4275,6 +4411,7 @@ fn publish_current_live_state(session_id: &str, payload: &CurrentLivePublishPayl
             latest_scalar_row: payload.latest_scalar_row.as_ref(),
             latest_fields: payload.latest_fields.as_ref(),
             preview_fields: payload.preview_fields.as_deref(),
+            clear_preview_cache: payload.clear_preview_cache,
             engine_log: payload.engine_log.as_deref(),
         })
         .send()
@@ -4718,6 +4855,7 @@ mod tests {
             relaxation: None,
             demag_realization: None,
             air_box_config: None,
+            interfacial_dmi: None,
         });
 
         let update = initial_step_update(&plan);

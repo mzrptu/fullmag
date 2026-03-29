@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import type { ScalarRow } from "../../lib/useSessionStream";
+import { fmtSI, fmtExp } from "../../lib/format";
 
 /* ── Column definition ── */
 
@@ -10,25 +11,6 @@ interface Column {
   label: string;
   unit?: string;
   format: (v: number) => string;
-}
-
-function fmtSI(v: number, unit: string): string {
-  if (!Number.isFinite(v) || v === 0) return `0 ${unit}`;
-  const abs = Math.abs(v);
-  if (abs >= 1e6) return `${(v / 1e6).toPrecision(3)} M${unit}`;
-  if (abs >= 1e3) return `${(v / 1e3).toPrecision(3)} k${unit}`;
-  if (abs >= 1) return `${v.toPrecision(3)} ${unit}`;
-  if (abs >= 1e-3) return `${(v * 1e3).toPrecision(3)} m${unit}`;
-  if (abs >= 1e-6) return `${(v * 1e6).toPrecision(3)} µ${unit}`;
-  if (abs >= 1e-9) return `${(v * 1e9).toPrecision(3)} n${unit}`;
-  if (abs >= 1e-12) return `${(v * 1e12).toPrecision(3)} p${unit}`;
-  return v.toExponential(2);
-}
-
-function fmtExp(v: number): string {
-  if (!Number.isFinite(v)) return "—";
-  if (v === 0) return "0";
-  return v.toExponential(3);
 }
 
 function fmtFloat(v: number): string {

@@ -18,7 +18,7 @@ pub enum DisplayKind {
 ///
 /// Combines what is currently spread across `LivePreviewRequest` fields
 /// into a single, self-describing selection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DisplaySelection {
     pub quantity: String,
     pub kind: DisplayKind,
@@ -45,6 +45,40 @@ impl Default for DisplaySelection {
             every_n: 10,
             max_points: 16_384,
             auto_scale_enabled: true,
+        }
+    }
+}
+
+/// Monotonic display selection state used by interactive control-plane.
+///
+/// Keeps the selected display together with a revision counter so refreshes can
+/// be distinguished from unchanged selections.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DisplaySelectionState {
+    pub revision: u64,
+    pub selection: DisplaySelection,
+}
+
+impl Default for DisplaySelectionState {
+    fn default() -> Self {
+        Self {
+            revision: 0,
+            selection: DisplaySelection::default(),
+        }
+    }
+}
+
+impl DisplaySelectionState {
+    /// Convert to a backward-compatible preview request.
+    pub fn preview_request(&self) -> crate::types::LivePreviewRequest {
+        self.selection.to_preview_request(self.revision)
+    }
+
+    /// Create state from an existing preview request.
+    pub fn from_preview_request(request: &crate::types::LivePreviewRequest) -> Self {
+        Self {
+            revision: request.revision,
+            selection: DisplaySelection::from_preview_request(request),
         }
     }
 }

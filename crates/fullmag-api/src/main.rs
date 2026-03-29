@@ -24,7 +24,9 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 
 use fullmag_runner::quantities::{quantity_spec, quantity_specs, QuantityKind};
-use fullmag_runner::{FemMeshPayload, LivePreviewField, LivePreviewRequest, StepUpdate};
+use fullmag_runner::{
+    DisplaySelection, FemMeshPayload, LivePreviewField, LivePreviewRequest, StepUpdate,
+};
 
 #[derive(Debug, Clone)]
 struct AppState {
@@ -38,10 +40,10 @@ struct AppState {
     current_live_public_snapshot: Arc<RwLock<Option<String>>>,
     /// Full current-workspace snapshots broadcast to SSE/WS clients.
     current_live_events: broadcast::Sender<String>,
-    /// Preview controls for the sessionless root workspace.
-    current_preview_config: Arc<RwLock<CurrentPreviewConfig>>,
-    /// Change notifications for preview controls so the CLI can wait instead of polling.
-    current_preview_events: watch::Sender<CurrentPreviewConfig>,
+    /// Typed display selection for the sessionless root workspace.
+    current_display_selection: Arc<RwLock<CurrentDisplaySelection>>,
+    /// Change notifications for display selection so the CLI can wait instead of polling.
+    current_display_events: watch::Sender<CurrentDisplaySelection>,
     /// In-memory sequenced control queue for the root local-live workspace.
     current_control_queue: Arc<Mutex<VecDeque<SessionCommand>>>,
     /// Latest queued control sequence number.
@@ -203,6 +205,7 @@ struct SessionStateResponse {
     #[serde(skip_serializing, default)]
     preview_cache: CachedPreviewFields,
     artifacts: Vec<ArtifactEntry>,
+    display_selection: CurrentDisplaySelection,
     preview_config: CurrentPreviewConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     preview: Option<PreviewState>,
@@ -216,6 +219,7 @@ enum CurrentLiveEvent<'a> {
     },
     Preview {
         session_id: &'a str,
+        display_selection: &'a CurrentDisplaySelection,
         preview_config: &'a CurrentPreviewConfig,
         #[serde(skip_serializing_if = "Option::is_none")]
         preview: Option<&'a PreviewState>,
@@ -235,6 +239,7 @@ struct SessionStateEventView<'a> {
     fem_mesh: Option<&'a FemMeshPayload>,
     latest_fields: &'a LatestFields,
     artifacts: &'a [ArtifactEntry],
+    display_selection: &'a CurrentDisplaySelection,
     preview_config: &'a CurrentPreviewConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     preview: Option<&'a PreviewState>,
@@ -253,6 +258,7 @@ struct SessionStateResponseView<'a> {
     fem_mesh: Option<&'a FemMeshPayload>,
     latest_fields: &'a LatestFields,
     artifacts: &'a [ArtifactEntry],
+    display_selection: &'a CurrentDisplaySelection,
     preview_config: &'a CurrentPreviewConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     preview: Option<&'a PreviewState>,
@@ -301,6 +307,7 @@ impl CachedPreviewFields {
 }
 
 type CurrentPreviewConfig = LivePreviewRequest;
+type CurrentDisplaySelection = fullmag_runner::DisplaySelectionState;
 
 #[derive(Debug, Serialize, Clone)]
 struct PreviewState {
@@ -498,6 +505,8 @@ struct CurrentLivePublishRequest {
     #[serde(default)]
     preview_fields: Option<Vec<LivePreviewField>>,
     #[serde(default)]
+    clear_preview_cache: bool,
+    #[serde(default)]
     engine_log: Option<Vec<EngineLogEntry>>,
 }
 
@@ -526,6 +535,8 @@ struct SessionCommand {
     energy_tolerance: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mesh_options: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    display_selection: Option<CurrentDisplaySelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     preview_config: Option<CurrentPreviewConfig>,
 }
@@ -588,8 +599,8 @@ async fn main() {
         current_live_state: Arc::new(RwLock::new(None)),
         current_live_public_snapshot: Arc::new(RwLock::new(None)),
         current_live_events: broadcast::channel(256).0,
-        current_preview_config: Arc::new(RwLock::new(CurrentPreviewConfig::default())),
-        current_preview_events: watch::channel(CurrentPreviewConfig::default()).0,
+        current_display_selection: Arc::new(RwLock::new(CurrentDisplaySelection::default())),
+        current_display_events: watch::channel(CurrentDisplaySelection::default()).0,
         current_control_queue: Arc::new(Mutex::new(VecDeque::new())),
         current_control_events: watch::channel(0).0,
         current_control_next_seq: Arc::new(Mutex::new(0)),
@@ -613,6 +624,10 @@ async fn main() {
         .route(
             "/v1/live/current/preview/config",
             get(get_current_preview_config),
+        )
+        .route(
+            "/v1/live/current/preview/selection",
+            get(get_current_display_selection).post(set_current_preview_selection),
         )
         .route(
             "/v1/live/current/preview/config/wait",
@@ -777,28 +792,40 @@ async fn get_current_live_state(State(state): State<Arc<AppState>>) -> Result<Re
 async fn get_current_preview_config(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<CurrentPreviewConfig>, ApiError> {
-    Ok(Json(state.current_preview_config.read().await.clone()))
+    Ok(Json(
+        state
+            .current_display_selection
+            .read()
+            .await
+            .preview_request(),
+    ))
+}
+
+async fn get_current_display_selection(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<CurrentDisplaySelection>, ApiError> {
+    Ok(Json(state.current_display_selection.read().await.clone()))
 }
 
 async fn wait_current_preview_config(
     State(state): State<Arc<AppState>>,
     Query(query): Query<PreviewConfigWaitQuery>,
 ) -> Result<Response, ApiError> {
-    let current = state.current_preview_config.read().await.clone();
+    let current = state.current_display_selection.read().await.clone();
     if current.revision != query.after_revision {
-        return Ok(Json(current).into_response());
+        return Ok(Json(current.preview_request()).into_response());
     }
 
     let timeout_ms = query.timeout_ms.clamp(100, 20_000);
-    let mut rx = state.current_preview_events.subscribe();
+    let mut rx = state.current_display_events.subscribe();
     let waited = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async move {
         loop {
             rx.changed()
                 .await
-                .map_err(|_| ApiError::internal("preview config stream closed"))?;
+                .map_err(|_| ApiError::internal("display selection stream closed"))?;
             let next = rx.borrow().clone();
             if next.revision != query.after_revision {
-                return Ok::<CurrentPreviewConfig, ApiError>(next);
+                return Ok::<CurrentPreviewConfig, ApiError>(next.preview_request());
             }
         }
     })
@@ -886,9 +913,10 @@ async fn take_next_current_control_command_after(
 }
 
 fn build_preview_control_command(
-    preview_config: &CurrentPreviewConfig,
+    display_selection: &CurrentDisplaySelection,
     refresh_only: bool,
 ) -> SessionCommand {
+    let preview_config = display_selection.preview_request();
     SessionCommand {
         seq: 0,
         command_id: format!(
@@ -910,8 +938,23 @@ fn build_preview_control_command(
         torque_tolerance: None,
         energy_tolerance: None,
         mesh_options: None,
-        preview_config: Some(preview_config.clone()),
+        display_selection: Some(display_selection.clone()),
+        preview_config: Some(preview_config),
     }
+}
+
+fn canonicalize_display_selection(selection: &mut DisplaySelection) -> Result<(), ApiError> {
+    selection.kind = DisplaySelection::kind_for_quantity(&selection.quantity);
+    if matches!(selection.kind, fullmag_runner::DisplayKind::GlobalScalar) {
+        return Err(ApiError::bad_request(format!(
+            "quantity '{}' is a global scalar and cannot drive spatial preview selection",
+            selection.quantity
+        )));
+    }
+    if selection.component.trim().is_empty() {
+        selection.component = "3D".to_string();
+    }
+    Ok(())
 }
 
 async fn publish_current_live_state(
@@ -919,7 +962,8 @@ async fn publish_current_live_state(
     Json(req): Json<CurrentLivePublishRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let has_latest_fields_update = req.latest_fields.is_some();
-    let has_cached_preview_update = req.preview_fields.is_some();
+    let has_cached_preview_update = req.preview_fields.is_some() || req.clear_preview_cache;
+    let allow_previous_preview_fallback = !req.clear_preview_cache;
     let reset_preview = state
         .current_live_state
         .read()
@@ -928,15 +972,16 @@ async fn publish_current_live_state(
         .map(|existing| existing.session.session_id != req.session_id)
         .unwrap_or(false);
     if reset_preview {
-        let config = CurrentPreviewConfig::default();
-        *state.current_preview_config.write().await = config.clone();
-        let _ = state.current_preview_events.send(config);
+        let display_selection = CurrentDisplaySelection::default();
+        *state.current_display_selection.write().await = display_selection.clone();
+        let _ = state.current_display_events.send(display_selection);
         state.current_control_queue.lock().await.clear();
         *state.current_control_next_seq.lock().await = 0;
         let _ = state.current_control_events.send(0);
         let _ = std::fs::remove_dir_all(&state.current_workspace_root);
     }
-    let preview_config = state.current_preview_config.read().await.clone();
+    let display_selection = state.current_display_selection.read().await.clone();
+    let preview_config = display_selection.preview_request();
     let mut current = state.current_live_state.write().await;
     let mut next = match current.take() {
         Some(existing) if existing.session.session_id == req.session_id => existing,
@@ -944,6 +989,7 @@ async fn publish_current_live_state(
     };
     let previous_preview = next.preview.clone();
     apply_current_live_publish(&mut next, req)?;
+    next.display_selection = display_selection.clone();
     next.preview_config = preview_config.clone();
     if next.script_builder.is_none() && !next.session.script_path.trim().is_empty() {
         if let Ok(builder_state) = load_script_builder_state(
@@ -958,7 +1004,12 @@ async fn publish_current_live_state(
     let should_rebuild_preview =
         has_fresh_preview || has_latest_fields_update || has_cached_preview_update;
     next.preview = if should_rebuild_preview {
-        build_preview_state(&next, &preview_config).or(previous_preview)
+        let rebuilt = build_preview_state(&next, &preview_config);
+        if allow_previous_preview_fallback {
+            rebuilt.or(previous_preview)
+        } else {
+            rebuilt
+        }
     } else {
         previous_preview
     };
@@ -967,6 +1018,7 @@ async fn publish_current_live_state(
     let preview_json = if should_rebuild_preview {
         Some(serialize_current_live_preview(
             &next.session.session_id,
+            &next.display_selection,
             &next.preview_config,
             next.preview.as_ref(),
         )?)
@@ -990,6 +1042,16 @@ async fn set_current_preview_quantity(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     mutate_current_preview(&state, PreviewControlMode::Update, move |config| {
         config.quantity = req.quantity;
+    })
+    .await
+}
+
+async fn set_current_preview_selection(
+    State(state): State<Arc<AppState>>,
+    Json(selection): Json<DisplaySelection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    mutate_current_preview(&state, PreviewControlMode::Update, move |current| {
+        *current = selection;
     })
     .await
 }
@@ -1342,6 +1404,7 @@ fn build_session_command(req: SessionCommandRequest) -> Result<SessionCommand, A
         torque_tolerance: req.torque_tolerance,
         energy_tolerance: req.energy_tolerance,
         mesh_options: req.mesh_options,
+        display_selection: None,
         preview_config: None,
     })
 }
@@ -1533,15 +1596,17 @@ async fn mutate_current_preview<F>(
     mutate: F,
 ) -> Result<Json<serde_json::Value>, ApiError>
 where
-    F: FnOnce(&mut CurrentPreviewConfig),
+    F: FnOnce(&mut DisplaySelection),
 {
-    let preview_config = {
-        let mut config = state.current_preview_config.write().await;
-        mutate(&mut config);
-        config.revision = config.revision.saturating_add(1);
-        config.clone()
+    let display_selection = {
+        let mut current = state.current_display_selection.write().await;
+        mutate(&mut current.selection);
+        canonicalize_display_selection(&mut current.selection)?;
+        current.revision = current.revision.saturating_add(1);
+        current.clone()
     };
-    let _ = state.current_preview_events.send(preview_config.clone());
+    let preview_config = display_selection.preview_request();
+    let _ = state.current_display_events.send(display_selection.clone());
 
     let (json, public_json) = {
         let mut current = state.current_live_state.write().await;
@@ -1549,11 +1614,13 @@ where
             .as_mut()
             .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
         let previous_preview = snapshot.preview.clone();
+        snapshot.display_selection = display_selection.clone();
         snapshot.preview_config = preview_config.clone();
         snapshot.preview = build_preview_state(snapshot, &preview_config).or(previous_preview);
         let public_json = serialize_current_live_response(snapshot, true)?;
         let preview_json = serialize_current_live_preview(
             &snapshot.session.session_id,
+            &snapshot.display_selection,
             &snapshot.preview_config,
             snapshot.preview.as_ref(),
         )?;
@@ -1565,7 +1632,7 @@ where
     let command = enqueue_current_control_command(
         state,
         build_preview_control_command(
-            &preview_config,
+            &display_selection,
             matches!(control_mode, PreviewControlMode::Refresh),
         ),
     )
@@ -1592,6 +1659,7 @@ fn serialize_current_live_snapshot_event(
             fem_mesh: snapshot.fem_mesh.as_ref(),
             latest_fields: &snapshot.latest_fields,
             artifacts: &snapshot.artifacts,
+            display_selection: &snapshot.display_selection,
             preview_config: &snapshot.preview_config,
             preview: include_preview
                 .then_some(snapshot.preview.as_ref())
@@ -1617,6 +1685,7 @@ fn serialize_current_live_response(
         fem_mesh: snapshot.fem_mesh.as_ref(),
         latest_fields: &snapshot.latest_fields,
         artifacts: &snapshot.artifacts,
+        display_selection: &snapshot.display_selection,
         preview_config: &snapshot.preview_config,
         preview: include_preview
             .then_some(snapshot.preview.as_ref())
@@ -1627,11 +1696,13 @@ fn serialize_current_live_response(
 
 fn serialize_current_live_preview(
     session_id: &str,
+    display_selection: &CurrentDisplaySelection,
     preview_config: &CurrentPreviewConfig,
     preview: Option<&PreviewState>,
 ) -> Result<String, ApiError> {
     serde_json::to_string(&CurrentLiveEvent::Preview {
         session_id,
+        display_selection,
         preview_config,
         preview,
     })
@@ -2466,6 +2537,7 @@ fn default_current_live_state(req: &CurrentLivePublishRequest) -> SessionStateRe
         latest_fields: LatestFields::default(),
         preview_cache: CachedPreviewFields::default(),
         artifacts: Vec::new(),
+        display_selection: CurrentDisplaySelection::default(),
         preview_config: CurrentPreviewConfig::default(),
         preview: None,
     }
@@ -2505,6 +2577,9 @@ fn apply_current_live_publish(
     }
     if let Some(latest_fields) = req.latest_fields {
         merge_latest_fields(&mut current.latest_fields, latest_fields);
+    }
+    if req.clear_preview_cache {
+        current.preview_cache = CachedPreviewFields::default();
     }
     if let Some(preview_fields) = req.preview_fields {
         merge_cached_preview_fields(&mut current.preview_cache, preview_fields);

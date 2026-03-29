@@ -154,7 +154,7 @@ export default function RunSidebar() {
   }, []);
 
   return (
-    <div className="flex w-full h-full border-l border-border/60 bg-gradient-to-br from-card/80 to-background/50 backdrop-blur-xl shadow-[-8px_0_30px_rgba(0,0,0,0.3)] z-30">
+    <div className="flex w-full h-full border-l border-white/5 bg-gradient-to-br from-card/60 to-background/40 backdrop-blur-2xl shadow-[-8px_0_32px_rgba(0,0,0,0.4)] z-30">
       <PanelGroup
         orientation="vertical"
         className="flex w-full h-full flex-col"
@@ -172,7 +172,7 @@ export default function RunSidebar() {
           <section className="flex flex-col h-full bg-transparent">
             <button
               type="button"
-              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-border/40 border-l-[3px] border-l-primary shadow-[0_1px_2px_rgba(0,0,0,0.02)] shrink-0"
+              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-white/5 border-l-[3px] border-l-primary shadow-[0_4px_12px_rgba(0,0,0,0.1)] z-10 shrink-0 relative"
               onClick={handleNavigatorToggle}
               aria-expanded={navigatorOpen}
             >
@@ -206,7 +206,7 @@ export default function RunSidebar() {
           <section className="flex flex-col h-full bg-transparent">
             <button
               type="button"
-              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-border/40 border-l-[3px] border-l-emerald-500 shadow-[0_1px_2px_rgba(0,0,0,0.02)] shrink-0"
+              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-white/5 border-l-[3px] border-l-emerald-500 shadow-[0_4px_12px_rgba(0,0,0,0.1)] z-10 shrink-0 relative"
               onClick={handleInspectorToggle}
               aria-expanded={inspectorOpen}
             >

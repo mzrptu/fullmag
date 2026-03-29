@@ -4,6 +4,7 @@ import { memo, useRef, useEffect, useMemo } from "react";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { applyMagnetizationHsl } from "../magnetizationColor";
+import { COMP_NEGATIVE, COMP_NEUTRAL, COMP_POSITIVE } from "./colorUtils";
 import type { QualityLevel, RenderMode, VoxelColorMode, VoxelSampling, TopoComponent } from "../MagnetizationView3D";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
@@ -43,10 +44,6 @@ const QUALITY_CONFIGS: Record<QualityLevel, QualityConfig> = {
 };
 
 /* ── Constants ─────────────────────────────────────────────────────── */
-
-const COMP_NEGATIVE = new THREE.Color("#2f6caa");
-const COMP_NEUTRAL = new THREE.Color("#f4f1ed");
-const COMP_POSITIVE = new THREE.Color("#cf6256");
 
 const _dummy = new THREE.Object3D();
 const _defaultUp = new THREE.Vector3(0, 1, 0);

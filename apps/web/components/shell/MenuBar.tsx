@@ -112,7 +112,7 @@ export default function MenuBar(props: MenuBarProps) {
   const menus = buildMenus(props);
 
   return (
-    <div className="flex items-center gap-1 px-2 py-1 border-b border-border/40 bg-card/30 z-[60]">
+    <div className="flex items-center gap-1 px-2 py-1 border-b border-white/5 bg-background/40 backdrop-blur-md shadow-[0_4px_16px_rgba(0,0,0,0.2)] z-[60] relative">
       {menus.map((menu) => (
         <DropdownMenu.Root key={menu.label}>
           <DropdownMenu.Trigger asChild>
@@ -122,7 +122,7 @@ export default function MenuBar(props: MenuBarProps) {
           </DropdownMenu.Trigger>
 
           <DropdownMenu.Portal>
-            <DropdownMenu.Content className="min-w-[220px] rounded-md border border-border/50 bg-popover/95 backdrop-blur-md p-1 shadow-md animate-in fade-in-80 slide-in-from-top-1 z-[100]" sideOffset={2} align="start">
+            <DropdownMenu.Content className="min-w-[220px] rounded-md border border-border/50 bg-popover/95 text-popover-foreground backdrop-blur-md p-1 shadow-md animate-in fade-in-80 slide-in-from-top-1 z-[100]" sideOffset={2} align="start">
               {menu.items.map((item, i) =>
                 item.separator ? (
                   <DropdownMenu.Separator key={i} className="my-1 h-px bg-border/50" />

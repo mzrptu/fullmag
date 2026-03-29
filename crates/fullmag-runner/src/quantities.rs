@@ -126,6 +126,27 @@ pub fn quantity_specs() -> &'static [QuantitySpec] {
     &QUANTITY_SPECS
 }
 
+pub fn interactive_preview_quantity_ids() -> Vec<&'static str> {
+    QUANTITY_SPECS
+        .iter()
+        .filter(|spec| spec.ui_exposed && spec.interactive_preview)
+        .map(|spec| spec.id)
+        .collect()
+}
+
+pub fn cached_preview_quantity_ids() -> Vec<&'static str> {
+    QUANTITY_SPECS
+        .iter()
+        .filter(|spec| {
+            spec.ui_exposed
+                && spec.interactive_preview
+                && spec.kind == QuantityKind::VectorField
+                && spec.id != "m"
+        })
+        .map(|spec| spec.id)
+        .collect()
+}
+
 pub fn quantity_spec(id: &str) -> Option<&'static QuantitySpec> {
     QUANTITY_SPECS.iter().find(|spec| spec.id == id)
 }

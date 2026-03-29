@@ -43,9 +43,10 @@ export default function TitleBar({
     ?? (interactiveEnabled ? "Interactive simulation controls" : "Interactive controls are unavailable for this session");
 
   return (
-    <div className="flex h-12 w-full shrink-0 items-center justify-between border-b border-border/60 bg-gradient-to-r from-card/80 to-background/50 px-4 text-sm font-medium backdrop-blur-2xl shadow-[0_4px_24px_rgba(0,0,0,0.2)] z-20 relative">
+    <div className="flex h-12 w-full shrink-0 items-center justify-between border-b border-white/5 bg-background/40 px-4 text-sm font-medium backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.4)] z-20 relative">
       <span className="flex items-center gap-1.5 whitespace-nowrap overflow-hidden text-ellipsis">
-        <span className="font-semibold">{problemName}</span>
+        <img src="/logo.png" alt="Fullmag" className="w-5 h-5 mr-1.5 drop-shadow-md opacity-90" />
+        <span className="font-semibold tracking-wide text-foreground/90">{problemName}</span>
         {backend && <><span className="mx-1 text-muted-foreground/50">—</span><span className="text-muted-foreground text-[0.65rem] font-bold tracking-widest">{backend.toUpperCase()}</span></>}
         {runtimeEngine && <><span className="mx-1 text-muted-foreground/50">·</span><span className="text-muted-foreground text-[0.65rem] font-bold tracking-widest">{runtimeEngine.toUpperCase()}</span></>}
       </span>
