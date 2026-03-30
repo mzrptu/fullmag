@@ -28,132 +28,10 @@ use crate::types::{
     ExecutedRun, ExecutionProvenance, FieldSnapshot, LivePreviewRequest, LiveStepConsumer,
     RunError, RunResult, RunStatus, StateObservables, StepAction, StepStats, StepUpdate,
 };
-use crate::DisplaySelectionState;
 
 use std::time::Instant;
 
-/// Execute an FDM plan on the CPU reference engine.
-pub(crate) fn execute_reference_fdm(
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_impl(
-        plan,
-        until_seconds,
-        outputs,
-        None::<LiveStepConsumer<'_>>,
-        None,
-    )
-}
 
-/// Execute FDM on CPU with a per-step callback for live streaming.
-pub(crate) fn execute_reference_fdm_with_callback(
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    grid: [u32; 3],
-    field_every_n: u64,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_impl(
-        plan,
-        until_seconds,
-        outputs,
-        Some(LiveStepConsumer {
-            grid,
-            field_every_n,
-            display_selection: None,
-            on_step,
-        }),
-        None,
-    )
-}
-
-pub(crate) fn execute_reference_fdm_with_live_preview(
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    grid: [u32; 3],
-    field_every_n: u64,
-    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_impl(
-        plan,
-        until_seconds,
-        outputs,
-        Some(LiveStepConsumer {
-            grid,
-            field_every_n,
-            display_selection: Some(display_selection),
-            on_step,
-        }),
-        None,
-    )
-}
-
-pub(crate) fn execute_reference_fdm_streaming(
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    artifact_writer: ArtifactPipelineSender,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_impl(
-        plan,
-        until_seconds,
-        outputs,
-        None::<LiveStepConsumer<'_>>,
-        Some(artifact_writer),
-    )
-}
-
-pub(crate) fn execute_reference_fdm_with_callback_streaming(
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    grid: [u32; 3],
-    field_every_n: u64,
-    artifact_writer: ArtifactPipelineSender,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_impl(
-        plan,
-        until_seconds,
-        outputs,
-        Some(LiveStepConsumer {
-            grid,
-            field_every_n,
-            display_selection: None,
-            on_step,
-        }),
-        Some(artifact_writer),
-    )
-}
-
-pub(crate) fn execute_reference_fdm_with_live_preview_streaming(
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    grid: [u32; 3],
-    field_every_n: u64,
-    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
-    artifact_writer: ArtifactPipelineSender,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_impl(
-        plan,
-        until_seconds,
-        outputs,
-        Some(LiveStepConsumer {
-            grid,
-            field_every_n,
-            display_selection: Some(display_selection),
-            on_step,
-        }),
-        Some(artifact_writer),
-    )
-}
 
 pub(crate) fn snapshot_preview(
     plan: &FdmPlanIR,
@@ -267,7 +145,11 @@ pub(crate) fn build_snapshot_problem_and_state(
     Ok((problem, state))
 }
 
-fn execute_reference_fdm_impl(
+/// Execute an FDM plan on the CPU reference engine.
+///
+/// Pass `live: Some(LiveStepConsumer { .. })` for per-step callbacks /
+/// live preview, and `artifact_writer: Some(sender)` for streaming artifacts.
+pub(crate) fn execute_reference_fdm(
     plan: &FdmPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
@@ -641,6 +523,7 @@ fn execute_reference_fdm_impl(
         initial_magnetization,
         field_snapshots,
         field_snapshot_count,
+        auxiliary_artifacts: Vec::new(),
         provenance,
     })
 }
@@ -945,7 +828,7 @@ mod tests {
     #[test]
     fn uniform_relaxation_produces_stable_energy() {
         let plan = make_test_plan();
-        let result = execute_reference_fdm(&plan, 1e-12, &[]).expect("run should succeed");
+        let result = execute_reference_fdm(&plan, 1e-12, &[], None, None).expect("run should succeed");
 
         assert_eq!(result.result.status, RunStatus::Completed);
         assert!(!result.result.steps.is_empty());
@@ -967,7 +850,7 @@ mod tests {
             ..make_test_plan()
         };
 
-        let result = execute_reference_fdm(&plan, 5e-12, &[]).expect("run should succeed");
+        let result = execute_reference_fdm(&plan, 5e-12, &[], None, None).expect("run should succeed");
 
         assert_eq!(result.result.status, RunStatus::Completed);
         let first_energy = result.result.steps.first().unwrap().e_ex;
@@ -997,8 +880,8 @@ mod tests {
         };
 
         let base_result =
-            execute_reference_fdm(&base_plan, 1e-14, &[]).expect("base run should succeed");
-        let stronger_result = execute_reference_fdm(&stronger_exchange_plan, 1e-14, &[])
+            execute_reference_fdm(&base_plan, 1e-14, &[], None, None).expect("base run should succeed");
+        let stronger_result = execute_reference_fdm(&stronger_exchange_plan, 1e-14, &[], None, None)
             .expect("scaled run should succeed");
 
         let base_initial = base_result.result.steps.first().unwrap().e_ex;
@@ -1046,7 +929,7 @@ mod tests {
             },
         ];
 
-        let executed = execute_reference_fdm(&plan, 1e-12, &outputs)
+        let executed = execute_reference_fdm(&plan, 1e-12, &outputs, None, None)
             .expect("scheduled field run should succeed");
 
         for field_name in ["m", "H_ex", "H_demag", "H_ext", "H_eff"] {
@@ -1075,7 +958,7 @@ mod tests {
             ..make_test_plan()
         };
 
-        let executed = execute_reference_fdm(&plan, 1e-14, &[]).expect("run should succeed");
+        let executed = execute_reference_fdm(&plan, 1e-14, &[], None, None).expect("run should succeed");
         let stats = executed.result.steps.first().expect("scalar trace");
 
         assert!(stats.e_demag.is_finite());
@@ -1135,7 +1018,7 @@ mod tests {
         ];
 
         let executed =
-            execute_reference_fdm(&plan, 2e-13, &outputs).expect("masked run should succeed");
+            execute_reference_fdm(&plan, 2e-13, &outputs, None, None).expect("masked run should succeed");
 
         let is_zero = |vector: [f64; 3]| vector.iter().all(|value| value.abs() <= 1e-12);
 
@@ -1176,7 +1059,7 @@ mod tests {
         };
 
         let executed =
-            execute_reference_fdm(&plan, 1e-9, &[]).expect("relaxation run should succeed");
+            execute_reference_fdm(&plan, 1e-9, &[], None, None).expect("relaxation run should succeed");
 
         assert!(executed.result.steps.len() <= 2);
         let final_time = executed.result.steps.last().expect("final stats").time;
@@ -1189,7 +1072,7 @@ mod tests {
     #[test]
     fn llg_overdamped_relaxation_uses_pure_damping_rhs() {
         let plan = make_relaxation_precession_test_plan();
-        let executed = execute_reference_fdm(&plan, 1e-12, &[]).expect("relaxation should succeed");
+        let executed = execute_reference_fdm(&plan, 1e-12, &[], None, None).expect("relaxation should succeed");
         let final_m = executed.result.final_magnetization[0];
 
         assert!(
@@ -1217,7 +1100,7 @@ mod tests {
         };
 
         let executed =
-            execute_reference_fdm(&plan, 1e-9, &[]).expect("BB relaxation should succeed");
+            execute_reference_fdm(&plan, 1e-9, &[], None, None).expect("BB relaxation should succeed");
         assert_eq!(executed.result.status, RunStatus::Completed);
         assert!(!executed.result.steps.is_empty());
     }
@@ -1235,7 +1118,7 @@ mod tests {
         };
 
         let executed =
-            execute_reference_fdm(&plan, 1e-9, &[]).expect("NCG relaxation should succeed");
+            execute_reference_fdm(&plan, 1e-9, &[], None, None).expect("NCG relaxation should succeed");
         assert_eq!(executed.result.status, RunStatus::Completed);
         assert!(!executed.result.steps.is_empty());
     }
@@ -1255,7 +1138,7 @@ mod tests {
         };
 
         let executed =
-            execute_reference_fdm(&plan, 1e-9, &[]).expect("BB relaxation should succeed");
+            execute_reference_fdm(&plan, 1e-9, &[], None, None).expect("BB relaxation should succeed");
         assert!(
             executed.result.steps.len() >= 2,
             "should have initial + final stats"
@@ -1285,7 +1168,7 @@ mod tests {
         };
 
         let executed =
-            execute_reference_fdm(&plan, 1e-9, &[]).expect("NCG relaxation should succeed");
+            execute_reference_fdm(&plan, 1e-9, &[], None, None).expect("NCG relaxation should succeed");
         assert!(
             executed.result.steps.len() >= 2,
             "should have initial + final stats"
@@ -1324,7 +1207,7 @@ mod tests {
                 }),
                 ..base.clone()
             };
-            let executed = execute_reference_fdm(&plan, 1e-9, &[])
+            let executed = execute_reference_fdm(&plan, 1e-9, &[], None, None)
                 .expect(&format!("{:?} relaxation should succeed", algorithm));
             let final_energy = executed.result.steps.last().unwrap().e_total;
             energies.push((algorithm, final_energy));

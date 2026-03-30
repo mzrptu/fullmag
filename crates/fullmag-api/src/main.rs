@@ -102,6 +102,34 @@ struct ArtifactEntry {
     kind: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ArtifactFileQuery {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct EigenModeQuery {
+    index: u32,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+struct EigenDispersionRow {
+    mode_index: u32,
+    kx: f64,
+    ky: f64,
+    kz: f64,
+    frequency_hz: f64,
+    angular_frequency_rad_per_s: f64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct EigenDispersionResponse {
+    csv_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_metadata: Option<Value>,
+    rows: Vec<EigenDispersionRow>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct ScalarRow {
     step: u64,
@@ -808,6 +836,22 @@ async fn main() {
             "/v1/live/current/artifacts",
             get(list_current_live_artifacts),
         )
+        .route(
+            "/v1/live/current/artifacts/file",
+            get(read_current_live_artifact),
+        )
+        .route(
+            "/v1/live/current/eigen/spectrum",
+            get(get_current_live_eigen_spectrum),
+        )
+        .route(
+            "/v1/live/current/eigen/mode",
+            get(get_current_live_eigen_mode),
+        )
+        .route(
+            "/v1/live/current/eigen/dispersion",
+            get(get_current_live_eigen_dispersion),
+        )
         .route("/v1/docs/physics", get(list_physics_docs))
         .route("/v1/run", post(start_run))
         .route("/ws/live/current", get(ws_current_live))
@@ -1355,6 +1399,84 @@ async fn list_current_live_artifacts(
     Ok(Json(read_artifacts_from_dir(artifact_dir.as_deref())?))
 }
 
+async fn read_current_live_artifact(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ArtifactFileQuery>,
+) -> Result<Response, ApiError> {
+    let current = state.current_live_state.read().await;
+    let snapshot = current
+        .as_ref()
+        .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
+    let artifact_dir = current_artifact_dir(snapshot)
+        .ok_or_else(|| ApiError::not_found("no artifact directory for the active workspace"))?;
+    drop(current);
+
+    let relative = sanitize_artifact_relative_path(&query.path)?;
+    let artifact_path = artifact_dir.join(&relative);
+    if !artifact_path.exists() || !artifact_path.is_file() {
+        return Err(ApiError::not_found(format!(
+            "artifact '{}' was not found",
+            query.path
+        )));
+    }
+
+    let content_type = match artifact_path.extension().and_then(|ext| ext.to_str()) {
+        Some("json") => "application/json; charset=utf-8",
+        Some("csv") => "text/csv; charset=utf-8",
+        Some("txt") => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    };
+    let bytes = std::fs::read(&artifact_path)
+        .map_err(|error| ApiError::internal(format!("failed to read artifact: {}", error)))?;
+    Ok(([(CONTENT_TYPE, content_type)], bytes).into_response())
+}
+
+async fn get_current_live_eigen_spectrum(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, ApiError> {
+    let artifact_dir = require_current_live_artifact_dir(&state).await?;
+    for candidate in ["eigen/spectrum.json", "eigen/metadata/eigen_summary.json"] {
+        if try_resolve_artifact_path(&artifact_dir, candidate)?.is_some() {
+            return Ok(Json(read_json_artifact_value(&artifact_dir, candidate)?));
+        }
+    }
+    Err(ApiError::not_found(
+        "no eigen spectrum artifact found in the active workspace",
+    ))
+}
+
+async fn get_current_live_eigen_mode(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<EigenModeQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let artifact_dir = require_current_live_artifact_dir(&state).await?;
+    let relative_path = format!("eigen/modes/mode_{:04}.json", query.index);
+    Ok(Json(read_json_artifact_value(&artifact_dir, &relative_path)?))
+}
+
+async fn get_current_live_eigen_dispersion(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<EigenDispersionResponse>, ApiError> {
+    let artifact_dir = require_current_live_artifact_dir(&state).await?;
+    let csv_path = "eigen/dispersion/branch_table.csv";
+    let csv_content = read_text_artifact_value(&artifact_dir, csv_path)?;
+    let path_metadata = if try_resolve_artifact_path(&artifact_dir, "eigen/dispersion/path.json")?
+        .is_some()
+    {
+        Some(read_json_artifact_value(
+            &artifact_dir,
+            "eigen/dispersion/path.json",
+        )?)
+    } else {
+        None
+    };
+    Ok(Json(EigenDispersionResponse {
+        csv_path: csv_path.to_string(),
+        path_metadata,
+        rows: parse_eigen_dispersion_csv(&csv_content)?,
+    }))
+}
+
 /// POST /v1/run — start a simulation run and broadcast live updates.
 async fn start_run(
     State(state): State<Arc<AppState>>,
@@ -1899,6 +2021,10 @@ async fn import_magnetization_state_for_current_workspace(
                     max_steps: None,
                     torque_tolerance: None,
                     energy_tolerance: None,
+                    integrator: None,
+                    fixed_timestep: None,
+                    relax_algorithm: None,
+                    relax_alpha: None,
                     mesh_options: None,
                     state_path: Some(stored_abs_path.display().to_string()),
                     state_format: Some(loaded.format.clone()),
@@ -3233,6 +3359,127 @@ fn sanitize_file_name(file_name: &str) -> String {
         .unwrap_or_default()
 }
 
+fn sanitize_artifact_relative_path(raw: &str) -> Result<PathBuf, ApiError> {
+    let candidate = Path::new(raw);
+    if candidate.is_absolute() {
+        return Err(ApiError::bad_request(
+            "artifact path must be relative to the current artifact directory",
+        ));
+    }
+    let mut sanitized = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            std::path::Component::Normal(value) => sanitized.push(value),
+            std::path::Component::CurDir => {}
+            _ => {
+                return Err(ApiError::bad_request(
+                    "artifact path must not contain '..' or root prefixes",
+                ));
+            }
+        }
+    }
+    if sanitized.as_os_str().is_empty() {
+        return Err(ApiError::bad_request("artifact path must not be empty"));
+    }
+    Ok(sanitized)
+}
+
+async fn require_current_live_artifact_dir(state: &Arc<AppState>) -> Result<PathBuf, ApiError> {
+    let current = state.current_live_state.read().await;
+    let snapshot = current
+        .as_ref()
+        .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
+    current_artifact_dir(snapshot)
+        .ok_or_else(|| ApiError::not_found("no artifact directory for the active workspace"))
+}
+
+fn try_resolve_artifact_path(
+    artifact_dir: &Path,
+    raw: &str,
+) -> Result<Option<PathBuf>, ApiError> {
+    let relative = sanitize_artifact_relative_path(raw)?;
+    let artifact_path = artifact_dir.join(relative);
+    if artifact_path.exists() && artifact_path.is_file() {
+        Ok(Some(artifact_path))
+    } else {
+        Ok(None)
+    }
+}
+
+fn resolve_artifact_path(artifact_dir: &Path, raw: &str) -> Result<PathBuf, ApiError> {
+    try_resolve_artifact_path(artifact_dir, raw)?.ok_or_else(|| {
+        ApiError::not_found(format!("artifact '{}' was not found", raw))
+    })
+}
+
+fn read_text_artifact_value(artifact_dir: &Path, raw: &str) -> Result<String, ApiError> {
+    let artifact_path = resolve_artifact_path(artifact_dir, raw)?;
+    std::fs::read_to_string(&artifact_path)
+        .map_err(|error| ApiError::internal(format!("failed to read artifact: {}", error)))
+}
+
+fn read_json_artifact_value(artifact_dir: &Path, raw: &str) -> Result<Value, ApiError> {
+    let content = read_text_artifact_value(artifact_dir, raw)?;
+    serde_json::from_str(&content).map_err(|error| {
+        ApiError::internal(format!("failed to parse artifact '{}': {}", raw, error))
+    })
+}
+
+fn parse_eigen_dispersion_csv(content: &str) -> Result<Vec<EigenDispersionRow>, ApiError> {
+    let mut rows = Vec::new();
+    for (line_number, line) in content.lines().enumerate() {
+        if line_number == 0 {
+            continue;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let columns = trimmed.split(',').map(str::trim).collect::<Vec<_>>();
+        if columns.len() != 6 {
+            return Err(ApiError::internal(format!(
+                "invalid eigen dispersion row {}: expected 6 columns, got {}",
+                line_number + 1,
+                columns.len()
+            )));
+        }
+        let parse_u32 = |label: &str, raw: &str| {
+            raw.parse::<u32>().map_err(|error| {
+                ApiError::internal(format!(
+                    "invalid {} value '{}' in dispersion row {}: {}",
+                    label,
+                    raw,
+                    line_number + 1,
+                    error
+                ))
+            })
+        };
+        let parse_f64 = |label: &str, raw: &str| {
+            raw.parse::<f64>().map_err(|error| {
+                ApiError::internal(format!(
+                    "invalid {} value '{}' in dispersion row {}: {}",
+                    label,
+                    raw,
+                    line_number + 1,
+                    error
+                ))
+            })
+        };
+        rows.push(EigenDispersionRow {
+            mode_index: parse_u32("mode_index", columns[0])?,
+            kx: parse_f64("kx", columns[1])?,
+            ky: parse_f64("ky", columns[2])?,
+            kz: parse_f64("kz", columns[3])?,
+            frequency_hz: parse_f64("frequency_hz", columns[4])?,
+            angular_frequency_rad_per_s: parse_f64(
+                "angular_frequency_rad_per_s",
+                columns[5],
+            )?,
+        });
+    }
+    Ok(rows)
+}
+
 fn make_repo_relative(repo_root: &Path, path: &Path) -> String {
     path.strip_prefix(repo_root)
         .unwrap_or(path)
@@ -3923,5 +4170,43 @@ impl IntoResponse for ApiError {
             })),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_artifact_relative_path_rejects_parent_segments() {
+        let error = sanitize_artifact_relative_path("../secret.json")
+            .expect_err("parent segments must be rejected");
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn parse_eigen_dispersion_csv_decodes_rows() {
+        let csv = "mode_index,kx,ky,kz,frequency_hz,angular_frequency_rad_per_s\n0,0.0,1.0,2.0,3.0,4.0\n";
+        let rows = parse_eigen_dispersion_csv(csv).expect("csv should parse");
+        assert_eq!(
+            rows,
+            vec![EigenDispersionRow {
+                mode_index: 0,
+                kx: 0.0,
+                ky: 1.0,
+                kz: 2.0,
+                frequency_hz: 3.0,
+                angular_frequency_rad_per_s: 4.0,
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_eigen_dispersion_csv_rejects_short_rows() {
+        let error = parse_eigen_dispersion_csv(
+            "mode_index,kx,ky,kz,frequency_hz,angular_frequency_rad_per_s\n0,1,2\n",
+        )
+        .expect_err("short rows must fail");
+        assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

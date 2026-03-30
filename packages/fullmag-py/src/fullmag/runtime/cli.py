@@ -9,7 +9,7 @@ from typing import Sequence
 
 from fullmag._core import run_problem_json
 from fullmag.model import BackendTarget, ExecutionMode, ExecutionPrecision
-from fullmag.model.study import Relaxation
+from fullmag.model.study import Eigenmodes, Relaxation
 from fullmag.runtime.loader import load_problem_from_script
 from fullmag.runtime.simulation import Simulation, result_from_run_payload
 
@@ -186,6 +186,8 @@ def _resolve_until_seconds(study, default_until_seconds: float | None) -> float 
         if initial_timestep is None and adaptive_timestep is not None:
             initial_timestep = adaptive_timestep.dt_initial
         return (initial_timestep or 1e-13) * study.max_steps
+    if isinstance(study, Eigenmodes):
+        return 0.0
     return None
 
 

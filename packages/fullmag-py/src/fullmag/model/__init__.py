@@ -13,7 +13,7 @@ from .geometry import (
     Translate,
     Union,
 )
-from .outputs import SaveField, SaveScalar, Snapshot
+from .outputs import SaveDispersion, SaveField, SaveMode, SaveScalar, SaveSpectrum, Snapshot
 from .problem import (
     BackendTarget,
     DeviceTarget,
@@ -24,7 +24,7 @@ from .problem import (
     backend,
 )
 from .structure import Ferromagnet, Material, Region
-from .study import Relaxation, TimeEvolution
+from .study import Eigenmodes, Relaxation, TimeEvolution
 
 __all__ = [
     "BackendTarget",
@@ -36,6 +36,7 @@ __all__ = [
     "DeviceTarget",
     "Difference",
     "DiscretizationHints",
+    "Eigenmodes",
     "Ellipse",
     "Ellipsoid",
     "Exchange",
@@ -56,8 +57,11 @@ __all__ = [
     "Region",
     "Relaxation",
     "RuntimeSelection",
+    "SaveDispersion",
     "SaveField",
+    "SaveMode",
     "SaveScalar",
+    "SaveSpectrum",
     "Snapshot",
     "Sphere",
     "TimeEvolution",

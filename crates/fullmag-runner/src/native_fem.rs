@@ -596,6 +596,7 @@ mod tests {
             bulk_dmi: None,
             dind_field: None,
             dbulk_field: None,
+            temperature: None,
         }
     }
 
@@ -658,6 +659,7 @@ mod tests {
             bulk_dmi: None,
             dind_field: None,
             dbulk_field: None,
+            temperature: None,
         }
     }
 

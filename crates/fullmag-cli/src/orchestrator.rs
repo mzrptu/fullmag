@@ -28,6 +28,7 @@ fn current_live_metadata(
             fullmag_runner::quantities::interactive_preview_quantity_ids()
         }
         BackendPlanIR::FdmMultilayer(_) => vec!["m"],
+        BackendPlanIR::FemEigen(_) => vec![],
     };
     let runtime_engine = fullmag_runner::resolve_runtime_engine(problem)
         .ok()
@@ -1089,10 +1090,15 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     fdm.common_cells[1],
                     fdm.common_cells[2],
                 ],
-                BackendPlanIR::Fem(_) => [0, 0, 0],
+                BackendPlanIR::Fem(_) | BackendPlanIR::FemEigen(_) => [0, 0, 0],
             };
             let fem_mesh = match &execution_plan.backend_plan {
                 BackendPlanIR::Fem(fem) => Some(fullmag_runner::FemMeshPayload {
+                    nodes: fem.mesh.nodes.clone(),
+                    elements: fem.mesh.elements.clone(),
+                    boundary_faces: fem.mesh.boundary_faces.clone(),
+                }),
+                BackendPlanIR::FemEigen(fem) => Some(fullmag_runner::FemMeshPayload {
                     nodes: fem.mesh.nodes.clone(),
                     elements: fem.mesh.elements.clone(),
                     boundary_faces: fem.mesh.boundary_faces.clone(),
@@ -1625,10 +1631,15 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         fdm.common_cells[1],
                         fdm.common_cells[2],
                     ],
-                    BackendPlanIR::Fem(_) => [0, 0, 0],
+                    BackendPlanIR::Fem(_) | BackendPlanIR::FemEigen(_) => [0, 0, 0],
                 };
                 let fem_mesh = match &execution_plan.backend_plan {
                     BackendPlanIR::Fem(fem) => Some(fullmag_runner::FemMeshPayload {
+                        nodes: fem.mesh.nodes.clone(),
+                        elements: fem.mesh.elements.clone(),
+                        boundary_faces: fem.mesh.boundary_faces.clone(),
+                    }),
+                    BackendPlanIR::FemEigen(fem) => Some(fullmag_runner::FemMeshPayload {
                         nodes: fem.mesh.nodes.clone(),
                         elements: fem.mesh.elements.clone(),
                         boundary_faces: fem.mesh.boundary_faces.clone(),

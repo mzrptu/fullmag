@@ -9,10 +9,10 @@
 use fullmag_ir::{
     BackendPlanIR, BackendTarget, CommonPlanMeta, DiscretizationHintsIR, ExchangeBoundaryCondition,
     ExecutionMode, ExecutionPlanIR, ExecutionPrecision, FdmGridAssetIR, FdmHintsIR, FdmLayerPlanIR,
-    FdmMaterialIR, FdmMultilayerPlanIR, FdmMultilayerSummaryIR, FdmPlanIR, FemPlanIR,
-    GeometryEntryIR, GridDimensions, InitialMagnetizationIR, IntegratorChoice, MeshIR, OutputIR,
-    OutputPlanIR, ProblemIR, ProvenancePlanIR, RelaxationAlgorithmIR, RelaxationControlIR,
-    IR_VERSION,
+    FdmMaterialIR, FdmMultilayerPlanIR, FdmMultilayerSummaryIR, FdmPlanIR,
+    FemEigenPlanIR, FemPlanIR, GeometryEntryIR, GridDimensions, InitialMagnetizationIR,
+    IntegratorChoice, MeshIR, OutputIR, OutputPlanIR, ProblemIR, ProvenancePlanIR,
+    RelaxationAlgorithmIR, RelaxationControlIR, IR_VERSION,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -355,6 +355,7 @@ fn planned_study_controls(
         None => match &problem.study {
             fullmag_ir::StudyIR::TimeEvolution { .. } => IntegratorChoice::Rk45,
             fullmag_ir::StudyIR::Relaxation { algorithm, .. } => algorithm.default_integrator(),
+            fullmag_ir::StudyIR::Eigenmodes { .. } => IntegratorChoice::Heun,
         },
     };
 
@@ -451,7 +452,19 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
     }
 
     if resolved_backend == BackendTarget::Fem {
-        return plan_fem(problem, resolved_backend);
+        return match &problem.study {
+            fullmag_ir::StudyIR::Eigenmodes { .. } => plan_fem_eigen(problem, resolved_backend),
+            _ => plan_fem(problem, resolved_backend),
+        };
+    }
+
+    if matches!(problem.study, fullmag_ir::StudyIR::Eigenmodes { .. }) {
+        return Err(PlanError {
+            reasons: vec![
+                "StudyIR::Eigenmodes is currently executable only with backend='fem'"
+                    .to_string(),
+            ],
+        });
     }
 
     if problem.magnets.len() > 1 {
@@ -1749,6 +1762,7 @@ fn plan_fem(
         bulk_dmi,
         dind_field: None,
         dbulk_field: None,
+        temperature: None,
     };
     let study_note = if let Some(control) = fem_plan.relaxation.as_ref() {
         format!(
@@ -1795,6 +1809,315 @@ fn plan_fem(
                 ),
                 study_note,
                 "FEM CPU reference execution is available; native MFEM/libCEED/hypre GPU execution remains in progress"
+                    .to_string(),
+            ],
+        },
+    })
+}
+
+fn plan_fem_eigen(
+    problem: &ProblemIR,
+    resolved_backend: BackendTarget,
+) -> Result<ExecutionPlanIR, PlanError> {
+    let mut errors = Vec::new();
+
+    let fem_hints = match &problem.backend_policy.discretization_hints {
+        Some(DiscretizationHintsIR { fem: Some(fem), .. }) => fem,
+        _ => {
+            return Err(PlanError {
+                reasons: vec![
+                    "FEM discretization hints (order + hmax) are required for backend='fem'"
+                        .to_string(),
+                ],
+            });
+        }
+    };
+
+    let fullmag_ir::StudyIR::Eigenmodes {
+        dynamics,
+        operator,
+        count,
+        target,
+        equilibrium,
+        k_sampling,
+        normalization,
+        damping_policy,
+        ..
+    } = &problem.study
+    else {
+        unreachable!("plan_fem_eigen is only called for StudyIR::Eigenmodes");
+    };
+
+    let geometry_by_name: BTreeMap<&str, &GeometryEntryIR> = problem
+        .geometry
+        .entries
+        .iter()
+        .map(|entry| (entry.name(), entry))
+        .collect();
+    let region_to_geometry: BTreeMap<&str, &str> = problem
+        .regions
+        .iter()
+        .map(|region| (region.name.as_str(), region.geometry.as_str()))
+        .collect();
+
+    let mut merged_equilibrium = Vec::new();
+    let mut mesh_parts = Vec::with_capacity(problem.magnets.len());
+    let mut mesh_sources = Vec::with_capacity(problem.magnets.len());
+    let mut selected_material: Option<fullmag_ir::MaterialIR> = None;
+
+    for magnet in &problem.magnets {
+        let Some(geometry_name) = region_to_geometry.get(magnet.region.as_str()).copied() else {
+            errors.push(format!(
+                "magnet '{}' references region '{}' with no geometry binding",
+                magnet.name, magnet.region
+            ));
+            continue;
+        };
+        let Some(_geometry_entry) = geometry_by_name.get(geometry_name).copied() else {
+            errors.push(format!(
+                "magnet '{}' references geometry '{}' which is missing from geometry.entries",
+                magnet.name, geometry_name
+            ));
+            continue;
+        };
+        let Some(material) = problem
+            .materials
+            .iter()
+            .find(|candidate| candidate.name == magnet.material)
+            .cloned()
+        else {
+            errors.push(format!(
+                "magnet '{}' references missing material '{}'",
+                magnet.name, magnet.material
+            ));
+            continue;
+        };
+        if let Some(reference_material) = selected_material.as_ref() {
+            if !compatible_fem_material(reference_material, &material) {
+                errors.push(format!(
+                    "current multi-body FEM eigen baseline requires identical material law across magnets; '{}' is incompatible with '{}'",
+                    magnet.name,
+                    problem.magnets[0].name
+                ));
+            }
+        } else {
+            selected_material = Some(material.clone());
+        }
+
+        let mesh_asset = problem
+            .geometry_assets
+            .as_ref()
+            .and_then(|assets| {
+                assets
+                    .fem_mesh_assets
+                    .iter()
+                    .find(|asset| asset.geometry_name == geometry_name)
+            })
+            .cloned();
+
+        let mesh_asset = match mesh_asset {
+            Some(asset) => asset,
+            None => {
+                errors.push(format!(
+                    "geometry '{}' requires a precomputed FEM mesh asset; no MeshIR was provided",
+                    geometry_name
+                ));
+                continue;
+            }
+        };
+
+        let mesh = match (&mesh_asset.mesh, &mesh_asset.mesh_source) {
+            (Some(mesh), _) => mesh.clone(),
+            (None, Some(source)) => match load_mesh_from_source(source) {
+                Ok(mesh) => mesh,
+                Err(message) => {
+                    errors.push(message);
+                    continue;
+                }
+            },
+            (None, None) => {
+                errors.push(format!(
+                    "geometry '{}' requires a FEM mesh asset with inline mesh or mesh_source",
+                    geometry_name
+                ));
+                continue;
+            }
+        };
+
+        let n_nodes = mesh.nodes.len();
+        let equilibrium_magnetization = match &magnet.initial_magnetization {
+            Some(InitialMagnetizationIR::Uniform { value }) => vec![*value; n_nodes],
+            Some(InitialMagnetizationIR::RandomSeeded { seed }) => {
+                generate_random_unit_vectors(*seed, n_nodes)
+            }
+            Some(InitialMagnetizationIR::SampledField { values }) => {
+                if values.len() != n_nodes {
+                    errors.push(format!(
+                        "magnet '{}' sampled_field has {} vectors, but FEM mesh '{}' has {} nodes",
+                        magnet.name,
+                        values.len(),
+                        mesh.mesh_name,
+                        n_nodes
+                    ));
+                }
+                values.clone()
+            }
+            None => vec![[1.0, 0.0, 0.0]; n_nodes],
+        };
+
+        merged_equilibrium.extend(equilibrium_magnetization);
+        mesh_parts.push((magnet.name.clone(), mesh));
+        mesh_sources.push(mesh_asset.mesh_source);
+    }
+
+    let mut enable_exchange = false;
+    let mut enable_demag = false;
+    let mut external_field = None;
+    let mut demag_realization: Option<String> = None;
+    for term in &problem.energy_terms {
+        match term {
+            fullmag_ir::EnergyTermIR::Exchange => {
+                if enable_exchange {
+                    errors.push("Exchange is declared more than once".to_string());
+                }
+                enable_exchange = true;
+            }
+            fullmag_ir::EnergyTermIR::Demag { realization } => {
+                if enable_demag {
+                    errors.push("Demag is declared more than once".to_string());
+                }
+                enable_demag = true;
+                demag_realization = realization.clone();
+            }
+            fullmag_ir::EnergyTermIR::Zeeman { b } => {
+                if external_field.is_some() {
+                    errors.push("Zeeman is declared more than once".to_string());
+                }
+                external_field = Some([b[0] / MU0, b[1] / MU0, b[2] / MU0]);
+            }
+            other => {
+                errors.push(format!(
+                    "energy term '{:?}' is not yet executable in the FEM eigen baseline",
+                    other
+                ));
+            }
+        }
+    }
+    if !(enable_exchange || enable_demag || external_field.is_some()) {
+        errors.push(
+            "the current FEM eigen baseline requires at least one of Exchange, Demag, or Zeeman"
+                .to_string(),
+        );
+    }
+    if operator.include_demag && !enable_demag {
+        errors.push(
+            "eigen operator requested include_demag=true but the problem does not declare Demag()"
+                .to_string(),
+        );
+    }
+
+    validate_eigen_outputs(&problem.study.sampling().outputs, &mut errors);
+    if problem.backend_policy.execution_precision != ExecutionPrecision::Double
+        && !runtime_requests_cuda(problem)
+    {
+        errors.push(
+            "execution_precision='single' is not yet supported by the FEM eigen baseline on CPU"
+                .to_string(),
+        );
+    }
+
+    let gyromagnetic_ratio = match dynamics {
+        fullmag_ir::DynamicsIR::Llg {
+            gyromagnetic_ratio, ..
+        } => *gyromagnetic_ratio,
+    };
+
+    if !errors.is_empty() {
+        return Err(PlanError { reasons: errors });
+    }
+
+    let material =
+        selected_material.expect("validation should have caught missing FEM eigen material");
+    let mesh = merge_fem_meshes(&mesh_parts).map_err(|message| PlanError {
+        reasons: vec![message],
+    })?;
+    let mesh_name = mesh.mesh_name.clone();
+    let n_nodes = mesh.nodes.len();
+    let n_elements = mesh.elements.len();
+
+    let resolved_demag_realization = if enable_demag {
+        match demag_realization.as_deref() {
+            Some("transfer_grid") => Some("transfer_grid".to_string()),
+            Some("poisson_airbox") => Some("poisson_airbox".to_string()),
+            _ => {
+                let has_air_elements = mesh.element_markers.iter().any(|&marker| marker == 0);
+                if has_air_elements {
+                    Some("poisson_airbox".to_string())
+                } else {
+                    Some("transfer_grid".to_string())
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    let fem_plan = FemEigenPlanIR {
+        mesh_name: mesh_name.clone(),
+        mesh_source: if mesh_parts.len() == 1 {
+            mesh_sources.first().cloned().flatten()
+        } else {
+            None
+        },
+        mesh,
+        fe_order: fem_hints.order,
+        hmax: fem_hints.hmax,
+        equilibrium_magnetization: merged_equilibrium,
+        material,
+        operator: operator.clone(),
+        count: *count,
+        target: target.clone(),
+        equilibrium: equilibrium.clone(),
+        k_sampling: k_sampling.clone(),
+        normalization: *normalization,
+        damping_policy: *damping_policy,
+        enable_exchange,
+        enable_demag: enable_demag && operator.include_demag,
+        external_field,
+        gyromagnetic_ratio,
+        precision: problem.backend_policy.execution_precision,
+        exchange_bc: ExchangeBoundaryCondition::Neumann,
+        demag_realization: resolved_demag_realization,
+    };
+
+    let study_note = format!(
+        "study: eigenmodes operator={:?} count={} normalization={:?} damping_policy={:?}",
+        fem_plan.operator.kind, fem_plan.count, fem_plan.normalization, fem_plan.damping_policy
+    );
+
+    Ok(ExecutionPlanIR {
+        common: CommonPlanMeta {
+            ir_version: IR_VERSION.to_string(),
+            requested_backend: problem.backend_policy.requested_backend,
+            resolved_backend,
+            execution_mode: problem.validation_profile.execution_mode,
+        },
+        backend_plan: BackendPlanIR::FemEigen(fem_plan),
+        output_plan: OutputPlanIR {
+            outputs: problem.study.sampling().outputs.clone(),
+        },
+        provenance: ProvenancePlanIR {
+            notes: vec![
+                "Bootstrap FEM eigen planner with separate FemEigenPlanIR".to_string(),
+                format!("mesh asset: {mesh_name} ({n_nodes} nodes, {n_elements} elements)"),
+                format!(
+                    "active terms: exchange={}, demag={}, zeeman={}",
+                    enable_exchange,
+                    enable_demag && operator.include_demag,
+                    external_field.is_some()
+                ),
+                study_note,
+                "FEM eigen execution currently targets the CPU reference baseline; native MFEM/SLEPc integration remains future work"
                     .to_string(),
             ],
         },
@@ -1914,6 +2237,61 @@ fn validate_executable_outputs(
                         field, component
                     ));
                 }
+            }
+            OutputIR::EigenSpectrum { .. }
+            | OutputIR::EigenMode { .. }
+            | OutputIR::DispersionCurve { .. } => errors.push(
+                "eigenmode outputs require StudyIR::Eigenmodes and the FEM eigen planner"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
+fn validate_eigen_outputs(outputs: &[OutputIR], errors: &mut Vec<String>) {
+    let mut seen = BTreeSet::new();
+    for output in outputs {
+        match output {
+            OutputIR::EigenSpectrum { quantity } => {
+                let key = format!("eigen_spectrum:{quantity}");
+                if !seen.insert(key) {
+                    errors.push(format!(
+                        "eigen spectrum output '{}' is declared more than once",
+                        quantity
+                    ));
+                }
+            }
+            OutputIR::EigenMode { field, indices } => {
+                if indices.is_empty() {
+                    errors.push(format!(
+                        "eigen mode output '{}' must request at least one index",
+                        field
+                    ));
+                }
+                for index in indices {
+                    let key = format!("eigen_mode:{field}:{index}");
+                    if !seen.insert(key) {
+                        errors.push(format!(
+                            "eigen mode output '{}' requests mode {} more than once",
+                            field, index
+                        ));
+                    }
+                }
+            }
+            OutputIR::DispersionCurve { name } => {
+                let key = format!("dispersion:{name}");
+                if !seen.insert(key) {
+                    errors.push(format!(
+                        "dispersion output '{}' is declared more than once",
+                        name
+                    ));
+                }
+            }
+            OutputIR::Field { .. } | OutputIR::Scalar { .. } | OutputIR::Snapshot { .. } => {
+                errors.push(
+                    "StudyIR::Eigenmodes supports only eigen_spectrum, eigen_mode, and dispersion_curve outputs"
+                        .to_string(),
+                );
             }
         }
     }
@@ -2965,5 +3343,86 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason.contains("share the same XY center")));
+    }
+
+    #[test]
+    fn fem_eigen_backend_with_mesh_asset_plans_successfully() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.backend_policy.requested_backend = BackendTarget::Fem;
+        ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+            fdm: Some(fullmag_ir::FdmHintsIR {
+                cell: [2e-9, 2e-9, 5e-9],
+                default_cell: None,
+                per_magnet: None,
+                demag: None,
+                boundary_correction: None,
+            }),
+            fem: Some(fullmag_ir::FemHintsIR {
+                order: 1,
+                hmax: 2e-9,
+                mesh: Some("meshes/unit_tet.msh".to_string()),
+            }),
+            hybrid: None,
+        });
+        ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+            fdm_grid_assets: vec![],
+            fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
+                geometry_name: "strip".to_string(),
+                mesh_source: Some("meshes/unit_tet.msh".to_string()),
+                mesh: Some(fullmag_ir::MeshIR {
+                    mesh_name: "strip".to_string(),
+                    nodes: vec![
+                        [0.0, 0.0, 0.0],
+                        [1.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    elements: vec![[0, 1, 2, 3]],
+                    element_markers: vec![1],
+                    boundary_faces: vec![[0, 1, 2]],
+                    boundary_markers: vec![1],
+                }),
+            }],
+        });
+        ir.study = fullmag_ir::StudyIR::Eigenmodes {
+            dynamics: ir.study.dynamics().clone(),
+            operator: fullmag_ir::EigenOperatorConfigIR {
+                kind: fullmag_ir::EigenOperatorIR::LinearizedLlg,
+                include_demag: false,
+            },
+            count: 5,
+            target: fullmag_ir::EigenTargetIR::Lowest,
+            equilibrium: fullmag_ir::EquilibriumSourceIR::Provided,
+            k_sampling: Some(fullmag_ir::KSamplingIR::Single {
+                k_vector: [0.0, 0.0, 0.0],
+            }),
+            normalization: fullmag_ir::EigenNormalizationIR::UnitL2,
+            damping_policy: fullmag_ir::EigenDampingPolicyIR::Ignore,
+            sampling: fullmag_ir::SamplingIR {
+                outputs: vec![
+                    fullmag_ir::OutputIR::EigenSpectrum {
+                        quantity: "eigenfrequency".to_string(),
+                    },
+                    fullmag_ir::OutputIR::EigenMode {
+                        field: "mode".to_string(),
+                        indices: vec![0, 1],
+                    },
+                ],
+            },
+        };
+
+        let plan = plan(&ir).expect("FEM eigen mesh asset should produce a FemEigenPlanIR");
+        match plan.backend_plan {
+            BackendPlanIR::FemEigen(fem) => {
+                assert_eq!(fem.mesh.mesh_name, "strip");
+                assert_eq!(fem.mesh.nodes.len(), 4);
+                assert_eq!(fem.count, 5);
+                assert_eq!(fem.target, fullmag_ir::EigenTargetIR::Lowest);
+                assert!(fem.enable_exchange);
+                assert!(!fem.enable_demag);
+                assert_eq!(fem.normalization, fullmag_ir::EigenNormalizationIR::UnitL2);
+            }
+            other => panic!("expected FEM eigen plan, got {other:?}"),
+        }
     }
 }

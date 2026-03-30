@@ -28,7 +28,6 @@ use crate::types::{
     ExecutedRun, ExecutionProvenance, FieldSnapshot, LivePreviewRequest, LiveStepConsumer,
     RunError, RunResult, RunStatus, StateObservables, StepAction, StepStats, StepUpdate,
 };
-use crate::DisplaySelectionState;
 
 use std::time::Instant;
 
@@ -36,116 +35,15 @@ pub(crate) fn execute_reference_fem(
     plan: &FemPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
+    live: Option<LiveStepConsumer<'_>>,
+    artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     execute_reference_fem_impl(
         plan,
         until_seconds,
         outputs,
-        None::<LiveStepConsumer<'_>>,
-        None,
-    )
-}
-
-pub(crate) fn execute_reference_fem_with_callback(
-    plan: &FemPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    field_every_n: u64,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fem_impl(
-        plan,
-        until_seconds,
-        outputs,
-        Some(LiveStepConsumer {
-            grid: [0, 0, 0],
-            field_every_n,
-            display_selection: None,
-            on_step,
-        }),
-        None,
-    )
-}
-
-pub(crate) fn execute_reference_fem_with_live_preview(
-    plan: &FemPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    field_every_n: u64,
-    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fem_impl(
-        plan,
-        until_seconds,
-        outputs,
-        Some(LiveStepConsumer {
-            grid: [0, 0, 0],
-            field_every_n,
-            display_selection: Some(display_selection),
-            on_step,
-        }),
-        None,
-    )
-}
-
-pub(crate) fn execute_reference_fem_streaming(
-    plan: &FemPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    artifact_writer: ArtifactPipelineSender,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fem_impl(
-        plan,
-        until_seconds,
-        outputs,
-        None::<LiveStepConsumer<'_>>,
-        Some(artifact_writer),
-    )
-}
-
-pub(crate) fn execute_reference_fem_with_callback_streaming(
-    plan: &FemPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    field_every_n: u64,
-    artifact_writer: ArtifactPipelineSender,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fem_impl(
-        plan,
-        until_seconds,
-        outputs,
-        Some(LiveStepConsumer {
-            grid: [0, 0, 0],
-            field_every_n,
-            display_selection: None,
-            on_step,
-        }),
-        Some(artifact_writer),
-    )
-}
-
-pub(crate) fn execute_reference_fem_with_live_preview_streaming(
-    plan: &FemPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    field_every_n: u64,
-    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
-    artifact_writer: ArtifactPipelineSender,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fem_impl(
-        plan,
-        until_seconds,
-        outputs,
-        Some(LiveStepConsumer {
-            grid: [0, 0, 0],
-            field_every_n,
-            display_selection: Some(display_selection),
-            on_step,
-        }),
-        Some(artifact_writer),
+        live,
+        artifact_writer,
     )
 }
 
@@ -465,6 +363,7 @@ fn execute_reference_fem_impl(
         initial_magnetization,
         field_snapshots,
         field_snapshot_count,
+        auxiliary_artifacts: Vec::new(),
         provenance,
     })
 }
@@ -738,6 +637,7 @@ mod tests {
             bulk_dmi: None,
             dind_field: None,
             dbulk_field: None,
+            temperature: None,
         }
     }
 
@@ -818,13 +718,14 @@ mod tests {
             bulk_dmi: None,
             dind_field: None,
             dbulk_field: None,
+            temperature: None,
         }
     }
 
     #[test]
     fn uniform_fem_relaxation_produces_near_zero_exchange_energy() {
         let plan = make_test_plan(false);
-        let result = execute_reference_fem(&plan, 1e-12, &[]).expect("FEM run should succeed");
+        let result = execute_reference_fem(&plan, 1e-12, &[], None, None).expect("FEM run should succeed");
         assert_eq!(result.result.status, RunStatus::Completed);
         assert!(!result.result.steps.is_empty());
         for step in &result.result.steps {
@@ -839,7 +740,7 @@ mod tests {
     fn demag_outputs_are_nonzero_when_enabled() {
         let plan = make_box_demag_plan();
         let result =
-            execute_reference_fem(&plan, 1e-12, &[]).expect("FEM demag run should succeed");
+            execute_reference_fem(&plan, 1e-12, &[], None, None).expect("FEM demag run should succeed");
         assert_eq!(result.result.status, RunStatus::Completed);
         let last = result.result.steps.last().expect("at least one step");
         assert!(last.e_demag >= 0.0);
@@ -887,11 +788,23 @@ mod tests {
     fn fem_callback_emits_live_updates() {
         let plan = make_test_plan(true);
         let mut seen = 0usize;
-        let result = execute_reference_fem_with_callback(&plan, 5e-13, &[], 2, &mut |update| {
+        let mut on_step = |update: StepUpdate| -> StepAction {
             seen += 1;
             assert_eq!(update.grid, [0, 0, 0]);
             StepAction::Continue
-        })
+        };
+        let result = execute_reference_fem(
+            &plan,
+            5e-13,
+            &[],
+            Some(LiveStepConsumer {
+                grid: [0, 0, 0],
+                field_every_n: 2,
+                display_selection: None,
+                on_step: &mut on_step,
+            }),
+            None,
+        )
         .expect("callback FEM run should succeed");
 
         assert_eq!(result.result.status, RunStatus::Completed);
@@ -911,7 +824,7 @@ mod tests {
         };
 
         let executed =
-            execute_reference_fem(&plan, 1e-9, &[]).expect("FEM relaxation run should succeed");
+            execute_reference_fem(&plan, 1e-9, &[], None, None).expect("FEM relaxation run should succeed");
 
         assert!(executed.result.steps.len() <= 2);
         let final_time = executed.result.steps.last().expect("final stats").time;

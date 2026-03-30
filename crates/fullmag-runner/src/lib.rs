@@ -11,6 +11,7 @@ pub mod artifact_pipeline;
 mod artifacts;
 mod cpu_reference;
 mod dispatch;
+mod fem_eigen;
 mod fem_reference;
 pub mod interactive;
 mod interactive_runtime;
@@ -74,33 +75,40 @@ pub fn run_problem(
     let executed_result = with_cpu_parallelism(cpu_threads, || match &plan.backend_plan {
         BackendPlanIR::Fdm(fdm) => {
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_streaming(
+            dispatch::execute_fdm(
                 engine,
                 fdm,
                 until_seconds,
                 &plan.output_plan.outputs,
+                None,
                 artifact_writer.clone(),
             )
         }
         BackendPlanIR::FdmMultilayer(fdm) => {
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_multilayer_streaming(
+            dispatch::execute_fdm_multilayer(
                 engine,
                 fdm,
                 until_seconds,
                 &plan.output_plan.outputs,
+                None,
                 artifact_writer.clone(),
             )
         }
         BackendPlanIR::Fem(fem) => {
             let engine = dispatch::resolve_fem_engine(problem)?;
-            dispatch::execute_fem_streaming(
+            dispatch::execute_fem(
                 engine,
                 fem,
                 until_seconds,
                 &plan.output_plan.outputs,
+                None,
                 artifact_writer.clone(),
             )
+        }
+        BackendPlanIR::FemEigen(fem) => {
+            let engine = dispatch::resolve_fem_engine(problem)?;
+            dispatch::execute_fem_eigen(engine, fem, &plan.output_plan.outputs)
         }
     });
     let pipeline_summary = artifact_pipeline.finish();
@@ -160,39 +168,50 @@ pub fn run_problem_with_callback(
         BackendPlanIR::Fdm(fdm) => {
             let grid = fdm.grid.cells;
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_with_callback_streaming(
+            dispatch::execute_fdm(
                 engine,
                 fdm,
                 until_seconds,
                 &plan.output_plan.outputs,
-                grid,
-                field_every_n,
+                Some(types::LiveStepConsumer {
+                    grid,
+                    field_every_n,
+                    display_selection: None,
+                    on_step: &mut on_step,
+                }),
                 artifact_writer.clone(),
-                &mut on_step,
             )
         }
         BackendPlanIR::FdmMultilayer(fdm) => {
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_multilayer_with_callback_streaming(
+            dispatch::execute_fdm_multilayer(
                 engine,
                 fdm,
                 until_seconds,
                 &plan.output_plan.outputs,
+                Some((&fdm.common_cells, &mut on_step as &mut dyn FnMut(StepUpdate) -> StepAction)),
                 artifact_writer.clone(),
-                &mut on_step,
             )
         }
         BackendPlanIR::Fem(fem) => {
             let engine = dispatch::resolve_fem_engine(problem)?;
-            dispatch::execute_fem_with_callback_streaming(
+            dispatch::execute_fem(
                 engine,
                 fem,
                 until_seconds,
                 &plan.output_plan.outputs,
-                field_every_n,
+                Some(types::LiveStepConsumer {
+                    grid: [0, 0, 0],
+                    field_every_n,
+                    display_selection: None,
+                    on_step: &mut on_step,
+                }),
                 artifact_writer.clone(),
-                &mut on_step,
             )
+        }
+        BackendPlanIR::FemEigen(fem) => {
+            let engine = dispatch::resolve_fem_engine(problem)?;
+            dispatch::execute_fem_eigen(engine, fem, &plan.output_plan.outputs)
         }
     });
     let pipeline_summary = artifact_pipeline.finish();
@@ -253,7 +272,7 @@ pub fn run_problem_with_callback(
             fdm.common_cells[1],
             fdm.common_cells[2],
         ],
-        BackendPlanIR::Fem(_) => [0, 0, 0],
+        BackendPlanIR::Fem(_) | BackendPlanIR::FemEigen(_) => [0, 0, 0],
     };
     on_step(StepUpdate {
         stats: final_stats,
@@ -264,11 +283,16 @@ pub fn run_problem_with_callback(
                 elements: fem.mesh.elements.clone(),
                 boundary_faces: fem.mesh.boundary_faces.clone(),
             }),
+            BackendPlanIR::FemEigen(eigen) => Some(FemMeshPayload {
+                nodes: eigen.mesh.nodes.clone(),
+                elements: eigen.mesh.elements.clone(),
+                boundary_faces: eigen.mesh.boundary_faces.clone(),
+            }),
             BackendPlanIR::Fdm(_) | BackendPlanIR::FdmMultilayer(_) => None,
         },
         magnetization: match &plan.backend_plan {
             BackendPlanIR::Fdm(_) => Some(final_m),
-            BackendPlanIR::FdmMultilayer(_) | BackendPlanIR::Fem(_) => None,
+            BackendPlanIR::FdmMultilayer(_) | BackendPlanIR::Fem(_) | BackendPlanIR::FemEigen(_) => None,
         },
         preview_field: None,
         scalar_row_due: true,
@@ -303,41 +327,50 @@ pub fn run_problem_with_live_preview(
         BackendPlanIR::Fdm(fdm) => {
             let grid = fdm.grid.cells;
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_with_live_preview_streaming(
+            dispatch::execute_fdm(
                 engine,
                 fdm,
                 until_seconds,
                 &plan.output_plan.outputs,
-                grid,
-                field_every_n,
-                display_selection,
+                Some(types::LiveStepConsumer {
+                    grid,
+                    field_every_n,
+                    display_selection: Some(display_selection),
+                    on_step: &mut on_step,
+                }),
                 artifact_writer.clone(),
-                &mut on_step,
             )
         }
         BackendPlanIR::FdmMultilayer(fdm) => {
             let engine = dispatch::resolve_fdm_engine(problem)?;
-            dispatch::execute_fdm_multilayer_with_callback_streaming(
+            dispatch::execute_fdm_multilayer(
                 engine,
                 fdm,
                 until_seconds,
                 &plan.output_plan.outputs,
+                Some((&fdm.common_cells, &mut on_step as &mut dyn FnMut(StepUpdate) -> StepAction)),
                 artifact_writer.clone(),
-                &mut on_step,
             )
         }
         BackendPlanIR::Fem(fem) => {
             let engine = dispatch::resolve_fem_engine(problem)?;
-            dispatch::execute_fem_with_live_preview_streaming(
+            dispatch::execute_fem(
                 engine,
                 fem,
                 until_seconds,
                 &plan.output_plan.outputs,
-                field_every_n,
-                display_selection,
+                Some(types::LiveStepConsumer {
+                    grid: [0, 0, 0],
+                    field_every_n,
+                    display_selection: Some(display_selection),
+                    on_step: &mut on_step,
+                }),
                 artifact_writer.clone(),
-                &mut on_step,
             )
+        }
+        BackendPlanIR::FemEigen(fem) => {
+            let engine = dispatch::resolve_fem_engine(problem)?;
+            dispatch::execute_fem_eigen(engine, fem, &plan.output_plan.outputs)
         }
     });
     let pipeline_summary = artifact_pipeline.finish();
@@ -391,7 +424,7 @@ pub fn run_problem_with_live_preview(
             fdm.common_cells[1],
             fdm.common_cells[2],
         ],
-        BackendPlanIR::Fem(_) => [0, 0, 0],
+        BackendPlanIR::Fem(_) | BackendPlanIR::FemEigen(_) => [0, 0, 0],
     };
     on_step(StepUpdate {
         stats: final_stats,
@@ -401,6 +434,11 @@ pub fn run_problem_with_live_preview(
                 nodes: fem.mesh.nodes.clone(),
                 elements: fem.mesh.elements.clone(),
                 boundary_faces: fem.mesh.boundary_faces.clone(),
+            }),
+            BackendPlanIR::FemEigen(eigen) => Some(FemMeshPayload {
+                nodes: eigen.mesh.nodes.clone(),
+                elements: eigen.mesh.elements.clone(),
+                boundary_faces: eigen.mesh.boundary_faces.clone(),
             }),
             BackendPlanIR::Fdm(_) | BackendPlanIR::FdmMultilayer(_) => None,
         },
@@ -687,6 +725,11 @@ pub fn snapshot_problem_preview(
             let engine = dispatch::resolve_fem_engine(problem)?;
             dispatch::snapshot_fem_preview(engine, fem, request)
         }
+        BackendPlanIR::FemEigen(_) => Err(RunError {
+            message:
+                "interactive preview snapshot is not supported for FEM eigenmode plans"
+                    .to_string(),
+        }),
     }
 }
 
@@ -710,6 +753,11 @@ pub fn snapshot_problem_vector_fields(
             let engine = dispatch::resolve_fem_engine(problem)?;
             dispatch::snapshot_fem_vector_fields(engine, fem, quantities, request)
         }
+        BackendPlanIR::FemEigen(_) => Err(RunError {
+            message:
+                "interactive vector-field snapshots are not supported for FEM eigenmode plans"
+                    .to_string(),
+        }),
     }
 }
 
@@ -759,6 +807,9 @@ pub fn resolve_runtime_engine(problem: &ProblemIR) -> Result<RuntimeEngineInfo, 
                 accelerator: accelerator.to_string(),
             })
         }
+        BackendPlanIR::FemEigen(_) => Err(RunError {
+            message: "eigenmode analysis execution is not yet implemented".to_string(),
+        }),
     }
 }
 
@@ -819,7 +870,7 @@ pub fn run_reference_fdm(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<RunResult, RunError> {
-    Ok(cpu_reference::execute_reference_fdm(plan, until_seconds, outputs)?.result)
+    Ok(cpu_reference::execute_reference_fdm(plan, until_seconds, outputs, None, None)?.result)
 }
 
 pub fn run_reference_multilayer_fdm(
@@ -828,7 +879,7 @@ pub fn run_reference_multilayer_fdm(
     outputs: &[OutputIR],
 ) -> Result<RunResult, RunError> {
     Ok(
-        multilayer_reference::execute_reference_fdm_multilayer(plan, until_seconds, outputs)?
+        multilayer_reference::execute_reference_fdm_multilayer(plan, until_seconds, outputs, None, None)?
             .result,
     )
 }
@@ -1135,7 +1186,7 @@ mod tests {
             },
         ];
 
-        let executed = cpu_reference::execute_reference_fdm(&plan, 1e-12, &outputs)
+        let executed = cpu_reference::execute_reference_fdm(&plan, 1e-12, &outputs, None, None)
             .expect("scheduled field run should succeed");
 
         let m_snapshots = executed

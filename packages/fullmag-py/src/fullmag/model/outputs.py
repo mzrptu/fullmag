@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence
 
 from fullmag._validation import require_non_empty, require_positive
 
@@ -107,3 +108,49 @@ class Snapshot:
         if self.layer is not None:
             d["layer"] = self.layer
         return d
+
+
+@dataclass(frozen=True, slots=True)
+class SaveSpectrum:
+    quantity: str = "eigenfrequency"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "quantity", require_non_empty(self.quantity, "quantity"))
+
+    def to_ir(self) -> dict[str, object]:
+        return {"kind": "eigen_spectrum", "quantity": self.quantity}
+
+
+@dataclass(frozen=True, slots=True)
+class SaveMode:
+    field: str = "mode"
+    indices: Sequence[int] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "field", require_non_empty(self.field, "field"))
+        normalized = tuple(int(index) for index in self.indices)
+        if not normalized:
+            raise ValueError("SaveMode requires at least one mode index")
+        if any(index < 0 for index in normalized):
+            raise ValueError("mode indices must be >= 0")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("mode indices must be unique")
+        object.__setattr__(self, "indices", normalized)
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "kind": "eigen_mode",
+            "field": self.field,
+            "indices": list(self.indices),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SaveDispersion:
+    name: str = "dispersion"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", require_non_empty(self.name, "name"))
+
+    def to_ir(self) -> dict[str, object]:
+        return {"kind": "dispersion_curve", "name": self.name}

@@ -74,51 +74,10 @@ pub(crate) fn execute_cuda_fdm_multilayer(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
-    execute_cuda_fdm_multilayer_streaming(plan, until_seconds, outputs, None)
+    execute_cuda_fdm_multilayer_with_live(plan, until_seconds, outputs, None, None)
 }
 
-pub(crate) fn execute_cuda_fdm_multilayer_streaming(
-    plan: &FdmMultilayerPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    artifact_writer: Option<ArtifactPipelineSender>,
-) -> Result<ExecutedRun, RunError> {
-    execute_cuda_fdm_multilayer_impl(
-        plan,
-        until_seconds,
-        outputs,
-        None::<(&[u32; 3], &mut dyn FnMut(StepUpdate) -> StepAction)>,
-        artifact_writer,
-    )
-}
-
-#[allow(dead_code)]
-pub(crate) fn execute_cuda_fdm_multilayer_with_callback(
-    plan: &FdmMultilayerPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_cuda_fdm_multilayer_with_callback_streaming(plan, until_seconds, outputs, None, on_step)
-}
-
-pub(crate) fn execute_cuda_fdm_multilayer_with_callback_streaming(
-    plan: &FdmMultilayerPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    artifact_writer: Option<ArtifactPipelineSender>,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_cuda_fdm_multilayer_impl(
-        plan,
-        until_seconds,
-        outputs,
-        Some((&plan.common_cells, on_step)),
-        artifact_writer,
-    )
-}
-
-fn execute_cuda_fdm_multilayer_impl(
+pub(crate) fn execute_cuda_fdm_multilayer_with_live(
     plan: &FdmMultilayerPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
@@ -511,6 +470,7 @@ fn execute_cuda_assisted_multilayer_double(
         initial_magnetization,
         field_snapshots,
         field_snapshot_count,
+        auxiliary_artifacts: Vec::new(),
         provenance,
     })
 }
@@ -703,6 +663,7 @@ fn execute_cuda_assisted_multilayer_single(
         initial_magnetization,
         field_snapshots,
         field_snapshot_count,
+        auxiliary_artifacts: Vec::new(),
         provenance,
     })
 }
@@ -1083,6 +1044,7 @@ fn execute_native_stacked_cuda_multilayer(
         initial_magnetization,
         field_snapshots,
         field_snapshot_count,
+        auxiliary_artifacts: Vec::new(),
         provenance,
     })
 }
@@ -2398,7 +2360,7 @@ mod tests {
         }
 
         let plan = make_plan(true, ExecutionPrecision::Double);
-        let cpu = multilayer_reference::execute_reference_fdm_multilayer(&plan, 2e-13, &[])
+        let cpu = multilayer_reference::execute_reference_fdm_multilayer(&plan, 2e-13, &[], None, None)
             .expect("cpu multilayer");
         let cuda =
             execute_cuda_fdm_multilayer(&plan, 2e-13, &[]).expect("cuda-assisted multilayer");
@@ -2427,7 +2389,7 @@ mod tests {
         }
 
         let plan = make_touching_plan(ExecutionPrecision::Double);
-        let cpu = multilayer_reference::execute_reference_fdm_multilayer(&plan, 1e-13, &[])
+        let cpu = multilayer_reference::execute_reference_fdm_multilayer(&plan, 1e-13, &[], None, None)
             .expect("cpu multilayer");
         let cuda = execute_cuda_fdm_multilayer(&plan, 1e-13, &[]).expect("cuda multilayer");
 

@@ -124,6 +124,8 @@ pub struct fullmag_fdm_plan_desc {
     pub has_bulk_dmi: i32,
     pub dmi_d_bulk: f64,
 
+    pub temperature: f64,
+
     pub demag_kernel_xx_spectrum: *const f64,
     pub demag_kernel_yy_spectrum: *const f64,
     pub demag_kernel_zz_spectrum: *const f64,

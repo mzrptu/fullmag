@@ -298,6 +298,54 @@ pub struct SamplingIR {
     pub outputs: Vec<OutputIR>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EigenOperatorIR {
+    LinearizedLlg,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EigenOperatorConfigIR {
+    pub kind: EigenOperatorIR,
+    #[serde(default)]
+    pub include_demag: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EigenTargetIR {
+    Lowest,
+    Nearest { frequency_hz: f64 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EquilibriumSourceIR {
+    Provided,
+    RelaxedInitialState,
+    Artifact { path: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum KSamplingIR {
+    Single { k_vector: [f64; 3] },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EigenNormalizationIR {
+    UnitL2,
+    UnitMaxAmplitude,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EigenDampingPolicyIR {
+    Ignore,
+    Include,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StudyIR {
@@ -314,28 +362,40 @@ pub enum StudyIR {
         max_steps: u64,
         sampling: SamplingIR,
     },
+    Eigenmodes {
+        dynamics: DynamicsIR,
+        operator: EigenOperatorConfigIR,
+        count: u32,
+        target: EigenTargetIR,
+        equilibrium: EquilibriumSourceIR,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        k_sampling: Option<KSamplingIR>,
+        normalization: EigenNormalizationIR,
+        damping_policy: EigenDampingPolicyIR,
+        sampling: SamplingIR,
+    },
 }
 
 impl StudyIR {
     pub fn dynamics(&self) -> &DynamicsIR {
         match self {
-            StudyIR::TimeEvolution { dynamics, .. } | StudyIR::Relaxation { dynamics, .. } => {
-                dynamics
-            }
+            StudyIR::TimeEvolution { dynamics, .. }
+            | StudyIR::Relaxation { dynamics, .. }
+            | StudyIR::Eigenmodes { dynamics, .. } => dynamics,
         }
     }
 
     pub fn sampling(&self) -> &SamplingIR {
         match self {
-            StudyIR::TimeEvolution { sampling, .. } | StudyIR::Relaxation { sampling, .. } => {
-                sampling
-            }
+            StudyIR::TimeEvolution { sampling, .. }
+            | StudyIR::Relaxation { sampling, .. }
+            | StudyIR::Eigenmodes { sampling, .. } => sampling,
         }
     }
 
     pub fn relaxation(&self) -> Option<RelaxationControlIR> {
         match self {
-            StudyIR::TimeEvolution { .. } => None,
+            StudyIR::TimeEvolution { .. } | StudyIR::Eigenmodes { .. } => None,
             StudyIR::Relaxation {
                 algorithm,
                 torque_tolerance,
@@ -369,6 +429,16 @@ pub enum OutputIR {
         every_seconds: f64,
         #[serde(skip_serializing_if = "Option::is_none")]
         layer: Option<String>,
+    },
+    EigenSpectrum {
+        quantity: String,
+    },
+    EigenMode {
+        field: String,
+        indices: Vec<u32>,
+    },
+    DispersionCurve {
+        name: String,
     },
 }
 
@@ -684,6 +754,7 @@ pub enum BackendPlanIR {
     Fdm(FdmPlanIR),
     FdmMultilayer(FdmMultilayerPlanIR),
     Fem(FemPlanIR),
+    FemEigen(FemEigenPlanIR),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -800,6 +871,38 @@ pub struct FemPlanIR {
     pub dind_field: Option<Vec<f64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dbulk_field: Option<Vec<f64>>,
+    /// Temperature in Kelvin for thermal noise (0 = no thermal noise)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemEigenPlanIR {
+    pub mesh_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_source: Option<String>,
+    pub mesh: MeshIR,
+    pub fe_order: u32,
+    pub hmax: f64,
+    pub equilibrium_magnetization: Vec<[f64; 3]>,
+    pub material: MaterialIR,
+    pub operator: EigenOperatorConfigIR,
+    pub count: u32,
+    pub target: EigenTargetIR,
+    pub equilibrium: EquilibriumSourceIR,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub k_sampling: Option<KSamplingIR>,
+    pub normalization: EigenNormalizationIR,
+    pub damping_policy: EigenDampingPolicyIR,
+    pub enable_exchange: bool,
+    pub enable_demag: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_field: Option<[f64; 3]>,
+    pub gyromagnetic_ratio: f64,
+    pub precision: ExecutionPrecision,
+    pub exchange_bc: ExchangeBoundaryCondition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demag_realization: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1023,11 +1126,42 @@ impl ProblemIR {
                         ));
                     }
                 }
+                OutputIR::EigenSpectrum { quantity } => {
+                    if quantity.trim().is_empty() {
+                        errors.push("eigen_spectrum quantity must not be empty".to_string());
+                    }
+                }
+                OutputIR::EigenMode { field, indices } => {
+                    if field.trim().is_empty() {
+                        errors.push("eigen_mode field must not be empty".to_string());
+                    }
+                    if indices.is_empty() {
+                        errors.push("eigen_mode must contain at least one mode index".to_string());
+                    }
+                }
+                OutputIR::DispersionCurve { name } => {
+                    if name.trim().is_empty() {
+                        errors.push("dispersion_curve name must not be empty".to_string());
+                    }
+                }
             }
         }
         match &self.study {
             StudyIR::TimeEvolution { dynamics, .. } => {
                 validate_study_dynamics(dynamics, &mut errors);
+                for output in &self.study.sampling().outputs {
+                    if matches!(
+                        output,
+                        OutputIR::EigenSpectrum { .. }
+                            | OutputIR::EigenMode { .. }
+                            | OutputIR::DispersionCurve { .. }
+                    ) {
+                        errors.push(
+                            "time_evolution outputs must be field/scalar/snapshot requests"
+                                .to_string(),
+                        );
+                    }
+                }
             }
             StudyIR::Relaxation {
                 dynamics,
@@ -1047,6 +1181,92 @@ impl ProblemIR {
                 }
                 if *max_steps == 0 {
                     errors.push("relaxation.max_steps must be > 0".to_string());
+                }
+                for output in &self.study.sampling().outputs {
+                    if matches!(
+                        output,
+                        OutputIR::EigenSpectrum { .. }
+                            | OutputIR::EigenMode { .. }
+                            | OutputIR::DispersionCurve { .. }
+                    ) {
+                        errors.push(
+                            "relaxation outputs must be field/scalar/snapshot requests"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            StudyIR::Eigenmodes {
+                dynamics,
+                operator,
+                count,
+                target,
+                equilibrium,
+                k_sampling,
+                ..
+            } => {
+                validate_study_dynamics(dynamics, &mut errors);
+                if *count == 0 {
+                    errors.push("eigenmodes.count must be > 0".to_string());
+                }
+                match operator.kind {
+                    EigenOperatorIR::LinearizedLlg => {}
+                }
+                match target {
+                    EigenTargetIR::Lowest => {}
+                    EigenTargetIR::Nearest { frequency_hz } => {
+                        if *frequency_hz <= 0.0 {
+                            errors.push(
+                                "eigenmodes.target.frequency_hz must be positive".to_string(),
+                            );
+                        }
+                    }
+                }
+                if let EquilibriumSourceIR::Artifact { path } = equilibrium {
+                    if path.trim().is_empty() {
+                        errors.push(
+                            "eigenmodes.equilibrium artifact path must not be empty".to_string(),
+                        );
+                    }
+                }
+                if let Some(KSamplingIR::Single { k_vector }) = k_sampling {
+                    if !k_vector.iter().all(|value| value.is_finite()) {
+                        errors.push(
+                            "eigenmodes.k_sampling.k_vector must contain finite values"
+                                .to_string(),
+                        );
+                    }
+                }
+                let has_mode_output = self
+                    .study
+                    .sampling()
+                    .outputs
+                    .iter()
+                    .any(|output| matches!(output, OutputIR::EigenMode { .. }));
+                let has_spectrum_output = self
+                    .study
+                    .sampling()
+                    .outputs
+                    .iter()
+                    .any(|output| matches!(output, OutputIR::EigenSpectrum { .. }));
+                if !has_mode_output && !has_spectrum_output {
+                    errors.push(
+                        "eigenmodes study requires at least one eigen_spectrum or eigen_mode output"
+                            .to_string(),
+                    );
+                }
+                for output in &self.study.sampling().outputs {
+                    if matches!(
+                        output,
+                        OutputIR::Field { .. }
+                            | OutputIR::Scalar { .. }
+                            | OutputIR::Snapshot { .. }
+                    ) {
+                        errors.push(
+                            "eigenmodes outputs must be eigen_spectrum/eigen_mode/dispersion_curve requests"
+                                .to_string(),
+                        );
+                    }
                 }
             }
         }
@@ -1623,5 +1843,72 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("must contain at least one active cell")));
+    }
+
+    #[test]
+    fn eigenmodes_with_spectrum_and_mode_outputs_validate() {
+        let mut ir = ProblemIR::bootstrap_example();
+        let dynamics = ir.study.dynamics().clone();
+        ir.study = StudyIR::Eigenmodes {
+            dynamics,
+            operator: EigenOperatorConfigIR {
+                kind: EigenOperatorIR::LinearizedLlg,
+                include_demag: false,
+            },
+            count: 6,
+            target: EigenTargetIR::Lowest,
+            equilibrium: EquilibriumSourceIR::Provided,
+            k_sampling: Some(KSamplingIR::Single {
+                k_vector: [0.0, 0.0, 0.0],
+            }),
+            normalization: EigenNormalizationIR::UnitL2,
+            damping_policy: EigenDampingPolicyIR::Ignore,
+            sampling: SamplingIR {
+                outputs: vec![
+                    OutputIR::EigenSpectrum {
+                        quantity: "eigenfrequency".to_string(),
+                    },
+                    OutputIR::EigenMode {
+                        field: "mode".to_string(),
+                        indices: vec![0, 1],
+                    },
+                ],
+            },
+        };
+
+        assert!(ir.validate().is_ok());
+    }
+
+    #[test]
+    fn eigenmodes_require_spectrum_or_mode_output() {
+        let mut ir = ProblemIR::bootstrap_example();
+        let dynamics = ir.study.dynamics().clone();
+        ir.study = StudyIR::Eigenmodes {
+            dynamics,
+            operator: EigenOperatorConfigIR {
+                kind: EigenOperatorIR::LinearizedLlg,
+                include_demag: false,
+            },
+            count: 4,
+            target: EigenTargetIR::Lowest,
+            equilibrium: EquilibriumSourceIR::Provided,
+            k_sampling: None,
+            normalization: EigenNormalizationIR::UnitL2,
+            damping_policy: EigenDampingPolicyIR::Ignore,
+            sampling: SamplingIR {
+                outputs: vec![OutputIR::DispersionCurve {
+                    name: "dispersion".to_string(),
+                }],
+            },
+        };
+
+        let errors = ir
+            .validate()
+            .expect_err("dispersion-only eigen study must fail validation");
+        assert!(errors.iter().any(|error| {
+            error.contains(
+                "eigenmodes study requires at least one eigen_spectrum or eigen_mode output",
+            )
+        }));
     }
 }

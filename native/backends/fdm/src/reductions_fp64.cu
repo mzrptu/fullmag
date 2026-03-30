@@ -568,24 +568,188 @@ double reduce_uniaxial_anisotropy_energy_fp32(Context &ctx) {
     return finalize_sum_reduction(ctx.reduction_scratch, blocks);
 }
 
-double reduce_cubic_anisotropy_energy_fp64(Context &ctx) {
-    if (!ctx.has_cubic_anisotropy) {
-        return 0.0;
+// --- Cubic anisotropy energy kernel ---
+template <typename Scalar>
+__global__ void cubic_anisotropy_energy_blocks_kernel(
+    const Scalar *mx, const Scalar *my, const Scalar *mz,
+    double *block_out, uint64_t n, double coeff,
+    double Kc1, double Kc2, double Kc3,
+    double c1x, double c1y, double c1z,
+    double c2x, double c2y, double c2z,
+    const double *kc1_field, const double *kc2_field, const double *kc3_field)
+{
+    __shared__ double shared[REDUCTION_BLOCK_SIZE];
+    uint64_t idx = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    uint64_t stride = static_cast<uint64_t>(gridDim.x) * blockDim.x;
+
+    // c3 = c1 × c2
+    double c3x = c1y * c2z - c1z * c2y;
+    double c3y = c1z * c2x - c1x * c2z;
+    double c3z = c1x * c2y - c1y * c2x;
+
+    double energy = 0.0;
+    for (; idx < n; idx += stride) {
+        double kc1_val = kc1_field ? kc1_field[idx] : Kc1;
+        double kc2_val = kc2_field ? kc2_field[idx] : Kc2;
+        double kc3_val = kc3_field ? kc3_field[idx] : Kc3;
+        double mmx = to_f64(mx[idx]), mmy = to_f64(my[idx]), mmz = to_f64(mz[idx]);
+        double m1 = mmx * c1x + mmy * c1y + mmz * c1z;
+        double m2 = mmx * c2x + mmy * c2y + mmz * c2z;
+        double m3 = mmx * c3x + mmy * c3y + mmz * c3z;
+        double m1sq = m1 * m1, m2sq = m2 * m2, m3sq = m3 * m3;
+        double sigma = m1sq * m2sq + m2sq * m3sq + m1sq * m3sq;
+        energy += coeff * (kc1_val * sigma + kc2_val * m1sq * m2sq * m3sq + kc3_val * sigma * sigma);
     }
+
+    shared[threadIdx.x] = energy;
+    __syncthreads();
+    for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+        if (threadIdx.x < offset) shared[threadIdx.x] += shared[threadIdx.x + offset];
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) block_out[blockIdx.x] = shared[0];
+}
+
+// --- DMI energy kernel (interfacial + bulk) ---
+template <typename Scalar>
+__global__ void dmi_energy_blocks_kernel(
+    const Scalar *mx, const Scalar *my, const Scalar *mz,
+    double *block_out, uint64_t n, double coeff,
+    int has_interfacial, int has_bulk,
+    double D_int, double D_bulk,
+    int nx, int ny, int nz,
+    double inv_2dx, double inv_2dy, double inv_2dz,
+    const uint8_t *active_mask, int has_active_mask)
+{
+    __shared__ double shared[REDUCTION_BLOCK_SIZE];
+    uint64_t gidx = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    uint64_t stride = static_cast<uint64_t>(gridDim.x) * blockDim.x;
+
+    double energy = 0.0;
+    for (; gidx < n; gidx += stride) {
+        if (has_active_mask && active_mask[gidx] == 0) continue;
+
+        int idx = static_cast<int>(gidx);
+        int iz = idx / (ny * nx);
+        int rem = idx - iz * ny * nx;
+        int iy = rem / nx;
+        int ix = rem - iy * nx;
+
+        int xm = (ix > 0)      ? idx - 1       : idx;
+        int xp = (ix < nx - 1) ? idx + 1       : idx;
+        int ym = (iy > 0)      ? idx - nx      : idx;
+        int yp = (iy < ny - 1) ? idx + nx      : idx;
+        int zm = (iz > 0)      ? idx - nx * ny : idx;
+        int zp = (iz < nz - 1) ? idx + nx * ny : idx;
+
+        if (has_active_mask) {
+            if (active_mask[xm] == 0) xm = idx;
+            if (active_mask[xp] == 0) xp = idx;
+            if (active_mask[ym] == 0) ym = idx;
+            if (active_mask[yp] == 0) yp = idx;
+            if (active_mask[zm] == 0) zm = idx;
+            if (active_mask[zp] == 0) zp = idx;
+        }
+
+        double mmx = to_f64(mx[idx]), mmy = to_f64(my[idx]), mmz = to_f64(mz[idx]);
+
+        if (has_interfacial) {
+            // E_dmi = D * [mz(dmx/dx + dmy/dy) - mx*dmz/dx - my*dmz/dy] * V
+            double dmx_dx = (to_f64(mx[xp]) - to_f64(mx[xm])) * inv_2dx;
+            double dmy_dy = (to_f64(my[yp]) - to_f64(my[ym])) * inv_2dy;
+            double dmz_dx = (to_f64(mz[xp]) - to_f64(mz[xm])) * inv_2dx;
+            double dmz_dy = (to_f64(mz[yp]) - to_f64(mz[ym])) * inv_2dy;
+            energy += coeff * D_int * (mmz * (dmx_dx + dmy_dy) - mmx * dmz_dx - mmy * dmz_dy);
+        }
+
+        if (has_bulk) {
+            // E_bulk = D * m · (curl m) * V
+            double dmz_dy = (to_f64(mz[yp]) - to_f64(mz[ym])) * inv_2dy;
+            double dmy_dz = (to_f64(my[zp]) - to_f64(my[zm])) * inv_2dz;
+            double dmx_dz = (to_f64(mx[zp]) - to_f64(mx[zm])) * inv_2dz;
+            double dmz_dx = (to_f64(mz[xp]) - to_f64(mz[xm])) * inv_2dx;
+            double dmy_dx = (to_f64(my[xp]) - to_f64(my[xm])) * inv_2dx;
+            double dmx_dy = (to_f64(mx[yp]) - to_f64(mx[ym])) * inv_2dy;
+            double curl_x = dmz_dy - dmy_dz;
+            double curl_y = dmx_dz - dmz_dx;
+            double curl_z = dmy_dx - dmx_dy;
+            energy += coeff * D_bulk * (mmx * curl_x + mmy * curl_y + mmz * curl_z);
+        }
+    }
+
+    shared[threadIdx.x] = energy;
+    __syncthreads();
+    for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+        if (threadIdx.x < offset) shared[threadIdx.x] += shared[threadIdx.x + offset];
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) block_out[blockIdx.x] = shared[0];
+}
+
+double reduce_cubic_anisotropy_energy_fp64(Context &ctx) {
+    if (!ctx.has_cubic_anisotropy) return 0.0;
     uint64_t blocks = launch_grid_for(ctx.cell_count);
-    // Cubic energy uses σ-formulation computed on device via a dedicated kernel
-    // E = Kc1·σ + Kc2·m1²m2²m3² + Kc3·σ² (integrated over volume)
-    // We reuse the reduction infrastructure with a new kernel template
-    // For now, compute on host from the device m — this is a temporary approach
-    // TODO: dedicated cubic energy kernel
-    return 0.0;  // placeholder until dedicated kernel
+    double coeff = ctx.dx * ctx.dy * ctx.dz;
+    cubic_anisotropy_energy_blocks_kernel<<<static_cast<unsigned int>(blocks), REDUCTION_BLOCK_SIZE>>>(
+        static_cast<const double *>(ctx.m.x),
+        static_cast<const double *>(ctx.m.y),
+        static_cast<const double *>(ctx.m.z),
+        ctx.reduction_scratch, ctx.cell_count, coeff,
+        ctx.Kc1, ctx.Kc2, ctx.Kc3,
+        ctx.cubic_axis1[0], ctx.cubic_axis1[1], ctx.cubic_axis1[2],
+        ctx.cubic_axis2[0], ctx.cubic_axis2[1], ctx.cubic_axis2[2],
+        ctx.kc1_field, ctx.kc2_field, ctx.kc3_field);
+    return finalize_sum_reduction(ctx.reduction_scratch, blocks);
 }
 
 double reduce_cubic_anisotropy_energy_fp32(Context &ctx) {
-    if (!ctx.has_cubic_anisotropy) {
-        return 0.0;
-    }
-    return 0.0;  // placeholder until dedicated kernel
+    if (!ctx.has_cubic_anisotropy) return 0.0;
+    uint64_t blocks = launch_grid_for(ctx.cell_count);
+    double coeff = ctx.dx * ctx.dy * ctx.dz;
+    cubic_anisotropy_energy_blocks_kernel<<<static_cast<unsigned int>(blocks), REDUCTION_BLOCK_SIZE>>>(
+        static_cast<const float *>(ctx.m.x),
+        static_cast<const float *>(ctx.m.y),
+        static_cast<const float *>(ctx.m.z),
+        ctx.reduction_scratch, ctx.cell_count, coeff,
+        ctx.Kc1, ctx.Kc2, ctx.Kc3,
+        ctx.cubic_axis1[0], ctx.cubic_axis1[1], ctx.cubic_axis1[2],
+        ctx.cubic_axis2[0], ctx.cubic_axis2[1], ctx.cubic_axis2[2],
+        ctx.kc1_field, ctx.kc2_field, ctx.kc3_field);
+    return finalize_sum_reduction(ctx.reduction_scratch, blocks);
+}
+
+double reduce_dmi_energy_fp64(Context &ctx) {
+    if (!ctx.has_interfacial_dmi && !ctx.has_bulk_dmi) return 0.0;
+    uint64_t blocks = launch_grid_for(ctx.cell_count);
+    double coeff = ctx.dx * ctx.dy * ctx.dz;
+    dmi_energy_blocks_kernel<<<static_cast<unsigned int>(blocks), REDUCTION_BLOCK_SIZE>>>(
+        static_cast<const double *>(ctx.m.x),
+        static_cast<const double *>(ctx.m.y),
+        static_cast<const double *>(ctx.m.z),
+        ctx.reduction_scratch, ctx.cell_count, coeff,
+        ctx.has_interfacial_dmi ? 1 : 0, ctx.has_bulk_dmi ? 1 : 0,
+        ctx.D_interfacial, ctx.D_bulk,
+        static_cast<int>(ctx.nx), static_cast<int>(ctx.ny), static_cast<int>(ctx.nz),
+        0.5 / ctx.dx, 0.5 / ctx.dy, 0.5 / ctx.dz,
+        ctx.active_mask, ctx.has_active_mask ? 1 : 0);
+    return finalize_sum_reduction(ctx.reduction_scratch, blocks);
+}
+
+double reduce_dmi_energy_fp32(Context &ctx) {
+    if (!ctx.has_interfacial_dmi && !ctx.has_bulk_dmi) return 0.0;
+    uint64_t blocks = launch_grid_for(ctx.cell_count);
+    double coeff = ctx.dx * ctx.dy * ctx.dz;
+    dmi_energy_blocks_kernel<<<static_cast<unsigned int>(blocks), REDUCTION_BLOCK_SIZE>>>(
+        static_cast<const float *>(ctx.m.x),
+        static_cast<const float *>(ctx.m.y),
+        static_cast<const float *>(ctx.m.z),
+        ctx.reduction_scratch, ctx.cell_count, coeff,
+        ctx.has_interfacial_dmi ? 1 : 0, ctx.has_bulk_dmi ? 1 : 0,
+        ctx.D_interfacial, ctx.D_bulk,
+        static_cast<int>(ctx.nx), static_cast<int>(ctx.ny), static_cast<int>(ctx.nz),
+        0.5 / ctx.dx, 0.5 / ctx.dy, 0.5 / ctx.dz,
+        ctx.active_mask, ctx.has_active_mask ? 1 : 0);
+    return finalize_sum_reduction(ctx.reduction_scratch, blocks);
 }
 
 } // namespace fdm

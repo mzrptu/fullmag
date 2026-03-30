@@ -82,6 +82,11 @@ struct Context {
     bool has_bulk_dmi = false;
     double D_bulk = 0.0;
 
+    // Thermal noise
+    double temperature = 0.0;  // Kelvin
+    double thermal_sigma = 0.0;  // Precomputed noise amplitude (A/m)
+    double current_dt = 1e-13;   // Current timestep for thermal sigma computation
+
     // Execution
     fullmag_fdm_precision precision;
     fullmag_fdm_integrator integrator;

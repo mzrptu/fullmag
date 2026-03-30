@@ -15,9 +15,16 @@ from fullmag._validation import ensure_unique_names, require_non_empty
 from fullmag.model.discretization import DiscretizationHints, FEM
 from fullmag.model.dynamics import LLG
 from fullmag.model.energy import BulkDMI, Demag, Exchange, InterfacialDMI, Zeeman
-from fullmag.model.outputs import SaveField, SaveScalar, Snapshot
+from fullmag.model.outputs import (
+    SaveDispersion,
+    SaveField,
+    SaveMode,
+    SaveScalar,
+    SaveSpectrum,
+    Snapshot,
+)
 from fullmag.model.structure import Ferromagnet, Material, Region
-from fullmag.model.study import Relaxation, TimeEvolution
+from fullmag.model.study import Eigenmodes, Relaxation, TimeEvolution
 
 IR_VERSION = "0.2.0"
 API_VERSION = "0.2.0"
@@ -425,7 +432,8 @@ backend = RuntimeSelection()
 
 
 EnergyTerm = Exchange | Demag | InterfacialDMI | BulkDMI | Zeeman
-OutputSpec = SaveField | SaveScalar | Snapshot
+LegacyOutputSpec = SaveField | SaveScalar | Snapshot
+OutputSpec = LegacyOutputSpec | SaveSpectrum | SaveMode | SaveDispersion
 
 
 def _builder_source_kind(entrypoint_kind: str) -> str:
@@ -512,9 +520,9 @@ class Problem:
     name: str
     magnets: Sequence[Ferromagnet]
     energy: Sequence[EnergyTerm]
-    study: TimeEvolution | Relaxation | None = None
+    study: TimeEvolution | Relaxation | Eigenmodes | None = None
     dynamics: LLG | None = None
-    outputs: Sequence[OutputSpec] | None = None
+    outputs: Sequence[LegacyOutputSpec] | None = None
     discretization: DiscretizationHints | None = None
     description: str | None = None
     runtime: RuntimeSelection = field(default_factory=RuntimeSelection)
@@ -654,7 +662,7 @@ class Problem:
             hybrid=self.discretization.hybrid,
         )
 
-    def _normalize_study(self) -> TimeEvolution | Relaxation:
+    def _normalize_study(self) -> TimeEvolution | Relaxation | Eigenmodes:
         if self.study is not None and (self.dynamics is not None or self.outputs is not None):
             raise ValueError(
                 "Problem accepts either study=... or the legacy dynamics=... and outputs=... shape, not both"

@@ -258,6 +258,7 @@ pub(crate) struct ExecutedRun {
     pub initial_magnetization: Vec<[f64; 3]>,
     pub field_snapshots: Vec<FieldSnapshot>,
     pub field_snapshot_count: usize,
+    pub auxiliary_artifacts: Vec<AuxiliaryArtifact>,
     pub provenance: ExecutionProvenance,
 }
 
@@ -268,6 +269,12 @@ pub(crate) struct FieldSnapshot {
     pub time: f64,
     pub solver_dt: f64,
     pub values: Vec<[f64; 3]>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AuxiliaryArtifact {
+    pub relative_path: String,
+    pub bytes: Vec<u8>,
 }
 
 pub(crate) struct LiveStepConsumer<'a> {

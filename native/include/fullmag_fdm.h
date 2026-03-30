@@ -129,6 +129,8 @@ typedef struct {
     int                        has_bulk_dmi;
     double                     dmi_D_bulk;            /* D_bulk (J/m^2) */
 
+    double                     temperature;            /* Temperature in K (0 = no thermal noise) */
+
     /*
      * Optional precomputed Newell tensor spectra, interleaved as
      * [re0, im0, re1, im1, ...] in host-side f64 for each component.

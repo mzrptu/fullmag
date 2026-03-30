@@ -21,6 +21,8 @@ extern double launch_exchange_energy_fp32(Context &ctx);
 extern double launch_demag_energy_fp32(Context &ctx);
 extern double launch_external_energy_fp32(Context &ctx);
 extern double reduce_uniaxial_anisotropy_energy_fp32(Context &ctx);
+extern double reduce_cubic_anisotropy_energy_fp32(Context &ctx);
+extern double reduce_dmi_energy_fp32(Context &ctx);
 extern double reduce_max_norm_fp32(Context &ctx, const void *vx, const void *vy, const void *vz, uint64_t n);
 
 // Reuse the LLG RHS kernel declared in llg_fp32.cu
@@ -170,6 +172,8 @@ void launch_rk4_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stats
     double e_demag = launch_demag_energy_fp32(ctx);
     double e_ext = launch_external_energy_fp32(ctx);
     double e_aniso = reduce_uniaxial_anisotropy_energy_fp32(ctx);
+    double e_cubic = reduce_cubic_anisotropy_energy_fp32(ctx);
+    double e_dmi = reduce_dmi_energy_fp32(ctx);
     double max_h_eff = reduce_max_norm_fp32(ctx, ctx.work.x, ctx.work.y, ctx.work.z, ctx.cell_count);
     double max_h_demag = ctx.enable_demag
         ? reduce_max_norm_fp32(ctx, ctx.h_demag.x, ctx.h_demag.y, ctx.h_demag.z, ctx.cell_count)
@@ -191,6 +195,8 @@ void launch_rk4_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stats
     stats->demag_energy_joules = e_demag;
     stats->external_energy_joules = e_ext;
     stats->anisotropy_energy_joules = e_aniso;
+    stats->cubic_energy_joules = e_cubic;
+    stats->dmi_energy_joules = e_dmi;
     stats->total_energy_joules = e_ex + e_demag + e_ext + e_aniso;
     stats->max_effective_field_amplitude = max_h_eff;
     stats->max_demag_field_amplitude = max_h_demag;

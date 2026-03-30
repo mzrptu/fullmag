@@ -4,22 +4,36 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 from fullmag.model.dynamics import LLG
-from fullmag.model.outputs import SaveField, SaveScalar, Snapshot
-from fullmag._validation import require_positive
+from fullmag.model.outputs import (
+    SaveDispersion,
+    SaveField,
+    SaveMode,
+    SaveScalar,
+    SaveSpectrum,
+    Snapshot,
+)
+from fullmag._validation import require_non_empty, require_positive
 
-OutputSpec = SaveField | SaveScalar | Snapshot
+TimeOutputSpec = SaveField | SaveScalar | Snapshot
+EigenOutputSpec = SaveSpectrum | SaveMode | SaveDispersion
+OutputSpec = TimeOutputSpec | EigenOutputSpec
 SUPPORTED_RELAXATION_ALGORITHMS = {
     "llg_overdamped",
     "projected_gradient_bb",
     "nonlinear_cg",
     "tangent_plane_implicit",
 }
+SUPPORTED_EIGEN_OPERATORS = {"linearized_llg"}
+SUPPORTED_EIGEN_TARGETS = {"lowest", "nearest"}
+SUPPORTED_EQUILIBRIUM_SOURCES = {"provided", "relax", "artifact"}
+SUPPORTED_EIGEN_NORMALIZATIONS = {"unit_l2", "unit_max_amplitude"}
+SUPPORTED_EIGEN_DAMPING_POLICIES = {"ignore", "include"}
 
 
 @dataclass(frozen=True, slots=True)
 class TimeEvolution:
     dynamics: LLG
-    outputs: Sequence[OutputSpec]
+    outputs: Sequence[TimeOutputSpec]
 
     def __post_init__(self) -> None:
         if not self.outputs:
@@ -81,7 +95,7 @@ class Relaxation:
         in all algorithms.
     """
 
-    outputs: Sequence[OutputSpec]
+    outputs: Sequence[TimeOutputSpec]
     algorithm: str = "llg_overdamped"
     torque_tolerance: float = 1e-4
     energy_tolerance: float | None = None
@@ -109,5 +123,100 @@ class Relaxation:
             "torque_tolerance": self.torque_tolerance,
             "energy_tolerance": self.energy_tolerance,
             "max_steps": self.max_steps,
+            "sampling": {"outputs": [output.to_ir() for output in self.outputs]},
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Eigenmodes:
+    outputs: Sequence[EigenOutputSpec]
+    count: int = 20
+    target: str = "lowest"
+    target_frequency: float | None = None
+    operator: str = "linearized_llg"
+    equilibrium_source: str = "provided"
+    equilibrium_artifact: str | None = None
+    include_demag: bool = True
+    k_vector: tuple[float, float, float] | None = None
+    normalization: str = "unit_l2"
+    damping_policy: str = "ignore"
+    dynamics: LLG = field(default_factory=LLG)
+
+    def __post_init__(self) -> None:
+        if not self.outputs:
+            raise ValueError("Eigenmodes requires at least one output")
+        if self.count <= 0:
+            raise ValueError("count must be positive")
+        if self.operator not in SUPPORTED_EIGEN_OPERATORS:
+            supported = ", ".join(sorted(SUPPORTED_EIGEN_OPERATORS))
+            raise ValueError(f"operator must be one of: {supported}")
+        if self.target not in SUPPORTED_EIGEN_TARGETS:
+            supported = ", ".join(sorted(SUPPORTED_EIGEN_TARGETS))
+            raise ValueError(f"target must be one of: {supported}")
+        if self.target == "nearest":
+            require_positive(self.target_frequency, "target_frequency")
+        elif self.target_frequency is not None:
+            require_positive(self.target_frequency, "target_frequency")
+        if self.equilibrium_source not in SUPPORTED_EQUILIBRIUM_SOURCES:
+            supported = ", ".join(sorted(SUPPORTED_EQUILIBRIUM_SOURCES))
+            raise ValueError(f"equilibrium_source must be one of: {supported}")
+        if self.equilibrium_source == "artifact":
+            if self.equilibrium_artifact is None:
+                raise ValueError("equilibrium_artifact is required when equilibrium_source='artifact'")
+            object.__setattr__(
+                self,
+                "equilibrium_artifact",
+                require_non_empty(self.equilibrium_artifact, "equilibrium_artifact"),
+            )
+        elif self.equilibrium_artifact is not None:
+            object.__setattr__(
+                self,
+                "equilibrium_artifact",
+                require_non_empty(self.equilibrium_artifact, "equilibrium_artifact"),
+            )
+        if self.k_vector is not None and len(self.k_vector) != 3:
+            raise ValueError("k_vector must have exactly three components")
+        if self.normalization not in SUPPORTED_EIGEN_NORMALIZATIONS:
+            supported = ", ".join(sorted(SUPPORTED_EIGEN_NORMALIZATIONS))
+            raise ValueError(f"normalization must be one of: {supported}")
+        if self.damping_policy not in SUPPORTED_EIGEN_DAMPING_POLICIES:
+            supported = ", ".join(sorted(SUPPORTED_EIGEN_DAMPING_POLICIES))
+            raise ValueError(f"damping_policy must be one of: {supported}")
+
+    def to_ir(self) -> dict[str, object]:
+        target: dict[str, object]
+        if self.target == "nearest":
+            target = {"kind": "nearest", "frequency_hz": self.target_frequency}
+        else:
+            target = {"kind": "lowest"}
+
+        equilibrium: dict[str, object]
+        if self.equilibrium_source == "artifact":
+            equilibrium = {
+                "kind": "artifact",
+                "path": self.equilibrium_artifact,
+            }
+        elif self.equilibrium_source == "relax":
+            equilibrium = {"kind": "relaxed_initial_state"}
+        else:
+            equilibrium = {"kind": "provided"}
+
+        sampling = None
+        if self.k_vector is not None:
+            sampling = {"kind": "single", "k_vector": list(self.k_vector)}
+
+        return {
+            "kind": "eigenmodes",
+            "dynamics": self.dynamics.to_ir(),
+            "operator": {
+                "kind": self.operator,
+                "include_demag": self.include_demag,
+            },
+            "count": self.count,
+            "target": target,
+            "equilibrium": equilibrium,
+            "k_sampling": sampling,
+            "normalization": self.normalization,
+            "damping_policy": self.damping_policy,
             "sampling": {"outputs": [output.to_ir() for output in self.outputs]},
         }

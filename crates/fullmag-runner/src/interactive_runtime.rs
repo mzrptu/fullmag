@@ -733,6 +733,7 @@ impl CpuInteractiveFdmPreviewRuntime {
             field_snapshots,
             field_snapshot_count,
             provenance,
+            auxiliary_artifacts: vec![],
         })
     }
 
@@ -1204,6 +1205,7 @@ impl CudaInteractiveFdmPreviewRuntime {
             initial_magnetization,
             field_snapshots,
             field_snapshot_count,
+            auxiliary_artifacts: vec![],
             provenance,
         })
     }
@@ -1567,6 +1569,7 @@ impl CpuInteractiveFemPreviewRuntime {
             field_snapshots,
             field_snapshot_count,
             provenance,
+            auxiliary_artifacts: vec![],
         })
     }
 }
@@ -1873,6 +1876,7 @@ impl GpuInteractiveFemPreviewRuntime {
             initial_magnetization,
             field_snapshots,
             field_snapshot_count,
+            auxiliary_artifacts: vec![],
             provenance,
         })
     }

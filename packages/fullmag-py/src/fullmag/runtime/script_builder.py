@@ -25,9 +25,16 @@ from fullmag.model.geometry import (
     Translate,
     Union,
 )
-from fullmag.model.outputs import SaveField, SaveScalar, Snapshot
+from fullmag.model.outputs import (
+    SaveDispersion,
+    SaveField,
+    SaveMode,
+    SaveScalar,
+    SaveSpectrum,
+    Snapshot,
+)
 from fullmag.model.problem import Problem
-from fullmag.model.study import Relaxation, TimeEvolution
+from fullmag.model.study import Eigenmodes, Relaxation, TimeEvolution
 from fullmag.runtime.loader import LoadedProblem, LoadedStage
 
 
@@ -440,6 +447,11 @@ def _render_outputs(problem: Problem, magnet_vars: dict[str, str]) -> list[str]:
             else:
                 lines.append(f"fm.snapshot({_py_repr(quantity)}, every={_py_number(output.every)})")
             continue
+        if isinstance(output, (SaveSpectrum, SaveMode, SaveDispersion)):
+            raise ValueError(
+                "canonical flat-script rewrite does not yet support Eigenmodes outputs; "
+                "keep these studies in build()/Problem scripts for now"
+            )
         raise ValueError(f"unsupported output type: {type(output).__name__}")
     return lines
 
@@ -461,6 +473,11 @@ def _render_stages(
         previous_dynamics_signature = dynamics_signature
 
         study = stage.problem.study
+        if isinstance(study, Eigenmodes):
+            raise ValueError(
+                "canonical flat-script rewrite does not yet support Eigenmodes studies; "
+                "keep them in build()/Problem scripts for now"
+            )
         if isinstance(study, Relaxation):
             relax_override = _normalize_mapping(solver_override.get("relax"))
             algorithm = _override_string(relax_override, "algorithm", study.algorithm) or study.algorithm
@@ -649,7 +666,7 @@ def _export_initial_state(problem: Problem) -> dict[str, object] | None:
     }
 
 
-def _study_outputs(study: TimeEvolution | Relaxation) -> Sequence[object]:
+def _study_outputs(study: TimeEvolution | Relaxation | Eigenmodes) -> Sequence[object]:
     return tuple(study.outputs)
 
 

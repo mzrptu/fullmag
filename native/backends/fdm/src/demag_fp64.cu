@@ -11,6 +11,7 @@
 
 #include <cuda_runtime.h>
 #include <cufft.h>
+#include <curand_kernel.h>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -254,7 +255,9 @@ __global__ void combine_effective_field_fp64_kernel(
     double D_int,
     double D_bulk,
     int nx, int ny, int nz,
-    double inv_2dx, double inv_2dy, double inv_2dz)
+    double inv_2dx, double inv_2dy, double inv_2dz,
+    double thermal_sigma,
+    uint64_t thermal_seed)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
@@ -383,6 +386,15 @@ __global__ void combine_effective_field_fp64_kernel(
         hx += h_demag_x[idx];
         hy += h_demag_y[idx];
         hz += h_demag_z[idx];
+    }
+
+    // --- Thermal noise ---
+    if (thermal_sigma > 0.0) {
+        curandStatePhilox4_32_10_t state;
+        curand_init(thermal_seed, idx, 0, &state);
+        hx += thermal_sigma * curand_normal_double(&state);
+        hy += thermal_sigma * curand_normal_double(&state);
+        hz += thermal_sigma * curand_normal_double(&state);
     }
 
     h_eff_x[idx] = hx;
@@ -514,6 +526,18 @@ void launch_demag_field_fp64(Context &ctx) {
 void launch_effective_field_fp64(Context &ctx) {
     int n = static_cast<int>(ctx.cell_count);
     int grid = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+    // Compute thermal noise amplitude (FDT)
+    if (ctx.temperature > 0.0 && ctx.Ms > 0.0 && ctx.current_dt > 0.0) {
+        double MU0 = 4.0 * M_PI * 1e-7;
+        double KB = 1.380649e-23;
+        double V = ctx.dx * ctx.dy * ctx.dz;
+        double gamma0 = ctx.gamma * MU0;
+        ctx.thermal_sigma = sqrt(2.0 * ctx.alpha * KB * ctx.temperature / (gamma0 * MU0 * ctx.Ms * V * ctx.current_dt));
+    } else {
+        ctx.thermal_sigma = 0.0;
+    }
+
     combine_effective_field_fp64_kernel<<<grid, BLOCK_SIZE>>>(
         static_cast<const double*>(ctx.m.x),
         static_cast<const double*>(ctx.m.y),
@@ -558,7 +582,9 @@ void launch_effective_field_fp64(Context &ctx) {
         ctx.D_interfacial,
         ctx.D_bulk,
         static_cast<int>(ctx.nx), static_cast<int>(ctx.ny), static_cast<int>(ctx.nz),
-        0.5 / ctx.dx, 0.5 / ctx.dy, 0.5 / ctx.dz);
+        0.5 / ctx.dx, 0.5 / ctx.dy, 0.5 / ctx.dz,
+        ctx.thermal_sigma,
+        ctx.step_count);
 }
 
 double launch_demag_energy_fp64(Context &ctx) {

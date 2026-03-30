@@ -17,5 +17,6 @@ fullmag-fem-sys = { path = "../fullmag-fem-sys", optional = true }
 fullmag-ir = { path = "../fullmag-ir" }
 fullmag-plan = { path = "../fullmag-plan" }
 rayon = "1.10"
+nalgebra = "0.33"
 serde = { workspace = true }
 serde_json = { workspace = true }

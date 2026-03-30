@@ -153,6 +153,9 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
     ctx->has_bulk_dmi = plan->has_bulk_dmi != 0;
     ctx->D_bulk = plan->dmi_D_bulk;
 
+    // Thermal noise
+    ctx->temperature = plan->temperature;
+
     // Adaptive step config (DP45)
     ctx->adaptive_max_error = plan->adaptive_max_error > 0 ? plan->adaptive_max_error : 1e-5;
     ctx->adaptive_dt_min    = plan->adaptive_dt_min > 0    ? plan->adaptive_dt_min    : 1e-18;

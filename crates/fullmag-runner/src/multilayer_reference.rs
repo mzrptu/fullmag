@@ -42,66 +42,6 @@ pub(crate) fn execute_reference_fdm_multilayer(
     plan: &FdmMultilayerPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_multilayer_impl(
-        plan,
-        until_seconds,
-        outputs,
-        None::<(&[u32; 3], &mut dyn FnMut(StepUpdate) -> StepAction)>,
-        None,
-    )
-}
-
-pub(crate) fn execute_reference_fdm_multilayer_with_callback(
-    plan: &FdmMultilayerPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_multilayer_impl(
-        plan,
-        until_seconds,
-        outputs,
-        Some((&plan.common_cells, on_step)),
-        None,
-    )
-}
-
-pub(crate) fn execute_reference_fdm_multilayer_streaming(
-    plan: &FdmMultilayerPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    artifact_writer: ArtifactPipelineSender,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_multilayer_impl(
-        plan,
-        until_seconds,
-        outputs,
-        None::<(&[u32; 3], &mut dyn FnMut(StepUpdate) -> StepAction)>,
-        Some(artifact_writer),
-    )
-}
-
-pub(crate) fn execute_reference_fdm_multilayer_with_callback_streaming(
-    plan: &FdmMultilayerPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    artifact_writer: ArtifactPipelineSender,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_reference_fdm_multilayer_impl(
-        plan,
-        until_seconds,
-        outputs,
-        Some((&plan.common_cells, on_step)),
-        Some(artifact_writer),
-    )
-}
-
-fn execute_reference_fdm_multilayer_impl(
-    plan: &FdmMultilayerPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
     mut live: Option<(&[u32; 3], &mut dyn FnMut(StepUpdate) -> StepAction)>,
     artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
@@ -309,6 +249,7 @@ fn execute_reference_fdm_multilayer_impl(
         initial_magnetization,
         field_snapshots,
         field_snapshot_count,
+        auxiliary_artifacts: Vec::new(),
         provenance,
     })
 }
@@ -989,7 +930,7 @@ mod tests {
     #[test]
     fn multilayer_reference_run_executes_two_layers() {
         let plan = make_plan(true);
-        let executed = execute_reference_fdm_multilayer(&plan, 2e-13, &[])
+        let executed = execute_reference_fdm_multilayer(&plan, 2e-13, &[], None, None)
             .expect("multilayer run should execute");
         assert_eq!(executed.result.status, RunStatus::Completed);
         assert_eq!(executed.result.final_magnetization.len(), 32);
@@ -1000,7 +941,7 @@ mod tests {
     #[test]
     fn multilayer_exchange_only_has_zero_demag_energy() {
         let plan = make_plan(false);
-        let executed = execute_reference_fdm_multilayer(&plan, 1e-13, &[])
+        let executed = execute_reference_fdm_multilayer(&plan, 1e-13, &[], None, None)
             .expect("exchange-only multilayer run should execute");
         let final_step = executed.result.steps.last().unwrap();
         assert!(final_step.e_demag.abs() < 1e-30);

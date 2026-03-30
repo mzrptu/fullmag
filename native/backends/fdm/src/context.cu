@@ -27,6 +27,8 @@ extern void launch_effective_field_fp32(Context &ctx);
 static void free_boundary_correction(Context &ctx);
 static void free_anisotropy_fields(Context &ctx);
 static void free_cubic_anisotropy_fields(Context &ctx);
+static bool upload_f64_array(Context &ctx, double *&dst, const double *src,
+                              uint64_t len, const char *label);
 
 /* ── Helper: element size based on precision ── */
 

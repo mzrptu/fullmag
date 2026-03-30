@@ -175,6 +175,23 @@ pub(crate) fn execution_plan_log_lines(
             lines.push(format!("FE order: {}", fem.fe_order));
             lines.push(format!("hmax: {}", format_length_m(fem.hmax)));
         }
+        BackendPlanIR::FemEigen(fem) => {
+            lines.push("Backend plan: fem_eigen".to_string());
+            lines.push(format!("Mesh: {}", fem.mesh_name));
+            lines.push(format!(
+                "Mesh size: {} nodes, {} elements, {} boundary faces",
+                fem.mesh.nodes.len(),
+                fem.mesh.elements.len(),
+                fem.mesh.boundary_faces.len()
+            ));
+            if let Some((min, max)) = fem_mesh_bbox(&fem.mesh) {
+                let extent = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+                lines.push(format!("World extent: {}", format_extent(extent)));
+            }
+            lines.push(format!("FE order: {}", fem.fe_order));
+            lines.push(format!("hmax: {}", format_length_m(fem.hmax)));
+            lines.push(format!("Requested modes: {}", fem.count));
+        }
     }
     lines
 }
@@ -261,6 +278,31 @@ pub(crate) fn current_artifact_layout(plan: &ExecutionPlanIR) -> serde_json::Val
                 "bounds_min": bounds_min,
                 "bounds_max": bounds_max,
                 "world_extent": extent,
+            })
+        }
+        BackendPlanIR::FemEigen(fem) => {
+            let (bounds_min, bounds_max, extent) = fem_mesh_bbox(&fem.mesh)
+                .map(|(min, max)| {
+                    (
+                        Some(min),
+                        Some(max),
+                        Some([max[0] - min[0], max[1] - min[1], max[2] - min[2]]),
+                    )
+                })
+                .unwrap_or((None, None, None));
+            serde_json::json!({
+                "backend": "fem_eigen",
+                "mesh_name": fem.mesh.mesh_name,
+                "mesh_source": fem.mesh_source,
+                "fe_order": fem.fe_order,
+                "hmax": fem.hmax,
+                "n_nodes": fem.mesh.nodes.len(),
+                "n_elements": fem.mesh.elements.len(),
+                "boundary_face_count": fem.mesh.boundary_faces.len(),
+                "bounds_min": bounds_min,
+                "bounds_max": bounds_max,
+                "world_extent": extent,
+                "mode_count": fem.count,
             })
         }
     }

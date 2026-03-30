@@ -93,6 +93,48 @@ fn add_initial_state_warnings(
     }
 }
 
+fn diagnose_initial_state(
+    node_count: usize,
+    boundary_face_count: Option<usize>,
+    max_effective_field_amplitude: Option<f64>,
+    max_rhs_amplitude: Option<f64>,
+    exchange_enabled: bool,
+    demag_enabled: bool,
+    external_field: Option<[f64; 3]>,
+    damping: f64,
+    relaxation: Option<&fullmag_ir::RelaxationControlIR>,
+    uniform_initial_state: bool,
+) -> Result<InitialStateDiagnostic> {
+    if node_count == 0 {
+        anyhow::bail!("diagnostic mesh contains no nodes");
+    }
+
+    let mut diagnostic = InitialStateDiagnostic {
+        max_effective_field_amplitude,
+        max_rhs_amplitude,
+        warnings: Vec::new(),
+    };
+    add_initial_state_warnings(
+        &mut diagnostic.warnings,
+        diagnostic.max_effective_field_amplitude,
+        diagnostic.max_rhs_amplitude,
+        exchange_enabled,
+        demag_enabled,
+        external_field,
+        damping,
+        relaxation,
+        uniform_initial_state,
+    );
+    if demag_enabled && boundary_face_count == Some(0) {
+        diagnostic.warnings.push(
+            "Demag is enabled, but the FEM mesh exposes no boundary faces. Verify the mesh import before trusting magnetostatic diagnostics."
+                .to_string(),
+        );
+    }
+
+    Ok(diagnostic)
+}
+
 pub(crate) fn diagnose_initial_fdm_plan(plan: &FdmPlanIR) -> Result<InitialStateDiagnostic> {
     let grid = GridShape::new(
         plan.grid.cells[0] as usize,
@@ -264,7 +306,21 @@ pub(crate) fn diagnose_initial_backend_plan(backend_plan: &BackendPlanIR) -> Res
         BackendPlanIR::Fdm(plan) => diagnose_initial_fdm_plan(plan),
         BackendPlanIR::FdmMultilayer(plan) => Ok(diagnose_initial_multilayer_plan(plan)),
         BackendPlanIR::Fem(plan) => diagnose_initial_fem_plan(plan),
+        BackendPlanIR::FemEigen(plan) => diagnose_initial_state(
+            plan.mesh.nodes.len(),
+            Some(plan.mesh.boundary_faces.len()),
+            None,
+            None,
+            plan.enable_exchange,
+            plan.enable_demag,
+            plan.external_field,
+            if plan.material.damping.is_finite() {
+                plan.material.damping
+            } else {
+                0.0
+            },
+            None,
+            magnetization_is_uniform(&plan.equilibrium_magnetization),
+        ),
     }
 }
-
-

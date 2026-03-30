@@ -210,31 +210,33 @@ impl NativeFdmBackend {
             enable_demag: if plan.enable_demag { 1 } else { 0 },
             has_external_field: if plan.external_field.is_some() { 1 } else { 0 },
             external_field_am: plan.external_field.unwrap_or([0.0, 0.0, 0.0]),
-            
-            has_uniaxial_anisotropy: if plan.material.uniaxial_anisotropy.is_some() { 1 } else { 0 },
-            uniaxial_anisotropy_constant: plan.material.uniaxial_anisotropy.unwrap_or(0.0),
-            uniaxial_anisotropy_k2: plan.material.uniaxial_anisotropy_k2.unwrap_or(0.0),
-            anisotropy_axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
-            
-            ku1_field: plan.material.ku_field.as_ref().map_or(std::ptr::null(), |f| f.as_ptr()),
-            ku2_field: plan.material.ku2_field.as_ref().map_or(std::ptr::null(), |f| f.as_ptr()),
 
-            // Cubic anisotropy
-            has_cubic_anisotropy: if plan.material.cubic_anisotropy_kc1.is_some() { 1 } else { 0 },
-            cubic_kc1: plan.material.cubic_anisotropy_kc1.unwrap_or(0.0),
-            cubic_kc2: plan.material.cubic_anisotropy_kc2.unwrap_or(0.0),
-            cubic_kc3: plan.material.cubic_anisotropy_kc3.unwrap_or(0.0),
-            cubic_axis1: plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
-            cubic_axis2: plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
+            // The current FDM IR does not yet expose anisotropy or DMI terms, so we
+            // explicitly zero-initialize the native descriptor to stay aligned with it.
+            has_uniaxial_anisotropy: 0,
+            uniaxial_anisotropy_constant: 0.0,
+            uniaxial_anisotropy_k2: 0.0,
+            anisotropy_axis: [0.0, 0.0, 1.0],
+
+            ku1_field: std::ptr::null(),
+            ku2_field: std::ptr::null(),
+
+            has_cubic_anisotropy: 0,
+            cubic_kc1: 0.0,
+            cubic_kc2: 0.0,
+            cubic_kc3: 0.0,
+            cubic_axis1: [1.0, 0.0, 0.0],
+            cubic_axis2: [0.0, 1.0, 0.0],
             kc1_field: std::ptr::null(),
             kc2_field: std::ptr::null(),
             kc3_field: std::ptr::null(),
 
-            // DMI
-            has_interfacial_dmi: if plan.interfacial_dmi.is_some() { 1 } else { 0 },
-            dmi_d_interfacial: plan.interfacial_dmi.unwrap_or(0.0),
-            has_bulk_dmi: if plan.bulk_dmi.is_some() { 1 } else { 0 },
-            dmi_d_bulk: plan.bulk_dmi.unwrap_or(0.0),
+            has_interfacial_dmi: 0,
+            dmi_d_interfacial: 0.0,
+            has_bulk_dmi: 0,
+            dmi_d_bulk: 0.0,
+
+            temperature: 0.0,
 
             demag_kernel_xx_spectrum: demag_kernel_spectra
                 .as_ref()

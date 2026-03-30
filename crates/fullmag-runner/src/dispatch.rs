@@ -10,13 +10,14 @@
 //! - `cpu`: force CPU reference
 //! - `gpu`: force native FEM GPU, fail if unavailable
 
-use fullmag_ir::{FdmMultilayerPlanIR, FdmPlanIR, FemPlanIR, OutputIR, ProblemIR};
+use fullmag_ir::{FdmMultilayerPlanIR, FdmPlanIR, FemEigenPlanIR, FemPlanIR, OutputIR, ProblemIR};
 use serde_json::Value;
 
 use crate::artifact_pipeline::ArtifactPipelineSender;
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
 use crate::artifact_pipeline::ArtifactRecorder;
 use crate::cpu_reference;
+use crate::fem_eigen;
 use crate::fem_reference;
 #[cfg(feature = "cuda")]
 use crate::multilayer_cuda;
@@ -47,7 +48,6 @@ use crate::types::{
 };
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
 use crate::types::{ExecutionProvenance, FieldSnapshot, RunResult, RunStatus, StepStats};
-use crate::DisplaySelectionState;
 
 /// Which execution engine to use for FDM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,73 +439,42 @@ fn reject_direct_minimization_on_cuda(problem: &ProblemIR) -> Result<(), RunErro
 }
 
 /// Execute an FDM plan using the selected engine.
-#[allow(dead_code)]
-pub(crate) fn execute_fdm(
+pub(crate) fn execute_fdm<'a>(
     engine: FdmEngine,
     plan: &FdmPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
-) -> Result<ExecutedRun, RunError> {
-    execute_fdm_streaming(engine, plan, until_seconds, outputs, None)
-}
-
-pub(crate) fn execute_fdm_streaming(
-    engine: FdmEngine,
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
+    live: Option<LiveStepConsumer<'a>>,
     artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     match engine {
         FdmEngine::CpuReference => {
-            if let Some(writer) = artifact_writer {
-                cpu_reference::execute_reference_fdm_streaming(plan, until_seconds, outputs, writer)
-            } else {
-                cpu_reference::execute_reference_fdm(plan, until_seconds, outputs)
-            }
+            cpu_reference::execute_reference_fdm(plan, until_seconds, outputs, live, artifact_writer)
         }
-        FdmEngine::CudaFdm => execute_cuda_fdm(plan, until_seconds, outputs, artifact_writer),
+        FdmEngine::CudaFdm => execute_cuda_fdm(plan, until_seconds, outputs, live, artifact_writer),
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn execute_fdm_multilayer(
+/// Execute a multilayer FDM plan using the selected engine.
+pub(crate) fn execute_fdm_multilayer<'a>(
     engine: FdmEngine,
     plan: &FdmMultilayerPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
-) -> Result<ExecutedRun, RunError> {
-    execute_fdm_multilayer_streaming(engine, plan, until_seconds, outputs, None)
-}
-
-pub(crate) fn execute_fdm_multilayer_streaming(
-    engine: FdmEngine,
-    plan: &FdmMultilayerPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
+    live: Option<(&'a [u32; 3], &'a mut dyn FnMut(StepUpdate) -> StepAction)>,
     artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     match engine {
         FdmEngine::CpuReference => {
-            if let Some(writer) = artifact_writer {
-                multilayer_reference::execute_reference_fdm_multilayer_streaming(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    writer,
-                )
-            } else {
-                multilayer_reference::execute_reference_fdm_multilayer(plan, until_seconds, outputs)
-            }
+            multilayer_reference::execute_reference_fdm_multilayer(
+                plan, until_seconds, outputs, live, artifact_writer,
+            )
         }
         FdmEngine::CudaFdm => {
             #[cfg(feature = "cuda")]
             {
-                return multilayer_cuda::execute_cuda_fdm_multilayer_streaming(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    artifact_writer,
+                return multilayer_cuda::execute_cuda_fdm_multilayer_with_live(
+                    plan, until_seconds, outputs, live, artifact_writer,
                 );
             }
             #[cfg(not(feature = "cuda"))]
@@ -521,399 +490,41 @@ pub(crate) fn execute_fdm_multilayer_streaming(
 }
 
 /// Execute a FEM plan using the selected engine.
-#[allow(dead_code)]
-pub(crate) fn execute_fem(
+pub(crate) fn execute_fem<'a>(
     engine: FemEngine,
     plan: &FemPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
-) -> Result<ExecutedRun, RunError> {
-    execute_fem_streaming(engine, plan, until_seconds, outputs, None)
-}
-
-pub(crate) fn execute_fem_streaming(
-    engine: FemEngine,
-    plan: &FemPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
+    live: Option<LiveStepConsumer<'a>>,
     artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     match engine {
         FemEngine::CpuReference => {
-            if let Some(writer) = artifact_writer {
-                fem_reference::execute_reference_fem_streaming(plan, until_seconds, outputs, writer)
-            } else {
-                fem_reference::execute_reference_fem(plan, until_seconds, outputs)
-            }
+            fem_reference::execute_reference_fem(plan, until_seconds, outputs, live, artifact_writer)
         }
         FemEngine::NativeGpu => {
-            execute_native_fem_impl(plan, until_seconds, outputs, None, artifact_writer)
+            execute_native_fem(plan, until_seconds, outputs, live, artifact_writer)
         }
     }
 }
 
-/// Execute FEM with a per-step callback for live streaming.
-#[allow(dead_code)]
-pub(crate) fn execute_fem_with_callback(
+pub(crate) fn execute_fem_eigen(
     engine: FemEngine,
-    plan: &FemPlanIR,
-    until_seconds: f64,
+    plan: &FemEigenPlanIR,
     outputs: &[OutputIR],
-    field_every_n: u64,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_fem_with_callback_streaming(
-        engine,
-        plan,
-        until_seconds,
-        outputs,
-        field_every_n,
-        None,
-        on_step,
-    )
-}
-
-pub(crate) fn execute_fem_with_callback_streaming(
-    engine: FemEngine,
-    plan: &FemPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    field_every_n: u64,
-    artifact_writer: Option<ArtifactPipelineSender>,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
 ) -> Result<ExecutedRun, RunError> {
     match engine {
-        FemEngine::CpuReference => {
-            if let Some(writer) = artifact_writer {
-                fem_reference::execute_reference_fem_with_callback_streaming(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    field_every_n,
-                    writer,
-                    on_step,
-                )
-            } else {
-                fem_reference::execute_reference_fem_with_callback(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    field_every_n,
-                    on_step,
-                )
-            }
-        }
-        FemEngine::NativeGpu => execute_native_fem_impl(
-            plan,
-            until_seconds,
-            outputs,
-            Some(LiveStepConsumer {
-                grid: [0, 0, 0],
-                field_every_n,
-                display_selection: None,
-                on_step,
-            }),
-            artifact_writer,
-        ),
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn execute_fem_with_live_preview(
-    engine: FemEngine,
-    plan: &FemPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    field_every_n: u64,
-    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_fem_with_live_preview_streaming(
-        engine,
-        plan,
-        until_seconds,
-        outputs,
-        field_every_n,
-        display_selection,
-        None,
-        on_step,
-    )
-}
-
-pub(crate) fn execute_fem_with_live_preview_streaming(
-    engine: FemEngine,
-    plan: &FemPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    field_every_n: u64,
-    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
-    artifact_writer: Option<ArtifactPipelineSender>,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    match engine {
-        FemEngine::CpuReference => {
-            if let Some(writer) = artifact_writer {
-                fem_reference::execute_reference_fem_with_live_preview_streaming(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    field_every_n,
-                    display_selection,
-                    writer,
-                    on_step,
-                )
-            } else {
-                fem_reference::execute_reference_fem_with_live_preview(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    field_every_n,
-                    display_selection,
-                    on_step,
-                )
-            }
-        }
-        FemEngine::NativeGpu => execute_native_fem_impl(
-            plan,
-            until_seconds,
-            outputs,
-            Some(LiveStepConsumer {
-                grid: [0, 0, 0],
-                field_every_n,
-                display_selection: Some(display_selection),
-                on_step,
-            }),
-            artifact_writer,
-        ),
-    }
-}
-
-/// Execute FDM with a per-step callback for live streaming.
-#[allow(dead_code)]
-pub(crate) fn execute_fdm_with_callback(
-    engine: FdmEngine,
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    grid: [u32; 3],
-    field_every_n: u64,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_fdm_with_callback_streaming(
-        engine,
-        plan,
-        until_seconds,
-        outputs,
-        grid,
-        field_every_n,
-        None,
-        on_step,
-    )
-}
-
-pub(crate) fn execute_fdm_with_callback_streaming(
-    engine: FdmEngine,
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    grid: [u32; 3],
-    field_every_n: u64,
-    artifact_writer: Option<ArtifactPipelineSender>,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    match engine {
-        FdmEngine::CpuReference => {
-            if let Some(writer) = artifact_writer {
-                cpu_reference::execute_reference_fdm_with_callback_streaming(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    grid,
-                    field_every_n,
-                    writer,
-                    on_step,
-                )
-            } else {
-                cpu_reference::execute_reference_fdm_with_callback(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    grid,
-                    field_every_n,
-                    on_step,
-                )
-            }
-        }
-        FdmEngine::CudaFdm => execute_cuda_fdm_impl(
-            plan,
-            until_seconds,
-            outputs,
-            Some(LiveStepConsumer {
-                grid,
-                field_every_n,
-                display_selection: None,
-                on_step,
-            }),
-            artifact_writer,
-        ),
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn execute_fdm_with_live_preview(
-    engine: FdmEngine,
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    grid: [u32; 3],
-    field_every_n: u64,
-    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_fdm_with_live_preview_streaming(
-        engine,
-        plan,
-        until_seconds,
-        outputs,
-        grid,
-        field_every_n,
-        display_selection,
-        None,
-        on_step,
-    )
-}
-
-pub(crate) fn execute_fdm_with_live_preview_streaming(
-    engine: FdmEngine,
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    grid: [u32; 3],
-    field_every_n: u64,
-    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
-    artifact_writer: Option<ArtifactPipelineSender>,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    match engine {
-        FdmEngine::CpuReference => {
-            if let Some(writer) = artifact_writer {
-                cpu_reference::execute_reference_fdm_with_live_preview_streaming(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    grid,
-                    field_every_n,
-                    display_selection,
-                    writer,
-                    on_step,
-                )
-            } else {
-                cpu_reference::execute_reference_fdm_with_live_preview(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    grid,
-                    field_every_n,
-                    display_selection,
-                    on_step,
-                )
-            }
-        }
-        FdmEngine::CudaFdm => execute_cuda_fdm_impl(
-            plan,
-            until_seconds,
-            outputs,
-            Some(LiveStepConsumer {
-                grid,
-                field_every_n,
-                display_selection: Some(display_selection),
-                on_step,
-            }),
-            artifact_writer,
-        ),
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn execute_fdm_multilayer_with_callback(
-    engine: FdmEngine,
-    plan: &FdmMultilayerPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    execute_fdm_multilayer_with_callback_streaming(
-        engine,
-        plan,
-        until_seconds,
-        outputs,
-        None,
-        on_step,
-    )
-}
-
-pub(crate) fn execute_fdm_multilayer_with_callback_streaming(
-    engine: FdmEngine,
-    plan: &FdmMultilayerPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    artifact_writer: Option<ArtifactPipelineSender>,
-    on_step: &mut impl FnMut(StepUpdate) -> StepAction,
-) -> Result<ExecutedRun, RunError> {
-    match engine {
-        FdmEngine::CpuReference => {
-            if let Some(writer) = artifact_writer {
-                multilayer_reference::execute_reference_fdm_multilayer_with_callback_streaming(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    writer,
-                    on_step,
-                )
-            } else {
-                multilayer_reference::execute_reference_fdm_multilayer_with_callback(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    on_step,
-                )
-            }
-        }
-        FdmEngine::CudaFdm => {
-            #[cfg(feature = "cuda")]
-            {
-                return multilayer_cuda::execute_cuda_fdm_multilayer_with_callback_streaming(
-                    plan,
-                    until_seconds,
-                    outputs,
-                    artifact_writer,
-                    on_step,
-                );
-            }
-            #[cfg(not(feature = "cuda"))]
-            {
-                return Err(RunError {
-                    message:
-                        "FULLMAG_FDM_EXECUTION=cuda requested for multilayer FDM, but fullmag-runner was built without the cuda feature"
-                            .to_string(),
-                });
-            }
-        }
+        FemEngine::CpuReference => fem_eigen::execute_reference_fem_eigen(plan, outputs),
+        FemEngine::NativeGpu => Err(RunError {
+            message:
+                "native FEM GPU eigen execution is not available yet; rerun with device='cpu'"
+                    .to_string(),
+        }),
     }
 }
 
 #[cfg(feature = "cuda")]
 fn execute_cuda_fdm(
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    artifact_writer: Option<ArtifactPipelineSender>,
-) -> Result<ExecutedRun, RunError> {
-    execute_cuda_fdm_impl(plan, until_seconds, outputs, None, artifact_writer)
-}
-
-#[cfg(feature = "cuda")]
-fn execute_cuda_fdm_impl(
     plan: &FdmPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
@@ -1105,22 +716,13 @@ fn execute_cuda_fdm_impl(
         initial_magnetization,
         field_snapshots,
         field_snapshot_count,
+        auxiliary_artifacts: Vec::new(),
         provenance,
     })
 }
 
 #[cfg(feature = "fem-gpu")]
 fn execute_native_fem(
-    plan: &FemPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    artifact_writer: Option<ArtifactPipelineSender>,
-) -> Result<ExecutedRun, RunError> {
-    execute_native_fem_impl(plan, until_seconds, outputs, None, artifact_writer)
-}
-
-#[cfg(feature = "fem-gpu")]
-fn execute_native_fem_impl(
     plan: &FemPlanIR,
     until_seconds: f64,
     outputs: &[OutputIR],
@@ -1313,6 +915,7 @@ fn execute_native_fem_impl(
         initial_magnetization,
         field_snapshots,
         field_snapshot_count,
+        auxiliary_artifacts: Vec::new(),
         provenance,
     })
 }
@@ -1322,6 +925,7 @@ fn execute_native_fem(
     _plan: &FemPlanIR,
     _until_seconds: f64,
     _outputs: &[OutputIR],
+    _live: Option<LiveStepConsumer<'_>>,
     _artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     Err(RunError {
@@ -1331,22 +935,12 @@ fn execute_native_fem(
     })
 }
 
-#[cfg(not(feature = "fem-gpu"))]
-fn execute_native_fem_impl(
-    plan: &FemPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    _live: Option<LiveStepConsumer<'_>>,
-    _artifact_writer: Option<ArtifactPipelineSender>,
-) -> Result<ExecutedRun, RunError> {
-    execute_native_fem(plan, until_seconds, outputs, None)
-}
-
 #[cfg(not(feature = "cuda"))]
 fn execute_cuda_fdm(
     _plan: &FdmPlanIR,
     _until_seconds: f64,
     _outputs: &[OutputIR],
+    _live: Option<LiveStepConsumer<'_>>,
     _artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     Err(RunError {
@@ -1354,17 +948,6 @@ fn execute_cuda_fdm(
             "CUDA FDM backend requested but fullmag-runner was built without the 'cuda' feature"
                 .to_string(),
     })
-}
-
-#[cfg(not(feature = "cuda"))]
-fn execute_cuda_fdm_impl(
-    plan: &FdmPlanIR,
-    until_seconds: f64,
-    outputs: &[OutputIR],
-    _live: Option<LiveStepConsumer<'_>>,
-    _artifact_writer: Option<ArtifactPipelineSender>,
-) -> Result<ExecutedRun, RunError> {
-    execute_cuda_fdm(plan, until_seconds, outputs, None)
 }
 
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]

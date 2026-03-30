@@ -118,6 +118,14 @@ pub(crate) fn write_artifacts(
         }
     }
 
+    for artifact in &executed.auxiliary_artifacts {
+        let artifact_path = output_dir.join(&artifact.relative_path);
+        if let Some(parent) = artifact_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(artifact_path, &artifact.bytes)?;
+    }
+
     Ok(())
 }
 
@@ -259,6 +267,17 @@ pub(crate) fn field_layout(plan: &fullmag_ir::ExecutionPlanIR) -> serde_json::Va
             "hmax": fem.hmax,
             "n_nodes": fem.mesh.nodes.len(),
             "n_elements": fem.mesh.elements.len(),
+        }),
+        BackendPlanIR::FemEigen(fem) => serde_json::json!({
+            "backend": "fem_eigen",
+            "mesh_name": fem.mesh.mesh_name,
+            "mesh_source": fem.mesh_source,
+            "fe_order": fem.fe_order,
+            "hmax": fem.hmax,
+            "n_nodes": fem.mesh.nodes.len(),
+            "n_elements": fem.mesh.elements.len(),
+            "mode_count": fem.count,
+            "operator": fem.operator,
         }),
     }
 }

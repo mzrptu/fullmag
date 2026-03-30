@@ -177,6 +177,19 @@ pub(crate) fn initial_step_update(backend_plan: &BackendPlanIR) -> fullmag_runne
             scalar_row_due: false,
             finished: false,
         },
+        BackendPlanIR::FemEigen(fem) => fullmag_runner::StepUpdate {
+            stats,
+            grid: [0, 0, 0],
+            fem_mesh: Some(fullmag_runner::FemMeshPayload {
+                nodes: fem.mesh.nodes.clone(),
+                elements: fem.mesh.elements.clone(),
+                boundary_faces: fem.mesh.boundary_faces.clone(),
+            }),
+            magnetization: Some(flatten_magnetization(&fem.equilibrium_magnetization)),
+            preview_field: None,
+            scalar_row_due: false,
+            finished: false,
+        },
     }
 }
 
@@ -230,6 +243,19 @@ pub(crate) fn final_stage_step_update(
             scalar_row_due: true,
             finished,
         },
+        BackendPlanIR::FemEigen(fem) => fullmag_runner::StepUpdate {
+            stats,
+            grid: [0, 0, 0],
+            fem_mesh: Some(fullmag_runner::FemMeshPayload {
+                nodes: fem.mesh.nodes.clone(),
+                elements: fem.mesh.elements.clone(),
+                boundary_faces: fem.mesh.boundary_faces.clone(),
+            }),
+            magnetization: Some(flatten_magnetization(final_magnetization)),
+            preview_field: None,
+            scalar_row_due: true,
+            finished,
+        },
     })
 }
 
@@ -254,6 +280,7 @@ pub(crate) fn resolve_script_until_seconds(ir: &ProblemIR, default_until_seconds
         fullmag_ir::StudyIR::TimeEvolution { .. } => bail!(
             "no stop time provided. Define DEFAULT_UNTIL in the script for time-evolution runs"
         ),
+        fullmag_ir::StudyIR::Eigenmodes { .. } => Ok(0.0),
     }
 }
 
@@ -381,19 +408,18 @@ pub(crate) fn build_interactive_command_stage(
 
             let mut ir = base_problem.clone();
             let mut dynamics = ir.study.dynamics().clone();
-            if let fullmag_ir::DynamicsIR::Llg { ref mut integrator, ref mut fixed_timestep, .. } = dynamics {
-                if let Some(ref int_str) = command.integrator {
-                    if let Ok(parsed_integrator) = serde_json::from_value(serde_json::json!(int_str)) {
-                        *integrator = parsed_integrator;
-                    } else {
-                        eprintln!("[fullmag] warning: failed to parse integrator '{}'", int_str);
-                    }
+            let fullmag_ir::DynamicsIR::Llg { ref mut integrator, ref mut fixed_timestep, .. } = dynamics;
+            if let Some(ref int_str) = command.integrator {
+                if let Ok(parsed_integrator) = serde_json::from_value(serde_json::json!(int_str)) {
+                    *integrator = parsed_integrator;
+                } else {
+                    eprintln!("[fullmag] warning: failed to parse integrator '{}'", int_str);
                 }
-                if let Some(ft) = command.fixed_timestep {
-                    *fixed_timestep = Some(ft);
-                } else if command.integrator.as_deref() == Some("rk45") || command.integrator.as_deref() == Some("rk23") {
-                    *fixed_timestep = None;
-                }
+            }
+            if let Some(ft) = command.fixed_timestep {
+                *fixed_timestep = Some(ft);
+            } else if command.integrator.as_deref() == Some("rk45") || command.integrator.as_deref() == Some("rk23") {
+                *fixed_timestep = None;
             }
             let sampling = ir.study.sampling().clone();
             ir.problem_meta.entrypoint_kind = "interactive_run".to_string();
