@@ -108,10 +108,36 @@ struct Context {
 
     bool enable_anisotropy = false;
     double anisotropy_Ku = 0.0;
+    double anisotropy_Ku2 = 0.0;
     std::array<double, 3> anisotropy_axis{0.0, 0.0, 1.0};
 
     bool enable_dmi = false;
     double dmi_D = 0.0;
+
+    bool enable_bulk_dmi = false;
+    double bulk_dmi_D = 0.0;
+
+    bool enable_cubic_anisotropy = false;
+    double cubic_Kc1 = 0.0;
+    double cubic_Kc2 = 0.0;
+    double cubic_Kc3 = 0.0;
+    std::array<double, 3> cubic_axis1{1.0, 0.0, 0.0};
+    std::array<double, 3> cubic_axis2{0.0, 1.0, 0.0};
+    std::vector<double> h_cubic_ani_xyz;
+
+    // ── Per-node spatially varying material fields ────────────────────
+    // When non-empty (size == n_nodes), kernels use per-node values.
+    // When empty, scalar fallback (ctx.material.saturation_magnetisation etc.).
+    std::vector<double> Ms_field;
+    std::vector<double> A_field;
+    std::vector<double> alpha_field;
+    std::vector<double> Ku_field;
+    std::vector<double> Ku2_field;
+    std::vector<double> Dind_field;
+    std::vector<double> Dbulk_field;
+    std::vector<double> Kc1_field;
+    std::vector<double> Kc2_field;
+    std::vector<double> Kc3_field;
 
     fullmag_fem_material_desc material{};
     fullmag_fem_solver_config demag_solver{};

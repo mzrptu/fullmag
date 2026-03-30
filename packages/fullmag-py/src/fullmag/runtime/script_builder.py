@@ -10,6 +10,7 @@ from fullmag.init.magnetization import (
     SampledMagnetization,
     UniformMagnetization,
 )
+from fullmag.init.state_io import infer_magnetization_state_format
 from fullmag.model.discretization import FDM, FEM
 from fullmag.model.dynamics import DEFAULT_GAMMA, LLG
 from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Zeeman
@@ -65,6 +66,7 @@ def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
             "compute_quality": bool(mesh_options.get("compute_quality", False)),
             "per_element_quality": bool(mesh_options.get("per_element_quality", False)),
         },
+        "initial_state": _export_initial_state(base_problem),
     }
 
 
@@ -125,7 +127,14 @@ def render_loaded_problem_as_flat_script(
     lines.extend(_render_runtime(base_problem, overrides=overrides))
     lines.append("")
     _validate_energy_terms(base_problem)
-    lines.extend(_render_geometry_and_materials(base_problem, magnet_vars, source_root=source_root))
+    lines.extend(
+        _render_geometry_and_materials(
+            base_problem,
+            magnet_vars,
+            source_root=source_root,
+            overrides=overrides,
+        )
+    )
 
     external_field_lines = _render_external_field(base_problem)
     if external_field_lines:
@@ -221,7 +230,9 @@ def _render_geometry_and_materials(
     magnet_vars: dict[str, str],
     *,
     source_root: Path,
+    overrides: dict[str, object],
 ) -> list[str]:
+    initial_state_override = _normalize_mapping(overrides.get("initial_state"))
     lines = ["# Geometry & Material"]
     for magnet in problem.magnets:
         var_name = magnet_vars[magnet.name]
@@ -239,8 +250,24 @@ def _render_geometry_and_materials(
             raise ValueError(
                 "canonical flat-script rewrite does not yet support anisotropy axis terms"
             )
-        if magnet.m0 is not None:
-            lines.append(f"{var_name}.m = {_render_initial_magnetization(magnet.m0)}")
+        rendered_initial_override = _render_initial_state_override(
+            initial_state_override,
+            magnet_name=magnet.name,
+            magnet_var=var_name,
+            source_root=source_root,
+        )
+        if rendered_initial_override is not None:
+            lines.extend(rendered_initial_override)
+        elif magnet.m0 is not None:
+            rendered_initial = _render_initial_magnetization(
+                magnet.m0,
+                magnet_var=var_name,
+                source_root=source_root,
+            )
+            if isinstance(rendered_initial, list):
+                lines.extend(rendered_initial)
+            else:
+                lines.append(rendered_initial)
         dmi = _magnet_dmi(problem, magnet.name)
         if dmi is not None:
             lines.append(f"{var_name}.Dind = {_py_number(dmi)}")
@@ -543,18 +570,83 @@ def _render_geometry_expr(geometry: object, *, magnet_name: str, source_root: Pa
     raise ValueError(f"unsupported geometry kind for canonical rewrite: {type(geometry).__name__}")
 
 
-def _render_initial_magnetization(initializer: object) -> str:
+def _render_initial_magnetization(
+    initializer: object,
+    *,
+    magnet_var: str,
+    source_root: Path,
+) -> str | list[str]:
     if isinstance(initializer, UniformMagnetization):
-        return f"fm.uniform({_py_number(initializer.value[0])}, {_py_number(initializer.value[1])}, {_py_number(initializer.value[2])})"
+        return f"{magnet_var}.m = fm.uniform({_py_number(initializer.value[0])}, {_py_number(initializer.value[1])}, {_py_number(initializer.value[2])})"
     if isinstance(initializer, RandomMagnetization):
-        return f"fm.random(seed={initializer.seed})"
+        return f"{magnet_var}.m = fm.random(seed={initializer.seed})"
     if isinstance(initializer, SampledMagnetization):
+        if initializer.source_path:
+            kwargs = []
+            if initializer.source_format and initializer.source_format != "json":
+                kwargs.append(f"format={_py_repr(initializer.source_format)}")
+            if initializer.dataset and initializer.dataset != "values":
+                kwargs.append(f"dataset={_py_repr(initializer.dataset)}")
+            if initializer.sample_index not in {None, -1}:
+                kwargs.append(f"sample={initializer.sample_index}")
+            rendered_path = _py_repr(_relativize_path(initializer.source_path, source_root))
+            suffix = f", {', '.join(kwargs)}" if kwargs else ""
+            return [f"{magnet_var}.m.loadfile({rendered_path}{suffix})"]
         raise ValueError(
-            "canonical flat-script rewrite does not yet support sampled-field initial magnetization"
+            "canonical flat-script rewrite requires sampled-field initial magnetization to come from loadfile(...)"
         )
     raise ValueError(
         f"unsupported initial magnetization kind for canonical rewrite: {type(initializer).__name__}"
     )
+
+
+def _render_initial_state_override(
+    override: dict[str, object],
+    *,
+    magnet_name: str,
+    magnet_var: str,
+    source_root: Path,
+) -> list[str] | None:
+    if not override:
+        return None
+    override_path = override.get("source_path")
+    if not isinstance(override_path, str) or not override_path.strip():
+        return None
+    target_magnet = override.get("magnet_name")
+    if isinstance(target_magnet, str) and target_magnet.strip() and target_magnet != magnet_name:
+        return None
+
+    kwargs = []
+    override_format = override.get("format")
+    if isinstance(override_format, str) and override_format.strip() and override_format != "json":
+        kwargs.append(f"format={_py_repr(override_format)}")
+    override_dataset = override.get("dataset")
+    if isinstance(override_dataset, str) and override_dataset.strip() and override_dataset != "values":
+        kwargs.append(f"dataset={_py_repr(override_dataset)}")
+    override_sample = override.get("sample_index")
+    if isinstance(override_sample, int) and override_sample >= 0:
+        kwargs.append(f"sample={override_sample}")
+
+    rendered_path = _py_repr(_relativize_path(override_path, source_root))
+    suffix = f", {', '.join(kwargs)}" if kwargs else ""
+    return [f"{magnet_var}.m.loadfile({rendered_path}{suffix})"]
+
+
+def _export_initial_state(problem: Problem) -> dict[str, object] | None:
+    if len(problem.magnets) != 1:
+        return None
+    magnet = problem.magnets[0]
+    if not isinstance(magnet.m0, SampledMagnetization) or not magnet.m0.source_path:
+        return None
+
+    return {
+        "magnet_name": magnet.name,
+        "source_path": str(Path(magnet.m0.source_path).resolve()),
+        "format": magnet.m0.source_format
+        or infer_magnetization_state_format(magnet.m0.source_path),
+        "dataset": magnet.m0.dataset,
+        "sample_index": magnet.m0.sample_index,
+    }
 
 
 def _study_outputs(study: TimeEvolution | Relaxation) -> Sequence[object]:

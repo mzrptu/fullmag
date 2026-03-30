@@ -39,6 +39,8 @@ export function currentLiveApiClient() {
       preview: (path: string) => `${baseUrl}/v1/live/current/preview${path}`,
       previewSelection: `${baseUrl}/v1/live/current/preview/selection`,
       importAsset: `${baseUrl}/v1/live/current/assets/import`,
+      exportState: `${baseUrl}/v1/live/current/state/export`,
+      importState: `${baseUrl}/v1/live/current/state/import`,
       scriptSync: `${baseUrl}/v1/live/current/script/sync`,
       scriptBuilder: `${baseUrl}/v1/live/current/script/builder`,
     },
@@ -73,6 +75,20 @@ export function currentLiveApiClient() {
     },
     importAsset(payload: JsonObject) {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/assets/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
+    exportState(payload: JsonObject) {
+      return requestJson<JsonObject>(`${baseUrl}/v1/live/current/state/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
+    importState(payload: JsonObject) {
+      return requestJson<JsonObject>(`${baseUrl}/v1/live/current/state/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

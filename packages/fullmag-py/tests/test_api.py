@@ -16,6 +16,8 @@ import fullmag.world as flat_world
 from fullmag.meshing.voxelization import VoxelMaskData
 from fullmag.runtime import cli as runtime_cli
 from fullmag.runtime import helper as runtime_helper
+from fullmag.runtime.loader import load_problem_from_script
+from fullmag.runtime.script_builder import rewrite_loaded_problem_script
 from fullmag.meshing.gmsh_bridge import MeshData
 
 
@@ -103,6 +105,75 @@ class ProblemApiTests(unittest.TestCase):
         initializer = fm.init.random(seed=42)
 
         self.assertEqual(initializer.to_ir(), {"kind": "random_seeded", "seed": 42})
+
+    def test_magnetization_state_roundtrip_across_formats(self) -> None:
+        values = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            json_path = tmp_path / "state.json"
+            zarr_path = tmp_path / "state.zarr.zip"
+            h5_path = tmp_path / "state.h5"
+
+            fm.save_magnetization(json_path, values)
+            fm.save_magnetization(zarr_path, values)
+            fm.save_magnetization(h5_path, values)
+
+            for path in (json_path, zarr_path, h5_path):
+                loaded = fm.load_magnetization(path)
+                self.assertEqual(loaded.values, [tuple(row) for row in values])
+
+    def test_flat_magnet_handle_loadfile_assigns_sampled_state(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            state_path = tmp_path / "m_state.json"
+            fm.save_magnetization(state_path, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+
+            fm.reset()
+            fm.engine("fdm")
+            fm.cell(5e-9, 5e-9, 5e-9)
+            flower = fm.geometry(fm.Box(size=(10e-9, 10e-9, 5e-9), name="flower"), name="flower")
+            flower.Ms = 800e3
+            flower.Aex = 13e-12
+            flower.alpha = 0.2
+            loaded = flower.m.loadfile(state_path)
+
+            problem = flat_world._build_problem()
+            self.assertIsInstance(problem.magnets[0].m0, fm.init.SampledMagnetization)
+            self.assertEqual(problem.magnets[0].m0.values, loaded.values)
+            self.assertEqual(problem.magnets[0].m0.source_format, "json")
+
+    def test_script_builder_rewrites_file_backed_initial_state(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            state_path = tmp_path / "state.json"
+            script_path = tmp_path / "builder_state.py"
+            fm.save_magnetization(state_path, [[1.0, 0.0, 0.0]])
+            script_path.write_text(
+                textwrap.dedent(
+                    """
+                    import fullmag as fm
+
+                    fm.engine("fdm")
+                    fm.cell(5e-9, 5e-9, 5e-9)
+
+                    flower = fm.geometry(fm.Box(size=(5e-9, 5e-9, 5e-9), name="flower"), name="flower")
+                    flower.Ms = 800e3
+                    flower.Aex = 13e-12
+                    flower.alpha = 0.2
+                    flower.m.loadfile("state.json")
+
+                    fm.run(1e-12)
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            loaded = load_problem_from_script(script_path, lightweight_assets=True)
+            rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+
+            self.assertIn('flower.m.loadfile("state.json")', rewritten)
 
     def test_legacy_dynamics_and_outputs_are_normalized_to_time_evolution(self) -> None:
         geometry = fm.Box(size=(100e-9, 20e-9, 5e-9), name="track")

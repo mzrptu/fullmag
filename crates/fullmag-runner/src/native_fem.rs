@@ -223,9 +223,39 @@ impl NativeFemBackend {
                 0
             },
             uniaxial_anisotropy_constant: plan.material.uniaxial_anisotropy.unwrap_or(0.0),
+            uniaxial_anisotropy_k2: plan.material.uniaxial_anisotropy_k2.unwrap_or(0.0),
             anisotropy_axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
             has_interfacial_dmi: if plan.interfacial_dmi.is_some() { 1 } else { 0 },
             dmi_constant: plan.interfacial_dmi.unwrap_or(0.0),
+            has_bulk_dmi: if plan.bulk_dmi.is_some() { 1 } else { 0 },
+            bulk_dmi_constant: plan.bulk_dmi.unwrap_or(0.0),
+            has_cubic_anisotropy: if plan.material.cubic_anisotropy_kc1.is_some() { 1 } else { 0 },
+            cubic_kc1: plan.material.cubic_anisotropy_kc1.unwrap_or(0.0),
+            cubic_kc2: plan.material.cubic_anisotropy_kc2.unwrap_or(0.0),
+            cubic_kc3: plan.material.cubic_anisotropy_kc3.unwrap_or(0.0),
+            cubic_axis1: plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
+            cubic_axis2: plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
+            // Per-node spatially varying fields
+            ms_field: plan.material.ms_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            ms_field_len: plan.material.ms_field.as_ref().map_or(0, |v| v.len() as u64),
+            a_field: plan.material.a_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            a_field_len: plan.material.a_field.as_ref().map_or(0, |v| v.len() as u64),
+            alpha_field: plan.material.alpha_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            alpha_field_len: plan.material.alpha_field.as_ref().map_or(0, |v| v.len() as u64),
+            ku_field: plan.material.ku_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            ku_field_len: plan.material.ku_field.as_ref().map_or(0, |v| v.len() as u64),
+            ku2_field: plan.material.ku2_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            ku2_field_len: plan.material.ku2_field.as_ref().map_or(0, |v| v.len() as u64),
+            dind_field: plan.dind_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            dind_field_len: plan.dind_field.as_ref().map_or(0, |v| v.len() as u64),
+            dbulk_field: plan.dbulk_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            dbulk_field_len: plan.dbulk_field.as_ref().map_or(0, |v| v.len() as u64),
+            kc1_field: plan.material.kc1_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            kc1_field_len: plan.material.kc1_field.as_ref().map_or(0, |v| v.len() as u64),
+            kc2_field: plan.material.kc2_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            kc2_field_len: plan.material.kc2_field.as_ref().map_or(0, |v| v.len() as u64),
+            kc3_field: plan.material.kc3_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            kc3_field_len: plan.material.kc3_field.as_ref().map_or(0, |v| v.len() as u64),
         };
 
         // Build adaptive config if present
@@ -540,6 +570,15 @@ mod tests {
                 damping: 0.5,
                 uniaxial_anisotropy: None,
                 anisotropy_axis: None,
+                uniaxial_anisotropy_k2: None,
+                cubic_anisotropy_kc1: None,
+                cubic_anisotropy_kc2: None,
+                cubic_anisotropy_kc3: None,
+                cubic_anisotropy_axis1: None,
+                cubic_anisotropy_axis2: None,
+                ms_field: None, a_field: None, alpha_field: None,
+                ku_field: None, ku2_field: None,
+                kc1_field: None, kc2_field: None, kc3_field: None,
             },
             enable_exchange: true,
             enable_demag: true,
@@ -554,6 +593,9 @@ mod tests {
             demag_realization: None,
             air_box_config: None,
             interfacial_dmi: None,
+            bulk_dmi: None,
+            dind_field: None,
+            dbulk_field: None,
         }
     }
 
@@ -598,6 +640,7 @@ mod tests {
                 damping: 0.1,
                 uniaxial_anisotropy: None,
                 anisotropy_axis: None,
+                uniaxial_anisotropy_k2: None,
             },
             enable_exchange: true,
             enable_demag: false,
@@ -612,6 +655,9 @@ mod tests {
             demag_realization: None,
             air_box_config: None,
             interfacial_dmi: None,
+            bulk_dmi: None,
+            dind_field: None,
+            dbulk_field: None,
         }
     }
 

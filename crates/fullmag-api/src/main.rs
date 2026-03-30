@@ -152,10 +152,24 @@ struct ScriptBuilderMeshState {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+struct ScriptBuilderInitialState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    magnet_name: Option<String>,
+    source_path: String,
+    format: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dataset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sample_index: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct ScriptBuilderState {
     revision: u64,
     solver: ScriptBuilderSolverState,
     mesh: ScriptBuilderMeshState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    initial_state: Option<ScriptBuilderInitialState>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -438,6 +452,57 @@ struct ImportSessionAssetRequest {
     target_realization: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ExportMagnetizationStateRequest {
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    file_name: Option<String>,
+    #[serde(default)]
+    dataset: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ExportMagnetizationStateResponse {
+    file_name: String,
+    format: String,
+    stored_path: String,
+    vector_count: usize,
+    content_base64: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImportMagnetizationStateRequest {
+    file_name: String,
+    content_base64: String,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    dataset: Option<String>,
+    #[serde(default)]
+    sample_index: Option<i64>,
+    #[serde(default)]
+    apply_to_workspace: bool,
+    #[serde(default = "default_true")]
+    attach_to_script_builder: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ImportMagnetizationStateResponse {
+    asset_id: String,
+    session_id: String,
+    stored_path: String,
+    file_name: String,
+    format: String,
+    vector_count: usize,
+    applied_to_workspace: bool,
+    attached_to_script_builder: bool,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Serialize)]
 struct SessionAssetImportResponse {
     asset_id: String,
@@ -459,6 +524,8 @@ struct ScriptBuilderUpdateRequest {
     solver: Option<ScriptBuilderSolverState>,
     #[serde(default)]
     mesh: Option<ScriptBuilderMeshState>,
+    #[serde(default)]
+    initial_state: Option<ScriptBuilderInitialState>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -483,6 +550,14 @@ struct SessionCommandRequest {
     energy_tolerance: Option<f64>,
     #[serde(default)]
     mesh_options: Option<Value>,
+    #[serde(default)]
+    state_path: Option<String>,
+    #[serde(default)]
+    state_format: Option<String>,
+    #[serde(default)]
+    state_dataset: Option<String>,
+    #[serde(default)]
+    state_sample_index: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -535,6 +610,14 @@ struct SessionCommand {
     energy_tolerance: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mesh_options: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state_format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state_dataset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state_sample_index: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     display_selection: Option<CurrentDisplaySelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -688,6 +771,14 @@ async fn main() {
         .route(
             "/v1/live/current/assets/import",
             post(import_current_live_asset),
+        )
+        .route(
+            "/v1/live/current/state/export",
+            post(export_current_live_state),
+        )
+        .route(
+            "/v1/live/current/state/import",
+            post(import_current_live_state),
         )
         .route(
             "/v1/live/current/script/sync",
@@ -938,6 +1029,10 @@ fn build_preview_control_command(
         torque_tolerance: None,
         energy_tolerance: None,
         mesh_options: None,
+        state_path: None,
+        state_format: None,
+        state_dataset: None,
+        state_sample_index: None,
         display_selection: Some(display_selection.clone()),
         preview_config: Some(preview_config),
     }
@@ -1212,6 +1307,22 @@ async fn import_current_live_asset(
     Ok(Json(response))
 }
 
+async fn export_current_live_state(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ExportMagnetizationStateRequest>,
+) -> Result<Json<ExportMagnetizationStateResponse>, ApiError> {
+    let response = export_magnetization_state_for_current_workspace(&state, req).await?;
+    Ok(Json(response))
+}
+
+async fn import_current_live_state(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ImportMagnetizationStateRequest>,
+) -> Result<Json<ImportMagnetizationStateResponse>, ApiError> {
+    let response = import_magnetization_state_for_current_workspace(&state, req).await?;
+    Ok(Json(response))
+}
+
 async fn list_current_live_artifacts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ArtifactEntry>>, ApiError> {
@@ -1376,7 +1487,15 @@ fn build_session_command(req: SessionCommandRequest) -> Result<SessionCommand, A
     let kind = req.kind.trim().to_lowercase();
     if !matches!(
         kind.as_str(),
-        "run" | "relax" | "close" | "stop" | "pause" | "remesh" | "solve" | "compute"
+        "run"
+            | "relax"
+            | "close"
+            | "stop"
+            | "pause"
+            | "remesh"
+            | "solve"
+            | "compute"
+            | "load_state"
     ) {
         return Err(ApiError::bad_request(format!(
             "unsupported command kind '{}'",
@@ -1393,6 +1512,17 @@ fn build_session_command(req: SessionCommandRequest) -> Result<SessionCommand, A
             "relax command requires positive max_steps",
         ));
     }
+    if kind == "load_state"
+        && req
+            .state_path
+            .as_ref()
+            .map(|path| path.trim().is_empty())
+            .unwrap_or(true)
+    {
+        return Err(ApiError::bad_request(
+            "load_state command requires state_path",
+        ));
+    }
 
     Ok(SessionCommand {
         seq: 0,
@@ -1404,6 +1534,10 @@ fn build_session_command(req: SessionCommandRequest) -> Result<SessionCommand, A
         torque_tolerance: req.torque_tolerance,
         energy_tolerance: req.energy_tolerance,
         mesh_options: req.mesh_options,
+        state_path: req.state_path,
+        state_format: req.state_format,
+        state_dataset: req.state_dataset,
+        state_sample_index: req.state_sample_index,
         display_selection: None,
         preview_config: None,
     })
@@ -1481,6 +1615,331 @@ fn import_asset_into_dir(
     Ok(response)
 }
 
+#[derive(Debug, Deserialize)]
+struct ReadMagnetizationStateHelperResponse {
+    format: String,
+    dataset: Option<String>,
+    sample_index: Option<i64>,
+    vector_count: usize,
+    values: Vec<[f64; 3]>,
+}
+
+fn normalize_magnetization_state_format(
+    requested: Option<&str>,
+    file_name: Option<&str>,
+) -> Result<String, ApiError> {
+    let normalized = requested
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty());
+    if let Some(value) = normalized {
+        return match value.as_str() {
+            "json" => Ok("json".to_string()),
+            "zarr" => Ok("zarr".to_string()),
+            "h5" | "hdf5" => Ok("h5".to_string()),
+            _ => Err(ApiError::bad_request(format!(
+                "unsupported magnetization state format '{}'",
+                value
+            ))),
+        };
+    }
+
+    let lower = file_name.unwrap_or_default().to_lowercase();
+    if lower.ends_with(".zarr.zip") || lower.ends_with(".zarr") {
+        return Ok("zarr".to_string());
+    }
+    if lower.ends_with(".h5") || lower.ends_with(".hdf5") {
+        return Ok("h5".to_string());
+    }
+    Ok("json".to_string())
+}
+
+fn preferred_magnetization_state_suffix(format: &str) -> &'static str {
+    match format {
+        "json" => ".json",
+        "zarr" => ".zarr.zip",
+        "h5" => ".h5",
+        _ => ".json",
+    }
+}
+
+fn ensure_magnetization_state_file_name(file_name: &str, format: &str) -> String {
+    let safe = sanitize_file_name(file_name);
+    if safe.is_empty() {
+        return default_magnetization_state_file_name(format);
+    }
+    let lower = safe.to_lowercase();
+    if format == "zarr" && lower.ends_with(".zarr") {
+        return format!("{safe}.zip");
+    }
+    if format == "h5" && (lower.ends_with(".h5") || lower.ends_with(".hdf5")) {
+        return safe;
+    }
+    if lower.ends_with(preferred_magnetization_state_suffix(format)) {
+        return safe;
+    }
+    format!("{safe}{}", preferred_magnetization_state_suffix(format))
+}
+
+fn default_magnetization_state_file_name(format: &str) -> String {
+    let timestamp = unix_time_millis_now();
+    format!(
+        "m_state_{}{}",
+        timestamp,
+        preferred_magnetization_state_suffix(format)
+    )
+}
+
+fn magnetization_state_json_payload(values: &[[f64; 3]]) -> Vec<u8> {
+    serde_json::to_vec_pretty(&serde_json::json!({
+        "kind": "magnetization_state",
+        "observable": "m",
+        "format": "json",
+        "vector_count": values.len(),
+        "values": values,
+    }))
+    .expect("magnetization state JSON encoding should succeed")
+}
+
+fn flat_magnetization_to_vectors(values: &[f64]) -> Result<Vec<[f64; 3]>, ApiError> {
+    if values.len() % 3 != 0 {
+        return Err(ApiError::internal(format!(
+            "expected flat magnetization length divisible by 3, got {}",
+            values.len()
+        )));
+    }
+    Ok(values
+        .chunks_exact(3)
+        .map(|chunk| [chunk[0], chunk[1], chunk[2]])
+        .collect())
+}
+
+fn current_workspace_magnetization_source(
+    snapshot: &SessionStateResponse,
+    artifact_dir: &Path,
+    repo_root: &Path,
+) -> Result<Vec<[f64; 3]>, ApiError> {
+    if let Some(live_state) = snapshot.live_state.as_ref() {
+        if let Some(values) = live_state.latest_step.magnetization.as_ref() {
+            return flat_magnetization_to_vectors(values);
+        }
+    }
+
+    for candidate in ["m_final.json", "m_initial.json"] {
+        let path = artifact_dir.join(candidate);
+        if path.is_file() {
+            return read_magnetization_state_with_python(repo_root, &path, None, None, None)
+                .map(|loaded| loaded.values);
+        }
+    }
+
+    Err(ApiError::not_found(
+        "no current magnetization state is available yet for export",
+    ))
+}
+
+async fn export_magnetization_state_for_current_workspace(
+    state: &Arc<AppState>,
+    req: ExportMagnetizationStateRequest,
+) -> Result<ExportMagnetizationStateResponse, ApiError> {
+    let (artifact_dir, vectors) = {
+        let current = state.current_live_state.read().await;
+        let snapshot = current
+            .as_ref()
+            .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
+        let artifact_dir = current_artifact_dir(snapshot)
+            .unwrap_or_else(|| state.current_workspace_root.join("artifacts"));
+        let vectors =
+            current_workspace_magnetization_source(snapshot, &artifact_dir, &state.repo_root)?;
+        (artifact_dir, vectors)
+    };
+
+    let format =
+        normalize_magnetization_state_format(req.format.as_deref(), req.file_name.as_deref())?;
+    let file_name = req
+        .file_name
+        .as_deref()
+        .map(|value| ensure_magnetization_state_file_name(value, &format))
+        .unwrap_or_else(|| default_magnetization_state_file_name(&format));
+    let exports_dir = artifact_dir.join("exports");
+    let export_path = exports_dir.join(&file_name);
+    std::fs::create_dir_all(&exports_dir)?;
+
+    if format == "json" {
+        std::fs::write(&export_path, magnetization_state_json_payload(&vectors))?;
+    } else {
+        let temp_source_path = exports_dir.join(format!(".state-export-{}.json", uuid_v4_hex()));
+        std::fs::write(
+            &temp_source_path,
+            magnetization_state_json_payload(&vectors),
+        )?;
+        let convert_result = convert_magnetization_state_with_python(
+            &state.repo_root,
+            &temp_source_path,
+            &export_path,
+            Some("json"),
+            Some(&format),
+            None,
+            req.dataset.as_deref(),
+            None,
+        );
+        let _ = std::fs::remove_file(&temp_source_path);
+        convert_result?;
+    }
+
+    let content_base64 =
+        base64::engine::general_purpose::STANDARD.encode(std::fs::read(&export_path)?);
+    let vector_count = vectors.len();
+    let artifacts = read_artifacts_from_dir(Some(&artifact_dir))?;
+    let (json, public_json) = {
+        let mut current = state.current_live_state.write().await;
+        let snapshot = current
+            .as_mut()
+            .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
+        snapshot.artifacts = artifacts;
+        let snapshot_json = serialize_current_live_snapshot_event(snapshot, false)?;
+        let public_json = serialize_current_live_response(snapshot, true)?;
+        (snapshot_json, public_json)
+    };
+    *state.current_live_public_snapshot.write().await = Some(public_json);
+    let _ = state.current_live_events.send(json);
+
+    Ok(ExportMagnetizationStateResponse {
+        file_name,
+        format,
+        stored_path: make_repo_relative(&state.repo_root, &export_path),
+        vector_count,
+        content_base64,
+    })
+}
+
+async fn import_magnetization_state_for_current_workspace(
+    state: &Arc<AppState>,
+    req: ImportMagnetizationStateRequest,
+) -> Result<ImportMagnetizationStateResponse, ApiError> {
+    let format = normalize_magnetization_state_format(req.format.as_deref(), Some(&req.file_name))?;
+    let file_name = ensure_magnetization_state_file_name(&req.file_name, &format);
+    let (session_id, imports_dir, session_status) = {
+        let current = state.current_live_state.read().await;
+        let snapshot = current
+            .as_ref()
+            .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
+        let session_id = snapshot.session.session_id.clone();
+        let artifact_dir = current_artifact_dir(snapshot)
+            .unwrap_or_else(|| state.current_workspace_root.join("artifacts"));
+        (
+            session_id,
+            artifact_dir.join("imports"),
+            snapshot.session.status.clone(),
+        )
+    };
+
+    if req.apply_to_workspace
+        && !matches!(
+            session_status.as_str(),
+            "awaiting_command" | "waiting_for_compute"
+        )
+    {
+        return Err(ApiError::bad_request(
+            "workspace state import can only be applied while awaiting_command or waiting_for_compute",
+        ));
+    }
+
+    let imported = import_asset_into_dir(
+        state,
+        &session_id,
+        imports_dir.clone(),
+        ImportSessionAssetRequest {
+            file_name: file_name.clone(),
+            content_base64: req.content_base64.clone(),
+            target_realization: "magnetization_state".to_string(),
+        },
+    )?;
+    let stored_abs_path = state.repo_root.join(&imported.stored_path);
+    let loaded = read_magnetization_state_with_python(
+        &state.repo_root,
+        &stored_abs_path,
+        Some(&format),
+        req.dataset.as_deref(),
+        req.sample_index,
+    )?;
+    let command = if req.apply_to_workspace {
+        Some(
+            enqueue_current_control_command(
+                state,
+                SessionCommand {
+                    seq: 0,
+                    command_id: format!("cmd-{}", uuid_v4_hex()),
+                    kind: "load_state".to_string(),
+                    created_at_unix_ms: unix_time_millis_now(),
+                    until_seconds: None,
+                    max_steps: None,
+                    torque_tolerance: None,
+                    energy_tolerance: None,
+                    mesh_options: None,
+                    state_path: Some(stored_abs_path.display().to_string()),
+                    state_format: Some(loaded.format.clone()),
+                    state_dataset: loaded.dataset.clone(),
+                    state_sample_index: req.sample_index.or(loaded.sample_index),
+                    display_selection: None,
+                    preview_config: None,
+                },
+            )
+            .await,
+        )
+    } else {
+        None
+    };
+
+    let artifacts = read_artifacts_from_dir(imports_dir.parent())?;
+    let (json, public_json) = {
+        let mut current = state.current_live_state.write().await;
+        let snapshot = current
+            .as_mut()
+            .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
+        snapshot.artifacts = artifacts;
+        if req.attach_to_script_builder {
+            if snapshot.script_builder.is_none() && !snapshot.session.script_path.trim().is_empty()
+            {
+                snapshot.script_builder = Some(load_script_builder_state(
+                    &state.repo_root,
+                    &state.current_workspace_root,
+                    Path::new(snapshot.session.script_path.trim()),
+                )?);
+            }
+            if let Some(builder) = snapshot.script_builder.as_mut() {
+                builder.initial_state = Some(ScriptBuilderInitialState {
+                    magnet_name: None,
+                    source_path: stored_abs_path.display().to_string(),
+                    format: loaded.format.clone(),
+                    dataset: loaded.dataset.clone(),
+                    sample_index: req.sample_index.or(loaded.sample_index),
+                });
+                builder.revision = builder.revision.saturating_add(1);
+            }
+        }
+        let snapshot_json = serialize_current_live_snapshot_event(snapshot, false)?;
+        let public_json = serialize_current_live_response(snapshot, true)?;
+        (snapshot_json, public_json)
+    };
+    *state.current_live_public_snapshot.write().await = Some(public_json);
+    let _ = state.current_live_events.send(json);
+
+    if let Some(command) = command {
+        let _ = command;
+    }
+
+    Ok(ImportMagnetizationStateResponse {
+        asset_id: imported.asset_id,
+        session_id,
+        stored_path: imported.stored_path,
+        file_name,
+        format: loaded.format,
+        vector_count: loaded.vector_count,
+        applied_to_workspace: req.apply_to_workspace,
+        attached_to_script_builder: req.attach_to_script_builder,
+    })
+}
+
 async fn sync_current_live_script(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ScriptSyncRequest>,
@@ -1545,6 +2004,10 @@ async fn update_current_live_script_builder(
         }
         if let Some(mesh) = req.mesh {
             builder.mesh = mesh;
+            changed = true;
+        }
+        if let Some(initial_state) = req.initial_state {
+            builder.initial_state = Some(initial_state);
             changed = true;
         }
         if changed {
@@ -3208,6 +3671,13 @@ fn script_builder_overrides(builder: &ScriptBuilderState) -> Value {
             "compute_quality": builder.mesh.compute_quality,
             "per_element_quality": builder.mesh.per_element_quality,
         },
+        "initial_state": builder.initial_state.as_ref().map(|initial_state| serde_json::json!({
+            "magnet_name": initial_state.magnet_name,
+            "source_path": initial_state.source_path,
+            "format": initial_state.format,
+            "dataset": initial_state.dataset,
+            "sample_index": initial_state.sample_index,
+        })).unwrap_or(Value::Null),
     })
 }
 
@@ -3223,6 +3693,102 @@ fn parse_optional_text_u64(raw: &str) -> Value {
         .parse::<u64>()
         .ok()
         .map_or(Value::Null, Value::from)
+}
+
+fn read_magnetization_state_with_python(
+    repo_root: &Path,
+    path: &Path,
+    format: Option<&str>,
+    dataset: Option<&str>,
+    sample_index: Option<i64>,
+) -> Result<ReadMagnetizationStateHelperResponse, ApiError> {
+    let mut helper_args = vec![
+        "-m".to_string(),
+        "fullmag.runtime.helper".to_string(),
+        "read-magnetization-state".to_string(),
+        "--path".to_string(),
+        path.display().to_string(),
+    ];
+    if let Some(format) = format {
+        helper_args.push("--format".to_string());
+        helper_args.push(format.to_string());
+    }
+    if let Some(dataset) = dataset {
+        helper_args.push("--dataset".to_string());
+        helper_args.push(dataset.to_string());
+    }
+    if let Some(sample_index) = sample_index {
+        helper_args.push("--sample".to_string());
+        helper_args.push(sample_index.to_string());
+    }
+
+    let output = run_python_helper(repo_root, &helper_args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::bad_request(format!(
+            "python magnetization-state reader failed: {}",
+            stderr.trim()
+        )));
+    }
+    serde_json::from_slice::<ReadMagnetizationStateHelperResponse>(&output.stdout).map_err(
+        |error| {
+            ApiError::internal(format!(
+                "failed to deserialize state reader output: {}",
+                error
+            ))
+        },
+    )
+}
+
+fn convert_magnetization_state_with_python(
+    repo_root: &Path,
+    input_path: &Path,
+    output_path: &Path,
+    input_format: Option<&str>,
+    output_format: Option<&str>,
+    input_dataset: Option<&str>,
+    output_dataset: Option<&str>,
+    sample_index: Option<i64>,
+) -> Result<(), ApiError> {
+    let mut helper_args = vec![
+        "-m".to_string(),
+        "fullmag.runtime.helper".to_string(),
+        "convert-magnetization-state".to_string(),
+        "--input-path".to_string(),
+        input_path.display().to_string(),
+        "--output-path".to_string(),
+        output_path.display().to_string(),
+    ];
+    if let Some(input_format) = input_format {
+        helper_args.push("--input-format".to_string());
+        helper_args.push(input_format.to_string());
+    }
+    if let Some(output_format) = output_format {
+        helper_args.push("--output-format".to_string());
+        helper_args.push(output_format.to_string());
+    }
+    if let Some(input_dataset) = input_dataset {
+        helper_args.push("--input-dataset".to_string());
+        helper_args.push(input_dataset.to_string());
+    }
+    if let Some(output_dataset) = output_dataset {
+        helper_args.push("--output-dataset".to_string());
+        helper_args.push(output_dataset.to_string());
+    }
+    if let Some(sample_index) = sample_index {
+        helper_args.push("--sample".to_string());
+        helper_args.push(sample_index.to_string());
+    }
+
+    let output = run_python_helper(repo_root, &helper_args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::bad_request(format!(
+            "python magnetization-state converter failed: {}",
+            stderr.trim()
+        )));
+    }
+    Ok(())
 }
 
 fn run_python_helper(repo_root: &Path, args: &[String]) -> Result<std::process::Output, ApiError> {

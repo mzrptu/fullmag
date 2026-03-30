@@ -707,6 +707,7 @@ mod tests {
                 damping: 0.5,
                 uniaxial_anisotropy: None,
                 anisotropy_axis: None,
+                uniaxial_anisotropy_k2: None,
             },
             enable_exchange: true,
             enable_demag,
@@ -721,6 +722,9 @@ mod tests {
             demag_realization: None,
             air_box_config: None,
             interfacial_dmi: None,
+            bulk_dmi: None,
+            dind_field: None,
+            dbulk_field: None,
         }
     }
 
@@ -775,6 +779,15 @@ mod tests {
                 damping: 0.5,
                 uniaxial_anisotropy: None,
                 anisotropy_axis: None,
+                uniaxial_anisotropy_k2: None,
+                cubic_anisotropy_kc1: None,
+                cubic_anisotropy_kc2: None,
+                cubic_anisotropy_kc3: None,
+                cubic_anisotropy_axis1: None,
+                cubic_anisotropy_axis2: None,
+                ms_field: None, a_field: None, alpha_field: None,
+                ku_field: None, ku2_field: None,
+                kc1_field: None, kc2_field: None, kc3_field: None,
             },
             enable_exchange: true,
             enable_demag: true,
@@ -789,6 +802,9 @@ mod tests {
             demag_realization: None,
             air_box_config: None,
             interfacial_dmi: None,
+            bulk_dmi: None,
+            dind_field: None,
+            dbulk_field: None,
         }
     }
 

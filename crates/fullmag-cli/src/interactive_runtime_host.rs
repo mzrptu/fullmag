@@ -278,6 +278,50 @@ impl InteractiveRuntimeHost {
         self.runtime.as_mut()
     }
 
+    pub(super) fn load_state(
+        &mut self,
+        magnetization: Vec<[f64; 3]>,
+        live_workspace: &LocalLiveWorkspace,
+    ) -> Result<()> {
+        let generation = if let Ok(mut preview_state) = self.preview_source.lock() {
+            preview_state.status = InteractivePreviewStatus::AwaitingCommand;
+            preview_state.continuation_magnetization = Some(magnetization.clone());
+            preview_state.generation = preview_state.generation.saturating_add(1);
+            preview_state.generation
+        } else {
+            0
+        };
+
+        self.ensure_base_runtime_ready(Some(&magnetization), live_workspace);
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime
+                .upload_magnetization(&magnetization)
+                .map_err(|error| anyhow!(error.to_string()))?;
+        }
+
+        live_workspace.update(|state| {
+            state.live_state.updated_at_unix_ms = unix_time_millis().unwrap_or(0);
+            state.live_state.latest_step.magnetization =
+                Some(flatten_magnetization(&magnetization));
+            clear_cached_preview_fields(state);
+        });
+
+        if self.latest_field_cache_supported {
+            let preview_request = self.control.preview_request();
+            spawn_interactive_preview_cache_refresh(
+                self.artifact_dir.clone(),
+                self.base_problem.clone(),
+                Arc::clone(&self.preview_source),
+                live_workspace.clone(),
+                preview_request,
+                generation,
+            );
+        }
+
+        self.refresh_idle_preview(Some(&magnetization), live_workspace);
+        Ok(())
+    }
+
     fn continuation_magnetization(&self) -> Option<Vec<[f64; 3]>> {
         self.preview_source
             .lock()

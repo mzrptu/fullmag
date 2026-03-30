@@ -14,7 +14,22 @@ class Material:
     A: float
     alpha: float
     Ku1: float | None = None
+    Ku2: float | None = None
     anisU: tuple[float, float, float] | None = None
+    Kc1: float | None = None
+    Kc2: float | None = None
+    Kc3: float | None = None
+    anisC1: tuple[float, float, float] | None = None
+    anisC2: tuple[float, float, float] | None = None
+    # Per-node spatially varying fields (override scalar when provided)
+    Ms_field: list[float] | None = None
+    A_field: list[float] | None = None
+    alpha_field: list[float] | None = None
+    Ku_field: list[float] | None = None
+    Ku2_field: list[float] | None = None
+    Kc1_field: list[float] | None = None
+    Kc2_field: list[float] | None = None
+    Kc3_field: list[float] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", require_non_empty(self.name, "name"))
@@ -23,8 +38,14 @@ class Material:
         require_non_negative(self.alpha, "alpha")
         if self.Ku1 is not None:
             require_non_negative(self.Ku1, "Ku1")
+        if self.Ku2 is not None:
+            require_non_negative(self.Ku2, "Ku2")
         if self.anisU is not None:
             object.__setattr__(self, "anisU", as_vector3(self.anisU, "anisU"))
+        if self.anisC1 is not None:
+            object.__setattr__(self, "anisC1", as_vector3(self.anisC1, "anisC1"))
+        if self.anisC2 is not None:
+            object.__setattr__(self, "anisC2", as_vector3(self.anisC2, "anisC2"))
 
     def to_ir(self) -> dict[str, object]:
         return {
@@ -33,7 +54,21 @@ class Material:
             "exchange_stiffness": self.A,
             "damping": self.alpha,
             "uniaxial_anisotropy": self.Ku1,
+            "uniaxial_anisotropy_k2": self.Ku2,
             "anisotropy_axis": list(self.anisU) if self.anisU else None,
+            "cubic_anisotropy_kc1": self.Kc1,
+            "cubic_anisotropy_kc2": self.Kc2,
+            "cubic_anisotropy_kc3": self.Kc3,
+            "cubic_anisotropy_axis1": list(self.anisC1) if self.anisC1 else None,
+            "cubic_anisotropy_axis2": list(self.anisC2) if self.anisC2 else None,
+            "ms_field": self.Ms_field,
+            "a_field": self.A_field,
+            "alpha_field": self.alpha_field,
+            "ku_field": self.Ku_field,
+            "ku2_field": self.Ku2_field,
+            "kc1_field": self.Kc1_field,
+            "kc2_field": self.Kc2_field,
+            "kc3_field": self.Kc3_field,
         }
 
 

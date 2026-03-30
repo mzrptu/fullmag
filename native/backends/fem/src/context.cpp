@@ -95,6 +95,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     };
     ctx.enable_anisotropy = plan.has_uniaxial_anisotropy != 0;
     ctx.anisotropy_Ku = plan.uniaxial_anisotropy_constant;
+    ctx.anisotropy_Ku2 = plan.uniaxial_anisotropy_k2;
     ctx.anisotropy_axis = {
         plan.anisotropy_axis[0],
         plan.anisotropy_axis[1],
@@ -102,6 +103,32 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     };
     ctx.enable_dmi = plan.has_interfacial_dmi != 0;
     ctx.dmi_D = plan.dmi_constant;
+    ctx.enable_bulk_dmi = plan.has_bulk_dmi != 0;
+    ctx.bulk_dmi_D = plan.bulk_dmi_constant;
+    ctx.enable_cubic_anisotropy = plan.has_cubic_anisotropy != 0;
+    ctx.cubic_Kc1 = plan.cubic_kc1;
+    ctx.cubic_Kc2 = plan.cubic_kc2;
+    ctx.cubic_Kc3 = plan.cubic_kc3;
+    ctx.cubic_axis1 = {plan.cubic_axis1[0], plan.cubic_axis1[1], plan.cubic_axis1[2]};
+    ctx.cubic_axis2 = {plan.cubic_axis2[0], plan.cubic_axis2[1], plan.cubic_axis2[2]};
+
+    // Copy per-node spatially varying fields
+    auto copy_field = [](std::vector<double> &dst, const double *src, uint64_t len) {
+        if (src != nullptr && len > 0) {
+            dst.assign(src, src + len);
+        }
+    };
+    copy_field(ctx.Ms_field,    plan.ms_field,    plan.ms_field_len);
+    copy_field(ctx.A_field,     plan.a_field,     plan.a_field_len);
+    copy_field(ctx.alpha_field, plan.alpha_field,  plan.alpha_field_len);
+    copy_field(ctx.Ku_field,    plan.ku_field,    plan.ku_field_len);
+    copy_field(ctx.Ku2_field,   plan.ku2_field,   plan.ku2_field_len);
+    copy_field(ctx.Dind_field,  plan.dind_field,  plan.dind_field_len);
+    copy_field(ctx.Dbulk_field, plan.dbulk_field, plan.dbulk_field_len);
+    copy_field(ctx.Kc1_field,   plan.kc1_field,   plan.kc1_field_len);
+    copy_field(ctx.Kc2_field,   plan.kc2_field,   plan.kc2_field_len);
+    copy_field(ctx.Kc3_field,   plan.kc3_field,   plan.kc3_field_len);
+
     ctx.material = plan.material;
     ctx.demag_solver = plan.demag_solver;
 

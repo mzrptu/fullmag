@@ -1625,6 +1625,7 @@ fn plan_fem(
     let mut external_field = None;
     let mut demag_realization: Option<String> = None;
     let mut interfacial_dmi: Option<f64> = None;
+    let mut bulk_dmi: Option<f64> = None;
     for term in &problem.energy_terms {
         match term {
             fullmag_ir::EnergyTermIR::Exchange => {
@@ -1652,11 +1653,17 @@ fn plan_fem(
                 }
                 interfacial_dmi = Some(*d);
             }
+            fullmag_ir::EnergyTermIR::BulkDmi { d } => {
+                if bulk_dmi.is_some() {
+                    errors.push("BulkDmi is declared more than once".to_string());
+                }
+                bulk_dmi = Some(*d);
+            }
         }
     }
-    if !(enable_exchange || enable_demag || external_field.is_some() || interfacial_dmi.is_some()) {
+    if !(enable_exchange || enable_demag || external_field.is_some() || interfacial_dmi.is_some() || bulk_dmi.is_some()) {
         errors.push(
-            "the current FEM planning baseline requires at least one of Exchange, Demag, Zeeman, or InterfacialDmi"
+            "the current FEM planning baseline requires at least one of Exchange, Demag, Zeeman, InterfacialDmi, or BulkDmi"
                 .to_string(),
         );
     }
@@ -1739,6 +1746,9 @@ fn plan_fem(
         demag_realization: resolved_demag_realization,
         air_box_config: None,
         interfacial_dmi,
+        bulk_dmi,
+        dind_field: None,
+        dbulk_field: None,
     };
     let study_note = if let Some(control) = fem_plan.relaxation.as_ref() {
         format!(
@@ -2401,6 +2411,15 @@ mod tests {
             damping: 0.02,
             uniaxial_anisotropy: None,
             anisotropy_axis: None,
+            uniaxial_anisotropy_k2: None,
+            cubic_anisotropy_kc1: None,
+            cubic_anisotropy_kc2: None,
+            cubic_anisotropy_kc3: None,
+            cubic_anisotropy_axis1: None,
+            cubic_anisotropy_axis2: None,
+            ms_field: None, a_field: None, alpha_field: None,
+            ku_field: None, ku2_field: None,
+            kc1_field: None, kc2_field: None, kc3_field: None,
         });
         ir.geometry.entries.push(GeometryEntryIR::Box {
             name: "second".to_string(),

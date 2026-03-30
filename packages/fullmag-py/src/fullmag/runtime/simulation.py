@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Sequence
 
 from fullmag._core import run_problem_json
+from fullmag.init import save_magnetization
 from fullmag.model import BackendTarget, ExecutionMode, ExecutionPrecision, Problem
 
 
@@ -33,6 +35,22 @@ class Result:
     steps: Sequence[StepStats] = ()
     final_magnetization: list[list[float]] | None = None
     output_dir: str | None = None
+
+    def save_state(
+        self,
+        path: str | Path,
+        *,
+        format: str = "auto",
+        dataset: str = "values",
+    ) -> Path:
+        if self.final_magnetization is None:
+            raise ValueError("result does not contain final_magnetization")
+        return save_magnetization(
+            path,
+            self.final_magnetization,
+            format=format,
+            dataset=dataset,
+        )
 
 
 @dataclass(slots=True)

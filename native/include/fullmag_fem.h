@@ -117,9 +117,29 @@ typedef struct {
     const fullmag_fem_adaptive_config *adaptive_config;
     int has_uniaxial_anisotropy;
     double uniaxial_anisotropy_constant;
+    double uniaxial_anisotropy_k2;
     double anisotropy_axis[3];
     int has_interfacial_dmi;
     double dmi_constant;
+    int has_bulk_dmi;
+    double bulk_dmi_constant;
+    int has_cubic_anisotropy;
+    double cubic_kc1;
+    double cubic_kc2;
+    double cubic_kc3;
+    double cubic_axis1[3];
+    double cubic_axis2[3];
+    /* Per-node spatially varying fields (NULL + 0 = uniform, use scalar). */
+    const double *ms_field;           uint64_t ms_field_len;
+    const double *a_field;            uint64_t a_field_len;
+    const double *alpha_field;        uint64_t alpha_field_len;
+    const double *ku_field;           uint64_t ku_field_len;
+    const double *ku2_field;          uint64_t ku2_field_len;
+    const double *dind_field;         uint64_t dind_field_len;
+    const double *dbulk_field;        uint64_t dbulk_field_len;
+    const double *kc1_field;          uint64_t kc1_field_len;
+    const double *kc2_field;          uint64_t kc2_field_len;
+    const double *kc3_field;          uint64_t kc3_field_len;
 } fullmag_fem_plan_desc;
 
 typedef struct {

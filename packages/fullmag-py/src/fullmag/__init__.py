@@ -1,7 +1,14 @@
 """Public embedded Python DSL for Fullmag."""
 
 from . import init
-from .init import random, uniform
+from .init import (
+    MAGNETIZATION_STATE_FORMATS,
+    infer_magnetization_state_format,
+    load_magnetization,
+    random,
+    save_magnetization,
+    uniform,
+)
 from .model import (
     AdaptiveTimestep,
     Box,
@@ -24,6 +31,7 @@ from .model import (
     ImportedGeometry,
     Intersection,
     InterfacialDMI,
+    BulkDMI,
     LLG,
     Material,
     Problem,
@@ -81,6 +89,7 @@ __all__ = [
     "BackendTarget",
     "AdaptiveTimestep",
     "Box",
+    "BulkDMI",
     "Cylinder",
     "Demag",
     "DeviceTarget",
@@ -102,6 +111,7 @@ __all__ = [
     "InterfacialDMI",
     "LLG",
     "Material",
+    "MAGNETIZATION_STATE_FORMATS",
     "MeshData",
     "Problem",
     "Region",
@@ -120,9 +130,12 @@ __all__ = [
     "backend",
     "export_stl",
     "generate_mesh",
+    "infer_magnetization_state_format",
     "init",
+    "load_magnetization",
     "load_problem_from_script",
     "random",
+    "save_magnetization",
     "uniform",
     # Flat scripting API
     "GeometryMeshHandle",

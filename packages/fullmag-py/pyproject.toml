@@ -7,7 +7,11 @@ name = "fullmag"
 version = "0.1.0"
 description = "Embedded Python DSL for the Fullmag micromagnetics platform."
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24"]
+dependencies = [
+    "numpy>=1.24",
+    "zarr>=2.18",
+    "h5py>=3.9",
+]
 
 [project.optional-dependencies]
 meshing = [

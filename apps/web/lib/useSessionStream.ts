@@ -198,10 +198,19 @@ export interface ScriptBuilderMeshState {
   per_element_quality: boolean;
 }
 
+export interface ScriptBuilderInitialState {
+  magnet_name: string | null;
+  source_path: string;
+  format: string;
+  dataset: string | null;
+  sample_index: number | null;
+}
+
 export interface ScriptBuilderState {
   revision: number;
   solver: ScriptBuilderSolverState;
   mesh: ScriptBuilderMeshState;
+  initial_state: ScriptBuilderInitialState | null;
 }
 
 export interface SessionState {
@@ -625,6 +634,25 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
       compute_quality: Boolean(raw.mesh?.compute_quality),
       per_element_quality: Boolean(raw.mesh?.per_element_quality),
     },
+    initial_state:
+      raw.initial_state && typeof raw.initial_state === "object"
+        ? {
+            magnet_name:
+              typeof raw.initial_state.magnet_name === "string"
+                ? raw.initial_state.magnet_name
+                : null,
+            source_path: String(raw.initial_state.source_path ?? ""),
+            format: String(raw.initial_state.format ?? "json"),
+            dataset:
+              typeof raw.initial_state.dataset === "string"
+                ? raw.initial_state.dataset
+                : null,
+            sample_index:
+              raw.initial_state.sample_index != null
+                ? Number(raw.initial_state.sample_index)
+                : null,
+          }
+        : null,
   };
 }
 

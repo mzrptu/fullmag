@@ -31,11 +31,27 @@ class RandomMagnetization:
 @dataclass(frozen=True, slots=True)
 class SampledMagnetization:
     values: list[tuple[float, float, float]]
+    source_path: str | None
+    source_format: str | None
+    dataset: str | None
+    sample_index: int | None
 
-    def __init__(self, values: Sequence[Sequence[float]]) -> None:
+    def __init__(
+        self,
+        values: Sequence[Sequence[float]],
+        *,
+        source_path: str | None = None,
+        source_format: str | None = None,
+        dataset: str | None = None,
+        sample_index: int | None = None,
+    ) -> None:
         if not values:
             raise ValueError("values must not be empty")
         object.__setattr__(self, "values", [as_vector3(value, "values") for value in values])
+        object.__setattr__(self, "source_path", source_path)
+        object.__setattr__(self, "source_format", source_format)
+        object.__setattr__(self, "dataset", dataset)
+        object.__setattr__(self, "sample_index", sample_index)
 
     def to_ir(self) -> dict[str, object]:
         return {

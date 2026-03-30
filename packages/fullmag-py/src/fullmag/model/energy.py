@@ -42,6 +42,17 @@ class InterfacialDMI:
 
 
 @dataclass(frozen=True, slots=True)
+class BulkDMI:
+    D: float
+
+    def __post_init__(self) -> None:
+        require_positive(self.D, "D")
+
+    def to_ir(self) -> dict[str, object]:
+        return {"kind": "bulk_dmi", "D": self.D}
+
+
+@dataclass(frozen=True, slots=True)
 class Zeeman:
     B: tuple[float, float, float]
 

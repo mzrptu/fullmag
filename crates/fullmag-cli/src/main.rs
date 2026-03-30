@@ -269,6 +269,14 @@ struct SessionCommand {
     #[serde(default)]
     mesh_options: Option<serde_json::Value>,
     #[serde(default)]
+    state_path: Option<String>,
+    #[serde(default)]
+    state_format: Option<String>,
+    #[serde(default)]
+    state_dataset: Option<String>,
+    #[serde(default)]
+    state_sample_index: Option<i64>,
+    #[serde(default)]
     display_selection: Option<CurrentDisplaySelection>,
     #[serde(default)]
     preview_config: Option<fullmag_runner::LivePreviewRequest>,
@@ -1990,6 +1998,75 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             match cmd.kind.as_str() {
                 "preview_update" | "preview_refresh" => {
                     display_selection_handle.apply_preview_command(&cmd);
+                    let display_selection = display_selection_handle.display_selection_snapshot();
+                    if let Err(error) = refresh_problem_preview_state(
+                        &stages[0].ir,
+                        continuation_magnetization.as_deref(),
+                        &display_selection,
+                        &live_workspace,
+                        supports_interactive_latest_field_cache(
+                            &stage_execution_plans[0].backend_plan,
+                        ),
+                    ) {
+                        live_workspace.push_log(
+                            "warn",
+                            format!("Preview refresh after selection change failed: {}", error),
+                        );
+                    }
+                    continue;
+                }
+                "load_state" => {
+                    let Some(state_path) = cmd.state_path.as_deref() else {
+                        live_workspace
+                            .push_log("error", "State import command is missing state_path");
+                        continue;
+                    };
+                    match read_magnetization_state(
+                        Path::new(state_path),
+                        cmd.state_format.as_deref(),
+                        cmd.state_dataset.as_deref(),
+                        cmd.state_sample_index,
+                    ) {
+                        Ok(loaded_state) => {
+                            continuation_magnetization = Some(loaded_state.values.clone());
+                            live_workspace.update(|state| {
+                                state.live_state.updated_at_unix_ms =
+                                    unix_time_millis().unwrap_or(0);
+                                state.live_state.latest_step.magnetization =
+                                    Some(flatten_magnetization(&loaded_state.values));
+                                clear_cached_preview_fields(state);
+                            });
+                            let display_selection =
+                                display_selection_handle.display_selection_snapshot();
+                            if let Err(error) = refresh_problem_preview_state(
+                                &stages[0].ir,
+                                continuation_magnetization.as_deref(),
+                                &display_selection,
+                                &live_workspace,
+                                supports_interactive_latest_field_cache(
+                                    &stage_execution_plans[0].backend_plan,
+                                ),
+                            ) {
+                                live_workspace.push_log(
+                                    "warn",
+                                    format!("Loaded state preview refresh failed: {}", error),
+                                );
+                            }
+                            live_workspace.push_log(
+                                "success",
+                                format!(
+                                    "Loaded workspace state from {} ({} vectors)",
+                                    state_path, loaded_state.vector_count
+                                ),
+                            );
+                        }
+                        Err(error) => {
+                            live_workspace.push_log(
+                                "error",
+                                format!("Failed to load workspace state: {}", error),
+                            );
+                        }
+                    }
                     continue;
                 }
                 "solve" | "compute" => {
@@ -2516,6 +2593,46 @@ fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             // Pause just returns to awaiting_command without closing
             if command.kind == "pause" {
                 live_workspace.push_log("system", "Paused — awaiting next command");
+                continue;
+            }
+
+            if command.kind == "load_state" {
+                let Some(state_path) = command.state_path.as_deref() else {
+                    live_workspace.push_log("error", "State import command is missing state_path");
+                    continue;
+                };
+                match read_magnetization_state(
+                    Path::new(state_path),
+                    command.state_format.as_deref(),
+                    command.state_dataset.as_deref(),
+                    command.state_sample_index,
+                ) {
+                    Ok(loaded_state) => {
+                        if let Err(error) = interactive_runtime_host
+                            .load_state(loaded_state.values.clone(), &live_workspace)
+                        {
+                            live_workspace.push_log(
+                                "error",
+                                format!("Failed to apply imported workspace state: {}", error),
+                            );
+                            continue;
+                        }
+                        continuation_magnetization = Some(loaded_state.values);
+                        live_workspace.push_log(
+                            "success",
+                            format!(
+                                "Loaded workspace state from {} ({} vectors)",
+                                state_path, loaded_state.vector_count
+                            ),
+                        );
+                    }
+                    Err(error) => {
+                        live_workspace.push_log(
+                            "error",
+                            format!("Failed to load workspace state: {}", error),
+                        );
+                    }
+                }
                 continue;
             }
 
@@ -3569,6 +3686,84 @@ fn available_system_ram_bytes() -> u64 {
 fn estimate_fem_dense_ram(node_count: usize) -> u64 {
     let n = node_count as u64;
     n * n * 24 // 3 × N × N × 8 bytes
+}
+
+#[derive(Debug, Deserialize)]
+struct LoadedMagnetizationState {
+    vector_count: usize,
+    values: Vec<[f64; 3]>,
+}
+
+fn read_magnetization_state(
+    path: &Path,
+    format: Option<&str>,
+    dataset: Option<&str>,
+    sample_index: Option<i64>,
+) -> Result<LoadedMagnetizationState> {
+    let mut helper_args = vec![
+        "-m".to_string(),
+        "fullmag.runtime.helper".to_string(),
+        "read-magnetization-state".to_string(),
+        "--path".to_string(),
+        path.display().to_string(),
+    ];
+    if let Some(format) = format {
+        helper_args.push("--format".to_string());
+        helper_args.push(format.to_string());
+    }
+    if let Some(dataset) = dataset {
+        helper_args.push("--dataset".to_string());
+        helper_args.push(dataset.to_string());
+    }
+    if let Some(sample_index) = sample_index {
+        helper_args.push("--sample".to_string());
+        helper_args.push(sample_index.to_string());
+    }
+
+    let output = run_python_helper(&helper_args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("failed to load magnetization state: {}", stderr.trim());
+    }
+    serde_json::from_slice::<LoadedMagnetizationState>(&output.stdout)
+        .context("failed to parse magnetization state payload")
+}
+
+fn refresh_problem_preview_state(
+    base_problem: &ProblemIR,
+    continuation_magnetization: Option<&[[f64; 3]]>,
+    display_selection: &CurrentDisplaySelection,
+    live_workspace: &LocalLiveWorkspace,
+    refresh_cache: bool,
+) -> Result<()> {
+    let mut problem = base_problem.clone();
+    if let Some(previous_final_magnetization) = continuation_magnetization {
+        apply_continuation_initial_state(&mut problem, previous_final_magnetization)?;
+    }
+
+    let preview_field =
+        fullmag_runner::snapshot_problem_preview(&problem, &display_selection.preview_request())?;
+    live_workspace.update(|state| {
+        state.live_state.updated_at_unix_ms = unix_time_millis().unwrap_or(0);
+        state.live_state.latest_step.preview_field = Some(preview_field.clone());
+        if refresh_cache {
+            clear_cached_preview_fields(state);
+        }
+    });
+
+    if refresh_cache {
+        let cached_quantities = fullmag_runner::quantities::cached_preview_quantity_ids();
+        let cached_fields = fullmag_runner::snapshot_problem_vector_fields(
+            &problem,
+            &cached_quantities,
+            &display_selection.preview_request(),
+        )?;
+        live_workspace.update(|state| {
+            replace_cached_preview_fields(state, cached_fields.clone());
+        });
+    }
+
+    Ok(())
 }
 
 /// Invoke `remesh_cli.py` as a subprocess to regenerate the FEM mesh.
@@ -4842,6 +5037,15 @@ mod tests {
                 damping: 0.5,
                 uniaxial_anisotropy: None,
                 anisotropy_axis: None,
+                uniaxial_anisotropy_k2: None,
+                cubic_anisotropy_kc1: None,
+                cubic_anisotropy_kc2: None,
+                cubic_anisotropy_kc3: None,
+                cubic_anisotropy_axis1: None,
+                cubic_anisotropy_axis2: None,
+                ms_field: None, a_field: None, alpha_field: None,
+                ku_field: None, ku2_field: None,
+                kc1_field: None, kc2_field: None, kc3_field: None,
             },
             enable_exchange: true,
             enable_demag: true,
@@ -4856,6 +5060,9 @@ mod tests {
             demag_realization: None,
             air_box_config: None,
             interfacial_dmi: None,
+            bulk_dmi: None,
+            dind_field: None,
+            dbulk_field: None,
         });
 
         let update = initial_step_update(&plan);

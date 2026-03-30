@@ -79,12 +79,21 @@ class MagnetHandle:
         self.Aex: float | None = None
         self.alpha: float = 0.01
         self.Dind: float | None = None
-        self.m: Any = None
+        self._m_value: Any = None
+        self._m_proxy = MagnetizationHandle(self)
         self._mesh_spec = _MeshSpecState()
         self.mesh = GeometryMeshHandle(self)
 
     def __repr__(self) -> str:
-        return f"MagnetHandle({self._name!r}, Ms={self.Ms}, Aex={self.Aex})"
+        return f"MagnetHandle({self._name!r}, Ms={self.Ms}, Aex={self.Aex}, m={self._m_value!r})"
+
+    @property
+    def m(self) -> "MagnetizationHandle":
+        return self._m_proxy
+
+    @m.setter
+    def m(self, value: Any) -> None:
+        self._m_value = value
 
     def _resolved_geometry(self) -> object:
         """Return geometry with a stable per-magnet geometry asset name."""
@@ -110,11 +119,11 @@ class MagnetHandle:
             alpha=self.alpha,
         )
 
-        if self.m is None:
+        if self._m_value is None:
             from fullmag.init.magnetization import UniformMagnetization
             m0 = UniformMagnetization((1, 0, 0))
         else:
-            m0 = self.m
+            m0 = self._m_value
 
         return Ferromagnet(
             name=self._name,
@@ -122,6 +131,66 @@ class MagnetHandle:
             material=mat,
             m0=m0,
         )
+
+
+class MagnetizationHandle:
+    """Mutable magnetization slot bound to one flat-script geometry."""
+
+    def __init__(self, owner: MagnetHandle) -> None:
+        self._owner = owner
+
+    @property
+    def value(self) -> Any:
+        return self._owner._m_value
+
+    def get(self) -> Any:
+        return self._owner._m_value
+
+    def set(self, value: Any) -> Any:
+        self._owner._m_value = value
+        return value
+
+    def clear(self) -> None:
+        self._owner._m_value = None
+
+    def loadfile(
+        self,
+        path: str | Path,
+        *,
+        format: str = "auto",
+        dataset: str | None = None,
+        sample: int = -1,
+    ):
+        from fullmag.init import load_magnetization
+
+        state = load_magnetization(path, format=format, dataset=dataset, sample=sample)
+        self._owner._m_value = state
+        return state
+
+    def savefile(
+        self,
+        path: str | Path,
+        *,
+        format: str = "auto",
+        dataset: str = "values",
+    ) -> Path:
+        from fullmag.init import SampledMagnetization, save_magnetization
+
+        value = self._owner._m_value
+        if value is None:
+            raise ValueError("magnetization slot is empty")
+        if not isinstance(value, SampledMagnetization):
+            raise ValueError(
+                "savefile() requires explicit sampled magnetization data; "
+                "save a simulation Result or load a sampled state first"
+            )
+        return save_magnetization(path, value, format=format, dataset=dataset)
+
+    def __bool__(self) -> bool:
+        return self._owner._m_value is not None
+
+    def __repr__(self) -> str:
+        return repr(self._owner._m_value)
 
 
 @dataclass

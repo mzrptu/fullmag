@@ -192,7 +192,36 @@ pub struct MaterialIR {
     pub exchange_stiffness: f64,
     pub damping: f64,
     pub uniaxial_anisotropy: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uniaxial_anisotropy_k2: Option<f64>,
     pub anisotropy_axis: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cubic_anisotropy_kc1: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cubic_anisotropy_kc2: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cubic_anisotropy_kc3: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cubic_anisotropy_axis1: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cubic_anisotropy_axis2: Option<[f64; 3]>,
+    // Per-node spatially varying fields (when Some, override the scalar)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ms_field: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a_field: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha_field: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ku_field: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ku2_field: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kc1_field: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kc2_field: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kc3_field: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -220,6 +249,10 @@ pub enum EnergyTermIR {
         realization: Option<String>,
     },
     InterfacialDmi {
+        #[serde(rename = "D")]
+        d: f64,
+    },
+    BulkDmi {
         #[serde(rename = "D")]
         d: f64,
     },
@@ -761,6 +794,12 @@ pub struct FemPlanIR {
     pub air_box_config: Option<AirBoxConfigIR>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interfacial_dmi: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bulk_dmi: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dind_field: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dbulk_field: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -826,6 +865,15 @@ impl ProblemIR {
                 damping: 0.02,
                 uniaxial_anisotropy: None,
                 anisotropy_axis: None,
+                uniaxial_anisotropy_k2: None,
+                cubic_anisotropy_kc1: None,
+                cubic_anisotropy_kc2: None,
+                cubic_anisotropy_kc3: None,
+                cubic_anisotropy_axis1: None,
+                cubic_anisotropy_axis2: None,
+                ms_field: None, a_field: None, alpha_field: None,
+                ku_field: None, ku2_field: None,
+                kc1_field: None, kc2_field: None, kc3_field: None,
             }],
             magnets: vec![MagnetIR {
                 name: "strip".to_string(),

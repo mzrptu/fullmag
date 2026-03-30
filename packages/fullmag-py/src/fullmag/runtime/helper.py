@@ -83,6 +83,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Load a script and export session-local builder draft state for the control room.",
     )
     export_builder.add_argument("--script", required=True, help="Path to Python script.")
+
+    read_state = subparsers.add_parser(
+        "read-magnetization-state",
+        help="Load a magnetization state file and print canonical JSON values.",
+    )
+    read_state.add_argument("--path", required=True, help="Path to the input state file.")
+    read_state.add_argument("--format", default="auto", help="Input format: auto, json, zarr, or h5.")
+    read_state.add_argument("--dataset", help="Optional dataset path for zarr/h5 inputs.")
+    read_state.add_argument("--sample", type=int, default=-1, help="Sample index for [T,N,3] inputs.")
+
+    convert_state = subparsers.add_parser(
+        "convert-magnetization-state",
+        help="Convert a magnetization state file between supported formats.",
+    )
+    convert_state.add_argument("--input-path", required=True, help="Path to the input state file.")
+    convert_state.add_argument("--output-path", required=True, help="Path to the output state file.")
+    convert_state.add_argument("--input-format", default="auto", help="Input format: auto, json, zarr, or h5.")
+    convert_state.add_argument("--output-format", default="auto", help="Output format: auto, json, zarr, or h5.")
+    convert_state.add_argument("--input-dataset", help="Optional dataset path for zarr/h5 inputs.")
+    convert_state.add_argument("--output-dataset", default="values", help="Dataset path for zarr/h5 outputs.")
+    convert_state.add_argument("--sample", type=int, default=-1, help="Sample index for [T,N,3] inputs.")
     return parser
 
 
@@ -180,6 +201,59 @@ def main(argv: Sequence[str] | None = None) -> int:
         loaded = load_problem_from_script(Path(args.script), lightweight_assets=True)
         print(json.dumps(export_builder_draft(loaded)))
         emit_progress("Builder draft exported")
+        return 0
+
+    if args.command == "read-magnetization-state":
+        from fullmag.init import load_magnetization
+
+        state = load_magnetization(
+            args.path,
+            format=args.format,
+            dataset=args.dataset,
+            sample=args.sample,
+        )
+        print(
+            json.dumps(
+                {
+                    "path": str(Path(args.path).resolve()),
+                    "format": state.source_format or args.format,
+                    "dataset": state.dataset,
+                    "sample_index": state.sample_index,
+                    "vector_count": len(state.values),
+                    "values": [list(vector) for vector in state.values],
+                }
+            )
+        )
+        return 0
+
+    if args.command == "convert-magnetization-state":
+        from fullmag.init import convert_magnetization_state, load_magnetization
+
+        output_path = convert_magnetization_state(
+            args.input_path,
+            args.output_path,
+            input_format=args.input_format,
+            output_format=args.output_format,
+            input_dataset=args.input_dataset,
+            output_dataset=args.output_dataset,
+            sample=args.sample,
+        )
+        state = load_magnetization(
+            output_path,
+            format=args.output_format,
+            dataset=args.output_dataset if args.output_format in {"zarr", "h5"} else None,
+            sample=-1,
+        )
+        print(
+            json.dumps(
+                {
+                    "output_path": str(Path(output_path).resolve()),
+                    "format": state.source_format or args.output_format,
+                    "dataset": state.dataset,
+                    "vector_count": len(state.values),
+                }
+            )
+        )
         return 0
 
     parser.error(f"Unsupported helper command: {args.command}")

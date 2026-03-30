@@ -579,32 +579,149 @@ void compute_uniaxial_anisotropy_field(
     const double ux = ctx.anisotropy_axis[0];
     const double uy = ctx.anisotropy_axis[1];
     const double uz = ctx.anisotropy_axis[2];
-    const double prefactor = 2.0 * ctx.anisotropy_Ku /
-                             (kMu0 * ctx.material.saturation_magnetisation);
+    const double uniform_Ms = ctx.material.saturation_magnetisation;
+    const double uniform_Ku = ctx.anisotropy_Ku;
+    const double uniform_Ku2 = ctx.anisotropy_Ku2;
     double energy = 0.0;
 
     for (size_t i = 0; i < n; ++i) {
         if (!ctx.magnetic_node_mask.empty() && ctx.magnetic_node_mask[i] == 0u) {
             continue;
         }
+        const double Ms_i = ctx.Ms_field.empty() ? uniform_Ms : ctx.Ms_field[i];
+        const double Ku_i = ctx.Ku_field.empty() ? uniform_Ku : ctx.Ku_field[i];
+        const double Ku2_i = ctx.Ku2_field.empty() ? uniform_Ku2 : ctx.Ku2_field[i];
+        const double prefactor = 2.0 * Ku_i / (kMu0 * Ms_i);
+        const double prefactor2 = (Ku2_i != 0.0) ? 4.0 * Ku2_i / (kMu0 * Ms_i) : 0.0;
         const size_t base = i * 3u;
         const double mx = m_xyz[base + 0];
         const double my = m_xyz[base + 1];
         const double mz = m_xyz[base + 2];
         const double m_dot_u = mx * ux + my * uy + mz * uz;
+        const double m_dot_u2 = m_dot_u * m_dot_u;
 
-        h_ani_xyz[base + 0] = prefactor * m_dot_u * ux;
-        h_ani_xyz[base + 1] = prefactor * m_dot_u * uy;
-        h_ani_xyz[base + 2] = prefactor * m_dot_u * uz;
+        // H_ani = (2Ku1/μ₀Ms)(m·û)û + (4Ku2/μ₀Ms)(m·û)³û
+        const double coeff = prefactor * m_dot_u + prefactor2 * m_dot_u * m_dot_u2;
+        h_ani_xyz[base + 0] = coeff * ux;
+        h_ani_xyz[base + 1] = coeff * uy;
+        h_ani_xyz[base + 2] = coeff * uz;
 
         if (anisotropy_energy != nullptr && !ctx.mfem_lumped_mass.empty()) {
-            energy += -ctx.anisotropy_Ku * (1.0 - m_dot_u * m_dot_u) *
+            // E = -Ku1(1 - (m·û)²) - Ku2(1 - (m·û)²)²
+            //   = -Ku1 + Ku1(m·û)² - Ku2 + 2Ku2(m·û)² - Ku2(m·û)⁴
+            // Simplified: E_density = -Ku1(1-(m·û)²) - Ku2(1-(m·û)²)²
+            const double sin2 = 1.0 - m_dot_u2;
+            energy += (-Ku_i * sin2 - Ku2_i * sin2 * sin2) *
                       ctx.mfem_lumped_mass[i];
         }
     }
 
     if (anisotropy_energy != nullptr) {
         *anisotropy_energy = energy;
+    }
+}
+
+/// Compute cubic anisotropy effective field.
+/// H_cubic = -(2Kc1/μ₀Ms)[m1(m2²+m3²)ĉ1 + m2(m1²+m3²)ĉ2 + m3(m1²+m2²)ĉ3]
+///         -(2Kc2/μ₀Ms)[m1·m2²·m3²·ĉ1 + m1²·m2·m3²·ĉ2 + m1²·m2²·m3·ĉ3]
+///         -(4Kc3/μ₀Ms)·σ·[m1(m2²+m3²)ĉ1 + m2(m1²+m3²)ĉ2 + m3(m1²+m2²)ĉ3]
+/// where m_i = m·ĉ_i, σ = m1²m2² + m2²m3² + m1²m3².
+/// ĉ3 is computed as ĉ1 × ĉ2.
+/// Energy: E = Kc1·σ + Kc2·m1²m2²m3² + Kc3·σ²
+void compute_cubic_anisotropy_field(
+    const Context &ctx,
+    const std::vector<double> &m_xyz,
+    std::vector<double> &h_cub_xyz,
+    double *cubic_energy)
+{
+    const size_t n = ctx.n_nodes;
+    h_cub_xyz.assign(n * 3u, 0.0);
+    if (!ctx.enable_cubic_anisotropy ||
+        (ctx.cubic_Kc1 == 0.0 && ctx.cubic_Kc2 == 0.0 && ctx.cubic_Kc3 == 0.0)) {
+        if (cubic_energy != nullptr) {
+            *cubic_energy = 0.0;
+        }
+        return;
+    }
+
+    // Crystal axes: c1, c2, c3 = c1 × c2
+    const double c1x = ctx.cubic_axis1[0], c1y = ctx.cubic_axis1[1], c1z = ctx.cubic_axis1[2];
+    const double c2x = ctx.cubic_axis2[0], c2y = ctx.cubic_axis2[1], c2z = ctx.cubic_axis2[2];
+    const double c3x = c1y * c2z - c1z * c2y;
+    const double c3y = c1z * c2x - c1x * c2z;
+    const double c3z = c1x * c2y - c1y * c2x;
+
+    const double inv_mu0 = 1.0 / kMu0;
+    const double uniform_Ms = ctx.material.saturation_magnetisation;
+    const double uniform_Kc1 = ctx.cubic_Kc1;
+    const double uniform_Kc2 = ctx.cubic_Kc2;
+    const double uniform_Kc3 = ctx.cubic_Kc3;
+    double energy = 0.0;
+
+    for (size_t i = 0; i < n; ++i) {
+        if (!ctx.magnetic_node_mask.empty() && ctx.magnetic_node_mask[i] == 0u) {
+            continue;
+        }
+        const double Ms_i = ctx.Ms_field.empty() ? uniform_Ms : ctx.Ms_field[i];
+        const double Kc1_i = ctx.Kc1_field.empty() ? uniform_Kc1 : ctx.Kc1_field[i];
+        const double Kc2_i = ctx.Kc2_field.empty() ? uniform_Kc2 : ctx.Kc2_field[i];
+        const double Kc3_i = ctx.Kc3_field.empty() ? uniform_Kc3 : ctx.Kc3_field[i];
+        const double inv_mu0Ms = inv_mu0 / Ms_i;
+        const double pf1 = -2.0 * Kc1_i * inv_mu0Ms;
+        const double pf2 = -2.0 * Kc2_i * inv_mu0Ms;
+        const double pf3 = -4.0 * Kc3_i * inv_mu0Ms;
+        const size_t base = i * 3u;
+        const double mx = m_xyz[base + 0];
+        const double my = m_xyz[base + 1];
+        const double mz = m_xyz[base + 2];
+
+        // Project m onto crystal axes
+        const double m1 = mx * c1x + my * c1y + mz * c1z;
+        const double m2 = mx * c2x + my * c2y + mz * c2z;
+        const double m3 = mx * c3x + my * c3y + mz * c3z;
+
+        const double m1sq = m1 * m1;
+        const double m2sq = m2 * m2;
+        const double m3sq = m3 * m3;
+
+        // σ = m1²m2² + m2²m3² + m1²m3²
+        const double sigma = m1sq * m2sq + m2sq * m3sq + m1sq * m3sq;
+
+        // Kc1 contribution: ∂σ/∂m_i = 2·m_i·(sum of other two m_j²)
+        // H_i = -(2Kc1/μ₀Ms)·m_i·(mj² + mk²)
+        double g1 = pf1 * m1 * (m2sq + m3sq);
+        double g2 = pf1 * m2 * (m1sq + m3sq);
+        double g3 = pf1 * m3 * (m1sq + m2sq);
+
+        // Kc2 contribution: ∂(m1²m2²m3²)/∂m_i = 2·m_i·(product of other two)
+        if (ctx.cubic_Kc2 != 0.0 || !ctx.Kc2_field.empty()) {
+            g1 += pf2 * m1 * m2sq * m3sq;
+            g2 += pf2 * m1sq * m2 * m3sq;
+            g3 += pf2 * m1sq * m2sq * m3;
+        }
+
+        // Kc3 contribution: ∂(σ²)/∂m_i = 2σ · ∂σ/∂m_i
+        if (ctx.cubic_Kc3 != 0.0 || !ctx.Kc3_field.empty()) {
+            g1 += pf3 * sigma * m1 * (m2sq + m3sq);
+            g2 += pf3 * sigma * m2 * (m1sq + m3sq);
+            g3 += pf3 * sigma * m3 * (m1sq + m2sq);
+        }
+
+        // Transform back from crystal frame to Cartesian
+        h_cub_xyz[base + 0] = g1 * c1x + g2 * c2x + g3 * c3x;
+        h_cub_xyz[base + 1] = g1 * c1y + g2 * c2y + g3 * c3y;
+        h_cub_xyz[base + 2] = g1 * c1z + g2 * c2z + g3 * c3z;
+
+        if (cubic_energy != nullptr && !ctx.mfem_lumped_mass.empty()) {
+            energy += (Kc1_i * sigma +
+                       Kc2_i * m1sq * m2sq * m3sq +
+                       Kc3_i * sigma * sigma) *
+                      ctx.mfem_lumped_mass[i];
+        }
+    }
+
+    if (cubic_energy != nullptr) {
+        *cubic_energy = energy;
     }
 }
 
@@ -642,8 +759,8 @@ bool compute_interfacial_dmi_field(
         return false;
     }
 
-    const double prefactor = 2.0 * ctx.dmi_D /
-                             (kMu0 * ctx.material.saturation_magnetisation);
+    const double uniform_D = ctx.dmi_D;
+    const double uniform_Ms = ctx.material.saturation_magnetisation;
     double energy = 0.0;
 
     // Node-accumulated weighted contributions
@@ -681,6 +798,22 @@ bool compute_interfacial_dmi_field(
             my_elem(i) = sign * (*gf_my)(gdof);
             mz_elem(i) = sign * (*gf_mz)(gdof);
         }
+
+        // Compute per-element average D and Ms for this element's DOFs
+        double elem_D = 0.0, elem_Ms = 0.0;
+        if (!ctx.Dind_field.empty() || !ctx.Ms_field.empty()) {
+            for (int i = 0; i < local_ndof; ++i) {
+                const int gdof = dofs[i] >= 0 ? dofs[i] : -1 - dofs[i];
+                elem_D  += ctx.Dind_field.empty() ? uniform_D : ctx.Dind_field[gdof];
+                elem_Ms += ctx.Ms_field.empty() ? uniform_Ms : ctx.Ms_field[gdof];
+            }
+            elem_D  /= static_cast<double>(local_ndof);
+            elem_Ms /= static_cast<double>(local_ndof);
+        } else {
+            elem_D  = uniform_D;
+            elem_Ms = uniform_Ms;
+        }
+        const double prefactor = 2.0 * elem_D / (kMu0 * elem_Ms);
 
         const mfem::IntegrationRule &ir =
             mfem::IntRules.Get(fe->GetGeomType(), 2 * fe->GetOrder());
@@ -734,7 +867,7 @@ bool compute_interfacial_dmi_field(
                     my_q += my_elem(i) * shape(i);
                     mz_q += mz_elem(i) * shape(i);
                 }
-                energy += ctx.dmi_D * (mz_q * (dmx_dx + dmy_dy) -
+                energy += elem_D * (mz_q * (dmx_dx + dmy_dy) -
                                        mx_q * dmz_dx - my_q * dmz_dy) * w;
             }
         }
@@ -759,6 +892,177 @@ bool compute_interfacial_dmi_field(
 #else
     // No MFEM stack — DMI requires element-loop gradient
     error = "DMI computation requires MFEM stack";
+    return false;
+#endif
+}
+
+/// Compute Bloch-type (bulk) DMI effective field using element-loop gradient.
+/// H_dmi = (2D / μ₀Ms) ∇ × m
+///   H_x =  (2D / μ₀Ms) (∂m_z/∂y - ∂m_y/∂z)
+///   H_y =  (2D / μ₀Ms) (∂m_x/∂z - ∂m_z/∂x)
+///   H_z =  (2D / μ₀Ms) (∂m_y/∂x - ∂m_x/∂y)
+/// Energy: e_bulk_dmi = D · m · (∇ × m) (integrated)
+bool compute_bulk_dmi_field(
+    Context &ctx,
+    const std::vector<double> &m_xyz,
+    std::vector<double> &h_dmi_xyz,
+    double *dmi_energy,
+    std::string &error)
+{
+    const size_t n = ctx.n_nodes;
+    h_dmi_xyz.assign(n * 3u, 0.0);
+    if (!ctx.enable_bulk_dmi || ctx.bulk_dmi_D == 0.0) {
+        if (dmi_energy != nullptr) {
+            *dmi_energy = 0.0;
+        }
+        return true;
+    }
+
+#if FULLMAG_HAS_MFEM_STACK
+    if (!ctx.mfem_ready) {
+        error = "MFEM context not ready for bulk DMI computation";
+        return false;
+    }
+
+    auto *fes = static_cast<mfem::FiniteElementSpace *>(ctx.mfem_fes);
+    auto *mesh = static_cast<mfem::Mesh *>(ctx.mfem_mesh);
+    if (fes == nullptr || mesh == nullptr) {
+        error = "MFEM FE space or mesh is null during bulk DMI computation";
+        return false;
+    }
+
+    const double uniform_D = ctx.bulk_dmi_D;
+    const double uniform_Ms = ctx.material.saturation_magnetisation;
+    double energy = 0.0;
+
+    std::vector<double> node_weight(n, 0.0);
+
+    unpack_aos_to_existing_components(m_xyz, ctx.mfem_mx, ctx.mfem_my, ctx.mfem_mz);
+
+    auto *gf_mx = static_cast<mfem::GridFunction *>(ctx.mfem_gf_mx);
+    auto *gf_my = static_cast<mfem::GridFunction *>(ctx.mfem_gf_my);
+    auto *gf_mz = static_cast<mfem::GridFunction *>(ctx.mfem_gf_mz);
+
+    for (int elem = 0; elem < mesh->GetNE(); ++elem) {
+        if (!ctx.magnetic_element_mask.empty() &&
+            static_cast<size_t>(elem) < ctx.magnetic_element_mask.size() &&
+            ctx.magnetic_element_mask[elem] == 0u) {
+            continue;
+        }
+
+        const mfem::FiniteElement *fe = fes->GetFE(elem);
+        mfem::ElementTransformation *T = mesh->GetElementTransformation(elem);
+        mfem::Array<int> dofs;
+        fes->GetElementDofs(elem, dofs);
+        const int local_ndof = dofs.Size();
+
+        mfem::Vector mx_elem(local_ndof), my_elem(local_ndof), mz_elem(local_ndof);
+        for (int i = 0; i < local_ndof; ++i) {
+            const int gdof = dofs[i] >= 0 ? dofs[i] : -1 - dofs[i];
+            const double sign = dofs[i] >= 0 ? 1.0 : -1.0;
+            mx_elem(i) = sign * (*gf_mx)(gdof);
+            my_elem(i) = sign * (*gf_my)(gdof);
+            mz_elem(i) = sign * (*gf_mz)(gdof);
+        }
+
+        // Compute per-element average D and Ms
+        double elem_D = 0.0, elem_Ms = 0.0;
+        if (!ctx.Dbulk_field.empty() || !ctx.Ms_field.empty()) {
+            for (int i = 0; i < local_ndof; ++i) {
+                const int gdof2 = dofs[i] >= 0 ? dofs[i] : -1 - dofs[i];
+                elem_D  += ctx.Dbulk_field.empty() ? uniform_D : ctx.Dbulk_field[gdof2];
+                elem_Ms += ctx.Ms_field.empty() ? uniform_Ms : ctx.Ms_field[gdof2];
+            }
+            elem_D  /= static_cast<double>(local_ndof);
+            elem_Ms /= static_cast<double>(local_ndof);
+        } else {
+            elem_D  = uniform_D;
+            elem_Ms = uniform_Ms;
+        }
+        const double prefactor = 2.0 * elem_D / (kMu0 * elem_Ms);
+
+        const mfem::IntegrationRule &ir =
+            mfem::IntRules.Get(fe->GetGeomType(), 2 * fe->GetOrder());
+
+        for (int q = 0; q < ir.GetNPoints(); ++q) {
+            const mfem::IntegrationPoint &ip = ir.IntPoint(q);
+            T->SetIntPoint(&ip);
+            const double w = ip.weight * T->Weight();
+
+            mfem::DenseMatrix dshape(local_ndof, 3);
+            fe->CalcPhysDShape(*T, dshape);
+
+            // Full gradient: ∂m_i/∂x_j for i=x,y,z and j=x,y,z
+            double dmx_dx = 0.0, dmx_dy = 0.0, dmx_dz = 0.0;
+            double dmy_dx = 0.0, dmy_dy = 0.0, dmy_dz = 0.0;
+            double dmz_dx = 0.0, dmz_dy = 0.0, dmz_dz = 0.0;
+            for (int i = 0; i < local_ndof; ++i) {
+                dmx_dx += mx_elem(i) * dshape(i, 0);
+                dmx_dy += mx_elem(i) * dshape(i, 1);
+                dmx_dz += mx_elem(i) * dshape(i, 2);
+                dmy_dx += my_elem(i) * dshape(i, 0);
+                dmy_dy += my_elem(i) * dshape(i, 1);
+                dmy_dz += my_elem(i) * dshape(i, 2);
+                dmz_dx += mz_elem(i) * dshape(i, 0);
+                dmz_dy += mz_elem(i) * dshape(i, 1);
+                dmz_dz += mz_elem(i) * dshape(i, 2);
+            }
+
+            // ∇ × m
+            const double curl_x = dmz_dy - dmy_dz;
+            const double curl_y = dmx_dz - dmz_dx;
+            const double curl_z = dmy_dx - dmx_dy;
+
+            const double hx = prefactor * curl_x;
+            const double hy = prefactor * curl_y;
+            const double hz = prefactor * curl_z;
+
+            mfem::Vector shape(local_ndof);
+            fe->CalcShape(ip, shape);
+            for (int i = 0; i < local_ndof; ++i) {
+                const int gdof = dofs[i] >= 0 ? dofs[i] : -1 - dofs[i];
+                if (gdof < 0 || static_cast<uint32_t>(gdof) >= ctx.n_nodes) {
+                    continue;
+                }
+                const double phi_w = std::abs(shape(i)) * w;
+                const size_t base = static_cast<size_t>(gdof) * 3u;
+                h_dmi_xyz[base + 0] += phi_w * hx;
+                h_dmi_xyz[base + 1] += phi_w * hy;
+                h_dmi_xyz[base + 2] += phi_w * hz;
+                node_weight[gdof] += phi_w;
+            }
+
+            // Energy: e = D · m · (∇ × m)
+            if (dmi_energy != nullptr) {
+                double mx_q = 0.0, my_q = 0.0, mz_q = 0.0;
+                for (int i = 0; i < local_ndof; ++i) {
+                    mx_q += mx_elem(i) * shape(i);
+                    my_q += my_elem(i) * shape(i);
+                    mz_q += mz_elem(i) * shape(i);
+                }
+                energy += elem_D * (mx_q * curl_x + my_q * curl_y + mz_q * curl_z) * w;
+            }
+        }
+    }
+
+    // Normalize by accumulated weight
+    for (size_t i = 0; i < n; ++i) {
+        if (node_weight[i] > kGeomEps) {
+            const size_t base = i * 3u;
+            const double inv_w = 1.0 / node_weight[i];
+            h_dmi_xyz[base + 0] *= inv_w;
+            h_dmi_xyz[base + 1] *= inv_w;
+            h_dmi_xyz[base + 2] *= inv_w;
+        }
+    }
+
+    if (dmi_energy != nullptr) {
+        *dmi_energy = energy;
+    }
+
+    return true;
+#else
+    error = "Bulk DMI computation requires MFEM stack";
     return false;
 #endif
 }
@@ -2054,6 +2358,11 @@ bool context_step_exchange_heun_mfem(
         if (ctx.enable_anisotropy) {
             compute_uniaxial_anisotropy_field(ctx, ctx.m_xyz, ctx.h_ani_xyz, &ani_e);
         }
+        if (ctx.enable_cubic_anisotropy) {
+            double cub_e = 0.0;
+            compute_cubic_anisotropy_field(ctx, ctx.m_xyz, ctx.h_cubic_ani_xyz, &cub_e);
+            ani_e += cub_e;
+        }
         stats.anisotropy_energy_joules = ani_e;
     }
     {
@@ -2061,6 +2370,13 @@ bool context_step_exchange_heun_mfem(
         if (ctx.enable_dmi) {
             std::string dmi_err;
             compute_interfacial_dmi_field(ctx, ctx.m_xyz, ctx.h_dmi_xyz, &dmi_e, dmi_err);
+        }
+        if (ctx.enable_bulk_dmi) {
+            double bulk_e = 0.0;
+            std::string bulk_err;
+            std::vector<double> h_bulk_tmp;
+            compute_bulk_dmi_field(ctx, ctx.m_xyz, h_bulk_tmp, &bulk_e, bulk_err);
+            dmi_e += bulk_e;
         }
         stats.dmi_energy_joules = dmi_e;
     }
@@ -2371,6 +2687,11 @@ bool context_step_explicit_rk_mfem(
         if (ctx.enable_anisotropy) {
             compute_uniaxial_anisotropy_field(ctx, ctx.m_xyz, ctx.h_ani_xyz, &ani_e);
         }
+        if (ctx.enable_cubic_anisotropy) {
+            double cub_e = 0.0;
+            compute_cubic_anisotropy_field(ctx, ctx.m_xyz, ctx.h_cubic_ani_xyz, &cub_e);
+            ani_e += cub_e;
+        }
         stats.anisotropy_energy_joules = ani_e;
     }
     {
@@ -2378,6 +2699,13 @@ bool context_step_explicit_rk_mfem(
         if (ctx.enable_dmi) {
             std::string dmi_err;
             compute_interfacial_dmi_field(ctx, ctx.m_xyz, ctx.h_dmi_xyz, &dmi_e, dmi_err);
+        }
+        if (ctx.enable_bulk_dmi) {
+            double bulk_e = 0.0;
+            std::string bulk_err;
+            std::vector<double> h_bulk_tmp;
+            compute_bulk_dmi_field(ctx, ctx.m_xyz, h_bulk_tmp, &bulk_e, bulk_err);
+            dmi_e += bulk_e;
         }
         stats.dmi_energy_joules = dmi_e;
     }

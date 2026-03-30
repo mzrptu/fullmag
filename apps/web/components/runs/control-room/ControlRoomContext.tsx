@@ -202,6 +202,38 @@ function buildScriptBuilderUpdatePayload(
   };
 }
 
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("Failed to read uploaded file"));
+        return;
+      }
+      const base64 = result.includes(",") ? result.split(",", 2)[1] ?? "" : result;
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read uploaded file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function downloadBase64File(fileName: string, contentBase64: string) {
+  const binary = atob(contentBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function extractSolverPlan(
   metadata: Record<string, unknown> | null,
   session: SessionManifest | null,
@@ -380,6 +412,9 @@ export interface ControlRoomState {
   commandMessage: string | null;
   scriptSyncBusy: boolean;
   scriptSyncMessage: string | null;
+  stateIoBusy: boolean;
+  stateIoMessage: string | null;
+  scriptInitialState: ScriptBuilderState["initial_state"];
   runUntilInput: string;
 
   /* Preview config */
@@ -494,6 +529,15 @@ export interface ControlRoomActions {
   handleSimulationAction: (action: string) => void;
   handleCapture: () => void;
   handleExport: () => void;
+  handleStateExport: (format: string) => Promise<void>;
+  handleStateImport: (
+    file: File,
+    options?: {
+      format?: string;
+      applyToWorkspace?: boolean;
+      attachToScriptBuilder?: boolean;
+    },
+  ) => Promise<void>;
   requestPreviewQuantity: (nextQuantity: string) => void;
   syncScriptBuilder: () => Promise<void>;
 }
@@ -534,6 +578,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [commandMessage, setCommandMessage] = useState<string | null>(null);
   const [scriptSyncBusy, setScriptSyncBusy] = useState(false);
   const [scriptSyncMessage, setScriptSyncMessage] = useState<string | null>(null);
+  const [stateIoBusy, setStateIoBusy] = useState(false);
+  const [stateIoMessage, setStateIoMessage] = useState<string | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
   const [meshOptions, setMeshOptions] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
@@ -558,6 +604,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const preview = state?.preview ?? null;
   const femMesh = state?.fem_mesh ?? null;
   const scriptBuilder = state?.script_builder ?? null;
+  const scriptInitialState = scriptBuilder?.initial_state ?? null;
   const scalarRows = state?.scalar_rows ?? EMPTY_SCALAR_ROWS;
   const engineLog = state?.engine_log ?? EMPTY_ENGINE_LOG;
   const quantities = state?.quantities ?? [];
@@ -1122,6 +1169,76 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   const handleExport = useCallback(() => { void enqueueCommand({ kind: "save_vtk" }); }, [enqueueCommand]);
 
+  const handleStateExport = useCallback(async (format: string) => {
+    setStateIoBusy(true);
+    setStateIoMessage(null);
+    try {
+      const response = await liveApi.exportState({ format }) as {
+        file_name?: unknown;
+        content_base64?: unknown;
+        stored_path?: unknown;
+      };
+      const fileName =
+        typeof response.file_name === "string" && response.file_name.trim().length > 0
+          ? response.file_name
+          : `m_state.${format}`;
+      const contentBase64 =
+        typeof response.content_base64 === "string" ? response.content_base64 : "";
+      if (!contentBase64) {
+        throw new Error("Export response did not contain file content");
+      }
+      downloadBase64File(fileName, contentBase64);
+      setStateIoMessage(
+        typeof response.stored_path === "string" && response.stored_path.trim().length > 0
+          ? `Exported ${fileName} to ${response.stored_path}`
+          : `Exported ${fileName}`,
+      );
+    } catch (error) {
+      setStateIoMessage(error instanceof Error ? error.message : "Failed to export state");
+    } finally {
+      setStateIoBusy(false);
+    }
+  }, [liveApi]);
+
+  const handleStateImport = useCallback(async (
+    file: File,
+    options?: {
+      format?: string;
+      applyToWorkspace?: boolean;
+      attachToScriptBuilder?: boolean;
+    },
+  ) => {
+    setStateIoBusy(true);
+    setStateIoMessage(null);
+    try {
+      const contentBase64 = await fileToBase64(file);
+      const response = await liveApi.importState({
+        file_name: file.name,
+        content_base64: contentBase64,
+        format: options?.format ?? undefined,
+        apply_to_workspace: options?.applyToWorkspace ?? true,
+        attach_to_script_builder: options?.attachToScriptBuilder ?? true,
+      }) as { stored_path?: unknown; applied_to_workspace?: unknown };
+      const importedPath =
+        typeof response.stored_path === "string" && response.stored_path.trim().length > 0
+          ? response.stored_path
+          : file.name;
+      const applied =
+        typeof response.applied_to_workspace === "boolean"
+          ? response.applied_to_workspace
+          : (options?.applyToWorkspace ?? true);
+      setStateIoMessage(
+        applied
+          ? `Imported ${file.name} and applied it to the workspace`
+          : `Imported ${file.name} to ${importedPath}`,
+      );
+    } catch (error) {
+      setStateIoMessage(error instanceof Error ? error.message : "Failed to import state");
+    } finally {
+      setStateIoBusy(false);
+    }
+  }, [liveApi]);
+
   const syncScriptBuilder = useCallback(async () => {
     const scriptPath = session?.script_path ?? null;
     if (!scriptPath) {
@@ -1423,7 +1540,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshSelection, meshOptions, meshQualityData, meshGenerating,
     femDockTab, solverSettings, solverSetupOpen,
     interactiveEnabled, interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage,
-    scriptSyncBusy, scriptSyncMessage,
+    scriptSyncBusy, scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState,
     runUntilInput, previewBusy, previewMessage,
     previewControlsActive, requestedPreviewQuantity, requestedPreviewComponent,
     requestedPreviewLayer, requestedPreviewAllLayers, requestedPreviewEveryN,
@@ -1449,6 +1566,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setSolverSettings, setSolverSetupOpen, setRunUntilInput, setSelectedSidebarNodeId,
     enqueueCommand, handleCompute, updatePreview, handleMeshGenerate, openFemMeshWorkspace,
     handleViewModeChange, handleSimulationAction, handleCapture, handleExport,
+    handleStateExport, handleStateImport,
     requestPreviewQuantity, syncScriptBuilder,
   }), [
     connection, error, session, run, liveState, effectiveLiveState, preview, femMesh, scalarRows,
@@ -1461,7 +1579,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshClipAxis, meshClipPos, meshShowArrows, meshSelection, meshOptions, meshQualityData,
     meshGenerating, femDockTab, solverSettings, solverSetupOpen, interactiveEnabled,
     interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage, scriptSyncBusy,
-    scriptSyncMessage, runUntilInput,
+    scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState, runUntilInput,
     previewBusy, previewMessage, previewControlsActive, requestedPreviewQuantity,
     requestedPreviewComponent, requestedPreviewLayer, requestedPreviewAllLayers,
     requestedPreviewEveryN, requestedPreviewXChosenSize, requestedPreviewYChosenSize,
@@ -1477,6 +1595,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     selectedSidebarNodeId, emptyStateMessage,
     enqueueCommand, handleCompute, updatePreview, handleMeshGenerate, openFemMeshWorkspace,
     handleViewModeChange, handleSimulationAction, handleCapture, handleExport,
+    handleStateExport, handleStateImport,
     requestPreviewQuantity, syncScriptBuilder,
   ]);
 
