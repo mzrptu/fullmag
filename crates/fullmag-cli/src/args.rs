@@ -1,0 +1,161 @@
+use clap::{Parser, Subcommand, ValueEnum};
+use fullmag_ir::{BackendTarget, ExecutionMode, ExecutionPrecision};
+use serde::Serialize;
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+#[derive(Parser)]
+#[command(name = "fullmag")]
+#[command(
+    about = "Rust-hosted Fullmag CLI for Python-authored ProblemIR validation, planning, and execution"
+)]
+#[command(
+    override_usage = "fullmag <COMMAND>\n       fullmag [-i|--interactive] [--dev] <script.py> [--backend <auto|fdm|fem|hybrid>] [--mode <strict|extended|hybrid>] [--precision <single|double>] [--headless]"
+)]
+#[command(
+    after_help = "Script mode examples:\n  fullmag examples/exchange_relax.py\n  fullmag --dev examples/exchange_relax.py\n  fullmag -i examples/exchange_relax.py\n\nThe launcher gets the run horizon from the script itself.\nFor time evolution scripts define DEFAULT_UNTIL in the script.\nFor relaxation studies Fullmag derives the execution horizon from the study settings.\nDefault behavior serves the built control room from the embedded API unless --headless is passed.\nUse --dev to run the Next.js control room in dev mode.\nUse -i / --interactive to keep the session alive after the scripted stages finish so that more run/relax commands can be queued from the control room or API."
+)]
+pub(crate) struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Parser, Debug)]
+pub(crate) struct ScriptCli {
+    pub script: PathBuf,
+    #[arg(short = 'i', long, default_value_t = false)]
+    pub interactive: bool,
+    #[arg(long, value_enum)]
+    pub backend: Option<BackendArg>,
+    #[arg(long, value_enum)]
+    pub mode: Option<ModeArg>,
+    #[arg(long, value_enum)]
+    pub precision: Option<PrecisionArg>,
+    #[arg(long)]
+    pub output_dir: Option<PathBuf>,
+    #[arg(long = "workspace-root", default_value = ".fullmag/local-live/history")]
+    pub session_root: PathBuf,
+    #[arg(long, default_value_t = false)]
+    pub headless: bool,
+    #[arg(long, default_value_t = false)]
+    pub dev: bool,
+    #[arg(long)]
+    pub json: bool,
+    #[arg(
+        long,
+        help = "Port for the dev control room frontend (auto-selects 3000-3010 if omitted)"
+    )]
+    pub web_port: Option<u16>,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum Command {
+    Doctor,
+    ExampleIr,
+    ReferenceExchangeDemo {
+        #[arg(long, default_value_t = 10)]
+        steps: usize,
+        #[arg(long, default_value_t = 1e-13)]
+        dt: f64,
+    },
+    ValidateJson {
+        path: PathBuf,
+    },
+    PlanJson {
+        path: PathBuf,
+        #[arg(long)]
+        backend: Option<BackendArg>,
+    },
+    RunJson {
+        path: PathBuf,
+        #[arg(long)]
+        until: f64,
+        #[arg(long, default_value = "run_output")]
+        output_dir: PathBuf,
+    },
+    #[command(hide = true)]
+    ResolveRuntimeInvocation {
+        #[arg(long, default_value_t = false)]
+        shell: bool,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        raw_args: Vec<OsString>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BackendArg {
+    Auto,
+    Fdm,
+    Fem,
+    Hybrid,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ModeArg {
+    Strict,
+    Extended,
+    Hybrid,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PrecisionArg {
+    Single,
+    Double,
+}
+
+impl From<BackendArg> for BackendTarget {
+    fn from(value: BackendArg) -> Self {
+        match value {
+            BackendArg::Auto => BackendTarget::Auto,
+            BackendArg::Fdm => BackendTarget::Fdm,
+            BackendArg::Fem => BackendTarget::Fem,
+            BackendArg::Hybrid => BackendTarget::Hybrid,
+        }
+    }
+}
+
+impl From<ModeArg> for ExecutionMode {
+    fn from(value: ModeArg) -> Self {
+        match value {
+            ModeArg::Strict => ExecutionMode::Strict,
+            ModeArg::Extended => ExecutionMode::Extended,
+            ModeArg::Hybrid => ExecutionMode::Hybrid,
+        }
+    }
+}
+
+impl From<PrecisionArg> for ExecutionPrecision {
+    fn from(value: PrecisionArg) -> Self {
+        match value {
+            PrecisionArg::Single => ExecutionPrecision::Single,
+            PrecisionArg::Double => ExecutionPrecision::Double,
+        }
+    }
+}
+
+pub(crate) fn backend_target_name(value: BackendTarget) -> &'static str {
+    match value {
+        BackendTarget::Auto => "auto",
+        BackendTarget::Fdm => "fdm",
+        BackendTarget::Fem => "fem",
+        BackendTarget::Hybrid => "hybrid",
+    }
+}
+
+pub(crate) fn execution_mode_name(value: ExecutionMode) -> &'static str {
+    match value {
+        ExecutionMode::Strict => "strict",
+        ExecutionMode::Extended => "extended",
+        ExecutionMode::Hybrid => "hybrid",
+    }
+}
+
+pub(crate) fn execution_precision_name(value: ExecutionPrecision) -> &'static str {
+    match value {
+        ExecutionPrecision::Single => "single",
+        ExecutionPrecision::Double => "double",
+    }
+}

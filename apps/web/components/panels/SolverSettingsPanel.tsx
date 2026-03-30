@@ -1,9 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Input } from "../ui/input";
-import { Button } from "../ui/button";
 
 /* ── Types ─────────────────────────────────────────────────── */
 
@@ -34,15 +32,16 @@ export const DEFAULT_SOLVER_SETTINGS: SolverSettingsState = {
   relaxAlpha: "",
 };
 
-interface SolverSettingsPanelProps {
+export interface IntegratorSettingsPanelProps {
   settings: SolverSettingsState;
   onChange: (next: SolverSettingsState) => void;
-  /** Whether solver is currently running — disables mutation. */
   solverRunning?: boolean;
-  /** Workspace is in interactive mode and awaiting a command. */
-  awaitingCommand?: boolean;
-  /** Callback: apply solver settings to the next run/relax command. */
-  onApply?: () => void;
+}
+
+export interface RelaxationSettingsPanelProps {
+  settings: SolverSettingsState;
+  onChange: (next: SolverSettingsState) => void;
+  solverRunning?: boolean;
 }
 
 /* ── Algorithm options ─────────────────────────────────────── */
@@ -72,194 +71,193 @@ function HelpTip({ text }: { text: string }) {
   );
 }
 
-/* ── Component ─────────────────────────────────────────────── */
+/* ── Components ────────────────────────────────────────────── */
 
-export default function SolverSettingsPanel({
-  settings,
-  onChange,
-  solverRunning = false,
-  awaitingCommand = false,
-  onApply,
-}: SolverSettingsPanelProps) {
-  const disabled = solverRunning;
-  const canApply = awaitingCommand && !solverRunning;
-
-  const update = (patch: Partial<SolverSettingsState>) =>
-    onChange({ ...settings, ...patch });
-
+export function IntegratorSettingsPanel({ settings, onChange, solverRunning = false }: IntegratorSettingsPanelProps) {
+  const update = (patch: Partial<SolverSettingsState>) => onChange({ ...settings, ...patch });
   const selectedIntegrator = INTEGRATOR_OPTIONS.find((o) => o.value === settings.integrator);
-  const selectedRelax = RELAX_ALGORITHM_OPTIONS.find((o) => o.value === settings.relaxAlgorithm);
 
   return (
-    <div className="flex flex-col gap-2 p-3">
-      {/* ── Time Integration ── */}
-      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
-        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
-          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Time Integration</span>
-          <HelpTip text="Controls how the LLG equation is stepped forward in time. Adaptive integrators adjust Δt automatically for accuracy." />
-        </div>
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Integrator</span>
-            <div className="flex-1 max-w-[140px]">
-              <Select
-                value={settings.integrator}
-                onValueChange={(val) => update({ integrator: val })}
-                disabled={disabled}
-              >
-                <SelectTrigger className="h-7 w-full border-border/50 bg-card text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {INTEGRATOR_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          {selectedIntegrator && (
-            <div className="text-[0.65rem] leading-relaxed text-muted-foreground mt-[-4px] mb-2 p-1.5 bg-black/10 rounded-md border border-border/20 border-l-2 border-l-primary/50">{selectedIntegrator.desc}</div>
-          )}
+    <div className="flex flex-col gap-4 py-4">
+      {/* Documentation Block */}
+      <div className="bg-blue-500/10 border border-blue-500/20 rounded-md p-3 text-xs text-blue-100 leading-relaxed shadow-sm">
+        <strong className="text-blue-400 block mb-1 uppercase tracking-widest text-[0.65rem]">Time Integration</strong>
+        Select the numerical method used to advance the Landau-Lifshitz-Gilbert (LLG) equation in time.
+        Adaptive solvers (RK45, RK23) will automatically scale the timestep to maintain requested tolerance, whereas
+        explicit methods (Heun, RK4) require a carefully chosen fixed timestep to ensure stability.
+      </div>
 
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-              Fixed Δt
-              <HelpTip text="Leave empty for adaptive timestep (recommended for RK2(3)/RK4(5)). Set to e.g. 1e-13 for fixed-step integrators." />
-            </span>
-            <div className="flex-1 max-w-[140px]">
-              <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
-                type="text"
-                value={settings.fixedTimestep}
-                onChange={(e) => update({ fixedTimestep: e.target.value })}
-                placeholder="auto"
-                disabled={disabled}
-              />
-            </div>
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Method</span>
+          <div className="flex-1 max-w-[150px]">
+            <Select
+              value={settings.integrator}
+              onValueChange={(val) => update({ integrator: val })}
+              disabled={solverRunning}
+            >
+              <SelectTrigger className="h-8 w-full border-border/50 bg-card text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {INTEGRATOR_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {selectedIntegrator && (
+          <div className="text-[0.7rem] leading-relaxed text-muted-foreground p-2 bg-black/10 rounded-md border border-border/20 border-l-2 border-l-blue-500/50">
+            {selectedIntegrator.desc}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+            Fixed Step (Δt)
+            <HelpTip text="Leave empty to enable automatic adaptive timestep control. Provide a value in seconds (e.g., 1e-13) to enforce a fixed step." />
+          </span>
+          <div className="flex-1 max-w-[150px]">
+            <Input
+              className="h-8 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              value={settings.fixedTimestep}
+              onChange={(e) => update({ fixedTimestep: e.target.value })}
+              placeholder="auto"
+              disabled={solverRunning}
+            />
           </div>
         </div>
       </div>
-
-      {/* ── Relaxation ── */}
-      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
-        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
-          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Relaxation</span>
-          <HelpTip text="Energy minimization to find the ground state. The solver iterates until torque drops below the tolerance or the max step count is reached." />
-        </div>
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Algorithm</span>
-            <div className="flex-1 max-w-[140px]">
-              <Select
-                value={settings.relaxAlgorithm}
-                onValueChange={(val) => update({ relaxAlgorithm: val })}
-                disabled={disabled}
-              >
-                <SelectTrigger className="h-7 w-full border-border/50 bg-card text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {RELAX_ALGORITHM_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          {selectedRelax && (
-            <div className="text-[0.65rem] leading-relaxed text-muted-foreground mt-[-4px] mb-2 p-1.5 bg-black/10 rounded-md border border-border/20 border-l-2 border-l-primary/50">{selectedRelax.desc}</div>
-          )}
-
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-              Torque tol.
-              <HelpTip text="Convergence criterion: max|m × H_eff| < tolerance. Typical: 1e-5 (fast) to 1e-7 (precise). Unit: T." />
-            </span>
-            <div className="flex-1 max-w-[140px]">
-              <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
-                type="text"
-                value={settings.torqueTolerance}
-                onChange={(e) => update({ torqueTolerance: e.target.value })}
-                placeholder="1e-6"
-                disabled={disabled}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-              Energy tol.
-              <HelpTip text="Optional secondary criterion: |ΔE_total| < tolerance between steps. Leave empty to use torque-only convergence." />
-            </span>
-            <div className="flex-1 max-w-[140px]">
-              <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
-                type="text"
-                value={settings.energyTolerance}
-                onChange={(e) => update({ energyTolerance: e.target.value })}
-                placeholder="disabled"
-                disabled={disabled}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-              Max steps
-              <HelpTip text="Maximum number of iterations before giving up. Increase for complex geometries or tight tolerances." />
-            </span>
-            <div className="flex-1 max-w-[140px]">
-              <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
-                type="text"
-                value={settings.maxRelaxSteps}
-                onChange={(e) => update({ maxRelaxSteps: e.target.value })}
-                placeholder="5000"
-                disabled={disabled}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-              Damping α
-              <HelpTip text="Override the material damping for relaxation. Leave empty to use the material value. Higher α (e.g. 0.5–1.0) speeds convergence." />
-            </span>
-            <div className="flex-1 max-w-[140px]">
-              <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
-                type="text"
-                value={settings.relaxAlpha}
-                onChange={(e) => update({ relaxAlpha: e.target.value })}
-                placeholder="material default"
-                disabled={disabled}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Apply button ── */}
-      {canApply && onApply && (
-        <Button
-          className="mt-2 w-full h-8 text-xs font-bold uppercase tracking-widest"
-          variant="default"
-          onClick={onApply}
-          type="button"
-        >
-          Apply settings to next command
-        </Button>
-      )}
 
       {solverRunning && (
         <div className="mt-2 text-[0.65rem] text-amber-500 text-center uppercase tracking-widest font-bold p-2 bg-amber-500/10 rounded-md border border-amber-500/20">
-          Solver is running. Stop the simulation to modify settings.
+          Simulation running. Stop the engine to edit solver parameters.
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function RelaxationSettingsPanel({ settings, onChange, solverRunning = false }: RelaxationSettingsPanelProps) {
+  const update = (patch: Partial<SolverSettingsState>) => onChange({ ...settings, ...patch });
+  const selectedRelax = RELAX_ALGORITHM_OPTIONS.find((o) => o.value === settings.relaxAlgorithm);
+
+  return (
+    <div className="flex flex-col gap-4 py-4">
+      {/* Documentation Block */}
+      <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-md p-3 text-xs text-emerald-100 leading-relaxed shadow-sm">
+        <strong className="text-emerald-400 block mb-1 uppercase tracking-widest text-[0.65rem]">Energy Relaxation</strong>
+        Configure the steepest descent or conjugate gradient method used to find the magnetic ground state.
+        The algorithm iterates until the maximum effective torque acting on the system falls below the specified
+        tolerance threshold, ensuring a stable equilibrium state.
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Algorithm</span>
+          <div className="flex-1 max-w-[150px]">
+            <Select
+              value={settings.relaxAlgorithm}
+              onValueChange={(val) => update({ relaxAlgorithm: val })}
+              disabled={solverRunning}
+            >
+              <SelectTrigger className="h-8 w-full border-border/50 bg-card text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {RELAX_ALGORITHM_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {selectedRelax && (
+          <div className="text-[0.7rem] leading-relaxed text-muted-foreground p-2 bg-black/10 rounded-md border border-border/20 border-l-2 border-l-emerald-500/50">
+            {selectedRelax.desc}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-3 title-trigger">
+          <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+            Torque Tolerance
+            <HelpTip text="Target threshold for max|m × H_eff|. Default: 1e-6 T. Tighter tolerances (e.g. 1e-7) increase accuracy but require more steps." />
+          </span>
+          <div className="flex-1 max-w-[150px]">
+            <Input
+              className="h-8 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              value={settings.torqueTolerance}
+              onChange={(e) => update({ torqueTolerance: e.target.value })}
+              placeholder="1e-6"
+              disabled={solverRunning}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+            Energy Tolerance
+            <HelpTip text="Optional early-stopping threshold based on |ΔE_total| between solver steps. Leave empty to use purely torque-based convergence." />
+          </span>
+          <div className="flex-1 max-w-[150px]">
+            <Input
+              className="h-8 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              value={settings.energyTolerance}
+              onChange={(e) => update({ energyTolerance: e.target.value })}
+              placeholder="disabled"
+              disabled={solverRunning}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+            Max Steps
+            <HelpTip text="A hard cap on iteration count to prevent infinite loops if the tolerance is unreachable." />
+          </span>
+          <div className="flex-1 max-w-[150px]">
+            <Input
+              className="h-8 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              value={settings.maxRelaxSteps}
+              onChange={(e) => update({ maxRelaxSteps: e.target.value })}
+              placeholder="5000"
+              disabled={solverRunning}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+            Damping α
+            <HelpTip text="Artificial damping used exclusively during relaxation. Setting this to 1.0 (overdamped) vastly accelerates convergence towards the local minimum." />
+          </span>
+          <div className="flex-1 max-w-[150px]">
+            <Input
+              className="h-8 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              value={settings.relaxAlpha}
+              onChange={(e) => update({ relaxAlpha: e.target.value })}
+              placeholder="use material α"
+              disabled={solverRunning}
+            />
+          </div>
+        </div>
+      </div>
+
+      {solverRunning && (
+        <div className="mt-2 text-[0.65rem] text-amber-500 text-center uppercase tracking-widest font-bold p-2 bg-amber-500/10 rounded-md border border-amber-500/20">
+          Simulation running. Stop the engine to edit solver parameters.
         </div>
       )}
     </div>

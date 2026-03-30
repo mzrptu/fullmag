@@ -402,7 +402,6 @@ export interface ControlRoomState {
 
   /* Solver settings */
   solverSettings: SolverSettingsState;
-  solverSetupOpen: boolean;
 
   /* Interactive */
   interactiveEnabled: boolean;
@@ -517,7 +516,6 @@ export interface ControlRoomActions {
   setMeshOptions: React.Dispatch<React.SetStateAction<MeshOptionsState>>;
   setFemDockTab: React.Dispatch<React.SetStateAction<FemDockTab>>;
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
-  setSolverSetupOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setRunUntilInput: React.Dispatch<React.SetStateAction<string>>;
   setSelectedSidebarNodeId: React.Dispatch<React.SetStateAction<string | null>>;
   enqueueCommand: (payload: Record<string, unknown>) => Promise<void>;
@@ -586,7 +584,6 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [meshQualityData, setMeshQualityData] = useState<MeshQualityData | null>(null);
   const [meshGenerating, setMeshGenerating] = useState(false);
   const [solverSettings, setSolverSettings] = useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
-  const [solverSetupOpen, setSolverSetupOpen] = useState(false);
   const builderHydratedSessionRef = useRef<string | null>(null);
   const builderPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastBuilderPushSignatureRef = useRef<string | null>(null);
@@ -1098,7 +1095,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         setCommandMessage("Run requires a positive stop time");
         return;
       }
-      void enqueueCommand({ kind: "run", until_seconds: untilSeconds });
+      void enqueueCommand({
+        kind: "run",
+        until_seconds: untilSeconds,
+        integrator: solverSettings.integrator,
+        fixed_timestep: parseOptionalNumber(solverSettings.fixedTimestep),
+      });
       return;
     }
 
@@ -1113,6 +1115,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         max_steps: maxSteps,
         torque_tolerance: parseOptionalNumber(solverSettings.torqueTolerance),
         energy_tolerance: parseOptionalNumber(solverSettings.energyTolerance),
+        relax_algorithm: solverSettings.relaxAlgorithm,
+        relax_alpha: parseOptionalNumber(solverSettings.relaxAlpha),
       });
       return;
     }
@@ -1538,7 +1542,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     consoleCollapsed, sidebarCollapsed,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating,
-    femDockTab, solverSettings, solverSetupOpen,
+    femDockTab, solverSettings,
     interactiveEnabled, interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage,
     scriptSyncBusy, scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState,
     runUntilInput, previewBusy, previewMessage,
@@ -1563,7 +1567,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setConsoleCollapsed, setSidebarCollapsed,
     setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis, setMeshClipPos,
     setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
-    setSolverSettings, setSolverSetupOpen, setRunUntilInput, setSelectedSidebarNodeId,
+    setSolverSettings, setRunUntilInput, setSelectedSidebarNodeId,
     enqueueCommand, handleCompute, updatePreview, handleMeshGenerate, openFemMeshWorkspace,
     handleViewModeChange, handleSimulationAction, handleCapture, handleExport,
     handleStateExport, handleStateImport,
@@ -1577,7 +1581,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     viewMode, effectiveViewMode, component, plane, sliceIndex, selectedQuantity,
     consoleCollapsed, sidebarCollapsed, meshRenderMode, meshOpacity, meshClipEnabled,
     meshClipAxis, meshClipPos, meshShowArrows, meshSelection, meshOptions, meshQualityData,
-    meshGenerating, femDockTab, solverSettings, solverSetupOpen, interactiveEnabled,
+    meshGenerating, femDockTab, solverSettings, interactiveEnabled,
     interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage, scriptSyncBusy,
     scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState, runUntilInput,
     previewBusy, previewMessage, previewControlsActive, requestedPreviewQuantity,

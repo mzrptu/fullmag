@@ -28,6 +28,7 @@ extern void launch_demag_field_fp64(Context &ctx);
 extern void launch_effective_field_fp64(Context &ctx);
 extern double launch_demag_energy_fp64(Context &ctx);
 extern double launch_external_energy_fp64(Context &ctx);
+extern double reduce_uniaxial_anisotropy_energy_fp64(Context &ctx);
 
 // Forward declarations from reductions_fp64.cu
 extern double reduce_max_norm_fp64(Context &ctx, const void *vx, const void *vy, const void *vz, uint64_t n);
@@ -295,6 +296,7 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
     stats->exchange_energy_joules = e_ex;
     stats->demag_energy_joules = e_demag;
     stats->external_energy_joules = e_ext;
+    stats->anisotropy_energy_joules = e_aniso;
     stats->total_energy_joules = e_total;
     stats->max_effective_field_amplitude = max_h_eff;
     stats->max_demag_field_amplitude = max_h_demag;

@@ -211,6 +211,9 @@ __global__ void unpack_demag_fft_fp64_kernel(
 }
 
 __global__ void combine_effective_field_fp64_kernel(
+    const double * __restrict__ m_x,
+    const double * __restrict__ m_y,
+    const double * __restrict__ m_z,
     const double * __restrict__ h_ex_x,
     const double * __restrict__ h_ex_y,
     const double * __restrict__ h_ex_z,
@@ -227,7 +230,31 @@ __global__ void combine_effective_field_fp64_kernel(
     int has_active_mask,
     double hx_ext,
     double hy_ext,
-    double hz_ext)
+    double hz_ext,
+    int has_uniaxial_anisotropy,
+    double Ku1,
+    double Ku2,
+    double ux,
+    double uy,
+    double uz,
+    const double * __restrict__ ku1_field,
+    const double * __restrict__ ku2_field,
+    double ms,
+    int has_cubic_anisotropy,
+    double Kc1,
+    double Kc2,
+    double Kc3,
+    double c1x, double c1y, double c1z,
+    double c2x, double c2y, double c2z,
+    const double * __restrict__ kc1_field,
+    const double * __restrict__ kc2_field,
+    const double * __restrict__ kc3_field,
+    int has_interfacial_dmi,
+    int has_bulk_dmi,
+    double D_int,
+    double D_bulk,
+    int nx, int ny, int nz,
+    double inv_2dx, double inv_2dy, double inv_2dz)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
@@ -239,9 +266,113 @@ __global__ void combine_effective_field_fp64_kernel(
         return;
     }
 
+    double mx = m_x[idx];
+    double my = m_y[idx];
+    double mz = m_z[idx];
+
     double hx = hx_ext;
     double hy = hy_ext;
     double hz = hz_ext;
+
+    if (has_uniaxial_anisotropy && ms > 0.0) {
+        double mu0 = 4.0 * M_PI * 1e-7;
+        double ku1_val = ku1_field ? ku1_field[idx] : Ku1;
+        double ku2_val = ku2_field ? ku2_field[idx] : Ku2;
+        
+        double m_dot_u = mx * ux + my * uy + mz * uz;
+        double prefactor = 2.0 / (mu0 * ms);
+        
+        double term = prefactor * (ku1_val * m_dot_u + 2.0 * ku2_val * m_dot_u * m_dot_u * m_dot_u);
+        
+        hx += term * ux;
+        hy += term * uy;
+        hz += term * uz;
+    }
+
+    if (has_cubic_anisotropy && ms > 0.0) {
+        double mu0 = 4.0 * M_PI * 1e-7;
+        double kc1_val = kc1_field ? kc1_field[idx] : Kc1;
+        double kc2_val = kc2_field ? kc2_field[idx] : Kc2;
+        double kc3_val = kc3_field ? kc3_field[idx] : Kc3;
+        double inv_mu0Ms = 1.0 / (mu0 * ms);
+        
+        double c3x = c1y * c2z - c1z * c2y;
+        double c3y = c1z * c2x - c1x * c2z;
+        double c3z = c1x * c2y - c1y * c2x;
+        
+        double m1 = mx * c1x + my * c1y + mz * c1z;
+        double m2 = mx * c2x + my * c2y + mz * c2z;
+        double m3 = mx * c3x + my * c3y + mz * c3z;
+        
+        double m1sq = m1 * m1, m2sq = m2 * m2, m3sq = m3 * m3;
+        double sigma = m1sq * m2sq + m2sq * m3sq + m1sq * m3sq;
+        
+        double pf1 = -2.0 * kc1_val * inv_mu0Ms;
+        double pf2 = -2.0 * kc2_val * inv_mu0Ms;
+        double pf3 = -4.0 * kc3_val * inv_mu0Ms;
+        
+        double g1 = pf1 * m1 * (m2sq + m3sq) + pf2 * m1 * m2sq * m3sq + pf3 * sigma * m1 * (m2sq + m3sq);
+        double g2 = pf1 * m2 * (m1sq + m3sq) + pf2 * m1sq * m2 * m3sq + pf3 * sigma * m2 * (m1sq + m3sq);
+        double g3 = pf1 * m3 * (m1sq + m2sq) + pf2 * m1sq * m2sq * m3 + pf3 * sigma * m3 * (m1sq + m2sq);
+        
+        hx += g1 * c1x + g2 * c2x + g3 * c3x;
+        hy += g1 * c1y + g2 * c2y + g3 * c3y;
+        hz += g1 * c1z + g2 * c2z + g3 * c3z;
+    }
+
+    // --- DMI (finite differences with Neumann BC clamping) ---
+    if ((has_interfacial_dmi || has_bulk_dmi) && ms > 0.0) {
+        int iz = idx / (ny * nx);
+        int rem = idx - iz * ny * nx;
+        int iy = rem / nx;
+        int ix = rem - iy * nx;
+
+        // Clamped neighbor indices (Neumann BC)
+        int xm = (ix > 0)      ? idx - 1       : idx;
+        int xp = (ix < nx - 1) ? idx + 1       : idx;
+        int ym = (iy > 0)      ? idx - nx      : idx;
+        int yp = (iy < ny - 1) ? idx + nx      : idx;
+        int zm = (iz > 0)      ? idx - nx * ny : idx;
+        int zp = (iz < nz - 1) ? idx + nx * ny : idx;
+
+        if (has_active_mask) {
+            if (active_mask[xm] == 0) xm = idx;
+            if (active_mask[xp] == 0) xp = idx;
+            if (active_mask[ym] == 0) ym = idx;
+            if (active_mask[yp] == 0) yp = idx;
+            if (active_mask[zm] == 0) zm = idx;
+            if (active_mask[zp] == 0) zp = idx;
+        }
+
+        double mu0 = 4.0 * M_PI * 1e-7;
+        double dmi_pf = 2.0 / (mu0 * ms);
+
+        if (has_interfacial_dmi) {
+            // Interfacial DMI: H_x = D*(dmz/dx), H_y = D*(dmz/dy), H_z = -D*(dmx/dx + dmy/dy)
+            double dmz_dx = (m_z[xp] - m_z[xm]) * inv_2dx;
+            double dmz_dy = (m_z[yp] - m_z[ym]) * inv_2dy;
+            double dmx_dx = (m_x[xp] - m_x[xm]) * inv_2dx;
+            double dmy_dy = (m_y[yp] - m_y[ym]) * inv_2dy;
+
+            hx += dmi_pf * D_int * dmz_dx;
+            hy += dmi_pf * D_int * dmz_dy;
+            hz -= dmi_pf * D_int * (dmx_dx + dmy_dy);
+        }
+
+        if (has_bulk_dmi) {
+            // Bulk DMI: H = D * (curl m)
+            double dmz_dy = (m_z[yp] - m_z[ym]) * inv_2dy;
+            double dmy_dz = (m_y[zp] - m_y[zm]) * inv_2dz;
+            double dmx_dz = (m_x[zp] - m_x[zm]) * inv_2dz;
+            double dmz_dx = (m_z[xp] - m_z[xm]) * inv_2dx;
+            double dmy_dx = (m_y[xp] - m_y[xm]) * inv_2dx;
+            double dmx_dy = (m_x[yp] - m_x[ym]) * inv_2dy;
+
+            hx += dmi_pf * D_bulk * (dmz_dy - dmy_dz);
+            hy += dmi_pf * D_bulk * (dmx_dz - dmz_dx);
+            hz += dmi_pf * D_bulk * (dmy_dx - dmx_dy);
+        }
+    }
 
     if (enable_exchange) {
         hx += h_ex_x[idx];
@@ -384,6 +515,9 @@ void launch_effective_field_fp64(Context &ctx) {
     int n = static_cast<int>(ctx.cell_count);
     int grid = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     combine_effective_field_fp64_kernel<<<grid, BLOCK_SIZE>>>(
+        static_cast<const double*>(ctx.m.x),
+        static_cast<const double*>(ctx.m.y),
+        static_cast<const double*>(ctx.m.z),
         static_cast<const double*>(ctx.h_ex.x),
         static_cast<const double*>(ctx.h_ex.y),
         static_cast<const double*>(ctx.h_ex.z),
@@ -400,7 +534,31 @@ void launch_effective_field_fp64(Context &ctx) {
         ctx.has_active_mask ? 1 : 0,
         ctx.has_external_field ? ctx.external_field[0] : 0.0,
         ctx.has_external_field ? ctx.external_field[1] : 0.0,
-        ctx.has_external_field ? ctx.external_field[2] : 0.0);
+        ctx.has_external_field ? ctx.external_field[2] : 0.0,
+        ctx.has_uniaxial_anisotropy ? 1 : 0,
+        ctx.Ku1,
+        ctx.Ku2,
+        ctx.anisU[0],
+        ctx.anisU[1],
+        ctx.anisU[2],
+        ctx.ku1_field,
+        ctx.ku2_field,
+        ctx.Ms,
+        ctx.has_cubic_anisotropy ? 1 : 0,
+        ctx.Kc1,
+        ctx.Kc2,
+        ctx.Kc3,
+        ctx.cubic_axis1[0], ctx.cubic_axis1[1], ctx.cubic_axis1[2],
+        ctx.cubic_axis2[0], ctx.cubic_axis2[1], ctx.cubic_axis2[2],
+        ctx.kc1_field,
+        ctx.kc2_field,
+        ctx.kc3_field,
+        ctx.has_interfacial_dmi ? 1 : 0,
+        ctx.has_bulk_dmi ? 1 : 0,
+        ctx.D_interfacial,
+        ctx.D_bulk,
+        static_cast<int>(ctx.nx), static_cast<int>(ctx.ny), static_cast<int>(ctx.nz),
+        0.5 / ctx.dx, 0.5 / ctx.dy, 0.5 / ctx.dz);
 }
 
 double launch_demag_energy_fp64(Context &ctx) {

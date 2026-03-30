@@ -1,0 +1,294 @@
+use fullmag_ir::{GeometryAssetsIR, ProblemIR};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ScriptRunSummary {
+    pub session_id: String,
+    pub run_id: String,
+    pub script_path: String,
+    pub problem_name: String,
+    pub status: String,
+    pub backend: String,
+    pub mode: String,
+    pub precision: String,
+    pub total_steps: usize,
+    pub final_time: Option<f64>,
+    pub final_e_ex: Option<f64>,
+    pub final_e_demag: Option<f64>,
+    pub final_e_ext: Option<f64>,
+    pub final_e_total: Option<f64>,
+    pub artifact_dir: String,
+    pub workspace_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SessionManifest {
+    pub session_id: String,
+    pub run_id: String,
+    pub status: String,
+    pub interactive_session_requested: bool,
+    pub script_path: String,
+    pub problem_name: String,
+    pub requested_backend: String,
+    pub execution_mode: String,
+    pub precision: String,
+    pub artifact_dir: String,
+    pub started_at_unix_ms: u128,
+    pub finished_at_unix_ms: u128,
+    pub plan_summary: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RunManifest {
+    pub run_id: String,
+    pub session_id: String,
+    pub status: String,
+    pub total_steps: usize,
+    pub final_time: Option<f64>,
+    pub final_e_ex: Option<f64>,
+    pub final_e_demag: Option<f64>,
+    pub final_e_ext: Option<f64>,
+    pub final_e_total: Option<f64>,
+    pub artifact_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct LiveStateManifest {
+    pub status: String,
+    pub updated_at_unix_ms: u128,
+    pub latest_step: LiveStepView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct EngineLogEntry {
+    pub timestamp_unix_ms: u128,
+    pub level: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct LiveStepView {
+    pub step: u64,
+    pub time: f64,
+    pub dt: f64,
+    pub e_ex: f64,
+    pub e_demag: f64,
+    pub e_ext: f64,
+    pub e_total: f64,
+    pub max_dm_dt: f64,
+    pub max_h_eff: f64,
+    pub max_h_demag: f64,
+    pub wall_time_ns: u64,
+    pub grid: [u32; 3],
+    pub fem_mesh: Option<fullmag_runner::FemMeshPayload>,
+    pub magnetization: Option<Vec<f64>>,
+    pub preview_field: Option<fullmag_runner::LivePreviewField>,
+    pub finished: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ScriptExecutionConfig {
+    pub ir: ProblemIR,
+    #[serde(default)]
+    pub shared_geometry_assets: Option<GeometryAssetsIR>,
+    pub default_until_seconds: Option<f64>,
+    #[serde(default)]
+    pub stages: Vec<ScriptExecutionStage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ScriptExecutionStage {
+    pub ir: ProblemIR,
+    pub default_until_seconds: Option<f64>,
+    pub entrypoint_kind: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RuntimeResolutionSummary {
+    pub script_mode: bool,
+    pub requested_backend: String,
+    pub resolved_backend: String,
+    pub requested_device: String,
+    pub requested_precision: String,
+    pub preferred_runtime_family: String,
+    pub local_engine_id: Option<String>,
+    pub local_engine_label: Option<String>,
+    pub requires_managed_runtime: bool,
+    pub entrypoint_kind: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedScriptStage {
+    pub ir: ProblemIR,
+    pub until_seconds: f64,
+    pub entrypoint_kind: String,
+}
+
+pub(crate) type CurrentDisplaySelection = fullmag_runner::DisplaySelectionState;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SessionCommand {
+    #[serde(default)]
+    pub seq: u64,
+    pub command_id: String,
+    pub kind: String,
+    pub created_at_unix_ms: u128,
+    #[serde(default)]
+    pub until_seconds: Option<f64>,
+    #[serde(default)]
+    pub max_steps: Option<u64>,
+    #[serde(default)]
+    pub torque_tolerance: Option<f64>,
+    #[serde(default)]
+    pub energy_tolerance: Option<f64>,
+    #[serde(default)]
+    pub integrator: Option<String>,
+    #[serde(default)]
+    pub fixed_timestep: Option<f64>,
+    #[serde(default)]
+    pub relax_algorithm: Option<String>,
+    #[serde(default)]
+    pub relax_alpha: Option<f64>,
+    #[serde(default)]
+    pub mesh_options: Option<serde_json::Value>,
+    #[serde(default)]
+    pub state_path: Option<String>,
+    #[serde(default)]
+    pub state_format: Option<String>,
+    #[serde(default)]
+    pub state_dataset: Option<String>,
+    #[serde(default)]
+    pub state_sample_index: Option<i64>,
+    #[serde(default)]
+    pub display_selection: Option<CurrentDisplaySelection>,
+    #[serde(default)]
+    pub preview_config: Option<fullmag_runner::LivePreviewRequest>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CurrentLiveScalarRow {
+    pub step: u64,
+    pub time: f64,
+    pub solver_dt: f64,
+    pub mx: f64,
+    pub my: f64,
+    pub mz: f64,
+    pub e_ex: f64,
+    pub e_demag: f64,
+    pub e_ext: f64,
+    pub e_total: f64,
+    pub max_dm_dt: f64,
+    pub max_h_eff: f64,
+    pub max_h_demag: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub(crate) struct CurrentLivePublishPayload {
+    pub session: Option<SessionManifest>,
+    pub session_status: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub run: Option<RunManifest>,
+    pub live_state: Option<LiveStateManifest>,
+    pub latest_scalar_row: Option<CurrentLiveScalarRow>,
+    pub latest_fields: Option<CurrentLiveLatestFields>,
+    pub preview_fields: Option<Vec<fullmag_runner::LivePreviewField>>,
+    pub clear_preview_cache: bool,
+    pub engine_log: Option<Vec<EngineLogEntry>>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(transparent)]
+pub(crate) struct CurrentLiveLatestFields(pub BTreeMap<String, serde_json::Value>);
+
+impl CurrentLiveLatestFields {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CurrentLivePreviewFieldCache(BTreeMap<String, fullmag_runner::LivePreviewField>);
+
+impl CurrentLivePreviewFieldCache {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub fn insert(&mut self, field: fullmag_runner::LivePreviewField) {
+        self.0.insert(field.quantity.clone(), field);
+    }
+
+    pub fn replace_all(&mut self, fields: impl IntoIterator<Item = fullmag_runner::LivePreviewField>) {
+        self.clear();
+        for field in fields {
+            self.insert(field);
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<fullmag_runner::LivePreviewField> {
+        self.0.values().cloned().collect()
+    }
+
+    pub fn take_vec(&mut self) -> Vec<fullmag_runner::LivePreviewField> {
+        std::mem::take(&mut self.0).into_values().collect()
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CurrentLivePublishRequest<'a> {
+    pub session_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<&'a SessionManifest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_status: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<&'a serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<&'a RunManifest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_state: Option<&'a LiveStateManifest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_scalar_row: Option<&'a CurrentLiveScalarRow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_fields: Option<&'a CurrentLiveLatestFields>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_fields: Option<&'a [fullmag_runner::LivePreviewField]>,
+    pub clear_preview_cache: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine_log: Option<&'a [EngineLogEntry]>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum PythonProgressEvent {
+    Message(String),
+    FemSurfacePreview {
+        geometry_name: String,
+        fem_mesh: fullmag_runner::FemMeshPayload,
+        message: Option<String>,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PythonProgressEnvelope {
+    pub kind: String,
+    #[serde(default)]
+    pub geometry_name: Option<String>,
+    #[serde(default)]
+    pub fem_mesh: Option<fullmag_runner::FemMeshPayload>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+pub(crate) type PythonProgressCallback = Arc<dyn Fn(PythonProgressEvent) + Send + Sync + 'static>;
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LoadedMagnetizationState {
+    pub vector_count: usize,
+    pub values: Vec<[f64; 3]>,
+}

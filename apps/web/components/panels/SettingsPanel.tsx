@@ -19,6 +19,7 @@ import {
   fmtSIOrDash,
   fmtStepValue,
 } from "../runs/control-room/shared";
+import { IntegratorSettingsPanel, RelaxationSettingsPanel } from "./SolverSettingsPanel";
 
 const SPARK_HISTORY_LIMIT = 40;
 
@@ -971,7 +972,6 @@ function StateIoPanel() {
   const handleImport = () => {
     if (!selectedFile) return;
     void ctx.handleStateImport(selectedFile, {
-      format,
       applyToWorkspace: canApplyToWorkspace && applyToWorkspace,
       attachToScriptBuilder,
     });
@@ -1090,6 +1090,24 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
     Boolean(builderContract?.rewriteStrategy === "canonical_rewrite" && ctx.sessionFooter.scriptPath);
 
   const renderNodeContent = () => {
+    if (nodeId === "study-integrator") {
+      return (
+        <IntegratorSettingsPanel
+          settings={ctx.solverSettings}
+          onChange={ctx.setSolverSettings}
+          solverRunning={ctx.workspaceStatus === "running"}
+        />
+      );
+    }
+    if (nodeId === "study-relax") {
+      return (
+        <RelaxationSettingsPanel
+          settings={ctx.solverSettings}
+          onChange={ctx.setSolverSettings}
+          solverRunning={ctx.workspaceStatus === "running"}
+        />
+      );
+    }
     if (nodeId === "study" || nodeId.startsWith("study-")) return <StudyPanel />;
     if (nodeId === "mesh-size" || nodeId === "mesh-algorithm" || nodeId === "mesh-quality") {
       return (
@@ -1106,7 +1124,11 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
       );
     }
     if (nodeId === "mesh" || nodeId.startsWith("mesh-")) return <MeshPanel />;
-    if (nodeId === "results" || nodeId.startsWith("res-") || nodeId === "physics" || nodeId.startsWith("phys-")) return <ResultsPanel />;
+    if (nodeId === "results" || nodeId.startsWith("res-") || nodeId === "physics" || nodeId.startsWith("phys-")) {
+      if (nodeId === "res-state-io") return <StateIoPanel />;
+      return <ResultsPanel />;
+    }
+    if (nodeId === "initial-state") return <StateIoPanel />;
     if (nodeId === "materials" || nodeId.startsWith("mat-")) return <MaterialPanel />;
     return <GeometryPanel />;
   };
@@ -1158,9 +1180,6 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
         </div>
       </SidebarSection>
 
-      <SidebarSection title="State I/O" defaultOpen={false}>
-        <StateIoPanel />
-      </SidebarSection>
 
       {builderContract && (
         <SidebarSection

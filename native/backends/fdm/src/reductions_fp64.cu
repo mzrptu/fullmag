@@ -288,7 +288,49 @@ __global__ void external_energy_blocks_kernel(
         block_out[blockIdx.x] = shared[0];
     }
 }
+template <typename Scalar>
+__global__ void uniaxial_anisotropy_energy_blocks_kernel(
+    const Scalar *mx,
+    const Scalar *my,
+    const Scalar *mz,
+    double *block_out,
+    uint64_t n,
+    double coeff,
+    double Ku1,
+    double Ku2,
+    double ux,
+    double uy,
+    double uz,
+    const double *ku1_field,
+    const double *ku2_field)
+{
+    __shared__ double shared[REDUCTION_BLOCK_SIZE];
+    uint64_t idx = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    uint64_t stride = static_cast<uint64_t>(gridDim.x) * blockDim.x;
 
+    double energy = 0.0;
+    for (; idx < n; idx += stride) {
+        double ku1_val = ku1_field ? ku1_field[idx] : Ku1;
+        double ku2_val = ku2_field ? ku2_field[idx] : Ku2;
+        double m_dot_u = to_f64(mx[idx]) * ux + to_f64(my[idx]) * uy + to_f64(mz[idx]) * uz;
+        double m_dot_u_sq = m_dot_u * m_dot_u;
+        energy += coeff * (ku1_val * m_dot_u_sq + ku2_val * m_dot_u_sq * m_dot_u_sq);
+    }
+
+    shared[threadIdx.x] = energy;
+    __syncthreads();
+
+    for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+        if (threadIdx.x < offset) {
+            shared[threadIdx.x] += shared[threadIdx.x + offset];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        block_out[blockIdx.x] = shared[0];
+    }
+}
 static uint64_t launch_grid_for(uint64_t n) {
     uint64_t blocks = (n + REDUCTION_BLOCK_SIZE - 1) / REDUCTION_BLOCK_SIZE;
     if (blocks == 0) {
@@ -478,6 +520,72 @@ double reduce_external_energy_fp32(Context &ctx) {
         ctx.external_field[1],
         ctx.external_field[2]);
     return finalize_sum_reduction(ctx.reduction_scratch, blocks);
+}
+
+double reduce_uniaxial_anisotropy_energy_fp64(Context &ctx) {
+    if (!ctx.has_uniaxial_anisotropy) {
+        return 0.0;
+    }
+    uint64_t blocks = launch_grid_for(ctx.cell_count);
+    double coeff = -1.0 * ctx.dx * ctx.dy * ctx.dz;  // Energy is -Ku1*(m.u)^2 ...
+    uniaxial_anisotropy_energy_blocks_kernel<<<static_cast<unsigned int>(blocks), REDUCTION_BLOCK_SIZE>>>(
+        static_cast<const double *>(ctx.m.x),
+        static_cast<const double *>(ctx.m.y),
+        static_cast<const double *>(ctx.m.z),
+        ctx.reduction_scratch,
+        ctx.cell_count,
+        coeff,
+        ctx.Ku1,
+        ctx.Ku2,
+        ctx.anisU[0],
+        ctx.anisU[1],
+        ctx.anisU[2],
+        ctx.ku1_field,
+        ctx.ku2_field);
+    return finalize_sum_reduction(ctx.reduction_scratch, blocks);
+}
+
+double reduce_uniaxial_anisotropy_energy_fp32(Context &ctx) {
+    if (!ctx.has_uniaxial_anisotropy) {
+        return 0.0;
+    }
+    uint64_t blocks = launch_grid_for(ctx.cell_count);
+    double coeff = -1.0 * ctx.dx * ctx.dy * ctx.dz;
+    uniaxial_anisotropy_energy_blocks_kernel<<<static_cast<unsigned int>(blocks), REDUCTION_BLOCK_SIZE>>>(
+        static_cast<const float *>(ctx.m.x),
+        static_cast<const float *>(ctx.m.y),
+        static_cast<const float *>(ctx.m.z),
+        ctx.reduction_scratch,
+        ctx.cell_count,
+        coeff,
+        ctx.Ku1,
+        ctx.Ku2,
+        ctx.anisU[0],
+        ctx.anisU[1],
+        ctx.anisU[2],
+        ctx.ku1_field,
+        ctx.ku2_field);
+    return finalize_sum_reduction(ctx.reduction_scratch, blocks);
+}
+
+double reduce_cubic_anisotropy_energy_fp64(Context &ctx) {
+    if (!ctx.has_cubic_anisotropy) {
+        return 0.0;
+    }
+    uint64_t blocks = launch_grid_for(ctx.cell_count);
+    // Cubic energy uses σ-formulation computed on device via a dedicated kernel
+    // E = Kc1·σ + Kc2·m1²m2²m3² + Kc3·σ² (integrated over volume)
+    // We reuse the reduction infrastructure with a new kernel template
+    // For now, compute on host from the device m — this is a temporary approach
+    // TODO: dedicated cubic energy kernel
+    return 0.0;  // placeholder until dedicated kernel
+}
+
+double reduce_cubic_anisotropy_energy_fp32(Context &ctx) {
+    if (!ctx.has_cubic_anisotropy) {
+        return 0.0;
+    }
+    return 0.0;  // placeholder until dedicated kernel
 }
 
 } // namespace fdm

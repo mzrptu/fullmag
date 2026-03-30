@@ -57,13 +57,15 @@ export default function RunSidebar() {
               ? "active"
               : undefined,
         scalarRowCount: ctx.scalarRows.length,
+        initialStatePath: ctx.scriptInitialState?.source_path ?? null,
+        initialStateFormat: ctx.scriptInitialState?.format ?? null,
       }),
     [
       ctx.effectiveFemMesh, ctx.hasSolverTelemetry, ctx.isFemBackend, ctx.material,
       ctx.mesherSourceKind, ctx.meshFeOrder, ctx.meshName,
       ctx.solverPlan?.integrator, ctx.solverPlan?.relaxation?.algorithm,
       ctx.solverSettings.integrator, ctx.solverSettings.relaxAlgorithm,
-      ctx.effectiveDmDt, ctx.scalarRows.length,
+      ctx.effectiveDmDt, ctx.scalarRows.length, ctx.scriptInitialState,
     ],
   );
 
@@ -211,8 +213,12 @@ export default function RunSidebar() {
               aria-expanded={inspectorOpen}
             >
               <span className={cn("text-emerald-500/70 mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", inspectorOpen && "rotate-90")}>▸</span>
-              <span className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-foreground">Inspector</span>
-              <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-muted-foreground bg-emerald-500/10 px-1.5 py-0.5 rounded-sm border border-emerald-500/20">{activeNode?.label ?? "Workspace"}</span>
+              <span className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-foreground">
+                Inspector
+              </span>
+              <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-muted-foreground bg-emerald-500/10 px-1.5 py-0.5 rounded-sm border border-emerald-500/20">
+                {activeNode?.label ?? "Workspace"}
+              </span>
             </button>
             {inspectorOpen && (
               <div className="flex-1 min-h-0 min-w-0 overflow-hidden isolate relative">

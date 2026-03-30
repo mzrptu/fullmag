@@ -57,6 +57,31 @@ struct Context {
     double external_field[3] = {0.0, 0.0, 0.0};
     uint64_t active_cell_count = 0;
 
+    // Uniaxial Anisotropy
+    bool has_uniaxial_anisotropy = false;
+    double Ku1 = 0.0;
+    double Ku2 = 0.0;
+    double anisU[3] = {0.0, 0.0, 1.0};
+    double *ku1_field = nullptr;
+    double *ku2_field = nullptr;
+
+    // Cubic Anisotropy
+    bool has_cubic_anisotropy = false;
+    double Kc1 = 0.0;
+    double Kc2 = 0.0;
+    double Kc3 = 0.0;
+    double cubic_axis1[3] = {1.0, 0.0, 0.0};
+    double cubic_axis2[3] = {0.0, 1.0, 0.0};
+    double *kc1_field = nullptr;
+    double *kc2_field = nullptr;
+    double *kc3_field = nullptr;
+
+    // DMI
+    bool has_interfacial_dmi = false;
+    double D_interfacial = 0.0;
+    bool has_bulk_dmi = false;
+    double D_bulk = 0.0;
+
     // Execution
     fullmag_fdm_precision precision;
     fullmag_fdm_integrator integrator;
@@ -210,6 +235,21 @@ bool context_upload_boundary_correction(
     const double *delta_yp, const double *delta_ym,
     const double *delta_zp, const double *delta_zm,
     uint64_t cell_count);
+
+/// Upload spatially varying uniaxial anisotropy constants (host f64 -> device f64).
+bool context_upload_anisotropy_fields(
+    Context &ctx,
+    const double *ku1,
+    const double *ku2,
+    uint64_t len);
+
+/// Upload spatially varying cubic anisotropy constants (host f64 -> device f64).
+bool context_upload_cubic_anisotropy_fields(
+    Context &ctx,
+    const double *kc1,
+    const double *kc2,
+    const double *kc3,
+    uint64_t len);
 
 /// Upload sparse demag boundary correction tensors.
 bool context_upload_demag_boundary_corr(

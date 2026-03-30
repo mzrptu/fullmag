@@ -105,6 +105,30 @@ typedef struct {
     int                        has_external_field;
     double                     external_field_am[3]; /* H_ext in A/m */
 
+    int                        has_uniaxial_anisotropy;
+    double                     uniaxial_anisotropy_constant; /* K_u1 (J/m^3) */
+    double                     uniaxial_anisotropy_k2;       /* K_u2 (J/m^3) */
+    double                     anisotropy_axis[3];           /* Normalized axis */
+
+    const double              *ku1_field;        /* optional f64[cell_count] */
+    const double              *ku2_field;        /* optional f64[cell_count] */
+
+    int                        has_cubic_anisotropy;
+    double                     cubic_Kc1;             /* 1st-order cubic (J/m^3) */
+    double                     cubic_Kc2;             /* 2nd-order cubic (J/m^3) */
+    double                     cubic_Kc3;             /* 3rd-order cubic (J/m^3) */
+    double                     cubic_axis1[3];        /* Normalized 1st crystal axis */
+    double                     cubic_axis2[3];        /* Normalized 2nd crystal axis; c3 = c1×c2 */
+
+    const double              *kc1_field;        /* optional f64[cell_count] */
+    const double              *kc2_field;        /* optional f64[cell_count] */
+    const double              *kc3_field;        /* optional f64[cell_count] */
+
+    int                        has_interfacial_dmi;
+    double                     dmi_D_interfacial;     /* D_ind (J/m^2) */
+    int                        has_bulk_dmi;
+    double                     dmi_D_bulk;            /* D_bulk (J/m^2) */
+
     /*
      * Optional precomputed Newell tensor spectra, interleaved as
      * [re0, im0, re1, im1, ...] in host-side f64 for each component.
@@ -206,6 +230,9 @@ typedef struct {
     double   exchange_energy_joules;
     double   demag_energy_joules;
     double   external_energy_joules;
+    double   anisotropy_energy_joules;
+    double   cubic_energy_joules;
+    double   dmi_energy_joules;
     double   total_energy_joules;
     double   max_effective_field_amplitude;  /* max |H_eff| */
     double   max_demag_field_amplitude;      /* max |H_demag| */

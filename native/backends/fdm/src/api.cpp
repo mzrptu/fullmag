@@ -127,6 +127,32 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
     ctx->external_field[2] = plan->external_field_am[2];
     ctx->active_cell_count = ctx->cell_count;
 
+    // Uniaxial Anisotropy
+    ctx->has_uniaxial_anisotropy = plan->has_uniaxial_anisotropy != 0;
+    ctx->Ku1 = plan->uniaxial_anisotropy_constant;
+    ctx->Ku2 = plan->uniaxial_anisotropy_k2;
+    ctx->anisU[0] = plan->anisotropy_axis[0];
+    ctx->anisU[1] = plan->anisotropy_axis[1];
+    ctx->anisU[2] = plan->anisotropy_axis[2];
+
+    // Cubic Anisotropy
+    ctx->has_cubic_anisotropy = plan->has_cubic_anisotropy != 0;
+    ctx->Kc1 = plan->cubic_Kc1;
+    ctx->Kc2 = plan->cubic_Kc2;
+    ctx->Kc3 = plan->cubic_Kc3;
+    ctx->cubic_axis1[0] = plan->cubic_axis1[0];
+    ctx->cubic_axis1[1] = plan->cubic_axis1[1];
+    ctx->cubic_axis1[2] = plan->cubic_axis1[2];
+    ctx->cubic_axis2[0] = plan->cubic_axis2[0];
+    ctx->cubic_axis2[1] = plan->cubic_axis2[1];
+    ctx->cubic_axis2[2] = plan->cubic_axis2[2];
+
+    // DMI
+    ctx->has_interfacial_dmi = plan->has_interfacial_dmi != 0;
+    ctx->D_interfacial = plan->dmi_D_interfacial;
+    ctx->has_bulk_dmi = plan->has_bulk_dmi != 0;
+    ctx->D_bulk = plan->dmi_D_bulk;
+
     // Adaptive step config (DP45)
     ctx->adaptive_max_error = plan->adaptive_max_error > 0 ? plan->adaptive_max_error : 1e-5;
     ctx->adaptive_dt_min    = plan->adaptive_dt_min > 0    ? plan->adaptive_dt_min    : 1e-18;
@@ -284,6 +310,18 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
             {
                 return reinterpret_cast<fullmag_fdm_backend *>(ctx);
             }
+        }
+    }
+
+    if (ctx->has_uniaxial_anisotropy) {
+        if (!context_upload_anisotropy_fields(*ctx, plan->ku1_field, plan->ku2_field, ctx->cell_count)) {
+            return reinterpret_cast<fullmag_fdm_backend *>(ctx);
+        }
+    }
+
+    if (ctx->has_cubic_anisotropy) {
+        if (!context_upload_cubic_anisotropy_fields(*ctx, plan->kc1_field, plan->kc2_field, plan->kc3_field, ctx->cell_count)) {
+            return reinterpret_cast<fullmag_fdm_backend *>(ctx);
         }
     }
 

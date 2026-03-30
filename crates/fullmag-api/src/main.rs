@@ -549,6 +549,14 @@ struct SessionCommandRequest {
     #[serde(default)]
     energy_tolerance: Option<f64>,
     #[serde(default)]
+    integrator: Option<String>,
+    #[serde(default)]
+    fixed_timestep: Option<f64>,
+    #[serde(default)]
+    relax_algorithm: Option<String>,
+    #[serde(default)]
+    relax_alpha: Option<f64>,
+    #[serde(default)]
     mesh_options: Option<Value>,
     #[serde(default)]
     state_path: Option<String>,
@@ -608,6 +616,14 @@ struct SessionCommand {
     torque_tolerance: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     energy_tolerance: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    integrator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fixed_timestep: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    relax_algorithm: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    relax_alpha: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mesh_options: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1028,6 +1044,10 @@ fn build_preview_control_command(
         max_steps: None,
         torque_tolerance: None,
         energy_tolerance: None,
+        integrator: None,
+        fixed_timestep: None,
+        relax_algorithm: None,
+        relax_alpha: None,
         mesh_options: None,
         state_path: None,
         state_format: None,
@@ -1533,6 +1553,10 @@ fn build_session_command(req: SessionCommandRequest) -> Result<SessionCommand, A
         max_steps: req.max_steps,
         torque_tolerance: req.torque_tolerance,
         energy_tolerance: req.energy_tolerance,
+        integrator: req.integrator,
+        fixed_timestep: req.fixed_timestep,
+        relax_algorithm: req.relax_algorithm,
+        relax_alpha: req.relax_alpha,
         mesh_options: req.mesh_options,
         state_path: req.state_path,
         state_format: req.state_format,

@@ -25,6 +25,8 @@ extern void launch_demag_field_fp32(Context &ctx);
 extern void launch_effective_field_fp64(Context &ctx);
 extern void launch_effective_field_fp32(Context &ctx);
 static void free_boundary_correction(Context &ctx);
+static void free_anisotropy_fields(Context &ctx);
+static void free_cubic_anisotropy_fields(Context &ctx);
 
 /* ── Helper: element size based on precision ── */
 
@@ -468,6 +470,8 @@ void context_free_device(Context &ctx) {
     free_boundary_correction(ctx);
     free_reduction_scratch(ctx);
     free_preview_download_scratch(ctx);
+    free_anisotropy_fields(ctx);
+    free_cubic_anisotropy_fields(ctx);
 }
 
 bool context_upload_active_mask(Context &ctx, const uint8_t *mask, uint64_t len) {
@@ -597,6 +601,52 @@ bool context_upload_demag_kernel_spectra(
 }
 
 /* ── Boundary correction upload ── */
+
+static void free_anisotropy_fields(Context &ctx) {
+    auto free_f64 = [](double *&ptr) {
+        if (ptr) { cudaFree(ptr); ptr = nullptr; }
+    };
+    free_f64(ctx.ku1_field);
+    free_f64(ctx.ku2_field);
+}
+
+bool context_upload_anisotropy_fields(Context &ctx, const double *ku1, const double *ku2, uint64_t len) {
+    if (!ctx.has_uniaxial_anisotropy || len != ctx.cell_count) {
+        return true;
+    }
+    if (ku1) {
+        if (!upload_f64_array(ctx, ctx.ku1_field, ku1, len, "cudaMalloc(ku1_field)")) return false;
+    }
+    if (ku2) {
+        if (!upload_f64_array(ctx, ctx.ku2_field, ku2, len, "cudaMalloc(ku2_field)")) return false;
+    }
+    return true;
+}
+
+static void free_cubic_anisotropy_fields(Context &ctx) {
+    auto free_f64 = [](double *&ptr) {
+        if (ptr) { cudaFree(ptr); ptr = nullptr; }
+    };
+    free_f64(ctx.kc1_field);
+    free_f64(ctx.kc2_field);
+    free_f64(ctx.kc3_field);
+}
+
+bool context_upload_cubic_anisotropy_fields(Context &ctx, const double *kc1, const double *kc2, const double *kc3, uint64_t len) {
+    if (!ctx.has_cubic_anisotropy || len != ctx.cell_count) {
+        return true;
+    }
+    if (kc1) {
+        if (!upload_f64_array(ctx, ctx.kc1_field, kc1, len, "cudaMalloc(kc1_field)")) return false;
+    }
+    if (kc2) {
+        if (!upload_f64_array(ctx, ctx.kc2_field, kc2, len, "cudaMalloc(kc2_field)")) return false;
+    }
+    if (kc3) {
+        if (!upload_f64_array(ctx, ctx.kc3_field, kc3, len, "cudaMalloc(kc3_field)")) return false;
+    }
+    return true;
+}
 
 static void free_boundary_correction(Context &ctx) {
     auto free_f64 = [](double *&ptr) {

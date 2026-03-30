@@ -229,6 +229,8 @@ export function buildFullmagModelTree(opts: {
   onPhysicsClick?: () => void;
   onSolverClick?: () => void;
   onResultsClick?: () => void;
+  initialStatePath?: string | null;
+  initialStateFormat?: string | null;
 }): TreeNodeData[] {
   const physicsChildren: TreeNodeData[] = [
     { id: "phys-llg", label: "LLG Dynamics", icon: "∂", status: "ready" },
@@ -306,6 +308,15 @@ export function buildFullmagModelTree(opts: {
             { id: "mat-alpha", label: opts.materialAlpha != null ? `α = ${opts.materialAlpha}` : "α (damping)", icon: "α", status: opts.materialAlpha != null ? "ready" : "pending" },
           ],
         },
+        {
+          id: "initial-state",
+          label: "Initial State (m₀)",
+          icon: "📂",
+          status: opts.initialStatePath ? "ready" : "pending",
+          badge: opts.initialStatePath
+            ? (opts.initialStateFormat ?? "file")
+            : "uniform",
+        },
       ],
     },
     {
@@ -352,6 +363,7 @@ export function buildFullmagModelTree(opts: {
       children: [
         { id: "res-fields", label: "Field Data", icon: "🗂" },
         { id: "res-energy", label: "Energy", icon: "⚡" },
+        { id: "res-state-io", label: "State I/O", icon: "💾" },
         { id: "res-export", label: "Export", icon: "💾" },
       ],
     },

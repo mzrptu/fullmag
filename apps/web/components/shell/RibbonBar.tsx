@@ -5,7 +5,7 @@ import {
   FileText, Play, Pause, Square, Box, Columns2, Grid3X3,
   PanelRight, Camera, Download, BarChart3,
   Shapes, FlaskConical, Hexagon, Cog, Eye,
-  RefreshCw, Ruler, ListChecks, Zap, Magnet, Target,
+  RefreshCw, Ruler, ListChecks, Zap, Magnet, Target, Save,
 } from "lucide-react";
 import {
   Tooltip, TooltipTrigger, TooltipContent, TooltipProvider,
@@ -48,9 +48,9 @@ interface RibbonBarProps {
   onViewChange?: (mode: string) => void;
   onSidebarToggle?: () => void;
   onSimAction?: (action: string) => void;
-  onSetup?: () => void;
   onExport?: () => void;
   onCapture?: () => void;
+  onStateExport?: () => void;
 }
 
 /* ── Tab inference from tree node ── */
@@ -84,7 +84,6 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
     {
       id: "solver", title: "Solver",
       actions: [
-        { id: "configure", icon: <Cog size={20} />, label: "Setup", tooltip: "Configure time integrator, relaxation, and convergence", action: p.onSetup, iconColor: "text-slate-400" },
         { id: "relax", icon: <Target size={20} />, label: "Relax", tooltip: "Run relaxation to equilibrium", disabled: !p.canRelax, action: () => p.onSimAction?.("relax"), iconColor: "text-indigo-400" },
         { id: "run-solve", icon: <Play size={20} fill="currentColor" />, label: "Run", tooltip: "Run until the configured stop time", accent: true, disabled: !p.canRun, action: () => p.onSimAction?.("run") },
         { id: "pause", icon: <Pause size={20} fill="currentColor" />, label: "Pause", tooltip: "Pause solver", disabled: !p.canPause, action: () => p.onSimAction?.("pause"), iconColor: "text-amber-500" },
@@ -115,6 +114,7 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
       id: "mesh-export", title: "Export",
       actions: [
         { id: "export-vtk", icon: <Download size={20} />, label: "VTK", tooltip: "Export VTK mesh", action: p.onExport, iconColor: "text-blue-400" },
+        { id: "save-state", icon: <Save size={20} />, label: "State", tooltip: "Download magnetization state (JSON)", action: p.onStateExport, iconColor: "text-emerald-400" },
         { id: "snapshot", icon: <Camera size={20} />, label: "Capture", tooltip: "Take viewport screenshot", action: p.onCapture, iconColor: "text-violet-400" },
       ],
     },
@@ -124,12 +124,6 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
 
 function buildStudyGroups(p: RibbonBarProps): RibbonGroup[] {
   return [
-    {
-      id: "integrator", title: "Integrator",
-      actions: [
-        { id: "configure", icon: <Cog size={20} />, label: "Setup", tooltip: "Configure integrator and time-step settings", action: p.onSetup, iconColor: "text-slate-400" },
-      ],
-    },
     {
       id: "execution", title: "Execution",
       actions: [
@@ -158,7 +152,8 @@ function buildResultsGroups(p: RibbonBarProps): RibbonGroup[] {
       actions: [
         { id: "plot", icon: <BarChart3 size={20} />, label: "Chart", tooltip: "Open scalar plot", action: () => p.onViewChange?.("charts"), iconColor: "text-emerald-400" },
         { id: "snapshot", icon: <Camera size={20} />, label: "Capture", tooltip: "Take viewport screenshot", action: p.onCapture, iconColor: "text-violet-400" },
-        { id: "exportvtk", icon: <Download size={20} />, label: "Export", tooltip: "Export VTK", action: p.onExport, iconColor: "text-blue-400" },
+        { id: "exportvtk", icon: <Download size={20} />, label: "VTK", tooltip: "Export VTK", action: p.onExport, iconColor: "text-blue-400" },
+        { id: "save-state", icon: <Save size={20} />, label: "State", tooltip: "Download magnetization state (JSON)", action: p.onStateExport, iconColor: "text-emerald-400" },
       ],
     },
     buildViewGroup(p),

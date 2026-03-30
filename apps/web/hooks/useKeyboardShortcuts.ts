@@ -63,7 +63,7 @@ export function useKeyboardShortcuts() {
       /* Ctrl+Shift+P → Solver setup */
       if (e.key === "P" && ctrl && shift) {
         e.preventDefault();
-        ctx.setSolverSetupOpen((v: boolean) => !v);
+        ctx.setSelectedSidebarNodeId("study-integrator");
         return;
       }
     }

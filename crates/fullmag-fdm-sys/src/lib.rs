@@ -96,6 +96,34 @@ pub struct fullmag_fdm_plan_desc {
     pub enable_demag: i32,
     pub has_external_field: i32,
     pub external_field_am: [f64; 3],
+    
+    // Uniaxial anisotropy
+    pub has_uniaxial_anisotropy: i32,
+    pub uniaxial_anisotropy_constant: f64,
+    pub uniaxial_anisotropy_k2: f64,
+    pub anisotropy_axis: [f64; 3],
+
+    pub ku1_field: *const f64,
+    pub ku2_field: *const f64,
+
+    // Cubic anisotropy
+    pub has_cubic_anisotropy: i32,
+    pub cubic_kc1: f64,
+    pub cubic_kc2: f64,
+    pub cubic_kc3: f64,
+    pub cubic_axis1: [f64; 3],
+    pub cubic_axis2: [f64; 3],
+
+    pub kc1_field: *const f64,
+    pub kc2_field: *const f64,
+    pub kc3_field: *const f64,
+
+    // DMI
+    pub has_interfacial_dmi: i32,
+    pub dmi_d_interfacial: f64,
+    pub has_bulk_dmi: i32,
+    pub dmi_d_bulk: f64,
+
     pub demag_kernel_xx_spectrum: *const f64,
     pub demag_kernel_yy_spectrum: *const f64,
     pub demag_kernel_zz_spectrum: *const f64,
@@ -154,6 +182,9 @@ pub struct fullmag_fdm_step_stats {
     pub exchange_energy_joules: f64,
     pub demag_energy_joules: f64,
     pub external_energy_joules: f64,
+    pub anisotropy_energy_joules: f64,
+    pub cubic_energy_joules: f64,
+    pub dmi_energy_joules: f64,
     pub total_energy_joules: f64,
     pub max_effective_field_amplitude: f64,
     pub max_demag_field_amplitude: f64,

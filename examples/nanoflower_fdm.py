@@ -25,7 +25,7 @@ flower.Ms = 752e3       # saturation magnetisation [A/m]
 flower.Aex = 15.5e-12   # exchange stiffness [J/m]
 flower.alpha = 0.1      # Gilbert damping
 flower.m = fm.uniform(0.1,0.0001,0.99)
-flower.m.loadfile()
+# flower.m.loadfile() # Removed to prevent error, uses uniform state from line 27
 # ── External field ──────────────────────────────────────────
 # Cartesian:  fm.b_ext(0, 0, 0.1)          # 0.1 T along z
 # Spherical:  fm.b_ext(0.1, theta=0, phi=0) # same, via angles (degrees)

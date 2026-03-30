@@ -9,6 +9,7 @@ import StatusBar from "../shell/StatusBar";
 import ColorLegend from "../preview/ColorLegend";
 import RunSidebar from "./control-room/RunSidebar";
 import { ViewportBar, ViewportCanvasArea } from "./control-room/ViewportPanels";
+import FullmagLogo from "../brand/FullmagLogo";
 import {
   ControlRoomProvider,
   useControlRoom,
@@ -36,13 +37,9 @@ function ControlRoomShell() {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[40vw] h-[40vw] max-w-[500px] max-h-[500px] bg-primary/5 blur-[100px] rounded-full pointer-events-none" />
         
         <div className="flex flex-col items-center gap-8 relative z-10 w-full max-w-sm">
-          <div className="relative flex items-center justify-center w-24 h-24">
-            <div className="absolute inset-0 rounded-full border border-primary/20 bg-card/40 backdrop-blur-xl shadow-2xl" />
-            <img 
-              src="/logo.png" 
-              alt="Fullmag Logo" 
-              className="w-16 h-16 drop-shadow-[0_0_15px_rgba(137,180,250,0.5)] animate-pulse" 
-            />
+          <div className="relative flex items-center justify-center w-28 h-20">
+            <div className="absolute inset-0 rounded-2xl border border-primary/20 bg-card/40 backdrop-blur-xl shadow-2xl" />
+            <FullmagLogo size={96} animate className="relative z-10 drop-shadow-[0_0_20px_rgba(137,180,250,0.4)]" />
           </div>
           
           <div className="flex flex-col items-center gap-3 text-center">
@@ -132,9 +129,9 @@ function ControlRoomShell() {
         onViewChange={ctx.handleViewModeChange}
         onSidebarToggle={() => ctx.setSidebarCollapsed((v) => !v)}
         onSimAction={ctx.handleSimulationAction}
-        onSetup={() => ctx.setSolverSetupOpen((v) => !v)}
         onCapture={ctx.handleCapture}
         onExport={ctx.handleExport}
+        onStateExport={() => void ctx.handleStateExport("json")}
       />
       <PanelGroup
         orientation="horizontal"
