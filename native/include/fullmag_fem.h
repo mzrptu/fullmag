@@ -12,6 +12,7 @@ extern "C" {
 #define FULLMAG_FEM_ERR_INVALID -1
 #define FULLMAG_FEM_ERR_UNAVAILABLE -2
 #define FULLMAG_FEM_ERR_INTERNAL -3
+#define FULLMAG_FEM_ERR_INTERRUPTED -4
 
 typedef enum {
     FULLMAG_FEM_PRECISION_SINGLE = 1,
@@ -61,6 +62,8 @@ typedef enum {
     FULLMAG_FEM_DEMAG_TRANSFER_GRID = 0,
     FULLMAG_FEM_DEMAG_POISSON_AIRBOX = 1,
 } fullmag_fem_demag_realization;
+
+typedef int (*fullmag_fem_interrupt_poll_fn)(void *user_data);
 
 typedef struct {
     const double *nodes_xyz;
@@ -207,6 +210,12 @@ int fullmag_fem_backend_step(
     fullmag_fem_backend *handle,
     double dt_seconds,
     fullmag_fem_step_stats *out_stats
+);
+
+int fullmag_fem_backend_set_interrupt_poll(
+    fullmag_fem_backend *handle,
+    fullmag_fem_interrupt_poll_fn poll_fn,
+    void *user_data
 );
 
 int fullmag_fem_backend_copy_field_f64(

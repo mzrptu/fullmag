@@ -38,6 +38,7 @@ extern "C" {
 #define FULLMAG_FDM_ERR_INVALID  -1
 #define FULLMAG_FDM_ERR_CUDA     -2
 #define FULLMAG_FDM_ERR_INTERNAL -3
+#define FULLMAG_FDM_ERR_INTERRUPTED -4
 
 /* Maximum number of distinct exchange regions supported by the LUT. */
 #define FULLMAG_FDM_MAX_EXCHANGE_REGIONS 256
@@ -75,6 +76,8 @@ typedef enum {
     FULLMAG_FDM_BOUNDARY_VOLUME = 1,  /* T0: face-link + φ weighting */
     FULLMAG_FDM_BOUNDARY_FULL   = 2,  /* T1: ECB stencil + H_corr    */
 } fullmag_fdm_boundary_correction;
+
+typedef int (*fullmag_fdm_interrupt_poll_fn)(void *user_data);
 
 /* ── Plan descriptor ── */
 
@@ -317,6 +320,11 @@ int fullmag_fdm_backend_step(
     fullmag_fdm_backend    *handle,
     double                  dt_seconds,
     fullmag_fdm_step_stats *out_stats);
+
+int fullmag_fdm_backend_set_interrupt_poll(
+    fullmag_fdm_backend *handle,
+    fullmag_fdm_interrupt_poll_fn poll_fn,
+    void *user_data);
 
 /**
  * Copy a field observable from device to host as f64.

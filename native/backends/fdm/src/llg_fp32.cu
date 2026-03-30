@@ -264,6 +264,7 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         launch_demag_field_fp32(ctx);
     }
     launch_effective_field_fp32(ctx);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // Step 2: k1 = RHS(m, H_eff)
     llg_rhs_fp32_kernel<<<grid, BLOCK_SIZE>>>(
@@ -272,6 +273,7 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         (float*)ctx.k1.x, (float*)ctx.k1.y, (float*)ctx.k1.z,
         n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
         stt_params_from_ctx(ctx));
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // Step 3: predictor → m
     heun_predictor_fp32_kernel<<<grid, BLOCK_SIZE>>>(
@@ -279,6 +281,7 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         (const float*)ctx.k1.x, (const float*)ctx.k1.y, (const float*)ctx.k1.z,
         (float*)ctx.m.x, (float*)ctx.m.y, (float*)ctx.m.z,
         n, dt_f);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // Step 4: field contributions at predicted m
     if (ctx.enable_exchange) {
@@ -288,6 +291,7 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         launch_demag_field_fp32(ctx);
     }
     launch_effective_field_fp32(ctx);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // Step 5: k2 = RHS(m_pred, H_eff_pred) → store in h_ex
     llg_rhs_fp32_kernel<<<grid, BLOCK_SIZE>>>(
@@ -296,6 +300,7 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         (float*)ctx.h_ex.x, (float*)ctx.h_ex.y, (float*)ctx.h_ex.z,
         n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
         stt_params_from_ctx(ctx));
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // Step 6: corrector → m
     heun_corrector_fp32_kernel<<<grid, BLOCK_SIZE>>>(
@@ -304,6 +309,7 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         (const float*)ctx.k1.x, (const float*)ctx.k1.y, (const float*)ctx.k1.z,
         (const float*)ctx.h_ex.x, (const float*)ctx.h_ex.y, (const float*)ctx.h_ex.z,
         n, 0.5f * dt_f);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // Diagnostics
     if (ctx.enable_exchange) {

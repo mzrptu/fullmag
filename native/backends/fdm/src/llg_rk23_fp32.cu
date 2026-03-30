@@ -146,6 +146,7 @@ void launch_rk23_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         } else {
             compute_rhs_into_fp32(ctx, ctx.k1, n, grid, gamma_bar_f, alpha_f);
         }
+        if (abort_step_from_tmp(ctx)) return;
 
         // Stage 2
         rk23_stage_1_fp32_kernel<<<grid, 256>>>(
@@ -154,6 +155,7 @@ void launch_rk23_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
             n, dt_f, A21);
         compute_rhs_into_fp32(ctx, ctx.k2, n, grid, gamma_bar_f, alpha_f);
+        if (abort_step_from_tmp(ctx)) return;
 
         // Stage 3
         rk23_stage_1_fp32_kernel<<<grid, 256>>>(
@@ -162,6 +164,7 @@ void launch_rk23_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
             n, dt_f, A32);
         compute_rhs_into_fp32(ctx, ctx.k3, n, grid, gamma_bar_f, alpha_f);
+        if (abort_step_from_tmp(ctx)) return;
 
         // 3rd-order solution
         rk23_stage_3_fp32_kernel<<<grid, 256>>>(
@@ -171,9 +174,11 @@ void launch_rk23_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<const float*>(ctx.k3.x), static_cast<const float*>(ctx.k3.y), static_cast<const float*>(ctx.k3.z),
             static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
             n, dt_f, B1, B2, B3);
+        if (abort_step_from_tmp(ctx)) return;
 
         // FSAL: k4 = RHS(y3)
         compute_rhs_into_fp32(ctx, ctx.k_fsal, n, grid, gamma_bar_f, alpha_f);
+        if (abort_step_from_tmp(ctx)) return;
 
         // Error estimate (fp64 accumulators)
         rk23_error_fp32_kernel<<<grid, 256>>>(

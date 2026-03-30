@@ -155,28 +155,33 @@ void launch_abm3_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         if (ctx.enable_exchange) launch_exchange_field_fp32(ctx);
         if (ctx.enable_demag)    launch_demag_field_fp32(ctx);
         launch_effective_field_fp32(ctx);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         llg_rhs_fp32_kernel<<<grid, 256>>>(
             static_cast<const float*>(ctx.m.x), static_cast<const float*>(ctx.m.y), static_cast<const float*>(ctx.m.z),
             static_cast<const float*>(ctx.work.x), static_cast<const float*>(ctx.work.y), static_cast<const float*>(ctx.work.z),
             static_cast<float*>(ctx.k1.x), static_cast<float*>(ctx.k1.y), static_cast<float*>(ctx.k1.z),
             n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         heun_predictor_fp32_kernel<<<grid, 256>>>(
             static_cast<const float*>(ctx.tmp.x), static_cast<const float*>(ctx.tmp.y), static_cast<const float*>(ctx.tmp.z),
             static_cast<const float*>(ctx.k1.x), static_cast<const float*>(ctx.k1.y), static_cast<const float*>(ctx.k1.z),
             static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
             n, dt_f);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         if (ctx.enable_exchange) launch_exchange_field_fp32(ctx);
         if (ctx.enable_demag)    launch_demag_field_fp32(ctx);
         launch_effective_field_fp32(ctx);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         llg_rhs_fp32_kernel<<<grid, 256>>>(
             static_cast<const float*>(ctx.m.x), static_cast<const float*>(ctx.m.y), static_cast<const float*>(ctx.m.z),
             static_cast<const float*>(ctx.work.x), static_cast<const float*>(ctx.work.y), static_cast<const float*>(ctx.work.z),
             static_cast<float*>(ctx.h_ex.x), static_cast<float*>(ctx.h_ex.y), static_cast<float*>(ctx.h_ex.z),
             n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         heun_corrector_fp32_kernel<<<grid, 256>>>(
             static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
@@ -184,6 +189,7 @@ void launch_abm3_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<const float*>(ctx.k1.x), static_cast<const float*>(ctx.k1.y), static_cast<const float*>(ctx.k1.z),
             static_cast<const float*>(ctx.h_ex.x), static_cast<const float*>(ctx.h_ex.y), static_cast<const float*>(ctx.h_ex.z),
             n, 0.5f * dt_f);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         ctx.step_count++;
         ctx.current_time += dt;
@@ -218,16 +224,19 @@ void launch_abm3_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<const float*>(ctx.abm_f_n2.x), static_cast<const float*>(ctx.abm_f_n2.y), static_cast<const float*>(ctx.abm_f_n2.z),
         static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
         n, dt_f);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     if (ctx.enable_exchange) launch_exchange_field_fp32(ctx);
     if (ctx.enable_demag)    launch_demag_field_fp32(ctx);
     launch_effective_field_fp32(ctx);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     llg_rhs_fp32_kernel<<<grid, 256>>>(
         static_cast<const float*>(ctx.m.x), static_cast<const float*>(ctx.m.y), static_cast<const float*>(ctx.m.z),
         static_cast<const float*>(ctx.work.x), static_cast<const float*>(ctx.work.y), static_cast<const float*>(ctx.work.z),
         static_cast<float*>(ctx.k1.x), static_cast<float*>(ctx.k1.y), static_cast<float*>(ctx.k1.z),
         n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     abm3_corrector_fp32_kernel<<<grid, 256>>>(
         static_cast<const float*>(ctx.tmp.x), static_cast<const float*>(ctx.tmp.y), static_cast<const float*>(ctx.tmp.z),
@@ -236,6 +245,7 @@ void launch_abm3_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<const float*>(ctx.abm_f_n1.x), static_cast<const float*>(ctx.abm_f_n1.y), static_cast<const float*>(ctx.abm_f_n1.z),
         static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
         n, dt_f);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     ctx.step_count++;
     ctx.current_time += dt;

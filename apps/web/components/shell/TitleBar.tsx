@@ -15,6 +15,8 @@ interface TitleBarProps {
   relaxEnabled?: boolean;
   pauseEnabled?: boolean;
   stopEnabled?: boolean;
+  runAction?: string;
+  runLabel?: string;
   commandMessage?: string | null;
   onSimAction?: (action: string) => void;
 }
@@ -30,12 +32,14 @@ export default function TitleBar({
   relaxEnabled = false,
   pauseEnabled = false,
   stopEnabled = false,
+  runAction = "run",
+  runLabel = "Run",
   commandMessage,
   onSimAction,
 }: TitleBarProps) {
   const controls = [
     { id: "relax", label: "Relax", icon: <Target size={14} />, tone: "relax", enabled: relaxEnabled },
-    { id: "run", label: "Run", icon: <Play size={14} fill="currentColor" />, tone: "run", enabled: runEnabled },
+    { id: runAction, label: runLabel, icon: <Play size={14} fill="currentColor" />, tone: "run", enabled: runEnabled },
     { id: "pause", label: "Pause", icon: <Pause size={14} fill="currentColor" />, tone: "pause", enabled: pauseEnabled },
     { id: "stop", label: "Stop", icon: <Square size={14} fill="currentColor" />, tone: "stop", enabled: stopEnabled },
   ] as const;

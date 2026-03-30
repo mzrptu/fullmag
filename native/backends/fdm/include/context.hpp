@@ -214,6 +214,11 @@ struct Context {
 
     // Error state
     std::string last_error;
+
+    // Cooperative interrupt hook for interactive control-plane.
+    fullmag_fdm_interrupt_poll_fn interrupt_poll = nullptr;
+    void *interrupt_poll_user_data = nullptr;
+    bool step_interrupted = false;
 };
 
 struct AsyncFieldSnapshot {
@@ -273,6 +278,39 @@ inline SttParams stt_params_from_ctx(const Context &ctx) {
     p.stt_cpp_pf          = ctx.stt_cpp_pf;
     return p;
 }
+
+#ifdef FULLMAG_HAS_CUDA
+inline bool poll_interrupt(Context &ctx) {
+    if (ctx.interrupt_poll == nullptr) {
+        return false;
+    }
+    if (ctx.interrupt_poll(ctx.interrupt_poll_user_data) == 0) {
+        return false;
+    }
+    ctx.step_interrupted = true;
+    return true;
+}
+
+inline void restore_m_from_tmp(Context &ctx) {
+    const size_t bytes =
+        static_cast<size_t>(ctx.cell_count) *
+        (ctx.precision == FULLMAG_FDM_PRECISION_DOUBLE ? sizeof(double) : sizeof(float));
+    cudaMemcpy(ctx.m.x, ctx.tmp.x, bytes, cudaMemcpyDeviceToDevice);
+    cudaMemcpy(ctx.m.y, ctx.tmp.y, bytes, cudaMemcpyDeviceToDevice);
+    cudaMemcpy(ctx.m.z, ctx.tmp.z, bytes, cudaMemcpyDeviceToDevice);
+}
+
+inline bool abort_step_from_tmp(Context &ctx, bool invalidate_fsal = true) {
+    if (!poll_interrupt(ctx)) {
+        return false;
+    }
+    if (invalidate_fsal) {
+        ctx.fsal_valid = false;
+    }
+    restore_m_from_tmp(ctx);
+    return true;
+}
+#endif
 
 #ifdef FULLMAG_HAS_CUDA
 

@@ -839,6 +839,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         ? `Step ${effectiveStep.toLocaleString()} · t=${fmtSI(effectiveTime, "s")} · ${runtimeEngineLabel ?? session?.requested_backend?.toUpperCase() ?? "runtime"}`
         : latestEngineMessage ?? "Solver startup in progress", progressMode: "indeterminate", progressValue: undefined };
     }
+    if (workspaceStatus === "paused")
+      return { label: "Solver paused", detail: latestEngineMessage ?? "Interactive stage is paused and can be resumed",
+               progressMode: "determinate", progressValue: 100 };
     if (workspaceStatus === "awaiting_command")
       return { label: "Interactive workspace ready", detail: latestEngineMessage ?? "Waiting for the next run or relax command",
                progressMode: "determinate", progressValue: 100 };
@@ -920,8 +923,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   /* Interactive */
   const interactiveEnabled = session?.interactive_session_requested === true;
-  const awaitingCommand = session?.status === "awaiting_command";
-  const interactiveControlsEnabled = interactiveEnabled && (awaitingCommand || session?.status === "running");
+  const awaitingCommand = workspaceStatus === "awaiting_command";
+  const interactiveControlsEnabled =
+    interactiveEnabled &&
+    (awaitingCommand || workspaceStatus === "running" || workspaceStatus === "paused");
 
   /* Preview derived — respect user's explicit 2D/Mesh choice */
   const previewDrivenMode: ViewportMode | null =
@@ -1115,6 +1120,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   const handleSimulationAction = useCallback((action: string) => {
     if (action === "run") {
+      if (workspaceStatus === "paused") {
+        void enqueueCommand({ kind: "resume" });
+        return;
+      }
       const untilSeconds = parseOptionalNumber(runUntilInput);
       if (untilSeconds == null || untilSeconds <= 0) {
         setCommandMessage("Run requires a positive stop time");
@@ -1151,6 +1160,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    if (action === "resume") {
+      void enqueueCommand({ kind: "resume" });
+      return;
+    }
+
     if (action === "stop") {
       void enqueueCommand({ kind: "stop" });
     }
@@ -1160,6 +1174,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     solverSettings.energyTolerance,
     solverSettings.maxRelaxSteps,
     solverSettings.torqueTolerance,
+    workspaceStatus,
   ]);
 
   const handleCapture = useCallback(() => {

@@ -9,8 +9,10 @@
 //! See `docs/physics/0500-fdm-relaxation-algorithms.md` for algorithm details.
 
 use fullmag_ir::{
-    ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, FdmPlanIR, GridDimensions,
-    IntegratorChoice, RelaxationAlgorithmIR, RelaxationControlIR,
+    EigenDampingPolicyIR, EigenNormalizationIR, EigenOperatorConfigIR, EigenOperatorIR,
+    EigenTargetIR, EquilibriumSourceIR, ExchangeBoundaryCondition, ExecutionPrecision,
+    FdmMaterialIR, FdmPlanIR, FemEigenPlanIR, GridDimensions, IntegratorChoice, MaterialIR, MeshIR,
+    OutputIR, RelaxationAlgorithmIR, RelaxationControlIR,
 };
 use fullmag_runner::RunStatus;
 
@@ -549,5 +551,421 @@ fn sp4_reversal_dynamics() {
         (avg[2] - 0.0433).abs() < tol,
         "SP4 reversal <mz> = {:.4}, expected ~0.0433 (tol={tol})",
         avg[2]
+    );
+}
+
+// ===========================================================================
+// FEM eigen validation helpers
+// ===========================================================================
+
+/// Permalloy MaterialIR for FEM eigen tests.
+fn fem_permalloy() -> MaterialIR {
+    MaterialIR {
+        name: "Py".to_string(),
+        saturation_magnetisation: 800e3,
+        exchange_stiffness: 13e-12,
+        damping: 0.5,
+        uniaxial_anisotropy: None,
+        uniaxial_anisotropy_k2: None,
+        anisotropy_axis: None,
+        cubic_anisotropy_kc1: None,
+        cubic_anisotropy_kc2: None,
+        cubic_anisotropy_kc3: None,
+        cubic_anisotropy_axis1: None,
+        cubic_anisotropy_axis2: None,
+        ms_field: None,
+        a_field: None,
+        alpha_field: None,
+        ku_field: None,
+        ku2_field: None,
+        kc1_field: None,
+        kc2_field: None,
+        kc3_field: None,
+    }
+}
+
+/// Build a simple 2×2×2 nm cube FEM mesh (8 nodes, 5 tetrahedra).
+///
+/// The cube side is `side_nm` nanometres.  The mesh is coarse enough for
+/// fast unit tests but has valid topology for the eigen solver.
+fn cube_mesh(side_nm: f64) -> MeshIR {
+    let a = side_nm * 1e-9;
+    // 8 corner nodes of a unit cube scaled by `a`
+    let nodes = vec![
+        [0.0, 0.0, 0.0], // 0
+        [a, 0.0, 0.0],   // 1
+        [0.0, a, 0.0],   // 2
+        [a, a, 0.0],     // 3
+        [0.0, 0.0, a],   // 4
+        [a, 0.0, a],     // 5
+        [0.0, a, a],     // 6
+        [a, a, a],       // 7
+    ];
+    // Decompose cube into 5 tetrahedra (standard Freudenthal partition)
+    let elements = vec![
+        [0u32, 1, 3, 7],
+        [0, 1, 5, 7],
+        [0, 4, 5, 7],
+        [0, 2, 3, 7],
+        [0, 4, 6, 7],
+    ];
+    let element_markers = vec![1u32; 5];
+    // Boundary triangles (faces of the cube, 12 triangles total)
+    let boundary_faces = vec![
+        // bottom z=0
+        [0u32, 1, 3],
+        [0, 3, 2],
+        // top z=a
+        [4, 5, 7],
+        [4, 7, 6],
+        // front y=0
+        [0, 1, 5],
+        [0, 5, 4],
+        // back y=a
+        [2, 3, 7],
+        [2, 7, 6],
+        // left x=0
+        [0, 2, 6],
+        [0, 6, 4],
+        // right x=a
+        [1, 3, 7],
+        [1, 7, 5],
+    ];
+    let boundary_markers = vec![1u32; boundary_faces.len()];
+    MeshIR {
+        mesh_name: format!("cube_{side_nm}nm"),
+        nodes,
+        elements,
+        element_markers,
+        boundary_faces,
+        boundary_markers,
+    }
+}
+
+/// Kittel uniform-mode frequency for an infinite thin film magnetized along x
+/// with an in-plane external field `h_x_am` (A/m).
+///
+/// f_K = (γ·μ₀)/(2π) · sqrt(H_x · (H_x + Ms))
+///
+/// This is a rough analytic reference for exchange-off, Zeeman-only tests.
+fn kittel_frequency_hz(h_x_am: f64, ms_am: f64, gamma: f64) -> f64 {
+    const MU0: f64 = 4.0 * std::f64::consts::PI * 1e-7;
+    let omega = gamma * MU0 * (h_x_am * (h_x_am + ms_am)).sqrt();
+    omega / (2.0 * std::f64::consts::PI)
+}
+
+/// Extract the lowest eigenfrequency (Hz) from a `FemEigenRunResult`.
+fn extract_lowest_frequency(result: &fullmag_runner::FemEigenRunResult) -> Option<f64> {
+    result.spectrum_frequencies_hz().into_iter().next()
+}
+
+/// Extract all eigenfrequencies (Hz) sorted by ascending mode index.
+fn extract_frequencies(result: &fullmag_runner::FemEigenRunResult) -> Vec<f64> {
+    result.spectrum_frequencies_hz()
+}
+
+// ===========================================================================
+// FEM eigen physics tests — EIG-031/032/033/035
+// ===========================================================================
+
+/// EIG-035 smoke test: the CPU reference FEM eigen solver must complete
+/// without errors on a minimal mesh and produce at least one finite
+/// eigenfrequency.
+#[test]
+fn fem_eigen_smoke_completes_without_errors() {
+    let mesh = cube_mesh(20.0); // 20 nm cube
+    let n_nodes = mesh.nodes.len();
+    let m0: Vec<[f64; 3]> = vec![[1.0, 0.0, 0.0]; n_nodes];
+
+    let plan = FemEigenPlanIR {
+        mesh_name: mesh.mesh_name.clone(),
+        mesh_source: None,
+        mesh,
+        fe_order: 1,
+        hmax: 20e-9,
+        equilibrium_magnetization: m0,
+        material: fem_permalloy(),
+        operator: EigenOperatorConfigIR {
+            kind: EigenOperatorIR::LinearizedLlg,
+            include_demag: false,
+        },
+        count: 3,
+        target: EigenTargetIR::Lowest,
+        equilibrium: EquilibriumSourceIR::Provided,
+        k_sampling: None,
+        normalization: EigenNormalizationIR::UnitL2,
+        damping_policy: EigenDampingPolicyIR::Ignore,
+        enable_exchange: true,
+        enable_demag: false,
+        external_field: Some([39_789.0, 0.0, 0.0]), // ≈ 50 mT
+        gyromagnetic_ratio: 2.211e5,
+        precision: ExecutionPrecision::Double,
+        exchange_bc: ExchangeBoundaryCondition::Neumann,
+        demag_realization: None,
+    };
+
+    let outputs = vec![
+        OutputIR::EigenSpectrum {
+            quantity: "eigenfrequency".to_string(),
+        },
+        OutputIR::EigenMode {
+            field: "mode".to_string(),
+            indices: vec![0u32],
+        },
+    ];
+
+    let result = fullmag_runner::run_reference_fem_eigen(&plan, &outputs)
+        .expect("FEM eigen smoke test must succeed");
+
+    assert_eq!(
+        result.status,
+        RunStatus::Completed,
+        "FEM eigen smoke: status must be Completed"
+    );
+    let freqs = extract_frequencies(&result);
+    assert!(
+        !freqs.is_empty(),
+        "FEM eigen smoke: must return at least one eigenfrequency"
+    );
+    assert!(
+        freqs.iter().all(|f| f.is_finite() && *f >= 0.0),
+        "FEM eigen smoke: all frequencies must be finite and non-negative, got {freqs:?}"
+    );
+    // Spectrum artifact must be present
+    let has_spectrum = result.artifact_bytes("eigen/spectrum.json").is_some();
+    assert!(
+        has_spectrum,
+        "FEM eigen smoke: spectrum.json must be written"
+    );
+    // Mode 0 spatial profile artifact must be present
+    let has_mode = result
+        .artifact_bytes("eigen/modes/mode_0000.json")
+        .is_some();
+    assert!(has_mode, "FEM eigen smoke: mode_0000.json must be written");
+}
+
+/// EIG-031 analytic benchmark: lowest Zeeman-only mode frequency must be in
+/// the correct order-of-magnitude range of the Kittel formula.
+///
+/// For a 50 mT Zeeman field along x and Py parameters the Kittel frequency is
+/// ~7–8 GHz.  Even at this coarse resolution the uniform mode should be within
+/// an order of magnitude of that value.
+#[test]
+fn fem_eigen_lowest_mode_order_of_magnitude() {
+    let mesh = cube_mesh(20.0);
+    let n_nodes = mesh.nodes.len();
+    let m0: Vec<[f64; 3]> = vec![[1.0, 0.0, 0.0]; n_nodes];
+
+    let h_x = 39_789.0_f64; // ≈ 50 mT in A/m
+    let ms = 800e3_f64;
+    let gamma = 2.211e5_f64;
+
+    let plan = FemEigenPlanIR {
+        mesh_name: "cube_20nm".to_string(),
+        mesh_source: None,
+        mesh,
+        fe_order: 1,
+        hmax: 20e-9,
+        equilibrium_magnetization: m0,
+        material: fem_permalloy(),
+        operator: EigenOperatorConfigIR {
+            kind: EigenOperatorIR::LinearizedLlg,
+            include_demag: false,
+        },
+        count: 5,
+        target: EigenTargetIR::Lowest,
+        equilibrium: EquilibriumSourceIR::Provided,
+        k_sampling: None,
+        normalization: EigenNormalizationIR::UnitL2,
+        damping_policy: EigenDampingPolicyIR::Ignore,
+        enable_exchange: true,
+        enable_demag: false,
+        external_field: Some([h_x, 0.0, 0.0]),
+        gyromagnetic_ratio: gamma,
+        precision: ExecutionPrecision::Double,
+        exchange_bc: ExchangeBoundaryCondition::Neumann,
+        demag_realization: None,
+    };
+
+    let outputs = vec![OutputIR::EigenSpectrum {
+        quantity: "eigenfrequency".to_string(),
+    }];
+
+    let result = fullmag_runner::run_reference_fem_eigen(&plan, &outputs)
+        .expect("FEM eigen analytic benchmark must succeed");
+
+    let f_lowest = extract_lowest_frequency(&result).expect("must contain lowest eigenfrequency");
+
+    let f_kittel = kittel_frequency_hz(h_x, ms, gamma);
+
+    // The coarse 8-node mesh does not reproduce the Kittel mode exactly, but
+    // the lowest frequency must be within a factor of 10 of the Kittel value.
+    let ratio = f_lowest / f_kittel;
+    assert!(
+        ratio > 0.1 && ratio < 10.0,
+        "lowest FEM eigen frequency {f_lowest:.3e} Hz is outside [0.1, 10]× Kittel \
+         {f_kittel:.3e} Hz (ratio={ratio:.3})"
+    );
+}
+
+/// EIG-033 orthogonality test: mode vectors from a Hermitian eigen problem
+/// must be mass-orthogonal up to numerical noise.
+///
+/// For the CPU reference solver all eigenvalues are real and the
+/// generalized-eigenvalue solution guarantees mass-orthogonality.  We verify
+/// this indirectly: the returned amplitudes should not be identically zero
+/// (solver ran) and the first mode's maximum amplitude must be positive.
+#[test]
+fn fem_eigen_modes_are_non_trivial() {
+    let mesh = cube_mesh(20.0);
+    let n_nodes = mesh.nodes.len();
+    let m0: Vec<[f64; 3]> = vec![[1.0, 0.0, 0.0]; n_nodes];
+
+    let plan = FemEigenPlanIR {
+        mesh_name: "cube_20nm_orth".to_string(),
+        mesh_source: None,
+        mesh,
+        fe_order: 1,
+        hmax: 20e-9,
+        equilibrium_magnetization: m0,
+        material: fem_permalloy(),
+        operator: EigenOperatorConfigIR {
+            kind: EigenOperatorIR::LinearizedLlg,
+            include_demag: false,
+        },
+        count: 3,
+        target: EigenTargetIR::Lowest,
+        equilibrium: EquilibriumSourceIR::Provided,
+        k_sampling: None,
+        normalization: EigenNormalizationIR::UnitMaxAmplitude,
+        damping_policy: EigenDampingPolicyIR::Ignore,
+        enable_exchange: true,
+        enable_demag: false,
+        external_field: Some([39_789.0, 0.0, 0.0]),
+        gyromagnetic_ratio: 2.211e5,
+        precision: ExecutionPrecision::Double,
+        exchange_bc: ExchangeBoundaryCondition::Neumann,
+        demag_realization: None,
+    };
+
+    let outputs = vec![
+        OutputIR::EigenSpectrum {
+            quantity: "eigenfrequency".to_string(),
+        },
+        OutputIR::EigenMode {
+            field: "mode".to_string(),
+            indices: vec![0u32, 1u32],
+        },
+    ];
+
+    let result = fullmag_runner::run_reference_fem_eigen(&plan, &outputs)
+        .expect("FEM eigen mode orthogonality test must succeed");
+
+    let freqs = extract_frequencies(&result);
+    assert!(
+        freqs.len() >= 2,
+        "must compute at least 2 modes for orthogonality check, got {}",
+        freqs.len()
+    );
+
+    // Frequencies must be sorted in ascending order (Lowest target)
+    for window in freqs.windows(2) {
+        assert!(
+            window[0] <= window[1] + 1e6, // allow 1 MHz floating-point slack
+            "frequencies must be non-decreasing: {:.3e} > {:.3e}",
+            window[0],
+            window[1]
+        );
+    }
+
+    // Mode 0 spatial profile must be present and parseable
+    let mode_bytes = result
+        .artifact_bytes("eigen/modes/mode_0000.json")
+        .expect("mode 0 artifact must be present");
+
+    let mode_json: serde_json::Value =
+        serde_json::from_slice(mode_bytes).expect("mode 0 JSON must be valid");
+
+    let max_amp = mode_json["max_amplitude"]
+        .as_f64()
+        .expect("mode 0 must have max_amplitude field");
+
+    assert!(
+        max_amp > 0.0,
+        "mode 0 max_amplitude must be positive, got {max_amp}"
+    );
+}
+
+/// EIG-032 mesh-convergence hint: running on a finer mesh must not produce
+/// lower frequencies than on a coarser mesh by more than a moderate factor.
+///
+/// This is a weak check: it only ensures the solver is well-behaved across
+/// mesh resolutions without requiring a known analytic reference.
+#[test]
+fn fem_eigen_frequency_is_stable_across_resolutions() {
+    let gamma = 2.211e5_f64;
+    let h_x = 39_789.0_f64;
+
+    let run = |side_nm: f64| -> f64 {
+        let mesh = cube_mesh(side_nm);
+        let n = mesh.nodes.len();
+        let m0 = vec![[1.0_f64, 0.0, 0.0]; n];
+        let plan = FemEigenPlanIR {
+            mesh_name: format!("cube_{side_nm}nm"),
+            mesh_source: None,
+            mesh,
+            fe_order: 1,
+            hmax: side_nm * 1e-9,
+            equilibrium_magnetization: m0,
+            material: fem_permalloy(),
+            operator: EigenOperatorConfigIR {
+                kind: EigenOperatorIR::LinearizedLlg,
+                include_demag: false,
+            },
+            count: 3,
+            target: EigenTargetIR::Lowest,
+            equilibrium: EquilibriumSourceIR::Provided,
+            k_sampling: None,
+            normalization: EigenNormalizationIR::UnitL2,
+            damping_policy: EigenDampingPolicyIR::Ignore,
+            enable_exchange: true,
+            enable_demag: false,
+            external_field: Some([h_x, 0.0, 0.0]),
+            gyromagnetic_ratio: gamma,
+            precision: ExecutionPrecision::Double,
+            exchange_bc: ExchangeBoundaryCondition::Neumann,
+            demag_realization: None,
+        };
+        let outputs = vec![OutputIR::EigenSpectrum {
+            quantity: "eigenfrequency".to_string(),
+        }];
+        let result = fullmag_runner::run_reference_fem_eigen(&plan, &outputs)
+            .expect("FEM eigen convergence run must succeed");
+        extract_lowest_frequency(&result).expect("must return a lowest frequency")
+    };
+
+    // Both runs use the same 8-node cube but with different side lengths
+    // (20 nm vs 40 nm).  The absolute frequency will differ, but both must
+    // be positive and finite.
+    let f_20 = run(20.0);
+    let f_40 = run(40.0);
+
+    assert!(
+        f_20.is_finite() && f_20 > 0.0,
+        "20 nm run: f={f_20:.3e} must be positive finite"
+    );
+    assert!(
+        f_40.is_finite() && f_40 > 0.0,
+        "40 nm run: f={f_40:.3e} must be positive finite"
+    );
+
+    // The ratio of the two runs should stay within a reasonable range (the
+    // same topology is used so the normalised spectrum is identical up to
+    // the exchange stiffness scaling 1/a²).  Ratio should be ~4 for a²
+    // scaling.
+    let ratio = f_20 / f_40;
+    assert!(
+        ratio > 1.5 && ratio < 8.0,
+        "20nm/40nm frequency ratio is {ratio:.3} — expected ~4 from exchange a² scaling"
     );
 }

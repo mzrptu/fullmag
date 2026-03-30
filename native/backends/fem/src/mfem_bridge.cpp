@@ -22,6 +22,7 @@ namespace {
 
 constexpr double kMu0 = 4.0e-7 * 3.14159265358979323846;
 constexpr double kGeomEps = 1e-30;
+constexpr int kInterruptPollStride = 256;
 
 using Vec3 = std::array<double, 3>;
 using SteadyClock = std::chrono::steady_clock;
@@ -435,7 +436,9 @@ void compute_row_sum_lumped_mass(const mfem::SparseMatrix &matrix, std::vector<d
     }
 }
 
-void multiply_sparse_matrix_host(
+bool multiply_sparse_matrix_host(
+    Context *ctx,
+    bool allow_interrupt,
     const mfem::SparseMatrix &matrix,
     const std::vector<double> &x,
     std::vector<double> &y)
@@ -446,15 +449,25 @@ void multiply_sparse_matrix_host(
     const int *J = matrix.GetJ();
     const double *data = matrix.GetData();
     for (int row = 0; row < n; ++row) {
+        if (allow_interrupt &&
+            ctx != nullptr &&
+            row > 0 &&
+            (row % kInterruptPollStride) == 0 &&
+            poll_interrupt(*ctx)) {
+            return false;
+        }
         double sum = 0.0;
         for (int index = I[row]; index < I[row + 1]; ++index) {
             sum += data[index] * x[static_cast<size_t>(J[index])];
         }
         y[static_cast<size_t>(row)] = sum;
     }
+    return true;
 }
 
 bool apply_exchange_component(
+    Context *ctx,
+    bool allow_interrupt,
     const mfem::SparseMatrix &stiffness,
     const std::vector<double> &lumped_mass,
     double prefactor,
@@ -469,10 +482,19 @@ bool apply_exchange_component(
         error = "MFEM stiffness size does not match host magnetization component size";
         return false;
     }
-    multiply_sparse_matrix_host(stiffness, m_values, tmp_host);
+    if (!multiply_sparse_matrix_host(ctx, allow_interrupt, stiffness, m_values, tmp_host)) {
+        return false;
+    }
     h_component.resize(m_values.size());
     double energy = 0.0;
     for (int i = 0; i < stiffness.Height(); ++i) {
+        if (allow_interrupt &&
+            ctx != nullptr &&
+            i > 0 &&
+            (i % kInterruptPollStride) == 0 &&
+            poll_interrupt(*ctx)) {
+            return false;
+        }
         const double mass = lumped_mass[static_cast<size_t>(i)];
         if (mass <= 0.0) {
             // S08: non-magnetic nodes may have zero lumped mass when
@@ -1149,6 +1171,7 @@ bool compute_exchange_for_magnetization(
     std::vector<double> &h_ex_xyz,
     std::vector<double> *h_eff_xyz,
     double *exchange_energy,
+    bool allow_interrupt,
     std::string &error)
 {
     if (!ctx.mfem_ready) {
@@ -1180,6 +1203,8 @@ bool compute_exchange_for_magnetization(
     double component_energy = 0.0;
 
     if (!apply_exchange_component(
+            &ctx,
+            allow_interrupt,
             stiffness,
             ctx.mfem_lumped_mass,
             prefactor,
@@ -1196,6 +1221,8 @@ bool compute_exchange_for_magnetization(
     }
     component_energy = 0.0;
     if (!apply_exchange_component(
+            &ctx,
+            allow_interrupt,
             stiffness,
             ctx.mfem_lumped_mass,
             prefactor,
@@ -1212,6 +1239,8 @@ bool compute_exchange_for_magnetization(
     }
     component_energy = 0.0;
     if (!apply_exchange_component(
+            &ctx,
+            allow_interrupt,
             stiffness,
             ctx.mfem_lumped_mass,
             prefactor,
@@ -1221,6 +1250,9 @@ bool compute_exchange_for_magnetization(
             ctx.material.exchange_stiffness,
             exchange_energy != nullptr ? &component_energy : nullptr,
             error)) {
+        return false;
+    }
+    if (allow_interrupt && poll_interrupt(ctx)) {
         return false;
     }
     if (exchange_energy != nullptr) {
@@ -1233,6 +1265,12 @@ bool compute_exchange_for_magnetization(
     // but nodes shared between magnetic and air may carry residual coupling.
     if (!ctx.magnetic_node_mask.empty()) {
         for (size_t i = 0; i < ctx.magnetic_node_mask.size(); ++i) {
+            if (allow_interrupt &&
+                i > 0 &&
+                (i % static_cast<size_t>(kInterruptPollStride)) == 0 &&
+                poll_interrupt(ctx)) {
+                return false;
+            }
             if (ctx.magnetic_node_mask[i] == 0u) {
                 const size_t base = i * 3u;
                 h_ex_xyz[base + 0] = 0.0;
@@ -1352,6 +1390,7 @@ bool compute_demag_for_magnetization(
     const std::vector<double> &m_xyz,
     std::vector<double> &h_demag_xyz,
     double &demag_energy,
+    bool allow_interrupt,
     std::string &error)
 {
     if (ctx.mfem_lumped_mass.empty()) {
@@ -1373,6 +1412,9 @@ bool compute_demag_for_magnetization(
         ctx.transfer_grid.desc,
         ctx.transfer_grid.active_mask,
         ctx.transfer_grid.magnetization_xyz);
+    if (allow_interrupt && poll_interrupt(ctx)) {
+        return false;
+    }
 
     if (fullmag_fdm_backend_upload_magnetization_f64(
             ctx.transfer_grid.backend,
@@ -1384,11 +1426,17 @@ bool compute_demag_for_magnetization(
                 (fdm_error != nullptr ? fdm_error : "unknown FDM error");
         return false;
     }
+    if (allow_interrupt && poll_interrupt(ctx)) {
+        return false;
+    }
 
     if (fullmag_fdm_backend_refresh_demag_observable(ctx.transfer_grid.backend) != FULLMAG_FDM_OK) {
         const char *fdm_error = fullmag_fdm_backend_last_error(ctx.transfer_grid.backend);
         error = std::string("FEM transfer-grid demag failed to refresh FDM H_demag: ") +
                 (fdm_error != nullptr ? fdm_error : "unknown FDM error");
+        return false;
+    }
+    if (allow_interrupt && poll_interrupt(ctx)) {
         return false;
     }
 
@@ -1403,9 +1451,18 @@ bool compute_demag_for_magnetization(
                 (fdm_error != nullptr ? fdm_error : "unknown FDM error");
         return false;
     }
+    if (allow_interrupt && poll_interrupt(ctx)) {
+        return false;
+    }
 
     h_demag_xyz.assign(static_cast<size_t>(ctx.n_nodes) * 3u, 0.0);
     for (uint32_t node = 0; node < ctx.n_nodes; ++node) {
+        if (allow_interrupt &&
+            node > 0 &&
+            (node % static_cast<uint32_t>(kInterruptPollStride)) == 0 &&
+            poll_interrupt(ctx)) {
+            return false;
+        }
         if (!ctx.magnetic_node_mask.empty() && ctx.magnetic_node_mask[node] == 0u) {
             continue;
         }
@@ -1421,6 +1478,12 @@ bool compute_demag_for_magnetization(
 
     demag_energy = 0.0;
     for (size_t node = 0; node < ctx.mfem_lumped_mass.size(); ++node) {
+        if (allow_interrupt &&
+            node > 0 &&
+            (node % static_cast<size_t>(kInterruptPollStride)) == 0 &&
+            poll_interrupt(ctx)) {
+            return false;
+        }
         const size_t base = node * 3u;
         const double mdoth =
             m_xyz[base + 0] * h_demag_xyz[base + 0] +
@@ -1441,6 +1504,7 @@ bool compute_effective_fields_for_magnetization(
     std::vector<double> &h_eff_xyz,
     double *exchange_energy,
     double *demag_energy,
+    bool allow_interrupt,
     PhaseTimings *timings,
     std::string &error)
 {
@@ -1452,8 +1516,17 @@ bool compute_effective_fields_for_magnetization(
     if (ctx.enable_exchange) {
         ScopedPhaseTimer timer(timings != nullptr ? &timings->exchange_wall_time_ns : nullptr);
         if (!compute_exchange_for_magnetization(
-                ctx, m_xyz, h_ex_xyz, nullptr, exchange_energy != nullptr ? &exchange : nullptr, error))
+                ctx,
+                m_xyz,
+                h_ex_xyz,
+                nullptr,
+                exchange_energy != nullptr ? &exchange : nullptr,
+                allow_interrupt,
+                error))
         {
+            return false;
+        }
+        if (allow_interrupt && poll_interrupt(ctx)) {
             return false;
         }
     }
@@ -1462,15 +1535,18 @@ bool compute_effective_fields_for_magnetization(
     if (ctx.enable_demag) {
         ScopedPhaseTimer timer(timings != nullptr ? &timings->demag_wall_time_ns : nullptr);
         if (ctx.demag_realization == 1 /* POISSON_AIRBOX */ && ctx.poisson_ready) {
-            if (!context_compute_demag_poisson(ctx, m_xyz, h_demag_xyz, demag, error)) {
+            if (!context_compute_demag_poisson(ctx, m_xyz, h_demag_xyz, demag, allow_interrupt, error)) {
                 return false;
             }
         } else {
             if (!compute_demag_for_magnetization(
-                    ctx, m_xyz, h_demag_xyz, demag, error))
+                    ctx, m_xyz, h_demag_xyz, demag, allow_interrupt, error))
             {
                 return false;
             }
+        }
+        if (allow_interrupt && poll_interrupt(ctx)) {
+            return false;
         }
     }
 
@@ -1498,6 +1574,9 @@ bool compute_effective_fields_for_magnetization(
         for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
             h_eff_xyz[i] = h_ex_xyz[i] + h_demag_xyz[i] + ctx.h_ext_xyz[i] +
                            ctx.h_ani_xyz[i] + ctx.h_dmi_xyz[i];
+        }
+        if (allow_interrupt && poll_interrupt(ctx)) {
+            return false;
         }
     }
 
@@ -2271,6 +2350,7 @@ bool context_compute_demag_poisson(
     const std::vector<double> &m_xyz,
     std::vector<double> &h_demag_xyz,
     double &demag_energy,
+    bool allow_interrupt,
     std::string &error)
 {
     if (!ctx.poisson_ready) {
@@ -2281,6 +2361,9 @@ bool context_compute_demag_poisson(
     // S03: Assemble RHS b(v) = ∫ M·∇v dV
     mfem::Vector rhs;
     if (!assemble_poisson_rhs(ctx, m_xyz, rhs, error)) {
+        return false;
+    }
+    if (allow_interrupt && poll_interrupt(ctx)) {
         return false;
     }
 
@@ -2300,9 +2383,15 @@ bool context_compute_demag_poisson(
         return false;
     }
 #endif
+    if (allow_interrupt && poll_interrupt(ctx)) {
+        return false;
+    }
 
     // S05: Recover H_demag = -∇u and compute energy
     if (!recover_demag_field(ctx, solution, h_demag_xyz, demag_energy, m_xyz, error)) {
+        return false;
+    }
+    if (allow_interrupt && poll_interrupt(ctx)) {
         return false;
     }
 
@@ -2323,6 +2412,7 @@ bool context_refresh_exchange_field_mfem(Context &ctx, std::string &error) {
             ctx.h_eff_xyz,
             &exchange_energy,
             &demag_energy,
+            false,
             nullptr,
             error)) {
         return false;
@@ -2362,9 +2452,13 @@ bool context_snapshot_stats_mfem(
             h_eff_current,
             &exchange_energy,
             &demag_energy,
+            false,
             &timings,
             error)) {
         return false;
+    }
+    if (poll_interrupt(ctx)) {
+        return true;
     }
 
     ctx.h_ex_xyz = std::move(h_ex_current);
@@ -2421,6 +2515,7 @@ bool context_step_exchange_heun_mfem(
         error = "native FEM GPU stepper requires a positive dt";
         return false;
     }
+    ctx.current_dt = dt_seconds;
 
     std::vector<double> h_ex_now;
     std::vector<double> h_demag_now;
@@ -2435,8 +2530,12 @@ bool context_step_exchange_heun_mfem(
             h_eff_now,
             &exchange_energy,
             &demag_energy,
+            true,
             &timings,
             error)) {
+        if (ctx.step_interrupted) {
+            return true;
+        }
         return false;
     }
 
@@ -2452,6 +2551,9 @@ bool context_step_exchange_heun_mfem(
             k1,
             max_rhs_k1);
         zero_non_magnetic_nodes_aos(k1, ctx.magnetic_node_mask);
+    }
+    if (poll_interrupt(ctx)) {
+        return true;
     }
 
     std::vector<double> predicted = ctx.m_xyz;
@@ -2471,9 +2573,16 @@ bool context_step_exchange_heun_mfem(
             h_eff_pred,
             nullptr,
             nullptr,
+            true,
             &timings,
             error)) {
+        if (ctx.step_interrupted) {
+            return true;
+        }
         return false;
+    }
+    if (poll_interrupt(ctx)) {
+        return true;
     }
 
     std::vector<double> k2;
@@ -2488,6 +2597,9 @@ bool context_step_exchange_heun_mfem(
             k2,
             max_rhs_k2);
         zero_non_magnetic_nodes_aos(k2, ctx.magnetic_node_mask);
+    }
+    if (poll_interrupt(ctx)) {
+        return true;
     }
 
     std::vector<double> corrected = ctx.m_xyz;
@@ -2509,9 +2621,16 @@ bool context_step_exchange_heun_mfem(
             h_eff_final,
             &exchange_energy_final,
             &demag_energy_final,
+            true,
             &timings,
             error)) {
+        if (ctx.step_interrupted) {
+            return true;
+        }
         return false;
+    }
+    if (poll_interrupt(ctx)) {
+        return true;
     }
 
     ctx.m_xyz = std::move(corrected);
@@ -2657,7 +2776,7 @@ static bool evaluate_rhs(
 {
     if (!compute_effective_fields_for_magnetization(
             ctx, m_state, ws.h_ex_tmp, ws.h_demag_tmp, ws.h_eff_tmp,
-            out_exchange_energy, out_demag_energy, timings, error)) {
+            out_exchange_energy, out_demag_energy, true, timings, error)) {
         return false;
     }
     double max_rhs = 0.0;
@@ -2715,6 +2834,7 @@ bool context_step_explicit_rk_mfem(
         error = "native FEM GPU stepper requires a positive dt";
         return false;
     }
+    ctx.current_dt = dt_seconds;
 
     const size_t dof_len = ctx.m_xyz.size();
     stepper_workspace_allocate(ctx.stepper, dof_len, tab.stages);
@@ -2731,6 +2851,7 @@ bool context_step_explicit_rk_mfem(
 
     // Outer accept/reject loop (runs once for non-adaptive)
     for (;;) {
+        ctx.current_dt = dt;
         // Save m_backup
         ws.m_backup = ctx.m_xyz;
         final_stage_cache_valid = false;
@@ -2742,11 +2863,29 @@ bool context_step_explicit_rk_mfem(
         } else {
             double exchange_energy_s0 = 0.0;
             double demag_energy_s0 = 0.0;
-            if (!evaluate_rhs(ctx, ctx.m_xyz, ws, ws.k[0],
-                              nullptr, &exchange_energy_s0, &demag_energy_s0, &timings, error)) {
+            if (!evaluate_rhs(
+                    ctx,
+                    ctx.m_xyz,
+                    ws,
+                    ws.k[0],
+                    nullptr,
+                    &exchange_energy_s0,
+                    &demag_energy_s0,
+                    &timings,
+                    error)) {
+                if (ctx.step_interrupted) {
+                    ctx.m_xyz = ws.m_backup;
+                    ws.fsal_valid = false;
+                    return true;
+                }
                 return false;
             }
             total_rhs += 1;
+        }
+        if (poll_interrupt(ctx)) {
+            ctx.m_xyz = ws.m_backup;
+            ws.fsal_valid = false;
+            return true;
         }
 
         // Stages 1..s-1
@@ -2773,7 +2912,17 @@ bool context_step_explicit_rk_mfem(
                               stage_demag_energy,
                               &timings,
                               error)) {
+                if (ctx.step_interrupted) {
+                    ctx.m_xyz = ws.m_backup;
+                    ws.fsal_valid = false;
+                    return true;
+                }
                 return false;
+            }
+            if (poll_interrupt(ctx)) {
+                ctx.m_xyz = ws.m_backup;
+                ws.fsal_valid = false;
+                return true;
             }
             if (tab.fsal && s == tab.stages - 1) {
                 final_stage_cache_valid = true;
@@ -2790,6 +2939,11 @@ bool context_step_explicit_rk_mfem(
             ctx.m_xyz[i] = ws.m_backup[i] + dt * accum;
         }
         normalize_aos_field(ctx.m_xyz);
+        if (poll_interrupt(ctx)) {
+            ctx.m_xyz = ws.m_backup;
+            ws.fsal_valid = false;
+            return true;
+        }
 
         // For adaptive methods, compute error estimate
         if (adaptive) {
@@ -2808,9 +2962,15 @@ bool context_step_explicit_rk_mfem(
                 ctx.m_xyz = ws.m_backup;
                 dt = result.dt_next;
                 ctx.dt_seconds = dt;
+                ctx.current_dt = dt;
                 ws.fsal_valid = false;
                 rejected += 1;
                 continue;
+            }
+            if (poll_interrupt(ctx)) {
+                ctx.m_xyz = ws.m_backup;
+                ws.fsal_valid = false;
+                return true;
             }
             stats.error_estimate = err_norm;
             stats.dt_suggested = result.dt_next;
@@ -2844,8 +3004,21 @@ bool context_step_explicit_rk_mfem(
         std::vector<double> h_demag_final;
         std::vector<double> h_eff_final;
         if (!compute_effective_fields_for_magnetization(
-                ctx, ctx.m_xyz, h_ex_final, h_demag_final, h_eff_final,
-                &exchange_energy_final, &demag_energy_final, &timings, error)) {
+                ctx,
+                ctx.m_xyz,
+                h_ex_final,
+                h_demag_final,
+                h_eff_final,
+                &exchange_energy_final,
+                &demag_energy_final,
+                true,
+                &timings,
+                error)) {
+            if (ctx.step_interrupted) {
+                ctx.m_xyz = ws.m_backup;
+                ws.fsal_valid = false;
+                return true;
+            }
             return false;
         }
         ctx.h_ex_xyz = std::move(h_ex_final);

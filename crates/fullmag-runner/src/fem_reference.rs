@@ -887,6 +887,7 @@ mod tests {
                 grid: [0, 0, 0],
                 field_every_n: 2,
                 display_selection: None,
+                interrupt_requested: None,
                 on_step: &mut on_step,
             }),
             None,

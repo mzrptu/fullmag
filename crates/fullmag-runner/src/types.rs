@@ -2,8 +2,52 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::sync::atomic::AtomicBool;
 
 // ----- public types -----
+
+/// Public result type returned by [`crate::run_reference_fem_eigen`].
+///
+/// Contains the solver status and all artifact files (spectrum, modes) written
+/// during the eigenmode solve.  Artifact bytes are the raw JSON content.
+#[derive(Debug, Clone)]
+pub struct FemEigenRunResult {
+    /// Whether the solve completed successfully.
+    pub status: RunStatus,
+    /// Artifact files produced by the solver.
+    /// Each entry is `(relative_path, bytes)`, e.g.
+    /// `("eigen/spectrum.json", ...)` or `("eigen/modes/mode_0000.json", ...)`.
+    pub artifacts: Vec<(String, Vec<u8>)>,
+}
+
+impl FemEigenRunResult {
+    /// Return the bytes of the artifact at `relative_path`, if present.
+    pub fn artifact_bytes(&self, relative_path: &str) -> Option<&[u8]> {
+        self.artifacts
+            .iter()
+            .find(|(p, _)| p == relative_path)
+            .map(|(_, b)| b.as_slice())
+    }
+
+    /// Parse the spectrum artifact as JSON and return all mode frequencies in Hz.
+    pub fn spectrum_frequencies_hz(&self) -> Vec<f64> {
+        let bytes = match self.artifact_bytes("eigen/spectrum.json") {
+            Some(b) => b,
+            None => return vec![],
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+            return vec![];
+        };
+        value["modes"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m.get("frequency_hz").and_then(|f| f.as_f64()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunResult {
@@ -296,6 +340,8 @@ pub(crate) struct LiveStepConsumer<'a> {
     pub grid: [u32; 3],
     pub field_every_n: u64,
     pub display_selection: Option<&'a (dyn Fn() -> crate::DisplaySelectionState + Send + Sync)>,
+    #[cfg_attr(not(any(feature = "cuda", feature = "fem-gpu")), allow(dead_code))]
+    pub interrupt_requested: Option<&'a AtomicBool>,
     pub on_step: &'a mut dyn FnMut(StepUpdate) -> StepAction,
 }
 

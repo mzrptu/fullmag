@@ -24,9 +24,13 @@ use crate::types::StepStats;
 use crate::types::{LivePreviewField, LivePreviewRequest, RunError};
 
 #[cfg(feature = "cuda")]
+use std::ffi::c_void;
+#[cfg(feature = "cuda")]
 use std::ffi::CStr;
 #[cfg(feature = "cuda")]
 use std::io::Write;
+#[cfg(feature = "cuda")]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Check whether the native CUDA FDM backend is compiled and available.
 pub(crate) fn is_cuda_available() -> bool {
@@ -90,6 +94,18 @@ unsafe impl Send for NativeFdmFieldSnapshot {}
 
 #[cfg(feature = "cuda")]
 impl NativeFdmBackend {
+    unsafe extern "C" fn poll_atomic_interrupt_flag(user_data: *mut c_void) -> i32 {
+        let flag = user_data.cast::<AtomicBool>();
+        if flag.is_null() {
+            return 0;
+        }
+        if unsafe { (*flag).load(Ordering::Relaxed) } {
+            1
+        } else {
+            0
+        }
+    }
+
     /// Create a new backend from an FDM execution plan.
     pub fn create(plan: &fullmag_ir::FdmPlanIR) -> Result<Self, RunError> {
         let grid = ffi::fullmag_fdm_grid_desc {
@@ -425,8 +441,27 @@ impl NativeFdmBackend {
         })
     }
 
-    /// Execute one Heun time step.
-    pub fn step(&mut self, dt: f64) -> Result<StepStats, RunError> {
+    pub fn set_interrupt_signal(&mut self, signal: Option<&AtomicBool>) -> Result<(), RunError> {
+        let (poll_fn, user_data) = signal.map_or((None, std::ptr::null_mut()), |flag| {
+            (
+                Some(Self::poll_atomic_interrupt_flag as unsafe extern "C" fn(*mut c_void) -> i32),
+                flag as *const AtomicBool as *mut c_void,
+            )
+        });
+        let rc =
+            unsafe { ffi::fullmag_fdm_backend_set_interrupt_poll(self.handle, poll_fn, user_data) };
+        if rc != ffi::FULLMAG_FDM_OK {
+            return Err(self.last_error_or("set_interrupt_signal failed"));
+        }
+        Ok(())
+    }
+
+    pub fn step_interruptible(
+        &mut self,
+        dt: f64,
+        interrupt_signal: Option<&AtomicBool>,
+    ) -> Result<Option<StepStats>, RunError> {
+        self.set_interrupt_signal(interrupt_signal)?;
         let mut stats = ffi::fullmag_fdm_step_stats {
             step: 0,
             time_seconds: 0.0,
@@ -446,11 +481,14 @@ impl NativeFdmBackend {
         };
 
         let rc = unsafe { ffi::fullmag_fdm_backend_step(self.handle, dt, &mut stats) };
+        if rc == ffi::FULLMAG_FDM_ERR_INTERRUPTED {
+            return Ok(None);
+        }
         if rc != ffi::FULLMAG_FDM_OK {
             return Err(self.last_error_or("step failed"));
         }
 
-        Ok(StepStats {
+        Ok(Some(StepStats {
             step: stats.step,
             time: stats.time_seconds,
             dt: stats.dt_seconds,
@@ -469,7 +507,13 @@ impl NativeFdmBackend {
                 None
             },
             ..StepStats::default()
-        })
+        }))
+    }
+
+    /// Execute one time step.
+    pub fn step(&mut self, dt: f64) -> Result<StepStats, RunError> {
+        self.step_interruptible(dt, None)?
+            .ok_or_else(|| self.last_error_or("step interrupted without an interrupt signal"))
     }
 
     /// Copy a field observable from device to host as [f64; 3] AoS.

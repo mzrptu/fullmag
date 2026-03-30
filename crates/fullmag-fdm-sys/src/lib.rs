@@ -5,6 +5,7 @@
 
 #![allow(non_camel_case_types)]
 
+use std::ffi::c_void;
 use std::os::raw::c_char;
 
 // ── Constants ──
@@ -17,6 +18,7 @@ pub const FULLMAG_FDM_OK: i32 = 0;
 pub const FULLMAG_FDM_ERR_INVALID: i32 = -1;
 pub const FULLMAG_FDM_ERR_CUDA: i32 = -2;
 pub const FULLMAG_FDM_ERR_INTERNAL: i32 = -3;
+pub const FULLMAG_FDM_ERR_INTERRUPTED: i32 = -4;
 
 // ── Enums ──
 
@@ -61,6 +63,8 @@ pub enum fullmag_fdm_boundary_correction {
     FULLMAG_FDM_BOUNDARY_VOLUME = 1,
     FULLMAG_FDM_BOUNDARY_FULL = 2,
 }
+
+pub type fullmag_fdm_interrupt_poll_fn = Option<unsafe extern "C" fn(*mut c_void) -> i32>;
 
 // ── Descriptors ──
 
@@ -267,6 +271,12 @@ extern "C" {
         handle: *mut fullmag_fdm_backend,
         dt_seconds: f64,
         out_stats: *mut fullmag_fdm_step_stats,
+    ) -> i32;
+
+    pub fn fullmag_fdm_backend_set_interrupt_poll(
+        handle: *mut fullmag_fdm_backend,
+        poll_fn: fullmag_fdm_interrupt_poll_fn,
+        user_data: *mut c_void,
     ) -> i32;
 
     pub fn fullmag_fdm_backend_copy_field_f64(

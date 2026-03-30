@@ -15,7 +15,11 @@ use crate::preview::{build_mesh_preview_field, normalize_quantity_id};
 use crate::types::{LivePreviewField, LivePreviewRequest, RunError, StepStats};
 
 #[cfg(feature = "fem-gpu")]
+use std::ffi::c_void;
+#[cfg(feature = "fem-gpu")]
 use std::ffi::CStr;
+#[cfg(feature = "fem-gpu")]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(feature = "fem-gpu")]
 type BBox = ([f64; 3], [f64; 3]);
@@ -63,6 +67,18 @@ pub(crate) struct NativeFemBackend {
 
 #[cfg(feature = "fem-gpu")]
 impl NativeFemBackend {
+    unsafe extern "C" fn poll_atomic_interrupt_flag(user_data: *mut c_void) -> i32 {
+        let flag = user_data.cast::<AtomicBool>();
+        if flag.is_null() {
+            return 0;
+        }
+        if unsafe { (*flag).load(Ordering::Relaxed) } {
+            1
+        } else {
+            0
+        }
+    }
+
     pub fn create(plan: &fullmag_ir::FemPlanIR) -> Result<Self, RunError> {
         let nodes_flat: Vec<f64> = plan
             .mesh
@@ -384,7 +400,27 @@ impl NativeFemBackend {
         Ok(Self { handle })
     }
 
-    pub fn step(&mut self, dt: f64) -> Result<StepStats, RunError> {
+    pub fn set_interrupt_signal(&mut self, signal: Option<&AtomicBool>) -> Result<(), RunError> {
+        let (poll_fn, user_data) = signal.map_or((None, std::ptr::null_mut()), |flag| {
+            (
+                Some(Self::poll_atomic_interrupt_flag as unsafe extern "C" fn(*mut c_void) -> i32),
+                flag as *const AtomicBool as *mut c_void,
+            )
+        });
+        let rc =
+            unsafe { ffi::fullmag_fem_backend_set_interrupt_poll(self.handle, poll_fn, user_data) };
+        if rc != ffi::FULLMAG_FEM_OK {
+            return Err(self.last_error_or("FEM GPU set_interrupt_signal failed"));
+        }
+        Ok(())
+    }
+
+    pub fn step_interruptible(
+        &mut self,
+        dt: f64,
+        interrupt_signal: Option<&AtomicBool>,
+    ) -> Result<Option<StepStats>, RunError> {
+        self.set_interrupt_signal(interrupt_signal)?;
         let mut stats = ffi::fullmag_fem_step_stats {
             step: 0,
             time_seconds: 0.0,
@@ -414,11 +450,14 @@ impl NativeFemBackend {
         };
 
         let rc = unsafe { ffi::fullmag_fem_backend_step(self.handle, dt, &mut stats) };
+        if rc == ffi::FULLMAG_FEM_ERR_INTERRUPTED {
+            return Ok(None);
+        }
         if rc != ffi::FULLMAG_FEM_OK {
             return Err(self.last_error_or("FEM GPU step failed"));
         }
 
-        Ok(StepStats {
+        Ok(Some(StepStats {
             step: stats.step,
             time: stats.time_seconds,
             dt: stats.dt_seconds,
@@ -452,7 +491,13 @@ impl NativeFemBackend {
             fsal_reused: stats.fsal_reused != 0,
             demag_solves: stats.demag_linear_iterations,
             ..StepStats::default()
-        })
+        }))
+    }
+
+    #[allow(dead_code)]
+    pub fn step(&mut self, dt: f64) -> Result<StepStats, RunError> {
+        self.step_interruptible(dt, None)?
+            .ok_or_else(|| self.last_error_or("FEM GPU step interrupted without a signal"))
     }
 
     pub fn copy_field(

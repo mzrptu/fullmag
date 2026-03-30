@@ -234,6 +234,7 @@ impl InteractiveFdmPreviewRuntime {
         grid: [u32; 3],
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         match &mut self.inner {
@@ -243,6 +244,7 @@ impl InteractiveFdmPreviewRuntime {
                 grid,
                 field_every_n,
                 display_selection,
+                interrupt_requested,
                 on_step,
             ),
             #[cfg(feature = "cuda")]
@@ -252,6 +254,7 @@ impl InteractiveFdmPreviewRuntime {
                 grid,
                 field_every_n,
                 display_selection,
+                interrupt_requested,
                 on_step,
             ),
         }
@@ -265,6 +268,7 @@ impl InteractiveFdmPreviewRuntime {
         grid: [u32; 3],
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
@@ -277,6 +281,7 @@ impl InteractiveFdmPreviewRuntime {
                     grid,
                     field_every_n,
                     display_selection,
+                    interrupt_requested,
                     artifact_writer,
                     on_step,
                 ),
@@ -289,6 +294,7 @@ impl InteractiveFdmPreviewRuntime {
                     grid,
                     field_every_n,
                     display_selection,
+                    interrupt_requested,
                     artifact_writer,
                     on_step,
                 ),
@@ -425,6 +431,7 @@ impl InteractiveFemPreviewRuntime {
         until_seconds: f64,
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         match &mut self.inner {
@@ -433,6 +440,7 @@ impl InteractiveFemPreviewRuntime {
                 until_seconds,
                 field_every_n,
                 display_selection,
+                interrupt_requested,
                 on_step,
             ),
             #[cfg(feature = "fem-gpu")]
@@ -441,6 +449,7 @@ impl InteractiveFemPreviewRuntime {
                 until_seconds,
                 field_every_n,
                 display_selection,
+                interrupt_requested,
                 on_step,
             ),
         }
@@ -454,6 +463,7 @@ impl InteractiveFemPreviewRuntime {
         field_every_n: u64,
         artifact_writer: Option<ArtifactPipelineSender>,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
         match &mut self.inner {
@@ -465,6 +475,7 @@ impl InteractiveFemPreviewRuntime {
                     field_every_n,
                     artifact_writer,
                     display_selection,
+                    interrupt_requested,
                     on_step,
                 ),
             #[cfg(feature = "fem-gpu")]
@@ -476,6 +487,7 @@ impl InteractiveFemPreviewRuntime {
                     field_every_n,
                     artifact_writer,
                     display_selection,
+                    interrupt_requested,
                     on_step,
                 ),
         }
@@ -557,6 +569,7 @@ impl CpuInteractiveFdmPreviewRuntime {
         grid: [u32; 3],
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        _interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         if !self.plan_signature.eq(&normalize_plan_signature(plan)) {
@@ -750,6 +763,7 @@ impl CpuInteractiveFdmPreviewRuntime {
         grid: [u32; 3],
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        _interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
@@ -1086,6 +1100,7 @@ impl CudaInteractiveFdmPreviewRuntime {
         grid: [u32; 3],
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         if !self.plan_signature.eq(&normalize_plan_signature(plan)) {
@@ -1157,7 +1172,12 @@ impl CudaInteractiveFdmPreviewRuntime {
             }
 
             let dt_step = dt.min(until_seconds - (self.total_time - base_time));
-            let total_stats = self.backend.step(dt_step)?;
+            let Some(total_stats) = self
+                .backend
+                .step_interruptible(dt_step, interrupt_requested)?
+            else {
+                continue;
+            };
             self.total_steps = total_stats.step;
             self.total_time = total_stats.time;
             if let Some(next) = total_stats.dt_suggested {
@@ -1238,6 +1258,7 @@ impl CudaInteractiveFdmPreviewRuntime {
         grid: [u32; 3],
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
@@ -1328,7 +1349,12 @@ impl CudaInteractiveFdmPreviewRuntime {
             }
 
             let dt_step = dt.min(until_seconds - (self.total_time - base_time));
-            let total_stats = self.backend.step(dt_step)?;
+            let Some(total_stats) = self
+                .backend
+                .step_interruptible(dt_step, interrupt_requested)?
+            else {
+                continue;
+            };
             self.total_steps = total_stats.step;
             self.total_time = total_stats.time;
             if let Some(next) = total_stats.dt_suggested {
@@ -1497,6 +1523,7 @@ impl CpuInteractiveFemPreviewRuntime {
         until_seconds: f64,
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        _interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         if !self.plan_signature.eq(&normalize_fem_plan_signature(plan)) {
@@ -1669,6 +1696,7 @@ impl CpuInteractiveFemPreviewRuntime {
         field_every_n: u64,
         artifact_writer: Option<ArtifactPipelineSender>,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        _interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
         if !self.plan_signature.eq(&normalize_fem_plan_signature(plan)) {
@@ -1949,6 +1977,7 @@ impl GpuInteractiveFemPreviewRuntime {
         until_seconds: f64,
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         if !self.plan_signature.eq(&normalize_fem_plan_signature(plan)) {
@@ -2017,7 +2046,12 @@ impl GpuInteractiveFemPreviewRuntime {
             }
 
             let dt_step = dt.min(until_seconds - (self.total_time - base_time));
-            let total_stats = self.backend.step(dt_step)?;
+            let Some(total_stats) = self
+                .backend
+                .step_interruptible(dt_step, interrupt_requested)?
+            else {
+                continue;
+            };
             self.total_steps = total_stats.step;
             self.total_time = total_stats.time;
             if let Some(next) = total_stats.dt_suggested {
@@ -2097,6 +2131,7 @@ impl GpuInteractiveFemPreviewRuntime {
         field_every_n: u64,
         artifact_writer: Option<ArtifactPipelineSender>,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
         if !self.plan_signature.eq(&normalize_fem_plan_signature(plan)) {
@@ -2182,7 +2217,12 @@ impl GpuInteractiveFemPreviewRuntime {
             }
 
             let dt_step = dt.min(until_seconds - (self.total_time - base_time));
-            let total_stats = self.backend.step(dt_step)?;
+            let Some(total_stats) = self
+                .backend
+                .step_interruptible(dt_step, interrupt_requested)?
+            else {
+                continue;
+            };
             self.total_steps = total_stats.step;
             self.total_time = total_stats.time;
             if let Some(next) = total_stats.dt_suggested {
@@ -2926,6 +2966,7 @@ impl InteractiveBackend for InteractiveFdmPreviewRuntime {
         until_seconds: f64,
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
@@ -2942,6 +2983,7 @@ impl InteractiveBackend for InteractiveFdmPreviewRuntime {
             fdm.grid.cells,
             field_every_n,
             display_selection,
+            interrupt_requested,
             artifact_writer,
             on_step,
         )
@@ -2999,6 +3041,7 @@ impl InteractiveBackend for InteractiveFemPreviewRuntime {
         until_seconds: f64,
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
@@ -3015,6 +3058,7 @@ impl InteractiveBackend for InteractiveFemPreviewRuntime {
             field_every_n,
             artifact_writer,
             display_selection,
+            interrupt_requested,
             on_step,
         )
     }

@@ -685,7 +685,12 @@ fn execute_cuda_fdm(
         }
 
         let dt_step = dt.min(until_seconds - current_time);
-        let stats = backend.step(dt_step)?;
+        let interrupt_requested = live
+            .as_ref()
+            .and_then(|consumer| consumer.interrupt_requested);
+        let Some(stats) = backend.step_interruptible(dt_step, interrupt_requested)? else {
+            continue;
+        };
         current_time = stats.time;
         latest_stats = Some(stats.clone());
         current_stats = stats.clone();
@@ -923,7 +928,12 @@ fn execute_native_fem(
         }
 
         let dt_step = dt.min(until_seconds - current_time);
-        let stats = backend.step(dt_step)?;
+        let interrupt_requested = live
+            .as_ref()
+            .and_then(|consumer| consumer.interrupt_requested);
+        let Some(stats) = backend.step_interruptible(dt_step, interrupt_requested)? else {
+            continue;
+        };
         current_time = stats.time;
         latest_stats = Some(stats.clone());
         current_stats = stats.clone();

@@ -99,6 +99,7 @@ int fullmag_fem_backend_step(
     handle->last_error.clear();
     bool ok = false;
     auto &ctx = handle->context;
+    ctx.step_interrupted = false;
     if (ctx.integrator == FULLMAG_FEM_INTEGRATOR_HEUN) {
         // Legacy Heun path (unchanged behavior)
         ok = fullmag::fem::context_step_exchange_heun_mfem(
@@ -113,12 +114,35 @@ int fullmag_fem_backend_step(
         fullmag_fem_set_handle_error(handle, handle->last_error);
         return FULLMAG_FEM_ERR_UNAVAILABLE;
     }
+    if (ctx.step_interrupted) {
+        if (!fullmag::fem::context_snapshot_stats_mfem(
+                ctx, *out_stats, handle->last_error)) {
+            fullmag_fem_set_handle_error(handle, handle->last_error);
+            return FULLMAG_FEM_ERR_UNAVAILABLE;
+        }
+        out_stats->dt_seconds = 0.0;
+        return FULLMAG_FEM_ERR_INTERRUPTED;
+    }
     return FULLMAG_FEM_OK;
 #else
     (void)dt_seconds;
     fullmag_fem_set_handle_error(handle, kUnavailableMessage);
     return FULLMAG_FEM_ERR_UNAVAILABLE;
 #endif
+}
+
+int fullmag_fem_backend_set_interrupt_poll(
+    fullmag_fem_backend *handle,
+    fullmag_fem_interrupt_poll_fn poll_fn,
+    void *user_data
+) {
+    if (handle == nullptr) {
+        fullmag_fem_set_global_error("fullmag_fem_backend_set_interrupt_poll received null handle");
+        return FULLMAG_FEM_ERR_INVALID;
+    }
+    handle->context.interrupt_poll = poll_fn;
+    handle->context.interrupt_poll_user_data = user_data;
+    return FULLMAG_FEM_OK;
 }
 
 int fullmag_fem_backend_copy_field_f64(

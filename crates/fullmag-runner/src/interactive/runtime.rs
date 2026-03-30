@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use crate::artifact_pipeline::ArtifactPipeline;
 use crate::artifacts;
@@ -146,6 +147,7 @@ impl InteractiveRuntime {
         output_dir: &Path,
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&AtomicBool>,
         mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
     ) -> Result<RunResult, RunError> {
         let plan = fullmag_plan::plan(problem)?;
@@ -162,6 +164,7 @@ impl InteractiveRuntime {
             until_seconds,
             field_every_n,
             display_selection,
+            interrupt_requested,
             artifact_writer,
             &mut on_step,
         );

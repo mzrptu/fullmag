@@ -40,7 +40,7 @@ pub use interactive::events::{
 pub use interactive::runtime::InteractiveRuntime;
 pub use interactive_runtime::{InteractiveFdmPreviewRuntime, InteractiveFemPreviewRuntime};
 pub use types::{
-    ExecutionProvenance, FemMeshPayload, LivePreviewField, LivePreviewRequest,
+    ExecutionProvenance, FemEigenRunResult, FemMeshPayload, LivePreviewField, LivePreviewRequest,
     LiveVectorFieldSnapshot, RunError, RunResult, RunStatus, RuntimeEngineInfo, StepAction,
     StepStats, StepUpdate,
 };
@@ -181,6 +181,7 @@ pub fn run_problem_with_callback(
                     grid,
                     field_every_n,
                     display_selection: None,
+                    interrupt_requested: None,
                     on_step: &mut on_step,
                 }),
                 artifact_writer.clone(),
@@ -211,6 +212,7 @@ pub fn run_problem_with_callback(
                     grid: [0, 0, 0],
                     field_every_n,
                     display_selection: None,
+                    interrupt_requested: None,
                     on_step: &mut on_step,
                 }),
                 artifact_writer.clone(),
@@ -323,6 +325,26 @@ pub fn run_problem_with_live_preview(
     display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
 ) -> Result<RunResult, RunError> {
+    run_problem_with_live_preview_interruptible(
+        problem,
+        until_seconds,
+        output_dir,
+        field_every_n,
+        display_selection,
+        None,
+        &mut on_step,
+    )
+}
+
+pub fn run_problem_with_live_preview_interruptible(
+    problem: &ProblemIR,
+    until_seconds: f64,
+    output_dir: &Path,
+    field_every_n: u64,
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+    interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
+    mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
+) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
     let mut artifact_pipeline = artifact_pipeline::ArtifactPipeline::start(
         output_dir.to_path_buf(),
@@ -345,6 +367,7 @@ pub fn run_problem_with_live_preview(
                     grid,
                     field_every_n,
                     display_selection: Some(display_selection),
+                    interrupt_requested,
                     on_step: &mut on_step,
                 }),
                 artifact_writer.clone(),
@@ -375,6 +398,7 @@ pub fn run_problem_with_live_preview(
                     grid: [0, 0, 0],
                     field_every_n,
                     display_selection: Some(display_selection),
+                    interrupt_requested,
                     on_step: &mut on_step,
                 }),
                 artifact_writer.clone(),
@@ -474,6 +498,28 @@ pub fn run_problem_with_interactive_fdm_runtime_live_preview(
     display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
 ) -> Result<RunResult, RunError> {
+    run_problem_with_interactive_fdm_runtime_live_preview_interruptible(
+        runtime,
+        problem,
+        until_seconds,
+        output_dir,
+        field_every_n,
+        display_selection,
+        None,
+        &mut on_step,
+    )
+}
+
+pub fn run_problem_with_interactive_fdm_runtime_live_preview_interruptible(
+    runtime: &mut InteractiveFdmPreviewRuntime,
+    problem: &ProblemIR,
+    until_seconds: f64,
+    output_dir: &Path,
+    field_every_n: u64,
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+    interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
+    mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
+) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
     let BackendPlanIR::Fdm(fdm) = &plan.backend_plan else {
         return Err(RunError {
@@ -497,6 +543,7 @@ pub fn run_problem_with_interactive_fdm_runtime_live_preview(
         fdm.grid.cells,
         field_every_n,
         display_selection,
+        interrupt_requested,
         artifact_writer,
         &mut on_step,
     );
@@ -574,6 +621,28 @@ pub fn run_problem_with_interactive_fem_runtime_live_preview(
     display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
 ) -> Result<RunResult, RunError> {
+    run_problem_with_interactive_fem_runtime_live_preview_interruptible(
+        runtime,
+        problem,
+        until_seconds,
+        output_dir,
+        field_every_n,
+        display_selection,
+        None,
+        &mut on_step,
+    )
+}
+
+pub fn run_problem_with_interactive_fem_runtime_live_preview_interruptible(
+    runtime: &mut InteractiveFemPreviewRuntime,
+    problem: &ProblemIR,
+    until_seconds: f64,
+    output_dir: &Path,
+    field_every_n: u64,
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+    interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
+    mut on_step: impl FnMut(StepUpdate) -> StepAction + Send,
+) -> Result<RunResult, RunError> {
     let plan = fullmag_plan::plan(problem)?;
     let BackendPlanIR::Fem(fem) = &plan.backend_plan else {
         return Err(RunError {
@@ -596,6 +665,7 @@ pub fn run_problem_with_interactive_fem_runtime_live_preview(
         field_every_n,
         artifact_writer,
         display_selection,
+        interrupt_requested,
         &mut on_step,
     );
     let pipeline_summary = artifact_pipeline.finish();
@@ -708,12 +778,35 @@ pub fn run_problem_with_interactive_runtime_live_preview(
     display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
     on_step: impl FnMut(StepUpdate) -> StepAction + Send,
 ) -> Result<RunResult, RunError> {
+    run_problem_with_interactive_runtime_live_preview_interruptible(
+        runtime,
+        problem,
+        until_seconds,
+        output_dir,
+        field_every_n,
+        display_selection,
+        None,
+        on_step,
+    )
+}
+
+pub fn run_problem_with_interactive_runtime_live_preview_interruptible(
+    runtime: &mut InteractiveRuntime,
+    problem: &ProblemIR,
+    until_seconds: f64,
+    output_dir: &Path,
+    field_every_n: u64,
+    display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
+    interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
+    on_step: impl FnMut(StepUpdate) -> StepAction + Send,
+) -> Result<RunResult, RunError> {
     runtime.execute_streaming(
         problem,
         until_seconds,
         output_dir,
         field_every_n,
         display_selection,
+        interrupt_requested,
         on_step,
     )
 }
@@ -900,14 +993,21 @@ pub fn run_reference_multilayer_fdm(
 
 /// Run a FEM eigenmode analysis on the CPU reference engine.
 ///
-/// Returns the first eigenpair (`frequency_hz`, `eigenvalue`) for each computed
-/// mode via the `AuxiliaryArtifact`s in [`ExecutedRun`].  The caller can
-/// obtain all mode data from the returned `ExecutedRun::auxiliary_artifacts`.
+/// Returns a [`types::FemEigenRunResult`] with the solver status and all artifact
+/// files (spectrum JSON, mode JSONs) produced during the solve.
 pub fn run_reference_fem_eigen(
     plan: &fullmag_ir::FemEigenPlanIR,
     outputs: &[OutputIR],
-) -> Result<types::ExecutedRun, RunError> {
-    fem_eigen::execute_reference_fem_eigen(plan, outputs)
+) -> Result<types::FemEigenRunResult, RunError> {
+    let executed = fem_eigen::execute_reference_fem_eigen(plan, outputs)?;
+    Ok(types::FemEigenRunResult {
+        status: executed.result.status,
+        artifacts: executed
+            .auxiliary_artifacts
+            .into_iter()
+            .map(|a| (a.relative_path, a.bytes))
+            .collect(),
+    })
 }
 
 #[cfg(test)]

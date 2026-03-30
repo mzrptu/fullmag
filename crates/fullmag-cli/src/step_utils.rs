@@ -405,8 +405,11 @@ pub(crate) fn build_interactive_command_stage(
     command: &crate::types::SessionCommand,
 ) -> Result<Option<ResolvedScriptStage>> {
     match command.kind.as_str() {
-        "close" | "stop" => Ok(None),
-        "pause" => Ok(None),
+        "close" => Ok(None),
+        "stop" | "break" | "pause" | "resume" => anyhow::bail!(
+            "interactive control command '{}' must be handled before stage materialization",
+            command.kind
+        ),
         "run" => {
             let until_seconds = command.until_seconds.ok_or_else(|| {
                 anyhow::anyhow!("interactive 'run' command requires until_seconds")
@@ -491,6 +494,41 @@ pub(crate) fn build_interactive_command_stage(
             }))
         }
         other => anyhow::bail!("unsupported interactive command kind '{other}'"),
+    }
+}
+
+pub(crate) fn build_resumable_interactive_command(
+    command: &crate::types::SessionCommand,
+    stage_result: &fullmag_runner::RunResult,
+) -> Option<crate::types::SessionCommand> {
+    match command.kind.as_str() {
+        "run" => {
+            let requested_until_seconds = command.until_seconds?;
+            let elapsed_seconds = stage_result
+                .steps
+                .last()
+                .map(|step| step.time)
+                .unwrap_or(0.0);
+            let remaining_until_seconds = (requested_until_seconds - elapsed_seconds).max(0.0);
+            if remaining_until_seconds <= 0.0 {
+                return None;
+            }
+            let mut resumed = command.clone();
+            resumed.until_seconds = Some(remaining_until_seconds);
+            Some(resumed)
+        }
+        "relax" => {
+            let requested_max_steps = command.max_steps.unwrap_or(50_000);
+            let executed_steps = stage_result.steps.last().map(|step| step.step).unwrap_or(0);
+            let remaining_max_steps = requested_max_steps.saturating_sub(executed_steps);
+            if remaining_max_steps == 0 {
+                return None;
+            }
+            let mut resumed = command.clone();
+            resumed.max_steps = Some(remaining_max_steps);
+            Some(resumed)
+        }
+        _ => None,
     }
 }
 

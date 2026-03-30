@@ -261,6 +261,7 @@ void launch_dp45_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
                 static_cast<double*>(ctx.k1.z),
                 n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0);
         }
+        if (abort_step_from_tmp(ctx)) return;
 
         // Stage 2: y2 = m0 + dt*A21*k1 → compute k2
         dp45_rk_stage_1_kernel<<<grid, 256>>>(
@@ -269,6 +270,7 @@ void launch_dp45_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
             n, dt, A21);
         compute_rhs_into(ctx, ctx.k2, n, grid, gamma_bar, alpha);
+        if (abort_step_from_tmp(ctx)) return;
 
         // Stage 3: y3 = m0 + dt*(A31*k1 + A32*k2) → compute k3
         dp45_rk_stage_2_kernel<<<grid, 256>>>(
@@ -278,6 +280,7 @@ void launch_dp45_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
             n, dt, A31, A32);
         compute_rhs_into(ctx, ctx.k3, n, grid, gamma_bar, alpha);
+        if (abort_step_from_tmp(ctx)) return;
 
         // Stage 4: y4 = m0 + dt*(A41*k1 + A42*k2 + A43*k3)
         dp45_rk_stage_4_kernel<<<grid, 256>>>(
@@ -289,6 +292,7 @@ void launch_dp45_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
             n, dt, A41, A42, A43, 0.0);
         compute_rhs_into(ctx, ctx.k4, n, grid, gamma_bar, alpha);
+        if (abort_step_from_tmp(ctx)) return;
 
         // Stage 5: y5 = m0 + dt*(A51*k1 + A52*k2 + A53*k3 + A54*k4)
         dp45_rk_stage_4_kernel<<<grid, 256>>>(
@@ -300,6 +304,7 @@ void launch_dp45_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
             n, dt, A51, A52, A53, A54);
         compute_rhs_into(ctx, ctx.k5, n, grid, gamma_bar, alpha);
+        if (abort_step_from_tmp(ctx)) return;
 
         // Stage 6: y6 = m0 + dt*(A61*k1 + A62*k2 + A63*k3 + A64*k4 + A65*k5)
         dp45_rk_stage_5_kernel<<<grid, 256>>>(
@@ -312,6 +317,7 @@ void launch_dp45_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
             n, dt, A61, A62, A63, A64, A65);
         compute_rhs_into(ctx, ctx.k6, n, grid, gamma_bar, alpha);
+        if (abort_step_from_tmp(ctx)) return;
 
         // 5th-order solution: y5 = m0 + dt*(B1*k1 + B3*k3 + B4*k4 + B5*k5 + B6*k6)
         dp45_rk_stage_5_kernel<<<grid, 256>>>(
@@ -323,6 +329,7 @@ void launch_dp45_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<const double*>(ctx.k6.x), static_cast<const double*>(ctx.k6.y), static_cast<const double*>(ctx.k6.z),
             static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
             n, dt, B1, B3, B4, B5, B6);
+        if (abort_step_from_tmp(ctx)) return;
 
         // Stage 7 (FSAL): compute k7 = RHS(y5) — this becomes k1 for next step
         if (ctx.enable_exchange) launch_exchange_field_fp64(ctx);
@@ -340,6 +347,7 @@ void launch_dp45_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<double*>(ctx.k_fsal.y),
             static_cast<double*>(ctx.k_fsal.z),
             n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0);
+        if (abort_step_from_tmp(ctx)) return;
 
         // Error estimate
         dp45_error_kernel<<<grid, 256>>>(

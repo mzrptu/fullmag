@@ -285,6 +285,7 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         launch_demag_field_fp64(ctx);
     }
     launch_effective_field_fp64(ctx);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // --- Step 2: Compute k1 = RHS(m, H_eff) ---
     llg_rhs_fp64_kernel<<<grid, BLOCK_SIZE>>>(
@@ -299,6 +300,7 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.k1.z),
         n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0,
         stt_params_from_ctx(ctx));
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // --- Step 3: Predictor: m_pred = normalize(m + dt·k1) ---
     // Write predicted state into m (we saved original in tmp)
@@ -313,6 +315,7 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.m.y),
         static_cast<double*>(ctx.m.z),
         n, dt);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // --- Step 4: Compute field contributions at predicted m ---
     if (ctx.enable_exchange) {
@@ -322,6 +325,7 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         launch_demag_field_fp64(ctx);
     }
     launch_effective_field_fp64(ctx);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // --- Step 5: Compute k2 = RHS(m_pred, H_eff_pred) ---
     // Store k2 in h_ex (reuse buffer after H_eff has been formed in work)
@@ -337,6 +341,7 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.h_ex.z),
         n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0,
         stt_params_from_ctx(ctx));
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // --- Step 6: Corrector: m_new = normalize(m_orig + 0.5·dt·(k1 + k2)) ---
     heun_corrector_fp64_kernel<<<grid, BLOCK_SIZE>>>(
@@ -353,6 +358,7 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<const double*>(ctx.h_ex.y),
         static_cast<const double*>(ctx.h_ex.z),
         n, 0.5 * dt);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // --- Step 7: Compute diagnostics on the new state ---
     // Field contributions for diagnostics

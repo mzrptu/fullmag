@@ -22,6 +22,15 @@ struct CurrentLiveControlState {
 pub(super) struct CurrentLiveDisplaySelectionHandle {
     shared: Arc<(Mutex<CurrentLiveControlState>, Condvar)>,
     stop: Arc<AtomicBool>,
+    running_interrupt: Arc<Mutex<Option<InteractiveStageInterrupt>>>,
+    running_interrupt_requested: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum InteractiveStageInterrupt {
+    Pause,
+    Break,
+    Close,
 }
 
 impl CurrentLiveDisplaySelectionHandle {
@@ -36,6 +45,8 @@ impl CurrentLiveDisplaySelectionHandle {
                 Condvar::new(),
             )),
             stop: Arc::new(AtomicBool::new(false)),
+            running_interrupt: Arc::new(Mutex::new(None)),
+            running_interrupt_requested: Arc::new(AtomicBool::new(false)),
         };
         let worker = handle.clone();
         std::thread::spawn(move || {
@@ -44,6 +55,19 @@ impl CurrentLiveDisplaySelectionHandle {
                 match wait_for_current_live_control(after_seq, 15_000) {
                     Ok(Some(command)) => {
                         after_seq = after_seq.max(command.seq);
+                        if matches!(
+                            command.kind.as_str(),
+                            "preview_update"
+                                | "preview_refresh"
+                                | "pause"
+                                | "stop"
+                                | "break"
+                                | "close"
+                        ) {
+                            worker
+                                .running_interrupt_requested
+                                .store(true, Ordering::Relaxed);
+                        }
                         let (lock, cvar) = &*worker.shared;
                         if let Ok(mut state) = lock.lock() {
                             apply_preview_command_to_state(&mut state, &command);
@@ -101,19 +125,63 @@ impl CurrentLiveDisplaySelectionHandle {
         state.queue.pop_front()
     }
 
+    fn set_running_interrupt(&self, interrupt: InteractiveStageInterrupt) {
+        if let Ok(mut slot) = self.running_interrupt.lock() {
+            *slot = Some(interrupt);
+        }
+    }
+
+    pub(super) fn clear_running_interrupt(&self) {
+        if let Ok(mut slot) = self.running_interrupt.lock() {
+            *slot = None;
+        }
+        self.running_interrupt_requested
+            .store(false, Ordering::Relaxed);
+    }
+
+    pub(super) fn take_running_interrupt(&self) -> Option<InteractiveStageInterrupt> {
+        self.running_interrupt
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+    }
+
+    pub(super) fn running_interrupt_signal(&self) -> Arc<AtomicBool> {
+        self.running_interrupt_requested.clone()
+    }
+
     pub(super) fn process_running_control(&self) -> Option<fullmag_runner::StepAction> {
+        self.running_interrupt_requested
+            .store(false, Ordering::Relaxed);
         loop {
             let Some(command) = self.pop_front_matching(|command| {
                 matches!(
                     command.kind.as_str(),
-                    "preview_update" | "preview_refresh" | "pause" | "stop" | "close"
+                    "preview_update" | "preview_refresh" | "pause" | "stop" | "break" | "close"
                 )
             }) else {
                 return None;
             };
             match command.kind.as_str() {
                 "preview_update" | "preview_refresh" => self.apply_preview_command(&command),
-                "pause" | "stop" | "close" => {
+                "pause" => {
+                    self.set_running_interrupt(InteractiveStageInterrupt::Pause);
+                    eprintln!(
+                        "interactive: received '{}' command — cancelling stage",
+                        command.kind
+                    );
+                    return Some(fullmag_runner::StepAction::Stop);
+                }
+                "stop" | "break" => {
+                    self.set_running_interrupt(InteractiveStageInterrupt::Break);
+                    eprintln!(
+                        "interactive: received '{}' command — cancelling stage",
+                        command.kind
+                    );
+                    return Some(fullmag_runner::StepAction::Stop);
+                }
+                "close" => {
+                    self.set_running_interrupt(InteractiveStageInterrupt::Close);
                     eprintln!(
                         "interactive: received '{}' command — cancelling stage",
                         command.kind
@@ -152,6 +220,7 @@ impl Drop for CurrentLiveDisplaySelectionHandle {
 enum InteractivePreviewStatus {
     Running,
     AwaitingCommand,
+    Paused,
     Closed,
 }
 
@@ -209,12 +278,14 @@ impl InteractiveRuntimeHost {
             preview_state.status = InteractivePreviewStatus::Running;
             preview_state.generation = preview_state.generation.saturating_add(1);
         }
+        self.control.clear_running_interrupt();
     }
 
     pub(super) fn mark_closed(&self) {
         if let Ok(mut preview_state) = self.preview_source.lock() {
             preview_state.status = InteractivePreviewStatus::Closed;
         }
+        self.control.clear_running_interrupt();
     }
 
     pub(super) fn enter_awaiting_command(
@@ -243,6 +314,38 @@ impl InteractiveRuntimeHost {
                 live_workspace.clone(),
                 preview_request,
                 awaiting_generation,
+            );
+        }
+
+        self.refresh_idle_preview(continuation_slice, live_workspace);
+    }
+
+    pub(super) fn enter_paused(
+        &mut self,
+        continuation_magnetization: Option<Vec<[f64; 3]>>,
+        live_workspace: &LocalLiveWorkspace,
+    ) {
+        let paused_generation = if let Ok(mut preview_state) = self.preview_source.lock() {
+            preview_state.status = InteractivePreviewStatus::Paused;
+            preview_state.continuation_magnetization = continuation_magnetization.clone();
+            preview_state.generation = preview_state.generation.saturating_add(1);
+            preview_state.generation
+        } else {
+            0
+        };
+
+        let continuation_slice = continuation_magnetization.as_deref();
+        self.ensure_base_runtime_ready(continuation_slice, live_workspace);
+
+        if self.latest_field_cache_supported {
+            let preview_request = self.control.preview_request();
+            spawn_interactive_preview_cache_refresh(
+                self.artifact_dir.clone(),
+                self.base_problem.clone(),
+                Arc::clone(&self.preview_source),
+                live_workspace.clone(),
+                preview_request,
+                paused_generation,
             );
         }
 
@@ -295,6 +398,10 @@ impl InteractiveRuntimeHost {
 
     pub(super) fn runtime_mut(&mut self) -> Option<&mut fullmag_runner::InteractiveRuntime> {
         self.runtime.as_mut()
+    }
+
+    pub(super) fn take_running_interrupt(&self) -> Option<InteractiveStageInterrupt> {
+        self.control.take_running_interrupt()
     }
 
     pub(super) fn load_state(
@@ -553,7 +660,7 @@ fn spawn_interactive_preview_cache_refresh(
         let continuation_magnetization = source_state
             .lock()
             .map(|state| {
-                if state.status == InteractivePreviewStatus::AwaitingCommand
+                if supports_idle_preview_cache_refresh(state.status)
                     && state.generation == generation
                 {
                     state.continuation_magnetization.clone()
@@ -574,8 +681,7 @@ fn spawn_interactive_preview_cache_refresh(
         let should_publish = source_state
             .lock()
             .map(|state| {
-                state.status == InteractivePreviewStatus::AwaitingCommand
-                    && state.generation == generation
+                supports_idle_preview_cache_refresh(state.status) && state.generation == generation
             })
             .unwrap_or(false);
         if !should_publish {
@@ -590,6 +696,13 @@ fn spawn_interactive_preview_cache_refresh(
             eprintln!("interactive preview-cache warning: {}", error);
         }
     });
+}
+
+fn supports_idle_preview_cache_refresh(status: InteractivePreviewStatus) -> bool {
+    matches!(
+        status,
+        InteractivePreviewStatus::AwaitingCommand | InteractivePreviewStatus::Paused
+    )
 }
 
 fn wait_for_current_live_control(

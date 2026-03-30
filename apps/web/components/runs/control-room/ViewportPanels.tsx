@@ -9,6 +9,7 @@ import FemMeshView3D from "../../preview/FemMeshView3D";
 import FemMeshSlice2D from "../../preview/FemMeshSlice2D";
 import PreviewScalarField2D from "../../preview/PreviewScalarField2D";
 import EmptyState from "../../ui/EmptyState";
+import AnalyzeViewport from "./AnalyzeViewport";
 
 import { Slider } from "../../ui/slider";
 import { Switch } from "../../ui/switch";
@@ -445,6 +446,8 @@ export function ViewportCanvasArea() {
           plane={ctx.plane}
           sliceIndex={ctx.sliceIndex}
         />
+      ) : ctx.effectiveViewMode === "Analyze" ? (
+        <AnalyzeViewport />
       ) : (
         <div className="flex flex-col items-center justify-center h-full w-full opacity-60">
           <EmptyState

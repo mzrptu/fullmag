@@ -200,6 +200,7 @@ void launch_abm3_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         if (ctx.enable_exchange) launch_exchange_field_fp64(ctx);
         if (ctx.enable_demag)    launch_demag_field_fp64(ctx);
         launch_effective_field_fp64(ctx);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         llg_rhs_fp64_kernel<<<grid, 256>>>(
             static_cast<const double*>(ctx.m.x),
@@ -212,6 +213,7 @@ void launch_abm3_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<double*>(ctx.k1.y),
             static_cast<double*>(ctx.k1.z),
             n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         // Predictor: m_pred = normalize(m + dt·k1)
         heun_predictor_fp64_kernel<<<grid, 256>>>(
@@ -225,11 +227,13 @@ void launch_abm3_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<double*>(ctx.m.y),
             static_cast<double*>(ctx.m.z),
             n, dt);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         // k2 = RHS(m_pred)
         if (ctx.enable_exchange) launch_exchange_field_fp64(ctx);
         if (ctx.enable_demag)    launch_demag_field_fp64(ctx);
         launch_effective_field_fp64(ctx);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         llg_rhs_fp64_kernel<<<grid, 256>>>(
             static_cast<const double*>(ctx.m.x),
@@ -242,6 +246,7 @@ void launch_abm3_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<double*>(ctx.h_ex.y),
             static_cast<double*>(ctx.h_ex.z),
             n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         // Corrector: m_new = normalize(m_orig + 0.5·dt·(k1 + k2))
         heun_corrector_fp64_kernel<<<grid, 256>>>(
@@ -258,6 +263,7 @@ void launch_abm3_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<const double*>(ctx.h_ex.y),
             static_cast<const double*>(ctx.h_ex.z),
             n, 0.5 * dt);
+        if (abort_step_from_tmp(ctx, false)) return;
 
         ctx.step_count++;
         ctx.current_time += dt;
@@ -316,11 +322,13 @@ void launch_abm3_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.m.y),
         static_cast<double*>(ctx.m.z),
         n, dt);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // Evaluate RHS at predicted point (the ONLY new RHS eval)
     if (ctx.enable_exchange) launch_exchange_field_fp64(ctx);
     if (ctx.enable_demag)    launch_demag_field_fp64(ctx);
     launch_effective_field_fp64(ctx);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     llg_rhs_fp64_kernel<<<grid, 256>>>(
         static_cast<const double*>(ctx.m.x),
@@ -333,6 +341,7 @@ void launch_abm3_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.k1.y),
         static_cast<double*>(ctx.k1.z),
         n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // AM3 corrector: m = normalize(m_orig + dt·(5/12·f* + 8/12·f_n - 1/12·f_{n-1}))
     abm3_corrector_kernel<<<grid, 256>>>(
@@ -352,6 +361,7 @@ void launch_abm3_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.m.y),
         static_cast<double*>(ctx.m.z),
         n, dt);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     ctx.step_count++;
     ctx.current_time += dt;

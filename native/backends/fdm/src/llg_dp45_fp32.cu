@@ -188,6 +188,7 @@ void launch_dp45_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         } else {
             compute_rhs_into_fp32(ctx, ctx.k1, n, grid, gamma_bar_f, alpha_f);
         }
+        if (abort_step_from_tmp(ctx)) return;
 
         dp45_rk_stage_1_fp32_kernel<<<grid, 256>>>(
             static_cast<const float*>(ctx.tmp.x), static_cast<const float*>(ctx.tmp.y), static_cast<const float*>(ctx.tmp.z),
@@ -195,6 +196,7 @@ void launch_dp45_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
             n, dt_f, A21);
         compute_rhs_into_fp32(ctx, ctx.k2, n, grid, gamma_bar_f, alpha_f);
+        if (abort_step_from_tmp(ctx)) return;
 
         dp45_rk_stage_2_fp32_kernel<<<grid, 256>>>(
             static_cast<const float*>(ctx.tmp.x), static_cast<const float*>(ctx.tmp.y), static_cast<const float*>(ctx.tmp.z),
@@ -203,6 +205,7 @@ void launch_dp45_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
             n, dt_f, A31, A32);
         compute_rhs_into_fp32(ctx, ctx.k3, n, grid, gamma_bar_f, alpha_f);
+        if (abort_step_from_tmp(ctx)) return;
 
         dp45_rk_stage_4_fp32_kernel<<<grid, 256>>>(
             static_cast<const float*>(ctx.tmp.x), static_cast<const float*>(ctx.tmp.y), static_cast<const float*>(ctx.tmp.z),
@@ -213,6 +216,7 @@ void launch_dp45_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
             n, dt_f, A41, A42, A43, 0.0f);
         compute_rhs_into_fp32(ctx, ctx.k4, n, grid, gamma_bar_f, alpha_f);
+        if (abort_step_from_tmp(ctx)) return;
 
         dp45_rk_stage_4_fp32_kernel<<<grid, 256>>>(
             static_cast<const float*>(ctx.tmp.x), static_cast<const float*>(ctx.tmp.y), static_cast<const float*>(ctx.tmp.z),
@@ -223,6 +227,7 @@ void launch_dp45_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
             n, dt_f, A51, A52, A53, A54);
         compute_rhs_into_fp32(ctx, ctx.k5, n, grid, gamma_bar_f, alpha_f);
+        if (abort_step_from_tmp(ctx)) return;
 
         dp45_rk_stage_5_fp32_kernel<<<grid, 256>>>(
             static_cast<const float*>(ctx.tmp.x), static_cast<const float*>(ctx.tmp.y), static_cast<const float*>(ctx.tmp.z),
@@ -234,6 +239,7 @@ void launch_dp45_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
             n, dt_f, A61, A62, A63, A64, A65);
         compute_rhs_into_fp32(ctx, ctx.k6, n, grid, gamma_bar_f, alpha_f);
+        if (abort_step_from_tmp(ctx)) return;
 
         dp45_rk_stage_5_fp32_kernel<<<grid, 256>>>(
             static_cast<const float*>(ctx.tmp.x), static_cast<const float*>(ctx.tmp.y), static_cast<const float*>(ctx.tmp.z),
@@ -244,8 +250,10 @@ void launch_dp45_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<const float*>(ctx.k6.x), static_cast<const float*>(ctx.k6.y), static_cast<const float*>(ctx.k6.z),
             static_cast<float*>(ctx.m.x), static_cast<float*>(ctx.m.y), static_cast<float*>(ctx.m.z),
             n, dt_f, B1, B3, B4, B5, B6);
+        if (abort_step_from_tmp(ctx)) return;
 
         compute_rhs_into_fp32(ctx, ctx.k_fsal, n, grid, gamma_bar_f, alpha_f);
+        if (abort_step_from_tmp(ctx)) return;
 
         dp45_error_fp32_kernel<<<grid, 256>>>(
             static_cast<const float*>(ctx.k1.x), static_cast<const float*>(ctx.k1.y), static_cast<const float*>(ctx.k1.z),

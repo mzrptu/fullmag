@@ -122,6 +122,12 @@ fn run_manifest_from_steps(
     }
 }
 
+#[derive(Debug, Clone)]
+struct PausedInteractiveStage {
+    command: SessionCommand,
+    source_kind: String,
+}
+
 fn announce_session_start(_session_id: &str, script_path: &Path, backend: &str, headless: bool) {
     eprintln!("fullmag live workspace started");
     eprintln!("- script: {}", script_path.display());
@@ -161,6 +167,16 @@ fn print_script_summary(summary: &ScriptRunSummary) {
     }
     if let Some(final_e_total) = summary.final_e_total {
         println!("- final_E_total: {:.6e} J", final_e_total);
+    }
+    if let Some(count) = summary.eigen_mode_count {
+        println!("- eigen_modes_found: {count}");
+    }
+    if let Some(f_hz) = summary.eigen_lowest_frequency_hz {
+        println!(
+            "- eigen_lowest_frequency: {:.3e} Hz  ({:.3} GHz)",
+            f_hz,
+            f_hz / 1e9
+        );
     }
     println!("- artifact_dir: {}", summary.artifact_dir);
     println!("- workspace_dir: {}", summary.workspace_dir);
@@ -925,12 +941,14 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         let stage_result = match if use_live_callback {
             if supports_dynamic_live_preview(&execution_plan.backend_plan) {
                 let display_selection = || display_selection_handle.display_selection_snapshot();
-                fullmag_runner::run_problem_with_live_preview(
+                let interrupt_signal = display_selection_handle.running_interrupt_signal();
+                fullmag_runner::run_problem_with_live_preview_interruptible(
                     &stage.ir,
                     stage.until_seconds,
                     &current_stage_artifact_dir,
                     field_every_n,
                     &display_selection,
+                    Some(interrupt_signal.as_ref()),
                     |update| {
                         let adjusted = offset_step_update(
                             &update,
@@ -939,6 +957,10 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             update.finished && is_session_final_stage,
                         );
                         if is_control_checkpoint_only(&adjusted) {
+                            if let Some(action) = display_selection_handle.process_running_control()
+                            {
+                                return action;
+                            }
                             return fullmag_runner::StepAction::Continue;
                         }
                         let s = &adjusted.stats;
@@ -988,6 +1010,9 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                     upsert_cached_preview_field(state, preview_field);
                                 }
                             });
+                        }
+                        if let Some(action) = display_selection_handle.process_running_control() {
+                            return action;
                         }
                         fullmag_runner::StepAction::Continue
                     },
@@ -1249,6 +1274,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             .enter_awaiting_command(continuation_magnetization.clone(), &live_workspace);
 
         let mut interactive_stage_index = stage_count;
+        let mut paused_stage: Option<PausedInteractiveStage> = None;
         loop {
             let Some(command) =
                 interactive_runtime_host.wait_next_command(Duration::from_millis(250))
@@ -1261,11 +1287,98 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             }
 
             if command.kind == "pause" {
-                live_workspace.push_log("system", "Paused — awaiting next command");
+                if paused_stage.is_some() {
+                    live_workspace.push_log(
+                        "system",
+                        "Interactive workspace is already paused — use resume or stop",
+                    );
+                } else {
+                    live_workspace.push_log(
+                        "system",
+                        "Pause is only available while the solver is running",
+                    );
+                }
                 continue;
             }
 
+            if matches!(command.kind.as_str(), "stop" | "break") {
+                if paused_stage.take().is_some() {
+                    live_workspace.update(|state| {
+                        state.session = build_session_manifest(
+                            &session_id,
+                            &run_id,
+                            "awaiting_command",
+                            interactive_requested,
+                            &script_path,
+                            &final_problem_name,
+                            backend_target_name(final_requested_backend),
+                            execution_mode_name(final_execution_mode),
+                            execution_precision_name(final_precision),
+                            &artifact_dir,
+                            started_at_unix_ms,
+                            unix_time_millis().unwrap_or(0),
+                            plan_summary_json(&current_plan_summary),
+                        );
+                        state.run = run_manifest_from_steps(
+                            &run_id,
+                            &session_id,
+                            "awaiting_command",
+                            &artifact_dir,
+                            &aggregated_steps,
+                        );
+                        set_live_state_status(
+                            &mut state.live_state,
+                            "awaiting_command",
+                            Some(false),
+                        );
+                    });
+                    interactive_runtime_host.enter_awaiting_command(
+                        continuation_magnetization.clone(),
+                        &live_workspace,
+                    );
+                    live_workspace.push_log(
+                        "system",
+                        "Paused stage discarded — workspace is awaiting the next command",
+                    );
+                } else {
+                    live_workspace.push_log(
+                        "system",
+                        "Stop is only available while the solver is running or paused",
+                    );
+                }
+                continue;
+            }
+
+            if command.kind == "close" {
+                break;
+            }
+
+            let (command, command_kind_label) = if command.kind == "resume" {
+                let Some(paused) = paused_stage.take() else {
+                    live_workspace.push_log(
+                        "warning",
+                        "Resume requested, but there is no paused interactive stage",
+                    );
+                    continue;
+                };
+                live_workspace.push_log(
+                    "system",
+                    format!("Resuming paused interactive {} stage", paused.source_kind),
+                );
+                (paused.command, format!("resume ({})", paused.source_kind))
+            } else {
+                let kind = command.kind.clone();
+                (command, kind)
+            };
+
             if command.kind == "load_state" {
+                if paused_stage.is_some() {
+                    live_workspace.push_log(
+                        "warning",
+                        "Load-state is disabled while a stage is paused. Stop it first or resume it.",
+                    );
+                    continue;
+                }
                 let Some(state_path) = command.state_path.as_deref() else {
                     live_workspace.push_log("error", "State import command is missing state_path");
                     continue;
@@ -1303,6 +1416,19 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     }
                 }
                 continue;
+            }
+
+            if paused_stage.is_some() && matches!(command.kind.as_str(), "run" | "relax") {
+                paused_stage = None;
+                live_workspace.push_log(
+                    "warning",
+                    "Discarding paused stage and starting a new interactive command",
+                );
+                live_workspace.update(|state| {
+                    set_live_state_status(&mut state.live_state, "awaiting_command", Some(false));
+                });
+                interactive_runtime_host
+                    .enter_awaiting_command(continuation_magnetization.clone(), &live_workspace);
             }
 
             let Some(mut stage) =
@@ -1351,7 +1477,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             );
             live_workspace.push_log(
                 "system",
-                format!("Executing interactive command: {}", command.kind),
+                format!("Executing interactive command: {}", command_kind_label),
             );
             interactive_runtime_host.mark_running();
             live_workspace.update(|state| {
@@ -1386,6 +1512,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 let running_control = interactive_runtime_host.control();
                 if supports_dynamic_live_preview(&execution_plan.backend_plan) {
                     let display_selection = || running_control.display_selection_snapshot();
+                    let interrupt_signal = running_control.running_interrupt_signal();
                     let mut on_step = |update| {
                         let adjusted = offset_step_update(&update, step_offset, time_offset, false);
                         if is_control_checkpoint_only(&adjusted) {
@@ -1461,22 +1588,24 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     }
 
                     if let Some(runtime) = interactive_runtime_host.runtime_mut() {
-                        fullmag_runner::run_problem_with_interactive_runtime_live_preview(
+                        fullmag_runner::run_problem_with_interactive_runtime_live_preview_interruptible(
                             runtime,
                             &stage.ir,
                             stage.until_seconds,
                             &current_stage_artifact_dir,
                             field_every_n,
                             &display_selection,
+                            Some(interrupt_signal.as_ref()),
                             &mut on_step,
                         )
                     } else {
-                        fullmag_runner::run_problem_with_live_preview(
+                        fullmag_runner::run_problem_with_live_preview_interruptible(
                             &stage.ir,
                             stage.until_seconds,
                             &current_stage_artifact_dir,
                             field_every_n,
                             &display_selection,
+                            Some(interrupt_signal.as_ref()),
                             &mut on_step,
                         )
                     }
@@ -1580,9 +1709,13 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         &live_workspace,
                     );
                     eprintln!("interactive command failed: {}", error);
+                    paused_stage = None;
                     live_workspace.push_log(
                         "error",
-                        format!("Interactive command {} failed: {}", command.kind, error),
+                        format!(
+                            "Interactive command {} failed: {}",
+                            command_kind_label, error
+                        ),
                     );
                     continue;
                 }
@@ -1596,46 +1729,161 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     time_offset = last.time;
                 }
                 aggregated_steps.extend(offset_steps);
-                continuation_magnetization = Some(stage_result.final_magnetization);
+                continuation_magnetization = Some(stage_result.final_magnetization.clone());
                 interactive_stage_index += 1;
 
                 let cancelled_at_unix_ms = unix_time_millis()?;
-                live_workspace.update(|state| {
-                    state.session = build_session_manifest(
-                        &session_id,
-                        &run_id,
-                        "awaiting_command",
-                        interactive_requested,
-                        &script_path,
-                        &final_problem_name,
-                        backend_target_name(final_requested_backend),
-                        execution_mode_name(final_execution_mode),
-                        execution_precision_name(final_precision),
-                        &artifact_dir,
-                        started_at_unix_ms,
-                        cancelled_at_unix_ms,
-                        plan_summary_json(&current_plan_summary),
-                    );
-                    state.run = run_manifest_from_steps(
-                        &run_id,
-                        &session_id,
-                        "awaiting_command",
-                        &artifact_dir,
-                        &aggregated_steps,
-                    );
-                    set_live_state_status(&mut state.live_state, "awaiting_command", Some(false));
-                });
-                interactive_runtime_host
-                    .enter_awaiting_command(continuation_magnetization.clone(), &live_workspace);
-                eprintln!("interactive command {} cancelled by user", command.kind);
-                live_workspace.push_log(
-                    "warning",
-                    format!(
-                        "Interactive command {} cancelled — partial results preserved",
-                        command.kind,
-                    ),
-                );
-                continue;
+                match interactive_runtime_host
+                    .take_running_interrupt()
+                    .unwrap_or(crate::interactive_runtime_host::InteractiveStageInterrupt::Break)
+                {
+                    crate::interactive_runtime_host::InteractiveStageInterrupt::Pause => {
+                        let resumable_command =
+                            build_resumable_interactive_command(&command, &stage_result);
+                        if let Some(resumable_command) = resumable_command {
+                            paused_stage = Some(PausedInteractiveStage {
+                                command: resumable_command,
+                                source_kind: command.kind.clone(),
+                            });
+                            live_workspace.update(|state| {
+                                state.session = build_session_manifest(
+                                    &session_id,
+                                    &run_id,
+                                    "paused",
+                                    interactive_requested,
+                                    &script_path,
+                                    &final_problem_name,
+                                    backend_target_name(final_requested_backend),
+                                    execution_mode_name(final_execution_mode),
+                                    execution_precision_name(final_precision),
+                                    &artifact_dir,
+                                    started_at_unix_ms,
+                                    cancelled_at_unix_ms,
+                                    plan_summary_json(&current_plan_summary),
+                                );
+                                state.run = run_manifest_from_steps(
+                                    &run_id,
+                                    &session_id,
+                                    "paused",
+                                    &artifact_dir,
+                                    &aggregated_steps,
+                                );
+                                set_live_state_status(&mut state.live_state, "paused", Some(false));
+                            });
+                            interactive_runtime_host
+                                .enter_paused(continuation_magnetization.clone(), &live_workspace);
+                            eprintln!("interactive command {} paused by user", command_kind_label);
+                            live_workspace.push_log(
+                                "system",
+                                format!(
+                                    "Interactive command {} paused — use resume to continue",
+                                    command_kind_label,
+                                ),
+                            );
+                        } else {
+                            paused_stage = None;
+                            live_workspace.update(|state| {
+                                state.session = build_session_manifest(
+                                    &session_id,
+                                    &run_id,
+                                    "awaiting_command",
+                                    interactive_requested,
+                                    &script_path,
+                                    &final_problem_name,
+                                    backend_target_name(final_requested_backend),
+                                    execution_mode_name(final_execution_mode),
+                                    execution_precision_name(final_precision),
+                                    &artifact_dir,
+                                    started_at_unix_ms,
+                                    cancelled_at_unix_ms,
+                                    plan_summary_json(&current_plan_summary),
+                                );
+                                state.run = run_manifest_from_steps(
+                                    &run_id,
+                                    &session_id,
+                                    "awaiting_command",
+                                    &artifact_dir,
+                                    &aggregated_steps,
+                                );
+                                set_live_state_status(
+                                    &mut state.live_state,
+                                    "awaiting_command",
+                                    Some(false),
+                                );
+                            });
+                            interactive_runtime_host.enter_awaiting_command(
+                                continuation_magnetization.clone(),
+                                &live_workspace,
+                            );
+                            live_workspace.push_log(
+                                "system",
+                                format!(
+                                    "Interactive command {} reached its target before pause completed",
+                                    command_kind_label,
+                                ),
+                            );
+                        }
+                        continue;
+                    }
+                    crate::interactive_runtime_host::InteractiveStageInterrupt::Break => {
+                        paused_stage = None;
+                        live_workspace.update(|state| {
+                            state.session = build_session_manifest(
+                                &session_id,
+                                &run_id,
+                                "awaiting_command",
+                                interactive_requested,
+                                &script_path,
+                                &final_problem_name,
+                                backend_target_name(final_requested_backend),
+                                execution_mode_name(final_execution_mode),
+                                execution_precision_name(final_precision),
+                                &artifact_dir,
+                                started_at_unix_ms,
+                                cancelled_at_unix_ms,
+                                plan_summary_json(&current_plan_summary),
+                            );
+                            state.run = run_manifest_from_steps(
+                                &run_id,
+                                &session_id,
+                                "awaiting_command",
+                                &artifact_dir,
+                                &aggregated_steps,
+                            );
+                            set_live_state_status(
+                                &mut state.live_state,
+                                "awaiting_command",
+                                Some(false),
+                            );
+                        });
+                        interactive_runtime_host.enter_awaiting_command(
+                            continuation_magnetization.clone(),
+                            &live_workspace,
+                        );
+                        eprintln!(
+                            "interactive command {} cancelled by user",
+                            command_kind_label
+                        );
+                        live_workspace.push_log(
+                            "warning",
+                            format!(
+                                "Interactive command {} cancelled — partial results preserved",
+                                command_kind_label,
+                            ),
+                        );
+                        continue;
+                    }
+                    crate::interactive_runtime_host::InteractiveStageInterrupt::Close => {
+                        live_workspace.push_log(
+                            "system",
+                            format!(
+                                "Interactive command {} interrupted — closing workspace",
+                                command_kind_label,
+                            ),
+                        );
+                        break;
+                    }
+                }
             }
 
             if !use_live_callback {
@@ -1761,9 +2009,10 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             });
             interactive_runtime_host
                 .enter_awaiting_command(continuation_magnetization.clone(), &live_workspace);
+            paused_stage = None;
             live_workspace.push_log(
                 "success",
-                format!("Interactive command {} completed", command.kind),
+                format!("Interactive command {} completed", command_kind_label),
             );
         }
         interactive_runtime_host.mark_closed();
@@ -1774,6 +2023,27 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
 
     let finished_at_unix_ms = unix_time_millis()?;
     let final_status = fullmag_runner::RunStatus::Completed;
+
+    // If this was a FEM eigen run, read the spectrum artifact from disk so we
+    // can include the mode count and lowest frequency in the summary printout.
+    let (eigen_mode_count, eigen_lowest_frequency_hz) = {
+        let spectrum_path = artifact_dir.join("eigen").join("spectrum.json");
+        if let Ok(bytes) = std::fs::read(&spectrum_path) {
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                let modes = value["modes"].as_array();
+                let count = modes.map(|m| m.len());
+                let lowest = modes
+                    .and_then(|m| m.first())
+                    .and_then(|m| m.get("frequency_hz"))
+                    .and_then(|f| f.as_f64());
+                (count, lowest)
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        }
+    };
 
     let summary = ScriptRunSummary {
         session_id: session_id.clone(),
@@ -1793,6 +2063,8 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         final_e_demag: aggregated_steps.last().map(|step| step.e_demag),
         final_e_ext: aggregated_steps.last().map(|step| step.e_ext),
         final_e_total: aggregated_steps.last().map(|step| step.e_total),
+        eigen_mode_count,
+        eigen_lowest_frequency_hz,
         artifact_dir: artifact_dir.display().to_string(),
         workspace_dir: workspace_dir.display().to_string(),
     };

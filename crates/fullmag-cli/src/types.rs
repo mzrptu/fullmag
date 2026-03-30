@@ -19,6 +19,10 @@ pub(crate) struct ScriptRunSummary {
     pub final_e_demag: Option<f64>,
     pub final_e_ext: Option<f64>,
     pub final_e_total: Option<f64>,
+    /// Number of eigenmode frequencies found (FEM eigen only).
+    pub eigen_mode_count: Option<usize>,
+    /// Lowest eigenfrequency in Hz (FEM eigen only).
+    pub eigen_lowest_frequency_hz: Option<f64>,
     pub artifact_dir: String,
     pub workspace_dir: String,
 }

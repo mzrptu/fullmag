@@ -86,10 +86,18 @@ function ControlRoomShell() {
     </>
   );
 
-  const canRun = ctx.interactiveEnabled && ctx.awaitingCommand && !ctx.commandBusy;
+  const canRun =
+    ctx.interactiveEnabled &&
+    (ctx.awaitingCommand || ctx.workspaceStatus === "paused") &&
+    !ctx.commandBusy;
   const canRelax = ctx.interactiveEnabled && ctx.awaitingCommand && !ctx.commandBusy;
   const canPause = ctx.interactiveEnabled && ctx.workspaceStatus === "running" && !ctx.commandBusy;
-  const canStop = ctx.interactiveEnabled && ctx.workspaceStatus === "running" && !ctx.commandBusy;
+  const canStop =
+    ctx.interactiveEnabled &&
+    (ctx.workspaceStatus === "running" || ctx.workspaceStatus === "paused") &&
+    !ctx.commandBusy;
+  const primaryRunAction = ctx.workspaceStatus === "paused" ? "resume" : "run";
+  const primaryRunLabel = ctx.workspaceStatus === "paused" ? "Resume" : "Run";
 
 
 
@@ -107,6 +115,8 @@ function ControlRoomShell() {
         relaxEnabled={canRelax}
         pauseEnabled={canPause}
         stopEnabled={canStop}
+        runAction={primaryRunAction}
+        runLabel={primaryRunLabel}
         commandMessage={ctx.commandMessage}
         onSimAction={ctx.handleSimulationAction}
       />
@@ -117,6 +127,8 @@ function ControlRoomShell() {
         canRelax={canRelax}
         canPause={canPause}
         canStop={canStop}
+        runAction={primaryRunAction}
+        runLabel={primaryRunLabel}
         onViewChange={ctx.handleViewModeChange}
         onSidebarToggle={() => ctx.setSidebarCollapsed((v) => !v)}
         onSimAction={ctx.handleSimulationAction}
@@ -131,6 +143,8 @@ function ControlRoomShell() {
         canRelax={canRelax}
         canPause={canPause}
         canStop={canStop}
+        runAction={primaryRunAction}
+        runLabel={primaryRunLabel}
         onViewChange={ctx.handleViewModeChange}
         onSidebarToggle={() => ctx.setSidebarCollapsed((v) => !v)}
         onSimAction={ctx.handleSimulationAction}

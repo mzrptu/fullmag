@@ -63,7 +63,7 @@ export const navigationItems: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: <DashboardIcon /> },
   { href: '/runs', label: 'Runs', icon: <RunsIcon />, section: 'Execution' },
   { href: '/simulations', label: 'Simulations', icon: <SimulationsIcon />, section: 'Execution' },
-  { href: '/visualizations', label: 'Visualizations', icon: <ViewIcon />, section: 'Analysis' },
+  { href: '/visualizations', label: 'Analyze', icon: <ViewIcon />, section: 'Analysis' },
   { href: '/docs/physics', label: 'Physics Docs', icon: <DocsIcon />, section: 'Reference' },
   { href: '/settings', label: 'Settings', icon: <SettingsIcon />, section: 'System' },
 ];

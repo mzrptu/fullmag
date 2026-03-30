@@ -4,6 +4,7 @@ use crate::types::{
     RunError, StepAction, StepStats, StepUpdate,
 };
 use fullmag_ir::ProblemIR;
+use std::sync::atomic::AtomicBool;
 
 /// Geometry information stored by a backend, used for final step updates.
 #[derive(Debug, Clone)]
@@ -61,6 +62,7 @@ pub(crate) trait InteractiveBackend {
         until_seconds: f64,
         field_every_n: u64,
         display_selection: &(dyn Fn() -> crate::DisplaySelectionState + Send + Sync),
+        interrupt_requested: Option<&AtomicBool>,
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError>;

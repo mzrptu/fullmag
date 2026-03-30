@@ -29,7 +29,7 @@ pub struct QuantitySpec {
     pub ui_exposed: bool,
 }
 
-const QUANTITY_SPECS: [QuantitySpec; 9] = [
+const QUANTITY_SPECS: [QuantitySpec; 13] = [
     QuantitySpec {
         id: "m",
         label: "Magnetization",
@@ -119,6 +119,46 @@ const QUANTITY_SPECS: [QuantitySpec; 9] = [
         quick_access_label: None,
         scalar_metric_key: Some("e_total"),
         ui_exposed: true,
+    },
+    QuantitySpec {
+        id: "mode_amplitude",
+        label: "Mode Amplitude",
+        kind: QuantityKind::SpatialScalar,
+        unit: "dimensionless",
+        interactive_preview: false,
+        quick_access_label: None,
+        scalar_metric_key: None,
+        ui_exposed: false,
+    },
+    QuantitySpec {
+        id: "mode_real",
+        label: "Mode Real Part",
+        kind: QuantityKind::VectorField,
+        unit: "dimensionless",
+        interactive_preview: false,
+        quick_access_label: None,
+        scalar_metric_key: None,
+        ui_exposed: false,
+    },
+    QuantitySpec {
+        id: "mode_imag",
+        label: "Mode Imaginary Part",
+        kind: QuantityKind::VectorField,
+        unit: "dimensionless",
+        interactive_preview: false,
+        quick_access_label: None,
+        scalar_metric_key: None,
+        ui_exposed: false,
+    },
+    QuantitySpec {
+        id: "mode_phase",
+        label: "Mode Phase",
+        kind: QuantityKind::SpatialScalar,
+        unit: "rad",
+        interactive_preview: false,
+        quick_access_label: None,
+        scalar_metric_key: None,
+        ui_exposed: false,
     },
 ];
 

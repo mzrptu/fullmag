@@ -5,12 +5,14 @@
 
 #![allow(non_camel_case_types)]
 
+use std::ffi::c_void;
 use std::os::raw::c_char;
 
 pub const FULLMAG_FEM_OK: i32 = 0;
 pub const FULLMAG_FEM_ERR_INVALID: i32 = -1;
 pub const FULLMAG_FEM_ERR_UNAVAILABLE: i32 = -2;
 pub const FULLMAG_FEM_ERR_INTERNAL: i32 = -3;
+pub const FULLMAG_FEM_ERR_INTERRUPTED: i32 = -4;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +76,8 @@ pub enum fullmag_fem_demag_realization {
     FULLMAG_FEM_DEMAG_TRANSFER_GRID = 0,
     FULLMAG_FEM_DEMAG_POISSON_AIRBOX = 1,
 }
+
+pub type fullmag_fem_interrupt_poll_fn = Option<unsafe extern "C" fn(*mut c_void) -> i32>;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -242,6 +246,12 @@ extern "C" {
         handle: *mut fullmag_fem_backend,
         dt_seconds: f64,
         out_stats: *mut fullmag_fem_step_stats,
+    ) -> i32;
+
+    pub fn fullmag_fem_backend_set_interrupt_poll(
+        handle: *mut fullmag_fem_backend,
+        poll_fn: fullmag_fem_interrupt_poll_fn,
+        user_data: *mut c_void,
     ) -> i32;
 
     pub fn fullmag_fem_backend_copy_field_f64(

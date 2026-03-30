@@ -259,6 +259,11 @@ struct Context {
 
     // ── Unified RK stepper workspace ──
     StepperWorkspace stepper;
+
+    // Cooperative interrupt hook for interactive control-plane.
+    fullmag_fem_interrupt_poll_fn interrupt_poll = nullptr;
+    void *interrupt_poll_user_data = nullptr;
+    bool step_interrupted = false;
 };
 
 bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::string &error);
@@ -302,8 +307,20 @@ bool context_compute_demag_poisson(
     const std::vector<double> &m_xyz,
     std::vector<double> &h_demag_xyz,
     double &demag_energy,
+    bool allow_interrupt,
     std::string &error);
 #endif
+
+inline bool poll_interrupt(Context &ctx) {
+    if (ctx.interrupt_poll == nullptr) {
+        return false;
+    }
+    if (ctx.interrupt_poll(ctx.interrupt_poll_user_data) == 0) {
+        return false;
+    }
+    ctx.step_interrupted = true;
+    return true;
+}
 
 } // namespace fullmag::fem
 

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import type { FemLiveMesh } from "../../../lib/useSessionStream";
 import type { TreeNodeData } from "../../panels/ModelTree";
 
-export type ViewportMode = "3D" | "2D" | "Mesh";
+export type ViewportMode = "3D" | "2D" | "Mesh" | "Analyze";
 export type VectorComponent = "x" | "y" | "z" | "magnitude";
 export type PreviewComponent = "3D" | "x" | "y" | "z";
 export type SlicePlane = "xy" | "xz" | "yz";

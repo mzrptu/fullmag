@@ -217,6 +217,7 @@ void launch_rk23_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         } else {
             compute_rhs_into(ctx, ctx.k1, n, grid, gamma_bar, alpha);
         }
+        if (abort_step_from_tmp(ctx)) return;
 
         // Stage 2: y2 = m0 + dt*A21*k1 → compute k2
         rk23_stage_1_kernel<<<grid, 256>>>(
@@ -225,6 +226,7 @@ void launch_rk23_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
             n, dt, A21);
         compute_rhs_into(ctx, ctx.k2, n, grid, gamma_bar, alpha);
+        if (abort_step_from_tmp(ctx)) return;
 
         // Stage 3: y3 = m0 + dt*(0*k1 + A32*k2) → compute k3
         rk23_stage_1_kernel<<<grid, 256>>>(
@@ -233,6 +235,7 @@ void launch_rk23_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
             n, dt, A32);
         compute_rhs_into(ctx, ctx.k3, n, grid, gamma_bar, alpha);
+        if (abort_step_from_tmp(ctx)) return;
 
         // 3rd-order solution: y3 = m0 + dt*(B1*k1 + B2*k2 + B3*k3)
         rk23_stage_3_kernel<<<grid, 256>>>(
@@ -242,9 +245,11 @@ void launch_rk23_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<const double*>(ctx.k3.x), static_cast<const double*>(ctx.k3.y), static_cast<const double*>(ctx.k3.z),
             static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
             n, dt, B1, B2, B3);
+        if (abort_step_from_tmp(ctx)) return;
 
         // Stage 4 (FSAL): k4 = RHS(y3) — this becomes k1 for next step
         compute_rhs_into(ctx, ctx.k_fsal, n, grid, gamma_bar, alpha);
+        if (abort_step_from_tmp(ctx)) return;
 
         // Error estimate: |y3 - y2|
         rk23_error_kernel<<<grid, 256>>>(

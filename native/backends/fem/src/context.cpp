@@ -48,6 +48,89 @@ void fill_zero_vector_field(std::vector<double> &buffer, uint32_t n_nodes) {
     buffer.assign(static_cast<size_t>(n_nodes) * 3u, 0.0);
 }
 
+double average_magnetic_scalar_field(
+    const std::vector<double> &field,
+    const std::vector<uint8_t> &magnetic_node_mask,
+    double fallback)
+{
+    if (field.empty()) {
+        return fallback;
+    }
+
+    double sum = 0.0;
+    size_t count = 0;
+    const size_t node_count = std::min(field.size(), magnetic_node_mask.size());
+    for (size_t node = 0; node < node_count; ++node) {
+        if (magnetic_node_mask[node] == 0u) {
+            continue;
+        }
+        sum += field[node];
+        count += 1;
+    }
+    if (count == 0) {
+        return fallback;
+    }
+    return sum / static_cast<double>(count);
+}
+
+double tetrahedron_volume(
+    const std::vector<double> &nodes_xyz,
+    const std::vector<uint32_t> &elements,
+    uint32_t element_index)
+{
+    const size_t base = static_cast<size_t>(element_index) * 4u;
+    const auto read_coord = [&](uint32_t node, int axis) -> double {
+        return nodes_xyz[static_cast<size_t>(node) * 3u + static_cast<size_t>(axis)];
+    };
+
+    const uint32_t n0 = elements[base + 0];
+    const uint32_t n1 = elements[base + 1];
+    const uint32_t n2 = elements[base + 2];
+    const uint32_t n3 = elements[base + 3];
+
+    const double ax = read_coord(n1, 0) - read_coord(n0, 0);
+    const double ay = read_coord(n1, 1) - read_coord(n0, 1);
+    const double az = read_coord(n1, 2) - read_coord(n0, 2);
+    const double bx = read_coord(n2, 0) - read_coord(n0, 0);
+    const double by = read_coord(n2, 1) - read_coord(n0, 1);
+    const double bz = read_coord(n2, 2) - read_coord(n0, 2);
+    const double cx = read_coord(n3, 0) - read_coord(n0, 0);
+    const double cy = read_coord(n3, 1) - read_coord(n0, 1);
+    const double cz = read_coord(n3, 2) - read_coord(n0, 2);
+
+    const double determinant =
+        ax * (by * cz - bz * cy) -
+        ay * (bx * cz - bz * cx) +
+        az * (bx * cy - by * cx);
+
+    return std::abs(determinant) / 6.0;
+}
+
+double average_magnetic_node_volume(const Context &ctx) {
+    size_t magnetic_node_count = 0;
+    for (uint8_t magnetic : ctx.magnetic_node_mask) {
+        if (magnetic != 0u) {
+            magnetic_node_count += 1;
+        }
+    }
+    if (magnetic_node_count == 0) {
+        return 0.0;
+    }
+
+    double total_magnetic_volume = 0.0;
+    for (uint32_t element = 0; element < ctx.n_elements; ++element) {
+        if (!ctx.magnetic_element_mask.empty() &&
+            ctx.magnetic_element_mask[static_cast<size_t>(element)] == 0u) {
+            continue;
+        }
+        total_magnetic_volume += tetrahedron_volume(ctx.nodes_xyz, ctx.elements, element);
+    }
+    if (total_magnetic_volume <= 0.0) {
+        return 0.0;
+    }
+    return total_magnetic_volume / static_cast<double>(magnetic_node_count);
+}
+
 } // namespace
 
 bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::string &error) {
@@ -88,6 +171,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     ctx.fe_order = plan.fe_order;
     ctx.hmax = plan.hmax;
     ctx.dt_seconds = plan.dt_seconds;
+    ctx.current_dt = plan.dt_seconds;
     ctx.air_box_factor = plan.air_box_factor;
     ctx.precision = plan.precision;
     ctx.integrator = plan.integrator;
@@ -146,6 +230,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
         ctx.dt_seconds = plan.adaptive_config->dt_initial > 0.0
                              ? plan.adaptive_config->dt_initial
                              : plan.dt_seconds;
+        ctx.current_dt = ctx.dt_seconds;
         ctx.dt_min = plan.adaptive_config->dt_min;
         ctx.dt_max = plan.adaptive_config->dt_max;
         ctx.safety_factor = plan.adaptive_config->safety;
@@ -463,35 +548,57 @@ int context_upload_magnetization_f64(
     }
 
     // Add thermal noise: H_eff += H_therm  (Brown sLLG field)
-    if (ctx.temperature > 0.0 && ctx.Ms > 0.0 && ctx.current_dt > 0.0) {
+    if (ctx.temperature > 0.0 && ctx.current_dt > 0.0) {
         // Brown noise amplitude: sigma = sqrt(2*alpha*kB*T / (gamma0*mu0*Ms*V_node*dt))
-        // where gamma0 = gamma * mu0 (FullMag stores reduced gamma = gamma0/(1+alpha^2))
-        const double alpha = ctx.alpha;
-        const double Ms = ctx.Ms;
-        const double gamma_red = ctx.gamma;  // gamma / (1+alpha^2)
+        // where gamma0 = gamma_red * (1+alpha^2).
+        const double alpha = average_magnetic_scalar_field(
+            ctx.alpha_field,
+            ctx.magnetic_node_mask,
+            ctx.material.damping);
+        const double Ms = average_magnetic_scalar_field(
+            ctx.Ms_field,
+            ctx.magnetic_node_mask,
+            ctx.material.saturation_magnetisation);
+        const double gamma_red = ctx.material.gyromagnetic_ratio;
         const double gamma0 = gamma_red * (1.0 + alpha * alpha);
+        const double V_node = average_magnetic_node_volume(ctx);
 
-        // Estimate lumped node volume: total mesh volume / number of magnetic nodes
-        // (For FEM this is the appropriate carrier volume for the noise amplitude)
-        const uint32_t n_mag = std::max(1u, ctx.n_magnetic_nodes);
-        double total_volume = 0.0;
-        for (size_t e = 0; e < ctx.n_elements; ++e) {
-            total_volume += ctx.element_volumes[e];
+        if (alpha <= 0.0 || Ms <= 0.0 || gamma_red <= 0.0 || V_node <= 0.0) {
+            ctx.thermal_sigma = 0.0;
+            std::fill(ctx.h_therm_xyz.begin(), ctx.h_therm_xyz.end(), 0.0);
+            return FULLMAG_FEM_OK;
         }
-        const double V_node = total_volume / static_cast<double>(n_mag);
 
         const double sigma = std::sqrt(
             2.0 * alpha * kB * ctx.temperature /
             (gamma0 * kMU0 * Ms * V_node * ctx.current_dt)
         );
+        ctx.thermal_sigma = sigma;
 
         // Generate and add thermal noise using std::mt19937_64 + normal distribution
         // Seed: deterministic from step counter for reproducibility
         static thread_local std::mt19937_64 rng(42);
         std::normal_distribution<double> dist(0.0, sigma);
-        for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
-            ctx.h_eff_xyz[i] += dist(rng);
+        if (ctx.h_therm_xyz.size() != ctx.h_eff_xyz.size()) {
+            ctx.h_therm_xyz.assign(ctx.h_eff_xyz.size(), 0.0);
         }
+        for (size_t node = 0; node < static_cast<size_t>(ctx.n_nodes); ++node) {
+            const size_t base = node * 3u;
+            if (!ctx.magnetic_node_mask.empty() && ctx.magnetic_node_mask[node] == 0u) {
+                ctx.h_therm_xyz[base + 0] = 0.0;
+                ctx.h_therm_xyz[base + 1] = 0.0;
+                ctx.h_therm_xyz[base + 2] = 0.0;
+                continue;
+            }
+            for (size_t axis = 0; axis < 3u; ++axis) {
+                const double noise = dist(rng);
+                ctx.h_therm_xyz[base + axis] = noise;
+                ctx.h_eff_xyz[base + axis] += noise;
+            }
+        }
+    } else {
+        ctx.thermal_sigma = 0.0;
+        std::fill(ctx.h_therm_xyz.begin(), ctx.h_therm_xyz.end(), 0.0);
     }
 
     return FULLMAG_FEM_OK;

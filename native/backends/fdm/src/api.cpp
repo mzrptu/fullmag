@@ -510,6 +510,7 @@ int fullmag_fdm_backend_step(
 #if FULLMAG_HAS_CUDA
     if (!handle || !out_stats) return FULLMAG_FDM_ERR_INVALID;
     auto *ctx = reinterpret_cast<Context *>(handle);
+    ctx->step_interrupted = false;
 
     if (ctx->precision == FULLMAG_FDM_PRECISION_DOUBLE) {
         switch (ctx->integrator) {
@@ -552,6 +553,14 @@ int fullmag_fdm_backend_step(
         }
     }
 
+    if (ctx->step_interrupted) {
+        if (!fill_current_stats(*ctx, out_stats)) {
+            return FULLMAG_FDM_ERR_CUDA;
+        }
+        out_stats->dt_seconds = 0.0;
+        return FULLMAG_FDM_ERR_INTERRUPTED;
+    }
+
     // Check for CUDA errors
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -562,6 +571,23 @@ int fullmag_fdm_backend_step(
     return FULLMAG_FDM_OK;
 #else
     (void)handle; (void)dt_seconds; (void)out_stats;
+    return FULLMAG_FDM_ERR_CUDA;
+#endif
+}
+
+int fullmag_fdm_backend_set_interrupt_poll(
+    fullmag_fdm_backend *handle,
+    fullmag_fdm_interrupt_poll_fn poll_fn,
+    void *user_data)
+{
+#if FULLMAG_HAS_CUDA
+    if (!handle) return FULLMAG_FDM_ERR_INVALID;
+    auto *ctx = reinterpret_cast<Context *>(handle);
+    ctx->interrupt_poll = poll_fn;
+    ctx->interrupt_poll_user_data = user_data;
+    return FULLMAG_FDM_OK;
+#else
+    (void)handle; (void)poll_fn; (void)user_data;
     return FULLMAG_FDM_ERR_CUDA;
 #endif
 }

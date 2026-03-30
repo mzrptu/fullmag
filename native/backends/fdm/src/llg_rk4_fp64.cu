@@ -133,6 +133,7 @@ void launch_rk4_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stats
 
     // Stage 1: k1 = RHS(m0)
     compute_rhs_into(ctx, ctx.k1, n, grid, gamma_bar, alpha);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // Stage 2: m2 = normalize(m0 + 0.5*dt*k1), k2 = RHS(m2)
     rk4_stage_kernel<<<grid, 256>>>(
@@ -141,6 +142,7 @@ void launch_rk4_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stats
         static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
         n, 0.5 * dt);
     compute_rhs_into(ctx, ctx.k2, n, grid, gamma_bar, alpha);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // Stage 3: m3 = normalize(m0 + 0.5*dt*k2), k3 = RHS(m3)
     rk4_stage_kernel<<<grid, 256>>>(
@@ -149,6 +151,7 @@ void launch_rk4_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stats
         static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
         n, 0.5 * dt);
     compute_rhs_into(ctx, ctx.k3, n, grid, gamma_bar, alpha);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // Stage 4: m4 = normalize(m0 + dt*k3), k4 = RHS(m4)
     rk4_stage_kernel<<<grid, 256>>>(
@@ -157,6 +160,7 @@ void launch_rk4_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stats
         static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
         n, dt);
     compute_rhs_into(ctx, ctx.k4, n, grid, gamma_bar, alpha);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     // Final: m_new = normalize(m0 + dt/6*(k1 + 2k2 + 2k3 + k4))
     rk4_combine_kernel<<<grid, 256>>>(
@@ -167,6 +171,7 @@ void launch_rk4_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stats
         static_cast<const double*>(ctx.k4.x), static_cast<const double*>(ctx.k4.y), static_cast<const double*>(ctx.k4.z),
         static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
         n, dt / 6.0);
+    if (abort_step_from_tmp(ctx, false)) return;
 
     ctx.step_count++;
     ctx.current_time += dt;

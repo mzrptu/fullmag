@@ -7,13 +7,54 @@ import type { EigenModeSummary } from "./eigenTypes";
 
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
 
-const SERIES = {
-  stem: "#4c6ef5",
-  markers: "#9cc0ff",
-  selected: "#ffb86c",
-  text: "rgba(225, 232, 245, 0.9)",
-  grid: "rgba(120, 140, 170, 0.16)",
+const C = {
+  bg: "transparent",
+  text: "rgba(225,232,245,0.9)",
+  grid: "rgba(120,140,170,0.16)",
+  stem: "rgba(76,110,245,0.38)",
+  stemSel: "rgba(255,184,108,0.7)",
+  sel: "#ffb86c",
+  hovBg: "rgba(10,16,28,0.96)",
+  hovBorder: "rgba(132,156,240,0.55)",
+} as const;
+
+/** Marker color keyed by dominant polarization label emitted by the solver. */
+const POL_COLOR: Record<string, string> = {
+  ip: "#8ec5ff",
+  in_plane: "#8ec5ff",
+  op: "#c3a6ff",
+  out_of_plane: "#c3a6ff",
+  z: "#6ee7b7",
+  uniform: "#f9a8d4",
+  mixed: "#fcd34d",
+  default: "#9cc0ff",
 };
+
+function polColor(pol: string): string {
+  const key = pol.toLowerCase().replace(/[\s-]/g, "_");
+  return POL_COLOR[key] ?? POL_COLOR.default;
+}
+
+/** Compact legend pills rendered via Plotly annotations */
+function buildLegendAnnotations(): Partial<Plotly.Annotations>[] {
+  const entries: [string, string][] = [
+    ["ip", "#8ec5ff"],
+    ["op", "#c3a6ff"],
+    ["z", "#6ee7b7"],
+    ["mixed", "#fcd34d"],
+  ];
+  return entries.map(([label, color], i) => ({
+    x: 0 + i * 0.18,
+    y: 1.065,
+    xref: "paper" as const,
+    yref: "paper" as const,
+    text: `<span style="color:${color}">●</span> ${label}`,
+    showarrow: false,
+    font: { size: 9.5, color: "rgba(200,210,230,0.6)", family: "ui-monospace, Menlo, Consolas, monospace" },
+    xanchor: "left" as const,
+    yanchor: "bottom" as const,
+  }));
+}
 
 interface ModeSpectrumPlotProps {
   modes: EigenModeSummary[];

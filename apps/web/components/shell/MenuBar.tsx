@@ -36,6 +36,8 @@ interface MenuBarProps {
   canRelax?: boolean;
   canPause?: boolean;
   canStop?: boolean;
+  runAction?: string;
+  runLabel?: string;
   viewMode?: string;
 }
 
@@ -78,7 +80,7 @@ function buildMenus(props: MenuBarProps): MenuDef[] {
       label: "Simulation",
       items: [
         { label: "Relax", icon: <Target size={14} />, disabled: !props.canRelax, action: () => props.onSimAction?.("relax") },
-        { label: "Run", icon: <Play size={14} />, shortcut: "F5", disabled: !props.canRun, action: () => props.onSimAction?.("run") },
+        { label: props.runLabel ?? "Run", icon: <Play size={14} />, shortcut: "F5", disabled: !props.canRun, action: () => props.onSimAction?.(props.runAction ?? "run") },
         { label: "Pause", icon: <Pause size={14} />, disabled: !props.canPause, action: () => props.onSimAction?.("pause") },
         { label: "Stop", icon: <Square size={14} />, shortcut: "Shift+F5", disabled: !props.canStop, action: () => props.onSimAction?.("stop") },
         { separator: true, label: "" },
