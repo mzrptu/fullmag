@@ -1,7 +1,9 @@
 #include "context.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <random>
 
 #if FULLMAG_HAS_CUDA_RUNTIME
 #include <cuda_runtime.h>
@@ -10,6 +12,10 @@
 namespace fullmag::fem {
 
 namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kB  = 1.380649e-23;   // Boltzmann constant [J/K]
+constexpr double kMU0 = 4.0 * kPi * 1e-7;  // vacuum permeability [T·m/A]
 
 template <typename T>
 void copy_optional_span(
@@ -260,6 +266,65 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
         fill_zero_vector_field(ctx.h_eff_xyz, ctx.n_nodes);
     }
 
+    // ── Oersted field (cylindrical conductor) ──
+    ctx.has_oersted_cylinder = plan.has_oersted_cylinder != 0;
+    ctx.oersted_current = plan.oersted_current;
+    ctx.oersted_radius = plan.oersted_radius;
+    for (int i = 0; i < 3; ++i) {
+        ctx.oersted_center[i] = plan.oersted_center[i];
+        ctx.oersted_axis[i] = plan.oersted_axis[i];
+    }
+    ctx.oersted_time_dep_kind = plan.oersted_time_dep_kind;
+    ctx.oersted_time_dep_freq = plan.oersted_time_dep_freq;
+    ctx.oersted_time_dep_phase = plan.oersted_time_dep_phase;
+    ctx.oersted_time_dep_offset = plan.oersted_time_dep_offset;
+    ctx.oersted_time_dep_t_on = plan.oersted_time_dep_t_on;
+    ctx.oersted_time_dep_t_off = plan.oersted_time_dep_t_off;
+
+    if (ctx.has_oersted_cylinder && ctx.oersted_radius > 0.0) {
+        // Precompute static Oersted field for I = 1 A on FEM node coordinates.
+        // Ampère's law for infinite cylinder:
+        //   inside (r < R):  H_phi = r / (2 pi R^2)
+        //   outside (r >= R): H_phi = 1 / (2 pi r)
+        const double inv_2pi = 1.0 / (2.0 * kPi);
+        const double R = ctx.oersted_radius;
+        const double R2 = R * R;
+        const double cx = ctx.oersted_center[0];
+        const double cy = ctx.oersted_center[1];
+
+        ctx.h_oe_xyz.resize(static_cast<size_t>(ctx.n_nodes) * 3u, 0.0);
+        for (uint32_t i = 0; i < ctx.n_nodes; ++i) {
+            const double nx = ctx.nodes_xyz[i * 3 + 0];
+            const double ny = ctx.nodes_xyz[i * 3 + 1];
+
+            const double dx = nx - cx;
+            const double dy = ny - cy;
+            const double r = std::sqrt(dx * dx + dy * dy);
+
+            double H_phi;
+            if (r < 1e-30) {
+                H_phi = 0.0;
+            } else if (r < R) {
+                H_phi = inv_2pi * r / R2;
+            } else {
+                H_phi = inv_2pi / r;
+            }
+
+            double sin_phi = (r < 1e-30) ? 0.0 : dy / r;
+            double cos_phi = (r < 1e-30) ? 0.0 : dx / r;
+
+            ctx.h_oe_xyz[i * 3 + 0] = -H_phi * sin_phi;
+            ctx.h_oe_xyz[i * 3 + 1] =  H_phi * cos_phi;
+            ctx.h_oe_xyz[i * 3 + 2] =  0.0;
+        }
+    }
+
+    // ── Thermal noise (Brown field) ──
+    ctx.temperature = plan.temperature;
+    if (ctx.temperature > 0.0) {
+        ctx.h_therm_xyz.resize(static_cast<size_t>(ctx.n_nodes) * 3u, 0.0);
+    }
+
     context_populate_device_info(ctx);
 #if FULLMAG_HAS_MFEM_STACK
     if (!context_initialize_mfem(ctx, error)) {
@@ -373,6 +438,59 @@ int context_upload_magnetization_f64(
         ctx.h_eff_xyz = ctx.h_ex_xyz;
         for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
             ctx.h_eff_xyz[i] += ctx.h_demag_xyz[i];
+        }
+    }
+    // Add Oersted field: H_eff += I(t) * h_oe_static
+    if (ctx.has_oersted_cylinder && !ctx.h_oe_xyz.empty()) {
+        double I_scale = ctx.oersted_current;
+        switch (ctx.oersted_time_dep_kind) {
+            case 1: { // Sinusoidal
+                I_scale *= std::sin(2.0 * kPi * ctx.oersted_time_dep_freq * ctx.current_time
+                                    + ctx.oersted_time_dep_phase)
+                         + ctx.oersted_time_dep_offset;
+                break;
+            }
+            case 2: { // Pulse
+                I_scale *= (ctx.current_time >= ctx.oersted_time_dep_t_on &&
+                            ctx.current_time <  ctx.oersted_time_dep_t_off) ? 1.0 : 0.0;
+                break;
+            }
+            default: break;
+        }
+        for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
+            ctx.h_eff_xyz[i] += I_scale * ctx.h_oe_xyz[i];
+        }
+    }
+
+    // Add thermal noise: H_eff += H_therm  (Brown sLLG field)
+    if (ctx.temperature > 0.0 && ctx.Ms > 0.0 && ctx.current_dt > 0.0) {
+        // Brown noise amplitude: sigma = sqrt(2*alpha*kB*T / (gamma0*mu0*Ms*V_node*dt))
+        // where gamma0 = gamma * mu0 (FullMag stores reduced gamma = gamma0/(1+alpha^2))
+        const double alpha = ctx.alpha;
+        const double Ms = ctx.Ms;
+        const double gamma_red = ctx.gamma;  // gamma / (1+alpha^2)
+        const double gamma0 = gamma_red * (1.0 + alpha * alpha);
+
+        // Estimate lumped node volume: total mesh volume / number of magnetic nodes
+        // (For FEM this is the appropriate carrier volume for the noise amplitude)
+        const uint32_t n_mag = std::max(1u, ctx.n_magnetic_nodes);
+        double total_volume = 0.0;
+        for (size_t e = 0; e < ctx.n_elements; ++e) {
+            total_volume += ctx.element_volumes[e];
+        }
+        const double V_node = total_volume / static_cast<double>(n_mag);
+
+        const double sigma = std::sqrt(
+            2.0 * alpha * kB * ctx.temperature /
+            (gamma0 * kMU0 * Ms * V_node * ctx.current_dt)
+        );
+
+        // Generate and add thermal noise using std::mt19937_64 + normal distribution
+        // Seed: deterministic from step counter for reproducibility
+        static thread_local std::mt19937_64 rng(42);
+        std::normal_distribution<double> dist(0.0, sigma);
+        for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
+            ctx.h_eff_xyz[i] += dist(rng);
         }
     }
 

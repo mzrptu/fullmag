@@ -284,6 +284,21 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
         ctx->stt_cpp_pf = 0.0;
     }
 
+    // ── Oersted field (cylindrical conductor) ──
+    ctx->has_oersted_cylinder = plan->has_oersted_cylinder != 0;
+    ctx->oersted_current = plan->oersted_current;
+    ctx->oersted_radius = plan->oersted_radius;
+    for (int i = 0; i < 3; ++i) {
+        ctx->oersted_center[i] = plan->oersted_center[i];
+        ctx->oersted_axis[i] = plan->oersted_axis[i];
+    }
+    ctx->oersted_time_dep_kind = plan->oersted_time_dep_kind;
+    ctx->oersted_time_dep_freq = plan->oersted_time_dep_freq;
+    ctx->oersted_time_dep_phase = plan->oersted_time_dep_phase;
+    ctx->oersted_time_dep_offset = plan->oersted_time_dep_offset;
+    ctx->oersted_time_dep_t_on = plan->oersted_time_dep_t_on;
+    ctx->oersted_time_dep_t_off = plan->oersted_time_dep_t_off;
+
     // Adaptive step config (DP45)
     ctx->adaptive_max_error = plan->adaptive_max_error > 0 ? plan->adaptive_max_error : 1e-5;
     ctx->adaptive_dt_min    = plan->adaptive_dt_min > 0    ? plan->adaptive_dt_min    : 1e-18;
@@ -452,6 +467,13 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
 
     if (ctx->has_cubic_anisotropy) {
         if (!context_upload_cubic_anisotropy_fields(*ctx, plan->kc1_field, plan->kc2_field, plan->kc3_field, ctx->cell_count)) {
+            return reinterpret_cast<fullmag_fdm_backend *>(ctx);
+        }
+    }
+
+    // Precompute Oersted static field for I = 1 A
+    if (ctx->has_oersted_cylinder) {
+        if (!context_precompute_oersted_field(*ctx)) {
             return reinterpret_cast<fullmag_fdm_backend *>(ctx);
         }
     }
@@ -829,6 +851,24 @@ int fullmag_fdm_backend_refresh_observables(
     auto *ctx = reinterpret_cast<Context *>(handle);
 
     if (!context_refresh_observables(*ctx)) {
+        return FULLMAG_FDM_ERR_CUDA;
+    }
+
+    return FULLMAG_FDM_OK;
+#else
+    (void)handle;
+    return FULLMAG_FDM_ERR_CUDA;
+#endif
+}
+
+int fullmag_fdm_backend_refresh_demag_observable(
+    fullmag_fdm_backend *handle)
+{
+#if FULLMAG_HAS_CUDA
+    if (!handle) return FULLMAG_FDM_ERR_INVALID;
+    auto *ctx = reinterpret_cast<Context *>(handle);
+
+    if (!context_refresh_demag_observable(*ctx)) {
         return FULLMAG_FDM_ERR_CUDA;
     }
 

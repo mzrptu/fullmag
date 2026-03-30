@@ -28,7 +28,7 @@ cat > "${RUNTIME_ROOT}/bin/fullmag-fem-gpu" <<'EOF'
 set -euo pipefail
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_ROOT="$(cd "${SELF_DIR}/.." && pwd)"
-REPO_ROOT="$(cd "${RUNTIME_ROOT}/../.." && pwd)"
+REPO_ROOT="$(cd "${RUNTIME_ROOT}/../../.." && pwd)"
 export FULLMAG_REPO_ROOT="${REPO_ROOT}"
 export LD_LIBRARY_PATH="${RUNTIME_ROOT}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export FULLMAG_FEM_EXECUTION="${FULLMAG_FEM_EXECUTION:-gpu}"

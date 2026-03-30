@@ -23,6 +23,20 @@ class StepStats:
     max_dm_dt: float
     max_h_eff: float
     wall_time_ns: int
+    e_ani: float = 0.0
+    e_dmi: float = 0.0
+    max_h_demag: float = 0.0
+    exchange_wall_time_ns: int = 0
+    demag_wall_time_ns: int = 0
+    rhs_wall_time_ns: int = 0
+    extra_energy_wall_time_ns: int = 0
+    snapshot_wall_time_ns: int = 0
+    error_estimate: float | None = None
+    dt_suggested: float | None = None
+    rejected_attempts: int = 0
+    rhs_evals: int = 0
+    demag_solves: int = 0
+    fsal_reused: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +177,20 @@ def result_from_run_payload(
             max_dm_dt=s["max_dm_dt"],
             max_h_eff=s["max_h_eff"],
             wall_time_ns=s["wall_time_ns"],
+            e_ani=s.get("e_ani", 0.0),
+            e_dmi=s.get("e_dmi", 0.0),
+            max_h_demag=s.get("max_h_demag", 0.0),
+            exchange_wall_time_ns=s.get("exchange_wall_time_ns", 0),
+            demag_wall_time_ns=s.get("demag_wall_time_ns", 0),
+            rhs_wall_time_ns=s.get("rhs_wall_time_ns", 0),
+            extra_energy_wall_time_ns=s.get("extra_energy_wall_time_ns", 0),
+            snapshot_wall_time_ns=s.get("snapshot_wall_time_ns", 0),
+            error_estimate=s.get("error_estimate"),
+            dt_suggested=s.get("dt_suggested"),
+            rejected_attempts=s.get("rejected_attempts", 0),
+            rhs_evals=s.get("rhs_evals", 0),
+            demag_solves=s.get("demag_solves", 0),
+            fsal_reused=s.get("fsal_reused", False),
         )
         for s in run_result.get("steps", [])
     ]

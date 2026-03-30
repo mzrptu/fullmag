@@ -604,13 +604,15 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const femMesh = state?.fem_mesh ?? null;
   const scriptBuilder = state?.script_builder ?? null;
   const scriptInitialState = scriptBuilder?.initial_state ?? null;
+  const runtimeStatus = state?.runtime_status ?? null;
   const scalarRows = state?.scalar_rows ?? EMPTY_SCALAR_ROWS;
   const engineLog = state?.engine_log ?? EMPTY_ENGINE_LOG;
   const quantities = state?.quantities ?? [];
   const artifactsArr = state?.artifacts ?? [];
   const metadata = (state?.metadata as Record<string, unknown> | null) ?? null;
   const latestEngineMessage = engineLog.length > 0 ? engineLog[engineLog.length - 1]?.message ?? null : null;
-  const workspaceStatus = liveState?.status ?? session?.status ?? run?.status ?? "idle";
+  const workspaceStatus =
+    runtimeStatus?.code ?? liveState?.status ?? session?.status ?? run?.status ?? "idle";
 
   const hasSolverTelemetry =
     (liveState?.step ?? 0) > 0 ||

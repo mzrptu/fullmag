@@ -25,7 +25,8 @@ use tracing::info;
 
 use fullmag_runner::quantities::{quantity_spec, quantity_specs, QuantityKind};
 use fullmag_runner::{
-    DisplaySelection, FemMeshPayload, LivePreviewField, LivePreviewRequest, StepUpdate,
+    CommandAckEvent, DisplaySelection, DisplayUpdatedEvent, FemMeshPayload, LivePreviewField,
+    LivePreviewRequest, RuntimeEventEnvelope, RuntimeStatus, RuntimeStatusChangedEvent, StepUpdate,
 };
 
 #[derive(Debug, Clone)]
@@ -236,6 +237,7 @@ struct SessionStateResponse {
     session: SessionManifest,
     run: Option<RunManifest>,
     live_state: Option<LiveState>,
+    runtime_status: RuntimeStatusView,
     metadata: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     script_builder: Option<ScriptBuilderState>,
@@ -273,6 +275,7 @@ struct SessionStateEventView<'a> {
     session: &'a SessionManifest,
     run: Option<&'a RunManifest>,
     live_state: Option<&'a LiveState>,
+    runtime_status: &'a RuntimeStatusView,
     metadata: Option<&'a Value>,
     script_builder: Option<&'a ScriptBuilderState>,
     scalar_rows: &'a [ScalarRow],
@@ -292,6 +295,7 @@ struct SessionStateResponseView<'a> {
     session: &'a SessionManifest,
     run: Option<&'a RunManifest>,
     live_state: Option<&'a LiveState>,
+    runtime_status: &'a RuntimeStatusView,
     metadata: Option<&'a Value>,
     script_builder: Option<&'a ScriptBuilderState>,
     scalar_rows: &'a [ScalarRow],
@@ -411,6 +415,14 @@ struct GlobalScalarPreviewState {
     quantity: String,
     unit: String,
     value: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+struct RuntimeStatusView {
+    kind: RuntimeStatus,
+    code: String,
+    is_busy: bool,
+    can_accept_commands: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1163,6 +1175,7 @@ async fn publish_current_live_state(
         Some(existing) if existing.session.session_id == req.session_id => existing,
         _ => default_current_live_state(&req),
     };
+    let previous_runtime_status = next.runtime_status.clone();
     let previous_preview = next.preview.clone();
     apply_current_live_publish(&mut next, req)?;
     next.display_selection = display_selection.clone();
@@ -1206,6 +1219,22 @@ async fn publish_current_live_state(
     } else {
         None
     };
+    let runtime_status_json = build_runtime_status_changed_event(
+        &next.session.session_id,
+        &previous_runtime_status,
+        &next.runtime_status,
+    )
+    .map(|event| serialize_runtime_event(&event))
+    .transpose()?;
+    let display_updated_json = if should_rebuild_preview {
+        Some(serialize_runtime_event(&build_display_updated_event(
+            &next.session.session_id,
+            &next.display_selection,
+            next.preview.as_ref(),
+        ))?)
+    } else {
+        None
+    };
     *current = Some(next);
     drop(current);
     *state.current_live_public_snapshot.write().await = Some(public_json);
@@ -1213,6 +1242,12 @@ async fn publish_current_live_state(
     let _ = state.current_live_events.send(snapshot_json);
     if let Some(preview_json) = preview_json {
         let _ = state.current_live_events.send(preview_json);
+    }
+    if let Some(runtime_status_json) = runtime_status_json {
+        let _ = state.current_live_events.send(runtime_status_json);
+    }
+    if let Some(display_updated_json) = display_updated_json {
+        let _ = state.current_live_events.send(display_updated_json);
     }
     Ok(Json(serde_json::json!({ "status": "ok" })))
 }
@@ -1329,6 +1364,8 @@ async fn enqueue_current_live_command(
 ) -> Result<Json<SessionCommandResponse>, ApiError> {
     let session_id = current_live_session_id(&state).await?;
     let command = enqueue_current_control_command(&state, build_session_command(req)?).await;
+    let ack_json = serialize_runtime_event(&build_command_ack_event(&session_id, &command))?;
+    let _ = state.current_live_events.send(ack_json);
     let response = SessionCommandResponse {
         command_id: command.command_id.clone(),
         session_id,
@@ -1473,7 +1510,10 @@ async fn get_current_live_eigen_mode(
 ) -> Result<Json<Value>, ApiError> {
     let artifact_dir = require_current_live_artifact_dir(&state).await?;
     let relative_path = format!("eigen/modes/mode_{:04}.json", query.index);
-    Ok(Json(read_json_artifact_value(&artifact_dir, &relative_path)?))
+    Ok(Json(read_json_artifact_value(
+        &artifact_dir,
+        &relative_path,
+    )?))
 }
 
 async fn get_current_live_eigen_dispersion(
@@ -1482,16 +1522,15 @@ async fn get_current_live_eigen_dispersion(
     let artifact_dir = require_current_live_artifact_dir(&state).await?;
     let csv_path = "eigen/dispersion/branch_table.csv";
     let csv_content = read_text_artifact_value(&artifact_dir, csv_path)?;
-    let path_metadata = if try_resolve_artifact_path(&artifact_dir, "eigen/dispersion/path.json")?
-        .is_some()
-    {
-        Some(read_json_artifact_value(
-            &artifact_dir,
-            "eigen/dispersion/path.json",
-        )?)
-    } else {
-        None
-    };
+    let path_metadata =
+        if try_resolve_artifact_path(&artifact_dir, "eigen/dispersion/path.json")?.is_some() {
+            Some(read_json_artifact_value(
+                &artifact_dir,
+                "eigen/dispersion/path.json",
+            )?)
+        } else {
+            None
+        };
     Ok(Json(EigenDispersionResponse {
         csv_path: csv_path.to_string(),
         path_metadata,
@@ -2243,7 +2282,7 @@ where
     let preview_config = display_selection.preview_request();
     let _ = state.current_display_events.send(display_selection.clone());
 
-    let (json, public_json) = {
+    let (session_id, json, public_json, display_updated_json) = {
         let mut current = state.current_live_state.write().await;
         let snapshot = current
             .as_mut()
@@ -2261,11 +2300,20 @@ where
             &snapshot.preview_config,
             snapshot.preview.as_ref(),
         )?;
-        (preview_json, public_json)
+        let display_updated_json = serialize_runtime_event(&build_display_updated_event(
+            &snapshot.session.session_id,
+            &snapshot.display_selection,
+            snapshot.preview.as_ref(),
+        ))?;
+        (
+            snapshot.session.session_id.clone(),
+            preview_json,
+            public_json,
+            display_updated_json,
+        )
     };
     *state.current_live_public_snapshot.write().await = Some(public_json);
 
-    let _ = state.current_live_events.send(json);
     let command = enqueue_current_control_command(
         state,
         build_preview_control_command(
@@ -2274,6 +2322,10 @@ where
         ),
     )
     .await;
+    let ack_json = serialize_runtime_event(&build_command_ack_event(&session_id, &command))?;
+    let _ = state.current_live_events.send(ack_json);
+    let _ = state.current_live_events.send(json);
+    let _ = state.current_live_events.send(display_updated_json);
     Ok(Json(
         serde_json::json!({ "status": "ok", "control_seq": command.seq }),
     ))
@@ -2288,6 +2340,7 @@ fn serialize_current_live_snapshot_event(
             session: &snapshot.session,
             run: snapshot.run.as_ref(),
             live_state: snapshot.live_state.as_ref(),
+            runtime_status: &snapshot.runtime_status,
             metadata: snapshot.metadata.as_ref(),
             script_builder: snapshot.script_builder.as_ref(),
             scalar_rows: &snapshot.scalar_rows,
@@ -2314,6 +2367,7 @@ fn serialize_current_live_response(
         session: &snapshot.session,
         run: snapshot.run.as_ref(),
         live_state: snapshot.live_state.as_ref(),
+        runtime_status: &snapshot.runtime_status,
         metadata: snapshot.metadata.as_ref(),
         script_builder: snapshot.script_builder.as_ref(),
         scalar_rows: &snapshot.scalar_rows,
@@ -2344,6 +2398,67 @@ fn serialize_current_live_preview(
         preview,
     })
     .map_err(|error| ApiError::internal(format!("failed to serialize preview state: {}", error)))
+}
+
+fn serialize_runtime_event(event: &RuntimeEventEnvelope) -> Result<String, ApiError> {
+    serde_json::to_string(event).map_err(|error| {
+        ApiError::internal(format!("failed to serialize runtime event: {}", error))
+    })
+}
+
+fn build_command_ack_event(session_id: &str, command: &SessionCommand) -> RuntimeEventEnvelope {
+    RuntimeEventEnvelope::CommandAck(CommandAckEvent {
+        session_id: session_id.to_string(),
+        seq: command.seq,
+        command_id: command.command_id.clone(),
+        command_kind: command.kind.clone(),
+        issued_at_unix_ms: command.created_at_unix_ms,
+        display_selection: command.display_selection.clone(),
+    })
+}
+
+fn build_display_updated_event(
+    session_id: &str,
+    display_selection: &CurrentDisplaySelection,
+    preview: Option<&PreviewState>,
+) -> RuntimeEventEnvelope {
+    let (source_step, source_time) = match preview {
+        Some(PreviewState::Spatial(state)) => (Some(state.source_step), Some(state.source_time)),
+        Some(PreviewState::GlobalScalar(state)) => {
+            (Some(state.source_step), Some(state.source_time))
+        }
+        None => (None, None),
+    };
+    RuntimeEventEnvelope::DisplayUpdated(DisplayUpdatedEvent {
+        session_id: session_id.to_string(),
+        display_selection: display_selection.clone(),
+        display_kind: display_selection.selection.kind,
+        published_at_unix_ms: unix_time_millis_now(),
+        source_step,
+        source_time,
+    })
+}
+
+fn build_runtime_status_changed_event(
+    session_id: &str,
+    previous: &RuntimeStatusView,
+    next: &RuntimeStatusView,
+) -> Option<RuntimeEventEnvelope> {
+    if previous == next {
+        return None;
+    }
+    Some(RuntimeEventEnvelope::RuntimeStatusChanged(
+        RuntimeStatusChangedEvent {
+            session_id: session_id.to_string(),
+            status: next.kind,
+            status_code: next.code.clone(),
+            is_busy: next.is_busy,
+            can_accept_commands: next.can_accept_commands,
+            changed_at_unix_ms: unix_time_millis_now(),
+            previous_status: Some(previous.kind),
+            previous_status_code: Some(previous.code.clone()),
+        },
+    ))
 }
 
 fn live_state_has_fresh_preview(live_state: Option<&LiveState>) -> bool {
@@ -2612,8 +2727,7 @@ fn build_global_scalar_preview_state(
     current: &SessionStateResponse,
     display_selection: &CurrentDisplaySelection,
 ) -> Option<PreviewState> {
-    let quantity =
-        resolve_global_scalar_quantity(current, &display_selection.selection.quantity)?;
+    let quantity = resolve_global_scalar_quantity(current, &display_selection.selection.quantity)?;
     let value = current_global_scalar_value(current, &quantity)?;
     let (source_step, source_time) = current_preview_source(current);
     Some(PreviewState::GlobalScalar(GlobalScalarPreviewState {
@@ -2813,7 +2927,10 @@ fn resolve_preview_quantity(current: &SessionStateResponse, requested: &str) -> 
         .map(|quantity| quantity.id.clone())
 }
 
-fn resolve_global_scalar_quantity(current: &SessionStateResponse, requested: &str) -> Option<String> {
+fn resolve_global_scalar_quantity(
+    current: &SessionStateResponse,
+    requested: &str,
+) -> Option<String> {
     let is_global_scalar = |quantity_id: &str| {
         quantity_spec(quantity_id).is_some_and(|spec| spec.kind == QuantityKind::GlobalScalar)
     };
@@ -3240,6 +3357,28 @@ async fn current_live_session_id(state: &AppState) -> Result<String, ApiError> {
         .ok_or_else(|| ApiError::not_found("no active local live workspace"))
 }
 
+fn build_runtime_status_view(status_code: &str) -> RuntimeStatusView {
+    let kind = RuntimeStatus::from_status_code(status_code);
+    RuntimeStatusView {
+        kind,
+        code: status_code.to_string(),
+        is_busy: kind.is_busy(),
+        can_accept_commands: kind.can_accept_commands(),
+    }
+}
+
+fn effective_runtime_status_code(snapshot: &SessionStateResponse) -> String {
+    snapshot
+        .live_state
+        .as_ref()
+        .map(|state| state.status.clone())
+        .unwrap_or_else(|| snapshot.session.status.clone())
+}
+
+fn refresh_runtime_status(snapshot: &mut SessionStateResponse) {
+    snapshot.runtime_status = build_runtime_status_view(&effective_runtime_status_code(snapshot));
+}
+
 fn default_current_live_state(req: &CurrentLivePublishRequest) -> SessionStateResponse {
     let now = unix_time_millis_now();
     let run_id = req
@@ -3267,7 +3406,7 @@ fn default_current_live_state(req: &CurrentLivePublishRequest) -> SessionStateRe
         session: req.session.clone().unwrap_or(SessionManifest {
             session_id: req.session_id.clone(),
             run_id,
-            status,
+            status: status.clone(),
             interactive_session_requested: false,
             script_path: String::new(),
             problem_name: "Local Live Workspace".to_string(),
@@ -3281,6 +3420,7 @@ fn default_current_live_state(req: &CurrentLivePublishRequest) -> SessionStateRe
         }),
         run: None,
         live_state: None,
+        runtime_status: build_runtime_status_view(&status),
         metadata: None,
         script_builder: None,
         scalar_rows: Vec::new(),
@@ -3367,6 +3507,8 @@ fn apply_current_live_publish(
     ) {
         current.session.finished_at_unix_ms = unix_time_millis_now();
     }
+
+    refresh_runtime_status(current);
 
     let field_location = if current.fem_mesh.is_some() {
         "node"
@@ -3533,10 +3675,7 @@ async fn require_current_live_artifact_dir(state: &Arc<AppState>) -> Result<Path
         .ok_or_else(|| ApiError::not_found("no artifact directory for the active workspace"))
 }
 
-fn try_resolve_artifact_path(
-    artifact_dir: &Path,
-    raw: &str,
-) -> Result<Option<PathBuf>, ApiError> {
+fn try_resolve_artifact_path(artifact_dir: &Path, raw: &str) -> Result<Option<PathBuf>, ApiError> {
     let relative = sanitize_artifact_relative_path(raw)?;
     let artifact_path = artifact_dir.join(relative);
     if artifact_path.exists() && artifact_path.is_file() {
@@ -3547,9 +3686,8 @@ fn try_resolve_artifact_path(
 }
 
 fn resolve_artifact_path(artifact_dir: &Path, raw: &str) -> Result<PathBuf, ApiError> {
-    try_resolve_artifact_path(artifact_dir, raw)?.ok_or_else(|| {
-        ApiError::not_found(format!("artifact '{}' was not found", raw))
-    })
+    try_resolve_artifact_path(artifact_dir, raw)?
+        .ok_or_else(|| ApiError::not_found(format!("artifact '{}' was not found", raw)))
 }
 
 fn read_text_artifact_value(artifact_dir: &Path, raw: &str) -> Result<String, ApiError> {
@@ -3611,10 +3749,7 @@ fn parse_eigen_dispersion_csv(content: &str) -> Result<Vec<EigenDispersionRow>, 
             ky: parse_f64("ky", columns[2])?,
             kz: parse_f64("kz", columns[3])?,
             frequency_hz: parse_f64("frequency_hz", columns[4])?,
-            angular_frequency_rad_per_s: parse_f64(
-                "angular_frequency_rad_per_s",
-                columns[5],
-            )?,
+            angular_frequency_rad_per_s: parse_f64("angular_frequency_rad_per_s", columns[5])?,
         });
     }
     Ok(rows)
@@ -4326,7 +4461,8 @@ mod tests {
 
     #[test]
     fn parse_eigen_dispersion_csv_decodes_rows() {
-        let csv = "mode_index,kx,ky,kz,frequency_hz,angular_frequency_rad_per_s\n0,0.0,1.0,2.0,3.0,4.0\n";
+        let csv =
+            "mode_index,kx,ky,kz,frequency_hz,angular_frequency_rad_per_s\n0,0.0,1.0,2.0,3.0,4.0\n";
         let rows = parse_eigen_dispersion_csv(csv).expect("csv should parse");
         assert_eq!(
             rows,

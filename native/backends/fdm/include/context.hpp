@@ -89,6 +89,7 @@ struct Context {
 
     // Zhang-Li STT (CIP)
     bool has_zhang_li_stt = false;
+
     double current_density_x = 0.0;
     double current_density_y = 0.0;
     double current_density_z = 0.0;
@@ -105,10 +106,27 @@ struct Context {
     double stt_epsilon_prime = 0.0;
     double stt_cpp_pf = 0.0;   // Precomputed coefficient: j * hbar / (2 * e * mu_0 * M_s * d)
 
+    // Oersted field (cylindrical conductor)
+    bool has_oersted_cylinder = false;
+    double oersted_current = 0.0;        // DC current [A]
+    double oersted_radius = 0.0;         // cylinder radius [m]
+    double oersted_center[3] = {0,0,0};  // cross-section centre [m]
+    double oersted_axis[3] = {0,0,1};    // current-flow axis (unit vector)
+    // Time dependence envelope
+    uint32_t oersted_time_dep_kind = 0;  // 0=constant, 1=sinusoidal, 2=pulse
+    double oersted_time_dep_freq = 0.0;  // sinusoidal: frequency [Hz]
+    double oersted_time_dep_phase = 0.0; // sinusoidal: phase [rad]
+    double oersted_time_dep_offset = 0.0;// sinusoidal: offset
+    double oersted_time_dep_t_on = 0.0;  // pulse: t_on [s]
+    double oersted_time_dep_t_off = 0.0; // pulse: t_off [s]
+    // Precomputed static Oersted field profile for I = 1 A (SoA layout)
+    DeviceVectorField h_oe_static;       // H_oe(x,y,z) for I=1A
+
     // Execution
     fullmag_fdm_precision precision;
     fullmag_fdm_integrator integrator;
     bool disable_precession = false;
+
 
     // Step counter
     uint64_t step_count = 0;
@@ -210,6 +228,52 @@ struct AsyncFieldSnapshot {
     bool needs_wait = false;
 };
 
+/// Plain-old-data copy of STT-related fields from Context.
+/// Passed by value to CUDA kernels so they don't need host-side Context access.
+struct SttParams {
+    int     has_zhang_li_stt    = 0;
+    double  current_density_x   = 0.0;
+    double  current_density_y   = 0.0;
+    double  current_density_z   = 0.0;
+    double  stt_u_pf            = 0.0;
+    double  stt_beta            = 0.0;
+    double  stt_degree          = 0.0;
+    int     nx = 1, ny = 1, nz = 1;
+    double  dx = 1.0, dy = 1.0, dz = 1.0;
+
+    int     has_slonczewski_stt = 0;
+    double  stt_p_x             = 0.0;
+    double  stt_p_y             = 0.0;
+    double  stt_p_z             = 0.0;
+    double  stt_lambda          = 1.0;
+    double  stt_epsilon_prime   = 0.0;
+    double  stt_cpp_pf          = 0.0;
+};
+
+/// Build an SttParams from a Context.
+inline SttParams stt_params_from_ctx(const Context &ctx) {
+    SttParams p;
+    p.has_zhang_li_stt  = ctx.has_zhang_li_stt  ? 1 : 0;
+    p.current_density_x = ctx.current_density_x;
+    p.current_density_y = ctx.current_density_y;
+    p.current_density_z = ctx.current_density_z;
+    p.stt_u_pf          = ctx.stt_u_pf;
+    p.stt_beta          = ctx.stt_beta;
+    p.stt_degree        = ctx.stt_degree;
+    p.nx = static_cast<int>(ctx.nx);
+    p.ny = static_cast<int>(ctx.ny);
+    p.nz = static_cast<int>(ctx.nz);
+    p.dx = ctx.dx; p.dy = ctx.dy; p.dz = ctx.dz;
+    p.has_slonczewski_stt = ctx.has_slonczewski_stt ? 1 : 0;
+    p.stt_p_x             = ctx.stt_p_x;
+    p.stt_p_y             = ctx.stt_p_y;
+    p.stt_p_z             = ctx.stt_p_z;
+    p.stt_lambda          = ctx.stt_lambda;
+    p.stt_epsilon_prime   = ctx.stt_epsilon_prime;
+    p.stt_cpp_pf          = ctx.stt_cpp_pf;
+    return p;
+}
+
 #ifdef FULLMAG_HAS_CUDA
 
 /// Allocate all device buffers.
@@ -274,6 +338,10 @@ bool context_upload_cubic_anisotropy_fields(
     const double *kc3,
     uint64_t len);
 
+/// Precompute static Oersted field profile for I = 1 A (host → device).
+/// Must be called after context_alloc_device when has_oersted_cylinder is set.
+bool context_precompute_oersted_field(Context &ctx);
+
 /// Upload sparse demag boundary correction tensors.
 bool context_upload_demag_boundary_corr(
     Context &ctx,
@@ -326,6 +394,9 @@ bool context_query_device_info(Context &ctx);
 
 /// Populate H_ex / H_demag / H_eff for the current state without advancing time.
 bool context_refresh_observables(Context &ctx);
+
+/// Populate only H_demag for the current state without advancing time.
+bool context_refresh_demag_observable(Context &ctx);
 
 /// Begin an asynchronous field snapshot with private staging + pinned host storage.
 AsyncFieldSnapshot *context_begin_async_field_snapshot(

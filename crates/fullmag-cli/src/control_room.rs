@@ -222,7 +222,9 @@ pub(crate) fn spawn_control_room(
     )
 }
 
-pub(crate) fn publish_current_live_workspace_snapshot(live_workspace: &LocalLiveWorkspace) -> Result<()> {
+pub(crate) fn publish_current_live_workspace_snapshot(
+    live_workspace: &LocalLiveWorkspace,
+) -> Result<()> {
     let snapshot = live_workspace.snapshot().snapshot();
     publish_current_live_state(
         snapshot
@@ -377,7 +379,10 @@ pub(crate) fn current_live_api_client() -> &'static reqwest::blocking::Client {
     })
 }
 
-pub(crate) fn publish_current_live_state(session_id: &str, payload: &CurrentLivePublishPayload) -> Result<()> {
+pub(crate) fn publish_current_live_state(
+    session_id: &str,
+    payload: &CurrentLivePublishPayload,
+) -> Result<()> {
     current_live_api_client()
         .post(format!("{}/v1/live/current/publish", api_base_url()))
         .json(&CurrentLivePublishRequest {

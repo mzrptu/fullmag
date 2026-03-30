@@ -40,7 +40,8 @@ __global__ void llg_rhs_fp32_kernel(
     float * __restrict__ out_y,
     float * __restrict__ out_z,
     int n,
-    float gamma_bar, float alpha, int disable_precession)
+    float gamma_bar, float alpha, int disable_precession,
+    SttParams stt)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
@@ -63,20 +64,20 @@ __global__ void llg_rhs_fp32_kernel(
 
     // --- Zhang-Li STT (CIP) ---
     // tau_ZL = -b * m x (m x (j.grad)m) - beta * b * m x (j.grad)m
-    float jx = static_cast<float>(ctx.current_density_x);
-    float jy = static_cast<float>(ctx.current_density_y);
-    float jz = static_cast<float>(ctx.current_density_z);
+    float jx = static_cast<float>(stt.current_density_x);
+    float jy = static_cast<float>(stt.current_density_y);
+    float jz = static_cast<float>(stt.current_density_z);
     
-    if (ctx.has_zhang_li_stt) {
-        float ux = static_cast<float>(ctx.stt_u_pf) * jx;
-        float uy = static_cast<float>(ctx.stt_u_pf) * jy;
-        float uz = static_cast<float>(ctx.stt_u_pf) * jz;
+    if (stt.has_zhang_li_stt) {
+        float ux = static_cast<float>(stt.stt_u_pf) * jx;
+        float uy = static_cast<float>(stt.stt_u_pf) * jy;
+        float uz = static_cast<float>(stt.stt_u_pf) * jz;
 
-        float inv_dx = static_cast<float>(1.0 / ctx.dx);
-        float inv_dy = static_cast<float>(1.0 / ctx.dy);
-        float inv_dz = static_cast<float>(1.0 / ctx.dz);
+        float inv_dx = static_cast<float>(1.0 / stt.dx);
+        float inv_dy = static_cast<float>(1.0 / stt.dy);
+        float inv_dz = static_cast<float>(1.0 / stt.dz);
 
-        int nx = ctx.nx, ny = ctx.ny, nz = ctx.nz;
+        int nx = stt.nx, ny = stt.ny, nz = stt.nz;
         int z = idx / (ny * nx);
         int rem = idx - z * ny * nx;
         int y = rem / nx;
@@ -133,7 +134,7 @@ __global__ void llg_rhs_fp32_kernel(
         float double_cross_y = m2 * cross_x - m0 * cross_z;
         float double_cross_z = m0 * cross_y - m1 * cross_x;
 
-        float beta = static_cast<float>(ctx.stt_beta);
+        float beta = static_cast<float>(stt.stt_beta);
         rhs_x += -double_cross_x - beta * cross_x;
         rhs_y += -double_cross_y - beta * cross_y;
         rhs_z += -double_cross_z - beta * cross_z;
@@ -141,19 +142,19 @@ __global__ void llg_rhs_fp32_kernel(
     
     // --- Slonczewski STT (CPP/SOT) ---
     // tau_STT = beta_STT * [ m x (m x p) + epsilon' * m x p ]
-    if (ctx.has_slonczewski_stt) {
-        float px = static_cast<float>(ctx.stt_p_x);
-        float py = static_cast<float>(ctx.stt_p_y);
-        float pz = static_cast<float>(ctx.stt_p_z);
+    if (stt.has_slonczewski_stt) {
+        float px = static_cast<float>(stt.stt_p_x);
+        float py = static_cast<float>(stt.stt_p_y);
+        float pz = static_cast<float>(stt.stt_p_z);
         float m_dot_p = m0 * px + m1 * py + m2 * pz;
         
-        float L2 = static_cast<float>(ctx.stt_lambda * ctx.stt_lambda);
-        float P_val = ctx.stt_degree > 0.0 ? static_cast<float>(ctx.stt_degree) : 1.0f;
+        float L2 = static_cast<float>(stt.stt_lambda * stt.stt_lambda);
+        float P_val = stt.stt_degree > 0.0 ? static_cast<float>(stt.stt_degree) : 1.0f;
         
         // Spin-transfer efficiency Slonczewski function
         float g = (P_val * L2) / ((L2 + 1.0f) + (L2 - 1.0f) * m_dot_p);
         
-        float beta_STT = static_cast<float>(ctx.stt_cpp_pf) * g;
+        float beta_STT = static_cast<float>(stt.stt_cpp_pf) * g;
         
         // m x p
         float m_cross_px = m1 * pz - m2 * py;
@@ -165,7 +166,7 @@ __global__ void llg_rhs_fp32_kernel(
         float double_m_cross_py = m2 * m_cross_px - m0 * m_cross_pz;
         float double_m_cross_pz = m0 * m_cross_py - m1 * m_cross_px;
         
-        float e_prime = static_cast<float>(ctx.stt_epsilon_prime);
+        float e_prime = static_cast<float>(stt.stt_epsilon_prime);
         rhs_x += beta_STT * (double_m_cross_px + e_prime * m_cross_px);
         rhs_y += beta_STT * (double_m_cross_py + e_prime * m_cross_py);
         rhs_z += beta_STT * (double_m_cross_pz + e_prime * m_cross_pz);
@@ -269,7 +270,8 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         (const float*)ctx.m.x, (const float*)ctx.m.y, (const float*)ctx.m.z,
         (const float*)ctx.work.x, (const float*)ctx.work.y, (const float*)ctx.work.z,
         (float*)ctx.k1.x, (float*)ctx.k1.y, (float*)ctx.k1.z,
-        n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0);
+        n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
+        stt_params_from_ctx(ctx));
 
     // Step 3: predictor → m
     heun_predictor_fp32_kernel<<<grid, BLOCK_SIZE>>>(
@@ -292,7 +294,8 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         (const float*)ctx.m.x, (const float*)ctx.m.y, (const float*)ctx.m.z,
         (const float*)ctx.work.x, (const float*)ctx.work.y, (const float*)ctx.work.z,
         (float*)ctx.h_ex.x, (float*)ctx.h_ex.y, (float*)ctx.h_ex.z,
-        n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0);
+        n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
+        stt_params_from_ctx(ctx));
 
     // Step 6: corrector → m
     heun_corrector_fp32_kernel<<<grid, BLOCK_SIZE>>>(
@@ -332,7 +335,8 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         (const float*)ctx.m.x, (const float*)ctx.m.y, (const float*)ctx.m.z,
         (const float*)ctx.work.x, (const float*)ctx.work.y, (const float*)ctx.work.z,
         (float*)ctx.k1.x, (float*)ctx.k1.y, (float*)ctx.k1.z,
-        n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0);
+        n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
+        stt_params_from_ctx(ctx));
 
     double max_dm_dt = reduce_max_norm_fp32(ctx, ctx.k1.x, ctx.k1.y, ctx.k1.z, ctx.cell_count);
 

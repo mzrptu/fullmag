@@ -828,6 +828,23 @@ fn build_native_stacked_cuda_plan(
             boundary_correction: None,
             boundary_geometry: None,
             inter_region_exchange: vec![],
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
         },
         layers,
         global_grid,
@@ -1077,6 +1094,23 @@ fn single_layer_cuda_plan(plan: &FdmMultilayerPlanIR, layer: &FdmLayerPlanIR) ->
         boundary_correction: None,
         boundary_geometry: None,
         inter_region_exchange: vec![],
+        current_density: None,
+        stt_degree: None,
+        stt_beta: None,
+        stt_spin_polarization: None,
+        stt_lambda: None,
+        stt_epsilon_prime: None,
+        has_oersted_cylinder: false,
+        oersted_current: None,
+        oersted_radius: None,
+        oersted_center: None,
+        oersted_axis: None,
+        oersted_time_dep_kind: 0,
+        oersted_time_dep_freq: 0.0,
+        oersted_time_dep_phase: 0.0,
+        oersted_time_dep_offset: 0.0,
+        oersted_time_dep_t_on: 0.0,
+        oersted_time_dep_t_off: 0.0,
     }
 }
 
@@ -2360,8 +2394,9 @@ mod tests {
         }
 
         let plan = make_plan(true, ExecutionPrecision::Double);
-        let cpu = multilayer_reference::execute_reference_fdm_multilayer(&plan, 2e-13, &[], None, None)
-            .expect("cpu multilayer");
+        let cpu =
+            multilayer_reference::execute_reference_fdm_multilayer(&plan, 2e-13, &[], None, None)
+                .expect("cpu multilayer");
         let cuda =
             execute_cuda_fdm_multilayer(&plan, 2e-13, &[]).expect("cuda-assisted multilayer");
 
@@ -2389,8 +2424,9 @@ mod tests {
         }
 
         let plan = make_touching_plan(ExecutionPrecision::Double);
-        let cpu = multilayer_reference::execute_reference_fdm_multilayer(&plan, 1e-13, &[], None, None)
-            .expect("cpu multilayer");
+        let cpu =
+            multilayer_reference::execute_reference_fdm_multilayer(&plan, 1e-13, &[], None, None)
+                .expect("cpu multilayer");
         let cuda = execute_cuda_fdm_multilayer(&plan, 1e-13, &[]).expect("cuda multilayer");
 
         let cpu_initial = cpu.result.steps.first().expect("cpu initial");

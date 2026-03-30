@@ -33,6 +33,10 @@ pub use interactive::commands::LiveControlCommand;
 pub use interactive::display::{
     DisplayKind, DisplayPayload, DisplaySelection, DisplaySelectionState,
 };
+pub use interactive::events::{
+    CommandAckEvent, CommandCompletedEvent, CommandRejectedEvent, DisplayUpdatedEvent,
+    RuntimeEventEnvelope, RuntimeStatus, RuntimeStatusChangedEvent, StepDeltaEvent,
+};
 pub use interactive::runtime::InteractiveRuntime;
 pub use interactive_runtime::{InteractiveFdmPreviewRuntime, InteractiveFemPreviewRuntime};
 pub use types::{
@@ -189,7 +193,10 @@ pub fn run_problem_with_callback(
                 fdm,
                 until_seconds,
                 &plan.output_plan.outputs,
-                Some((&fdm.common_cells, &mut on_step as &mut dyn FnMut(StepUpdate) -> StepAction)),
+                Some((
+                    &fdm.common_cells,
+                    &mut on_step as &mut dyn FnMut(StepUpdate) -> StepAction,
+                )),
                 artifact_writer.clone(),
             )
         }
@@ -292,7 +299,9 @@ pub fn run_problem_with_callback(
         },
         magnetization: match &plan.backend_plan {
             BackendPlanIR::Fdm(_) => Some(final_m),
-            BackendPlanIR::FdmMultilayer(_) | BackendPlanIR::Fem(_) | BackendPlanIR::FemEigen(_) => None,
+            BackendPlanIR::FdmMultilayer(_)
+            | BackendPlanIR::Fem(_)
+            | BackendPlanIR::FemEigen(_) => None,
         },
         preview_field: None,
         scalar_row_due: true,
@@ -348,7 +357,10 @@ pub fn run_problem_with_live_preview(
                 fdm,
                 until_seconds,
                 &plan.output_plan.outputs,
-                Some((&fdm.common_cells, &mut on_step as &mut dyn FnMut(StepUpdate) -> StepAction)),
+                Some((
+                    &fdm.common_cells,
+                    &mut on_step as &mut dyn FnMut(StepUpdate) -> StepAction,
+                )),
                 artifact_writer.clone(),
             )
         }
@@ -726,9 +738,8 @@ pub fn snapshot_problem_preview(
             dispatch::snapshot_fem_preview(engine, fem, request)
         }
         BackendPlanIR::FemEigen(_) => Err(RunError {
-            message:
-                "interactive preview snapshot is not supported for FEM eigenmode plans"
-                    .to_string(),
+            message: "interactive preview snapshot is not supported for FEM eigenmode plans"
+                .to_string(),
         }),
     }
 }
@@ -754,9 +765,8 @@ pub fn snapshot_problem_vector_fields(
             dispatch::snapshot_fem_vector_fields(engine, fem, quantities, request)
         }
         BackendPlanIR::FemEigen(_) => Err(RunError {
-            message:
-                "interactive vector-field snapshots are not supported for FEM eigenmode plans"
-                    .to_string(),
+            message: "interactive vector-field snapshots are not supported for FEM eigenmode plans"
+                .to_string(),
         }),
     }
 }
@@ -878,10 +888,26 @@ pub fn run_reference_multilayer_fdm(
     until_seconds: f64,
     outputs: &[OutputIR],
 ) -> Result<RunResult, RunError> {
-    Ok(
-        multilayer_reference::execute_reference_fdm_multilayer(plan, until_seconds, outputs, None, None)?
-            .result,
-    )
+    Ok(multilayer_reference::execute_reference_fdm_multilayer(
+        plan,
+        until_seconds,
+        outputs,
+        None,
+        None,
+    )?
+    .result)
+}
+
+/// Run a FEM eigenmode analysis on the CPU reference engine.
+///
+/// Returns the first eigenpair (`frequency_hz`, `eigenvalue`) for each computed
+/// mode via the `AuxiliaryArtifact`s in [`ExecutedRun`].  The caller can
+/// obtain all mode data from the returned `ExecutedRun::auxiliary_artifacts`.
+pub fn run_reference_fem_eigen(
+    plan: &fullmag_ir::FemEigenPlanIR,
+    outputs: &[OutputIR],
+) -> Result<types::ExecutedRun, RunError> {
+    fem_eigen::execute_reference_fem_eigen(plan, outputs)
 }
 
 #[cfg(test)]
@@ -923,6 +949,24 @@ mod tests {
             enable_exchange: true,
             enable_demag: false,
             external_field: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
+            temperature: None,
         }
     }
 

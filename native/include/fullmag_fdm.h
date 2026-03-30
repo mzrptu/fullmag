@@ -145,6 +145,19 @@ typedef struct {
     double                     stt_lambda;             /* Lambda (asymmetry parameter) */
     double                     stt_epsilon_prime;      /* epsilon' (secondary spin-transfer term) */
 
+    /* Oersted field from cylindrical conductor (STNO / MTJ) */
+    int                        has_oersted_cylinder;   /* 1 = enabled */
+    double                     oersted_current;        /* DC current [A] */
+    double                     oersted_radius;         /* cylinder radius [m] */
+    double                     oersted_center[3];      /* cross-section centre [m] */
+    double                     oersted_axis[3];        /* current-flow axis (unit vector) */
+    uint32_t                   oersted_time_dep_kind;  /* 0=constant, 1=sinusoidal, 2=pulse */
+    double                     oersted_time_dep_freq;  /* sinusoidal: frequency [Hz] */
+    double                     oersted_time_dep_phase; /* sinusoidal: phase [rad] */
+    double                     oersted_time_dep_offset;/* sinusoidal: offset */
+    double                     oersted_time_dep_t_on;  /* pulse: t_on [s] */
+    double                     oersted_time_dep_t_off; /* pulse: t_off [s] */
+
     /*
      * Optional precomputed Newell tensor spectra, interleaved as
      * [re0, im0, re1, im1, ...] in host-side f64 for each component.
@@ -424,6 +437,13 @@ int fullmag_fdm_backend_upload_magnetization_f32(
  * time step.
  */
 int fullmag_fdm_backend_refresh_observables(
+    fullmag_fdm_backend   *handle);
+
+/**
+ * Recompute only H_demag for the current magnetization state without taking a
+ * time step.
+ */
+int fullmag_fdm_backend_refresh_demag_observable(
     fullmag_fdm_backend   *handle);
 
 /**

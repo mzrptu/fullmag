@@ -3,6 +3,7 @@
 #include <mfem.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -23,6 +24,59 @@ constexpr double kMu0 = 4.0e-7 * 3.14159265358979323846;
 constexpr double kGeomEps = 1e-30;
 
 using Vec3 = std::array<double, 3>;
+using SteadyClock = std::chrono::steady_clock;
+
+struct PhaseTimings {
+    uint64_t exchange_wall_time_ns = 0;
+    uint64_t demag_wall_time_ns = 0;
+    uint64_t rhs_wall_time_ns = 0;
+    uint64_t extra_energy_wall_time_ns = 0;
+    uint64_t snapshot_wall_time_ns = 0;
+};
+
+uint64_t elapsed_ns(const SteadyClock::time_point &start) {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            SteadyClock::now() - start)
+            .count());
+}
+
+class ScopedPhaseTimer {
+public:
+    explicit ScopedPhaseTimer(uint64_t *accumulator)
+        : accumulator_(accumulator) {
+        if (accumulator_ != nullptr) {
+            start_ = SteadyClock::now();
+        }
+    }
+
+    ~ScopedPhaseTimer() {
+        if (accumulator_ != nullptr) {
+            *accumulator_ += elapsed_ns(start_);
+        }
+    }
+
+private:
+    uint64_t *accumulator_ = nullptr;
+    SteadyClock::time_point start_{};
+};
+
+fullmag_fdm_precision transfer_grid_precision(const Context &ctx) {
+    return ctx.precision == FULLMAG_FEM_PRECISION_SINGLE
+        ? FULLMAG_FDM_PRECISION_SINGLE
+        : FULLMAG_FDM_PRECISION_DOUBLE;
+}
+
+void apply_phase_timings(
+    fullmag_fem_step_stats &stats,
+    const PhaseTimings &timings)
+{
+    stats.exchange_wall_time_ns = timings.exchange_wall_time_ns;
+    stats.demag_wall_time_ns = timings.demag_wall_time_ns;
+    stats.rhs_wall_time_ns = timings.rhs_wall_time_ns;
+    stats.extra_energy_wall_time_ns = timings.extra_energy_wall_time_ns;
+    stats.snapshot_wall_time_ns = timings.snapshot_wall_time_ns;
+}
 
 std::optional<int> selected_cuda_device_from_env() {
     const char *specific = std::getenv("FULLMAG_FEM_GPU_INDEX");
@@ -387,7 +441,7 @@ void multiply_sparse_matrix_host(
     std::vector<double> &y)
 {
     const int n = matrix.Height();
-    y.assign(static_cast<size_t>(n), 0.0);
+    y.resize(static_cast<size_t>(n));
     const int *I = matrix.GetI();
     const int *J = matrix.GetJ();
     const double *data = matrix.GetData();
@@ -404,23 +458,21 @@ bool apply_exchange_component(
     const mfem::SparseMatrix &stiffness,
     const std::vector<double> &lumped_mass,
     double prefactor,
-    mfem::GridFunction &m_component,
     const std::vector<double> &m_values,
     std::vector<double> &h_component,
+    std::vector<double> &tmp_host,
+    double exchange_stiffness,
+    double *energy_out,
     std::string &error)
 {
-    if (m_component.Size() != static_cast<int>(m_values.size())) {
-        error = "MFEM GridFunction size does not match host magnetization component size";
+    if (stiffness.Height() != static_cast<int>(m_values.size())) {
+        error = "MFEM stiffness size does not match host magnetization component size";
         return false;
     }
-    double *m_host = m_component.HostWrite();
-    for (int i = 0; i < m_component.Size(); ++i) {
-        m_host[i] = m_values[static_cast<size_t>(i)];
-    }
-    std::vector<double> tmp_host;
     multiply_sparse_matrix_host(stiffness, m_values, tmp_host);
     h_component.resize(m_values.size());
-    for (int i = 0; i < m_component.Size(); ++i) {
+    double energy = 0.0;
+    for (int i = 0; i < stiffness.Height(); ++i) {
         const double mass = lumped_mass[static_cast<size_t>(i)];
         if (mass <= 0.0) {
             // S08: non-magnetic nodes may have zero lumped mass when
@@ -429,6 +481,10 @@ bool apply_exchange_component(
         } else {
             h_component[static_cast<size_t>(i)] = -prefactor * tmp_host[i] / mass;
         }
+        energy += exchange_stiffness * m_values[static_cast<size_t>(i)] * tmp_host[static_cast<size_t>(i)];
+    }
+    if (energy_out != nullptr) {
+        *energy_out = energy;
     }
     return true;
 }
@@ -1087,30 +1143,6 @@ double external_energy_from_field(
     return energy;
 }
 
-double exchange_energy_from_components(
-    const mfem::SparseMatrix &stiffness,
-    const std::vector<double> &mx,
-    const std::vector<double> &my,
-    const std::vector<double> &mz,
-    double exchange_stiffness)
-{
-    std::vector<double> tmp;
-    double energy = 0.0;
-    multiply_sparse_matrix_host(stiffness, mx, tmp);
-    for (size_t i = 0; i < mx.size(); ++i) {
-        energy += exchange_stiffness * mx[i] * tmp[i];
-    }
-    multiply_sparse_matrix_host(stiffness, my, tmp);
-    for (size_t i = 0; i < my.size(); ++i) {
-        energy += exchange_stiffness * my[i] * tmp[i];
-    }
-    multiply_sparse_matrix_host(stiffness, mz, tmp);
-    for (size_t i = 0; i < mz.size(); ++i) {
-        energy += exchange_stiffness * mz[i] * tmp[i];
-    }
-    return energy;
-}
-
 bool compute_exchange_for_magnetization(
     Context &ctx,
     const std::vector<double> &m_xyz,
@@ -1126,11 +1158,7 @@ bool compute_exchange_for_magnetization(
 
     auto *exchange_form = static_cast<mfem::BilinearForm *>(ctx.mfem_exchange_form);
     auto *mass_form = static_cast<mfem::BilinearForm *>(ctx.mfem_mass_form);
-    auto *gf_mx = static_cast<mfem::GridFunction *>(ctx.mfem_gf_mx);
-    auto *gf_my = static_cast<mfem::GridFunction *>(ctx.mfem_gf_my);
-    auto *gf_mz = static_cast<mfem::GridFunction *>(ctx.mfem_gf_mz);
-    if (exchange_form == nullptr || mass_form == nullptr || gf_mx == nullptr || gf_my == nullptr ||
-        gf_mz == nullptr) {
+    if (exchange_form == nullptr || mass_form == nullptr) {
         error = "MFEM exchange scaffold is missing one or more assembled objects";
         return false;
     }
@@ -1142,37 +1170,62 @@ bool compute_exchange_for_magnetization(
     if (ctx.mfem_lumped_mass.empty()) {
         compute_row_sum_lumped_mass(mass, ctx.mfem_lumped_mass);
     }
+    if (ctx.mfem_exchange_tmp.size() != ctx.mfem_lumped_mass.size()) {
+        ctx.mfem_exchange_tmp.resize(ctx.mfem_lumped_mass.size(), 0.0);
+    }
 
     const double prefactor = 2.0 * ctx.material.exchange_stiffness /
                              (kMu0 * ctx.material.saturation_magnetisation);
+    double exchange_energy_accum = 0.0;
+    double component_energy = 0.0;
 
     if (!apply_exchange_component(
             stiffness,
             ctx.mfem_lumped_mass,
             prefactor,
-            *gf_mx,
             ctx.mfem_mx,
             ctx.mfem_h_ex_x,
-            error) ||
-        !apply_exchange_component(
-            stiffness,
-            ctx.mfem_lumped_mass,
-            prefactor,
-            *gf_my,
-            ctx.mfem_my,
-            ctx.mfem_h_ex_y,
-            error) ||
-        !apply_exchange_component(
-            stiffness,
-            ctx.mfem_lumped_mass,
-            prefactor,
-            *gf_mz,
-            ctx.mfem_mz,
-            ctx.mfem_h_ex_z,
+            ctx.mfem_exchange_tmp,
+            ctx.material.exchange_stiffness,
+            exchange_energy != nullptr ? &component_energy : nullptr,
             error)) {
         return false;
     }
-
+    if (exchange_energy != nullptr) {
+        exchange_energy_accum += component_energy;
+    }
+    component_energy = 0.0;
+    if (!apply_exchange_component(
+            stiffness,
+            ctx.mfem_lumped_mass,
+            prefactor,
+            ctx.mfem_my,
+            ctx.mfem_h_ex_y,
+            ctx.mfem_exchange_tmp,
+            ctx.material.exchange_stiffness,
+            exchange_energy != nullptr ? &component_energy : nullptr,
+            error)) {
+        return false;
+    }
+    if (exchange_energy != nullptr) {
+        exchange_energy_accum += component_energy;
+    }
+    component_energy = 0.0;
+    if (!apply_exchange_component(
+            stiffness,
+            ctx.mfem_lumped_mass,
+            prefactor,
+            ctx.mfem_mz,
+            ctx.mfem_h_ex_z,
+            ctx.mfem_exchange_tmp,
+            ctx.material.exchange_stiffness,
+            exchange_energy != nullptr ? &component_energy : nullptr,
+            error)) {
+        return false;
+    }
+    if (exchange_energy != nullptr) {
+        exchange_energy_accum += component_energy;
+    }
     pack_components_to_aos(ctx.mfem_h_ex_x, ctx.mfem_h_ex_y, ctx.mfem_h_ex_z, h_ex_xyz);
 
     // S08 multi-region: zero exchange field on non-magnetic nodes.
@@ -1201,12 +1254,7 @@ bool compute_exchange_for_magnetization(
     }
 
     if (exchange_energy != nullptr) {
-        *exchange_energy = exchange_energy_from_components(
-            stiffness,
-            ctx.mfem_mx,
-            ctx.mfem_my,
-            ctx.mfem_mz,
-            ctx.material.exchange_stiffness);
+        *exchange_energy = exchange_energy_accum;
     }
 
     return true;
@@ -1251,42 +1299,35 @@ bool ensure_transfer_grid_backend(
         return false;
     }
 
-    const fullmag_fdm_plan_desc fdm_plan = {
-        fullmag_fdm_grid_desc{
-            ctx.transfer_grid.desc.nx,
-            ctx.transfer_grid.desc.ny,
-            ctx.transfer_grid.desc.nz,
-            ctx.transfer_grid.desc.dx,
-            ctx.transfer_grid.desc.dy,
-            ctx.transfer_grid.desc.dz,
-        },
-        fullmag_fdm_material_desc{
-            ctx.material.saturation_magnetisation,
-            ctx.material.exchange_stiffness,
-            ctx.material.damping,
-            ctx.material.gyromagnetic_ratio,
-        },
-        FULLMAG_FDM_PRECISION_DOUBLE,
-        FULLMAG_FDM_INTEGRATOR_HEUN,
-        0,
-        0,
-        1,
-        0,
-        {0.0, 0.0, 0.0},
-        ctx.transfer_grid.kernel_xx_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_xx_spectrum.data(),
-        ctx.transfer_grid.kernel_yy_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_yy_spectrum.data(),
-        ctx.transfer_grid.kernel_zz_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_zz_spectrum.data(),
-        ctx.transfer_grid.kernel_xy_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_xy_spectrum.data(),
-        ctx.transfer_grid.kernel_xz_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_xz_spectrum.data(),
-        ctx.transfer_grid.kernel_yz_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_yz_spectrum.data(),
-        static_cast<uint64_t>(ctx.transfer_grid.kernel_xx_spectrum.size()),
-        ctx.transfer_grid.active_mask.data(),
-        static_cast<uint64_t>(ctx.transfer_grid.active_mask.size()),
-        nullptr,  // region_mask — not used for FEM transfer grid
-        0,        // region_mask_len
-        ctx.transfer_grid.magnetization_xyz.data(),
-        static_cast<uint64_t>(ctx.transfer_grid.magnetization_xyz.size()),
+    fullmag_fdm_plan_desc fdm_plan = {};
+    fdm_plan.grid = fullmag_fdm_grid_desc{
+        ctx.transfer_grid.desc.nx,
+        ctx.transfer_grid.desc.ny,
+        ctx.transfer_grid.desc.nz,
+        ctx.transfer_grid.desc.dx,
+        ctx.transfer_grid.desc.dy,
+        ctx.transfer_grid.desc.dz,
     };
+    fdm_plan.material = fullmag_fdm_material_desc{
+        ctx.material.saturation_magnetisation,
+        ctx.material.exchange_stiffness,
+        ctx.material.damping,
+        ctx.material.gyromagnetic_ratio,
+    };
+    fdm_plan.precision    = transfer_grid_precision(ctx);
+    fdm_plan.integrator   = FULLMAG_FDM_INTEGRATOR_HEUN;
+    fdm_plan.enable_demag = 1;
+    fdm_plan.demag_kernel_xx_spectrum    = ctx.transfer_grid.kernel_xx_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_xx_spectrum.data();
+    fdm_plan.demag_kernel_yy_spectrum    = ctx.transfer_grid.kernel_yy_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_yy_spectrum.data();
+    fdm_plan.demag_kernel_zz_spectrum    = ctx.transfer_grid.kernel_zz_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_zz_spectrum.data();
+    fdm_plan.demag_kernel_xy_spectrum    = ctx.transfer_grid.kernel_xy_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_xy_spectrum.data();
+    fdm_plan.demag_kernel_xz_spectrum    = ctx.transfer_grid.kernel_xz_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_xz_spectrum.data();
+    fdm_plan.demag_kernel_yz_spectrum    = ctx.transfer_grid.kernel_yz_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_yz_spectrum.data();
+    fdm_plan.demag_kernel_spectrum_len   = static_cast<uint64_t>(ctx.transfer_grid.kernel_xx_spectrum.size());
+    fdm_plan.active_mask                 = ctx.transfer_grid.active_mask.data();
+    fdm_plan.active_mask_len             = static_cast<uint64_t>(ctx.transfer_grid.active_mask.size());
+    fdm_plan.initial_magnetization_xyz   = ctx.transfer_grid.magnetization_xyz.data();
+    fdm_plan.initial_magnetization_len   = static_cast<uint64_t>(ctx.transfer_grid.magnetization_xyz.size());
 
     ctx.transfer_grid.backend = fullmag_fdm_backend_create(&fdm_plan);
     if (ctx.transfer_grid.backend == nullptr) {
@@ -1344,9 +1385,9 @@ bool compute_demag_for_magnetization(
         return false;
     }
 
-    if (fullmag_fdm_backend_refresh_observables(ctx.transfer_grid.backend) != FULLMAG_FDM_OK) {
+    if (fullmag_fdm_backend_refresh_demag_observable(ctx.transfer_grid.backend) != FULLMAG_FDM_OK) {
         const char *fdm_error = fullmag_fdm_backend_last_error(ctx.transfer_grid.backend);
-        error = std::string("FEM transfer-grid demag failed to refresh FDM observables: ") +
+        error = std::string("FEM transfer-grid demag failed to refresh FDM H_demag: ") +
                 (fdm_error != nullptr ? fdm_error : "unknown FDM error");
         return false;
     }
@@ -1400,6 +1441,7 @@ bool compute_effective_fields_for_magnetization(
     std::vector<double> &h_eff_xyz,
     double *exchange_energy,
     double *demag_energy,
+    PhaseTimings *timings,
     std::string &error)
 {
     h_ex_xyz.assign(m_xyz.size(), 0.0);
@@ -1408,6 +1450,7 @@ bool compute_effective_fields_for_magnetization(
 
     double exchange = 0.0;
     if (ctx.enable_exchange) {
+        ScopedPhaseTimer timer(timings != nullptr ? &timings->exchange_wall_time_ns : nullptr);
         if (!compute_exchange_for_magnetization(
                 ctx, m_xyz, h_ex_xyz, nullptr, exchange_energy != nullptr ? &exchange : nullptr, error))
         {
@@ -1417,6 +1460,7 @@ bool compute_effective_fields_for_magnetization(
 
     double demag = 0.0;
     if (ctx.enable_demag) {
+        ScopedPhaseTimer timer(timings != nullptr ? &timings->demag_wall_time_ns : nullptr);
         if (ctx.demag_realization == 1 /* POISSON_AIRBOX */ && ctx.poisson_ready) {
             if (!context_compute_demag_poisson(ctx, m_xyz, h_demag_xyz, demag, error)) {
                 return false;
@@ -1430,28 +1474,31 @@ bool compute_effective_fields_for_magnetization(
         }
     }
 
-    double anisotropy = 0.0;
-    if (ctx.enable_anisotropy) {
-        compute_uniaxial_anisotropy_field(
-            ctx, m_xyz, ctx.h_ani_xyz,
-            &anisotropy);
-    } else {
-        ctx.h_ani_xyz.assign(m_xyz.size(), 0.0);
-    }
-
-    double dmi = 0.0;
-    if (ctx.enable_dmi) {
-        if (!compute_interfacial_dmi_field(
-                ctx, m_xyz, ctx.h_dmi_xyz, &dmi, error)) {
-            return false;
+    {
+        ScopedPhaseTimer timer(timings != nullptr ? &timings->extra_energy_wall_time_ns : nullptr);
+        double anisotropy = 0.0;
+        if (ctx.enable_anisotropy) {
+            compute_uniaxial_anisotropy_field(
+                ctx, m_xyz, ctx.h_ani_xyz,
+                &anisotropy);
+        } else {
+            ctx.h_ani_xyz.assign(m_xyz.size(), 0.0);
         }
-    } else {
-        ctx.h_dmi_xyz.assign(m_xyz.size(), 0.0);
-    }
 
-    for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
-        h_eff_xyz[i] = h_ex_xyz[i] + h_demag_xyz[i] + ctx.h_ext_xyz[i] +
-                       ctx.h_ani_xyz[i] + ctx.h_dmi_xyz[i];
+        double dmi = 0.0;
+        if (ctx.enable_dmi) {
+            if (!compute_interfacial_dmi_field(
+                    ctx, m_xyz, ctx.h_dmi_xyz, &dmi, error)) {
+                return false;
+            }
+        } else {
+            ctx.h_dmi_xyz.assign(m_xyz.size(), 0.0);
+        }
+
+        for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
+            h_eff_xyz[i] = h_ex_xyz[i] + h_demag_xyz[i] + ctx.h_ext_xyz[i] +
+                           ctx.h_ani_xyz[i] + ctx.h_dmi_xyz[i];
+        }
     }
 
     if (exchange_energy != nullptr) {
@@ -1462,6 +1509,63 @@ bool compute_effective_fields_for_magnetization(
     }
 
     return true;
+}
+
+void fill_demag_solver_stats(
+    const Context &ctx,
+    fullmag_fem_step_stats &stats)
+{
+    if (ctx.enable_demag && ctx.demag_realization == 1 /* POISSON_AIRBOX */) {
+        stats.demag_linear_iterations = static_cast<uint32_t>(std::max(ctx.poisson_last_iterations, 0));
+        stats.demag_linear_residual = ctx.poisson_last_residual;
+    } else {
+        stats.demag_linear_iterations = 0;
+        stats.demag_linear_residual = 0.0;
+    }
+}
+
+void fill_common_step_metrics(
+    Context &ctx,
+    fullmag_fem_step_stats &stats,
+    double max_rhs,
+    PhaseTimings *timings)
+{
+    ScopedPhaseTimer timer(timings != nullptr ? &timings->extra_energy_wall_time_ns : nullptr);
+
+    stats.external_energy_joules = external_energy_from_field(ctx, ctx.m_xyz);
+    double anisotropy_energy = 0.0;
+    if (ctx.enable_anisotropy) {
+        compute_uniaxial_anisotropy_field(ctx, ctx.m_xyz, ctx.h_ani_xyz, &anisotropy_energy);
+    }
+    if (ctx.enable_cubic_anisotropy) {
+        double cubic_energy = 0.0;
+        compute_cubic_anisotropy_field(ctx, ctx.m_xyz, ctx.h_cubic_ani_xyz, &cubic_energy);
+        anisotropy_energy += cubic_energy;
+    }
+    stats.anisotropy_energy_joules = anisotropy_energy;
+
+    double dmi_energy = 0.0;
+    if (ctx.enable_dmi) {
+        std::string dmi_error;
+        compute_interfacial_dmi_field(ctx, ctx.m_xyz, ctx.h_dmi_xyz, &dmi_energy, dmi_error);
+    }
+    if (ctx.enable_bulk_dmi) {
+        double bulk_dmi_energy = 0.0;
+        std::string bulk_error;
+        std::vector<double> h_bulk_tmp;
+        compute_bulk_dmi_field(ctx, ctx.m_xyz, h_bulk_tmp, &bulk_dmi_energy, bulk_error);
+        dmi_energy += bulk_dmi_energy;
+    }
+    stats.dmi_energy_joules = dmi_energy;
+
+    stats.total_energy_joules =
+        stats.exchange_energy_joules + stats.demag_energy_joules +
+        stats.external_energy_joules + stats.anisotropy_energy_joules +
+        stats.dmi_energy_joules;
+    stats.max_effective_field_amplitude = max_norm_aos(ctx.h_eff_xyz);
+    stats.max_demag_field_amplitude = max_norm_aos(ctx.h_demag_xyz);
+    stats.max_rhs_amplitude = max_rhs;
+    fill_demag_solver_stats(ctx, stats);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2134,12 +2238,14 @@ bool context_initialize_poisson(Context &ctx, std::string &error) {
 void context_destroy_poisson(Context &ctx) {
     // Cached Hypre solver objects — must be deleted before the matrix they reference.
     // Order matters: PCG → AMG → ParMatrix (reverse of construction).
+#ifdef MFEM_USE_MPI
     delete static_cast<mfem::HyprePCG *>(ctx.mfem_cached_hypre_pcg);
     ctx.mfem_cached_hypre_pcg = nullptr;
     delete static_cast<mfem::HypreBoomerAMG *>(ctx.mfem_cached_hypre_amg);
     ctx.mfem_cached_hypre_amg = nullptr;
     delete static_cast<mfem::HypreParMatrix *>(ctx.mfem_cached_hypre_par);
     ctx.mfem_cached_hypre_par = nullptr;
+#endif
     ctx.poisson_solver_setup = false;
 
     // S09: BC-eliminated matrix is a separate allocation — delete first.
@@ -2217,6 +2323,7 @@ bool context_refresh_exchange_field_mfem(Context &ctx, std::string &error) {
             ctx.h_eff_xyz,
             &exchange_energy,
             &demag_energy,
+            nullptr,
             error)) {
         return false;
     }
@@ -2229,6 +2336,10 @@ bool context_snapshot_stats_mfem(
     fullmag_fem_step_stats &stats,
     std::string &error)
 {
+    const auto wall_start = SteadyClock::now();
+    PhaseTimings timings;
+    stats = {};
+
     if (!ctx.mfem_ready) {
         error = "MFEM snapshot requested before MFEM context initialization";
         return false;
@@ -2251,6 +2362,7 @@ bool context_snapshot_stats_mfem(
             h_eff_current,
             &exchange_energy,
             &demag_energy,
+            &timings,
             error)) {
         return false;
     }
@@ -2262,57 +2374,28 @@ bool context_snapshot_stats_mfem(
 
     std::vector<double> rhs_current;
     double max_rhs_current = 0.0;
-    llg_rhs_aos(
-        ctx.m_xyz,
-        ctx.h_eff_xyz,
-        ctx.material.gyromagnetic_ratio,
-        ctx.material.damping,
-        rhs_current,
-        max_rhs_current);
-    zero_non_magnetic_nodes_aos(rhs_current, ctx.magnetic_node_mask);
-    max_rhs_current = max_norm_aos(rhs_current);
+    {
+        ScopedPhaseTimer timer(&timings.rhs_wall_time_ns);
+        llg_rhs_aos(
+            ctx.m_xyz,
+            ctx.h_eff_xyz,
+            ctx.material.gyromagnetic_ratio,
+            ctx.material.damping,
+            rhs_current,
+            max_rhs_current);
+        zero_non_magnetic_nodes_aos(rhs_current, ctx.magnetic_node_mask);
+        max_rhs_current = max_norm_aos(rhs_current);
+    }
 
-    stats = {};
     stats.step = ctx.step_count;
     stats.time_seconds = ctx.current_time;
     stats.dt_seconds = 0.0;
     stats.exchange_energy_joules = exchange_energy;
     stats.demag_energy_joules = demag_energy;
-    stats.external_energy_joules = external_energy_from_field(ctx, ctx.m_xyz);
-    {
-        double ani_e = 0.0;
-        if (ctx.enable_anisotropy) {
-            compute_uniaxial_anisotropy_field(ctx, ctx.m_xyz, ctx.h_ani_xyz, &ani_e);
-        }
-        if (ctx.enable_cubic_anisotropy) {
-            double cub_e = 0.0;
-            compute_cubic_anisotropy_field(ctx, ctx.m_xyz, ctx.h_cubic_ani_xyz, &cub_e);
-            ani_e += cub_e;
-        }
-        stats.anisotropy_energy_joules = ani_e;
-    }
-    {
-        double dmi_e = 0.0;
-        if (ctx.enable_dmi) {
-            std::string dmi_err;
-            compute_interfacial_dmi_field(ctx, ctx.m_xyz, ctx.h_dmi_xyz, &dmi_e, dmi_err);
-        }
-        if (ctx.enable_bulk_dmi) {
-            double bulk_e = 0.0;
-            std::string bulk_err;
-            std::vector<double> h_bulk_tmp;
-            compute_bulk_dmi_field(ctx, ctx.m_xyz, h_bulk_tmp, &bulk_e, bulk_err);
-            dmi_e += bulk_e;
-        }
-        stats.dmi_energy_joules = dmi_e;
-    }
-    stats.total_energy_joules =
-        stats.exchange_energy_joules + stats.demag_energy_joules +
-        stats.external_energy_joules + stats.anisotropy_energy_joules +
-        stats.dmi_energy_joules;
-    stats.max_effective_field_amplitude = max_norm_aos(ctx.h_eff_xyz);
-    stats.max_demag_field_amplitude = max_norm_aos(ctx.h_demag_xyz);
-    stats.max_rhs_amplitude = max_rhs_current;
+    fill_common_step_metrics(ctx, stats, max_rhs_current, &timings);
+    timings.snapshot_wall_time_ns = elapsed_ns(wall_start);
+    apply_phase_timings(stats, timings);
+    stats.wall_time_ns = timings.snapshot_wall_time_ns;
     return true;
 }
 
@@ -2322,6 +2405,10 @@ bool context_step_exchange_heun_mfem(
     fullmag_fem_step_stats &stats,
     std::string &error)
 {
+    const auto wall_start = SteadyClock::now();
+    PhaseTimings timings;
+    stats = {};
+
     if (!ctx.mfem_ready) {
         error = "MFEM step requested before MFEM context initialization";
         return false;
@@ -2348,20 +2435,24 @@ bool context_step_exchange_heun_mfem(
             h_eff_now,
             &exchange_energy,
             &demag_energy,
+            &timings,
             error)) {
         return false;
     }
 
     std::vector<double> k1;
     double max_rhs_k1 = 0.0;
-    llg_rhs_aos(
-        ctx.m_xyz,
-        h_eff_now,
-        ctx.material.gyromagnetic_ratio,
-        ctx.material.damping,
-        k1,
-        max_rhs_k1);
-    zero_non_magnetic_nodes_aos(k1, ctx.magnetic_node_mask);
+    {
+        ScopedPhaseTimer timer(&timings.rhs_wall_time_ns);
+        llg_rhs_aos(
+            ctx.m_xyz,
+            h_eff_now,
+            ctx.material.gyromagnetic_ratio,
+            ctx.material.damping,
+            k1,
+            max_rhs_k1);
+        zero_non_magnetic_nodes_aos(k1, ctx.magnetic_node_mask);
+    }
 
     std::vector<double> predicted = ctx.m_xyz;
     for (size_t i = 0; i < predicted.size(); ++i) {
@@ -2380,20 +2471,24 @@ bool context_step_exchange_heun_mfem(
             h_eff_pred,
             nullptr,
             nullptr,
+            &timings,
             error)) {
         return false;
     }
 
     std::vector<double> k2;
     double max_rhs_k2 = 0.0;
-    llg_rhs_aos(
-        predicted,
-        h_eff_pred,
-        ctx.material.gyromagnetic_ratio,
-        ctx.material.damping,
-        k2,
-        max_rhs_k2);
-    zero_non_magnetic_nodes_aos(k2, ctx.magnetic_node_mask);
+    {
+        ScopedPhaseTimer timer(&timings.rhs_wall_time_ns);
+        llg_rhs_aos(
+            predicted,
+            h_eff_pred,
+            ctx.material.gyromagnetic_ratio,
+            ctx.material.damping,
+            k2,
+            max_rhs_k2);
+        zero_non_magnetic_nodes_aos(k2, ctx.magnetic_node_mask);
+    }
 
     std::vector<double> corrected = ctx.m_xyz;
     for (size_t i = 0; i < corrected.size(); ++i) {
@@ -2414,6 +2509,7 @@ bool context_step_exchange_heun_mfem(
             h_eff_final,
             &exchange_energy_final,
             &demag_energy_final,
+            &timings,
             error)) {
         return false;
     }
@@ -2429,64 +2525,32 @@ bool context_step_exchange_heun_mfem(
     // Compute post-step RHS from final corrected state (matches CPU metric).
     std::vector<double> rhs_final;
     double max_rhs_final = 0.0;
-    llg_rhs_aos(
-        ctx.m_xyz,
-        ctx.h_eff_xyz,
-        ctx.material.gyromagnetic_ratio,
-        ctx.material.damping,
-        rhs_final,
-        max_rhs_final);
-    zero_non_magnetic_nodes_aos(rhs_final, ctx.magnetic_node_mask);
-    max_rhs_final = max_norm_aos(rhs_final);
+    {
+        ScopedPhaseTimer timer(&timings.rhs_wall_time_ns);
+        llg_rhs_aos(
+            ctx.m_xyz,
+            ctx.h_eff_xyz,
+            ctx.material.gyromagnetic_ratio,
+            ctx.material.damping,
+            rhs_final,
+            max_rhs_final);
+        zero_non_magnetic_nodes_aos(rhs_final, ctx.magnetic_node_mask);
+        max_rhs_final = max_norm_aos(rhs_final);
+    }
 
     stats.step = ctx.step_count;
     stats.time_seconds = ctx.current_time;
     stats.dt_seconds = dt_seconds;
     stats.exchange_energy_joules = exchange_energy_final;
     stats.demag_energy_joules = demag_energy_final;
-    stats.external_energy_joules = external_energy_from_field(ctx, ctx.m_xyz);
-    {
-        double ani_e = 0.0;
-        if (ctx.enable_anisotropy) {
-            compute_uniaxial_anisotropy_field(ctx, ctx.m_xyz, ctx.h_ani_xyz, &ani_e);
-        }
-        if (ctx.enable_cubic_anisotropy) {
-            double cub_e = 0.0;
-            compute_cubic_anisotropy_field(ctx, ctx.m_xyz, ctx.h_cubic_ani_xyz, &cub_e);
-            ani_e += cub_e;
-        }
-        stats.anisotropy_energy_joules = ani_e;
-    }
-    {
-        double dmi_e = 0.0;
-        if (ctx.enable_dmi) {
-            std::string dmi_err;
-            compute_interfacial_dmi_field(ctx, ctx.m_xyz, ctx.h_dmi_xyz, &dmi_e, dmi_err);
-        }
-        if (ctx.enable_bulk_dmi) {
-            double bulk_e = 0.0;
-            std::string bulk_err;
-            std::vector<double> h_bulk_tmp;
-            compute_bulk_dmi_field(ctx, ctx.m_xyz, h_bulk_tmp, &bulk_e, bulk_err);
-            dmi_e += bulk_e;
-        }
-        stats.dmi_energy_joules = dmi_e;
-    }
-    stats.total_energy_joules =
-        stats.exchange_energy_joules + stats.demag_energy_joules +
-        stats.external_energy_joules + stats.anisotropy_energy_joules +
-        stats.dmi_energy_joules;
-    stats.max_effective_field_amplitude = max_norm_aos(ctx.h_eff_xyz);
-    stats.max_demag_field_amplitude = max_norm_aos(ctx.h_demag_xyz);
-    stats.max_rhs_amplitude = max_rhs_final;
-    stats.demag_linear_iterations = 0;
-    stats.demag_linear_residual = 0.0;
-    stats.wall_time_ns = 0;
+    fill_common_step_metrics(ctx, stats, max_rhs_final, &timings);
     stats.error_estimate = 0.0;
     stats.rejected_attempts = 0;
     stats.dt_suggested = 0.0;
     stats.rhs_evaluations = 2;
     stats.fsal_reused = 0;
+    apply_phase_timings(stats, timings);
+    stats.wall_time_ns = elapsed_ns(wall_start);
 
     return true;
 }
@@ -2588,18 +2652,22 @@ static bool evaluate_rhs(
     double *out_max_rhs,
     double *out_exchange_energy,
     double *out_demag_energy,
+    PhaseTimings *timings,
     std::string &error)
 {
     if (!compute_effective_fields_for_magnetization(
             ctx, m_state, ws.h_ex_tmp, ws.h_demag_tmp, ws.h_eff_tmp,
-            out_exchange_energy, out_demag_energy, error)) {
+            out_exchange_energy, out_demag_energy, timings, error)) {
         return false;
     }
     double max_rhs = 0.0;
-    llg_rhs_aos(m_state, ws.h_eff_tmp,
-                ctx.material.gyromagnetic_ratio, ctx.material.damping,
-                out_k, max_rhs);
-    zero_non_magnetic_nodes_aos(out_k, ctx.magnetic_node_mask);
+    {
+        ScopedPhaseTimer timer(timings != nullptr ? &timings->rhs_wall_time_ns : nullptr);
+        llg_rhs_aos(m_state, ws.h_eff_tmp,
+                    ctx.material.gyromagnetic_ratio, ctx.material.damping,
+                    out_k, max_rhs);
+        zero_non_magnetic_nodes_aos(out_k, ctx.magnetic_node_mask);
+    }
     if (out_max_rhs) *out_max_rhs = max_rhs;
     return true;
 }
@@ -2631,6 +2699,10 @@ bool context_step_explicit_rk_mfem(
     fullmag_fem_step_stats &stats,
     std::string &error)
 {
+    const auto wall_start = SteadyClock::now();
+    PhaseTimings timings;
+    stats = {};
+
     if (!ctx.mfem_ready) {
         error = "MFEM step requested before MFEM context initialization";
         return false;
@@ -2653,11 +2725,15 @@ bool context_step_explicit_rk_mfem(
     uint32_t rejected = 0;
     uint32_t total_rhs = 0;
     bool fsal_used = false;
+    bool final_stage_cache_valid = false;
+    double exchange_energy_final = 0.0;
+    double demag_energy_final = 0.0;
 
     // Outer accept/reject loop (runs once for non-adaptive)
     for (;;) {
         // Save m_backup
         ws.m_backup = ctx.m_xyz;
+        final_stage_cache_valid = false;
 
         // Stage 0: evaluate or reuse FSAL
         if (tab.fsal && ws.fsal_valid) {
@@ -2667,7 +2743,7 @@ bool context_step_explicit_rk_mfem(
             double exchange_energy_s0 = 0.0;
             double demag_energy_s0 = 0.0;
             if (!evaluate_rhs(ctx, ctx.m_xyz, ws, ws.k[0],
-                              nullptr, &exchange_energy_s0, &demag_energy_s0, error)) {
+                              nullptr, &exchange_energy_s0, &demag_energy_s0, &timings, error)) {
                 return false;
             }
             total_rhs += 1;
@@ -2685,9 +2761,22 @@ bool context_step_explicit_rk_mfem(
             }
             normalize_aos_field(ws.m_stage);
 
+            double *stage_exchange_energy = nullptr;
+            double *stage_demag_energy = nullptr;
+            if (tab.fsal && s == tab.stages - 1) {
+                stage_exchange_energy = &exchange_energy_final;
+                stage_demag_energy = &demag_energy_final;
+            }
             if (!evaluate_rhs(ctx, ws.m_stage, ws, ws.k[s],
-                              nullptr, nullptr, nullptr, error)) {
+                              nullptr,
+                              stage_exchange_energy,
+                              stage_demag_energy,
+                              &timings,
+                              error)) {
                 return false;
+            }
+            if (tab.fsal && s == tab.stages - 1) {
+                final_stage_cache_valid = true;
             }
             total_rhs += 1;
         }
@@ -2743,77 +2832,55 @@ bool context_step_explicit_rk_mfem(
         break; // accepted
     }
 
-    // Post-step: compute final fields and energy from accepted state
-    double exchange_energy_final = 0.0;
-    double demag_energy_final = 0.0;
-    std::vector<double> h_ex_final, h_demag_final, h_eff_final;
-    if (!compute_effective_fields_for_magnetization(
-            ctx, ctx.m_xyz, h_ex_final, h_demag_final, h_eff_final,
-            &exchange_energy_final, &demag_energy_final, error)) {
-        return false;
+    if (final_stage_cache_valid) {
+        // FSAL tableaux used here evaluate the last stage at c=1 using the same
+        // state as the accepted high-order solution, so we can reuse the cached
+        // H_ex/H_demag/H_eff and avoid a full post-step recompute.
+        ctx.h_ex_xyz = ws.h_ex_tmp;
+        ctx.h_demag_xyz = ws.h_demag_tmp;
+        ctx.h_eff_xyz = ws.h_eff_tmp;
+    } else {
+        std::vector<double> h_ex_final;
+        std::vector<double> h_demag_final;
+        std::vector<double> h_eff_final;
+        if (!compute_effective_fields_for_magnetization(
+                ctx, ctx.m_xyz, h_ex_final, h_demag_final, h_eff_final,
+                &exchange_energy_final, &demag_energy_final, &timings, error)) {
+            return false;
+        }
+        ctx.h_ex_xyz = std::move(h_ex_final);
+        ctx.h_demag_xyz = std::move(h_demag_final);
+        ctx.h_eff_xyz = std::move(h_eff_final);
     }
-    ctx.h_ex_xyz = std::move(h_ex_final);
-    ctx.h_demag_xyz = std::move(h_demag_final);
-    ctx.h_eff_xyz = std::move(h_eff_final);
     ctx.current_time += dt;
     ctx.step_count += 1;
     ctx.mfem_exchange_ready = true;
 
     // Post-step RHS for max_dm_dt metric
-    std::vector<double> rhs_final;
     double max_rhs_final = 0.0;
-    llg_rhs_aos(ctx.m_xyz, ctx.h_eff_xyz,
-                ctx.material.gyromagnetic_ratio, ctx.material.damping,
-                rhs_final, max_rhs_final);
-    zero_non_magnetic_nodes_aos(rhs_final, ctx.magnetic_node_mask);
-    max_rhs_final = max_norm_aos(rhs_final);
+    if (final_stage_cache_valid) {
+        max_rhs_final = max_norm_aos(ws.k[0]);
+    } else {
+        std::vector<double> rhs_final;
+        ScopedPhaseTimer timer(&timings.rhs_wall_time_ns);
+        llg_rhs_aos(ctx.m_xyz, ctx.h_eff_xyz,
+                    ctx.material.gyromagnetic_ratio, ctx.material.damping,
+                    rhs_final, max_rhs_final);
+        zero_non_magnetic_nodes_aos(rhs_final, ctx.magnetic_node_mask);
+        max_rhs_final = max_norm_aos(rhs_final);
+    }
 
     stats.step = ctx.step_count;
     stats.time_seconds = ctx.current_time;
     stats.dt_seconds = dt;
     stats.exchange_energy_joules = exchange_energy_final;
     stats.demag_energy_joules = demag_energy_final;
-    stats.external_energy_joules = external_energy_from_field(ctx, ctx.m_xyz);
-    {
-        double ani_e = 0.0;
-        if (ctx.enable_anisotropy) {
-            compute_uniaxial_anisotropy_field(ctx, ctx.m_xyz, ctx.h_ani_xyz, &ani_e);
-        }
-        if (ctx.enable_cubic_anisotropy) {
-            double cub_e = 0.0;
-            compute_cubic_anisotropy_field(ctx, ctx.m_xyz, ctx.h_cubic_ani_xyz, &cub_e);
-            ani_e += cub_e;
-        }
-        stats.anisotropy_energy_joules = ani_e;
-    }
-    {
-        double dmi_e = 0.0;
-        if (ctx.enable_dmi) {
-            std::string dmi_err;
-            compute_interfacial_dmi_field(ctx, ctx.m_xyz, ctx.h_dmi_xyz, &dmi_e, dmi_err);
-        }
-        if (ctx.enable_bulk_dmi) {
-            double bulk_e = 0.0;
-            std::string bulk_err;
-            std::vector<double> h_bulk_tmp;
-            compute_bulk_dmi_field(ctx, ctx.m_xyz, h_bulk_tmp, &bulk_e, bulk_err);
-            dmi_e += bulk_e;
-        }
-        stats.dmi_energy_joules = dmi_e;
-    }
-    stats.total_energy_joules =
-        stats.exchange_energy_joules + stats.demag_energy_joules +
-        stats.external_energy_joules + stats.anisotropy_energy_joules +
-        stats.dmi_energy_joules;
-    stats.max_effective_field_amplitude = max_norm_aos(ctx.h_eff_xyz);
-    stats.max_demag_field_amplitude = max_norm_aos(ctx.h_demag_xyz);
-    stats.max_rhs_amplitude = max_rhs_final;
-    stats.demag_linear_iterations = 0;
-    stats.demag_linear_residual = 0.0;
-    stats.wall_time_ns = 0;
+    fill_common_step_metrics(ctx, stats, max_rhs_final, &timings);
     stats.rejected_attempts = rejected;
     stats.rhs_evaluations = total_rhs;
     stats.fsal_reused = fsal_used ? 1 : 0;
+    apply_phase_timings(stats, timings);
+    stats.wall_time_ns = elapsed_ns(wall_start);
 
     return true;
 }

@@ -3,11 +3,13 @@
 import { cn } from "@/lib/utils";
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { FullmagLogoVector } from "./FullmagLogoVector";
 
 /* ────────────────────────────────────────────────────────────
    FullmagLogo — High-Fidelity Infinity Loop Vector Mark
    
-   Using optimized traced SVG provided by the user.
+   Using the highly optimized, auto-traced SVG wrapped as a TSX component
+   to allow for future animations and raw DOM access.
    ────────────────────────────────────────────────────────── */
 
 interface FullmagLogoProps {
@@ -33,9 +35,7 @@ export default function FullmagLogo({
   return (
     <>
       {/* ── Standard UI Render ── */}
-      <img
-        src="/fullmag-logo.svg"
-        alt="Fullmag Infinity Logo"
+      <FullmagLogoVector
         width={size}
         height={size} // The SVG viewbox is 626x635, roughly 1:1 aspect ratio
         className={cn(
@@ -57,9 +57,7 @@ export default function FullmagLogo({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="absolute inset-0 bg-primary/10 rounded-3xl blur-3xl pointer-events-none" />
-            <img
-              src="/fullmag-logo.svg"
-              alt="Fullmag Infinity Logo Zoomed"
+            <FullmagLogoVector
               className="w-full h-full object-contain drop-shadow-[0_0_80px_rgba(203,166,247,0.3)] relative z-10 pointer-events-none"
             />
           </div>

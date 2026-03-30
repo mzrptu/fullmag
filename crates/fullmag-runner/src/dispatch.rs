@@ -19,6 +19,8 @@ use crate::artifact_pipeline::ArtifactRecorder;
 use crate::cpu_reference;
 use crate::fem_eigen;
 use crate::fem_reference;
+#[cfg(any(feature = "cuda", feature = "fem-gpu"))]
+use crate::interactive_runtime::{display_is_global_scalar, display_refresh_due};
 #[cfg(feature = "cuda")]
 use crate::multilayer_cuda;
 use crate::multilayer_reference;
@@ -396,6 +398,33 @@ fn runtime_fem_order(problem: &ProblemIR) -> u32 {
         .unwrap_or(1)
 }
 
+fn fem_gpu_execution_forced() -> bool {
+    matches!(
+        std::env::var("FULLMAG_FEM_EXECUTION").ok().as_deref(),
+        Some("gpu")
+    )
+}
+
+fn fem_gpu_min_nodes_threshold() -> Option<usize> {
+    match std::env::var("FULLMAG_FEM_GPU_MIN_NODES") {
+        Ok(raw) => match raw.trim().parse::<usize>() {
+            Ok(0) => None,
+            Ok(value) => Some(value),
+            Err(_) => Some(10_000),
+        },
+        Err(_) => Some(10_000),
+    }
+}
+
+fn should_fallback_to_cpu_for_small_fem_gpu(plan: &FemPlanIR) -> Option<usize> {
+    if fem_gpu_execution_forced() {
+        return None;
+    }
+    let min_nodes = fem_gpu_min_nodes_threshold()?;
+    let node_count = plan.mesh.nodes.len();
+    (node_count < min_nodes).then_some(min_nodes)
+}
+
 fn apply_runtime_gpu_index(problem: &ProblemIR, backend: &str) {
     let Some(index) = runtime_device_index(problem) else {
         return;
@@ -448,9 +477,13 @@ pub(crate) fn execute_fdm<'a>(
     artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     match engine {
-        FdmEngine::CpuReference => {
-            cpu_reference::execute_reference_fdm(plan, until_seconds, outputs, live, artifact_writer)
-        }
+        FdmEngine::CpuReference => cpu_reference::execute_reference_fdm(
+            plan,
+            until_seconds,
+            outputs,
+            live,
+            artifact_writer,
+        ),
         FdmEngine::CudaFdm => execute_cuda_fdm(plan, until_seconds, outputs, live, artifact_writer),
     }
 }
@@ -465,16 +498,22 @@ pub(crate) fn execute_fdm_multilayer<'a>(
     artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     match engine {
-        FdmEngine::CpuReference => {
-            multilayer_reference::execute_reference_fdm_multilayer(
-                plan, until_seconds, outputs, live, artifact_writer,
-            )
-        }
+        FdmEngine::CpuReference => multilayer_reference::execute_reference_fdm_multilayer(
+            plan,
+            until_seconds,
+            outputs,
+            live,
+            artifact_writer,
+        ),
         FdmEngine::CudaFdm => {
             #[cfg(feature = "cuda")]
             {
                 return multilayer_cuda::execute_cuda_fdm_multilayer_with_live(
-                    plan, until_seconds, outputs, live, artifact_writer,
+                    plan,
+                    until_seconds,
+                    outputs,
+                    live,
+                    artifact_writer,
                 );
             }
             #[cfg(not(feature = "cuda"))]
@@ -499,10 +538,28 @@ pub(crate) fn execute_fem<'a>(
     artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     match engine {
-        FemEngine::CpuReference => {
-            fem_reference::execute_reference_fem(plan, until_seconds, outputs, live, artifact_writer)
-        }
+        FemEngine::CpuReference => fem_reference::execute_reference_fem(
+            plan,
+            until_seconds,
+            outputs,
+            live,
+            artifact_writer,
+        ),
         FemEngine::NativeGpu => {
+            if let Some(min_nodes) = should_fallback_to_cpu_for_small_fem_gpu(plan) {
+                eprintln!(
+                    "warning: FEM plan has {} nodes, below FULLMAG_FEM_GPU_MIN_NODES={} — falling back to CPU reference engine (set FULLMAG_FEM_EXECUTION=gpu to force GPU or FULLMAG_FEM_GPU_MIN_NODES=0 to disable this policy)",
+                    plan.mesh.nodes.len(),
+                    min_nodes
+                );
+                return fem_reference::execute_reference_fem(
+                    plan,
+                    until_seconds,
+                    outputs,
+                    live,
+                    artifact_writer,
+                );
+            }
             execute_native_fem(plan, until_seconds, outputs, live, artifact_writer)
         }
     }
@@ -516,9 +573,8 @@ pub(crate) fn execute_fem_eigen(
     match engine {
         FemEngine::CpuReference => fem_eigen::execute_reference_fem_eigen(plan, outputs),
         FemEngine::NativeGpu => Err(RunError {
-            message:
-                "native FEM GPU eigen execution is not available yet; rerun with device='cpu'"
-                    .to_string(),
+            message: "native FEM GPU eigen execution is not available yet; rerun with device='cpu'"
+                .to_string(),
         }),
     }
 }
@@ -589,11 +645,50 @@ fn execute_cuda_fdm(
     let mut previous_total_energy: Option<f64> = None;
     let mut last_preview_revision: Option<u64> = None;
     let mut cancelled = false;
+    let mut current_stats = backend.snapshot_step_stats(plan.grid.cells)?;
     while current_time < until_seconds {
+        if let Some(live) = live.as_mut() {
+            if let Some(display_selection) = live.display_selection.map(|get| get()) {
+                let preview_due = display_refresh_due(
+                    last_preview_revision,
+                    &display_selection,
+                    current_stats.step,
+                );
+                let preview_targets_global_scalar = display_is_global_scalar(&display_selection);
+                let preview_field = if preview_due && !preview_targets_global_scalar {
+                    let request = display_selection.preview_request();
+                    Some(backend.copy_live_preview_field(
+                        &request,
+                        plan.grid.cells,
+                        plan.active_mask.as_deref(),
+                    )?)
+                } else {
+                    None
+                };
+                let action = (live.on_step)(StepUpdate {
+                    stats: current_stats.clone(),
+                    grid: live.grid,
+                    fem_mesh: None,
+                    magnetization: None,
+                    preview_field,
+                    scalar_row_due: preview_due && preview_targets_global_scalar,
+                    finished: false,
+                });
+                if preview_due {
+                    last_preview_revision = Some(display_selection.revision);
+                }
+                if action == StepAction::Stop {
+                    cancelled = true;
+                    break;
+                }
+            }
+        }
+
         let dt_step = dt.min(until_seconds - current_time);
         let stats = backend.step(dt_step)?;
         current_time = stats.time;
         latest_stats = Some(stats.clone());
+        current_stats = stats.clone();
         let due_scalar_row = scalar_row_due(&scalar_schedules, stats.time);
         let average_requested = scalar_outputs_request_average_m(&scalar_schedules);
         let mut sampled_stats = stats.clone();
@@ -614,13 +709,11 @@ fn execute_cuda_fdm(
             let display_selection = live.display_selection.map(|get| get());
             let preview_due = display_selection
                 .as_ref()
-                .map(|selection| {
-                    let preview_emit_every = u64::from(selection.selection.every_n.max(1));
-                    last_preview_revision != Some(selection.revision)
-                        || stats.step <= 1
-                        || stats.step % preview_emit_every == 0
-                })
+                .map(|selection| display_refresh_due(last_preview_revision, selection, stats.step))
                 .unwrap_or(false);
+            let preview_targets_global_scalar = display_selection
+                .as_ref()
+                .is_some_and(display_is_global_scalar);
             let magnetization = if live.display_selection.is_none() && stats.step % emit_every == 0
             {
                 if magnetization_cache.is_none() {
@@ -634,16 +727,14 @@ fn execute_cuda_fdm(
             } else {
                 None
             };
-            let preview_field = if preview_due {
+            let preview_field = if preview_due && !preview_targets_global_scalar {
                 let selection = display_selection.as_ref().expect("checked preview_due");
                 let request = selection.preview_request();
-                let preview = backend.copy_live_preview_field(
+                Some(backend.copy_live_preview_field(
                     &request,
                     plan.grid.cells,
                     plan.active_mask.as_deref(),
-                )?;
-                last_preview_revision = Some(selection.revision);
-                Some(preview)
+                )?)
             } else {
                 None
             };
@@ -653,9 +744,17 @@ fn execute_cuda_fdm(
                 fem_mesh: None,
                 magnetization,
                 preview_field,
-                scalar_row_due: due_scalar_row,
+                scalar_row_due: due_scalar_row || (preview_due && preview_targets_global_scalar),
                 finished: false,
             });
+            if preview_due {
+                last_preview_revision = Some(
+                    display_selection
+                        .as_ref()
+                        .expect("checked preview_due")
+                        .revision,
+                );
+            }
             if action == StepAction::Stop {
                 cancelled = true;
             }
@@ -784,35 +883,70 @@ fn execute_native_fem(
     let mut previous_total_energy: Option<f64> = None;
     let mut last_preview_revision: Option<u64> = None;
     let mut cancelled = false;
+    let mut current_stats = backend.snapshot_step_stats(node_count)?;
     while current_time < until_seconds {
+        if let Some(live) = live.as_mut() {
+            if let Some(display_selection) = live.display_selection.map(|get| get()) {
+                let preview_due = display_refresh_due(
+                    last_preview_revision,
+                    &display_selection,
+                    current_stats.step,
+                );
+                let preview_targets_global_scalar = display_is_global_scalar(&display_selection);
+                let preview_field = if preview_due && !preview_targets_global_scalar {
+                    let request = display_selection.preview_request();
+                    Some(backend.copy_live_preview_field(&request, node_count)?)
+                } else {
+                    None
+                };
+                let action = (live.on_step)(StepUpdate {
+                    stats: current_stats.clone(),
+                    grid: live.grid,
+                    fem_mesh: (current_stats.step == 0).then_some(crate::types::FemMeshPayload {
+                        nodes: plan.mesh.nodes.clone(),
+                        elements: plan.mesh.elements.clone(),
+                        boundary_faces: plan.mesh.boundary_faces.clone(),
+                    }),
+                    magnetization: None,
+                    preview_field,
+                    scalar_row_due: preview_due && preview_targets_global_scalar,
+                    finished: false,
+                });
+                if preview_due {
+                    last_preview_revision = Some(display_selection.revision);
+                }
+                if action == StepAction::Stop {
+                    cancelled = true;
+                    break;
+                }
+            }
+        }
+
         let dt_step = dt.min(until_seconds - current_time);
         let stats = backend.step(dt_step)?;
         current_time = stats.time;
         latest_stats = Some(stats.clone());
+        current_stats = stats.clone();
         if let Some(live) = live.as_mut() {
             let emit_every = live.field_every_n.max(1);
             let display_selection = live.display_selection.map(|get| get());
             let preview_due = display_selection
                 .as_ref()
-                .map(|selection| {
-                    let preview_emit_every = u64::from(selection.selection.every_n.max(1));
-                    last_preview_revision != Some(selection.revision)
-                        || stats.step <= 1
-                        || stats.step % preview_emit_every == 0
-                })
+                .map(|selection| display_refresh_due(last_preview_revision, selection, stats.step))
                 .unwrap_or(false);
+            let preview_targets_global_scalar = display_selection
+                .as_ref()
+                .is_some_and(display_is_global_scalar);
             let magnetization = if live.display_selection.is_none() && stats.step % emit_every == 0
             {
                 Some(flatten_vectors(&backend.copy_m(node_count)?))
             } else {
                 None
             };
-            let preview_field = if preview_due {
+            let preview_field = if preview_due && !preview_targets_global_scalar {
                 let selection = display_selection.as_ref().expect("checked preview_due");
                 let request = selection.preview_request();
-                let preview = backend.copy_live_preview_field(&request, node_count)?;
-                last_preview_revision = Some(selection.revision);
-                Some(preview)
+                Some(backend.copy_live_preview_field(&request, node_count)?)
             } else {
                 None
             };
@@ -826,9 +960,17 @@ fn execute_native_fem(
                 }),
                 magnetization,
                 preview_field,
-                scalar_row_due: false,
+                scalar_row_due: preview_due && preview_targets_global_scalar,
                 finished: false,
             });
+            if preview_due {
+                last_preview_revision = Some(
+                    display_selection
+                        .as_ref()
+                        .expect("checked preview_due")
+                        .revision,
+                );
+            }
             if action == StepAction::Stop {
                 cancelled = true;
             }

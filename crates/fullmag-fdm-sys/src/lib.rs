@@ -96,7 +96,7 @@ pub struct fullmag_fdm_plan_desc {
     pub enable_demag: i32,
     pub has_external_field: i32,
     pub external_field_am: [f64; 3],
-    
+
     // Uniaxial anisotropy
     pub has_uniaxial_anisotropy: i32,
     pub uniaxial_anisotropy_constant: f64,
@@ -137,6 +137,19 @@ pub struct fullmag_fdm_plan_desc {
     pub stt_p_z: f64,
     pub stt_lambda: f64,
     pub stt_epsilon_prime: f64,
+
+    // Oersted field (cylindrical conductor)
+    pub has_oersted_cylinder: i32,
+    pub oersted_current: f64,
+    pub oersted_radius: f64,
+    pub oersted_center: [f64; 3],
+    pub oersted_axis: [f64; 3],
+    pub oersted_time_dep_kind: u32,
+    pub oersted_time_dep_freq: f64,
+    pub oersted_time_dep_phase: f64,
+    pub oersted_time_dep_offset: f64,
+    pub oersted_time_dep_t_on: f64,
+    pub oersted_time_dep_t_off: f64,
 
     pub demag_kernel_xx_spectrum: *const f64,
     pub demag_kernel_yy_spectrum: *const f64,
@@ -321,6 +334,8 @@ extern "C" {
     ) -> i32;
 
     pub fn fullmag_fdm_backend_refresh_observables(handle: *mut fullmag_fdm_backend) -> i32;
+
+    pub fn fullmag_fdm_backend_refresh_demag_observable(handle: *mut fullmag_fdm_backend) -> i32;
 
     pub fn fullmag_fdm_backend_snapshot_stats(
         handle: *mut fullmag_fdm_backend,

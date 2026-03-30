@@ -213,7 +213,6 @@ impl NativeFdmBackend {
             enable_demag: if plan.enable_demag { 1 } else { 0 },
             has_external_field: if plan.external_field.is_some() { 1 } else { 0 },
             external_field_am: plan.external_field.unwrap_or([0.0, 0.0, 0.0]),
-            temperature: plan.temperature.unwrap_or(0.0),
 
             current_density_x: plan.current_density.map_or(0.0, |j| j[0]),
             current_density_y: plan.current_density.map_or(0.0, |j| j[1]),
@@ -226,6 +225,18 @@ impl NativeFdmBackend {
             stt_p_z: plan.stt_spin_polarization.map_or(0.0, |p| p[2]),
             stt_lambda: plan.stt_lambda.unwrap_or(0.0),
             stt_epsilon_prime: plan.stt_epsilon_prime.unwrap_or(0.0),
+
+            has_oersted_cylinder: if plan.has_oersted_cylinder { 1 } else { 0 },
+            oersted_current: plan.oersted_current.unwrap_or(0.0),
+            oersted_radius: plan.oersted_radius.unwrap_or(0.0),
+            oersted_center: plan.oersted_center.unwrap_or([0.0, 0.0, 0.0]),
+            oersted_axis: plan.oersted_axis.unwrap_or([0.0, 0.0, 1.0]),
+            oersted_time_dep_kind: plan.oersted_time_dep_kind,
+            oersted_time_dep_freq: plan.oersted_time_dep_freq,
+            oersted_time_dep_phase: plan.oersted_time_dep_phase,
+            oersted_time_dep_offset: plan.oersted_time_dep_offset,
+            oersted_time_dep_t_on: plan.oersted_time_dep_t_on,
+            oersted_time_dep_t_off: plan.oersted_time_dep_t_off,
 
             // The current FDM IR does not yet expose anisotropy or DMI terms, so we
             // explicitly zero-initialize the native descriptor to stay aligned with it.
@@ -252,7 +263,7 @@ impl NativeFdmBackend {
             has_bulk_dmi: 0,
             dmi_d_bulk: 0.0,
 
-            temperature: 0.0,
+            temperature: plan.temperature.unwrap_or(0.0),
 
             demag_kernel_xx_spectrum: demag_kernel_spectra
                 .as_ref()
@@ -738,9 +749,8 @@ impl NativeFdmBackend {
             wall_time_ns: 0,
         };
 
-        let rc = unsafe {
-            ffi::fullmag_fdm_backend_snapshot_stats(self.handle as *mut _, &mut stats)
-        };
+        let rc =
+            unsafe { ffi::fullmag_fdm_backend_snapshot_stats(self.handle as *mut _, &mut stats) };
         if rc != ffi::FULLMAG_FDM_OK {
             return Err(self.last_error_or("snapshot_step_stats failed"));
         }
@@ -983,7 +993,10 @@ fn llg_rhs_from_field(
     } else {
         [0.0, 0.0, 0.0]
     };
-    scale(add(precession_term, scale(damping_term, damping)), -gamma_bar)
+    scale(
+        add(precession_term, scale(damping_term, damping)),
+        -gamma_bar,
+    )
 }
 
 #[cfg(feature = "cuda")]

@@ -7,12 +7,12 @@
 //! when a precomputed `MeshIR` asset is attached; runner execution is fully supported.
 
 use fullmag_ir::{
-    BackendPlanIR, BackendTarget, CommonPlanMeta, DiscretizationHintsIR, ExchangeBoundaryCondition,
-    ExecutionMode, ExecutionPlanIR, ExecutionPrecision, FdmGridAssetIR, FdmHintsIR, FdmLayerPlanIR,
-    FdmMaterialIR, FdmMultilayerPlanIR, FdmMultilayerSummaryIR, FdmPlanIR,
-    FemEigenPlanIR, FemPlanIR, GeometryEntryIR, GridDimensions, InitialMagnetizationIR,
+    BackendPlanIR, BackendTarget, CommonPlanMeta, DiscretizationHintsIR, EnergyTermIR,
+    ExchangeBoundaryCondition, ExecutionMode, ExecutionPlanIR, ExecutionPrecision, FdmGridAssetIR,
+    FdmHintsIR, FdmLayerPlanIR, FdmMaterialIR, FdmMultilayerPlanIR, FdmMultilayerSummaryIR,
+    FdmPlanIR, FemEigenPlanIR, FemPlanIR, GeometryEntryIR, GridDimensions, InitialMagnetizationIR,
     IntegratorChoice, MeshIR, OutputIR, OutputPlanIR, ProblemIR, ProvenancePlanIR,
-    RelaxationAlgorithmIR, RelaxationControlIR, IR_VERSION,
+    RelaxationAlgorithmIR, RelaxationControlIR, TimeDependenceIR, IR_VERSION,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -461,8 +461,7 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
     if matches!(problem.study, fullmag_ir::StudyIR::Eigenmodes { .. }) {
         return Err(PlanError {
             reasons: vec![
-                "StudyIR::Eigenmodes is currently executable only with backend='fem'"
-                    .to_string(),
+                "StudyIR::Eigenmodes is currently executable only with backend='fem'".to_string(),
             ],
         });
     }
@@ -903,7 +902,64 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         stt_spin_polarization: problem.stt_spin_polarization,
         stt_lambda: problem.stt_lambda,
         stt_epsilon_prime: problem.stt_epsilon_prime,
+        has_oersted_cylinder: false,
+        oersted_current: None,
+        oersted_radius: None,
+        oersted_center: None,
+        oersted_axis: None,
+        oersted_time_dep_kind: 0,
+        oersted_time_dep_freq: 0.0,
+        oersted_time_dep_phase: 0.0,
+        oersted_time_dep_offset: 0.0,
+        oersted_time_dep_t_on: 0.0,
+        oersted_time_dep_t_off: 0.0,
+        temperature: problem.temperature,
     };
+
+    // ── Extract Oersted cylinder from energy terms ──
+    for term in &problem.energy_terms {
+        if let EnergyTermIR::OerstedCylinder {
+            current,
+            radius,
+            center,
+            axis,
+            time_dependence,
+        } = term
+        {
+            fdm_plan.has_oersted_cylinder = true;
+            fdm_plan.oersted_current = Some(*current);
+            fdm_plan.oersted_radius = Some(*radius);
+            fdm_plan.oersted_center = Some(*center);
+            fdm_plan.oersted_axis = Some(*axis);
+            if let Some(td) = time_dependence {
+                match td {
+                    TimeDependenceIR::Constant => {
+                        fdm_plan.oersted_time_dep_kind = 0;
+                    }
+                    TimeDependenceIR::Sinusoidal {
+                        frequency_hz,
+                        phase_rad,
+                        offset,
+                    } => {
+                        fdm_plan.oersted_time_dep_kind = 1;
+                        fdm_plan.oersted_time_dep_freq = *frequency_hz;
+                        fdm_plan.oersted_time_dep_phase = *phase_rad;
+                        fdm_plan.oersted_time_dep_offset = *offset;
+                    }
+                    TimeDependenceIR::Pulse { t_on, t_off } => {
+                        fdm_plan.oersted_time_dep_kind = 2;
+                        fdm_plan.oersted_time_dep_t_on = *t_on;
+                        fdm_plan.oersted_time_dep_t_off = *t_off;
+                    }
+                    TimeDependenceIR::PiecewiseLinear { .. } => {
+                        // TODO: piecewise linear not yet supported in CUDA backend
+                        fdm_plan.oersted_time_dep_kind = 0;
+                    }
+                }
+            }
+            break; // Only one Oersted cylinder per plan for now
+        }
+    }
 
     // ── Compute sub-cell boundary geometry when boundary correction is enabled ──
     if fdm_plan.boundary_correction.is_some()
@@ -1678,9 +1734,17 @@ fn plan_fem(
                 }
                 bulk_dmi = Some(*d);
             }
+            fullmag_ir::EnergyTermIR::OerstedCylinder { .. } => {
+                // Oersted field: extracted separately below.
+            }
         }
     }
-    if !(enable_exchange || enable_demag || external_field.is_some() || interfacial_dmi.is_some() || bulk_dmi.is_some()) {
+    if !(enable_exchange
+        || enable_demag
+        || external_field.is_some()
+        || interfacial_dmi.is_some()
+        || bulk_dmi.is_some())
+    {
         errors.push(
             "the current FEM planning baseline requires at least one of Exchange, Demag, Zeeman, InterfacialDmi, or BulkDmi"
                 .to_string(),
@@ -1740,7 +1804,7 @@ fn plan_fem(
         None
     };
 
-    let fem_plan = FemPlanIR {
+    let mut fem_plan = FemPlanIR {
         mesh_name: mesh_name.clone(),
         mesh_source: if mesh_parts.len() == 1 {
             mesh_sources.first().cloned().flatten()
@@ -1768,14 +1832,70 @@ fn plan_fem(
         bulk_dmi,
         dind_field: None,
         dbulk_field: None,
-        temperature: None,
+        temperature: problem.temperature,
         current_density: problem.current_density,
         stt_degree: problem.stt_degree,
         stt_beta: problem.stt_beta,
         stt_spin_polarization: problem.stt_spin_polarization,
         stt_lambda: problem.stt_lambda,
         stt_epsilon_prime: problem.stt_epsilon_prime,
+        has_oersted_cylinder: false,
+        oersted_current: None,
+        oersted_radius: None,
+        oersted_center: None,
+        oersted_axis: None,
+        oersted_time_dep_kind: 0,
+        oersted_time_dep_freq: 0.0,
+        oersted_time_dep_phase: 0.0,
+        oersted_time_dep_offset: 0.0,
+        oersted_time_dep_t_on: 0.0,
+        oersted_time_dep_t_off: 0.0,
     };
+
+    // ── Extract Oersted cylinder from energy terms ──
+    for term in &problem.energy_terms {
+        if let EnergyTermIR::OerstedCylinder {
+            current,
+            radius,
+            center,
+            axis,
+            time_dependence,
+        } = term
+        {
+            fem_plan.has_oersted_cylinder = true;
+            fem_plan.oersted_current = Some(*current);
+            fem_plan.oersted_radius = Some(*radius);
+            fem_plan.oersted_center = Some(*center);
+            fem_plan.oersted_axis = Some(*axis);
+            if let Some(td) = time_dependence {
+                match td {
+                    TimeDependenceIR::Constant => {
+                        fem_plan.oersted_time_dep_kind = 0;
+                    }
+                    TimeDependenceIR::Sinusoidal {
+                        frequency_hz,
+                        phase_rad,
+                        offset,
+                    } => {
+                        fem_plan.oersted_time_dep_kind = 1;
+                        fem_plan.oersted_time_dep_freq = *frequency_hz;
+                        fem_plan.oersted_time_dep_phase = *phase_rad;
+                        fem_plan.oersted_time_dep_offset = *offset;
+                    }
+                    TimeDependenceIR::Pulse { t_on, t_off } => {
+                        fem_plan.oersted_time_dep_kind = 2;
+                        fem_plan.oersted_time_dep_t_on = *t_on;
+                        fem_plan.oersted_time_dep_t_off = *t_off;
+                    }
+                    TimeDependenceIR::PiecewiseLinear { .. } => {
+                        fem_plan.oersted_time_dep_kind = 0;
+                    }
+                }
+            }
+            break;
+        }
+    }
+
     let study_note = if let Some(control) = fem_plan.relaxation.as_ref() {
         format!(
             "study: relaxation algorithm={} torque_tolerance={:.6e} energy_tolerance={} max_steps={}",
@@ -2807,9 +2927,14 @@ mod tests {
             cubic_anisotropy_kc3: None,
             cubic_anisotropy_axis1: None,
             cubic_anisotropy_axis2: None,
-            ms_field: None, a_field: None, alpha_field: None,
-            ku_field: None, ku2_field: None,
-            kc1_field: None, kc2_field: None, kc3_field: None,
+            ms_field: None,
+            a_field: None,
+            alpha_field: None,
+            ku_field: None,
+            ku2_field: None,
+            kc1_field: None,
+            kc2_field: None,
+            kc3_field: None,
         });
         ir.geometry.entries.push(GeometryEntryIR::Box {
             name: "second".to_string(),

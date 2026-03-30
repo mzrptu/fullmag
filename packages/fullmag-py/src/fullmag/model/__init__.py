@@ -1,6 +1,16 @@
 from .discretization import DiscretizationHints, FDM, FDMDemag, FDMGrid, FEM, Hybrid
 from .dynamics import AdaptiveTimestep, LLG
-from .energy import BulkDMI, Demag, Exchange, InterfacialDMI, Zeeman
+from .energy import (
+    BulkDMI,
+    Constant,
+    Demag,
+    Exchange,
+    InterfacialDMI,
+    OerstedCylinder,
+    Pulse,
+    Sinusoidal,
+    Zeeman,
+)
 from .geometry import (
     Box,
     Cylinder,
@@ -31,6 +41,7 @@ __all__ = [
     "AdaptiveTimestep",
     "Box",
     "BulkDMI",
+    "Constant",
     "Cylinder",
     "Demag",
     "DeviceTarget",
@@ -53,15 +64,18 @@ __all__ = [
     "InterfacialDMI",
     "LLG",
     "Material",
+    "OerstedCylinder",
     "Problem",
     "Region",
     "Relaxation",
     "RuntimeSelection",
+    "Pulse",
     "SaveDispersion",
     "SaveField",
     "SaveMode",
     "SaveScalar",
     "SaveSpectrum",
+    "Sinusoidal",
     "Snapshot",
     "Sphere",
     "TimeEvolution",

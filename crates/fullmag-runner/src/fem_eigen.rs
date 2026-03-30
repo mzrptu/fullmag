@@ -4,8 +4,8 @@ use fullmag_engine::{
     Vector3, MU0,
 };
 use fullmag_ir::{
-    EigenDampingPolicyIR, EigenNormalizationIR, EquilibriumSourceIR, FemEigenPlanIR,
-    KSamplingIR, OutputIR, RelaxationAlgorithmIR, RelaxationControlIR,
+    EigenDampingPolicyIR, EigenNormalizationIR, EquilibriumSourceIR, FemEigenPlanIR, KSamplingIR,
+    OutputIR, RelaxationAlgorithmIR, RelaxationControlIR,
 };
 use nalgebra::{DMatrix, DVector, SymmetricEigen};
 
@@ -72,7 +72,11 @@ pub(crate) fn execute_reference_fem_eigen(
 
     match &plan.target {
         fullmag_ir::EigenTargetIR::Lowest => {
-            eigenpairs.sort_by(|lhs, rhs| lhs.0.partial_cmp(&rhs.0).unwrap_or(std::cmp::Ordering::Equal));
+            eigenpairs.sort_by(|lhs, rhs| {
+                lhs.0
+                    .partial_cmp(&rhs.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
         fullmag_ir::EigenTargetIR::Nearest { frequency_hz } => {
             eigenpairs.sort_by(|lhs, rhs| {
@@ -101,14 +105,11 @@ pub(crate) fn execute_reference_fem_eigen(
     let mut modes_summary = Vec::with_capacity(eigenpairs.len());
     for (mode_index, (eigenvalue, vector)) in eigenpairs.iter().enumerate() {
         let normalized = normalize_mode(vector.clone(), &mass, &plan.normalization);
-        let (real, imag, amplitude, phase, max_amplitude) = project_mode_to_tangent_basis(
-            topology.n_nodes,
-            &active_nodes,
-            &normalized,
-            &bases,
-        );
+        let (real, imag, amplitude, phase, max_amplitude) =
+            project_mode_to_tangent_basis(topology.n_nodes, &active_nodes, &normalized, &bases);
         let frequency_hz = frequency_from_eigenvalue(plan.gyromagnetic_ratio, *eigenvalue);
-        let angular_frequency = angular_frequency_from_eigenvalue(plan.gyromagnetic_ratio, *eigenvalue);
+        let angular_frequency =
+            angular_frequency_from_eigenvalue(plan.gyromagnetic_ratio, *eigenvalue);
         let norm = modal_norm(&normalized, &mass).sqrt();
         let mode_summary = serde_json::json!({
             "index": mode_index,
@@ -294,9 +295,11 @@ fn materialize_equilibrium(
         };
         let mut previous_total_energy = None;
         while steps_taken < RELAX_MAX_STEPS {
-            let report = problem.step(&mut state, RELAX_DT).map_err(|error| RunError {
-                message: format!("FEM eigen relaxation step {}: {}", steps_taken, error),
-            })?;
+            let report = problem
+                .step(&mut state, RELAX_DT)
+                .map_err(|error| RunError {
+                    message: format!("FEM eigen relaxation step {}: {}", steps_taken, error),
+                })?;
             steps_taken += 1;
             let stats = StepStats {
                 step: steps_taken,
@@ -328,7 +331,12 @@ fn materialize_equilibrium(
     let observables = problem.observe(&state).map_err(|error| RunError {
         message: format!("FEM eigen observables: {}", error),
     })?;
-    Ok((problem, state.magnetization().to_vec(), steps_taken, observables))
+    Ok((
+        problem,
+        state.magnetization().to_vec(),
+        steps_taken,
+        observables,
+    ))
 }
 
 fn load_equilibrium_artifact(path: &str, expected_len: usize) -> Result<Vec<Vector3>, RunError> {
@@ -364,7 +372,10 @@ fn load_equilibrium_artifact(path: &str, expected_len: usize) -> Result<Vec<Vect
         .into_iter()
         .map(|entry| {
             let array = entry.as_array().ok_or_else(|| RunError {
-                message: format!("equilibrium artifact '{}' contains a non-vector entry", path),
+                message: format!(
+                    "equilibrium artifact '{}' contains a non-vector entry",
+                    path
+                ),
             })?;
             if array.len() != 3 {
                 return Err(RunError {
@@ -428,10 +439,30 @@ fn assemble_projected_scalar_operator(
         }
         let volume = topology.element_volumes[element_index];
         let local_mass = [
-            [2.0 * volume / 20.0, volume / 20.0, volume / 20.0, volume / 20.0],
-            [volume / 20.0, 2.0 * volume / 20.0, volume / 20.0, volume / 20.0],
-            [volume / 20.0, volume / 20.0, 2.0 * volume / 20.0, volume / 20.0],
-            [volume / 20.0, volume / 20.0, volume / 20.0, 2.0 * volume / 20.0],
+            [
+                2.0 * volume / 20.0,
+                volume / 20.0,
+                volume / 20.0,
+                volume / 20.0,
+            ],
+            [
+                volume / 20.0,
+                2.0 * volume / 20.0,
+                volume / 20.0,
+                volume / 20.0,
+            ],
+            [
+                volume / 20.0,
+                volume / 20.0,
+                2.0 * volume / 20.0,
+                volume / 20.0,
+            ],
+            [
+                volume / 20.0,
+                volume / 20.0,
+                volume / 20.0,
+                2.0 * volume / 20.0,
+            ],
         ];
         let local_shift = [
             parallel_field[element[0] as usize],
@@ -471,7 +502,10 @@ fn normalize_mode(
             vector / norm
         }
         EigenNormalizationIR::UnitMaxAmplitude => {
-            let max_value = vector.iter().fold(0.0_f64, |acc, value| acc.max(value.abs())).max(1e-30);
+            let max_value = vector
+                .iter()
+                .fold(0.0_f64, |acc, value| acc.max(value.abs()))
+                .max(1e-30);
             vector / max_value
         }
     }

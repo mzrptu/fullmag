@@ -950,6 +950,10 @@ pub struct ExchangeLlgProblem {
     pub dynamics: LlgConfig,
     pub terms: EffectiveFieldTerms,
     pub active_mask: Option<Vec<bool>>,
+    /// Temperature in Kelvin for Brown thermal field (sLLG). 0 = no thermal noise.
+    pub temperature: f64,
+    /// Current timestep used for thermal σ computation (set by runner before stepping).
+    pub thermal_dt: f64,
 }
 
 impl ExchangeLlgProblem {
@@ -1003,6 +1007,8 @@ impl ExchangeLlgProblem {
             dynamics,
             terms,
             active_mask,
+            temperature: 0.0,
+            thermal_dt: 1e-13,
         })
     }
 
@@ -2441,7 +2447,65 @@ impl ExchangeLlgProblem {
             zero_vectors(self.grid.cell_count())
         };
         let external_field = self.external_field_vectors();
-        combine_fields(&exchange_field, &demag_field, &external_field)
+        let mut h_eff = combine_fields(&exchange_field, &demag_field, &external_field);
+
+        // Add Brown thermal field if temperature > 0
+        if self.temperature > 0.0
+            && self.material.saturation_magnetisation > 0.0
+            && self.thermal_dt > 0.0
+        {
+            use std::cell::RefCell;
+
+            thread_local! {
+                static RNG: RefCell<u64> = const { RefCell::new(42u64) };
+            }
+
+            let alpha = self.material.damping;
+            let ms = self.material.saturation_magnetisation;
+            let gamma_red = self.dynamics.gyromagnetic_ratio;
+            let gamma0 = gamma_red * (1.0 + alpha * alpha);
+            let v_cell = self.cell_size.dx * self.cell_size.dy * self.cell_size.dz;
+            const KB: f64 = 1.380649e-23;
+            const MU0: f64 = 1.2566370614359173e-6;
+
+            let sigma = (2.0 * alpha * KB * self.temperature
+                / (gamma0 * MU0 * ms * v_cell * self.thermal_dt))
+                .sqrt();
+
+            // Simple xorshift64* RNG for thermal noise
+            // (avoids extra crate imports; statistically sufficient for sLLG)
+            RNG.with(|seed_cell| {
+                let mut seed = *seed_cell.borrow();
+                for h in h_eff.iter_mut() {
+                    // Generate 3 Gaussian-distributed random numbers via Box-Muller
+                    let (n0, n1, n2) = {
+                        // xorshift64* for uniform random f64 in (0,1)
+                        let next_u = |s: &mut u64| -> f64 {
+                            *s ^= *s >> 12;
+                            *s ^= *s << 25;
+                            *s ^= *s >> 27;
+                            ((*s).wrapping_mul(0x2545F4914F6CDD1D) >> 11) as f64
+                                / (1u64 << 53) as f64
+                        };
+                        let u1 = next_u(&mut seed).max(1e-300);
+                        let u2 = next_u(&mut seed);
+                        let u3 = next_u(&mut seed).max(1e-300);
+                        let u4 = next_u(&mut seed);
+                        let r1 = (-2.0 * u1.ln()).sqrt();
+                        let r2 = (-2.0 * u3.ln()).sqrt();
+                        let theta1 = 2.0 * std::f64::consts::PI * u2;
+                        let theta2 = 2.0 * std::f64::consts::PI * u4;
+                        (r1 * theta1.cos(), r1 * theta1.sin(), r2 * theta2.cos())
+                    };
+                    h[0] += sigma * n0;
+                    h[1] += sigma * n1;
+                    h[2] += sigma * n2;
+                }
+                *seed_cell.borrow_mut() = seed;
+            });
+        }
+
+        h_eff
     }
 
     /// Compute tangent-space gradient: g_i = -P_{m_i} H_eff,i

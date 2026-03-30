@@ -190,6 +190,41 @@ export interface CurrentDisplaySelection {
   selection: DisplaySelection;
 }
 
+export type RuntimeStatusKind =
+  | "bootstrapping"
+  | "materializing"
+  | "materializing_script"
+  | "waiting_for_compute"
+  | "awaiting_command"
+  | "running"
+  | "paused"
+  | "breaking"
+  | "closing"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "unknown";
+
+export interface RuntimeStatusState {
+  kind: RuntimeStatusKind;
+  code: string;
+  is_busy: boolean;
+  can_accept_commands: boolean;
+}
+
+export interface CommandStatus {
+  session_id: string;
+  seq: number | null;
+  command_id: string;
+  command_kind: string;
+  state: "acknowledged" | "rejected" | "completed";
+  issued_at_unix_ms: number | null;
+  completed_at_unix_ms: number | null;
+  completion_state: string | null;
+  reason: string | null;
+  display_selection: CurrentDisplaySelection | null;
+}
+
 export interface ScriptBuilderSolverState {
   integrator: string;
   fixed_timestep: string;
@@ -232,6 +267,7 @@ export interface SessionState {
   session: SessionManifest;
   run: RunManifest | null;
   live_state: LiveState | null;
+  runtime_status: RuntimeStatusState | null;
   metadata: Record<string, unknown> | null;
   script_builder: ScriptBuilderState | null;
   scalar_rows: ScalarRow[];
@@ -243,6 +279,7 @@ export interface SessionState {
   display_selection: CurrentDisplaySelection | null;
   preview_config: PreviewConfig | null;
   preview: PreviewState | null;
+  command_status: CommandStatus | null;
 }
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
@@ -265,6 +302,64 @@ interface PreviewCurrentLiveEvent {
   preview_config: unknown;
   preview?: unknown;
 }
+
+interface CommandAckCurrentLiveEvent {
+  kind: "command_ack";
+  session_id: string;
+  seq: number;
+  command_id: string;
+  command_kind: string;
+  issued_at_unix_ms: number;
+  display_selection?: unknown;
+}
+
+interface CommandRejectedCurrentLiveEvent {
+  kind: "command_rejected";
+  session_id: string;
+  command_id: string;
+  command_kind: string;
+  issued_at_unix_ms: number;
+  reason: string;
+}
+
+interface CommandCompletedCurrentLiveEvent {
+  kind: "command_completed";
+  session_id: string;
+  seq: number;
+  command_id: string;
+  command_kind: string;
+  completed_at_unix_ms: number;
+  completion_state: string;
+}
+
+interface DisplayUpdatedCurrentLiveEvent {
+  kind: "display_updated";
+  session_id: string;
+  display_selection: unknown;
+  display_kind: DisplayKind;
+  published_at_unix_ms: number;
+  source_step?: number;
+  source_time?: number;
+}
+
+interface RuntimeStatusChangedCurrentLiveEvent {
+  kind: "runtime_status_changed";
+  session_id: string;
+  status: RuntimeStatusKind;
+  status_code: string;
+  is_busy: boolean;
+  can_accept_commands: boolean;
+  changed_at_unix_ms: number;
+  previous_status?: RuntimeStatusKind;
+  previous_status_code?: string;
+}
+
+type RuntimeCurrentLiveEvent =
+  | CommandAckCurrentLiveEvent
+  | CommandRejectedCurrentLiveEvent
+  | CommandCompletedCurrentLiveEvent
+  | DisplayUpdatedCurrentLiveEvent
+  | RuntimeStatusChangedCurrentLiveEvent;
 
 function currentSessionHint(): string | null {
   if (typeof window === "undefined") {
@@ -368,6 +463,10 @@ function mergeSessionState(prev: SessionState | null, next: SessionState): Sessi
     merged.preview = prev.preview;
   }
 
+  if (prev.runtime_status && !next.runtime_status) {
+    merged.runtime_status = prev.runtime_status;
+  }
+
   if (
     prev.script_builder &&
     (
@@ -399,6 +498,10 @@ function mergeSessionState(prev: SessionState | null, next: SessionState): Sessi
     merged.engine_log = prev.engine_log;
   } else if (next.engine_log.length === prev.engine_log.length) {
     merged.engine_log = prev.engine_log;
+  }
+
+  if (!merged.command_status && prev.command_status) {
+    merged.command_status = prev.command_status;
   }
 
   return merged;
@@ -493,6 +596,26 @@ function normalizeDisplayKind(raw: unknown): DisplayKind {
   }
 }
 
+function normalizeRuntimeStatusKind(raw: unknown): RuntimeStatusKind {
+  switch (raw) {
+    case "bootstrapping":
+    case "materializing":
+    case "materializing_script":
+    case "waiting_for_compute":
+    case "awaiting_command":
+    case "running":
+    case "paused":
+    case "breaking":
+    case "closing":
+    case "completed":
+    case "failed":
+    case "cancelled":
+      return raw;
+    default:
+      return "unknown";
+  }
+}
+
 function normalizeDisplaySelection(raw: any): CurrentDisplaySelection | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -515,6 +638,20 @@ function normalizeDisplaySelection(raw: any): CurrentDisplaySelection | null {
       max_points: Number(selection.max_points ?? 16384),
       auto_scale_enabled: Boolean(selection.auto_scale_enabled ?? true),
     },
+  };
+}
+
+function normalizeRuntimeStatus(raw: any): RuntimeStatusState | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const code = String(raw.code ?? "");
+  const kind = normalizeRuntimeStatusKind(raw.kind ?? code);
+  return {
+    kind,
+    code: code || kind,
+    is_busy: Boolean(raw.is_busy),
+    can_accept_commands: Boolean(raw.can_accept_commands),
   };
 }
 
@@ -739,6 +876,104 @@ function mergePreviewEvent(
   };
 }
 
+function mergeRuntimeEvent(
+  prev: SessionState | null,
+  raw: RuntimeCurrentLiveEvent,
+): SessionState | null {
+  if (!prev || prev.session.session_id !== raw.session_id) {
+    return prev;
+  }
+
+  if (raw.kind === "runtime_status_changed") {
+    const runtime_status: RuntimeStatusState = {
+      kind: normalizeRuntimeStatusKind(raw.status),
+      code: String(raw.status_code ?? raw.status),
+      is_busy: Boolean(raw.is_busy),
+      can_accept_commands: Boolean(raw.can_accept_commands),
+    };
+    return {
+      ...prev,
+      runtime_status,
+      live_state: prev.live_state
+        ? { ...prev.live_state, status: runtime_status.code }
+        : prev.live_state,
+    };
+  }
+
+  if (raw.kind === "display_updated") {
+    let displaySelection =
+      normalizeDisplaySelection(raw.display_selection) ?? prev.display_selection;
+    if (
+      displaySelection &&
+      prev.display_selection &&
+      displaySelection.revision < prev.display_selection.revision
+    ) {
+      displaySelection = prev.display_selection;
+    }
+    const previewConfig =
+      previewConfigFromDisplaySelection(displaySelection) ?? prev.preview_config;
+    return {
+      ...prev,
+      display_selection: displaySelection,
+      preview_config: previewConfig,
+    };
+  }
+
+  if (raw.kind === "command_ack") {
+    const displaySelection =
+      normalizeDisplaySelection(raw.display_selection) ?? prev.display_selection;
+    return {
+      ...prev,
+      command_status: {
+        session_id: raw.session_id,
+        seq: Number(raw.seq ?? 0),
+        command_id: String(raw.command_id ?? ""),
+        command_kind: String(raw.command_kind ?? ""),
+        state: "acknowledged",
+        issued_at_unix_ms: Number(raw.issued_at_unix_ms ?? 0),
+        completed_at_unix_ms: null,
+        completion_state: null,
+        reason: null,
+        display_selection: displaySelection,
+      },
+    };
+  }
+
+  if (raw.kind === "command_rejected") {
+    return {
+      ...prev,
+      command_status: {
+        session_id: raw.session_id,
+        seq: null,
+        command_id: String(raw.command_id ?? ""),
+        command_kind: String(raw.command_kind ?? ""),
+        state: "rejected",
+        issued_at_unix_ms: Number(raw.issued_at_unix_ms ?? 0),
+        completed_at_unix_ms: null,
+        completion_state: null,
+        reason: String(raw.reason ?? ""),
+        display_selection: prev.display_selection,
+      },
+    };
+  }
+
+  return {
+    ...prev,
+    command_status: {
+      session_id: raw.session_id,
+      seq: Number(raw.seq ?? 0),
+      command_id: String(raw.command_id ?? ""),
+      command_kind: String(raw.command_kind ?? ""),
+      state: "completed",
+      issued_at_unix_ms: null,
+      completed_at_unix_ms: Number(raw.completed_at_unix_ms ?? 0),
+      completion_state: String(raw.completion_state ?? ""),
+      reason: null,
+      display_selection: prev.display_selection,
+    },
+  };
+}
+
 function normalizeSessionState(raw: any): SessionState {
   const rawLive = raw.live_state;
   const latestFields = normalizeLatestFields(raw.latest_fields);
@@ -778,6 +1013,7 @@ function normalizeSessionState(raw: any): SessionState {
     session: raw.session,
     run: raw.run ?? null,
     live_state: liveState,
+    runtime_status: normalizeRuntimeStatus(raw.runtime_status),
     metadata: raw.metadata ?? null,
     script_builder: normalizeScriptBuilder(raw.script_builder),
     scalar_rows: Array.isArray(raw.scalar_rows)
@@ -821,6 +1057,7 @@ function normalizeSessionState(raw: any): SessionState {
       normalizePreviewConfig(rawPreviewConfig) ??
       previewConfigFromDisplaySelection(displaySelection),
     preview: normalizePreviewState(rawPreview),
+    command_status: null,
   };
 }
 
@@ -919,6 +1156,20 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
 
           if (raw?.kind === "preview" && typeof raw.session_id === "string") {
             return mergePreviewEvent(prevState, raw as PreviewCurrentLiveEvent);
+          }
+
+          if (
+            typeof raw?.kind === "string" &&
+            typeof raw?.session_id === "string" &&
+            (
+              raw.kind === "command_ack" ||
+              raw.kind === "command_rejected" ||
+              raw.kind === "command_completed" ||
+              raw.kind === "display_updated" ||
+              raw.kind === "runtime_status_changed"
+            )
+          ) {
+            return mergeRuntimeEvent(prevState, raw as RuntimeCurrentLiveEvent);
           }
 
           const nextState = normalizeSessionState(raw);

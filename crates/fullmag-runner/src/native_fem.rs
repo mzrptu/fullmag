@@ -144,7 +144,7 @@ impl NativeFemBackend {
             }
         };
 
-        let plan_desc = ffi::fullmag_fem_plan_desc {
+        let mut plan_desc = ffi::fullmag_fem_plan_desc {
             mesh,
             material,
             fe_order: plan.fe_order,
@@ -229,33 +229,122 @@ impl NativeFemBackend {
             dmi_constant: plan.interfacial_dmi.unwrap_or(0.0),
             has_bulk_dmi: if plan.bulk_dmi.is_some() { 1 } else { 0 },
             bulk_dmi_constant: plan.bulk_dmi.unwrap_or(0.0),
-            has_cubic_anisotropy: if plan.material.cubic_anisotropy_kc1.is_some() { 1 } else { 0 },
+            has_cubic_anisotropy: if plan.material.cubic_anisotropy_kc1.is_some() {
+                1
+            } else {
+                0
+            },
             cubic_kc1: plan.material.cubic_anisotropy_kc1.unwrap_or(0.0),
             cubic_kc2: plan.material.cubic_anisotropy_kc2.unwrap_or(0.0),
             cubic_kc3: plan.material.cubic_anisotropy_kc3.unwrap_or(0.0),
-            cubic_axis1: plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
-            cubic_axis2: plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
+            cubic_axis1: plan
+                .material
+                .cubic_anisotropy_axis1
+                .unwrap_or([1.0, 0.0, 0.0]),
+            cubic_axis2: plan
+                .material
+                .cubic_anisotropy_axis2
+                .unwrap_or([0.0, 1.0, 0.0]),
             // Per-node spatially varying fields
-            ms_field: plan.material.ms_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
-            ms_field_len: plan.material.ms_field.as_ref().map_or(0, |v| v.len() as u64),
-            a_field: plan.material.a_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            ms_field: plan
+                .material
+                .ms_field
+                .as_deref()
+                .map_or(std::ptr::null(), |s| s.as_ptr()),
+            ms_field_len: plan
+                .material
+                .ms_field
+                .as_ref()
+                .map_or(0, |v| v.len() as u64),
+            a_field: plan
+                .material
+                .a_field
+                .as_deref()
+                .map_or(std::ptr::null(), |s| s.as_ptr()),
             a_field_len: plan.material.a_field.as_ref().map_or(0, |v| v.len() as u64),
-            alpha_field: plan.material.alpha_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
-            alpha_field_len: plan.material.alpha_field.as_ref().map_or(0, |v| v.len() as u64),
-            ku_field: plan.material.ku_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
-            ku_field_len: plan.material.ku_field.as_ref().map_or(0, |v| v.len() as u64),
-            ku2_field: plan.material.ku2_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
-            ku2_field_len: plan.material.ku2_field.as_ref().map_or(0, |v| v.len() as u64),
-            dind_field: plan.dind_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            alpha_field: plan
+                .material
+                .alpha_field
+                .as_deref()
+                .map_or(std::ptr::null(), |s| s.as_ptr()),
+            alpha_field_len: plan
+                .material
+                .alpha_field
+                .as_ref()
+                .map_or(0, |v| v.len() as u64),
+            ku_field: plan
+                .material
+                .ku_field
+                .as_deref()
+                .map_or(std::ptr::null(), |s| s.as_ptr()),
+            ku_field_len: plan
+                .material
+                .ku_field
+                .as_ref()
+                .map_or(0, |v| v.len() as u64),
+            ku2_field: plan
+                .material
+                .ku2_field
+                .as_deref()
+                .map_or(std::ptr::null(), |s| s.as_ptr()),
+            ku2_field_len: plan
+                .material
+                .ku2_field
+                .as_ref()
+                .map_or(0, |v| v.len() as u64),
+            dind_field: plan
+                .dind_field
+                .as_deref()
+                .map_or(std::ptr::null(), |s| s.as_ptr()),
             dind_field_len: plan.dind_field.as_ref().map_or(0, |v| v.len() as u64),
-            dbulk_field: plan.dbulk_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            dbulk_field: plan
+                .dbulk_field
+                .as_deref()
+                .map_or(std::ptr::null(), |s| s.as_ptr()),
             dbulk_field_len: plan.dbulk_field.as_ref().map_or(0, |v| v.len() as u64),
-            kc1_field: plan.material.kc1_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
-            kc1_field_len: plan.material.kc1_field.as_ref().map_or(0, |v| v.len() as u64),
-            kc2_field: plan.material.kc2_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
-            kc2_field_len: plan.material.kc2_field.as_ref().map_or(0, |v| v.len() as u64),
-            kc3_field: plan.material.kc3_field.as_deref().map_or(std::ptr::null(), |s| s.as_ptr()),
-            kc3_field_len: plan.material.kc3_field.as_ref().map_or(0, |v| v.len() as u64),
+            kc1_field: plan
+                .material
+                .kc1_field
+                .as_deref()
+                .map_or(std::ptr::null(), |s| s.as_ptr()),
+            kc1_field_len: plan
+                .material
+                .kc1_field
+                .as_ref()
+                .map_or(0, |v| v.len() as u64),
+            kc2_field: plan
+                .material
+                .kc2_field
+                .as_deref()
+                .map_or(std::ptr::null(), |s| s.as_ptr()),
+            kc2_field_len: plan
+                .material
+                .kc2_field
+                .as_ref()
+                .map_or(0, |v| v.len() as u64),
+            kc3_field: plan
+                .material
+                .kc3_field
+                .as_deref()
+                .map_or(std::ptr::null(), |s| s.as_ptr()),
+            kc3_field_len: plan
+                .material
+                .kc3_field
+                .as_ref()
+                .map_or(0, |v| v.len() as u64),
+            // Oersted field
+            has_oersted_cylinder: if plan.has_oersted_cylinder { 1 } else { 0 },
+            oersted_current: plan.oersted_current.unwrap_or(0.0),
+            oersted_radius: plan.oersted_radius.unwrap_or(0.0),
+            oersted_center: plan.oersted_center.unwrap_or([0.0, 0.0, 0.0]),
+            oersted_axis: plan.oersted_axis.unwrap_or([0.0, 0.0, 1.0]),
+            oersted_time_dep_kind: plan.oersted_time_dep_kind,
+            oersted_time_dep_freq: plan.oersted_time_dep_freq,
+            oersted_time_dep_phase: plan.oersted_time_dep_phase,
+            oersted_time_dep_offset: plan.oersted_time_dep_offset,
+            oersted_time_dep_t_on: plan.oersted_time_dep_t_on,
+            oersted_time_dep_t_off: plan.oersted_time_dep_t_off,
+            temperature: plan.temperature.unwrap_or(0.0),
         };
 
         // Build adaptive config if present
@@ -312,6 +401,11 @@ impl NativeFemBackend {
             demag_linear_iterations: 0,
             demag_linear_residual: 0.0,
             wall_time_ns: 0,
+            exchange_wall_time_ns: 0,
+            demag_wall_time_ns: 0,
+            rhs_wall_time_ns: 0,
+            extra_energy_wall_time_ns: 0,
+            snapshot_wall_time_ns: 0,
             error_estimate: 0.0,
             rejected_attempts: 0,
             dt_suggested: 0.0,
@@ -338,6 +432,11 @@ impl NativeFemBackend {
             max_h_eff: stats.max_effective_field_amplitude,
             max_h_demag: stats.max_demag_field_amplitude,
             wall_time_ns: stats.wall_time_ns,
+            exchange_wall_time_ns: stats.exchange_wall_time_ns,
+            demag_wall_time_ns: stats.demag_wall_time_ns,
+            rhs_wall_time_ns: stats.rhs_wall_time_ns,
+            extra_energy_wall_time_ns: stats.extra_energy_wall_time_ns,
+            snapshot_wall_time_ns: stats.snapshot_wall_time_ns,
             error_estimate: if stats.error_estimate > 0.0 {
                 Some(stats.error_estimate)
             } else {
@@ -419,6 +518,11 @@ impl NativeFemBackend {
             demag_linear_iterations: 0,
             demag_linear_residual: 0.0,
             wall_time_ns: 0,
+            exchange_wall_time_ns: 0,
+            demag_wall_time_ns: 0,
+            rhs_wall_time_ns: 0,
+            extra_energy_wall_time_ns: 0,
+            snapshot_wall_time_ns: 0,
             error_estimate: 0.0,
             rejected_attempts: 0,
             dt_suggested: 0.0,
@@ -446,6 +550,11 @@ impl NativeFemBackend {
             max_h_eff: stats.max_effective_field_amplitude,
             max_h_demag: stats.max_demag_field_amplitude,
             wall_time_ns: stats.wall_time_ns,
+            exchange_wall_time_ns: stats.exchange_wall_time_ns,
+            demag_wall_time_ns: stats.demag_wall_time_ns,
+            rhs_wall_time_ns: stats.rhs_wall_time_ns,
+            extra_energy_wall_time_ns: stats.extra_energy_wall_time_ns,
+            snapshot_wall_time_ns: stats.snapshot_wall_time_ns,
             demag_solves: stats.demag_linear_iterations,
             ..StepStats::default()
         };
@@ -627,9 +736,14 @@ mod tests {
                 cubic_anisotropy_kc3: None,
                 cubic_anisotropy_axis1: None,
                 cubic_anisotropy_axis2: None,
-                ms_field: None, a_field: None, alpha_field: None,
-                ku_field: None, ku2_field: None,
-                kc1_field: None, kc2_field: None, kc3_field: None,
+                ms_field: None,
+                a_field: None,
+                alpha_field: None,
+                ku_field: None,
+                ku2_field: None,
+                kc1_field: None,
+                kc2_field: None,
+                kc3_field: None,
             },
             enable_exchange: true,
             enable_demag: true,
@@ -648,6 +762,23 @@ mod tests {
             dind_field: None,
             dbulk_field: None,
             temperature: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
         }
     }
 
@@ -711,6 +842,23 @@ mod tests {
             dind_field: None,
             dbulk_field: None,
             temperature: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
         }
     }
 

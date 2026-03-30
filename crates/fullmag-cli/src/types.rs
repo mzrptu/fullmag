@@ -224,7 +224,10 @@ impl CurrentLivePreviewFieldCache {
         self.0.insert(field.quantity.clone(), field);
     }
 
-    pub fn replace_all(&mut self, fields: impl IntoIterator<Item = fullmag_runner::LivePreviewField>) {
+    pub fn replace_all(
+        &mut self,
+        fields: impl IntoIterator<Item = fullmag_runner::LivePreviewField>,
+    ) {
         self.clear();
         for field in fields {
             self.insert(field);

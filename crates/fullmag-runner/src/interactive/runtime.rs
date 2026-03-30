@@ -89,7 +89,10 @@ impl InteractiveRuntime {
             DisplayKind::VectorField | DisplayKind::SpatialScalar => {
                 let request = selection.to_preview_request(self.display_revision);
                 let field = self.backend.snapshot_preview(&request)?;
-                Ok(DisplayPayload::from_live_preview_field(selection.kind, field))
+                Ok(DisplayPayload::from_live_preview_field(
+                    selection.kind,
+                    field,
+                ))
             }
             DisplayKind::GlobalScalar => {
                 let stats = self.backend.snapshot_step_stats()?;

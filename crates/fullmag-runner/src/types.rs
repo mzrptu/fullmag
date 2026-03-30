@@ -47,6 +47,16 @@ pub struct StepStats {
     pub max_h_eff: f64,
     pub max_h_demag: f64,
     pub wall_time_ns: u64,
+    #[serde(default)]
+    pub exchange_wall_time_ns: u64,
+    #[serde(default)]
+    pub demag_wall_time_ns: u64,
+    #[serde(default)]
+    pub rhs_wall_time_ns: u64,
+    #[serde(default)]
+    pub extra_energy_wall_time_ns: u64,
+    #[serde(default)]
+    pub snapshot_wall_time_ns: u64,
     // --- adaptive time-stepping diagnostics (PR1) ---
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_estimate: Option<f64>,
@@ -81,6 +91,11 @@ impl Default for StepStats {
             max_h_eff: 0.0,
             max_h_demag: 0.0,
             wall_time_ns: 0,
+            exchange_wall_time_ns: 0,
+            demag_wall_time_ns: 0,
+            rhs_wall_time_ns: 0,
+            extra_energy_wall_time_ns: 0,
+            snapshot_wall_time_ns: 0,
             error_estimate: None,
             dt_suggested: None,
             rejected_attempts: 0,

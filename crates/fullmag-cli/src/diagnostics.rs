@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use fullmag_engine::fem::{FemLlgProblem, MeshTopology};
 use fullmag_engine::{
-    AdaptiveStepConfig, CellSize, EffectiveFieldTerms, ExchangeLlgProblem, GridShape,
-    LlgConfig, MaterialParameters, TimeIntegrator,
+    AdaptiveStepConfig, CellSize, EffectiveFieldTerms, ExchangeLlgProblem, GridShape, LlgConfig,
+    MaterialParameters, TimeIntegrator,
 };
 use fullmag_ir::{
     BackendPlanIR, FdmMultilayerPlanIR, FdmPlanIR, FemPlanIR, IntegratorChoice,
@@ -301,7 +301,9 @@ fn diagnose_initial_multilayer_plan(plan: &FdmMultilayerPlanIR) -> InitialStateD
     diagnostic
 }
 
-pub(crate) fn diagnose_initial_backend_plan(backend_plan: &BackendPlanIR) -> Result<InitialStateDiagnostic> {
+pub(crate) fn diagnose_initial_backend_plan(
+    backend_plan: &BackendPlanIR,
+) -> Result<InitialStateDiagnostic> {
     match backend_plan {
         BackendPlanIR::Fdm(plan) => diagnose_initial_fdm_plan(plan),
         BackendPlanIR::FdmMultilayer(plan) => Ok(diagnose_initial_multilayer_plan(plan)),

@@ -275,7 +275,11 @@ pub(crate) fn bootstrap_live_state(status: &str) -> LiveStateManifest {
     }
 }
 
-pub(crate) fn set_live_state_status(live_state: &mut LiveStateManifest, status: &str, finished: Option<bool>) {
+pub(crate) fn set_live_state_status(
+    live_state: &mut LiveStateManifest,
+    status: &str,
+    finished: Option<bool>,
+) {
     live_state.status = status.to_string();
     live_state.updated_at_unix_ms = unix_time_millis().unwrap_or(0);
     if let Some(finished) = finished {
@@ -337,7 +341,10 @@ pub(crate) fn upsert_cached_preview_field(
     state.pending_preview_fields.insert(field.clone());
 }
 
-pub(crate) fn apply_python_progress_event(live_workspace: &LocalLiveWorkspace, event: PythonProgressEvent) {
+pub(crate) fn apply_python_progress_event(
+    live_workspace: &LocalLiveWorkspace,
+    event: PythonProgressEvent,
+) {
     match event {
         PythonProgressEvent::Message(message) => {
             live_workspace.push_log("info", message);

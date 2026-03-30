@@ -523,6 +523,19 @@ void launch_demag_field_fp64(Context &ctx) {
     }
 }
 
+/* ── Axpy kernel: dst += scale * src  (for Oersted field addition) ── */
+__global__ void add_scaled_field_fp64_kernel(
+    double *dst_x, double *dst_y, double *dst_z,
+    const double *src_x, const double *src_y, const double *src_z,
+    double scale, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    dst_x[i] += scale * src_x[i];
+    dst_y[i] += scale * src_y[i];
+    dst_z[i] += scale * src_z[i];
+}
+
 void launch_effective_field_fp64(Context &ctx) {
     int n = static_cast<int>(ctx.cell_count);
     int grid = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
@@ -585,6 +598,41 @@ void launch_effective_field_fp64(Context &ctx) {
         0.5 / ctx.dx, 0.5 / ctx.dy, 0.5 / ctx.dz,
         ctx.thermal_sigma,
         ctx.step_count);
+
+    // ── Add Oersted field contribution: H_eff += I(t) * H_oe_static ──
+    if (ctx.has_oersted_cylinder) {
+        double t = ctx.current_time;
+        double I_scale = ctx.oersted_current;
+
+        // Evaluate time-dependence envelope
+        switch (ctx.oersted_time_dep_kind) {
+            case 1: { // Sinusoidal
+                double f = ctx.oersted_time_dep_freq;
+                double phi = ctx.oersted_time_dep_phase;
+                double off = ctx.oersted_time_dep_offset;
+                I_scale *= sin(2.0 * M_PI * f * t + phi) + off;
+                break;
+            }
+            case 2: { // Pulse
+                double t_on = ctx.oersted_time_dep_t_on;
+                double t_off = ctx.oersted_time_dep_t_off;
+                I_scale *= (t >= t_on && t < t_off) ? 1.0 : 0.0;
+                break;
+            }
+            default: // Constant (kind=0)
+                break;
+        }
+
+        // Simple axpy: work += I_scale * h_oe_static
+        add_scaled_field_fp64_kernel<<<grid, BLOCK_SIZE>>>(
+            static_cast<double*>(ctx.work.x),
+            static_cast<double*>(ctx.work.y),
+            static_cast<double*>(ctx.work.z),
+            static_cast<const double*>(ctx.h_oe_static.x),
+            static_cast<const double*>(ctx.h_oe_static.y),
+            static_cast<const double*>(ctx.h_oe_static.z),
+            I_scale, n);
+    }
 }
 
 double launch_demag_energy_fp64(Context &ctx) {

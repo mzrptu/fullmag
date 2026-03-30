@@ -140,6 +140,22 @@ typedef struct {
     const double *kc1_field;          uint64_t kc1_field_len;
     const double *kc2_field;          uint64_t kc2_field_len;
     const double *kc3_field;          uint64_t kc3_field_len;
+
+    /* Oersted field from cylindrical conductor */
+    int                        has_oersted_cylinder;
+    double                     oersted_current;
+    double                     oersted_radius;
+    double                     oersted_center[3];
+    double                     oersted_axis[3];
+    uint32_t                   oersted_time_dep_kind;
+    double                     oersted_time_dep_freq;
+    double                     oersted_time_dep_phase;
+    double                     oersted_time_dep_offset;
+    double                     oersted_time_dep_t_on;
+    double                     oersted_time_dep_t_off;
+
+    /* Thermal noise */
+    double                     temperature;            /* Temperature in K (0 = no thermal noise) */
 } fullmag_fem_plan_desc;
 
 typedef struct {
@@ -158,6 +174,11 @@ typedef struct {
     uint32_t demag_linear_iterations;
     double demag_linear_residual;
     uint64_t wall_time_ns;
+    uint64_t exchange_wall_time_ns;
+    uint64_t demag_wall_time_ns;
+    uint64_t rhs_wall_time_ns;
+    uint64_t extra_energy_wall_time_ns;
+    uint64_t snapshot_wall_time_ns;
     double error_estimate;
     uint32_t rejected_attempts;
     double dt_suggested;

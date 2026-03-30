@@ -9,10 +9,15 @@
 pub mod backend;
 pub mod commands;
 pub mod display;
+pub mod events;
 pub mod runtime;
 
 pub use backend::BackendGeometry;
 pub(crate) use backend::InteractiveBackend;
 pub use commands::LiveControlCommand;
 pub use display::{DisplayKind, DisplayPayload, DisplaySelection, DisplaySelectionState};
+pub use events::{
+    CommandAckEvent, CommandCompletedEvent, CommandRejectedEvent, DisplayUpdatedEvent,
+    RuntimeEventEnvelope, RuntimeStatus, RuntimeStatusChangedEvent, StepDeltaEvent,
+};
 pub use runtime::InteractiveRuntime;

@@ -13,6 +13,7 @@ use fullmag_engine::{
 use fullmag_ir::{ExecutionPrecision, FemPlanIR, IntegratorChoice, OutputIR};
 
 use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
+use crate::interactive_runtime::{display_is_global_scalar, display_refresh_due};
 use crate::preview::{
     build_mesh_preview_field, flatten_vectors, normalize_quantity_id, select_observables,
 };
@@ -38,13 +39,7 @@ pub(crate) fn execute_reference_fem(
     live: Option<LiveStepConsumer<'_>>,
     artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
-    execute_reference_fem_impl(
-        plan,
-        until_seconds,
-        outputs,
-        live,
-        artifact_writer,
-    )
+    execute_reference_fem_impl(plan, until_seconds, outputs, live, artifact_writer)
 }
 
 pub(crate) fn snapshot_preview(
@@ -212,8 +207,51 @@ fn execute_reference_fem_impl(
     let mut previous_total_energy = Some(observe_state(&problem, &state)?.total_energy);
     let mut last_preview_revision: Option<u64> = None;
     let mut cancelled = false;
+    let mut current_observables = observe_state(&problem, &state)?;
+    let mut current_stats =
+        make_step_stats(step_count, state.time_seconds, 0.0, 0, &current_observables);
 
     while state.time_seconds < until_seconds {
+        if let Some(live) = live.as_mut() {
+            if let Some(display_selection) = live.display_selection.map(|get| get()) {
+                let preview_due = display_refresh_due(
+                    last_preview_revision,
+                    &display_selection,
+                    current_stats.step,
+                );
+                let preview_targets_global_scalar = display_is_global_scalar(&display_selection);
+                let preview_field = if preview_due && !preview_targets_global_scalar {
+                    let request = display_selection.preview_request();
+                    Some(build_mesh_preview_field(
+                        &request,
+                        select_observables(&current_observables, &request.quantity),
+                    ))
+                } else {
+                    None
+                };
+                let action = (live.on_step)(StepUpdate {
+                    stats: current_stats.clone(),
+                    grid: live.grid,
+                    fem_mesh: (current_stats.step == 0).then_some(crate::types::FemMeshPayload {
+                        nodes: plan.mesh.nodes.clone(),
+                        elements: plan.mesh.elements.clone(),
+                        boundary_faces: plan.mesh.boundary_faces.clone(),
+                    }),
+                    magnetization: None,
+                    preview_field,
+                    scalar_row_due: preview_due && preview_targets_global_scalar,
+                    finished: false,
+                });
+                if preview_due {
+                    last_preview_revision = Some(display_selection.revision);
+                }
+                if action == StepAction::Stop {
+                    cancelled = true;
+                    break;
+                }
+            }
+        }
+
         let dt_step = dt.min(until_seconds - state.time_seconds);
         let wall_start = Instant::now();
         let report = problem.step(&mut state, dt_step).map_err(|e| RunError {
@@ -238,6 +276,7 @@ fn execute_reference_fem_impl(
             wall_time_ns: wall_elapsed,
             ..StepStats::default()
         };
+        current_stats = latest_stats.clone();
 
         if !default_scalar_trace || !field_schedules.is_empty() {
             record_due_outputs(
@@ -255,27 +294,25 @@ fn execute_reference_fem_impl(
 
         if let Some(live) = live.as_mut() {
             let observables = observe_state(&problem, &state)?;
+            current_observables = observables.clone();
             let emit_every = live.field_every_n.max(1);
             let display_selection = live.display_selection.map(|get| get());
             let preview_due = display_selection
                 .as_ref()
-                .map(|selection| {
-                    let preview_emit_every = u64::from(selection.selection.every_n.max(1));
-                    last_preview_revision != Some(selection.revision)
-                        || step_count <= 1
-                        || step_count % preview_emit_every == 0
-                })
+                .map(|selection| display_refresh_due(last_preview_revision, selection, step_count))
                 .unwrap_or(false);
+            let preview_targets_global_scalar = display_selection
+                .as_ref()
+                .is_some_and(display_is_global_scalar);
             let magnetization = if live.display_selection.is_none() && step_count % emit_every == 0
             {
                 Some(flatten_vectors(&observables.magnetization))
             } else {
                 None
             };
-            let preview_field = if preview_due {
+            let preview_field = if preview_due && !preview_targets_global_scalar {
                 let selection = display_selection.as_ref().expect("checked preview_due");
                 let request = selection.preview_request();
-                last_preview_revision = Some(selection.revision);
                 Some(build_mesh_preview_field(
                     &request,
                     select_observables(&observables, &request.quantity),
@@ -283,7 +320,8 @@ fn execute_reference_fem_impl(
             } else {
                 None
             };
-            let due_scalar_row = scalar_row_due(&scalar_schedules, state.time_seconds);
+            let due_scalar_row = scalar_row_due(&scalar_schedules, state.time_seconds)
+                || (preview_due && preview_targets_global_scalar);
             let mut update_stats = make_step_stats(
                 step_count,
                 state.time_seconds,
@@ -311,6 +349,14 @@ fn execute_reference_fem_impl(
                 scalar_row_due: due_scalar_row,
                 finished: false,
             });
+            if preview_due {
+                last_preview_revision = Some(
+                    display_selection
+                        .as_ref()
+                        .expect("checked preview_due")
+                        .revision,
+                );
+            }
             if action == StepAction::Stop {
                 cancelled = true;
             }
@@ -638,6 +684,23 @@ mod tests {
             dind_field: None,
             dbulk_field: None,
             temperature: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
         }
     }
 
@@ -698,9 +761,14 @@ mod tests {
                 cubic_anisotropy_kc3: None,
                 cubic_anisotropy_axis1: None,
                 cubic_anisotropy_axis2: None,
-                ms_field: None, a_field: None, alpha_field: None,
-                ku_field: None, ku2_field: None,
-                kc1_field: None, kc2_field: None, kc3_field: None,
+                ms_field: None,
+                a_field: None,
+                alpha_field: None,
+                ku_field: None,
+                ku2_field: None,
+                kc1_field: None,
+                kc2_field: None,
+                kc3_field: None,
             },
             enable_exchange: true,
             enable_demag: true,
@@ -719,13 +787,31 @@ mod tests {
             dind_field: None,
             dbulk_field: None,
             temperature: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
         }
     }
 
     #[test]
     fn uniform_fem_relaxation_produces_near_zero_exchange_energy() {
         let plan = make_test_plan(false);
-        let result = execute_reference_fem(&plan, 1e-12, &[], None, None).expect("FEM run should succeed");
+        let result =
+            execute_reference_fem(&plan, 1e-12, &[], None, None).expect("FEM run should succeed");
         assert_eq!(result.result.status, RunStatus::Completed);
         assert!(!result.result.steps.is_empty());
         for step in &result.result.steps {
@@ -739,8 +825,8 @@ mod tests {
     #[test]
     fn demag_outputs_are_nonzero_when_enabled() {
         let plan = make_box_demag_plan();
-        let result =
-            execute_reference_fem(&plan, 1e-12, &[], None, None).expect("FEM demag run should succeed");
+        let result = execute_reference_fem(&plan, 1e-12, &[], None, None)
+            .expect("FEM demag run should succeed");
         assert_eq!(result.result.status, RunStatus::Completed);
         let last = result.result.steps.last().expect("at least one step");
         assert!(last.e_demag >= 0.0);
@@ -823,8 +909,8 @@ mod tests {
             ..make_test_plan(false)
         };
 
-        let executed =
-            execute_reference_fem(&plan, 1e-9, &[], None, None).expect("FEM relaxation run should succeed");
+        let executed = execute_reference_fem(&plan, 1e-9, &[], None, None)
+            .expect("FEM relaxation run should succeed");
 
         assert!(executed.result.steps.len() <= 2);
         let final_time = executed.result.steps.last().expect("final stats").time;

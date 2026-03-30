@@ -54,7 +54,8 @@ __global__ void llg_rhs_fp64_kernel(
     double * __restrict__ out_y,
     double * __restrict__ out_z,
     int n,
-    double gamma_bar, double alpha, int disable_precession)
+    double gamma_bar, double alpha, int disable_precession,
+    SttParams stt)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
@@ -82,16 +83,16 @@ __global__ void llg_rhs_fp64_kernel(
     // tau_ZL = -b * m x (m x (j.grad)m) - beta * b * m x (j.grad)m
     // b = P * mu_B / (e * M_s * (1 + beta^2)) [precomputed as stt_u_pf]
     // Vector u = stt_u_pf * j
-    double jx = ctx.current_density_x;
-    double jy = ctx.current_density_y;
-    double jz = ctx.current_density_z;
-    if (ctx.has_zhang_li_stt) {
-        double ux = ctx.stt_u_pf * jx;
-        double uy = ctx.stt_u_pf * jy;
-        double uz = ctx.stt_u_pf * jz;
+    double jx = stt.current_density_x;
+    double jy = stt.current_density_y;
+    double jz = stt.current_density_z;
+    if (stt.has_zhang_li_stt) {
+        double ux = stt.stt_u_pf * jx;
+        double uy = stt.stt_u_pf * jy;
+        double uz = stt.stt_u_pf * jz;
 
         // Upwind difference for (u.grad)m
-        int nx = ctx.nx, ny = ctx.ny, nz = ctx.nz;
+        int nx = stt.nx, ny = stt.ny, nz = stt.nz;
         int z = idx / (ny * nx);
         int rem = idx - z * ny * nx;
         int y = rem / nx;
@@ -102,40 +103,40 @@ __global__ void llg_rhs_fp64_kernel(
         // x-derivative
         if (ux > 0.0 && x > 0) {
             int prev = idx - 1;
-            dmx_u += ux * (m0 - mx[prev]) / ctx.dx;
-            dmy_u += ux * (m1 - my[prev]) / ctx.dx;
-            dmz_u += ux * (m2 - mz[prev]) / ctx.dx;
+            dmx_u += ux * (m0 - mx[prev]) / stt.dx;
+            dmy_u += ux * (m1 - my[prev]) / stt.dx;
+            dmz_u += ux * (m2 - mz[prev]) / stt.dx;
         } else if (ux < 0.0 && x < nx - 1) {
             int next = idx + 1;
-            dmx_u += ux * (mx[next] - m0) / ctx.dx;
-            dmy_u += ux * (my[next] - m1) / ctx.dx;
-            dmz_u += ux * (mz[next] - m2) / ctx.dx;
+            dmx_u += ux * (mx[next] - m0) / stt.dx;
+            dmy_u += ux * (my[next] - m1) / stt.dx;
+            dmz_u += ux * (mz[next] - m2) / stt.dx;
         }
 
         // y-derivative
         if (uy > 0.0 && y > 0) {
             int prev = idx - nx;
-            dmx_u += uy * (m0 - mx[prev]) / ctx.dy;
-            dmy_u += uy * (m1 - my[prev]) / ctx.dy;
-            dmz_u += uy * (m2 - mz[prev]) / ctx.dy;
+            dmx_u += uy * (m0 - mx[prev]) / stt.dy;
+            dmy_u += uy * (m1 - my[prev]) / stt.dy;
+            dmz_u += uy * (m2 - mz[prev]) / stt.dy;
         } else if (uy < 0.0 && y < ny - 1) {
             int next = idx + nx;
-            dmx_u += uy * (mx[next] - m0) / ctx.dy;
-            dmy_u += uy * (my[next] - m1) / ctx.dy;
-            dmz_u += uy * (mz[next] - m2) / ctx.dy;
+            dmx_u += uy * (mx[next] - m0) / stt.dy;
+            dmy_u += uy * (my[next] - m1) / stt.dy;
+            dmz_u += uy * (mz[next] - m2) / stt.dy;
         }
 
         // z-derivative
         if (uz > 0.0 && z > 0) {
             int prev = idx - nx * ny;
-            dmx_u += uz * (m0 - mx[prev]) / ctx.dz;
-            dmy_u += uz * (m1 - my[prev]) / ctx.dz;
-            dmz_u += uz * (m2 - mz[prev]) / ctx.dz;
+            dmx_u += uz * (m0 - mx[prev]) / stt.dz;
+            dmy_u += uz * (m1 - my[prev]) / stt.dz;
+            dmz_u += uz * (m2 - mz[prev]) / stt.dz;
         } else if (uz < 0.0 && z < nz - 1) {
             int next = idx + nx * ny;
-            dmx_u += uz * (mx[next] - m0) / ctx.dz;
-            dmy_u += uz * (my[next] - m1) / ctx.dz;
-            dmz_u += uz * (mz[next] - m2) / ctx.dz;
+            dmx_u += uz * (mx[next] - m0) / stt.dz;
+            dmy_u += uz * (my[next] - m1) / stt.dz;
+            dmz_u += uz * (mz[next] - m2) / stt.dz;
         }
 
         // m x (u.grad)m
@@ -148,31 +149,24 @@ __global__ void llg_rhs_fp64_kernel(
         double double_cross_y = m2 * cross_x - m0 * cross_z;
         double double_cross_z = m0 * cross_y - m1 * cross_x;
 
-        double beta = ctx.stt_beta;
+        double beta = stt.stt_beta;
         rhs_x += -double_cross_x - beta * cross_x;
         rhs_y += -double_cross_y - beta * cross_y;
         rhs_z += -double_cross_z - beta * cross_z;
     }
     
     // --- Slonczewski STT (CPP/SOT) ---
-    // tau_STT = beta_STT * [ m x (m x p) + epsilon' * m x p ]
-    // where beta_STT = (j * hbar) / (2 * e * mu_0 * d * M_s) * (P * Lambda^2) / ((Lambda^2 + 1) + (Lambda^2 - 1) * (m . p))
-    // ctx.stt_cpp_pf precomputes (j * hbar) / (2 * e * mu_0 * M_s * d)
-    // NOTE: using macroscopic time T = gamma_0 * t, the torque must be scaled by 1/gamma_0
-    //       we omit gamma_0 here because rhs is already in SI units (A/m) and time step uses physical gamma
-    if (ctx.has_slonczewski_stt) {
-        double px = ctx.stt_p_x;
-        double py = ctx.stt_p_y;
-        double pz = ctx.stt_p_z;
+    if (stt.has_slonczewski_stt) {
+        double px = stt.stt_p_x;
+        double py = stt.stt_p_y;
+        double pz = stt.stt_p_z;
         double m_dot_p = m0 * px + m1 * py + m2 * pz;
         
-        double L2 = ctx.stt_lambda * ctx.stt_lambda;
-        double P_val = ctx.stt_degree > 0 ? ctx.stt_degree : 1.0; // fallback to 1.0 if not set but p is set
+        double L2 = stt.stt_lambda * stt.stt_lambda;
+        double P_val = stt.stt_degree > 0 ? stt.stt_degree : 1.0;
         
-        // Spin-transfer efficiency Slonczewski function
         double g = (P_val * L2) / ((L2 + 1.0) + (L2 - 1.0) * m_dot_p);
-        
-        double beta_STT = ctx.stt_cpp_pf * g;
+        double beta_STT = stt.stt_cpp_pf * g;
         
         // m x p
         double m_cross_px = m1 * pz - m2 * py;
@@ -184,9 +178,9 @@ __global__ void llg_rhs_fp64_kernel(
         double double_m_cross_py = m2 * m_cross_px - m0 * m_cross_pz;
         double double_m_cross_pz = m0 * m_cross_py - m1 * m_cross_px;
         
-        rhs_x += beta_STT * (double_m_cross_px + ctx.stt_epsilon_prime * m_cross_px);
-        rhs_y += beta_STT * (double_m_cross_py + ctx.stt_epsilon_prime * m_cross_py);
-        rhs_z += beta_STT * (double_m_cross_pz + ctx.stt_epsilon_prime * m_cross_pz);
+        rhs_x += beta_STT * (double_m_cross_px + stt.stt_epsilon_prime * m_cross_px);
+        rhs_y += beta_STT * (double_m_cross_py + stt.stt_epsilon_prime * m_cross_py);
+        rhs_z += beta_STT * (double_m_cross_pz + stt.stt_epsilon_prime * m_cross_pz);
     }
 
     out_x[idx] = rhs_x;
@@ -303,7 +297,8 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.k1.x),
         static_cast<double*>(ctx.k1.y),
         static_cast<double*>(ctx.k1.z),
-        n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0);
+        n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0,
+        stt_params_from_ctx(ctx));
 
     // --- Step 3: Predictor: m_pred = normalize(m + dt·k1) ---
     // Write predicted state into m (we saved original in tmp)
@@ -340,7 +335,8 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.h_ex.x),  // reuse as k2 storage
         static_cast<double*>(ctx.h_ex.y),
         static_cast<double*>(ctx.h_ex.z),
-        n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0);
+        n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0,
+        stt_params_from_ctx(ctx));
 
     // --- Step 6: Corrector: m_new = normalize(m_orig + 0.5·dt·(k1 + k2)) ---
     heun_corrector_fp64_kernel<<<grid, BLOCK_SIZE>>>(
@@ -398,7 +394,8 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.k1.x),
         static_cast<double*>(ctx.k1.y),
         static_cast<double*>(ctx.k1.z),
-        n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0);
+        n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0,
+        stt_params_from_ctx(ctx));
 
     double max_dm_dt = reduce_max_norm_fp64(ctx, ctx.k1.x, ctx.k1.y, ctx.k1.z, ctx.cell_count);
 

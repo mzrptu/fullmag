@@ -6,7 +6,10 @@ use anyhow::{anyhow, bail, Context, Result};
 
 use crate::args::ScriptCli;
 use crate::control_room::repo_root;
-use crate::types::{LoadedMagnetizationState, PythonProgressCallback, PythonProgressEnvelope, PythonProgressEvent, ScriptExecutionConfig};
+use crate::types::{
+    LoadedMagnetizationState, PythonProgressCallback, PythonProgressEnvelope, PythonProgressEvent,
+    ScriptExecutionConfig,
+};
 
 pub(crate) const PYTHON_PROGRESS_PREFIX: &str = "[fullmag-progress] ";
 const PYTHON_PROGRESS_JSON_PREFIX: &str = "json:";

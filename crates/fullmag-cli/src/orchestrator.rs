@@ -208,6 +208,14 @@ fn refresh_problem_preview_state(
     Ok(())
 }
 
+fn is_control_checkpoint_only(update: &fullmag_runner::StepUpdate) -> bool {
+    update.preview_field.is_none()
+        && !update.scalar_row_due
+        && update.fem_mesh.is_none()
+        && update.magnetization.is_none()
+        && !update.finished
+}
+
 // ── main orchestration entry point ───────────────────────────────────────────
 
 pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
@@ -930,6 +938,9 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             time_offset,
                             update.finished && is_session_final_stage,
                         );
+                        if is_control_checkpoint_only(&adjusted) {
+                            return fullmag_runner::StepAction::Continue;
+                        }
                         let s = &adjusted.stats;
                         let print_step = s.step <= 10
                             || (s.step <= 100 && s.step % 10 == 0)
@@ -1377,6 +1388,12 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     let display_selection = || running_control.display_selection_snapshot();
                     let mut on_step = |update| {
                         let adjusted = offset_step_update(&update, step_offset, time_offset, false);
+                        if is_control_checkpoint_only(&adjusted) {
+                            if let Some(action) = running_control.process_running_control() {
+                                return action;
+                            }
+                            return fullmag_runner::StepAction::Continue;
+                        }
                         let s = &adjusted.stats;
                         let print_step = s.step <= 10
                             || (s.step <= 100 && s.step % 10 == 0)

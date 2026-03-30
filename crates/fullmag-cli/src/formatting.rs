@@ -71,7 +71,11 @@ pub(crate) fn plan_summary_json(plan_summary: &ExecutionPlanSummary) -> serde_js
 
 pub(crate) const MAX_ENGINE_LOG_ENTRIES: usize = 256;
 
-pub(crate) fn push_engine_log(entries: &mut Vec<EngineLogEntry>, level: &str, message: impl Into<String>) {
+pub(crate) fn push_engine_log(
+    entries: &mut Vec<EngineLogEntry>,
+    level: &str,
+    message: impl Into<String>,
+) {
     let timestamp_unix_ms = unix_time_millis().unwrap_or(0);
     entries.push(EngineLogEntry {
         timestamp_unix_ms,

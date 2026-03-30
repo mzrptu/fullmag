@@ -161,6 +161,27 @@ struct Context {
     std::vector<double> h_ani_xyz;
     std::vector<double> h_dmi_xyz;
     std::vector<double> h_eff_xyz;
+
+    // ── Oersted field (cylindrical conductor) ──
+    bool has_oersted_cylinder = false;
+    double oersted_current = 0.0;
+    double oersted_radius = 0.0;
+    std::array<double, 3> oersted_center{0.0, 0.0, 0.0};
+    std::array<double, 3> oersted_axis{0.0, 0.0, 1.0};
+    uint32_t oersted_time_dep_kind = 0;
+    double oersted_time_dep_freq = 0.0;
+    double oersted_time_dep_phase = 0.0;
+    double oersted_time_dep_offset = 0.0;
+    double oersted_time_dep_t_on = 0.0;
+    double oersted_time_dep_t_off = 0.0;
+    std::vector<double> h_oe_xyz;  // Precomputed static Oersted field for I=1A (AOS-3)
+
+    // ── Thermal noise (Brown field) ──
+    double temperature = 0.0;       // Kelvin
+    double thermal_sigma = 0.0;     // Precomputed noise amplitude (A/m)
+    double current_dt = 1e-13;      // Current timestep for thermal sigma computation
+    std::vector<double> h_therm_xyz;  // Per-node thermal field buffer (AOS-3)
+
     TransferGridState transfer_grid{};
 
 #if FULLMAG_HAS_MFEM_STACK
@@ -170,6 +191,7 @@ struct Context {
     std::vector<double> mfem_h_ex_x;
     std::vector<double> mfem_h_ex_y;
     std::vector<double> mfem_h_ex_z;
+    std::vector<double> mfem_exchange_tmp;
     std::vector<double> mfem_lumped_mass;
 
     int mfem_selected_device_index = -1;

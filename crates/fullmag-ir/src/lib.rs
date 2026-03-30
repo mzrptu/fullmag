@@ -240,6 +240,29 @@ pub enum InitialMagnetizationIR {
     SampledField { values: Vec<[f64; 3]> },
 }
 
+/// Time-dependence envelope for fields and currents.
+///
+/// The effective value at time `t` is: `amplitude(t) = base * f(t)`
+/// where `f(t)` is defined by the variant.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TimeDependenceIR {
+    /// Constant: f(t) = 1
+    Constant,
+    /// Sinusoidal: f(t) = sin(2π·freq·t + phase) + offset
+    Sinusoidal {
+        frequency_hz: f64,
+        #[serde(default)]
+        phase_rad: f64,
+        #[serde(default)]
+        offset: f64,
+    },
+    /// Rectangular pulse: f(t) = 1 for t_on ≤ t < t_off, else 0
+    Pulse { t_on: f64, t_off: f64 },
+    /// Piecewise linear: pairs of (time, value), linearly interpolated
+    PiecewiseLinear { points: Vec<[f64; 2]> },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EnergyTermIR {
@@ -259,6 +282,27 @@ pub enum EnergyTermIR {
     Zeeman {
         #[serde(rename = "B")]
         b: [f64; 3],
+    },
+    /// Oersted field from a cylindrical conductor (STNO / MTJ pillar).
+    ///
+    /// The static spatial profile H_oe(x,y,z) is precomputed on the GPU
+    /// for I = 1 A, then scaled by `current * time_dependence(t)` at each
+    /// RHS evaluation.
+    OerstedCylinder {
+        /// DC current amplitude [A].  Sign determines field chirality.
+        current: f64,
+        /// Cylinder radius [m].
+        radius: f64,
+        /// Centre of the cylinder cross-section [m]. Only the two in-plane
+        /// components matter (the third is ignored and taken along `axis`).
+        #[serde(default)]
+        center: [f64; 3],
+        /// Cylinder / current-flow axis (unit vector, default +z).
+        #[serde(default = "default_axis_z")]
+        axis: [f64; 3],
+        /// Optional time-varying envelope for the current.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        time_dependence: Option<TimeDependenceIR>,
     },
 }
 
@@ -732,7 +776,7 @@ pub struct ProblemIR {
     /// Non-adiabaticity parameter for Zhang-Li STT (beta)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_beta: Option<f64>,
-    
+
     /// Fixed spin polarization vector for Slonczewski STT (p)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_spin_polarization: Option<[f64; 3]>,
@@ -742,6 +786,10 @@ pub struct ProblemIR {
     /// Slonczewski secondary spin-transfer term (epsilon')
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_epsilon_prime: Option<f64>,
+
+    /// Temperature in Kelvin for Brown thermal field (sLLG). None or 0 = no thermal noise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -825,7 +873,7 @@ pub struct FdmPlanIR {
     /// Non-adiabaticity parameter for Zhang-Li STT (beta)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_beta: Option<f64>,
-    
+
     /// Fixed spin polarization vector for Slonczewski STT (p)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_spin_polarization: Option<[f64; 3]>,
@@ -835,6 +883,45 @@ pub struct FdmPlanIR {
     /// Slonczewski secondary spin-transfer term (epsilon')
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_epsilon_prime: Option<f64>,
+
+    // ── Oersted field (cylindrical conductor) ──
+    /// Whether to include the Oersted field from a cylindrical conductor.
+    #[serde(default)]
+    pub has_oersted_cylinder: bool,
+    /// DC current [A] for Oersted computation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oersted_current: Option<f64>,
+    /// Cylinder radius [m].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oersted_radius: Option<f64>,
+    /// Cross-section centre [m].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oersted_center: Option<[f64; 3]>,
+    /// Current-flow axis (unit vector).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oersted_axis: Option<[f64; 3]>,
+    /// Time-dependence kind: 0=constant, 1=sinusoidal, 2=pulse
+    #[serde(default)]
+    pub oersted_time_dep_kind: u32,
+    /// Sinusoidal: frequency [Hz]
+    #[serde(default)]
+    pub oersted_time_dep_freq: f64,
+    /// Sinusoidal: phase [rad]
+    #[serde(default)]
+    pub oersted_time_dep_phase: f64,
+    /// Sinusoidal: offset
+    #[serde(default)]
+    pub oersted_time_dep_offset: f64,
+    /// Pulse: t_on [s]
+    #[serde(default)]
+    pub oersted_time_dep_t_on: f64,
+    /// Pulse: t_off [s]
+    #[serde(default)]
+    pub oersted_time_dep_t_off: f64,
+
+    /// Temperature in Kelvin for Brown thermal field (sLLG). None or 0 = no thermal noise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
 }
 
 /// Sub-cell boundary geometry arrays computed from SDF during planning.
@@ -923,7 +1010,7 @@ pub struct FemPlanIR {
     /// Non-adiabaticity parameter for Zhang-Li STT (beta)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_beta: Option<f64>,
-    
+
     /// Fixed spin polarization vector for Slonczewski STT (p)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_spin_polarization: Option<[f64; 3]>,
@@ -933,6 +1020,30 @@ pub struct FemPlanIR {
     /// Slonczewski secondary spin-transfer term (epsilon')
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_epsilon_prime: Option<f64>,
+
+    /// Oersted field from cylindrical conductor
+    #[serde(default)]
+    pub has_oersted_cylinder: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oersted_current: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oersted_radius: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oersted_center: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oersted_axis: Option<[f64; 3]>,
+    #[serde(default)]
+    pub oersted_time_dep_kind: u32,
+    #[serde(default)]
+    pub oersted_time_dep_freq: f64,
+    #[serde(default)]
+    pub oersted_time_dep_phase: f64,
+    #[serde(default)]
+    pub oersted_time_dep_offset: f64,
+    #[serde(default)]
+    pub oersted_time_dep_t_on: f64,
+    #[serde(default)]
+    pub oersted_time_dep_t_off: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1033,9 +1144,14 @@ impl ProblemIR {
                 cubic_anisotropy_kc3: None,
                 cubic_anisotropy_axis1: None,
                 cubic_anisotropy_axis2: None,
-                ms_field: None, a_field: None, alpha_field: None,
-                ku_field: None, ku2_field: None,
-                kc1_field: None, kc2_field: None, kc3_field: None,
+                ms_field: None,
+                a_field: None,
+                alpha_field: None,
+                ku_field: None,
+                ku2_field: None,
+                kc1_field: None,
+                kc2_field: None,
+                kc3_field: None,
             }],
             magnets: vec![MagnetIR {
                 name: "strip".to_string(),
@@ -1096,6 +1212,7 @@ impl ProblemIR {
             stt_spin_polarization: None,
             stt_lambda: None,
             stt_epsilon_prime: None,
+            temperature: None,
         }
     }
 
@@ -1255,8 +1372,7 @@ impl ProblemIR {
                             | OutputIR::DispersionCurve { .. }
                     ) {
                         errors.push(
-                            "relaxation outputs must be field/scalar/snapshot requests"
-                                .to_string(),
+                            "relaxation outputs must be field/scalar/snapshot requests".to_string(),
                         );
                     }
                 }
@@ -1297,8 +1413,7 @@ impl ProblemIR {
                 if let Some(KSamplingIR::Single { k_vector }) = k_sampling {
                     if !k_vector.iter().all(|value| value.is_finite()) {
                         errors.push(
-                            "eigenmodes.k_sampling.k_vector must contain finite values"
-                                .to_string(),
+                            "eigenmodes.k_sampling.k_vector must contain finite values".to_string(),
                         );
                     }
                 }
@@ -1653,6 +1768,10 @@ impl RelaxationAlgorithmIR {
     }
 }
 
+fn default_axis_z() -> [f64; 3] {
+    [0.0, 0.0, 1.0]
+}
+
 fn validate_unique_names<'a>(
     names: impl Iterator<Item = &'a str>,
     label: &str,
@@ -1874,6 +1993,24 @@ mod tests {
                 boundary_correction: None,
                 boundary_geometry: None,
                 inter_region_exchange: vec![],
+                current_density: None,
+                stt_degree: None,
+                stt_beta: None,
+                stt_spin_polarization: None,
+                stt_lambda: None,
+                stt_epsilon_prime: None,
+                has_oersted_cylinder: false,
+                oersted_current: None,
+                oersted_radius: None,
+                oersted_center: None,
+                oersted_axis: None,
+                oersted_time_dep_kind: 0,
+                oersted_time_dep_freq: 0.0,
+                oersted_time_dep_phase: 0.0,
+                oersted_time_dep_offset: 0.0,
+                oersted_time_dep_t_on: 0.0,
+                oersted_time_dep_t_off: 0.0,
+                temperature: None,
             }),
             output_plan: OutputPlanIR {
                 outputs: vec![OutputIR::Field {

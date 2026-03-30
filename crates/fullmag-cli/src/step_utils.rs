@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Result};
 use fullmag_ir::{BackendPlanIR, ProblemIR};
 
-use crate::live_workspace::LocalLiveWorkspace;
-use crate::types::{LiveStateManifest, LiveStepView, ResolvedScriptStage, RunManifest, ScriptExecutionConfig};
 use crate::formatting::unix_time_millis;
+use crate::live_workspace::LocalLiveWorkspace;
+use crate::types::{
+    LiveStateManifest, LiveStepView, ResolvedScriptStage, RunManifest, ScriptExecutionConfig,
+};
 
 pub(crate) fn emit_initial_state_warnings(
     live_workspace: Option<&LocalLiveWorkspace>,
@@ -72,7 +74,9 @@ pub(crate) fn flatten_magnetization(values: &[[f64; 3]]) -> Vec<f64> {
         .collect()
 }
 
-pub(crate) fn live_state_manifest_from_update(update: &fullmag_runner::StepUpdate) -> LiveStateManifest {
+pub(crate) fn live_state_manifest_from_update(
+    update: &fullmag_runner::StepUpdate,
+) -> LiveStateManifest {
     LiveStateManifest {
         status: if update.finished {
             "completed".to_string()
@@ -259,7 +263,10 @@ pub(crate) fn final_stage_step_update(
     })
 }
 
-pub(crate) fn resolve_script_until_seconds(ir: &ProblemIR, default_until_seconds: Option<f64>) -> Result<f64> {
+pub(crate) fn resolve_script_until_seconds(
+    ir: &ProblemIR,
+    default_until_seconds: Option<f64>,
+) -> Result<f64> {
     if let Some(until_seconds) = default_until_seconds {
         return Ok(until_seconds);
     }
@@ -284,7 +291,9 @@ pub(crate) fn resolve_script_until_seconds(ir: &ProblemIR, default_until_seconds
     }
 }
 
-pub(crate) fn materialize_script_stages(config: ScriptExecutionConfig) -> Result<Vec<ResolvedScriptStage>> {
+pub(crate) fn materialize_script_stages(
+    config: ScriptExecutionConfig,
+) -> Result<Vec<ResolvedScriptStage>> {
     let ScriptExecutionConfig {
         mut ir,
         shared_geometry_assets,
@@ -399,26 +408,35 @@ pub(crate) fn build_interactive_command_stage(
         "close" | "stop" => Ok(None),
         "pause" => Ok(None),
         "run" => {
-            let until_seconds = command
-                .until_seconds
-                .ok_or_else(|| anyhow::anyhow!("interactive 'run' command requires until_seconds"))?;
+            let until_seconds = command.until_seconds.ok_or_else(|| {
+                anyhow::anyhow!("interactive 'run' command requires until_seconds")
+            })?;
             if until_seconds <= 0.0 {
                 anyhow::bail!("interactive 'run' command requires positive until_seconds");
             }
 
             let mut ir = base_problem.clone();
             let mut dynamics = ir.study.dynamics().clone();
-            let fullmag_ir::DynamicsIR::Llg { ref mut integrator, ref mut fixed_timestep, .. } = dynamics;
+            let fullmag_ir::DynamicsIR::Llg {
+                ref mut integrator,
+                ref mut fixed_timestep,
+                ..
+            } = dynamics;
             if let Some(ref int_str) = command.integrator {
                 if let Ok(parsed_integrator) = serde_json::from_value(serde_json::json!(int_str)) {
                     *integrator = parsed_integrator;
                 } else {
-                    eprintln!("[fullmag] warning: failed to parse integrator '{}'", int_str);
+                    eprintln!(
+                        "[fullmag] warning: failed to parse integrator '{}'",
+                        int_str
+                    );
                 }
             }
             if let Some(ft) = command.fixed_timestep {
                 *fixed_timestep = Some(ft);
-            } else if command.integrator.as_deref() == Some("rk45") || command.integrator.as_deref() == Some("rk23") {
+            } else if command.integrator.as_deref() == Some("rk45")
+                || command.integrator.as_deref() == Some("rk23")
+            {
                 *fixed_timestep = None;
             }
             let sampling = ir.study.sampling().clone();
@@ -444,7 +462,9 @@ pub(crate) fn build_interactive_command_stage(
                 }
             }
 
-            let algorithm = command.relax_algorithm.as_deref()
+            let algorithm = command
+                .relax_algorithm
+                .as_deref()
                 .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
                 .unwrap_or(fullmag_ir::RelaxationAlgorithmIR::LlgOverdamped);
 

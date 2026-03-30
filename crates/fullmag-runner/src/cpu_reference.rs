@@ -12,6 +12,7 @@ use fullmag_ir::{
 };
 
 use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
+use crate::interactive_runtime::{display_is_global_scalar, display_refresh_due};
 use crate::preview::{build_grid_preview_field, flatten_vectors, select_observables};
 use crate::relaxation::{
     execute_nonlinear_cg, execute_projected_gradient_bb, llg_overdamped_uses_pure_damping,
@@ -30,8 +31,6 @@ use crate::types::{
 };
 
 use std::time::Instant;
-
-
 
 pub(crate) fn snapshot_preview(
     plan: &FdmPlanIR,
@@ -122,7 +121,7 @@ pub(crate) fn build_snapshot_problem_and_state(
         });
     }
 
-    let problem = ExchangeLlgProblem::with_terms_and_mask(
+    let mut problem = ExchangeLlgProblem::with_terms_and_mask(
         grid,
         cell_size,
         material,
@@ -137,6 +136,11 @@ pub(crate) fn build_snapshot_problem_and_state(
     .map_err(|e| RunError {
         message: format!("Problem construction: {}", e),
     })?;
+    // Set thermal noise parameters
+    problem.temperature = plan.temperature.unwrap_or(0.0);
+    if let Some(dt) = plan.fixed_timestep {
+        problem.thermal_dt = dt;
+    }
     let state = problem
         .new_state(plan.initial_magnetization.clone())
         .map_err(|e| RunError {
@@ -370,7 +374,49 @@ pub(crate) fn execute_reference_fdm(
         ));
     } else {
         // LLG overdamped (or no relaxation): existing time-stepping loop
+        let mut current_observables = observe_state(&problem, &state)?;
+        let mut current_stats =
+            make_step_stats(step_count, state.time_seconds, 0.0, 0, &current_observables);
         while state.time_seconds < until_seconds {
+            if let Some(live) = live.as_mut() {
+                if let Some(display_selection) = live.display_selection.map(|get| get()) {
+                    let preview_due = display_refresh_due(
+                        last_preview_revision,
+                        &display_selection,
+                        current_stats.step,
+                    );
+                    let preview_targets_global_scalar =
+                        display_is_global_scalar(&display_selection);
+                    let preview_field = if preview_due && !preview_targets_global_scalar {
+                        let request = display_selection.preview_request();
+                        Some(build_grid_preview_field(
+                            &request,
+                            select_observables(&current_observables, &request.quantity),
+                            live.grid,
+                            plan.active_mask.as_deref(),
+                        ))
+                    } else {
+                        None
+                    };
+                    let action = (live.on_step)(StepUpdate {
+                        stats: current_stats.clone(),
+                        scalar_row_due: preview_due && preview_targets_global_scalar,
+                        grid: live.grid,
+                        fem_mesh: None,
+                        magnetization: None,
+                        preview_field,
+                        finished: false,
+                    });
+                    if preview_due {
+                        last_preview_revision = Some(display_selection.revision);
+                    }
+                    if action == StepAction::Stop {
+                        cancelled = true;
+                        break;
+                    }
+                }
+            }
+
             let dt_step = dt.min(until_seconds - state.time_seconds);
             let wall_start = Instant::now();
             let report = problem
@@ -403,6 +449,7 @@ pub(crate) fn execute_reference_fdm(
                 wall_time_ns: wall_elapsed,
                 ..StepStats::default()
             };
+            current_stats = latest_stats.clone();
 
             if !default_scalar_trace || !field_schedules.is_empty() {
                 record_due_outputs(
@@ -420,27 +467,27 @@ pub(crate) fn execute_reference_fdm(
 
             if let Some(live) = live.as_mut() {
                 let observables = observe_state(&problem, &state)?;
+                current_observables = observables.clone();
                 let emit_every = live.field_every_n.max(1);
                 let display_selection = live.display_selection.map(|get| get());
                 let preview_due = display_selection
                     .as_ref()
                     .map(|selection| {
-                        let preview_emit_every = u64::from(selection.selection.every_n.max(1));
-                        last_preview_revision != Some(selection.revision)
-                            || step_count <= 1
-                            || step_count % preview_emit_every == 0
+                        display_refresh_due(last_preview_revision, selection, step_count)
                     })
                     .unwrap_or(false);
+                let preview_targets_global_scalar = display_selection
+                    .as_ref()
+                    .is_some_and(display_is_global_scalar);
                 let magnetization =
                     if live.display_selection.is_none() && step_count % emit_every == 0 {
                         Some(flatten_vectors(&observables.magnetization))
                     } else {
                         None
                     };
-                let preview_field = if preview_due {
+                let preview_field = if preview_due && !preview_targets_global_scalar {
                     let selection = display_selection.as_ref().expect("checked preview_due");
                     let request = selection.preview_request();
-                    last_preview_revision = Some(selection.revision);
                     Some(build_grid_preview_field(
                         &request,
                         select_observables(&observables, &request.quantity),
@@ -450,7 +497,8 @@ pub(crate) fn execute_reference_fdm(
                 } else {
                     None
                 };
-                let due_scalar_row = scalar_row_due(&scalar_schedules, state.time_seconds);
+                let due_scalar_row = scalar_row_due(&scalar_schedules, state.time_seconds)
+                    || (preview_due && preview_targets_global_scalar);
                 let mut update_stats = make_step_stats(
                     step_count,
                     state.time_seconds,
@@ -470,6 +518,14 @@ pub(crate) fn execute_reference_fdm(
                     preview_field,
                     finished: false,
                 });
+                if preview_due {
+                    last_preview_revision = Some(
+                        display_selection
+                            .as_ref()
+                            .expect("checked preview_due")
+                            .revision,
+                    );
+                }
                 if action == StepAction::Stop {
                     cancelled = true;
                 }
@@ -788,6 +844,24 @@ mod tests {
             enable_exchange: true,
             enable_demag: false,
             external_field: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
+            temperature: None,
         }
     }
 
@@ -822,13 +896,32 @@ mod tests {
             boundary_correction: None,
             boundary_geometry: None,
             inter_region_exchange: vec![],
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
+            temperature: None,
         }
     }
 
     #[test]
     fn uniform_relaxation_produces_stable_energy() {
         let plan = make_test_plan();
-        let result = execute_reference_fdm(&plan, 1e-12, &[], None, None).expect("run should succeed");
+        let result =
+            execute_reference_fdm(&plan, 1e-12, &[], None, None).expect("run should succeed");
 
         assert_eq!(result.result.status, RunStatus::Completed);
         assert!(!result.result.steps.is_empty());
@@ -850,7 +943,8 @@ mod tests {
             ..make_test_plan()
         };
 
-        let result = execute_reference_fdm(&plan, 5e-12, &[], None, None).expect("run should succeed");
+        let result =
+            execute_reference_fdm(&plan, 5e-12, &[], None, None).expect("run should succeed");
 
         assert_eq!(result.result.status, RunStatus::Completed);
         let first_energy = result.result.steps.first().unwrap().e_ex;
@@ -879,10 +973,11 @@ mod tests {
             ..make_test_plan()
         };
 
-        let base_result =
-            execute_reference_fdm(&base_plan, 1e-14, &[], None, None).expect("base run should succeed");
-        let stronger_result = execute_reference_fdm(&stronger_exchange_plan, 1e-14, &[], None, None)
-            .expect("scaled run should succeed");
+        let base_result = execute_reference_fdm(&base_plan, 1e-14, &[], None, None)
+            .expect("base run should succeed");
+        let stronger_result =
+            execute_reference_fdm(&stronger_exchange_plan, 1e-14, &[], None, None)
+                .expect("scaled run should succeed");
 
         let base_initial = base_result.result.steps.first().unwrap().e_ex;
         let stronger_initial = stronger_result.result.steps.first().unwrap().e_ex;
@@ -958,7 +1053,8 @@ mod tests {
             ..make_test_plan()
         };
 
-        let executed = execute_reference_fdm(&plan, 1e-14, &[], None, None).expect("run should succeed");
+        let executed =
+            execute_reference_fdm(&plan, 1e-14, &[], None, None).expect("run should succeed");
         let stats = executed.result.steps.first().expect("scalar trace");
 
         assert!(stats.e_demag.is_finite());
@@ -1017,8 +1113,8 @@ mod tests {
             },
         ];
 
-        let executed =
-            execute_reference_fdm(&plan, 2e-13, &outputs, None, None).expect("masked run should succeed");
+        let executed = execute_reference_fdm(&plan, 2e-13, &outputs, None, None)
+            .expect("masked run should succeed");
 
         let is_zero = |vector: [f64; 3]| vector.iter().all(|value| value.abs() <= 1e-12);
 
@@ -1058,8 +1154,8 @@ mod tests {
             ..make_test_plan()
         };
 
-        let executed =
-            execute_reference_fdm(&plan, 1e-9, &[], None, None).expect("relaxation run should succeed");
+        let executed = execute_reference_fdm(&plan, 1e-9, &[], None, None)
+            .expect("relaxation run should succeed");
 
         assert!(executed.result.steps.len() <= 2);
         let final_time = executed.result.steps.last().expect("final stats").time;
@@ -1072,7 +1168,8 @@ mod tests {
     #[test]
     fn llg_overdamped_relaxation_uses_pure_damping_rhs() {
         let plan = make_relaxation_precession_test_plan();
-        let executed = execute_reference_fdm(&plan, 1e-12, &[], None, None).expect("relaxation should succeed");
+        let executed = execute_reference_fdm(&plan, 1e-12, &[], None, None)
+            .expect("relaxation should succeed");
         let final_m = executed.result.final_magnetization[0];
 
         assert!(
@@ -1099,8 +1196,8 @@ mod tests {
             ..make_test_plan()
         };
 
-        let executed =
-            execute_reference_fdm(&plan, 1e-9, &[], None, None).expect("BB relaxation should succeed");
+        let executed = execute_reference_fdm(&plan, 1e-9, &[], None, None)
+            .expect("BB relaxation should succeed");
         assert_eq!(executed.result.status, RunStatus::Completed);
         assert!(!executed.result.steps.is_empty());
     }
@@ -1117,8 +1214,8 @@ mod tests {
             ..make_test_plan()
         };
 
-        let executed =
-            execute_reference_fdm(&plan, 1e-9, &[], None, None).expect("NCG relaxation should succeed");
+        let executed = execute_reference_fdm(&plan, 1e-9, &[], None, None)
+            .expect("NCG relaxation should succeed");
         assert_eq!(executed.result.status, RunStatus::Completed);
         assert!(!executed.result.steps.is_empty());
     }
@@ -1137,8 +1234,8 @@ mod tests {
             ..make_test_plan()
         };
 
-        let executed =
-            execute_reference_fdm(&plan, 1e-9, &[], None, None).expect("BB relaxation should succeed");
+        let executed = execute_reference_fdm(&plan, 1e-9, &[], None, None)
+            .expect("BB relaxation should succeed");
         assert!(
             executed.result.steps.len() >= 2,
             "should have initial + final stats"
@@ -1167,8 +1264,8 @@ mod tests {
             ..make_test_plan()
         };
 
-        let executed =
-            execute_reference_fdm(&plan, 1e-9, &[], None, None).expect("NCG relaxation should succeed");
+        let executed = execute_reference_fdm(&plan, 1e-9, &[], None, None)
+            .expect("NCG relaxation should succeed");
         assert!(
             executed.result.steps.len() >= 2,
             "should have initial + final stats"
