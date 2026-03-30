@@ -9,6 +9,7 @@ import StatusBar from "../shell/StatusBar";
 import ColorLegend from "../preview/ColorLegend";
 import RunSidebar from "./control-room/RunSidebar";
 import { ViewportBar, ViewportCanvasArea } from "./control-room/ViewportPanels";
+import WorkspaceControlStrip from "./control-room/WorkspaceControlStrip";
 import FullmagLogo from "../brand/FullmagLogo";
 import {
   ControlRoomProvider,
@@ -21,7 +22,6 @@ import {
   fmtStepValue,
 } from "./control-room/shared";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
-import { cn } from "@/lib/utils";
 
 /* ── Inner shell (consumes context) ── */
 
@@ -86,22 +86,6 @@ function ControlRoomShell() {
     </>
   );
 
-  const canRun =
-    ctx.interactiveEnabled &&
-    (ctx.awaitingCommand || ctx.workspaceStatus === "paused") &&
-    !ctx.commandBusy;
-  const canRelax = ctx.interactiveEnabled && ctx.awaitingCommand && !ctx.commandBusy;
-  const canPause = ctx.interactiveEnabled && ctx.workspaceStatus === "running" && !ctx.commandBusy;
-  const canStop =
-    ctx.interactiveEnabled &&
-    (ctx.workspaceStatus === "running" || ctx.workspaceStatus === "paused") &&
-    !ctx.commandBusy;
-  const primaryRunAction = ctx.workspaceStatus === "paused" ? "resume" : "run";
-  const primaryRunLabel = ctx.workspaceStatus === "paused" ? "Resume" : "Run";
-
-
-
-
   return (
     <div className="fixed inset-0 flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
       <TitleBar
@@ -111,24 +95,25 @@ function ControlRoomShell() {
         status={ctx.workspaceStatus}
         connection={ctx.connection}
         interactiveEnabled={ctx.interactiveEnabled}
-        runEnabled={canRun}
-        relaxEnabled={canRelax}
-        pauseEnabled={canPause}
-        stopEnabled={canStop}
-        runAction={primaryRunAction}
-        runLabel={primaryRunLabel}
+        runEnabled={ctx.canRunCommand}
+        relaxEnabled={ctx.canRelaxCommand}
+        pauseEnabled={ctx.canPauseCommand}
+        stopEnabled={ctx.canStopCommand}
+        runAction={ctx.primaryRunAction}
+        runLabel={ctx.primaryRunLabel}
+        commandBusy={ctx.commandBusy}
         commandMessage={ctx.commandMessage}
         onSimAction={ctx.handleSimulationAction}
       />
       <MenuBar
         viewMode={ctx.effectiveViewMode}
         interactiveEnabled={ctx.interactiveEnabled}
-        canRun={canRun}
-        canRelax={canRelax}
-        canPause={canPause}
-        canStop={canStop}
-        runAction={primaryRunAction}
-        runLabel={primaryRunLabel}
+        canRun={ctx.canRunCommand}
+        canRelax={ctx.canRelaxCommand}
+        canPause={ctx.canPauseCommand}
+        canStop={ctx.canStopCommand}
+        runAction={ctx.primaryRunAction}
+        runLabel={ctx.primaryRunLabel}
         onViewChange={ctx.handleViewModeChange}
         onSidebarToggle={() => ctx.setSidebarCollapsed((v) => !v)}
         onSimAction={ctx.handleSimulationAction}
@@ -139,19 +124,24 @@ function ControlRoomShell() {
         solverRunning={ctx.workspaceStatus === "running"}
         sidebarVisible={!ctx.sidebarCollapsed}
         selectedNodeId={ctx.selectedSidebarNodeId}
-        canRun={canRun}
-        canRelax={canRelax}
-        canPause={canPause}
-        canStop={canStop}
-        runAction={primaryRunAction}
-        runLabel={primaryRunLabel}
+        canRun={ctx.canRunCommand}
+        canRelax={ctx.canRelaxCommand}
+        canPause={ctx.canPauseCommand}
+        canStop={ctx.canStopCommand}
+        runAction={ctx.primaryRunAction}
+        runLabel={ctx.primaryRunLabel}
         onViewChange={ctx.handleViewModeChange}
         onSidebarToggle={() => ctx.setSidebarCollapsed((v) => !v)}
         onSimAction={ctx.handleSimulationAction}
+        quickPreviewTargets={ctx.quickPreviewTargets}
+        selectedQuantity={ctx.requestedPreviewQuantity}
+        previewPending={ctx.previewBusy}
+        onQuickPreviewSelect={ctx.requestPreviewQuantity}
         onCapture={ctx.handleCapture}
         onExport={ctx.handleExport}
         onStateExport={() => void ctx.handleStateExport("json")}
       />
+      <WorkspaceControlStrip />
       <PanelGroup
         orientation="horizontal"
         className="flex flex-row flex-1 min-h-0 min-w-0 overflow-hidden"
@@ -242,6 +232,18 @@ function ControlRoomShell() {
         activityDetail={ctx.activity.detail}
         progressMode={ctx.activity.progressMode}
         progressValue={ctx.activity.progressValue}
+        commandMessage={ctx.commandMessage}
+        commandState={ctx.activeCommandState}
+        displayLabel={ctx.selectedQuantityLabel}
+        displayDetail={
+          ctx.selectedScalarValue != null
+            ? `${ctx.selectedScalarValue.toExponential(4)} ${ctx.selectedQuantityUnit ?? ""}`.trim()
+            : ctx.isVectorQuantity
+              ? ctx.requestedPreviewComponent
+              : "scalar"
+        }
+        previewPending={ctx.previewBusy}
+        runtimeCanAcceptCommands={ctx.runtimeCanAcceptCommands}
         nodeCount={ctx.isFemBackend && ctx.femMesh
           ? `${ctx.femMesh.nodes.length.toLocaleString()} nodes`
           : ctx.totalCells && ctx.totalCells > 0

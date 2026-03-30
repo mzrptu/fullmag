@@ -87,6 +87,32 @@ export function ViewportBar() {
               ))}
             </SelectContent>
           </Select>
+          {ctx.quickPreviewTargets.length > 0 && (
+            <div className="flex max-w-full flex-wrap items-center gap-1">
+              {ctx.quickPreviewTargets.slice(0, 6).map((target) => {
+                const active = ctx.requestedPreviewQuantity === target.id;
+                return (
+                  <button
+                    key={target.id}
+                    type="button"
+                    className={cn(
+                      "rounded-md border px-2 py-1 text-[0.62rem] font-bold uppercase tracking-[0.15em] transition-colors",
+                      active
+                        ? "border-primary/30 bg-primary/12 text-primary"
+                        : "border-border/40 bg-card/20 text-muted-foreground hover:bg-card/50 hover:text-foreground",
+                      ctx.previewBusy && active && "animate-pulse",
+                      (!target.available || ctx.previewBusy) && !active && "opacity-45",
+                    )}
+                    onClick={() => ctx.requestPreviewQuantity(target.id)}
+                    disabled={!target.available || ctx.previewBusy}
+                    title={`Switch preview to ${target.shortLabel}`}
+                  >
+                    {target.shortLabel}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {ctx.isVectorQuantity && (
             <>

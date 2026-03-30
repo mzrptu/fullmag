@@ -72,49 +72,74 @@ export default function ModeSpectrumPlot({
   onSelectMode,
 }: ModeSpectrumPlotProps) {
   const plotData = useMemo(() => {
-    const markerX = modes.map((mode) => mode.index);
-    const markerY = modes.map((mode) => toFrequencyGHz(mode.frequency_hz));
-    const customData = modes.map((mode) => mode.index);
+    const normalStemX: (number | null)[] = [];
+    const normalStemY: (number | null)[] = [];
+    const selStemX: (number | null)[] = [];
+    const selStemY: (number | null)[] = [];
 
-    const stemX: Array<number | null> = [];
-    const stemY: Array<number | null> = [];
     for (const mode of modes) {
-      stemX.push(mode.index, mode.index, null);
-      stemY.push(0, toFrequencyGHz(mode.frequency_hz), null);
+      const fGHz = toFrequencyGHz(mode.frequency_hz);
+      if (mode.index === selectedMode) {
+        selStemX.push(mode.index, mode.index, null);
+        selStemY.push(0, fGHz, null);
+      } else {
+        normalStemX.push(mode.index, mode.index, null);
+        normalStemY.push(0, fGHz, null);
+      }
     }
 
+    const markerX = modes.map((m) => m.index);
+    const markerY = modes.map((m) => toFrequencyGHz(m.frequency_hz));
+    const customData = modes.map((m) => m.index);
+    const hoverText = modes.map(
+      (m) =>
+        `<b>Mode ${m.index}</b>  ${(m.frequency_hz / 1e9).toFixed(4)} GHz` +
+        `<br>pol: ${m.dominant_polarization}` +
+        `<br>max amp: ${m.max_amplitude.toExponential(2)}` +
+        (m.k_vector
+          ? `<br>k: (${m.k_vector.map((v) => v.toExponential(1)).join(", ")})`
+          : "<br>k: Γ"),
+    );
+
     const traces: Partial<Plotly.PlotData>[] = [
+      // Normal stem lines
       {
-        x: stemX,
-        y: stemY,
+        x: normalStemX,
+        y: normalStemY,
         type: "scatter",
         mode: "lines",
         hoverinfo: "skip",
-        line: {
-          color: SERIES.stem,
-          width: 1.2,
-        },
+        line: { color: C.stem, width: 1 },
         showlegend: false,
       },
+      // Selected stem (highlighted)
+      {
+        x: selStemX,
+        y: selStemY,
+        type: "scatter",
+        mode: "lines",
+        hoverinfo: "skip",
+        line: { color: C.stemSel, width: 2.5 },
+        showlegend: false,
+      },
+      // All mode markers
       {
         x: markerX,
         y: markerY,
         type: "scatter",
         mode: "markers",
         name: "Modes",
-        customdata: customData,
+        customdata: customData as unknown as Plotly.Datum[],
+        text: hoverText,
+        hovertemplate: "%{text}<extra></extra>",
         marker: {
-          color: markerX.map((modeIndex) =>
-            modeIndex === selectedMode ? SERIES.selected : SERIES.markers,
-          ),
-          size: markerX.map((modeIndex) => (modeIndex === selectedMode ? 13 : 10)),
-          line: {
-            color: "rgba(10, 15, 30, 0.65)",
-            width: 1.2,
-          },
+          color: modes.map((m) =>
+            m.index === selectedMode ? C.sel : polColor(m.dominant_polarization),
+          ) as unknown as string,
+          size: modes.map((m) => (m.index === selectedMode ? 14 : 9)),
+          line: { color: "rgba(8,12,24,0.5)", width: 1 },
+          symbol: "circle",
         },
-        hovertemplate:
-          "mode %{customdata}<br>f=%{y:.4f} GHz<extra>Eigen spectrum</extra>",
         showlegend: false,
       },
     ];
@@ -122,47 +147,61 @@ export default function ModeSpectrumPlot({
     return traces;
   }, [modes, selectedMode]);
 
+  const tickVals = modes.length <= 32 ? modes.map((m) => m.index) : undefined;
+
   const layout = useMemo(
     (): Partial<Plotly.Layout> => ({
-      paper_bgcolor: "transparent",
-      plot_bgcolor: "transparent",
-      margin: { l: 64, r: 20, t: 12, b: 54 },
+      paper_bgcolor: C.bg,
+      plot_bgcolor: C.bg,
+      margin: { l: 60, r: 20, t: 36, b: 52 },
       font: {
         family: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
         size: 11,
-        color: SERIES.text,
+        color: C.text,
       },
       xaxis: {
-        title: { text: "Mode index", standoff: 8 },
-        color: SERIES.text,
-        gridcolor: SERIES.grid,
+        title: { text: "Mode index", standoff: 6, font: { size: 10.5 } },
+        color: C.text,
+        gridcolor: C.grid,
         zeroline: false,
-        tickmode: "array",
-        tickvals: modes.map((mode) => mode.index),
+        tickmode: tickVals ? "array" : "auto",
+        tickvals: tickVals,
+        tickfont: { size: 10 },
       },
       yaxis: {
-        title: { text: "Frequency (GHz)", standoff: 8 },
-        color: SERIES.text,
-        gridcolor: SERIES.grid,
+        title: { text: "f (GHz)", standoff: 6, font: { size: 10.5 } },
+        color: C.text,
+        gridcolor: C.grid,
         zeroline: false,
+        rangemode: "nonnegative",
+        tickfont: { size: 10 },
       },
       hovermode: "closest",
       dragmode: "pan",
       hoverlabel: {
-        bgcolor: "rgba(10, 16, 28, 0.95)",
-        bordercolor: "rgba(132, 156, 240, 0.55)",
-        font: {
-          color: "#eef4ff",
-          size: 12,
+        bgcolor: C.hovBg,
+        bordercolor: C.hovBorder,
+        font: { color: "#eef4ff", size: 12 },
+        align: "left",
+      },
+      modebar: { bgcolor: "transparent", color: C.text, activecolor: C.sel },
+      annotations: [
+        ...buildLegendAnnotations(),
+        {
+          x: 1,
+          y: 1.065,
+          xref: "paper",
+          yref: "paper",
+          text: `${modes.length} modes`,
+          showarrow: false,
+          font: { size: 9.5, color: "rgba(190,205,230,0.45)" },
+          xanchor: "right",
+          yanchor: "bottom",
         },
-      },
-      modebar: {
-        bgcolor: "transparent",
-        color: SERIES.text,
-        activecolor: SERIES.selected,
-      },
+      ],
     }),
-    [modes],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [modes.length, tickVals],
   );
 
   const config = useMemo(
@@ -194,9 +233,9 @@ export default function ModeSpectrumPlot({
       className="h-full w-full"
       style={{ width: "100%", height: "100%" }}
       onClick={(event: Readonly<Plotly.PlotMouseEvent>) => {
-        const selected = event.points?.[0]?.customdata;
-        if (typeof selected === "number") {
-          onSelectMode?.(selected);
+        const cd = event.points?.[0]?.customdata;
+        if (typeof cd === "number") {
+          onSelectMode?.(cd);
         }
       }}
     />

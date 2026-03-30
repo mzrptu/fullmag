@@ -19,19 +19,15 @@ interface EigenModeInspectorProps {
   mesh: FemMeshPayload | null;
   mode: EigenModeArtifact | null;
   loading?: boolean;
+  /** When true the component fills its flex parent instead of using fixed rem heights. */
+  compact?: boolean;
 }
 
 function modeFieldLabel(view: ModeFieldView, component: VectorComponent): string {
-  if (view === "amplitude") {
-    return "Mode amplitude";
-  }
-  if (view === "phase") {
-    return "Mode phase";
-  }
+  if (view === "amplitude") return "Mode amplitude";
+  if (view === "phase") return "Mode phase";
   const prefix = view === "real" ? "Re" : "Im";
-  if (component === "magnitude") {
-    return `${prefix}(|m|)`;
-  }
+  if (component === "magnitude") return `${prefix}(|m|)`;
   return `${prefix}(m_${component})`;
 }
 
@@ -52,16 +48,24 @@ function formatGHz(valueHz: number): string {
 }
 
 function formatVec3(value: [number, number, number] | null): string {
-  if (!value) {
-    return "Gamma";
-  }
-  return value.map((entry) => entry.toExponential(2)).join(", ");
+  if (!value) return "Γ";
+  return `(${value.map((v) => v.toExponential(2)).join(", ")})`;
+}
+
+function StatChip({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 rounded-lg border border-border/30 bg-muted/30 px-2.5 py-1.5 min-w-[80px]">
+      <span className="text-[0.58rem] font-bold uppercase tracking-widest text-muted-foreground">{label}</span>
+      <span className="font-mono text-[0.72rem] text-foreground/85 truncate">{value}</span>
+    </div>
+  );
 }
 
 export default function EigenModeInspector({
   mesh,
   mode,
   loading = false,
+  compact = false,
 }: EigenModeInspectorProps) {
   const [fieldView, setFieldView] = useState<ModeFieldView>("amplitude");
   const [vectorComponent, setVectorComponent] = useState<VectorComponent>("magnitude");
@@ -74,23 +78,17 @@ export default function EigenModeInspector({
   }, [mode?.index]);
 
   const meshData = useMemo(() => {
-    if (!mesh || !mode) {
-      return null;
-    }
-
+    if (!mesh || !mode) return null;
     const nodeCount = mesh.nodes.length;
     const zero = zeroArray(nodeCount);
+
     if (fieldView === "amplitude") {
       return {
         nodes: flattenNodes(mesh),
         boundaryFaces: flattenBoundaryFaces(mesh),
         nNodes: nodeCount,
         nElements: mesh.elements.length,
-        fieldData: {
-          x: mode.amplitude,
-          y: zero,
-          z: zero,
-        },
+        fieldData: { x: mode.amplitude, y: zero, z: zero },
       };
     }
     if (fieldView === "phase") {
@@ -99,14 +97,9 @@ export default function EigenModeInspector({
         boundaryFaces: flattenBoundaryFaces(mesh),
         nNodes: nodeCount,
         nElements: mesh.elements.length,
-        fieldData: {
-          x: mode.phase,
-          y: zero,
-          z: zero,
-        },
+        fieldData: { x: mode.phase, y: zero, z: zero },
       };
     }
-
     const source = fieldView === "real" ? mode.real : mode.imag;
     return {
       nodes: flattenNodes(mesh),
@@ -122,10 +115,8 @@ export default function EigenModeInspector({
   }, [fieldView, mesh, mode]);
 
   const maxAmplitude = useMemo(() => {
-    if (!mode) {
-      return 0;
-    }
-    return mode.amplitude.reduce((current, value) => Math.max(current, Math.abs(value)), 0);
+    if (!mode) return 0;
+    return mode.amplitude.reduce((cur, v) => Math.max(cur, Math.abs(v)), 0);
   }, [mode]);
 
   const sliceComponent = fieldView === "amplitude" || fieldView === "phase" ? "x" : vectorComponent;
@@ -135,7 +126,8 @@ export default function EigenModeInspector({
     return (
       <EmptyState
         title="Loading mode field"
-        description="Reading the selected eigenmode artifact and mapping it back onto the FEM mesh."
+        description="Reading the eigenmode artifact from the active session."
+        compact
       />
     );
   }
@@ -144,11 +136,115 @@ export default function EigenModeInspector({
     return (
       <EmptyState
         title="Mode artifact unavailable"
-        description="This run exposes the spectrum, but the selected mode was not exported as a field artifact."
+        description="The spectrum is present but this mode was not exported as a field artifact."
+        compact
       />
     );
   }
 
+  const viewerClass = compact
+    ? "flex-1 min-h-0 min-w-0 overflow-hidden rounded-[14px] border border-border/30 bg-[rgba(3,9,20,0.72)]"
+    : "h-[34rem] overflow-hidden rounded-[18px] border border-[var(--ide-border-subtle)] bg-[rgba(3,9,20,0.72)]";
+
+  if (compact) {
+    // ── Compact layout: fills its flex parent ──────────────────────────────
+    return (
+      <div className="flex flex-col h-full min-h-0 gap-2">
+        {/* Compact header */}
+        <div className="flex flex-wrap items-center gap-2 px-1 shrink-0">
+          <Badge variant="secondary">Mode {mode.index}</Badge>
+          <span className="font-mono text-sm text-foreground/90">{formatGHz(mode.frequency_hz)}</span>
+          <Badge variant="outline">{mode.dominant_polarization}</Badge>
+          <Badge variant="outline">{mode.normalization}</Badge>
+          <div className="flex-1" />
+          <span className="font-mono text-[0.68rem] text-muted-foreground">
+            ω={mode.angular_frequency_rad_per_s.toExponential(2)} rad/s
+          </span>
+        </div>
+
+        {/* Controls bar */}
+        <div className="flex flex-wrap items-end gap-2 shrink-0">
+          <div className="min-w-[13rem]">
+            <SegmentedControl
+              label="Field"
+              value={fieldView}
+              onchange={(v) => setFieldView(v as ModeFieldView)}
+              options={[
+                { value: "real", label: "Re" },
+                { value: "imag", label: "Im" },
+                { value: "amplitude", label: "Amp" },
+                { value: "phase", label: "φ" },
+              ]}
+            />
+          </div>
+          {(fieldView === "real" || fieldView === "imag") && (
+            <div className="min-w-[10rem]">
+              <SelectField
+                label="Component"
+                value={vectorComponent}
+                onchange={(v) => setVectorComponent(v as VectorComponent)}
+                options={[
+                  { value: "magnitude", label: "|m|" },
+                  { value: "x", label: "x" },
+                  { value: "y", label: "y" },
+                  { value: "z", label: "z" },
+                ]}
+              />
+            </div>
+          )}
+          <div className="min-w-[6rem]">
+            <SelectField
+              label="Slice"
+              value={slicePlane}
+              onchange={(v) => setSlicePlane(v as SlicePlane)}
+              options={[
+                { value: "xy", label: "XY" },
+                { value: "xz", label: "XZ" },
+                { value: "yz", label: "YZ" },
+              ]}
+            />
+          </div>
+          <div className="flex flex-col gap-1 min-w-[7rem]">
+            <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
+              Idx {sliceIndex + 1}/25
+            </span>
+            <input
+              type="range" min={0} max={24} step={1} value={sliceIndex}
+              onChange={(e) => setSliceIndex(Number(e.target.value))}
+              className="h-[3px] accent-primary w-full"
+            />
+          </div>
+        </div>
+
+        {/* Two-panel viewer — shares remaining height */}
+        <div className="flex gap-2 flex-1 min-h-0">
+          <div className={`flex-[1.3] ${viewerClass}`}>
+            <FemMeshView3D
+              meshData={meshData}
+              colorField={colorField}
+              fieldLabel={modeFieldLabel(fieldView, vectorComponent)}
+              toolbarMode="hidden"
+              topologyKey={`mode:${mode.index}:${meshData.nNodes}`}
+              showOrientationLegend={false}
+            />
+          </div>
+          <div className={`flex-[1] ${viewerClass} p-1`}>
+            <FemMeshSlice2D
+              meshData={meshData}
+              quantityLabel={modeFieldLabel(fieldView, vectorComponent)}
+              quantityId={fieldView === "phase" ? "phase" : "mode"}
+              component={sliceComponent}
+              plane={slicePlane}
+              sliceIndex={sliceIndex}
+              sliceCount={25}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Full-page layout (original design) ────────────────────────────────────
   return (
     <div className="space-y-4">
       <section className="rounded-[20px] border border-[var(--ide-border-subtle)] bg-[linear-gradient(135deg,rgba(38,65,140,0.22),rgba(11,18,35,0.78))] p-4">
@@ -168,7 +264,7 @@ export default function EigenModeInspector({
               representation and normalization.
             </p>
           </div>
-          <div className="grid gap-2 text-right text-xs text-[var(--ide-text-3)] sm:grid-cols-2">
+          <div className="flex flex-wrap gap-2">
             <StatChip label="omega" value={mode.angular_frequency_rad_per_s.toExponential(3)} />
             <StatChip label="max amp" value={maxAmplitude.toExponential(3)} />
             <StatChip label="k-vector" value={formatVec3(mode.k_vector)} />
@@ -262,15 +358,6 @@ export default function EigenModeInspector({
           </div>
         </div>
       </section>
-    </div>
-  );
-}
-
-function StatChip({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-[rgba(150,170,220,0.18)] bg-[rgba(10,16,28,0.45)] px-3 py-2">
-      <div className="text-[0.68rem] uppercase tracking-[0.08em] text-[var(--ide-text-3)]">{label}</div>
-      <div className="mt-1 font-mono text-[0.82rem] text-[var(--ide-text-1)]">{value}</div>
     </div>
   );
 }

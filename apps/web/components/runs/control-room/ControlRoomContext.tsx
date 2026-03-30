@@ -15,6 +15,7 @@ import { currentLiveApiClient } from "../../../lib/liveApiClient";
 import { useCurrentLiveStream } from "../../../lib/useSessionStream";
 import type {
   ArtifactEntry,
+  CommandStatus,
   DisplaySelection,
   EngineLogEntry,
   FemLiveMesh,
@@ -22,6 +23,7 @@ import type {
   PreviewState,
   QuantityDescriptor,
   RunManifest,
+  RuntimeStatusState,
   ScalarRow,
   ScriptBuilderState,
   SessionManifest,
@@ -138,6 +140,53 @@ function asNumber(value: unknown): number | null {
 
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function sameDisplaySelection(
+  left: DisplaySelection | null | undefined,
+  right: DisplaySelection | null | undefined,
+): boolean {
+  if (!left || !right) return false;
+  return (
+    left.quantity === right.quantity &&
+    left.kind === right.kind &&
+    left.component === right.component &&
+    left.layer === right.layer &&
+    left.all_layers === right.all_layers &&
+    left.x_chosen_size === right.x_chosen_size &&
+    left.y_chosen_size === right.y_chosen_size &&
+    left.every_n === right.every_n &&
+    left.max_points === right.max_points &&
+    left.auto_scale_enabled === right.auto_scale_enabled
+  );
+}
+
+function commandKindLabel(kind: string | null | undefined): string {
+  switch (kind) {
+    case "preview_update":
+      return "Display update";
+    case "preview_refresh":
+      return "Preview refresh";
+    case "run":
+      return "Run";
+    case "relax":
+      return "Relax";
+    case "pause":
+      return "Pause";
+    case "resume":
+      return "Resume";
+    case "stop":
+    case "break":
+      return "Stop";
+    case "solve":
+      return "Compute";
+    case "remesh":
+      return "Remesh";
+    case "save_vtk":
+      return "Export VTK";
+    default:
+      return kind && kind.trim().length > 0 ? kind : "Command";
+  }
 }
 
 function solverSettingsFromBuilder(
@@ -358,6 +407,17 @@ export interface ControlRoomState {
   runtimeEngineLabel: string | null;
   activity: ActivityInfo;
   sessionFooter: SessionFooterData;
+  runtimeStatus: RuntimeStatusState | null;
+  runtimeCanAcceptCommands: boolean;
+  commandStatus: CommandStatus | null;
+  activeCommandKind: string | null;
+  activeCommandState: CommandStatus["state"] | null;
+  canRunCommand: boolean;
+  canRelaxCommand: boolean;
+  canPauseCommand: boolean;
+  canStopCommand: boolean;
+  primaryRunAction: string;
+  primaryRunLabel: string;
 
   /* Effective solver telemetry */
   effectiveStep: number;
@@ -441,6 +501,8 @@ export interface ControlRoomState {
   isVectorQuantity: boolean;
   quickPreviewTargets: QuickPreviewTarget[];
   selectedScalarValue: number | null;
+  selectedQuantityLabel: string;
+  selectedQuantityUnit: string | null;
 
   /* Grid / topology */
   solverGrid: [number, number, number];
@@ -572,14 +634,16 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [meshShowArrows, setMeshShowArrows] = useState(true);
   const [runUntilInput, setRunUntilInput] = useState("1e-12");
   const [selectedSidebarNodeId, setSelectedSidebarNodeId] = useState<string | null>(null);
-  const [commandBusy, setCommandBusy] = useState(false);
-  const [commandMessage, setCommandMessage] = useState<string | null>(null);
+  const [commandPostInFlight, setCommandPostInFlight] = useState(false);
+  const [commandErrorMessage, setCommandErrorMessage] = useState<string | null>(null);
   const [scriptSyncBusy, setScriptSyncBusy] = useState(false);
   const [scriptSyncMessage, setScriptSyncMessage] = useState<string | null>(null);
   const [stateIoBusy, setStateIoBusy] = useState(false);
   const [stateIoMessage, setStateIoMessage] = useState<string | null>(null);
-  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewPostInFlight, setPreviewPostInFlight] = useState(false);
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
+  const [optimisticDisplaySelection, setOptimisticDisplaySelection] =
+    useState<DisplaySelection | null>(null);
   const [meshOptions, setMeshOptions] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
   const [meshQualityData, setMeshQualityData] = useState<MeshQualityData | null>(null);
   const [meshGenerating, setMeshGenerating] = useState(false);
@@ -605,6 +669,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const scriptBuilder = state?.script_builder ?? null;
   const scriptInitialState = scriptBuilder?.initial_state ?? null;
   const runtimeStatus = state?.runtime_status ?? null;
+  const commandStatus = state?.command_status ?? null;
   const scalarRows = state?.scalar_rows ?? EMPTY_SCALAR_ROWS;
   const engineLog = state?.engine_log ?? EMPTY_ENGINE_LOG;
   const quantities = state?.quantities ?? [];
@@ -924,6 +989,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   /* Interactive */
   const interactiveEnabled = session?.interactive_session_requested === true;
   const awaitingCommand = workspaceStatus === "awaiting_command";
+  const runtimeCanAcceptCommands =
+    runtimeStatus?.can_accept_commands ?? interactiveEnabled;
   const interactiveControlsEnabled =
     interactiveEnabled &&
     (awaitingCommand || workspaceStatus === "running" || workspaceStatus === "paused");
@@ -935,6 +1002,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       : null;
   const effectiveViewMode = previewDrivenMode ?? viewMode;
   const requestedDisplaySelection = useMemo<DisplaySelection>(() => {
+    if (optimisticDisplaySelection) {
+      return optimisticDisplaySelection;
+    }
     const quantity =
       displaySelection?.selection.quantity ?? previewConfig?.quantity ?? preview?.quantity ?? "m";
     return {
@@ -978,7 +1048,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         spatialPreview?.auto_scale_enabled ??
         true,
     };
-  }, [displaySelection, kindForQuantity, preview, previewConfig, spatialPreview]);
+  }, [displaySelection, kindForQuantity, optimisticDisplaySelection, preview, previewConfig, spatialPreview]);
   const currentPreviewRevision = displaySelection?.revision ?? previewConfig?.revision ?? null;
   const previewControlsActive = Boolean(displaySelection ?? previewConfig ?? preview);
   const requestedPreviewQuantity = requestedDisplaySelection.quantity;
@@ -1011,6 +1081,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     preview.config_revision !== currentPreviewRevision,
   );
   const previewIsBootstrapStale = Boolean(previewControlsActive && preview && effectiveStep > 0 && preview.source_step === 0);
+  const displaySelectionPending = optimisticDisplaySelection != null;
+  const previewBusy = previewPostInFlight || displaySelectionPending;
   const renderPreview = spatialPreview;
   const activeQuantityId =
     previewControlsActive
@@ -1025,10 +1097,15 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   /* Callbacks */
   const enqueueCommand = useCallback(async (payload: Record<string, unknown>) => {
-    setCommandBusy(true); setCommandMessage(null);
-    try { await liveApi.queueCommand(payload); setCommandMessage(`Queued ${String(payload.kind)}`); }
-    catch (e) { setCommandMessage(e instanceof Error ? e.message : "Failed to queue command"); }
-    finally { setCommandBusy(false); }
+    setCommandPostInFlight(true);
+    setCommandErrorMessage(null);
+    try {
+      await liveApi.queueCommand(payload);
+    } catch (e) {
+      setCommandErrorMessage(e instanceof Error ? e.message : "Failed to queue command");
+    } finally {
+      setCommandPostInFlight(false);
+    }
   }, [liveApi]);
 
   const updatePreview = useCallback(async (path: string, payload: Record<string, unknown> = {}) => {
@@ -1063,16 +1140,24 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         nextSelection.max_points = Number(payload.maxPoints ?? nextSelection.max_points);
         break;
       default:
-        setPreviewBusy(true); setPreviewMessage(null);
+        setPreviewPostInFlight(true);
+        setPreviewMessage(null);
         try { await liveApi.updatePreview(path, payload); }
         catch (e) { setPreviewMessage(e instanceof Error ? e.message : "Failed to update preview"); }
-        finally { setPreviewBusy(false); }
+        finally { setPreviewPostInFlight(false); }
         return;
     }
-    setPreviewBusy(true); setPreviewMessage(null);
-    try { await liveApi.updateDisplaySelection(nextSelection as unknown as Record<string, unknown>); }
-    catch (e) { setPreviewMessage(e instanceof Error ? e.message : "Failed to update preview"); }
-    finally { setPreviewBusy(false); }
+    setOptimisticDisplaySelection(nextSelection);
+    setPreviewPostInFlight(true);
+    setPreviewMessage(`Switching to ${nextSelection.quantity}`);
+    try {
+      await liveApi.updateDisplaySelection(nextSelection as unknown as Record<string, unknown>);
+    }
+    catch (e) {
+      setOptimisticDisplaySelection(null);
+      setPreviewMessage(e instanceof Error ? e.message : "Failed to update preview");
+    }
+    finally { setPreviewPostInFlight(false); }
   }, [kindForQuantity, liveApi, requestedDisplaySelection]);
 
   const handleMeshGenerate = useCallback(async () => {
@@ -1090,7 +1175,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
           per_element_quality: meshOptions.perElementQuality,
         },
       });
-    } catch (err) { setCommandMessage(err instanceof Error ? err.message : "Mesh generation failed"); }
+    } catch (err) { setCommandErrorMessage(err instanceof Error ? err.message : "Mesh generation failed"); }
     finally { setMeshGenerating(false); }
   }, [meshOptions, liveApi]);
 
@@ -1126,7 +1211,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       }
       const untilSeconds = parseOptionalNumber(runUntilInput);
       if (untilSeconds == null || untilSeconds <= 0) {
-        setCommandMessage("Run requires a positive stop time");
+        setCommandErrorMessage("Run requires a positive stop time");
         return;
       }
       void enqueueCommand({
@@ -1141,7 +1226,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     if (action === "relax") {
       const maxSteps = parseOptionalNumber(solverSettings.maxRelaxSteps);
       if (maxSteps == null || maxSteps <= 0) {
-        setCommandMessage("Relax requires a positive max step count");
+        setCommandErrorMessage("Relax requires a positive max step count");
         return;
       }
       void enqueueCommand({
@@ -1312,6 +1397,72 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     }
   }, [liveApi, localBuilderDraft, localBuilderSignature, session?.script_path]);
 
+  useEffect(() => {
+    if (!optimisticDisplaySelection) {
+      return;
+    }
+    const committedSelection = displaySelection?.selection ?? null;
+    if (sameDisplaySelection(optimisticDisplaySelection, committedSelection)) {
+      setOptimisticDisplaySelection(null);
+      setPreviewMessage(null);
+    }
+  }, [displaySelection, optimisticDisplaySelection]);
+
+  useEffect(() => {
+    if (commandStatus?.state === "rejected" && optimisticDisplaySelection) {
+      setOptimisticDisplaySelection(null);
+    }
+  }, [commandStatus?.state, optimisticDisplaySelection]);
+
+  const activeCommandKind = commandStatus?.command_kind ?? null;
+  const activeCommandState = commandStatus?.state ?? null;
+  const commandMessage = useMemo(() => {
+    if (commandErrorMessage) {
+      return commandErrorMessage;
+    }
+    if (commandPostInFlight) {
+      return "Sending command to runtime…";
+    }
+    if (!commandStatus) {
+      return null;
+    }
+    const label = commandKindLabel(commandStatus.command_kind);
+    if (commandStatus.state === "rejected") {
+      return commandStatus.reason ? `${label} rejected: ${commandStatus.reason}` : `${label} rejected`;
+    }
+    if (commandStatus.state === "acknowledged") {
+      return `${label} acknowledged`;
+    }
+    if (commandStatus.completion_state && commandStatus.completion_state !== "ok") {
+      return `${label} ${commandStatus.completion_state}`;
+    }
+    return `${label} completed`;
+  }, [commandErrorMessage, commandPostInFlight, commandStatus]);
+
+  const commandBusy = commandPostInFlight;
+  const canRunCommand =
+    interactiveEnabled &&
+    (awaitingCommand || workspaceStatus === "paused") &&
+    runtimeCanAcceptCommands &&
+    !commandBusy;
+  const canRelaxCommand =
+    interactiveEnabled &&
+    awaitingCommand &&
+    runtimeCanAcceptCommands &&
+    !commandBusy;
+  const canPauseCommand =
+    interactiveEnabled &&
+    workspaceStatus === "running" &&
+    runtimeCanAcceptCommands &&
+    !commandBusy;
+  const canStopCommand =
+    interactiveEnabled &&
+    (workspaceStatus === "running" || workspaceStatus === "paused") &&
+    runtimeCanAcceptCommands &&
+    !commandBusy;
+  const primaryRunAction = workspaceStatus === "paused" ? "resume" : "run";
+  const primaryRunLabel = workspaceStatus === "paused" ? "Resume" : "Run";
+
   const requestPreviewQuantity = useCallback((nextQuantity: string) => {
     startTransition(() => {
       if (isFemBackend && effectiveViewMode === "Mesh") setViewMode("3D");
@@ -1394,6 +1545,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const selectedScalarValue = useMemo(() => {
     return globalScalarPreview?.value ?? null;
   }, [globalScalarPreview]);
+  const selectedQuantityLabel = quantityDescriptor?.label ?? requestedPreviewQuantity;
+  const selectedQuantityUnit = quantityDescriptor?.unit ?? null;
 
   /* Field data */
   const fieldMap = useMemo<Record<string, Float64Array | null>>(
@@ -1567,7 +1720,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     session, run, liveState, effectiveLiveState, preview, femMesh, scalarRows, engineLog,
     quantities, artifacts: artifactsArr, metadata,
     workspaceStatus, isWaitingForCompute, hasSolverTelemetry, solverNotStartedMessage, isFemBackend, runtimeEngineLabel,
-    activity, sessionFooter,
+    activity, sessionFooter, runtimeStatus, runtimeCanAcceptCommands, commandStatus, activeCommandKind, activeCommandState,
+    canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,
     effectiveStep, effectiveTime, effectiveDt, effectiveDmDt, effectiveHEff, effectiveHDemag,
     effectiveEEx, effectiveEDemag, effectiveEExt, effectiveETotal,
     elapsed, stepsPerSec,
@@ -1585,7 +1739,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     requestedPreviewMaxPoints, previewEveryNOptions, previewMaxPointOptions,
     previewIsStale, previewIsBootstrapStale,
     quantityOptions, previewQuantityOptions, quantityDescriptor, isVectorQuantity,
-    quickPreviewTargets, selectedScalarValue,
+    quickPreviewTargets, selectedScalarValue, selectedQuantityLabel, selectedQuantityUnit,
     solverGrid, previewGrid, totalCells, activeCells, inactiveCells, activeMaskPresent, activeMask,
     maxSliceCount,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField, femMagnetization3DActive,
@@ -1609,6 +1763,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     connection, error, session, run, liveState, effectiveLiveState, preview, femMesh, scalarRows,
     engineLog, quantities, artifactsArr, metadata, workspaceStatus, hasSolverTelemetry,
     solverNotStartedMessage, isFemBackend, runtimeEngineLabel, activity, sessionFooter,
+    runtimeStatus, runtimeCanAcceptCommands, commandStatus, activeCommandKind, activeCommandState,
+    canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,
     effectiveStep, effectiveTime, effectiveDt, effectiveDmDt, effectiveHEff, effectiveHDemag,
     effectiveEEx, effectiveEDemag, effectiveEExt, effectiveETotal, elapsed, stepsPerSec,
     viewMode, effectiveViewMode, component, plane, sliceIndex, selectedQuantity,
@@ -1623,7 +1779,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     requestedPreviewAutoScale, requestedPreviewMaxPoints, previewEveryNOptions,
     previewMaxPointOptions, previewIsStale, previewIsBootstrapStale, quantityOptions,
     previewQuantityOptions, quantityDescriptor, isVectorQuantity, quickPreviewTargets,
-    selectedScalarValue, solverGrid, previewGrid, totalCells, activeCells, inactiveCells,
+    selectedScalarValue, selectedQuantityLabel, selectedQuantityUnit,
+    solverGrid, previewGrid, totalCells, activeCells, inactiveCells,
     activeMaskPresent, activeMask, maxSliceCount, effectiveFemMesh, femMeshData, femTopologyKey,
     femColorField, femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
     meshFaceDetail, meshQualitySummary, selectedVectors, effectiveVectorComponent, fieldStats,

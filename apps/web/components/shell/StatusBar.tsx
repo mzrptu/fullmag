@@ -22,6 +22,12 @@ interface StatusBarProps {
   progressMode?: "idle" | "indeterminate" | "determinate";
   progressValue?: number;
   nodeCount?: string;
+  commandMessage?: string | null;
+  commandState?: string | null;
+  displayLabel?: string | null;
+  displayDetail?: string | null;
+  previewPending?: boolean;
+  runtimeCanAcceptCommands?: boolean;
 }
 
 export default function StatusBar({
@@ -40,6 +46,12 @@ export default function StatusBar({
   progressMode: _progressMode = "idle",
   progressValue: _progressValue,
   nodeCount,
+  commandMessage,
+  commandState,
+  displayLabel,
+  displayDetail,
+  previewPending = false,
+  runtimeCanAcceptCommands = false,
 }: StatusBarProps) {
   return (
     <div className="flex items-center justify-between border-t border-white/5 bg-background/40 backdrop-blur-xl px-3 py-1.5 text-[0.68rem] tracking-wide text-muted-foreground z-40 min-h-[28px] shadow-[0_-8px_32px_rgba(0,0,0,0.4)]">
@@ -60,6 +72,31 @@ export default function StatusBar({
             Idle
           </span>
         )}
+        {displayLabel && (
+          <span className="rounded-full border border-border/50 bg-background/50 px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-[0.18em] text-foreground/80">
+            Display {displayLabel}
+          </span>
+        )}
+        {displayDetail && (
+          <span className="truncate text-[0.68rem] text-muted-foreground" title={displayDetail}>
+            {displayDetail}
+          </span>
+        )}
+        {commandMessage && (
+          <span
+            className={cn(
+              "max-w-[24rem] truncate rounded-full border px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-[0.18em]",
+              commandState === "rejected"
+                ? "border-rose-500/25 bg-rose-500/10 text-rose-300"
+                : previewPending
+                  ? "border-violet-500/25 bg-violet-500/10 text-violet-200"
+                  : "border-sky-500/25 bg-sky-500/10 text-sky-300",
+            )}
+            title={commandMessage}
+          >
+            {commandMessage}
+          </span>
+        )}
       </div>
       <div className="flex items-center shrink-0 ml-auto gap-4">
       {/* Left section: status + connection */}
@@ -77,6 +114,15 @@ export default function StatusBar({
            connection === "connecting" ? <Loader2 size={11} className="animate-spin" /> : 
            <WifiOff size={11} />}
           {connection}
+        </span>
+        <span className="h-3 w-px bg-border/50" />
+        <span
+          className={cn(
+            "font-semibold uppercase tracking-[0.18em] text-[0.58rem]",
+            runtimeCanAcceptCommands ? "text-emerald-400" : "text-amber-400",
+          )}
+        >
+          {runtimeCanAcceptCommands ? "Control Ready" : "Runtime Busy"}
         </span>
       </div>
 

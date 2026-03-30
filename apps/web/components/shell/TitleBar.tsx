@@ -17,6 +17,7 @@ interface TitleBarProps {
   stopEnabled?: boolean;
   runAction?: string;
   runLabel?: string;
+  commandBusy?: boolean;
   commandMessage?: string | null;
   onSimAction?: (action: string) => void;
 }
@@ -34,6 +35,7 @@ export default function TitleBar({
   stopEnabled = false,
   runAction = "run",
   runLabel = "Run",
+  commandBusy = false,
   commandMessage,
   onSimAction,
 }: TitleBarProps) {
@@ -79,6 +81,20 @@ export default function TitleBar({
           </button>
         ))}
       </div>
+
+      {commandMessage && (
+        <div
+          className={cn(
+            "ml-3 max-w-[20rem] truncate rounded-full border px-3 py-1 text-[0.65rem] font-bold uppercase tracking-widest",
+            commandBusy
+              ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+              : "border-sky-500/30 bg-sky-500/10 text-sky-300",
+          )}
+          title={commandMessage}
+        >
+          {commandMessage}
+        </div>
+      )}
 
       <div className="ml-4 flex items-center gap-2 border-l border-border/60 pl-4 h-6">
         <span className={cn(

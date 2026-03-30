@@ -50,6 +50,14 @@ interface RibbonBarProps {
   onViewChange?: (mode: string) => void;
   onSidebarToggle?: () => void;
   onSimAction?: (action: string) => void;
+  quickPreviewTargets?: Array<{
+    id: string;
+    shortLabel: string;
+    available: boolean;
+  }>;
+  selectedQuantity?: string;
+  previewPending?: boolean;
+  onQuickPreviewSelect?: (quantityId: string) => void;
   onExport?: () => void;
   onCapture?: () => void;
   onStateExport?: () => void;
@@ -140,14 +148,44 @@ function buildStudyGroups(p: RibbonBarProps): RibbonGroup[] {
 }
 
 function buildResultsGroups(p: RibbonBarProps): RibbonGroup[] {
+  const quickPreviewActions: RibbonAction[] =
+    (p.quickPreviewTargets?.slice(0, 6) ?? []).map((target) => {
+      const lowerId = target.id.toLowerCase();
+      const lowerLabel = target.shortLabel.toLowerCase();
+      const icon =
+        target.id === "m" ? <Magnet size={20} /> :
+        (lowerId.includes("demag") || lowerLabel.includes("demag")) ? <Shapes size={20} /> :
+        (lowerId.includes("ex") || lowerLabel.includes("exchange")) ? <Zap size={20} /> :
+        (lowerId.startsWith("e_") || lowerLabel.startsWith("e")) ? <BarChart3 size={20} /> :
+        <Eye size={20} />;
+      const iconColor =
+        target.id === "m" ? "text-rose-400" :
+        (lowerId.includes("demag") || lowerLabel.includes("demag")) ? "text-fuchsia-400" :
+        (lowerId.includes("ex") || lowerLabel.includes("exchange")) ? "text-yellow-400" :
+        (lowerId.startsWith("e_") || lowerLabel.startsWith("e")) ? "text-emerald-400" :
+        "text-sky-400";
+      return {
+        id: `quantity-${target.id}`,
+        icon,
+        label: target.shortLabel,
+        tooltip: `Switch preview to ${target.shortLabel}`,
+        active: p.selectedQuantity === target.id,
+        disabled: !target.available,
+        iconColor,
+        action: () => p.onQuickPreviewSelect?.(target.id),
+      };
+    });
+
   return [
     {
       id: "quantity", title: "Quantity",
-      actions: [
-        { id: "magnetization", icon: <Magnet size={20} />, label: "M", tooltip: "Magnetization preview", active: true, iconColor: "text-rose-400" },
-        { id: "exchange", icon: <Zap size={20} />, label: "H_ex", tooltip: "Exchange field preview", iconColor: "text-yellow-400" },
-        { id: "demag", icon: <Shapes size={20} />, label: "H_dem", tooltip: "Demagnetization field preview", iconColor: "text-fuchsia-400" },
-      ],
+      actions: quickPreviewActions.length > 0
+        ? quickPreviewActions
+        : [
+            { id: "magnetization", icon: <Magnet size={20} />, label: "M", tooltip: "Magnetization preview", active: true, iconColor: "text-rose-400" },
+            { id: "exchange", icon: <Zap size={20} />, label: "H_ex", tooltip: "Exchange field preview", iconColor: "text-yellow-400" },
+            { id: "demag", icon: <Shapes size={20} />, label: "H_dem", tooltip: "Demagnetization field preview", iconColor: "text-fuchsia-400" },
+          ],
     },
     {
       id: "plot-tools", title: "Plot",
@@ -206,6 +244,8 @@ export default function RibbonBar(props: RibbonBarProps) {
     props.canRelax,
     props.canPause,
     props.canStop,
+    props.quickPreviewTargets,
+    props.selectedQuantity,
   ]);
 
   return (
@@ -245,6 +285,7 @@ export default function RibbonBar(props: RibbonBarProps) {
                             action.active ? "bg-primary/10 text-primary shadow-inner border border-primary/20" : 
                             action.accent ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm border border-transparent" :
                             "text-foreground hover:bg-muted/80 border border-transparent hover:border-border/50",
+                            props.previewPending && action.active && "animate-pulse shadow-[0_0_0_1px_rgba(99,102,241,0.35)]",
                             action.disabled && "opacity-40 cursor-not-allowed pointer-events-none"
                           )}
                           disabled={action.disabled}
