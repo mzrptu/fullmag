@@ -402,6 +402,57 @@ impl NativeFemBackend {
         Ok(())
     }
 
+    pub fn snapshot_step_stats(&mut self, node_count: usize) -> Result<StepStats, RunError> {
+        let mut stats = ffi::fullmag_fem_step_stats {
+            step: 0,
+            time_seconds: 0.0,
+            dt_seconds: 0.0,
+            exchange_energy_joules: 0.0,
+            demag_energy_joules: 0.0,
+            external_energy_joules: 0.0,
+            anisotropy_energy_joules: 0.0,
+            dmi_energy_joules: 0.0,
+            total_energy_joules: 0.0,
+            max_effective_field_amplitude: 0.0,
+            max_demag_field_amplitude: 0.0,
+            max_rhs_amplitude: 0.0,
+            demag_linear_iterations: 0,
+            demag_linear_residual: 0.0,
+            wall_time_ns: 0,
+            error_estimate: 0.0,
+            rejected_attempts: 0,
+            dt_suggested: 0.0,
+            rhs_evaluations: 0,
+            fsal_reused: 0,
+        };
+
+        let rc = unsafe { ffi::fullmag_fem_backend_snapshot_stats(self.handle, &mut stats) };
+        if rc != ffi::FULLMAG_FEM_OK {
+            return Err(self.last_error_or("FEM GPU snapshot_step_stats failed"));
+        }
+
+        let magnetization = self.copy_m(node_count)?;
+        let mut step_stats = StepStats {
+            step: stats.step,
+            time: stats.time_seconds,
+            dt: stats.dt_seconds,
+            e_ex: stats.exchange_energy_joules,
+            e_demag: stats.demag_energy_joules,
+            e_ext: stats.external_energy_joules,
+            e_ani: stats.anisotropy_energy_joules,
+            e_dmi: stats.dmi_energy_joules,
+            e_total: stats.total_energy_joules,
+            max_dm_dt: stats.max_rhs_amplitude,
+            max_h_eff: stats.max_effective_field_amplitude,
+            max_h_demag: stats.max_demag_field_amplitude,
+            wall_time_ns: stats.wall_time_ns,
+            demag_solves: stats.demag_linear_iterations,
+            ..StepStats::default()
+        };
+        crate::scalar_metrics::apply_average_m_to_step_stats(&mut step_stats, &magnetization);
+        Ok(step_stats)
+    }
+
     pub fn copy_h_ex(&self, node_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
         self.copy_field(
             ffi::fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_EX,

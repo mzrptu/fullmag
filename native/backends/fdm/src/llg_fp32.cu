@@ -57,9 +57,123 @@ __global__ void llg_rhs_fp32_kernel(
     float dz = m0 * py - m1 * px;
 
     float precession_scale = disable_precession ? 0.0f : 1.0f;
-    out_x[idx] = -gamma_bar * (precession_scale * px + alpha * dx);
-    out_y[idx] = -gamma_bar * (precession_scale * py + alpha * dy);
-    out_z[idx] = -gamma_bar * (precession_scale * pz + alpha * dz);
+    float rhs_x = -gamma_bar * (precession_scale * px + alpha * dx);
+    float rhs_y = -gamma_bar * (precession_scale * py + alpha * dy);
+    float rhs_z = -gamma_bar * (precession_scale * pz + alpha * dz);
+
+    // --- Zhang-Li STT (CIP) ---
+    // tau_ZL = -b * m x (m x (j.grad)m) - beta * b * m x (j.grad)m
+    float jx = static_cast<float>(ctx.current_density_x);
+    float jy = static_cast<float>(ctx.current_density_y);
+    float jz = static_cast<float>(ctx.current_density_z);
+    
+    if (ctx.has_zhang_li_stt) {
+        float ux = static_cast<float>(ctx.stt_u_pf) * jx;
+        float uy = static_cast<float>(ctx.stt_u_pf) * jy;
+        float uz = static_cast<float>(ctx.stt_u_pf) * jz;
+
+        float inv_dx = static_cast<float>(1.0 / ctx.dx);
+        float inv_dy = static_cast<float>(1.0 / ctx.dy);
+        float inv_dz = static_cast<float>(1.0 / ctx.dz);
+
+        int nx = ctx.nx, ny = ctx.ny, nz = ctx.nz;
+        int z = idx / (ny * nx);
+        int rem = idx - z * ny * nx;
+        int y = rem / nx;
+        int x = rem - y * nx;
+
+        float dmx_u = 0.0f, dmy_u = 0.0f, dmz_u = 0.0f;
+        
+        // x-derivative
+        if (ux > 0.0f && x > 0) {
+            int prev = idx - 1;
+            dmx_u += ux * (m0 - mx[prev]) * inv_dx;
+            dmy_u += ux * (m1 - my[prev]) * inv_dx;
+            dmz_u += ux * (m2 - mz[prev]) * inv_dx;
+        } else if (ux < 0.0f && x < nx - 1) {
+            int next = idx + 1;
+            dmx_u += ux * (mx[next] - m0) * inv_dx;
+            dmy_u += ux * (my[next] - m1) * inv_dx;
+            dmz_u += ux * (mz[next] - m2) * inv_dx;
+        }
+
+        // y-derivative
+        if (uy > 0.0f && y > 0) {
+            int prev = idx - nx;
+            dmx_u += uy * (m0 - mx[prev]) * inv_dy;
+            dmy_u += uy * (m1 - my[prev]) * inv_dy;
+            dmz_u += uy * (m2 - mz[prev]) * inv_dy;
+        } else if (uy < 0.0f && y < ny - 1) {
+            int next = idx + nx;
+            dmx_u += uy * (mx[next] - m0) * inv_dy;
+            dmy_u += uy * (my[next] - m1) * inv_dy;
+            dmz_u += uy * (mz[next] - m2) * inv_dy;
+        }
+
+        // z-derivative
+        if (uz > 0.0f && z > 0) {
+            int prev = idx - nx * ny;
+            dmx_u += uz * (m0 - mx[prev]) * inv_dz;
+            dmy_u += uz * (m1 - my[prev]) * inv_dz;
+            dmz_u += uz * (m2 - mz[prev]) * inv_dz;
+        } else if (uz < 0.0f && z < nz - 1) {
+            int next = idx + nx * ny;
+            dmx_u += uz * (mx[next] - m0) * inv_dz;
+            dmy_u += uz * (my[next] - m1) * inv_dz;
+            dmz_u += uz * (mz[next] - m2) * inv_dz;
+        }
+
+        // m x (u.grad)m
+        float cross_x = m1 * dmz_u - m2 * dmy_u;
+        float cross_y = m2 * dmx_u - m0 * dmz_u;
+        float cross_z = m0 * dmy_u - m1 * dmx_u;
+
+        // m x (m x (u.grad)m)
+        float double_cross_x = m1 * cross_z - m2 * cross_y;
+        float double_cross_y = m2 * cross_x - m0 * cross_z;
+        float double_cross_z = m0 * cross_y - m1 * cross_x;
+
+        float beta = static_cast<float>(ctx.stt_beta);
+        rhs_x += -double_cross_x - beta * cross_x;
+        rhs_y += -double_cross_y - beta * cross_y;
+        rhs_z += -double_cross_z - beta * cross_z;
+    }
+    
+    // --- Slonczewski STT (CPP/SOT) ---
+    // tau_STT = beta_STT * [ m x (m x p) + epsilon' * m x p ]
+    if (ctx.has_slonczewski_stt) {
+        float px = static_cast<float>(ctx.stt_p_x);
+        float py = static_cast<float>(ctx.stt_p_y);
+        float pz = static_cast<float>(ctx.stt_p_z);
+        float m_dot_p = m0 * px + m1 * py + m2 * pz;
+        
+        float L2 = static_cast<float>(ctx.stt_lambda * ctx.stt_lambda);
+        float P_val = ctx.stt_degree > 0.0 ? static_cast<float>(ctx.stt_degree) : 1.0f;
+        
+        // Spin-transfer efficiency Slonczewski function
+        float g = (P_val * L2) / ((L2 + 1.0f) + (L2 - 1.0f) * m_dot_p);
+        
+        float beta_STT = static_cast<float>(ctx.stt_cpp_pf) * g;
+        
+        // m x p
+        float m_cross_px = m1 * pz - m2 * py;
+        float m_cross_py = m2 * px - m0 * pz;
+        float m_cross_pz = m0 * py - m1 * px;
+        
+        // m x (m x p)
+        float double_m_cross_px = m1 * m_cross_pz - m2 * m_cross_py;
+        float double_m_cross_py = m2 * m_cross_px - m0 * m_cross_pz;
+        float double_m_cross_pz = m0 * m_cross_py - m1 * m_cross_px;
+        
+        float e_prime = static_cast<float>(ctx.stt_epsilon_prime);
+        rhs_x += beta_STT * (double_m_cross_px + e_prime * m_cross_px);
+        rhs_y += beta_STT * (double_m_cross_py + e_prime * m_cross_py);
+        rhs_z += beta_STT * (double_m_cross_pz + e_prime * m_cross_pz);
+    }
+
+    out_x[idx] = rhs_x;
+    out_y[idx] = rhs_y;
+    out_z[idx] = rhs_z;
 }
 
 /* ── Heun predictor (fp32) ── */

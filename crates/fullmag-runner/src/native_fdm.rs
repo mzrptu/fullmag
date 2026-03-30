@@ -45,6 +45,9 @@ pub(crate) fn is_cuda_available() -> bool {
 pub(crate) struct NativeFdmBackend {
     handle: *mut ffi::fullmag_fdm_backend,
     precision: fullmag_ir::ExecutionPrecision,
+    damping: f64,
+    gyromagnetic_ratio: f64,
+    precession_enabled: bool,
 }
 
 #[cfg(feature = "cuda")]
@@ -210,6 +213,19 @@ impl NativeFdmBackend {
             enable_demag: if plan.enable_demag { 1 } else { 0 },
             has_external_field: if plan.external_field.is_some() { 1 } else { 0 },
             external_field_am: plan.external_field.unwrap_or([0.0, 0.0, 0.0]),
+            temperature: plan.temperature.unwrap_or(0.0),
+
+            current_density_x: plan.current_density.map_or(0.0, |j| j[0]),
+            current_density_y: plan.current_density.map_or(0.0, |j| j[1]),
+            current_density_z: plan.current_density.map_or(0.0, |j| j[2]),
+            stt_degree: plan.stt_degree.unwrap_or(0.0),
+            stt_beta: plan.stt_beta.unwrap_or(0.0),
+
+            stt_p_x: plan.stt_spin_polarization.map_or(0.0, |p| p[0]),
+            stt_p_y: plan.stt_spin_polarization.map_or(0.0, |p| p[1]),
+            stt_p_z: plan.stt_spin_polarization.map_or(0.0, |p| p[2]),
+            stt_lambda: plan.stt_lambda.unwrap_or(0.0),
+            stt_epsilon_prime: plan.stt_epsilon_prime.unwrap_or(0.0),
 
             // The current FDM IR does not yet expose anisotropy or DMI terms, so we
             // explicitly zero-initialize the native descriptor to stay aligned with it.
@@ -392,6 +408,9 @@ impl NativeFdmBackend {
         Ok(Self {
             handle,
             precision: plan.precision,
+            damping: plan.material.damping,
+            gyromagnetic_ratio: plan.gyromagnetic_ratio,
+            precession_enabled: !llg_overdamped_uses_pure_damping(plan.relaxation.as_ref()),
         })
     }
 
@@ -700,6 +719,61 @@ impl NativeFdmBackend {
         Ok(())
     }
 
+    pub fn snapshot_step_stats(&mut self, grid: [u32; 3]) -> Result<StepStats, RunError> {
+        let mut stats = ffi::fullmag_fdm_step_stats {
+            step: 0,
+            time_seconds: 0.0,
+            dt_seconds: 0.0,
+            exchange_energy_joules: 0.0,
+            demag_energy_joules: 0.0,
+            external_energy_joules: 0.0,
+            anisotropy_energy_joules: 0.0,
+            cubic_energy_joules: 0.0,
+            dmi_energy_joules: 0.0,
+            total_energy_joules: 0.0,
+            max_effective_field_amplitude: 0.0,
+            max_demag_field_amplitude: 0.0,
+            max_rhs_amplitude: 0.0,
+            suggested_next_dt: 0.0,
+            wall_time_ns: 0,
+        };
+
+        let rc = unsafe {
+            ffi::fullmag_fdm_backend_snapshot_stats(self.handle as *mut _, &mut stats)
+        };
+        if rc != ffi::FULLMAG_FDM_OK {
+            return Err(self.last_error_or("snapshot_step_stats failed"));
+        }
+
+        let cell_count = (grid[0] as usize) * (grid[1] as usize) * (grid[2] as usize);
+        let magnetization = self.copy_m(cell_count)?;
+        let effective_field = self.copy_h_eff(cell_count)?;
+        let mut step_stats = StepStats {
+            step: stats.step,
+            time: stats.time_seconds,
+            dt: stats.dt_seconds,
+            e_ex: stats.exchange_energy_joules,
+            e_demag: stats.demag_energy_joules,
+            e_ext: stats.external_energy_joules,
+            e_ani: stats.anisotropy_energy_joules + stats.cubic_energy_joules,
+            e_dmi: stats.dmi_energy_joules,
+            e_total: stats.total_energy_joules,
+            max_dm_dt: max_rhs_norm_from_field(
+                &magnetization,
+                &effective_field,
+                self.damping,
+                self.gyromagnetic_ratio,
+                self.precession_enabled,
+            ),
+            max_h_eff: stats.max_effective_field_amplitude,
+            max_h_demag: stats.max_demag_field_amplitude,
+            wall_time_ns: stats.wall_time_ns,
+            ..StepStats::default()
+        };
+        crate::scalar_metrics::apply_average_m_to_step_stats(&mut step_stats, &magnetization);
+        Ok(step_stats)
+    }
+
     /// Query device info.
     pub fn device_info(&self) -> Result<DeviceInfo, RunError> {
         let mut info = ffi::fullmag_fdm_device_info {
@@ -868,6 +942,72 @@ fn flatten_vectors_f32(vectors: &[[f32; 3]]) -> Vec<f32> {
         .iter()
         .flat_map(|vector| vector.iter().copied())
         .collect()
+}
+
+#[cfg(feature = "cuda")]
+fn max_rhs_norm_from_field(
+    magnetization: &[[f64; 3]],
+    effective_field: &[[f64; 3]],
+    damping: f64,
+    gyromagnetic_ratio: f64,
+    precession_enabled: bool,
+) -> f64 {
+    magnetization
+        .iter()
+        .zip(effective_field.iter())
+        .map(|(m, h)| {
+            norm(llg_rhs_from_field(
+                *m,
+                *h,
+                damping,
+                gyromagnetic_ratio,
+                precession_enabled,
+            ))
+        })
+        .fold(0.0, f64::max)
+}
+
+#[cfg(feature = "cuda")]
+fn llg_rhs_from_field(
+    magnetization: [f64; 3],
+    field: [f64; 3],
+    damping: f64,
+    gyromagnetic_ratio: f64,
+    precession_enabled: bool,
+) -> [f64; 3] {
+    let gamma_bar = gyromagnetic_ratio / (1.0 + damping * damping);
+    let precession = cross(magnetization, field);
+    let damping_term = cross(magnetization, precession);
+    let precession_term = if precession_enabled {
+        precession
+    } else {
+        [0.0, 0.0, 0.0]
+    };
+    scale(add(precession_term, scale(damping_term, damping)), -gamma_bar)
+}
+
+#[cfg(feature = "cuda")]
+fn add(lhs: [f64; 3], rhs: [f64; 3]) -> [f64; 3] {
+    [lhs[0] + rhs[0], lhs[1] + rhs[1], lhs[2] + rhs[2]]
+}
+
+#[cfg(feature = "cuda")]
+fn scale(vector: [f64; 3], factor: f64) -> [f64; 3] {
+    [vector[0] * factor, vector[1] * factor, vector[2] * factor]
+}
+
+#[cfg(feature = "cuda")]
+fn cross(lhs: [f64; 3], rhs: [f64; 3]) -> [f64; 3] {
+    [
+        lhs[1] * rhs[2] - lhs[2] * rhs[1],
+        lhs[2] * rhs[0] - lhs[0] * rhs[2],
+        lhs[0] * rhs[1] - lhs[1] * rhs[0],
+    ]
+}
+
+#[cfg(feature = "cuda")]
+fn norm(vector: [f64; 3]) -> f64 {
+    (vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]).sqrt()
 }
 
 #[cfg(feature = "cuda")]

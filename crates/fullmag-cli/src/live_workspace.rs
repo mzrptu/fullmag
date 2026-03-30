@@ -284,20 +284,24 @@ pub(crate) fn set_live_state_status(live_state: &mut LiveStateManifest, status: 
 }
 
 pub(crate) fn scalar_row_from_update(update: &fullmag_runner::StepUpdate) -> CurrentLiveScalarRow {
+    scalar_row_from_stats(&update.stats)
+}
+
+pub(crate) fn scalar_row_from_stats(stats: &fullmag_runner::StepStats) -> CurrentLiveScalarRow {
     CurrentLiveScalarRow {
-        step: update.stats.step,
-        time: update.stats.time,
-        solver_dt: update.stats.dt,
-        mx: update.stats.mx,
-        my: update.stats.my,
-        mz: update.stats.mz,
-        e_ex: update.stats.e_ex,
-        e_demag: update.stats.e_demag,
-        e_ext: update.stats.e_ext,
-        e_total: update.stats.e_total,
-        max_dm_dt: update.stats.max_dm_dt,
-        max_h_eff: update.stats.max_h_eff,
-        max_h_demag: update.stats.max_h_demag,
+        step: stats.step,
+        time: stats.time,
+        solver_dt: stats.dt,
+        mx: stats.mx,
+        my: stats.my,
+        mz: stats.mz,
+        e_ex: stats.e_ex,
+        e_demag: stats.e_demag,
+        e_ext: stats.e_ext,
+        e_total: stats.e_total,
+        max_dm_dt: stats.max_dm_dt,
+        max_h_eff: stats.max_h_eff,
+        max_h_demag: stats.max_h_demag,
     }
 }
 

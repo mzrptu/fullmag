@@ -17,6 +17,8 @@ import { useControlRoom } from "./ControlRoomContext";
 
 export function ViewportBar() {
   const ctx = useControlRoom();
+  const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
+  const selectedDisplayIsGlobalScalar = ctx.quantityDescriptor?.kind === "global_scalar";
 
   return (
     <div className="flex flex-wrap items-center gap-2 px-2.5 py-1.5 bg-card/30 border-b border-border/40 shrink-0">
@@ -124,7 +126,7 @@ export function ViewportBar() {
             </>
           )}
 
-          {ctx.previewControlsActive && (
+          {ctx.previewControlsActive && !selectedDisplayIsGlobalScalar && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
               <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Every</span>
@@ -160,9 +162,10 @@ export function ViewportBar() {
             </>
           )}
 
-          {ctx.preview ? (
+          {spatialPreview ? (
             <>
-              {ctx.preview.x_possible_sizes.length > 0 && ctx.preview.y_possible_sizes.length > 0 && (
+              {spatialPreview.x_possible_sizes.length > 0 &&
+                spatialPreview.y_possible_sizes.length > 0 && (
                 <>
                   <span className="w-[1px] h-4 bg-border/40 shrink-0" />
                   <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">X</span>
@@ -175,7 +178,7 @@ export function ViewportBar() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {ctx.preview.x_possible_sizes.map((size) => (
+                      {spatialPreview.x_possible_sizes.map((size) => (
                         <SelectItem key={size} value={String(size)}>{size}</SelectItem>
                       ))}
                     </SelectContent>
@@ -190,7 +193,7 @@ export function ViewportBar() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {ctx.preview.y_possible_sizes.map((size) => (
+                      {spatialPreview.y_possible_sizes.map((size) => (
                         <SelectItem key={size} value={String(size)}>{size}</SelectItem>
                       ))}
                     </SelectContent>
@@ -210,7 +213,7 @@ export function ViewportBar() {
                 />
                 <span>Auto-fit</span>
               </label>
-              {ctx.preview.spatial_kind === "grid" && ctx.solverGrid[2] > 1 && (
+              {spatialPreview.spatial_kind === "grid" && ctx.solverGrid[2] > 1 && (
                 <>
                   <span className="w-[1px] h-4 bg-border/40 shrink-0" />
                   <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Z-Slice</span>
@@ -239,7 +242,7 @@ export function ViewportBar() {
                   </label>
                 </>
               )}
-              {ctx.preview.spatial_kind === "mesh" && ctx.effectiveViewMode === "2D" && (
+              {spatialPreview.spatial_kind === "mesh" && ctx.effectiveViewMode === "2D" && (
                 <>
                   <span className="w-[1px] h-4 bg-border/40 shrink-0" />
                   <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Plane</span>
@@ -302,6 +305,8 @@ export function ViewportBar() {
 
 export function ViewportCanvasArea() {
   const ctx = useControlRoom();
+  const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
+  const globalScalarPreview = ctx.preview?.kind === "global_scalar" ? ctx.preview : null;
 
   return (
     <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 relative overflow-hidden [&>*]:min-w-0 [&>*]:min-h-0 [&>*:not(.viewportOverlay)]:flex-1 [&>*:not(.viewportOverlay)]:w-full">
@@ -314,7 +319,28 @@ export function ViewportCanvasArea() {
           </span>
         )}
       </div>
-      {!ctx.isVectorQuantity ? (
+      {globalScalarPreview ? (
+        <div className="flex h-full w-full items-center justify-center p-6">
+          <div className="flex min-w-[280px] max-w-[520px] flex-col gap-4 rounded-2xl border border-border/50 bg-card/70 p-8 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+            <div className="space-y-1">
+              <p className="text-[0.68rem] font-bold uppercase tracking-[0.28em] text-muted-foreground">
+                Global Scalar
+              </p>
+              <h3 className="text-xl font-semibold text-foreground">
+                {ctx.quantityDescriptor?.label ?? globalScalarPreview.quantity}
+              </h3>
+            </div>
+            <div className="font-mono text-4xl font-semibold tracking-tight text-foreground">
+              {fmtExp(globalScalarPreview.value)}
+            </div>
+            <div className="flex flex-wrap gap-3 text-[0.72rem] text-muted-foreground">
+              <span>{globalScalarPreview.unit}</span>
+              <span>step {globalScalarPreview.source_step.toLocaleString()}</span>
+              <span>{fmtSI(globalScalarPreview.source_time, "s")}</span>
+            </div>
+          </div>
+        </div>
+      ) : !ctx.isVectorQuantity ? (
         <div className="flex flex-col items-center justify-center h-full w-full opacity-60">
           <EmptyState
             title={ctx.quantityDescriptor?.label ?? "Scalar quantity"}
@@ -327,15 +353,18 @@ export function ViewportCanvasArea() {
             compact
           />
         </div>
-      ) : ctx.preview && ctx.preview.spatial_kind === "grid" && ctx.preview.type === "2D" && ctx.preview.scalar_field.length > 0 ? (
+      ) : spatialPreview &&
+        spatialPreview.spatial_kind === "grid" &&
+        spatialPreview.type === "2D" &&
+        spatialPreview.scalar_field.length > 0 ? (
         <PreviewScalarField2D
-          data={ctx.preview.scalar_field}
-          grid={ctx.preview.preview_grid}
-          quantityLabel={ctx.quantityDescriptor?.label ?? ctx.preview.quantity}
-          quantityUnit={ctx.preview.unit}
-          component={ctx.preview.component}
-          min={ctx.preview.min}
-          max={ctx.preview.max}
+          data={spatialPreview.scalar_field}
+          grid={spatialPreview.preview_grid}
+          quantityLabel={ctx.quantityDescriptor?.label ?? spatialPreview.quantity}
+          quantityUnit={spatialPreview.unit}
+          component={spatialPreview.component}
+          min={spatialPreview.min}
+          max={spatialPreview.max}
         />
       ) : ctx.effectiveViewMode === "Mesh" && ctx.isFemBackend && ctx.femMeshData ? (
         <FemMeshView3D
@@ -402,7 +431,7 @@ export function ViewportCanvasArea() {
         <MagnetizationView3D
           grid={ctx.previewGrid}
           vectors={ctx.selectedVectors}
-          fieldLabel={ctx.quantityDescriptor?.label ?? ctx.preview?.quantity ?? ctx.selectedQuantity}
+          fieldLabel={ctx.quantityDescriptor?.label ?? spatialPreview?.quantity ?? ctx.selectedQuantity}
           activeMask={ctx.activeMask}
           worldExtent={ctx.worldExtent}
         />
@@ -410,8 +439,8 @@ export function ViewportCanvasArea() {
         <MagnetizationSlice2D
           grid={ctx.previewGrid}
           vectors={ctx.selectedVectors}
-          quantityLabel={ctx.quantityDescriptor?.label ?? ctx.preview?.quantity ?? ctx.selectedQuantity}
-          quantityId={ctx.preview?.quantity ?? ctx.selectedQuantity}
+          quantityLabel={ctx.quantityDescriptor?.label ?? spatialPreview?.quantity ?? ctx.selectedQuantity}
+          quantityId={spatialPreview?.quantity ?? ctx.selectedQuantity}
           component={ctx.component}
           plane={ctx.plane}
           sliceIndex={ctx.sliceIndex}

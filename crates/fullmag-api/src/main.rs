@@ -352,7 +352,15 @@ type CurrentPreviewConfig = LivePreviewRequest;
 type CurrentDisplaySelection = fullmag_runner::DisplaySelectionState;
 
 #[derive(Debug, Serialize, Clone)]
-struct PreviewState {
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PreviewState {
+    Spatial(SpatialPreviewState),
+    GlobalScalar(GlobalScalarPreviewState),
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct SpatialPreviewState {
+    display_kind: String,
     config_revision: u64,
     source_step: u64,
     source_time: f64,
@@ -392,6 +400,17 @@ struct PreviewState {
     original_face_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     active_mask: Option<Vec<bool>>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct GlobalScalarPreviewState {
+    display_kind: String,
+    config_revision: u64,
+    source_step: u64,
+    source_time: f64,
+    quantity: String,
+    unit: String,
+    value: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1104,13 +1123,9 @@ fn build_preview_control_command(
 
 fn canonicalize_display_selection(selection: &mut DisplaySelection) -> Result<(), ApiError> {
     selection.kind = DisplaySelection::kind_for_quantity(&selection.quantity);
-    if matches!(selection.kind, fullmag_runner::DisplayKind::GlobalScalar) {
-        return Err(ApiError::bad_request(format!(
-            "quantity '{}' is a global scalar and cannot drive spatial preview selection",
-            selection.quantity
-        )));
-    }
-    if selection.component.trim().is_empty() {
+    if selection.component.trim().is_empty()
+        && !matches!(selection.kind, fullmag_runner::DisplayKind::GlobalScalar)
+    {
         selection.component = "3D".to_string();
     }
     Ok(())
@@ -1120,6 +1135,8 @@ async fn publish_current_live_state(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CurrentLivePublishRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let has_live_state_update = req.live_state.is_some();
+    let has_scalar_row_update = req.latest_scalar_row.is_some();
     let has_latest_fields_update = req.latest_fields.is_some();
     let has_cached_preview_update = req.preview_fields.is_some() || req.clear_preview_cache;
     let allow_previous_preview_fallback = !req.clear_preview_cache;
@@ -1160,10 +1177,15 @@ async fn publish_current_live_state(
         }
     }
     let has_fresh_preview = live_state_has_fresh_preview(next.live_state.as_ref());
-    let should_rebuild_preview =
-        has_fresh_preview || has_latest_fields_update || has_cached_preview_update;
+    let should_rebuild_preview = has_fresh_preview
+        || has_latest_fields_update
+        || has_cached_preview_update
+        || (matches!(
+            next.display_selection.selection.kind,
+            fullmag_runner::DisplayKind::GlobalScalar
+        ) && (has_live_state_update || has_scalar_row_update));
     next.preview = if should_rebuild_preview {
-        let rebuilt = build_preview_state(&next, &preview_config);
+        let rebuilt = build_preview_state(&next, &next.display_selection, &preview_config);
         if allow_previous_preview_fallback {
             rebuilt.or(previous_preview)
         } else {
@@ -2229,7 +2251,9 @@ where
         let previous_preview = snapshot.preview.clone();
         snapshot.display_selection = display_selection.clone();
         snapshot.preview_config = preview_config.clone();
-        snapshot.preview = build_preview_state(snapshot, &preview_config).or(previous_preview);
+        snapshot.preview =
+            build_preview_state(snapshot, &snapshot.display_selection, &preview_config)
+                .or(previous_preview);
         let public_json = serialize_current_live_response(snapshot, true)?;
         let preview_json = serialize_current_live_preview(
             &snapshot.session.session_id,
@@ -2330,20 +2354,29 @@ fn live_state_has_fresh_preview(live_state: Option<&LiveState>) -> bool {
 
 fn build_preview_state(
     current: &SessionStateResponse,
+    display_selection: &CurrentDisplaySelection,
     config: &CurrentPreviewConfig,
 ) -> Option<PreviewState> {
-    let quantity = resolve_preview_quantity(current, &config.quantity)?;
-    let component = normalize_preview_component(&config.component);
-    let source_step = current
-        .live_state
-        .as_ref()
-        .map(|state| state.latest_step.step)
-        .unwrap_or(0);
-    let source_time = current
-        .live_state
-        .as_ref()
-        .map(|state| state.latest_step.time)
-        .unwrap_or(0.0);
+    match display_selection.selection.kind {
+        fullmag_runner::DisplayKind::GlobalScalar => {
+            build_global_scalar_preview_state(current, display_selection)
+        }
+        fullmag_runner::DisplayKind::VectorField | fullmag_runner::DisplayKind::SpatialScalar => {
+            build_spatial_preview_state(current, display_selection, config)
+        }
+    }
+}
+
+fn build_spatial_preview_state(
+    current: &SessionStateResponse,
+    display_selection: &CurrentDisplaySelection,
+    config: &CurrentPreviewConfig,
+) -> Option<PreviewState> {
+    let selection = &display_selection.selection;
+    let quantity = resolve_preview_quantity(current, &selection.quantity)?;
+    let component = normalize_preview_component(&selection.component);
+    let (source_step, source_time) = current_preview_source(current);
+
     if let Some(field) = current
         .live_state
         .as_ref()
@@ -2353,6 +2386,7 @@ fn build_preview_state(
         return build_preview_state_from_live_field(
             current,
             field,
+            display_selection,
             config,
             component,
             source_step,
@@ -2371,6 +2405,7 @@ fn build_preview_state(
         return build_preview_state_from_live_field(
             current,
             &field,
+            display_selection,
             config,
             component,
             source_step,
@@ -2383,6 +2418,7 @@ fn build_preview_state(
         return build_preview_state_from_live_field(
             current,
             &field,
+            display_selection,
             config,
             component,
             source_step,
@@ -2391,6 +2427,7 @@ fn build_preview_state(
     }
 
     let unit = quantity_unit(&quantity).to_string();
+    let display_kind = display_kind_for_quantity(&quantity).to_string();
 
     if let Some(mesh) = current.fem_mesh.as_ref() {
         let vectors = current_vector_field(current, &quantity)?.0;
@@ -2398,7 +2435,8 @@ fn build_preview_state(
             return None;
         }
         let (min, max) = component_min_max(&vectors, component);
-        return Some(PreviewState {
+        return Some(PreviewState::Spatial(SpatialPreviewState {
+            display_kind,
             config_revision: config.revision,
             source_step,
             source_time,
@@ -2431,7 +2469,7 @@ fn build_preview_state(
             original_node_count: Some(mesh.nodes.len()),
             original_face_count: Some(mesh.boundary_faces.len()),
             active_mask: None,
-        });
+        }));
     }
 
     let (vectors, grid) = current_vector_field(current, &quantity)?;
@@ -2469,7 +2507,8 @@ fn build_preview_state(
                 full_x, full_y, full_z, applied_x, applied_y, preview_z, config.max_points
             )
         });
-        return Some(PreviewState {
+        return Some(PreviewState::Spatial(SpatialPreviewState {
+            display_kind,
             config_revision: config.revision,
             source_step,
             source_time,
@@ -2502,7 +2541,7 @@ fn build_preview_state(
             original_node_count: None,
             original_face_count: None,
             active_mask: None,
-        });
+        }));
     }
 
     let layer = (config.layer as usize).min(full_z.saturating_sub(1));
@@ -2532,7 +2571,8 @@ fn build_preview_state(
             full_x, full_y, applied_x, applied_y, config.max_points
         )
     });
-    Some(PreviewState {
+    Some(PreviewState::Spatial(SpatialPreviewState {
+        display_kind,
         config_revision: config.revision,
         source_step,
         source_time,
@@ -2565,12 +2605,32 @@ fn build_preview_state(
         original_node_count: None,
         original_face_count: None,
         active_mask: None,
-    })
+    }))
+}
+
+fn build_global_scalar_preview_state(
+    current: &SessionStateResponse,
+    display_selection: &CurrentDisplaySelection,
+) -> Option<PreviewState> {
+    let quantity =
+        resolve_global_scalar_quantity(current, &display_selection.selection.quantity)?;
+    let value = current_global_scalar_value(current, &quantity)?;
+    let (source_step, source_time) = current_preview_source(current);
+    Some(PreviewState::GlobalScalar(GlobalScalarPreviewState {
+        display_kind: display_kind_for_quantity(&quantity).to_string(),
+        config_revision: display_selection.revision,
+        source_step,
+        source_time,
+        quantity: quantity.clone(),
+        unit: quantity_unit(&quantity).to_string(),
+        value,
+    }))
 }
 
 fn build_preview_state_from_live_field(
     current: &SessionStateResponse,
     field: &LivePreviewField,
+    display_selection: &CurrentDisplaySelection,
     config: &CurrentPreviewConfig,
     component: &str,
     source_step: u64,
@@ -2591,6 +2651,7 @@ fn build_preview_state_from_live_field(
         .chunks_exact(3)
         .map(|chunk| [chunk[0], chunk[1], chunk[2]])
         .collect::<Vec<_>>();
+    let display_kind = display_kind_for_quantity(&field.quantity).to_string();
 
     if field.spatial_kind == "mesh" {
         let mesh = current
@@ -2604,7 +2665,8 @@ fn build_preview_state_from_live_field(
             })?
             .clone();
         let (min, max) = component_min_max(&vectors, component);
-        return Some(PreviewState {
+        return Some(PreviewState::Spatial(SpatialPreviewState {
+            display_kind,
             config_revision: field.config_revision,
             source_step,
             source_time,
@@ -2637,7 +2699,7 @@ fn build_preview_state_from_live_field(
             original_node_count: Some(mesh.nodes.len()),
             original_face_count: Some(mesh.boundary_faces.len()),
             active_mask: None,
-        });
+        }));
     }
 
     let x_possible_sizes = if original_grid[0] > 0 {
@@ -2653,7 +2715,8 @@ fn build_preview_state_from_live_field(
 
     if component == "3D" {
         let (min, max) = component_min_max(&vectors, component);
-        return Some(PreviewState {
+        return Some(PreviewState::Spatial(SpatialPreviewState {
+            display_kind,
             config_revision: field.config_revision,
             source_step,
             source_time,
@@ -2661,8 +2724,11 @@ fn build_preview_state_from_live_field(
             quantity: field.quantity.clone(),
             unit: field.unit.clone(),
             component: component.to_string(),
-            layer: config.layer.min(field.original_grid[2].saturating_sub(1)) as usize,
-            all_layers: config.all_layers,
+            layer: display_selection
+                .selection
+                .layer
+                .min(field.original_grid[2].saturating_sub(1)) as usize,
+            all_layers: display_selection.selection.all_layers,
             view_type: "3D".to_string(),
             vector_field_values: Some(field.vector_field_values.clone()),
             scalar_field: Vec::new(),
@@ -2686,12 +2752,13 @@ fn build_preview_state_from_live_field(
             original_node_count: None,
             original_face_count: None,
             active_mask: field.active_mask.clone(),
-        });
+        }));
     }
 
     let scalar_field = sampled_grid_scalar_2d(&vectors, preview_grid, component);
     let (min, max) = scalar_min_max(&scalar_field);
-    Some(PreviewState {
+    Some(PreviewState::Spatial(SpatialPreviewState {
+        display_kind,
         config_revision: field.config_revision,
         source_step,
         source_time,
@@ -2699,8 +2766,11 @@ fn build_preview_state_from_live_field(
         quantity: field.quantity.clone(),
         unit: field.unit.clone(),
         component: component.to_string(),
-        layer: config.layer.min(field.original_grid[2].saturating_sub(1)) as usize,
-        all_layers: config.all_layers,
+        layer: display_selection
+            .selection
+            .layer
+            .min(field.original_grid[2].saturating_sub(1)) as usize,
+        all_layers: display_selection.selection.all_layers,
         view_type: "2D".to_string(),
         vector_field_values: None,
         scalar_field,
@@ -2724,7 +2794,7 @@ fn build_preview_state_from_live_field(
         original_node_count: None,
         original_face_count: None,
         active_mask: field.active_mask.clone(),
-    })
+    }))
 }
 
 fn resolve_preview_quantity(current: &SessionStateResponse, requested: &str) -> Option<String> {
@@ -2741,6 +2811,76 @@ fn resolve_preview_quantity(current: &SessionStateResponse, requested: &str) -> 
         .iter()
         .find(|quantity| quantity.available && is_preview_compatible(&quantity.id))
         .map(|quantity| quantity.id.clone())
+}
+
+fn resolve_global_scalar_quantity(current: &SessionStateResponse, requested: &str) -> Option<String> {
+    let is_global_scalar = |quantity_id: &str| {
+        quantity_spec(quantity_id).is_some_and(|spec| spec.kind == QuantityKind::GlobalScalar)
+    };
+    if current.quantities.iter().any(|quantity| {
+        quantity.available && quantity.id == requested && is_global_scalar(&quantity.id)
+    }) {
+        return Some(requested.to_string());
+    }
+    current
+        .quantities
+        .iter()
+        .find(|quantity| quantity.available && is_global_scalar(&quantity.id))
+        .map(|quantity| quantity.id.clone())
+}
+
+fn current_preview_source(current: &SessionStateResponse) -> (u64, f64) {
+    if let Some(live_state) = current.live_state.as_ref() {
+        return (live_state.latest_step.step, live_state.latest_step.time);
+    }
+    if let Some(row) = current.scalar_rows.last() {
+        return (row.step, row.time);
+    }
+    if let Some(run) = current.run.as_ref() {
+        return (run.total_steps as u64, run.final_time.unwrap_or(0.0));
+    }
+    (0, 0.0)
+}
+
+fn current_global_scalar_value(current: &SessionStateResponse, quantity: &str) -> Option<f64> {
+    let metric_key = quantity_spec(quantity)?.scalar_metric_key?;
+    current
+        .scalar_rows
+        .last()
+        .and_then(|row| scalar_row_metric_value(row, metric_key))
+        .or_else(|| {
+            current
+                .live_state
+                .as_ref()
+                .and_then(|state| live_step_metric_value(&state.latest_step, metric_key))
+        })
+        .or_else(|| run_manifest_scalar_value(current.run.as_ref(), metric_key))
+}
+
+fn scalar_row_metric_value(row: &ScalarRow, metric_key: &str) -> Option<f64> {
+    match metric_key {
+        "e_ex" => Some(row.e_ex),
+        "e_demag" => Some(row.e_demag),
+        "e_ext" => Some(row.e_ext),
+        "e_total" => Some(row.e_total),
+        _ => None,
+    }
+}
+
+fn live_step_metric_value(step: &StepUpdateView, metric_key: &str) -> Option<f64> {
+    match metric_key {
+        "e_ex" => Some(step.e_ex),
+        "e_demag" => Some(step.e_demag),
+        "e_ext" => Some(step.e_ext),
+        "e_total" => Some(step.e_total),
+        _ => None,
+    }
+}
+
+fn display_kind_for_quantity(quantity: &str) -> &'static str {
+    quantity_spec(quantity)
+        .map(|spec| spec.kind.as_api_kind())
+        .unwrap_or(QuantityKind::VectorField.as_api_kind())
 }
 
 fn normalize_preview_component(component: &str) -> &str {

@@ -143,9 +143,15 @@ pub enum DisplayPayload {
 }
 
 impl DisplayPayload {
-    /// Create a `DisplayPayload` from a `DisplaySelection` and a `LivePreviewField`.
-    pub fn from_vector_field(field: LivePreviewField) -> Self {
-        Self::VectorField(field)
+    /// Create a `DisplayPayload` from a live preview field and its display kind.
+    pub fn from_live_preview_field(kind: DisplayKind, field: LivePreviewField) -> Self {
+        match kind {
+            DisplayKind::VectorField => Self::VectorField(field),
+            DisplayKind::SpatialScalar => Self::SpatialScalar(field),
+            DisplayKind::GlobalScalar => {
+                unreachable!("global scalar displays do not carry LivePreviewField payloads")
+            }
+        }
     }
 
     /// Create a global scalar payload from step stats.

@@ -158,6 +158,34 @@ int fullmag_fem_backend_upload_magnetization_f64(
         handle->last_error);
 }
 
+int fullmag_fem_backend_snapshot_stats(
+    fullmag_fem_backend *handle,
+    fullmag_fem_step_stats *out_stats
+) {
+    if (out_stats == nullptr) {
+        fullmag_fem_set_handle_error(
+            handle,
+            "fullmag_fem_backend_snapshot_stats received null out_stats");
+        return FULLMAG_FEM_ERR_INVALID;
+    }
+    if (handle == nullptr) {
+        fullmag_fem_set_global_error("fullmag_fem_backend_snapshot_stats received null handle");
+        return FULLMAG_FEM_ERR_INVALID;
+    }
+
+#if FULLMAG_HAS_MFEM_STACK
+    handle->last_error.clear();
+    if (!fullmag::fem::context_snapshot_stats_mfem(
+            handle->context, *out_stats, handle->last_error)) {
+        return FULLMAG_FEM_ERR_UNAVAILABLE;
+    }
+    return FULLMAG_FEM_OK;
+#else
+    fullmag_fem_set_handle_error(handle, kUnavailableMessage);
+    return FULLMAG_FEM_ERR_UNAVAILABLE;
+#endif
+}
+
 int fullmag_fem_backend_get_device_info(
     fullmag_fem_backend *handle,
     fullmag_fem_device_info *out_info

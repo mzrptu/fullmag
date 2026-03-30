@@ -1,7 +1,7 @@
 use crate::artifact_pipeline::ArtifactPipelineSender;
 use crate::types::{
     ExecutedRun, ExecutionProvenance, FemMeshPayload, LivePreviewField, LivePreviewRequest,
-    RunError, StepAction, StepUpdate,
+    RunError, StepAction, StepStats, StepUpdate,
 };
 use fullmag_ir::ProblemIR;
 
@@ -37,6 +37,9 @@ pub(crate) trait InteractiveBackend {
         quantities: &[&str],
         request: &LivePreviewRequest,
     ) -> Result<Vec<LivePreviewField>, RunError>;
+
+    /// Snapshot scalar diagnostics for the current backend state without stepping.
+    fn snapshot_step_stats(&mut self) -> Result<StepStats, RunError>;
 
     /// Get execution provenance info (engine, precision, device).
     fn execution_provenance(&self) -> ExecutionProvenance;

@@ -126,6 +126,18 @@ pub struct fullmag_fdm_plan_desc {
 
     pub temperature: f64,
 
+    pub current_density_x: f64,
+    pub current_density_y: f64,
+    pub current_density_z: f64,
+    pub stt_degree: f64,
+    pub stt_beta: f64,
+
+    pub stt_p_x: f64,
+    pub stt_p_y: f64,
+    pub stt_p_z: f64,
+    pub stt_lambda: f64,
+    pub stt_epsilon_prime: f64,
+
     pub demag_kernel_xx_spectrum: *const f64,
     pub demag_kernel_yy_spectrum: *const f64,
     pub demag_kernel_zz_spectrum: *const f64,
@@ -309,6 +321,11 @@ extern "C" {
     ) -> i32;
 
     pub fn fullmag_fdm_backend_refresh_observables(handle: *mut fullmag_fdm_backend) -> i32;
+
+    pub fn fullmag_fdm_backend_snapshot_stats(
+        handle: *mut fullmag_fdm_backend,
+        out_stats: *mut fullmag_fdm_step_stats,
+    ) -> i32;
 
     pub fn fullmag_fdm_backend_get_device_info(
         handle: *mut fullmag_fdm_backend,

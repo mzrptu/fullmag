@@ -107,7 +107,9 @@ export interface LatestFields {
   grid: [number, number, number] | null;
 }
 
-export interface PreviewState {
+export interface SpatialPreviewState {
+  kind: "spatial";
+  display_kind: "vector_field" | "spatial_scalar";
   config_revision: number;
   source_step: number;
   source_time: number;
@@ -141,6 +143,19 @@ export interface PreviewState {
   original_face_count: number | null;
   active_mask: boolean[] | null;
 }
+
+export interface GlobalScalarPreviewState {
+  kind: "global_scalar";
+  display_kind: "global_scalar";
+  config_revision: number;
+  source_step: number;
+  source_time: number;
+  quantity: string;
+  unit: string;
+  value: number;
+}
+
+export type PreviewState = SpatialPreviewState | GlobalScalarPreviewState;
 
 export interface PreviewConfig {
   revision: number;
@@ -545,17 +560,32 @@ function normalizePreviewState(raw: any): PreviewState | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
+  if (raw.kind === "global_scalar") {
+    return {
+      kind: "global_scalar",
+      display_kind: "global_scalar",
+      config_revision: Number(raw.config_revision ?? 0),
+      source_step: Number(raw.source_step ?? 0),
+      source_time: Number(raw.source_time ?? 0),
+      quantity: String(raw.quantity ?? ""),
+      unit: String(raw.unit ?? ""),
+      value: Number(raw.value ?? 0),
+    };
+  }
   return {
+    kind: "spatial",
+    display_kind:
+      raw.display_kind === "spatial_scalar" ? "spatial_scalar" : "vector_field",
     config_revision: Number(raw.config_revision ?? 0),
     source_step: Number(raw.source_step ?? 0),
     source_time: Number(raw.source_time ?? 0),
     spatial_kind: raw.spatial_kind === "mesh" ? "mesh" : "grid",
-    quantity: raw.quantity ?? "",
-    unit: raw.unit ?? "",
-    component: raw.component ?? "3D",
+    quantity: String(raw.quantity ?? ""),
+    unit: String(raw.unit ?? ""),
+    component: String(raw.component ?? "3D"),
     layer: Number(raw.layer ?? 0),
     all_layers: Boolean(raw.all_layers),
-    type: raw.type ?? "3D",
+    type: String(raw.type ?? "3D"),
     vector_field_values: normalizeVectorFieldValues(raw.vector_field_values),
     scalar_field: Array.isArray(raw.scalar_field)
       ? raw.scalar_field

@@ -28,6 +28,30 @@ extern void launch_rk4_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats
 extern void launch_rk4_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stats);
 extern void launch_rk23_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stats);
 extern void launch_rk23_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stats);
+extern double launch_exchange_energy_fp64(Context &ctx);
+extern double launch_exchange_energy_fp32(Context &ctx);
+extern double launch_demag_energy_fp64(Context &ctx);
+extern double launch_demag_energy_fp32(Context &ctx);
+extern double launch_external_energy_fp64(Context &ctx);
+extern double launch_external_energy_fp32(Context &ctx);
+extern double reduce_uniaxial_anisotropy_energy_fp64(Context &ctx);
+extern double reduce_uniaxial_anisotropy_energy_fp32(Context &ctx);
+extern double reduce_cubic_anisotropy_energy_fp64(Context &ctx);
+extern double reduce_cubic_anisotropy_energy_fp32(Context &ctx);
+extern double reduce_dmi_energy_fp64(Context &ctx);
+extern double reduce_dmi_energy_fp32(Context &ctx);
+extern double reduce_max_norm_fp64(
+    Context &ctx,
+    const void *vx,
+    const void *vy,
+    const void *vz,
+    uint64_t n);
+extern double reduce_max_norm_fp32(
+    Context &ctx,
+    const void *vx,
+    const void *vy,
+    const void *vz,
+    uint64_t n);
 extern void set_cuda_error(Context &ctx, const char *operation, cudaError_t err);
 } }
 
@@ -58,6 +82,65 @@ bool select_cuda_device_if_requested(Context &ctx) {
         set_cuda_error(ctx, "cudaSetDevice", err);
         return false;
     }
+    return true;
+}
+
+bool fill_current_stats(Context &ctx, fullmag_fdm_step_stats *out_stats) {
+    if (!context_refresh_observables(ctx)) {
+        return false;
+    }
+
+    std::memset(out_stats, 0, sizeof(*out_stats));
+    out_stats->step = ctx.step_count;
+    out_stats->time_seconds = ctx.current_time;
+
+    if (ctx.precision == FULLMAG_FDM_PRECISION_DOUBLE) {
+        out_stats->exchange_energy_joules =
+            ctx.enable_exchange ? launch_exchange_energy_fp64(ctx) : 0.0;
+        out_stats->demag_energy_joules =
+            ctx.enable_demag ? launch_demag_energy_fp64(ctx) : 0.0;
+        out_stats->external_energy_joules = launch_external_energy_fp64(ctx);
+        out_stats->anisotropy_energy_joules = reduce_uniaxial_anisotropy_energy_fp64(ctx);
+        out_stats->cubic_energy_joules = reduce_cubic_anisotropy_energy_fp64(ctx);
+        out_stats->dmi_energy_joules = reduce_dmi_energy_fp64(ctx);
+        out_stats->max_effective_field_amplitude =
+            reduce_max_norm_fp64(ctx, ctx.work.x, ctx.work.y, ctx.work.z, ctx.cell_count);
+        out_stats->max_demag_field_amplitude = ctx.enable_demag
+            ? reduce_max_norm_fp64(
+                ctx,
+                ctx.h_demag.x,
+                ctx.h_demag.y,
+                ctx.h_demag.z,
+                ctx.cell_count)
+            : 0.0;
+    } else {
+        out_stats->exchange_energy_joules =
+            ctx.enable_exchange ? launch_exchange_energy_fp32(ctx) : 0.0;
+        out_stats->demag_energy_joules =
+            ctx.enable_demag ? launch_demag_energy_fp32(ctx) : 0.0;
+        out_stats->external_energy_joules = launch_external_energy_fp32(ctx);
+        out_stats->anisotropy_energy_joules = reduce_uniaxial_anisotropy_energy_fp32(ctx);
+        out_stats->cubic_energy_joules = reduce_cubic_anisotropy_energy_fp32(ctx);
+        out_stats->dmi_energy_joules = reduce_dmi_energy_fp32(ctx);
+        out_stats->max_effective_field_amplitude =
+            reduce_max_norm_fp32(ctx, ctx.work.x, ctx.work.y, ctx.work.z, ctx.cell_count);
+        out_stats->max_demag_field_amplitude = ctx.enable_demag
+            ? reduce_max_norm_fp32(
+                ctx,
+                ctx.h_demag.x,
+                ctx.h_demag.y,
+                ctx.h_demag.z,
+                ctx.cell_count)
+            : 0.0;
+    }
+
+    out_stats->total_energy_joules =
+        out_stats->exchange_energy_joules +
+        out_stats->demag_energy_joules +
+        out_stats->external_energy_joules +
+        out_stats->anisotropy_energy_joules +
+        out_stats->cubic_energy_joules +
+        out_stats->dmi_energy_joules;
     return true;
 }
 
@@ -155,6 +238,51 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
 
     // Thermal noise
     ctx->temperature = plan->temperature;
+
+    // Zhang-Li STT
+    ctx->has_zhang_li_stt = (plan->current_density_x != 0 || plan->current_density_y != 0 || plan->current_density_z != 0) 
+                         && plan->stt_degree > 0;
+    ctx->current_density_x = plan->current_density_x;
+    ctx->current_density_y = plan->current_density_y;
+    ctx->current_density_z = plan->current_density_z;
+    ctx->stt_degree = plan->stt_degree;
+    ctx->stt_beta = plan->stt_beta;
+    if (ctx->has_zhang_li_stt && ctx->Ms > 0) {
+        double mu_B = 9.274009994e-24; // Bohr magneton (J/T)
+        double e = 1.60217662e-19;     // Elementary charge (C)
+        double b = (ctx->stt_degree * mu_B) / (e * ctx->Ms * (1.0 + ctx->stt_beta * ctx->stt_beta));
+        ctx->stt_u_pf = b;
+    } else {
+        ctx->stt_u_pf = 0.0;
+    }
+
+    // Slonczewski STT (CPP / SOT)
+    double px = plan->stt_p_x;
+    double py = plan->stt_p_y;
+    double pz = plan->stt_p_z;
+    double p_sq = px*px + py*py + pz*pz;
+    
+    ctx->has_slonczewski_stt = p_sq > 0.0 && plan->stt_lambda > 0.0 
+                            && (plan->current_density_x != 0 || plan->current_density_y != 0 || plan->current_density_z != 0);
+    ctx->stt_p_x = px;
+    ctx->stt_p_y = py;
+    ctx->stt_p_z = pz;
+    ctx->stt_lambda = plan->stt_lambda;
+    ctx->stt_epsilon_prime = plan->stt_epsilon_prime;
+    
+    if (ctx->has_slonczewski_stt && ctx->Ms > 0 && ctx->dz > 0) {
+        double hbar = 1.054571817e-34; // Reduced Planck constant (J s)
+        double e = 1.60217662e-19;     // Elementary charge (C)
+        double mu_0 = 4.0 * M_PI * 1e-7; // Vacuum permeability
+        double js = sqrt(ctx->current_density_x*ctx->current_density_x + 
+                         ctx->current_density_y*ctx->current_density_y + 
+                         ctx->current_density_z*ctx->current_density_z);
+        // Standard prefactor: j * hbar / (2 * e * mu_0 * M_s * d)
+        // Here d is the cell thickness in the z-direction (assuming CPP is along z)
+        ctx->stt_cpp_pf = (js * hbar) / (2.0 * e * mu_0 * ctx->Ms * ctx->dz);
+    } else {
+        ctx->stt_cpp_pf = 0.0;
+    }
 
     // Adaptive step config (DP45)
     ctx->adaptive_max_error = plan->adaptive_max_error > 0 ? plan->adaptive_max_error : 1e-5;
@@ -707,6 +835,25 @@ int fullmag_fdm_backend_refresh_observables(
     return FULLMAG_FDM_OK;
 #else
     (void)handle;
+    return FULLMAG_FDM_ERR_CUDA;
+#endif
+}
+
+int fullmag_fdm_backend_snapshot_stats(
+    fullmag_fdm_backend *handle,
+    fullmag_fdm_step_stats *out_stats)
+{
+#if FULLMAG_HAS_CUDA
+    if (!handle || !out_stats) return FULLMAG_FDM_ERR_INVALID;
+    auto *ctx = reinterpret_cast<Context *>(handle);
+
+    if (!fill_current_stats(*ctx, out_stats)) {
+        return FULLMAG_FDM_ERR_CUDA;
+    }
+
+    return FULLMAG_FDM_OK;
+#else
+    (void)handle; (void)out_stats;
     return FULLMAG_FDM_ERR_CUDA;
 #endif
 }

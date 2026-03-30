@@ -201,6 +201,11 @@ int fullmag_fem_backend_upload_magnetization_f64(
     uint64_t len
 );
 
+int fullmag_fem_backend_snapshot_stats(
+    fullmag_fem_backend *handle,
+    fullmag_fem_step_stats *out_stats
+);
+
 int fullmag_fem_backend_get_device_info(
     fullmag_fem_backend *handle,
     fullmag_fem_device_info *out_info

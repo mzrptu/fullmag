@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::artifact_pipeline::ArtifactPipeline;
 use crate::artifacts;
 use crate::types::{
-    LivePreviewField, LivePreviewRequest, RunError, RunResult, StepAction, StepUpdate,
+    LivePreviewField, LivePreviewRequest, RunError, RunResult, StepAction, StepStats, StepUpdate,
 };
 use fullmag_ir::ProblemIR;
 
@@ -89,21 +89,25 @@ impl InteractiveRuntime {
             DisplayKind::VectorField | DisplayKind::SpatialScalar => {
                 let request = selection.to_preview_request(self.display_revision);
                 let field = self.backend.snapshot_preview(&request)?;
-                Ok(DisplayPayload::from_vector_field(field))
+                Ok(DisplayPayload::from_live_preview_field(selection.kind, field))
             }
             DisplayKind::GlobalScalar => {
-                // For global scalars, we need step stats. Compute a zero-step snapshot
-                // by reading the current state observables via a preview of "m" to get stats.
-                // This is a lightweight path — the backend computes scalar metrics internally.
-                Err(RunError {
-                    message: format!(
-                        "global scalar display for '{}' is not yet implemented via runtime query; \
-                         use step stats from the last executed segment instead",
-                        selection.quantity
-                    ),
+                let stats = self.backend.snapshot_step_stats()?;
+                DisplayPayload::from_global_scalar(&selection.quantity, &stats).ok_or_else(|| {
+                    RunError {
+                        message: format!(
+                            "global scalar display for '{}' is not available from runtime stats",
+                            selection.quantity
+                        ),
+                    }
                 })
             }
         }
+    }
+
+    /// Snapshot current scalar diagnostics without advancing the simulation.
+    pub fn snapshot_step_stats(&mut self) -> Result<StepStats, RunError> {
+        self.backend.snapshot_step_stats()
     }
 
     /// Snapshot a single preview field for the given request.

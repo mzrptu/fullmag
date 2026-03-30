@@ -74,10 +74,124 @@ __global__ void llg_rhs_fp64_kernel(
 
     double precession_scale = disable_precession ? 0.0 : 1.0;
 
-    // dm/dt = -γ̄ · (precession_scale·precession + α · damping)
-    out_x[idx] = -gamma_bar * (precession_scale * px + alpha * dx);
-    out_y[idx] = -gamma_bar * (precession_scale * py + alpha * dy);
-    out_z[idx] = -gamma_bar * (precession_scale * pz + alpha * dz);
+    double rhs_x = -gamma_bar * (precession_scale * px + alpha * dx);
+    double rhs_y = -gamma_bar * (precession_scale * py + alpha * dy);
+    double rhs_z = -gamma_bar * (precession_scale * pz + alpha * dz);
+
+    // --- Zhang-Li STT (CIP) ---
+    // tau_ZL = -b * m x (m x (j.grad)m) - beta * b * m x (j.grad)m
+    // b = P * mu_B / (e * M_s * (1 + beta^2)) [precomputed as stt_u_pf]
+    // Vector u = stt_u_pf * j
+    double jx = ctx.current_density_x;
+    double jy = ctx.current_density_y;
+    double jz = ctx.current_density_z;
+    if (ctx.has_zhang_li_stt) {
+        double ux = ctx.stt_u_pf * jx;
+        double uy = ctx.stt_u_pf * jy;
+        double uz = ctx.stt_u_pf * jz;
+
+        // Upwind difference for (u.grad)m
+        int nx = ctx.nx, ny = ctx.ny, nz = ctx.nz;
+        int z = idx / (ny * nx);
+        int rem = idx - z * ny * nx;
+        int y = rem / nx;
+        int x = rem - y * nx;
+
+        double dmx_u = 0.0, dmy_u = 0.0, dmz_u = 0.0;
+        
+        // x-derivative
+        if (ux > 0.0 && x > 0) {
+            int prev = idx - 1;
+            dmx_u += ux * (m0 - mx[prev]) / ctx.dx;
+            dmy_u += ux * (m1 - my[prev]) / ctx.dx;
+            dmz_u += ux * (m2 - mz[prev]) / ctx.dx;
+        } else if (ux < 0.0 && x < nx - 1) {
+            int next = idx + 1;
+            dmx_u += ux * (mx[next] - m0) / ctx.dx;
+            dmy_u += ux * (my[next] - m1) / ctx.dx;
+            dmz_u += ux * (mz[next] - m2) / ctx.dx;
+        }
+
+        // y-derivative
+        if (uy > 0.0 && y > 0) {
+            int prev = idx - nx;
+            dmx_u += uy * (m0 - mx[prev]) / ctx.dy;
+            dmy_u += uy * (m1 - my[prev]) / ctx.dy;
+            dmz_u += uy * (m2 - mz[prev]) / ctx.dy;
+        } else if (uy < 0.0 && y < ny - 1) {
+            int next = idx + nx;
+            dmx_u += uy * (mx[next] - m0) / ctx.dy;
+            dmy_u += uy * (my[next] - m1) / ctx.dy;
+            dmz_u += uy * (mz[next] - m2) / ctx.dy;
+        }
+
+        // z-derivative
+        if (uz > 0.0 && z > 0) {
+            int prev = idx - nx * ny;
+            dmx_u += uz * (m0 - mx[prev]) / ctx.dz;
+            dmy_u += uz * (m1 - my[prev]) / ctx.dz;
+            dmz_u += uz * (m2 - mz[prev]) / ctx.dz;
+        } else if (uz < 0.0 && z < nz - 1) {
+            int next = idx + nx * ny;
+            dmx_u += uz * (mx[next] - m0) / ctx.dz;
+            dmy_u += uz * (my[next] - m1) / ctx.dz;
+            dmz_u += uz * (mz[next] - m2) / ctx.dz;
+        }
+
+        // m x (u.grad)m
+        double cross_x = m1 * dmz_u - m2 * dmy_u;
+        double cross_y = m2 * dmx_u - m0 * dmz_u;
+        double cross_z = m0 * dmy_u - m1 * dmx_u;
+
+        // m x (m x (u.grad)m)
+        double double_cross_x = m1 * cross_z - m2 * cross_y;
+        double double_cross_y = m2 * cross_x - m0 * cross_z;
+        double double_cross_z = m0 * cross_y - m1 * cross_x;
+
+        double beta = ctx.stt_beta;
+        rhs_x += -double_cross_x - beta * cross_x;
+        rhs_y += -double_cross_y - beta * cross_y;
+        rhs_z += -double_cross_z - beta * cross_z;
+    }
+    
+    // --- Slonczewski STT (CPP/SOT) ---
+    // tau_STT = beta_STT * [ m x (m x p) + epsilon' * m x p ]
+    // where beta_STT = (j * hbar) / (2 * e * mu_0 * d * M_s) * (P * Lambda^2) / ((Lambda^2 + 1) + (Lambda^2 - 1) * (m . p))
+    // ctx.stt_cpp_pf precomputes (j * hbar) / (2 * e * mu_0 * M_s * d)
+    // NOTE: using macroscopic time T = gamma_0 * t, the torque must be scaled by 1/gamma_0
+    //       we omit gamma_0 here because rhs is already in SI units (A/m) and time step uses physical gamma
+    if (ctx.has_slonczewski_stt) {
+        double px = ctx.stt_p_x;
+        double py = ctx.stt_p_y;
+        double pz = ctx.stt_p_z;
+        double m_dot_p = m0 * px + m1 * py + m2 * pz;
+        
+        double L2 = ctx.stt_lambda * ctx.stt_lambda;
+        double P_val = ctx.stt_degree > 0 ? ctx.stt_degree : 1.0; // fallback to 1.0 if not set but p is set
+        
+        // Spin-transfer efficiency Slonczewski function
+        double g = (P_val * L2) / ((L2 + 1.0) + (L2 - 1.0) * m_dot_p);
+        
+        double beta_STT = ctx.stt_cpp_pf * g;
+        
+        // m x p
+        double m_cross_px = m1 * pz - m2 * py;
+        double m_cross_py = m2 * px - m0 * pz;
+        double m_cross_pz = m0 * py - m1 * px;
+        
+        // m x (m x p)
+        double double_m_cross_px = m1 * m_cross_pz - m2 * m_cross_py;
+        double double_m_cross_py = m2 * m_cross_px - m0 * m_cross_pz;
+        double double_m_cross_pz = m0 * m_cross_py - m1 * m_cross_px;
+        
+        rhs_x += beta_STT * (double_m_cross_px + ctx.stt_epsilon_prime * m_cross_px);
+        rhs_y += beta_STT * (double_m_cross_py + ctx.stt_epsilon_prime * m_cross_py);
+        rhs_z += beta_STT * (double_m_cross_pz + ctx.stt_epsilon_prime * m_cross_pz);
+    }
+
+    out_x[idx] = rhs_x;
+    out_y[idx] = rhs_y;
+    out_z[idx] = rhs_z;
 }
 
 /* ── Heun predictor kernel ──

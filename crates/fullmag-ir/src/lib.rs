@@ -722,6 +722,26 @@ pub struct ProblemIR {
     pub study: StudyIR,
     pub backend_policy: BackendPolicyIR,
     pub validation_profile: ValidationProfileIR,
+
+    /// Global current density for Zhang-Li STT [A/m^2]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_density: Option<[f64; 3]>,
+    /// Spin polarization degree for Zhang-Li STT (P)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_degree: Option<f64>,
+    /// Non-adiabaticity parameter for Zhang-Li STT (beta)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_beta: Option<f64>,
+    
+    /// Fixed spin polarization vector for Slonczewski STT (p)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_spin_polarization: Option<[f64; 3]>,
+    /// Slonczewski asymmetry parameter (Lambda)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_lambda: Option<f64>,
+    /// Slonczewski secondary spin-transfer term (epsilon')
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_epsilon_prime: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -796,6 +816,25 @@ pub struct FdmPlanIR {
     /// Sub-cell geometry data (computed by planner when boundary_correction is set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boundary_geometry: Option<BoundaryGeometryIR>,
+    /// Global current density for Zhang-Li STT [A/m^2]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_density: Option<[f64; 3]>,
+    /// Spin polarization degree for Zhang-Li STT (P)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_degree: Option<f64>,
+    /// Non-adiabaticity parameter for Zhang-Li STT (beta)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_beta: Option<f64>,
+    
+    /// Fixed spin polarization vector for Slonczewski STT (p)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_spin_polarization: Option<[f64; 3]>,
+    /// Slonczewski asymmetry parameter (Lambda)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_lambda: Option<f64>,
+    /// Slonczewski secondary spin-transfer term (epsilon')
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_epsilon_prime: Option<f64>,
 }
 
 /// Sub-cell boundary geometry arrays computed from SDF during planning.
@@ -874,6 +913,26 @@ pub struct FemPlanIR {
     /// Temperature in Kelvin for thermal noise (0 = no thermal noise)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
+
+    /// Global current density for Zhang-Li STT [A/m^2]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_density: Option<[f64; 3]>,
+    /// Spin polarization degree for Zhang-Li STT (P)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_degree: Option<f64>,
+    /// Non-adiabaticity parameter for Zhang-Li STT (beta)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_beta: Option<f64>,
+    
+    /// Fixed spin polarization vector for Slonczewski STT (p)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_spin_polarization: Option<[f64; 3]>,
+    /// Slonczewski asymmetry parameter (Lambda)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_lambda: Option<f64>,
+    /// Slonczewski secondary spin-transfer term (epsilon')
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_epsilon_prime: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1031,6 +1090,12 @@ impl ProblemIR {
             validation_profile: ValidationProfileIR {
                 execution_mode: ExecutionMode::Strict,
             },
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
         }
     }
 

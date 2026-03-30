@@ -87,6 +87,24 @@ struct Context {
     double thermal_sigma = 0.0;  // Precomputed noise amplitude (A/m)
     double current_dt = 1e-13;   // Current timestep for thermal sigma computation
 
+    // Zhang-Li STT (CIP)
+    bool has_zhang_li_stt = false;
+    double current_density_x = 0.0;
+    double current_density_y = 0.0;
+    double current_density_z = 0.0;
+    double stt_u_pf = 0.0;     // Precomputed coefficient: j * P * mu_B / (e * M_s * (1 + beta^2))
+    double stt_degree = 0.0;   // P
+    double stt_beta = 0.0;     // beta
+
+    // Slonczewski STT (CPP / SOT)
+    bool has_slonczewski_stt = false;
+    double stt_p_x = 0.0;
+    double stt_p_y = 0.0;
+    double stt_p_z = 0.0;
+    double stt_lambda = 0.0;
+    double stt_epsilon_prime = 0.0;
+    double stt_cpp_pf = 0.0;   // Precomputed coefficient: j * hbar / (2 * e * mu_0 * M_s * d)
+
     // Execution
     fullmag_fdm_precision precision;
     fullmag_fdm_integrator integrator;

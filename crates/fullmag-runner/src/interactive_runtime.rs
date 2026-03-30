@@ -24,6 +24,24 @@ use crate::types::{
 };
 use crate::DisplaySelectionState;
 
+fn display_refresh_due(
+    last_preview_revision: Option<u64>,
+    display_state: &DisplaySelectionState,
+    local_step: u64,
+) -> bool {
+    let preview_emit_every = u64::from(display_state.selection.every_n.max(1));
+    last_preview_revision != Some(display_state.revision)
+        || local_step <= 1
+        || local_step % preview_emit_every == 0
+}
+
+fn display_is_global_scalar(display_state: &DisplaySelectionState) -> bool {
+    matches!(
+        display_state.selection.kind,
+        crate::DisplayKind::GlobalScalar
+    )
+}
+
 pub struct InteractiveFdmPreviewRuntime {
     inner: InteractiveFdmPreviewRuntimeInner,
 }
@@ -198,6 +216,14 @@ impl InteractiveFdmPreviewRuntime {
             InteractiveFdmPreviewRuntimeInner::Cuda(runtime) => {
                 runtime.snapshot_vector_fields(quantities, request)
             }
+        }
+    }
+
+    pub fn snapshot_step_stats(&mut self) -> Result<StepStats, RunError> {
+        match &mut self.inner {
+            InteractiveFdmPreviewRuntimeInner::Cpu(runtime) => runtime.snapshot_step_stats(),
+            #[cfg(feature = "cuda")]
+            InteractiveFdmPreviewRuntimeInner::Cuda(runtime) => runtime.snapshot_step_stats(),
         }
     }
 
@@ -454,6 +480,14 @@ impl InteractiveFemPreviewRuntime {
                 ),
         }
     }
+
+    pub fn snapshot_step_stats(&mut self) -> Result<StepStats, RunError> {
+        match &mut self.inner {
+            InteractiveFemPreviewRuntimeInner::Cpu(runtime) => runtime.snapshot_step_stats(),
+            #[cfg(feature = "fem-gpu")]
+            InteractiveFemPreviewRuntimeInner::Gpu(runtime) => runtime.snapshot_step_stats(),
+        }
+    }
 }
 
 impl CpuInteractiveFdmPreviewRuntime {
@@ -503,6 +537,17 @@ impl CpuInteractiveFdmPreviewRuntime {
             ));
         }
         Ok(cached)
+    }
+
+    fn snapshot_step_stats(&mut self) -> Result<StepStats, RunError> {
+        let observables = cpu_reference::observe_state(&self.problem, &self.state)?;
+        Ok(make_step_stats(
+            self.total_steps,
+            self.state.time_seconds,
+            0.0,
+            0,
+            &observables,
+        ))
     }
 
     fn execute_with_live_preview(
@@ -555,8 +600,49 @@ impl CpuInteractiveFdmPreviewRuntime {
         let mut last_preview_revision: Option<u64> = None;
         let mut cancelled = false;
         let mut steps: Vec<StepStats> = Vec::new();
+        let initial_observables = cpu_reference::observe_state(&self.problem, &self.state)?;
+        let mut current_local_stats = make_step_stats(
+            self.total_steps,
+            self.state.time_seconds,
+            0.0,
+            0,
+            &initial_observables,
+        );
+        current_local_stats.step -= base_step;
+        current_local_stats.time -= base_time;
 
         while self.state.time_seconds - base_time < until_seconds {
+            let display_state = display_selection();
+            let preview_due =
+                display_refresh_due(last_preview_revision, &display_state, current_local_stats.step);
+            let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
+                let preview_cfg = display_state.preview_request();
+                Some(build_grid_preview_field(
+                    &preview_cfg,
+                    select_observables(&initial_observables, &preview_cfg.quantity),
+                    grid,
+                    self.plan_signature.active_mask.as_deref(),
+                ))
+            } else {
+                None
+            };
+            let action = on_step(StepUpdate {
+                stats: current_local_stats.clone(),
+                grid,
+                fem_mesh: None,
+                magnetization: None,
+                preview_field,
+                scalar_row_due: preview_due && display_is_global_scalar(&display_state),
+                finished: false,
+            });
+            if preview_due {
+                last_preview_revision = Some(display_state.revision);
+            }
+            if action == StepAction::Stop {
+                cancelled = true;
+                break;
+            }
+
             let dt_step = dt.min(until_seconds - (self.state.time_seconds - base_time));
             let wall_start = std::time::Instant::now();
             let report = self
@@ -587,14 +673,11 @@ impl CpuInteractiveFdmPreviewRuntime {
             let mut local_stats = total_stats.clone();
             local_stats.step -= base_step;
             local_stats.time -= base_time;
+            current_local_stats = local_stats.clone();
             let display_state = display_selection();
-            let preview_cfg = display_state.preview_request();
-            let preview_emit_every = u64::from(display_state.selection.every_n.max(1));
-            let preview_due = last_preview_revision != Some(display_state.revision)
-                || local_stats.step <= 1
-                || local_stats.step % preview_emit_every == 0;
-            let preview_field = if preview_due {
-                last_preview_revision = Some(display_state.revision);
+            let preview_due = display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
+                let preview_cfg = display_state.preview_request();
                 Some(build_grid_preview_field(
                     &preview_cfg,
                     select_observables(&observables, &preview_cfg.quantity),
@@ -605,7 +688,9 @@ impl CpuInteractiveFdmPreviewRuntime {
                 None
             };
             let scalar_row_due =
-                local_stats.step <= 1 || local_stats.step % field_every_n.max(1) == 0;
+                local_stats.step <= 1
+                    || local_stats.step % field_every_n.max(1) == 0
+                    || (preview_due && display_is_global_scalar(&display_state));
             let action = on_step(StepUpdate {
                 stats: local_stats.clone(),
                 grid,
@@ -615,6 +700,9 @@ impl CpuInteractiveFdmPreviewRuntime {
                 scalar_row_due,
                 finished: false,
             });
+            if preview_due {
+                last_preview_revision = Some(display_state.revision);
+            }
             steps.push(local_stats.clone());
             if action == StepAction::Stop {
                 cancelled = true;
@@ -768,8 +856,40 @@ impl CpuInteractiveFdmPreviewRuntime {
         let mut last_preview_revision: Option<u64> = None;
         let mut cancelled = false;
         let mut latest_local_stats: Option<StepStats> = None;
+        let mut current_local_stats = make_step_stats(0, 0.0, 0.0, 0, &initial_observables);
 
         while self.state.time_seconds - base_time < until_seconds {
+            let display_state = display_selection();
+            let preview_due =
+                display_refresh_due(last_preview_revision, &display_state, current_local_stats.step);
+            let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
+                let preview_cfg = display_state.preview_request();
+                Some(build_grid_preview_field(
+                    &preview_cfg,
+                    select_observables(&initial_observables, &preview_cfg.quantity),
+                    grid,
+                    self.plan_signature.active_mask.as_deref(),
+                ))
+            } else {
+                None
+            };
+            let action = on_step(StepUpdate {
+                stats: current_local_stats.clone(),
+                grid,
+                fem_mesh: None,
+                magnetization: None,
+                preview_field,
+                scalar_row_due: preview_due && display_is_global_scalar(&display_state),
+                finished: false,
+            });
+            if preview_due {
+                last_preview_revision = Some(display_state.revision);
+            }
+            if action == StepAction::Stop {
+                cancelled = true;
+                break;
+            }
+
             let dt_step = dt.min(until_seconds - (self.state.time_seconds - base_time));
             let wall_start = std::time::Instant::now();
             let report = self
@@ -800,6 +920,7 @@ impl CpuInteractiveFdmPreviewRuntime {
             let mut local_stats = total_stats.clone();
             local_stats.step -= base_step;
             local_stats.time -= base_time;
+            current_local_stats = local_stats.clone();
             latest_local_stats = Some(local_stats.clone());
 
             record_due_cpu_outputs(
@@ -815,13 +936,9 @@ impl CpuInteractiveFdmPreviewRuntime {
             )?;
 
             let display_state = display_selection();
-            let preview_cfg = display_state.preview_request();
-            let preview_emit_every = u64::from(display_state.selection.every_n.max(1));
-            let preview_due = last_preview_revision != Some(display_state.revision)
-                || local_stats.step <= 1
-                || local_stats.step % preview_emit_every == 0;
-            let preview_field = if preview_due {
-                last_preview_revision = Some(display_state.revision);
+            let preview_due = display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
+                let preview_cfg = display_state.preview_request();
                 Some(build_grid_preview_field(
                     &preview_cfg,
                     select_observables(&observables, &preview_cfg.quantity),
@@ -832,7 +949,9 @@ impl CpuInteractiveFdmPreviewRuntime {
                 None
             };
             let scalar_row_due =
-                local_stats.step <= 1 || local_stats.step % field_every_n.max(1) == 0;
+                local_stats.step <= 1
+                    || local_stats.step % field_every_n.max(1) == 0
+                    || (preview_due && display_is_global_scalar(&display_state));
             let action = on_step(StepUpdate {
                 stats: local_stats.clone(),
                 grid,
@@ -842,6 +961,9 @@ impl CpuInteractiveFdmPreviewRuntime {
                 scalar_row_due,
                 finished: false,
             });
+            if preview_due {
+                last_preview_revision = Some(display_state.revision);
+            }
             if action == StepAction::Stop {
                 cancelled = true;
                 break;
@@ -893,7 +1015,8 @@ impl CpuInteractiveFdmPreviewRuntime {
 #[cfg(feature = "cuda")]
 impl CudaInteractiveFdmPreviewRuntime {
     fn upload_magnetization(&mut self, magnetization: &[[f64; 3]]) -> Result<(), RunError> {
-        self.backend.upload_magnetization(magnetization)
+        self.backend.upload_magnetization(magnetization)?;
+        self.backend.refresh_observables()
     }
 
     fn snapshot_preview(
@@ -932,6 +1055,10 @@ impl CudaInteractiveFdmPreviewRuntime {
         }
 
         Ok(cached)
+    }
+
+    fn snapshot_step_stats(&mut self) -> Result<StepStats, RunError> {
+        self.backend.snapshot_step_stats(self.original_grid)
     }
 
     fn execute_with_live_preview(
@@ -1259,6 +1386,17 @@ impl CpuInteractiveFemPreviewRuntime {
         Ok(cached)
     }
 
+    fn snapshot_step_stats(&mut self) -> Result<StepStats, RunError> {
+        let observables = fem_reference::observe_state(&self.problem, &self.state)?;
+        Ok(make_step_stats(
+            self.total_steps,
+            self.state.time_seconds,
+            0.0,
+            0,
+            &observables,
+        ))
+    }
+
     fn execute_with_live_preview(
         &mut self,
         plan: &FemPlanIR,
@@ -1577,7 +1715,9 @@ impl CpuInteractiveFemPreviewRuntime {
 #[cfg(feature = "fem-gpu")]
 impl GpuInteractiveFemPreviewRuntime {
     fn upload_magnetization(&mut self, magnetization: &[[f64; 3]]) -> Result<(), RunError> {
-        self.backend.upload_magnetization(magnetization)
+        self.backend.upload_magnetization(magnetization)?;
+        let _ = self.backend.snapshot_step_stats(self.node_count)?;
+        Ok(())
     }
 
     fn snapshot_preview(
@@ -1612,6 +1752,10 @@ impl GpuInteractiveFemPreviewRuntime {
         }
 
         Ok(cached)
+    }
+
+    fn snapshot_step_stats(&mut self) -> Result<StepStats, RunError> {
+        self.backend.snapshot_step_stats(self.node_count)
     }
 
     fn execute_with_live_preview(
@@ -2492,6 +2636,10 @@ impl InteractiveBackend for InteractiveFdmPreviewRuntime {
         self.snapshot_vector_fields(quantities, request)
     }
 
+    fn snapshot_step_stats(&mut self) -> Result<StepStats, RunError> {
+        self.snapshot_step_stats()
+    }
+
     fn execution_provenance(&self) -> ExecutionProvenance {
         self.execution_provenance()
     }
@@ -2559,6 +2707,10 @@ impl InteractiveBackend for InteractiveFemPreviewRuntime {
         request: &LivePreviewRequest,
     ) -> Result<Vec<LivePreviewField>, RunError> {
         self.snapshot_vector_fields(quantities, request)
+    }
+
+    fn snapshot_step_stats(&mut self) -> Result<StepStats, RunError> {
+        self.snapshot_step_stats()
     }
 
     fn execution_provenance(&self) -> ExecutionProvenance {

@@ -131,6 +131,20 @@ typedef struct {
 
     double                     temperature;            /* Temperature in K (0 = no thermal noise) */
 
+    /* Zhang-Li Spin-Transfer Torque (CIP) */
+    double                     current_density_x;      /* j_x (A/m^2) */
+    double                     current_density_y;      /* j_y (A/m^2) */
+    double                     current_density_z;      /* j_z (A/m^2) */
+    double                     stt_degree;             /* P (dimensionless) */
+    double                     stt_beta;               /* beta (dimensionless) */
+    
+    /* Slonczewski Spin-Transfer Torque (CPP / SOT) */
+    double                     stt_p_x;                /* p_x (polarization direction) */
+    double                     stt_p_y;                /* p_y */
+    double                     stt_p_z;                /* p_z */
+    double                     stt_lambda;             /* Lambda (asymmetry parameter) */
+    double                     stt_epsilon_prime;      /* epsilon' (secondary spin-transfer term) */
+
     /*
      * Optional precomputed Newell tensor spectra, interleaved as
      * [re0, im0, re1, im1, ...] in host-side f64 for each component.
@@ -411,6 +425,17 @@ int fullmag_fdm_backend_upload_magnetization_f32(
  */
 int fullmag_fdm_backend_refresh_observables(
     fullmag_fdm_backend   *handle);
+
+/**
+ * Snapshot scalar diagnostics for the current state without advancing time.
+ *
+ * The backend recomputes derived observables first, then fills `out_stats`
+ * using the current magnetization / field state and the current accumulated
+ * step/time counters.
+ */
+int fullmag_fdm_backend_snapshot_stats(
+    fullmag_fdm_backend   *handle,
+    fullmag_fdm_step_stats *out_stats);
 
 /**
  * Query GPU device metadata.

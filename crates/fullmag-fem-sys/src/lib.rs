@@ -228,6 +228,11 @@ extern "C" {
         len: u64,
     ) -> i32;
 
+    pub fn fullmag_fem_backend_snapshot_stats(
+        handle: *mut fullmag_fem_backend,
+        out_stats: *mut fullmag_fem_step_stats,
+    ) -> i32;
+
     pub fn fullmag_fem_backend_get_device_info(
         handle: *mut fullmag_fem_backend,
         out_info: *mut fullmag_fem_device_info,

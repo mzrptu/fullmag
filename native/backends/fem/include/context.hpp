@@ -267,6 +267,10 @@ bool context_step_explicit_rk_mfem(
     double dt_seconds,
     fullmag_fem_step_stats &stats,
     std::string &error);
+bool context_snapshot_stats_mfem(
+    Context &ctx,
+    fullmag_fem_step_stats &stats,
+    std::string &error);
 const ExplicitTableau &tableau_for_integrator(fullmag_fem_integrator integrator);
 void stepper_workspace_allocate(StepperWorkspace &ws, size_t dof_len, int stages);
 bool context_initialize_poisson(Context &ctx, std::string &error);

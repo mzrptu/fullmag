@@ -46,6 +46,7 @@ impl CurrentLiveDisplaySelectionHandle {
                         after_seq = after_seq.max(command.seq);
                         let (lock, cvar) = &*worker.shared;
                         if let Ok(mut state) = lock.lock() {
+                            apply_preview_command_to_state(&mut state, &command);
                             state.queue.push_back(command);
                             cvar.notify_all();
                         }
@@ -72,17 +73,9 @@ impl CurrentLiveDisplaySelectionHandle {
     }
 
     pub(super) fn apply_preview_command(&self, command: &SessionCommand) {
-        let Some(display_selection) = command.display_selection.clone().or_else(|| {
-            command
-                .preview_config
-                .as_ref()
-                .map(CurrentDisplaySelection::from_preview_request)
-        }) else {
-            return;
-        };
         let (lock, _) = &*self.shared;
         if let Ok(mut state) = lock.lock() {
-            state.display_selection = display_selection;
+            apply_preview_command_to_state(&mut state, command);
         }
     }
 
@@ -130,6 +123,20 @@ impl CurrentLiveDisplaySelectionHandle {
                 _ => {}
             }
         }
+    }
+}
+
+fn apply_preview_command_to_state(state: &mut CurrentLiveControlState, command: &SessionCommand) {
+    let Some(display_selection) = command.display_selection.clone().or_else(|| {
+        command
+            .preview_config
+            .as_ref()
+            .map(CurrentDisplaySelection::from_preview_request)
+    }) else {
+        return;
+    };
+    if matches!(command.kind.as_str(), "preview_update" | "preview_refresh") {
+        state.display_selection = display_selection;
     }
 }
 
@@ -470,20 +477,29 @@ fn refresh_interactive_preview_runtime_display(
     live_workspace: &LocalLiveWorkspace,
 ) -> Result<()> {
     let payload = runtime.set_display_selection(display_selection.selection.clone())?;
-    let mut preview_field = match payload {
-        fullmag_runner::DisplayPayload::VectorField(field)
-        | fullmag_runner::DisplayPayload::SpatialScalar(field) => field,
-        fullmag_runner::DisplayPayload::GlobalScalar { quantity, .. } => {
-            bail!(
-                "unsupported global scalar '{}' for interactive spatial preview runtime refresh",
-                quantity
-            );
+    let step_stats = runtime.snapshot_step_stats()?;
+    let preview_field = match payload {
+        fullmag_runner::DisplayPayload::VectorField(mut field)
+        | fullmag_runner::DisplayPayload::SpatialScalar(mut field) => {
+            field.config_revision = display_selection.revision;
+            Some(field)
         }
+        fullmag_runner::DisplayPayload::GlobalScalar { .. } => None,
     };
-    preview_field.config_revision = display_selection.revision;
     live_workspace.update(|state| {
         state.live_state.updated_at_unix_ms = unix_time_millis().unwrap_or(0);
-        state.live_state.latest_step.preview_field = Some(preview_field.clone());
+        state.live_state.latest_step.step = step_stats.step;
+        state.live_state.latest_step.time = step_stats.time;
+        state.live_state.latest_step.dt = step_stats.dt;
+        state.live_state.latest_step.e_ex = step_stats.e_ex;
+        state.live_state.latest_step.e_demag = step_stats.e_demag;
+        state.live_state.latest_step.e_ext = step_stats.e_ext;
+        state.live_state.latest_step.e_total = step_stats.e_total;
+        state.live_state.latest_step.max_dm_dt = step_stats.max_dm_dt;
+        state.live_state.latest_step.max_h_eff = step_stats.max_h_eff;
+        state.live_state.latest_step.max_h_demag = step_stats.max_h_demag;
+        state.latest_scalar_row = Some(scalar_row_from_stats(&step_stats));
+        state.live_state.latest_step.preview_field = preview_field.clone();
     });
     Ok(())
 }

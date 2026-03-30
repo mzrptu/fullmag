@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 
 function ControlRoomShell() {
   const ctx = useControlRoom();
+  const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
   useKeyboardShortcuts();
 
   /* ── Loading state ── */
@@ -60,12 +61,16 @@ function ControlRoomShell() {
 
   const previewNotices = (
     <>
-      {(ctx.preview?.auto_downscaled || ctx.liveState?.preview_auto_downscaled) && (
+      {(spatialPreview?.auto_downscaled || ctx.liveState?.preview_auto_downscaled) && (
         <div
           className="px-2.5 py-1.5 border-b border-amber-500/30 bg-amber-500/10 text-amber-500 text-xs leading-snug"
-          title={ctx.preview?.auto_downscale_message ?? ctx.liveState?.preview_auto_downscale_message ?? undefined}
+          title={
+            spatialPreview?.auto_downscale_message ??
+            ctx.liveState?.preview_auto_downscale_message ??
+            undefined
+          }
         >
-          {ctx.preview?.auto_downscale_message ??
+          {spatialPreview?.auto_downscale_message ??
             ctx.liveState?.preview_auto_downscale_message ??
             `Preview auto-fit to ${ctx.previewGrid[0]}×${ctx.previewGrid[1]}×${ctx.previewGrid[2]}`}
         </div>

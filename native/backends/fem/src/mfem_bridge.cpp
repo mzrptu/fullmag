@@ -2224,6 +2224,98 @@ bool context_refresh_exchange_field_mfem(Context &ctx, std::string &error) {
     return true;
 }
 
+bool context_snapshot_stats_mfem(
+    Context &ctx,
+    fullmag_fem_step_stats &stats,
+    std::string &error)
+{
+    if (!ctx.mfem_ready) {
+        error = "MFEM snapshot requested before MFEM context initialization";
+        return false;
+    }
+    if (!ctx.enable_exchange && !ctx.enable_demag) {
+        error = "native FEM GPU snapshot requires at least one effective-field term";
+        return false;
+    }
+
+    std::vector<double> h_ex_current;
+    std::vector<double> h_demag_current;
+    std::vector<double> h_eff_current;
+    double exchange_energy = 0.0;
+    double demag_energy = 0.0;
+    if (!compute_effective_fields_for_magnetization(
+            ctx,
+            ctx.m_xyz,
+            h_ex_current,
+            h_demag_current,
+            h_eff_current,
+            &exchange_energy,
+            &demag_energy,
+            error)) {
+        return false;
+    }
+
+    ctx.h_ex_xyz = std::move(h_ex_current);
+    ctx.h_demag_xyz = std::move(h_demag_current);
+    ctx.h_eff_xyz = std::move(h_eff_current);
+    ctx.mfem_exchange_ready = true;
+
+    std::vector<double> rhs_current;
+    double max_rhs_current = 0.0;
+    llg_rhs_aos(
+        ctx.m_xyz,
+        ctx.h_eff_xyz,
+        ctx.material.gyromagnetic_ratio,
+        ctx.material.damping,
+        rhs_current,
+        max_rhs_current);
+    zero_non_magnetic_nodes_aos(rhs_current, ctx.magnetic_node_mask);
+    max_rhs_current = max_norm_aos(rhs_current);
+
+    stats = {};
+    stats.step = ctx.step_count;
+    stats.time_seconds = ctx.current_time;
+    stats.dt_seconds = 0.0;
+    stats.exchange_energy_joules = exchange_energy;
+    stats.demag_energy_joules = demag_energy;
+    stats.external_energy_joules = external_energy_from_field(ctx, ctx.m_xyz);
+    {
+        double ani_e = 0.0;
+        if (ctx.enable_anisotropy) {
+            compute_uniaxial_anisotropy_field(ctx, ctx.m_xyz, ctx.h_ani_xyz, &ani_e);
+        }
+        if (ctx.enable_cubic_anisotropy) {
+            double cub_e = 0.0;
+            compute_cubic_anisotropy_field(ctx, ctx.m_xyz, ctx.h_cubic_ani_xyz, &cub_e);
+            ani_e += cub_e;
+        }
+        stats.anisotropy_energy_joules = ani_e;
+    }
+    {
+        double dmi_e = 0.0;
+        if (ctx.enable_dmi) {
+            std::string dmi_err;
+            compute_interfacial_dmi_field(ctx, ctx.m_xyz, ctx.h_dmi_xyz, &dmi_e, dmi_err);
+        }
+        if (ctx.enable_bulk_dmi) {
+            double bulk_e = 0.0;
+            std::string bulk_err;
+            std::vector<double> h_bulk_tmp;
+            compute_bulk_dmi_field(ctx, ctx.m_xyz, h_bulk_tmp, &bulk_e, bulk_err);
+            dmi_e += bulk_e;
+        }
+        stats.dmi_energy_joules = dmi_e;
+    }
+    stats.total_energy_joules =
+        stats.exchange_energy_joules + stats.demag_energy_joules +
+        stats.external_energy_joules + stats.anisotropy_energy_joules +
+        stats.dmi_energy_joules;
+    stats.max_effective_field_amplitude = max_norm_aos(ctx.h_eff_xyz);
+    stats.max_demag_field_amplitude = max_norm_aos(ctx.h_demag_xyz);
+    stats.max_rhs_amplitude = max_rhs_current;
+    return true;
+}
+
 bool context_step_exchange_heun_mfem(
     Context &ctx,
     double dt_seconds,

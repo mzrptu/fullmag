@@ -599,6 +599,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const displaySelection = state?.display_selection ?? null;
   const previewConfig = state?.preview_config ?? null;
   const preview = state?.preview ?? null;
+  const spatialPreview = preview?.kind === "spatial" ? preview : null;
+  const globalScalarPreview = preview?.kind === "global_scalar" ? preview : null;
   const femMesh = state?.fem_mesh ?? null;
   const scriptBuilder = state?.script_builder ?? null;
   const scriptInitialState = scriptBuilder?.initial_state ?? null;
@@ -667,7 +669,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const resolvedBackend =
     (typeof planSummary?.resolved_backend === "string" ? planSummary.resolved_backend : null) ??
     (typeof session?.requested_backend === "string" ? session.requested_backend : null);
-  const isFemBackend = resolvedBackend === "fem" || femMesh != null || preview?.spatial_kind === "mesh";
+  const isFemBackend =
+    resolvedBackend === "fem" || femMesh != null || spatialPreview?.spatial_kind === "mesh";
 
   const runtimeEngine = (metadata?.runtime_engine as Record<string, unknown> | undefined) ?? undefined;
   const runtimeEngineLabel = typeof runtimeEngine?.engine_label === "string" ? runtimeEngine.engine_label : null;
@@ -886,7 +889,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [_rawSolverGrid?.[0], _rawSolverGrid?.[1], _rawSolverGrid?.[2]],
   );
-  const _rawPreviewGrid = preview?.preview_grid ?? liveState?.preview_grid ?? state?.latest_fields.grid ?? solverGrid;
+  const _rawPreviewGrid =
+    spatialPreview?.preview_grid ?? liveState?.preview_grid ?? state?.latest_fields.grid ?? solverGrid;
   const previewGrid = useMemo<[number, number, number]>(
     () => [_rawPreviewGrid?.[0] ?? 0, _rawPreviewGrid?.[1] ?? 0, _rawPreviewGrid?.[2] ?? 0],
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -902,14 +906,15 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     if (activeCells != null && totalCells != null) return Math.max(totalCells - activeCells, 0);
     return null;
   }, [activeCells, artifactLayout, totalCells]);
-  const activeMaskPresent = artifactLayout?.active_mask_present === true || preview?.active_mask != null;
+  const activeMaskPresent =
+    artifactLayout?.active_mask_present === true || spatialPreview?.active_mask != null;
   const activeMask = useMemo<boolean[] | null>(() => {
     // Prefer live preview mask (resampled to preview grid) over static artifact layout mask.
-    if (preview?.active_mask != null) return preview.active_mask;
+    if (spatialPreview?.active_mask != null) return spatialPreview.active_mask;
     const raw = artifactLayout?.active_mask;
     if (!Array.isArray(raw)) return null;
     return raw.map((v: unknown) => Boolean(v));
-  }, [preview?.active_mask, artifactLayout]);
+  }, [spatialPreview?.active_mask, artifactLayout]);
 
   /* Interactive */
   const interactiveEnabled = session?.interactive_session_requested === true;
@@ -918,32 +923,55 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   /* Preview derived — respect user's explicit 2D/Mesh choice */
   const previewDrivenMode: ViewportMode | null =
-    preview && !isFemBackend && viewMode === "3D" ? (preview.type === "3D" ? "3D" : "2D") : null;
+    spatialPreview && !isFemBackend && viewMode === "3D"
+      ? (spatialPreview.type === "3D" ? "3D" : "2D")
+      : null;
   const effectiveViewMode = previewDrivenMode ?? viewMode;
   const requestedDisplaySelection = useMemo<DisplaySelection>(() => {
-    const quantity = displaySelection?.selection.quantity ?? previewConfig?.quantity ?? preview?.quantity ?? "m";
+    const quantity =
+      displaySelection?.selection.quantity ?? previewConfig?.quantity ?? preview?.quantity ?? "m";
     return {
       quantity,
       kind: displaySelection?.selection.kind ?? kindForQuantity(quantity),
-      component: displaySelection?.selection.component ?? previewConfig?.component ?? preview?.component ?? "3D",
-      layer: displaySelection?.selection.layer ?? previewConfig?.layer ?? preview?.layer ?? 0,
+      component:
+        displaySelection?.selection.component ??
+        previewConfig?.component ??
+        spatialPreview?.component ??
+        "3D",
+      layer:
+        displaySelection?.selection.layer ??
+        previewConfig?.layer ??
+        spatialPreview?.layer ??
+        0,
       all_layers:
-        displaySelection?.selection.all_layers ?? previewConfig?.all_layers ?? preview?.all_layers ?? false,
+        displaySelection?.selection.all_layers ??
+        previewConfig?.all_layers ??
+        spatialPreview?.all_layers ??
+        false,
       x_chosen_size:
-        displaySelection?.selection.x_chosen_size ?? previewConfig?.x_chosen_size ?? preview?.x_chosen_size ?? 0,
+        displaySelection?.selection.x_chosen_size ??
+        previewConfig?.x_chosen_size ??
+        spatialPreview?.x_chosen_size ??
+        0,
       y_chosen_size:
-        displaySelection?.selection.y_chosen_size ?? previewConfig?.y_chosen_size ?? preview?.y_chosen_size ?? 0,
+        displaySelection?.selection.y_chosen_size ??
+        previewConfig?.y_chosen_size ??
+        spatialPreview?.y_chosen_size ??
+        0,
       every_n:
         displaySelection?.selection.every_n ?? previewConfig?.every_n ?? PREVIEW_EVERY_N_DEFAULT,
       max_points:
-        displaySelection?.selection.max_points ?? previewConfig?.max_points ?? preview?.max_points ?? PREVIEW_MAX_POINTS_DEFAULT,
+        displaySelection?.selection.max_points ??
+        previewConfig?.max_points ??
+        spatialPreview?.max_points ??
+        PREVIEW_MAX_POINTS_DEFAULT,
       auto_scale_enabled:
         displaySelection?.selection.auto_scale_enabled ??
         previewConfig?.auto_scale_enabled ??
-        preview?.auto_scale_enabled ??
+        spatialPreview?.auto_scale_enabled ??
         true,
     };
-  }, [displaySelection, kindForQuantity, preview, previewConfig]);
+  }, [displaySelection, kindForQuantity, preview, previewConfig, spatialPreview]);
   const currentPreviewRevision = displaySelection?.revision ?? previewConfig?.revision ?? null;
   const previewControlsActive = Boolean(displaySelection ?? previewConfig ?? preview);
   const requestedPreviewQuantity = requestedDisplaySelection.quantity;
@@ -976,16 +1004,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     preview.config_revision !== currentPreviewRevision,
   );
   const previewIsBootstrapStale = Boolean(previewControlsActive && preview && effectiveStep > 0 && preview.source_step === 0);
-  const renderPreview = preview;
-  const selectedQuantityIsScalar = isGlobalScalarQuantity(selectedQuantity);
-  const selectedQuantityUsesLocalData =
-    selectedQuantityIsScalar || (awaitingCommand && selectedQuantity === "m");
+  const renderPreview = spatialPreview;
   const activeQuantityId =
-    selectedQuantityUsesLocalData
-      ? selectedQuantity
-      : (previewControlsActive
-          ? (previewIsStale ? requestedPreviewQuantity : (renderPreview?.quantity ?? requestedPreviewQuantity))
-          : selectedQuantity);
+    previewControlsActive
+      ? (previewIsStale ? requestedPreviewQuantity : (preview?.quantity ?? requestedPreviewQuantity))
+      : selectedQuantity;
   const isMeshPreview = renderPreview?.spatial_kind === "mesh";
   const previewVectorComponent: VectorComponent =
     renderPreview?.component && renderPreview.component !== "3D"
@@ -1277,12 +1300,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       if (isFemBackend && effectiveViewMode === "Mesh") setViewMode("3D");
       setSelectedQuantity(nextQuantity);
     });
-    if (isGlobalScalarQuantity(nextQuantity)) return;
-    if (awaitingCommand && nextQuantity === "m") return;
     if (previewControlsActive) {
       void updatePreview("/quantity", { quantity: nextQuantity });
     }
-  }, [awaitingCommand, effectiveViewMode, isFemBackend, isGlobalScalarQuantity, previewControlsActive, updatePreview]);
+  }, [effectiveViewMode, isFemBackend, previewControlsActive, updatePreview]);
 
   /* Keyboard shortcuts */
   useEffect(() => {
@@ -1330,8 +1351,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [quantityOptions, selectedQuantity]);
 
   useEffect(() => {
-    if (!selectedQuantityUsesLocalData && requestedPreviewQuantity) setSelectedQuantity(requestedPreviewQuantity);
-  }, [requestedPreviewQuantity, selectedQuantityUsesLocalData]);
+    if (requestedPreviewQuantity) setSelectedQuantity(requestedPreviewQuantity);
+  }, [requestedPreviewQuantity]);
 
   const quantityDescriptor = useMemo(
     () => (activeQuantityId ? quantityDescriptorById.get(activeQuantityId) ?? null : null),
@@ -1354,13 +1375,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   );
 
   const selectedScalarValue = useMemo(() => {
-    const scalarKey = quantityDescriptor?.scalar_metric_key;
-    if (!scalarKey) return null;
-    const lastRow = scalarRows[scalarRows.length - 1];
-    if (!lastRow) return null;
-    const value = lastRow[scalarKey as keyof ScalarRow];
-    return typeof value === "number" ? value : null;
-  }, [quantityDescriptor, scalarRows]);
+    return globalScalarPreview?.value ?? null;
+  }, [globalScalarPreview]);
 
   /* Field data */
   const fieldMap = useMemo<Record<string, Float64Array | null>>(
@@ -1464,12 +1480,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   /* Slice count */
   const maxSliceCount = useMemo(() => {
-    if (preview?.spatial_kind === "grid") return 1;
+    if (spatialPreview?.spatial_kind === "grid") return 1;
     if (isFemBackend && femMeshData) return FEM_SLICE_COUNT;
     if (plane === "xy") return Math.max(1, previewGrid[2]);
     if (plane === "xz") return Math.max(1, previewGrid[1]);
     return Math.max(1, previewGrid[0]);
-  }, [femMeshData, isFemBackend, plane, preview?.spatial_kind, previewGrid]);
+  }, [femMeshData, isFemBackend, plane, spatialPreview?.spatial_kind, previewGrid]);
 
   useEffect(() => {
     if (sliceIndex >= maxSliceCount) setSliceIndex(Math.max(0, maxSliceCount - 1));

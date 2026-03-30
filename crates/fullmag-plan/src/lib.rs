@@ -897,6 +897,12 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
             .and_then(|h| h.fdm.as_ref())
             .and_then(|fdm| fdm.boundary_correction.clone()),
         boundary_geometry: None,
+        current_density: problem.current_density,
+        stt_degree: problem.stt_degree,
+        stt_beta: problem.stt_beta,
+        stt_spin_polarization: problem.stt_spin_polarization,
+        stt_lambda: problem.stt_lambda,
+        stt_epsilon_prime: problem.stt_epsilon_prime,
     };
 
     // ── Compute sub-cell boundary geometry when boundary correction is enabled ──
@@ -1763,6 +1769,12 @@ fn plan_fem(
         dind_field: None,
         dbulk_field: None,
         temperature: None,
+        current_density: problem.current_density,
+        stt_degree: problem.stt_degree,
+        stt_beta: problem.stt_beta,
+        stt_spin_polarization: problem.stt_spin_polarization,
+        stt_lambda: problem.stt_lambda,
+        stt_epsilon_prime: problem.stt_epsilon_prime,
     };
     let study_note = if let Some(control) = fem_plan.relaxation.as_ref() {
         format!(
