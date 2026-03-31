@@ -239,6 +239,7 @@ fn execute_reference_fem_impl(
                     }),
                     magnetization: None,
                     preview_field,
+                    cached_preview_fields: None,
                     scalar_row_due: preview_due && preview_targets_global_scalar,
                     finished: false,
                 });
@@ -346,6 +347,7 @@ fn execute_reference_fem_impl(
                 },
                 magnetization,
                 preview_field,
+                cached_preview_fields: None,
                 scalar_row_due: due_scalar_row,
                 finished: false,
             });

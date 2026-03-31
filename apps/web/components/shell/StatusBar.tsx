@@ -54,11 +54,11 @@ export default function StatusBar({
   runtimeCanAcceptCommands = false,
 }: StatusBarProps) {
   return (
-    <div className="flex items-center justify-between border-t border-white/5 bg-background/40 backdrop-blur-xl px-3 py-1.5 text-[0.68rem] tracking-wide text-muted-foreground z-40 min-h-[28px] shadow-[0_-8px_32px_rgba(0,0,0,0.4)]">
+    <div className="flex items-center justify-between border-t border-white/5 bg-background/50 backdrop-blur-xl px-3 py-1.5 text-[0.68rem] tracking-wide text-muted-foreground z-40 min-h-[28px]">
       <div className="flex items-center gap-2 overflow-hidden flex-1 mr-4">
         {(activityLabel || activityDetail) ? (
           <>
-            <span className="font-bold uppercase tracking-widest text-[0.6rem] bg-primary text-primary-foreground px-1.5 py-[1px] rounded shadow-sm border border-primary/20 shrink-0">
+            <span className="font-medium uppercase tracking-wider text-[0.6rem] bg-primary text-primary-foreground px-1.5 py-[1px] rounded shadow-sm border border-primary/20 shrink-0">
               {activityLabel ?? "Workspace"}
             </span>
             {activityDetail && (
@@ -68,12 +68,12 @@ export default function StatusBar({
             )}
           </>
         ) : (
-          <span className="font-bold uppercase tracking-widest text-[0.6rem] bg-muted text-muted-foreground px-1.5 py-[1px] rounded shadow-sm shrink-0">
+          <span className="font-medium uppercase tracking-wider text-[0.6rem] bg-muted text-muted-foreground px-1.5 py-[1px] rounded shadow-sm shrink-0">
             Idle
           </span>
         )}
         {displayLabel && (
-          <span className="rounded-full border border-border/50 bg-background/50 px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-[0.18em] text-foreground/80">
+          <span className="rounded-full border border-border/50 bg-background/50 px-2 py-0.5 text-[0.6rem] font-medium uppercase tracking-wider text-foreground/80">
             Display {displayLabel}
           </span>
         )}
@@ -85,7 +85,7 @@ export default function StatusBar({
         {commandMessage && (
           <span
             className={cn(
-              "max-w-[24rem] truncate rounded-full border px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-[0.18em]",
+              "max-w-[24rem] truncate rounded-full border px-2 py-0.5 text-[0.6rem] font-medium uppercase tracking-wider",
               commandState === "rejected"
                 ? "border-rose-500/25 bg-rose-500/10 text-rose-300"
                 : previewPending
@@ -118,7 +118,7 @@ export default function StatusBar({
         <span className="h-3 w-px bg-border/50" />
         <span
           className={cn(
-            "font-semibold uppercase tracking-[0.18em] text-[0.58rem]",
+            "font-medium uppercase tracking-wider text-[0.58rem]",
             runtimeCanAcceptCommands ? "text-emerald-400" : "text-amber-400",
           )}
         >

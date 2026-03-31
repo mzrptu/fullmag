@@ -35,6 +35,83 @@ pub(crate) fn display_refresh_due(
         || local_step % preview_emit_every == 0
 }
 
+pub(crate) fn cached_preview_refresh_due(
+    last_cached_preview_revision: Option<u64>,
+    display_state: &DisplaySelectionState,
+    local_step: u64,
+    _field_every_n: u64,
+) -> bool {
+    // Keep the quick-switch cache hot on every accepted step so changing
+    // quantity can usually swap to an already-available preview payload.
+    const HOT_CACHE_EVERY_N: u64 = 1;
+    last_cached_preview_revision != Some(display_state.revision)
+        || local_step <= 1
+        || local_step % HOT_CACHE_EVERY_N == 0
+}
+
+pub(crate) fn cached_preview_quantities_for(
+    display_state: &DisplaySelectionState,
+) -> Vec<&'static str> {
+    let active_quantity = (!display_is_global_scalar(display_state))
+        .then_some(display_state.selection.quantity.as_str());
+    crate::quantities::cached_preview_quantity_ids()
+        .into_iter()
+        .filter(|quantity| Some(*quantity) != active_quantity)
+        .collect()
+}
+
+fn build_cached_grid_preview_fields(
+    display_state: &DisplaySelectionState,
+    observables: &StateObservables,
+    grid: [u32; 3],
+    active_mask: Option<&[bool]>,
+) -> Option<Vec<LivePreviewField>> {
+    let quantities = cached_preview_quantities_for(display_state);
+    if quantities.is_empty() {
+        return None;
+    }
+    let base_request = display_state.preview_request();
+    Some(
+        quantities
+            .into_iter()
+            .map(|quantity| {
+                let mut request = base_request.clone();
+                request.quantity = quantity.to_string();
+                build_grid_preview_field(
+                    &request,
+                    select_observables(observables, quantity),
+                    grid,
+                    active_mask,
+                )
+            })
+            .collect(),
+    )
+}
+
+fn build_cached_mesh_preview_fields(
+    display_state: &DisplaySelectionState,
+    observables: &StateObservables,
+) -> Option<Vec<LivePreviewField>> {
+    let quantities = cached_preview_quantities_for(display_state);
+    if quantities.is_empty() {
+        return None;
+    }
+    let base_request = display_state.preview_request();
+    Some(
+        quantities
+            .into_iter()
+            .map(|quantity| {
+                let mut request = base_request.clone();
+                request.quantity = quantity.to_string();
+                crate::preview::build_mesh_preview_field(
+                    &request,
+                    select_observables(observables, quantity),
+                )
+            })
+            .collect(),
+    )
+}
+
 pub(crate) fn display_is_global_scalar(display_state: &DisplaySelectionState) -> bool {
     matches!(
         display_state.selection.kind,
@@ -611,6 +688,7 @@ impl CpuInteractiveFdmPreviewRuntime {
         let mut previous_total_energy =
             Some(cpu_reference::observe_state(&self.problem, &self.state)?.total_energy);
         let mut last_preview_revision: Option<u64> = None;
+        let mut last_cached_preview_revision: Option<u64> = None;
         let mut cancelled = false;
         let mut steps: Vec<StepStats> = Vec::new();
         let initial_observables = cpu_reference::observe_state(&self.problem, &self.state)?;
@@ -632,6 +710,12 @@ impl CpuInteractiveFdmPreviewRuntime {
                 &display_state,
                 current_local_stats.step,
             );
+            let cached_preview_due = cached_preview_refresh_due(
+                last_cached_preview_revision,
+                &display_state,
+                current_local_stats.step,
+                field_every_n,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(build_grid_preview_field(
@@ -643,17 +727,31 @@ impl CpuInteractiveFdmPreviewRuntime {
             } else {
                 None
             };
+            let cached_preview_fields = if cached_preview_due {
+                build_cached_grid_preview_fields(
+                    &display_state,
+                    &current_observables,
+                    grid,
+                    self.plan_signature.active_mask.as_deref(),
+                )
+            } else {
+                None
+            };
             let action = on_step(StepUpdate {
                 stats: current_local_stats.clone(),
                 grid,
                 fem_mesh: None,
                 magnetization: None,
                 preview_field,
+                cached_preview_fields,
                 scalar_row_due: preview_due && display_is_global_scalar(&display_state),
                 finished: false,
             });
             if preview_due {
                 last_preview_revision = Some(display_state.revision);
+            }
+            if cached_preview_due {
+                last_cached_preview_revision = Some(display_state.revision);
             }
             if action == StepAction::Stop {
                 cancelled = true;
@@ -695,6 +793,12 @@ impl CpuInteractiveFdmPreviewRuntime {
             let display_state = display_selection();
             let preview_due =
                 display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let cached_preview_due = cached_preview_refresh_due(
+                last_cached_preview_revision,
+                &display_state,
+                local_stats.step,
+                field_every_n,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(build_grid_preview_field(
@@ -703,6 +807,16 @@ impl CpuInteractiveFdmPreviewRuntime {
                     grid,
                     self.plan_signature.active_mask.as_deref(),
                 ))
+            } else {
+                None
+            };
+            let cached_preview_fields = if cached_preview_due {
+                build_cached_grid_preview_fields(
+                    &display_state,
+                    &observables,
+                    grid,
+                    self.plan_signature.active_mask.as_deref(),
+                )
             } else {
                 None
             };
@@ -715,11 +829,15 @@ impl CpuInteractiveFdmPreviewRuntime {
                 fem_mesh: None,
                 magnetization: None,
                 preview_field,
+                cached_preview_fields,
                 scalar_row_due,
                 finished: false,
             });
             if preview_due {
                 last_preview_revision = Some(display_state.revision);
+            }
+            if cached_preview_due {
+                last_cached_preview_revision = Some(display_state.revision);
             }
             steps.push(local_stats.clone());
             if action == StepAction::Stop {
@@ -910,6 +1028,7 @@ impl CpuInteractiveFdmPreviewRuntime {
                 fem_mesh: None,
                 magnetization: None,
                 preview_field,
+                cached_preview_fields: None,
                 scalar_row_due: preview_due && display_is_global_scalar(&display_state),
                 finished: false,
             });
@@ -990,6 +1109,7 @@ impl CpuInteractiveFdmPreviewRuntime {
                 fem_mesh: None,
                 magnetization: None,
                 preview_field,
+                cached_preview_fields: None,
                 scalar_row_due,
                 finished: false,
             });
@@ -1127,6 +1247,7 @@ impl CudaInteractiveFdmPreviewRuntime {
             .unwrap_or(1e-13);
         let mut previous_total_energy: Option<f64> = None;
         let mut last_preview_revision: Option<u64> = None;
+        let mut last_cached_preview_revision: Option<u64> = None;
         let cell_count = (self.original_grid[0] as usize)
             * (self.original_grid[1] as usize)
             * (self.original_grid[2] as usize);
@@ -1144,6 +1265,12 @@ impl CudaInteractiveFdmPreviewRuntime {
                 &display_state,
                 current_local_stats.step,
             );
+            let cached_preview_due = cached_preview_refresh_due(
+                last_cached_preview_revision,
+                &display_state,
+                current_local_stats.step,
+                field_every_n,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(self.backend.copy_live_preview_field(
@@ -1154,17 +1281,32 @@ impl CudaInteractiveFdmPreviewRuntime {
             } else {
                 None
             };
+            let cached_preview_fields = if cached_preview_due {
+                let preview_cfg = display_state.preview_request();
+                let quantities = cached_preview_quantities_for(&display_state);
+                if quantities.is_empty() {
+                    None
+                } else {
+                    Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
+                }
+            } else {
+                None
+            };
             let action = on_step(StepUpdate {
                 stats: current_local_stats.clone(),
                 grid,
                 fem_mesh: None,
                 magnetization: None,
                 preview_field,
+                cached_preview_fields,
                 scalar_row_due: preview_due && display_is_global_scalar(&display_state),
                 finished: false,
             });
             if preview_due {
                 last_preview_revision = Some(display_state.revision);
+            }
+            if cached_preview_due {
+                last_cached_preview_revision = Some(display_state.revision);
             }
             if action == StepAction::Stop {
                 cancelled = true;
@@ -1191,6 +1333,12 @@ impl CudaInteractiveFdmPreviewRuntime {
             let display_state = display_selection();
             let preview_due =
                 display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let cached_preview_due = cached_preview_refresh_due(
+                last_cached_preview_revision,
+                &display_state,
+                local_stats.step,
+                field_every_n,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(self.backend.copy_live_preview_field(
@@ -1198,6 +1346,17 @@ impl CudaInteractiveFdmPreviewRuntime {
                     grid,
                     self.plan_signature.active_mask.as_deref(),
                 )?)
+            } else {
+                None
+            };
+            let cached_preview_fields = if cached_preview_due {
+                let preview_cfg = display_state.preview_request();
+                let quantities = cached_preview_quantities_for(&display_state);
+                if quantities.is_empty() {
+                    None
+                } else {
+                    Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
+                }
             } else {
                 None
             };
@@ -1210,11 +1369,15 @@ impl CudaInteractiveFdmPreviewRuntime {
                 fem_mesh: None,
                 magnetization: None,
                 preview_field,
+                cached_preview_fields,
                 scalar_row_due,
                 finished: false,
             });
             if preview_due {
                 last_preview_revision = Some(display_state.revision);
+            }
+            if cached_preview_due {
+                last_cached_preview_revision = Some(display_state.revision);
             }
             steps.push(local_stats.clone());
             if action == StepAction::Stop {
@@ -1306,6 +1469,7 @@ impl CudaInteractiveFdmPreviewRuntime {
             .unwrap_or(1e-13);
         let mut previous_total_energy: Option<f64> = None;
         let mut last_preview_revision: Option<u64> = None;
+        let mut last_cached_preview_revision: Option<u64> = None;
         let mut cancelled = false;
         let mut steps: Vec<StepStats> = Vec::new();
         let pure_damping_relax = llg_overdamped_uses_pure_damping(plan.relaxation.as_ref());
@@ -1321,6 +1485,12 @@ impl CudaInteractiveFdmPreviewRuntime {
                 &display_state,
                 current_local_stats.step,
             );
+            let cached_preview_due = cached_preview_refresh_due(
+                last_cached_preview_revision,
+                &display_state,
+                current_local_stats.step,
+                field_every_n,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(self.backend.copy_live_preview_field(
@@ -1331,17 +1501,32 @@ impl CudaInteractiveFdmPreviewRuntime {
             } else {
                 None
             };
+            let cached_preview_fields = if cached_preview_due {
+                let preview_cfg = display_state.preview_request();
+                let quantities = cached_preview_quantities_for(&display_state);
+                if quantities.is_empty() {
+                    None
+                } else {
+                    Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
+                }
+            } else {
+                None
+            };
             let action = on_step(StepUpdate {
                 stats: current_local_stats.clone(),
                 grid,
                 fem_mesh: None,
                 magnetization: None,
                 preview_field,
+                cached_preview_fields,
                 scalar_row_due: preview_due && display_is_global_scalar(&display_state),
                 finished: false,
             });
             if preview_due {
                 last_preview_revision = Some(display_state.revision);
+            }
+            if cached_preview_due {
+                last_cached_preview_revision = Some(display_state.revision);
             }
             if action == StepAction::Stop {
                 cancelled = true;
@@ -1369,6 +1554,12 @@ impl CudaInteractiveFdmPreviewRuntime {
             let display_state = display_selection();
             let preview_due =
                 display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let cached_preview_due = cached_preview_refresh_due(
+                last_cached_preview_revision,
+                &display_state,
+                local_stats.step,
+                field_every_n,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(self.backend.copy_live_preview_field(
@@ -1376,6 +1567,17 @@ impl CudaInteractiveFdmPreviewRuntime {
                     grid,
                     self.plan_signature.active_mask.as_deref(),
                 )?)
+            } else {
+                None
+            };
+            let cached_preview_fields = if cached_preview_due {
+                let preview_cfg = display_state.preview_request();
+                let quantities = cached_preview_quantities_for(&display_state);
+                if quantities.is_empty() {
+                    None
+                } else {
+                    Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
+                }
             } else {
                 None
             };
@@ -1388,11 +1590,15 @@ impl CudaInteractiveFdmPreviewRuntime {
                 fem_mesh: None,
                 magnetization: None,
                 preview_field,
+                cached_preview_fields,
                 scalar_row_due,
                 finished: false,
             });
             if preview_due {
                 last_preview_revision = Some(display_state.revision);
+            }
+            if cached_preview_due {
+                last_cached_preview_revision = Some(display_state.revision);
             }
             if action == StepAction::Stop {
                 cancelled = true;
@@ -1553,6 +1759,7 @@ impl CpuInteractiveFemPreviewRuntime {
         let mut previous_total_energy =
             Some(fem_reference::observe_state(&self.problem, &self.state)?.total_energy);
         let mut last_preview_revision: Option<u64> = None;
+        let mut last_cached_preview_revision: Option<u64> = None;
         let mut cancelled = false;
         let mut steps: Vec<StepStats> = Vec::new();
         let initial_observables = fem_reference::observe_state(&self.problem, &self.state)?;
@@ -1574,6 +1781,12 @@ impl CpuInteractiveFemPreviewRuntime {
                 &display_state,
                 current_local_stats.step,
             );
+            let cached_preview_due = cached_preview_refresh_due(
+                last_cached_preview_revision,
+                &display_state,
+                current_local_stats.step,
+                field_every_n,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(crate::preview::build_mesh_preview_field(
@@ -1583,17 +1796,26 @@ impl CpuInteractiveFemPreviewRuntime {
             } else {
                 None
             };
+            let cached_preview_fields = if cached_preview_due {
+                build_cached_mesh_preview_fields(&display_state, &current_observables)
+            } else {
+                None
+            };
             let action = on_step(StepUpdate {
                 stats: current_local_stats.clone(),
                 grid: [0, 0, 0],
                 fem_mesh: (current_local_stats.step == 0).then_some(self.mesh.clone()),
                 magnetization: None,
                 preview_field,
+                cached_preview_fields,
                 scalar_row_due: preview_due && display_is_global_scalar(&display_state),
                 finished: false,
             });
             if preview_due {
                 last_preview_revision = Some(display_state.revision);
+            }
+            if cached_preview_due {
+                last_cached_preview_revision = Some(display_state.revision);
             }
             if action == StepAction::Stop {
                 cancelled = true;
@@ -1630,12 +1852,23 @@ impl CpuInteractiveFemPreviewRuntime {
             let display_state = display_selection();
             let preview_due =
                 display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let cached_preview_due = cached_preview_refresh_due(
+                last_cached_preview_revision,
+                &display_state,
+                local_stats.step,
+                field_every_n,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(crate::preview::build_mesh_preview_field(
                     &preview_cfg,
                     select_observables(&observables, &preview_cfg.quantity),
                 ))
+            } else {
+                None
+            };
+            let cached_preview_fields = if cached_preview_due {
+                build_cached_mesh_preview_fields(&display_state, &observables)
             } else {
                 None
             };
@@ -1648,11 +1881,15 @@ impl CpuInteractiveFemPreviewRuntime {
                 fem_mesh: (local_stats.step <= 1).then_some(self.mesh.clone()),
                 magnetization: None,
                 preview_field,
+                cached_preview_fields,
                 scalar_row_due,
                 finished: false,
             });
             if preview_due {
                 last_preview_revision = Some(display_state.revision);
+            }
+            if cached_preview_due {
+                last_cached_preview_revision = Some(display_state.revision);
             }
             steps.push(local_stats.clone());
             if action == StepAction::Stop {
@@ -1790,6 +2027,7 @@ impl CpuInteractiveFemPreviewRuntime {
                 fem_mesh: (current_local_stats.step == 0).then_some(self.mesh.clone()),
                 magnetization: None,
                 preview_field,
+                cached_preview_fields: None,
                 scalar_row_due: preview_due && display_is_global_scalar(&display_state),
                 finished: false,
             });
@@ -1863,6 +2101,7 @@ impl CpuInteractiveFemPreviewRuntime {
                 fem_mesh: (local_stats.step <= 1).then_some(self.mesh.clone()),
                 magnetization: None,
                 preview_field,
+                cached_preview_fields: None,
                 scalar_row_due,
                 finished: false,
             });
@@ -2005,6 +2244,7 @@ impl GpuInteractiveFemPreviewRuntime {
             .unwrap_or(1e-13);
         let mut previous_total_energy: Option<f64> = None;
         let mut last_preview_revision: Option<u64> = None;
+        let mut last_cached_preview_revision: Option<u64> = None;
         let mut cancelled = false;
         let mut steps: Vec<StepStats> = Vec::new();
         let pure_damping_relax = llg_overdamped_uses_pure_damping(plan.relaxation.as_ref());
@@ -2019,6 +2259,12 @@ impl GpuInteractiveFemPreviewRuntime {
                 &display_state,
                 current_local_stats.step,
             );
+            let cached_preview_due = cached_preview_refresh_due(
+                last_cached_preview_revision,
+                &display_state,
+                current_local_stats.step,
+                field_every_n,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(
@@ -2028,17 +2274,32 @@ impl GpuInteractiveFemPreviewRuntime {
             } else {
                 None
             };
+            let cached_preview_fields = if cached_preview_due {
+                let preview_cfg = display_state.preview_request();
+                let quantities = cached_preview_quantities_for(&display_state);
+                if quantities.is_empty() {
+                    None
+                } else {
+                    Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
+                }
+            } else {
+                None
+            };
             let action = on_step(StepUpdate {
                 stats: current_local_stats.clone(),
                 grid: [0, 0, 0],
                 fem_mesh: (current_local_stats.step == 0).then_some(self.mesh.clone()),
                 magnetization: None,
                 preview_field,
+                cached_preview_fields,
                 scalar_row_due: preview_due && display_is_global_scalar(&display_state),
                 finished: false,
             });
             if preview_due {
                 last_preview_revision = Some(display_state.revision);
+            }
+            if cached_preview_due {
+                last_cached_preview_revision = Some(display_state.revision);
             }
             if action == StepAction::Stop {
                 cancelled = true;
@@ -2065,12 +2326,29 @@ impl GpuInteractiveFemPreviewRuntime {
             let display_state = display_selection();
             let preview_due =
                 display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let cached_preview_due = cached_preview_refresh_due(
+                last_cached_preview_revision,
+                &display_state,
+                local_stats.step,
+                field_every_n,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(
                     self.backend
                         .copy_live_preview_field(&preview_cfg, self.node_count)?,
                 )
+            } else {
+                None
+            };
+            let cached_preview_fields = if cached_preview_due {
+                let preview_cfg = display_state.preview_request();
+                let quantities = cached_preview_quantities_for(&display_state);
+                if quantities.is_empty() {
+                    None
+                } else {
+                    Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
+                }
             } else {
                 None
             };
@@ -2083,11 +2361,15 @@ impl GpuInteractiveFemPreviewRuntime {
                 fem_mesh: (local_stats.step <= 1).then_some(self.mesh.clone()),
                 magnetization: None,
                 preview_field,
+                cached_preview_fields,
                 scalar_row_due,
                 finished: false,
             });
             if preview_due {
                 last_preview_revision = Some(display_state.revision);
+            }
+            if cached_preview_due {
+                last_cached_preview_revision = Some(display_state.revision);
             }
             steps.push(local_stats.clone());
             if action == StepAction::Stop {

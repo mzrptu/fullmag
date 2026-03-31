@@ -2,14 +2,11 @@
 
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
 import EngineConsole from "../panels/EngineConsole";
-import TitleBar from "../shell/TitleBar";
-import MenuBar from "../shell/MenuBar";
+import TopHeader from "../shell/TopHeader";
 import RibbonBar from "../shell/RibbonBar";
 import StatusBar from "../shell/StatusBar";
-import ColorLegend from "../preview/ColorLegend";
 import RunSidebar from "./control-room/RunSidebar";
 import { ViewportBar, ViewportCanvasArea } from "./control-room/ViewportPanels";
-import WorkspaceControlStrip from "./control-room/WorkspaceControlStrip";
 import FullmagLogo from "../brand/FullmagLogo";
 import {
   ControlRoomProvider,
@@ -88,25 +85,12 @@ function ControlRoomShell() {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
-      <TitleBar
+      <TopHeader
         problemName={ctx.session?.problem_name ?? "Local Live Workspace"}
         backend={ctx.session?.requested_backend ?? ""}
         runtimeEngine={ctx.runtimeEngineLabel ?? undefined}
         status={ctx.workspaceStatus}
         connection={ctx.connection}
-        interactiveEnabled={ctx.interactiveEnabled}
-        runEnabled={ctx.canRunCommand}
-        relaxEnabled={ctx.canRelaxCommand}
-        pauseEnabled={ctx.canPauseCommand}
-        stopEnabled={ctx.canStopCommand}
-        runAction={ctx.primaryRunAction}
-        runLabel={ctx.primaryRunLabel}
-        commandBusy={ctx.commandBusy}
-        commandMessage={ctx.commandMessage}
-        onSimAction={ctx.handleSimulationAction}
-      />
-      <MenuBar
-        viewMode={ctx.effectiveViewMode}
         interactiveEnabled={ctx.interactiveEnabled}
         canRun={ctx.canRunCommand}
         canRelax={ctx.canRelaxCommand}
@@ -114,9 +98,12 @@ function ControlRoomShell() {
         canStop={ctx.canStopCommand}
         runAction={ctx.primaryRunAction}
         runLabel={ctx.primaryRunLabel}
+        commandBusy={ctx.commandBusy}
+        commandMessage={ctx.commandMessage}
+        onSimAction={ctx.handleSimulationAction}
+        viewMode={ctx.effectiveViewMode}
         onViewChange={ctx.handleViewModeChange}
         onSidebarToggle={() => ctx.setSidebarCollapsed((v) => !v)}
-        onSimAction={ctx.handleSimulationAction}
       />
       <RibbonBar
         viewMode={ctx.effectiveViewMode}
@@ -141,7 +128,6 @@ function ControlRoomShell() {
         onExport={ctx.handleExport}
         onStateExport={() => void ctx.handleStateExport("json")}
       />
-      <WorkspaceControlStrip />
       <PanelGroup
         orientation="horizontal"
         className="flex flex-row flex-1 min-h-0 min-w-0 overflow-hidden"
@@ -178,13 +164,12 @@ function ControlRoomShell() {
               defaultSize={PANEL_SIZES.viewportDefault}
               minSize={PANEL_SIZES.viewportMin}
             >
-                <div className="flex flex-row h-full min-h-0 min-w-0 overflow-hidden bg-background flex-1 relative shadow-[inset_0_0_120px_rgba(0,0,0,0.6)] ring-1 ring-inset ring-white/5">
+                <div className="flex flex-row h-full min-h-0 min-w-0 overflow-hidden bg-background flex-1 relative ring-1 ring-inset ring-white/5">
                   <div className="flex flex-col flex-1 min-w-0 min-h-0">
                     <ViewportBar />
                     {previewNotices}
                     <ViewportCanvasArea />
                   </div>
-                  <ColorLegend />
                 </div>
             </Panel>
 

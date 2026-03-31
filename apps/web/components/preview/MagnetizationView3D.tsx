@@ -251,7 +251,7 @@ function MagnetizationView3DInner({
         </button>
 
         {expanded ? (
-          <div className="mt-2 p-3 min-w-[200px] max-w-[220px] max-h-[360px] overflow-y-auto flex flex-col gap-3 rounded-lg bg-gradient-to-b from-card to-background border border-border/50 backdrop-blur-md shadow-lg scrollbar-thin scrollbar-thumb-muted-foreground/30">
+          <div className="mt-2 p-3 min-w-[200px] max-w-[220px] max-h-[360px] overflow-y-auto flex flex-col gap-3 rounded-xl bg-card/60 border border-border/40 backdrop-blur-xl shadow-lg ring-1 ring-white/5 scrollbar-thin scrollbar-thumb-muted-foreground/30">
             {!geometryMode ? (
               <ControlGroup label="Render mode">
                 <SegmentedGroup
@@ -339,8 +339,8 @@ function MagnetizationView3DInner({
                 <div className="h-px bg-border/50 my-0.5" />
 
                 <ControlGroup label="Topography">
-                  <button
-                    className={cn("w-full py-2 text-[0.65rem] font-bold tracking-wider text-muted-foreground bg-white/5 border border-border/50 rounded-md cursor-pointer transition-all hover:bg-primary/10 hover:border-primary/50 hover:text-foreground", settings.topoEnabled && "bg-gradient-to-br from-emerald-500/85 to-emerald-700/85 text-white border-emerald-500/50 hover:text-white")}
+          <button
+                    className={cn("w-full py-1.5 text-[0.65rem] font-semibold tracking-wider text-muted-foreground bg-white/5 border border-border/50 rounded-md cursor-pointer transition-all hover:bg-primary/10 hover:border-primary/50 hover:text-foreground", settings.topoEnabled && "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:text-emerald-300")}
                     onClick={() => update({ topoEnabled: !settings.topoEnabled })}
                   >
                     {settings.topoEnabled ? "⛰ ON" : "OFF"}
@@ -380,7 +380,7 @@ function MagnetizationView3DInner({
                 {cameraPresets.map((p) => (
                   <button
                     key={p.label}
-                    className="py-1.5 text-[0.65rem] font-bold tracking-wider text-muted-foreground bg-transparent border-none cursor-pointer transition-colors border-r border-border/50 last:border-r-0 hover:bg-primary/10 hover:text-foreground"
+                    className="py-1.5 text-[0.65rem] font-semibold tracking-wider text-muted-foreground bg-transparent border-none cursor-pointer transition-colors border-r border-border/50 last:border-r-0 hover:bg-primary/10 hover:text-foreground"
                     onClick={p.fn}
                   >
                     {p.label.toUpperCase()}
@@ -389,11 +389,11 @@ function MagnetizationView3DInner({
               </div>
             </ControlGroup>
 
-            <button className="w-full py-2 text-[0.65rem] font-bold tracking-wider text-muted-foreground bg-white/5 border border-border/50 rounded-md cursor-pointer transition-all hover:bg-primary/10 hover:border-primary/50 hover:text-foreground" onClick={resetCamera}>
+            <button className="w-full py-2 text-[0.65rem] font-semibold tracking-wider text-muted-foreground bg-white/5 border border-border/40 rounded-md cursor-pointer transition-all hover:bg-primary/10 hover:border-primary/50 hover:text-foreground" onClick={resetCamera}>
               Reset Camera
             </button>
 
-            <button className="w-full py-2 text-[0.65rem] font-bold tracking-wider text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/30 rounded-md cursor-pointer transition-all hover:bg-emerald-500/20 hover:border-emerald-500/50 hover:text-emerald-300" onClick={captureSnapshot}>
+            <button className="w-full py-2 text-[0.65rem] font-semibold tracking-wider text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/30 rounded-md cursor-pointer transition-all hover:bg-emerald-500/20 hover:border-emerald-500/50 hover:text-emerald-300" onClick={captureSnapshot}>
               📷 Snapshot
             </button>
           </div>
@@ -494,7 +494,7 @@ function SegmentedGroup({ options, value, onChange, columns }: {
       {options.map(([k, label]) => (
         <button
           key={k}
-          className={cn("py-1.5 text-[0.65rem] font-bold tracking-wider text-muted-foreground bg-transparent border-none cursor-pointer transition-colors border-r border-border/50 last:border-r-0 hover:bg-primary/10 hover:text-foreground", value === k && "bg-gradient-to-br from-primary to-blue-600 text-white")}
+          className={cn("py-1.5 text-[0.65rem] font-medium tracking-wider text-muted-foreground bg-transparent border-none cursor-pointer transition-colors border-r border-border/50 last:border-r-0 hover:bg-primary/10 hover:text-foreground", value === k && "bg-primary/15 text-primary font-semibold")}
           onClick={() => onChange(k)}
         >
           {label}

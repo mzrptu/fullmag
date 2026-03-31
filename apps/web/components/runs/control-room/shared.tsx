@@ -36,8 +36,8 @@ export const PANEL_SIZES = {
   femDockMax: "50%",
   femViewportDefault: "76%",
   femViewportMin: "26%",
-  sidebarDefault: "22%",
-  sidebarMin: "14%",
+  sidebarDefault: "35%",
+  sidebarMin: "20%",
   sidebarMax: "50%",
 } as const;
 

@@ -316,7 +316,7 @@ export default function VisualizationsPage() {
                 {session && <Badge variant="outline">{session.requested_backend.toUpperCase()}</Badge>}
               </div>
               <div className="space-y-2">
-                <h2 className="text-2xl font-semibold tracking-tight text-[var(--ide-text-1)]">
+                <h2 className="text-lg font-semibold tracking-tight text-[var(--ide-text-1)]">
                   {session?.problem_name ?? "Current Session"}
                 </h2>
                 <p className="max-w-2xl text-sm leading-6 text-[var(--ide-text-3)]">
@@ -423,7 +423,7 @@ export default function VisualizationsPage() {
                 <section className="rounded-[24px] border border-[var(--ide-border-subtle)] bg-[var(--ide-surface-raised)] p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
-                      <h2 className="text-lg font-semibold text-[var(--ide-text-1)]">Spectrum</h2>
+                      <h2 className="text-base font-semibold text-[var(--ide-text-1)]">Spectrum</h2>
                       <p className="text-sm text-[var(--ide-text-3)]">
                         Click a point to move directly into mode inspection.
                       </p>
@@ -442,7 +442,7 @@ export default function VisualizationsPage() {
                 <section className="rounded-[24px] border border-[var(--ide-border-subtle)] bg-[var(--ide-surface-raised)] p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
-                      <h2 className="text-lg font-semibold text-[var(--ide-text-1)]">Mode Table</h2>
+                      <h2 className="text-base font-semibold text-[var(--ide-text-1)]">Mode Table</h2>
                       <p className="text-sm text-[var(--ide-text-3)]">
                         Saved modes can be opened instantly; summary-only modes stay visible for ranking.
                       </p>
@@ -529,7 +529,7 @@ export default function VisualizationsPage() {
                 <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(300px,0.8fr)]">
                   <section className="rounded-[24px] border border-[var(--ide-border-subtle)] bg-[var(--ide-surface-raised)] p-4">
                     <div className="mb-3">
-                      <h2 className="text-lg font-semibold text-[var(--ide-text-1)]">Dispersion</h2>
+                      <h2 className="text-base font-semibold text-[var(--ide-text-1)]">Dispersion</h2>
                       <p className="text-sm text-[var(--ide-text-3)]">
                         Branch data comes directly from `eigen/dispersion/branch_table.csv`.
                       </p>
@@ -545,7 +545,7 @@ export default function VisualizationsPage() {
 
                   <section className="rounded-[24px] border border-[var(--ide-border-subtle)] bg-[var(--ide-surface-raised)] p-4">
                     <div className="mb-3">
-                      <h2 className="text-lg font-semibold text-[var(--ide-text-1)]">Branch Samples</h2>
+                      <h2 className="text-base font-semibold text-[var(--ide-text-1)]">Branch Samples</h2>
                       <p className="text-sm text-[var(--ide-text-3)]">
                         Click a row to focus the corresponding mode across tabs.
                       </p>
@@ -593,7 +593,7 @@ export default function VisualizationsPage() {
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)]">
                 <section className="rounded-[24px] border border-[var(--ide-border-subtle)] bg-[var(--ide-surface-raised)] p-4">
                   <div className="mb-4">
-                    <h2 className="text-lg font-semibold text-[var(--ide-text-1)]">Study Diagnostics</h2>
+                    <h2 className="text-base font-semibold text-[var(--ide-text-1)]">Study Diagnostics</h2>
                     <p className="text-sm text-[var(--ide-text-3)]">
                       Residual and orthogonality diagnostics are not exported yet, so this view focuses on operator and
                       artifact provenance.
@@ -613,7 +613,7 @@ export default function VisualizationsPage() {
 
                 <section className="rounded-[24px] border border-[var(--ide-border-subtle)] bg-[var(--ide-surface-raised)] p-4">
                   <div className="mb-4">
-                    <h2 className="text-lg font-semibold text-[var(--ide-text-1)]">Selection</h2>
+                    <h2 className="text-base font-semibold text-[var(--ide-text-1)]">Selection</h2>
                     <p className="text-sm text-[var(--ide-text-3)]">
                       The current focus stays synchronized across spectrum, mode view and branch table.
                     </p>

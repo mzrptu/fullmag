@@ -167,6 +167,7 @@ pub(crate) fn execute_reference_fdm_multilayer(
                 fem_mesh: None,
                 magnetization: None,
                 preview_field: None,
+                cached_preview_fields: None,
                 scalar_row_due: false,
                 finished: false,
             });

@@ -677,7 +677,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             };
 
             match cmd.kind.as_str() {
-                "preview_update" | "preview_refresh" => {
+                "display_selection_update" | "preview_update" | "preview_refresh" => {
                     display_selection_handle.apply_preview_command(&cmd);
                     let display_selection = display_selection_handle.display_selection_snapshot();
                     if let Err(error) = refresh_problem_preview_state(
@@ -685,9 +685,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         continuation_magnetization.as_deref(),
                         &display_selection,
                         &live_workspace,
-                        supports_interactive_latest_field_cache(
-                            &stage_execution_plans[0].backend_plan,
-                        ),
+                        supports_dynamic_live_preview(&stage_execution_plans[0].backend_plan),
                     ) {
                         live_workspace.push_log(
                             "warn",
@@ -724,7 +722,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                 continuation_magnetization.as_deref(),
                                 &display_selection,
                                 &live_workspace,
-                                supports_interactive_latest_field_cache(
+                                supports_dynamic_live_preview(
                                     &stage_execution_plans[0].backend_plan,
                                 ),
                             ) {
@@ -1006,9 +1004,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                 );
                                 state.live_state = live_state_manifest_from_update(&adjusted);
                                 set_latest_scalar_row_if_due(state, &adjusted);
-                                if let Some(preview_field) = adjusted.preview_field.as_ref() {
-                                    upsert_cached_preview_field(state, preview_field);
-                                }
+                                merge_cached_preview_fields_from_update(state, &adjusted);
                             });
                         }
                         if let Some(action) = display_selection_handle.process_running_control() {
@@ -1159,6 +1155,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         None
                     },
                     preview_field: None,
+                    cached_preview_fields: None,
                     scalar_row_due: true,
                     finished: is_final_step && is_session_final_stage,
                 };
@@ -1267,7 +1264,6 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         let mut interactive_runtime_host = InteractiveRuntimeHost::new(
             display_selection_handle.clone(),
             interactive_template_ir.clone(),
-            artifact_dir.clone(),
             &initial_execution_plan.backend_plan,
         );
         interactive_runtime_host
@@ -1556,9 +1552,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                 );
                                 state.live_state = live_state_manifest_from_update(&adjusted);
                                 set_latest_scalar_row_if_due(state, &adjusted);
-                                if let Some(preview_field) = adjusted.preview_field.as_ref() {
-                                    upsert_cached_preview_field(state, preview_field);
-                                }
+                                merge_cached_preview_fields_from_update(state, &adjusted);
                             });
                         }
 
@@ -1652,9 +1646,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                     );
                                     state.live_state = live_state_manifest_from_update(&adjusted);
                                     set_latest_scalar_row_if_due(state, &adjusted);
-                                    if let Some(preview_field) = adjusted.preview_field.as_ref() {
-                                        upsert_cached_preview_field(state, preview_field);
-                                    }
+                                    merge_cached_preview_fields_from_update(state, &adjusted);
                                 });
                             }
 
@@ -1925,6 +1917,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         fem_mesh: fem_mesh.clone(),
                         magnetization: None,
                         preview_field: None,
+                        cached_preview_fields: None,
                         scalar_row_due: true,
                         finished: false,
                     };

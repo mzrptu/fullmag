@@ -57,13 +57,13 @@ interface MetricFieldProps {
 
 function MetricField({ label, value, sparkData, sparkColor, title, valueTone }: MetricFieldProps) {
   return (
-    <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-      <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground" title={title}>{label}</span>
-      <span className={cn("font-mono text-xs text-foreground", valueTone === "success" ? "text-emerald-500" : undefined)}>
+    <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+      <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground" title={title}>{label}</span>
+      <span className={cn("font-mono text-xs text-foreground", valueTone === "success" ? "text-emerald-400" : undefined)}>
         {value}
       </span>
       {sparkData && sparkColor && (
-        <div className="h-6 w-full mt-1.5 opacity-80" style={{position: "relative"}}>
+        <div className="h-6 w-full mt-1 opacity-80" style={{position: "relative"}}>
           <Sparkline
             data={sparkData}
             height={20}
@@ -99,18 +99,18 @@ function SidebarSection({
   }, [autoOpenKey]);
 
   return (
-    <section className="flex flex-col border-b border-border/40 last:border-0">
+    <section className="flex flex-col border-b border-border/20 last:border-0">
       <button
         type="button"
-        className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 hover:bg-gradient-to-r hover:from-white/5 hover:to-transparent border-b border-transparent hover:border-white/5 shadow-sm group"
+        className="flex items-center w-full px-3 py-2 text-left transition-colors hover:bg-muted/30 group"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
       >
-        <span className={cn("text-muted-foreground transition-transform duration-150 mr-2 flex items-center justify-center w-4 h-4 text-[10px] font-black", open && "rotate-90")}>▸</span>
-        <span className="text-xs font-bold uppercase tracking-[0.15em] text-foreground">{title}</span>
-        {badge ? <span className="ml-auto text-[0.65rem] font-mono tracking-tight text-muted-foreground/80 bg-muted/60 px-1.5 py-0.5 rounded-sm border border-border/40">{badge}</span> : null}
+        <span className={cn("text-muted-foreground transition-transform duration-150 mr-2 flex items-center justify-center w-4 h-4 text-[10px]", open && "rotate-90")}>▸</span>
+        <span className="text-[0.65rem] font-medium uppercase tracking-wider text-foreground">{title}</span>
+        {badge ? <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-muted-foreground/70 bg-muted/40 px-1.5 py-0.5 rounded-sm">{badge}</span> : null}
       </button>
-      {open ? <div className="px-3 pb-4 pt-1 mb-1 flex flex-col gap-5">{children}</div> : null}
+      {open ? <div className="px-3 pb-3 pt-1 flex flex-col gap-4">{children}</div> : null}
     </section>
   );
 }
@@ -287,24 +287,24 @@ function GeometryPanel() {
   const ctx = useControlRoom();
   return (
     <div className="grid grid-cols-2 gap-3">
-      <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Geometry</span>
+      <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+        <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Geometry</span>
         <span className="font-mono text-xs text-foreground">{ctx.meshName ?? ctx.mesherSourceKind ?? "—"}</span>
       </div>
-      <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Source</span>
+      <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+        <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Source</span>
         <span className="font-mono text-xs text-foreground">{ctx.meshSource ?? ctx.mesherSourceKind ?? "—"}</span>
       </div>
-      <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Extent</span>
+      <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+        <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Extent</span>
         <span className="font-mono text-xs text-foreground">
           {ctx.meshExtent
             ? `${fmtSI(ctx.meshExtent[0], "m")} · ${fmtSI(ctx.meshExtent[1], "m")} · ${fmtSI(ctx.meshExtent[2], "m")}`
             : "—"}
         </span>
       </div>
-      <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Bounds</span>
+      <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+        <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Bounds</span>
         <span className="font-mono text-xs text-foreground">
           {ctx.meshBoundsMin && ctx.meshBoundsMax
             ? `${fmtSI(ctx.meshBoundsMin[0], "m")} → ${fmtSI(ctx.meshBoundsMax[0], "m")}`
@@ -322,23 +322,23 @@ function MaterialPanel() {
   return (
     <>
       <div className="grid grid-cols-3 gap-3">
-        <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">M_sat</span>
+        <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">M_sat</span>
           <span className="font-mono text-xs text-foreground">{ctx.material.msat != null ? fmtSI(ctx.material.msat, "A/m") : "—"}</span>
         </div>
-        <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">A_ex</span>
+        <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">A_ex</span>
           <span className="font-mono text-xs text-foreground">{ctx.material.aex != null ? fmtSI(ctx.material.aex, "J/m") : "—"}</span>
         </div>
-        <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">α</span>
+        <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">α</span>
           <span className="font-mono text-xs text-foreground">{ctx.material.alpha?.toPrecision(3) ?? "—"}</span>
         </div>
       </div>
       <div className="flex flex-wrap gap-1.5 mt-3">
-        {ctx.material.exchangeEnabled && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Exchange</span>}
-        {ctx.material.demagEnabled && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Demag</span>}
-        {ctx.material.zeemanField?.some((v) => v !== 0) && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Zeeman</span>}
+        {ctx.material.exchangeEnabled && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Exchange</span>}
+        {ctx.material.demagEnabled && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Demag</span>}
+        {ctx.material.zeemanField?.some((v) => v !== 0) && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Zeeman</span>}
       </div>
     </>
   );
@@ -356,42 +356,42 @@ function MeshPanel() {
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Backend</span>
+        <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Backend</span>
           <span className="font-mono text-xs text-foreground">{ctx.mesherBackend ?? "—"}</span>
         </div>
-        <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Source</span>
+        <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Source</span>
           <span className="font-mono text-xs text-foreground">{ctx.mesherSourceKind ?? ctx.meshSource ?? "—"}</span>
         </div>
       </div>
 
       <div className="grid gap-2.5 p-3 rounded-md bg-card/40 border border-border/40 shadow-sm">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Topology</span>
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Topology</span>
           <span className="text-[0.65rem] font-mono text-muted-foreground/70">
             {effectiveFemMesh?.elements.length ? "volume mesh" : "surface preview"}
           </span>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-background/50 border border-border/30">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Nodes</span>
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Nodes</span>
             <span className="font-mono text-xs text-foreground">{effectiveFemMesh?.nodes.length.toLocaleString() ?? "0"}</span>
           </div>
           <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-background/50 border border-border/30">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Elements</span>
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Elements</span>
             <span className="font-mono text-xs text-foreground">{effectiveFemMesh?.elements.length.toLocaleString() ?? "0"}</span>
           </div>
           <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-background/50 border border-border/30">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Faces</span>
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Faces</span>
             <span className="font-mono text-xs text-foreground">{effectiveFemMesh?.boundary_faces.length.toLocaleString() ?? "0"}</span>
           </div>
           <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-background/50 border border-border/30">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">FE order</span>
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">FE order</span>
             <span className="font-mono text-xs text-foreground">{meshFeOrder != null ? String(meshFeOrder) : "—"}</span>
           </div>
           <div className="grid gap-1 px-2.5 py-2 rounded-lg bg-background/50 border border-border/30">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">hmax</span>
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">hmax</span>
             <span className="font-mono text-xs text-foreground">{meshHmax != null ? fmtSI(meshHmax, "m") : "—"}</span>
           </div>
         </div>
@@ -399,7 +399,7 @@ function MeshPanel() {
 
       <div className="grid gap-2.5 p-3 rounded-md bg-card/40 border border-border/40 shadow-sm">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Inspect</span>
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Inspect</span>
         </div>
         <div className="flex flex-wrap gap-1">
           {(["Mesh", "3D", "2D"] as ViewportMode[]).map((mode) => (
@@ -437,7 +437,7 @@ function MeshPanel() {
       {meshFaceDetail && (
         <div className="grid gap-2.5 p-3 rounded-md bg-card/40 border border-border/40 shadow-sm">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Selection</span>
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Selection</span>
             <span className="text-[0.65rem] font-mono text-muted-foreground/70">
               {meshSelection.selectedFaceIndices.length} face{meshSelection.selectedFaceIndices.length === 1 ? "" : "s"}
             </span>
@@ -513,70 +513,70 @@ function StudyPanel() {
   return (
     <>
       <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
-        <div className="text-[0.6rem] font-black uppercase tracking-[0.2em] text-muted-foreground mb-4">Active Backend Configuration</div>
+        <div className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground mb-4">Active Backend Configuration</div>
         <div className="grid grid-cols-3 gap-3">
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">State</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">State</span>
             <span className="font-mono text-xs text-foreground">{ctx.workspaceStatus}</span>
           </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Study</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Study</span>
             <span className="font-mono text-xs text-foreground">{studyKindForPlan(solverPlan)}</span>
           </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Engine</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Engine</span>
             <span className="font-mono text-xs text-foreground">{ctx.runtimeEngineLabel ?? ctx.sessionFooter.requestedBackend ?? "—"}</span>
           </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3 mt-4">
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Backend</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Backend</span>
             <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.resolvedBackend ?? solverPlan?.backendKind ?? ctx.sessionFooter.requestedBackend)}</span>
           </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Mode</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Mode</span>
             <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.executionMode ?? ctx.session?.execution_mode)}</span>
           </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Precision</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Precision</span>
             <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.precision ?? ctx.session?.precision)}</span>
           </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3 mt-4">
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Integrator</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Integrator</span>
             <span className="font-mono text-xs text-foreground">{integratorProfile?.label ?? humanizeToken(solverPlan?.integrator)}</span>
           </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Δt control</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Δt control</span>
             <span className="font-mono text-xs text-foreground">{timestepModeForPlan(solverPlan)}</span>
           </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Precession</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Precession</span>
             <span className="font-mono text-xs text-foreground">{precessionModeForPlan(solverPlan)}</span>
           </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3 mt-4">
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">γ</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">γ</span>
             <span className="font-mono text-xs text-foreground">{solverPlan?.gyromagneticRatio != null ? `${fmtExp(solverPlan.gyromagneticRatio)} m/(A·s)` : "—"}</span>
           </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Exchange BC</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Exchange BC</span>
             <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.exchangeBoundary)}</span>
           </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Workload</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Workload</span>
             <span className="font-mono text-xs text-foreground">{workloadLabel}</span>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3 mt-4">
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Discretization</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Discretization</span>
             <span className="font-mono text-xs text-foreground">
               {!solverPlan
                 ? "—"
@@ -585,28 +585,28 @@ function StudyPanel() {
                 : `${formatGrid(solverPlan?.gridCells ?? null)} cells · ${formatVector(solverPlan?.cellSize ?? null, "m")}`}
             </span>
           </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">External field</span>
+          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">External field</span>
             <span className="font-mono text-xs text-foreground">{formatVector(solverPlan?.externalField ?? null, "T")}</span>
           </div>
         </div>
 
         {(solverPlan?.fixedTimestep != null || solverPlan?.adaptive) && (
           <div className="grid grid-cols-2 gap-3 mt-4">
-            <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Fixed Δt</span>
+            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Fixed Δt</span>
               <span className="font-mono text-xs text-foreground">{solverPlan?.fixedTimestep != null ? fmtSI(solverPlan.fixedTimestep, "s") : "—"}</span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Adaptive atol</span>
+            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Adaptive atol</span>
               <span className="font-mono text-xs text-foreground">{solverPlan?.adaptive?.atol != null ? fmtExp(solverPlan.adaptive.atol) : "—"}</span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Adaptive dt₀</span>
+            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Adaptive dt₀</span>
               <span className="font-mono text-xs text-foreground">{solverPlan?.adaptive?.dtInitial != null ? fmtSI(solverPlan.adaptive.dtInitial, "s") : "—"}</span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Adaptive range</span>
+            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Adaptive range</span>
               <span className="font-mono text-xs text-foreground">
                 {solverPlan?.adaptive
                   ? `${solverPlan.adaptive.dtMin != null ? fmtSI(solverPlan.adaptive.dtMin, "s") : "—"} → ${solverPlan.adaptive.dtMax != null ? fmtSI(solverPlan.adaptive.dtMax, "s") : "—"}`
@@ -618,31 +618,31 @@ function StudyPanel() {
 
         {solverPlan?.relaxation && (
           <div className="grid grid-cols-2 gap-3 mt-4">
-            <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Relax algorithm</span>
+            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Relax algorithm</span>
               <span className="font-mono text-xs text-foreground">{relaxationProfile?.label ?? humanizeToken(solverPlan.relaxation.algorithm)}</span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Max steps</span>
+            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Max steps</span>
               <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.maxSteps != null ? solverPlan.relaxation.maxSteps.toLocaleString() : "—"}</span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Torque tol.</span>
+            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Torque tol.</span>
               <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.torqueTolerance != null ? fmtExp(solverPlan.relaxation.torqueTolerance) : "—"}</span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md rounded-md ring-1 ring-inset ring-white/5">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Energy tol.</span>
+            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Energy tol.</span>
               <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.energyTolerance != null ? fmtExp(solverPlan.relaxation.energyTolerance) : "disabled"}</span>
             </div>
           </div>
         )}
 
         <div className="flex flex-wrap gap-1.5 mt-5">
-          {solverPlan?.exchangeEnabled && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Exchange</span>}
-          {solverPlan?.demagEnabled && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Demag</span>}
-          {solverPlan?.externalField?.some((value) => value !== 0) && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Zeeman</span>}
-          {solverPlan?.adaptive && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Adaptive Δt</span>}
-          {solverPlan?.relaxation && <span className="text-[0.6rem] font-bold uppercase tracking-widest border border-border/50 bg-muted/30 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex shadow-sm w-fit">Relaxation stage</span>}
+          {solverPlan?.exchangeEnabled && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Exchange</span>}
+          {solverPlan?.demagEnabled && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Demag</span>}
+          {solverPlan?.externalField?.some((value) => value !== 0) && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Zeeman</span>}
+          {solverPlan?.adaptive && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Adaptive Δt</span>}
+          {solverPlan?.relaxation && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Relaxation stage</span>}
         </div>
 
         {solverPlan?.notes.length ? (
@@ -655,7 +655,7 @@ function StudyPanel() {
       </div>
 
       <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
-        <div className="text-[0.6rem] font-black uppercase tracking-[0.2em] text-muted-foreground mb-4">Performance And Physics</div>
+        <div className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground mb-4">Performance And Physics</div>
         <div className="grid gap-3">
           {insightCards.map((card) => (
             <div key={card.title} className="bg-card/50 border border-border/50 shadow-sm rounded-lg p-3.5 flex flex-col gap-1 inline-flex">
@@ -670,7 +670,7 @@ function StudyPanel() {
       <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
         <div className="text-[0.6rem] font-black uppercase tracking-[0.2em] text-muted-foreground mb-4">Next Interactive Command</div>
         <div className="flex flex-col gap-3 p-3 bg-muted/30 border border-border/50 rounded-lg shadow-inner">
-          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
+          <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
             Run until [s]
             <input
               className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
@@ -681,19 +681,19 @@ function StudyPanel() {
           </label>
         </div>
         <div className="grid grid-cols-2 gap-3 mt-3">
-          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
+          <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
             Relax steps
             <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.maxRelaxSteps}
               onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, maxRelaxSteps: e.target.value }))}
               disabled={ctx.commandBusy || !ctx.awaitingCommand} />
           </label>
-          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
+          <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
             Torque tol.
             <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.torqueTolerance}
               onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, torqueTolerance: e.target.value }))}
               disabled={ctx.commandBusy || !ctx.awaitingCommand} />
           </label>
-          <label className="flex flex-col gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground col-span-2">
+          <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground col-span-2">
             Energy tol.
             <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.energyTolerance}
               onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, energyTolerance: e.target.value }))}

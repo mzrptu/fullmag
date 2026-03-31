@@ -944,9 +944,11 @@ fn fem_eigen_frequency_is_stable_across_resolutions() {
         extract_lowest_frequency(&result).expect("must return a lowest frequency")
     };
 
-    // Both runs use the same 8-node cube but with different side lengths
-    // (20 nm vs 40 nm).  The absolute frequency will differ, but both must
-    // be positive and finite.
+    // Both runs use the same 8-node cube topology with different side lengths
+    // (20 nm vs 40 nm).  With an external field applied, the lowest mode is
+    // the uniform FMR mode whose eigenvalue equals H₀ (the exchange operator
+    // row-sum vanishes for the uniform mode under Neumann BCs).  Therefore
+    // the frequency is mesh-size independent: ratio ≈ 1.0.
     let f_20 = run(20.0);
     let f_40 = run(40.0);
 
@@ -959,13 +961,91 @@ fn fem_eigen_frequency_is_stable_across_resolutions() {
         "40 nm run: f={f_40:.3e} must be positive finite"
     );
 
-    // The ratio of the two runs should stay within a reasonable range (the
-    // same topology is used so the normalised spectrum is identical up to
-    // the exchange stiffness scaling 1/a²).  Ratio should be ~4 for a²
-    // scaling.
     let ratio = f_20 / f_40;
     assert!(
-        ratio > 1.5 && ratio < 8.0,
-        "20nm/40nm frequency ratio is {ratio:.3} — expected ~4 from exchange a² scaling"
+        ratio > 0.8 && ratio < 1.25,
+        "20nm/40nm frequency ratio is {ratio:.3} — expected ~1.0 (uniform FMR mode is mesh-invariant)"
+    );
+}
+
+/// EIG-034 FEM↔analytic cross-check with demag: including the demagnetisation
+/// field must lower the uniform-mode frequency relative to the Zeeman-only case.
+///
+/// Physics: for an in-plane equilibrium (m₀ ∥ x̂) with H₀ along x̂, the
+/// demagnetisation field adds an effective easy-plane anisotropy.  For a cube
+/// (Nₓ ≈ 1/3) the internal field is reduced, so the precession frequency
+/// must be lower than in the Zeeman-only (no-demag) case:
+///
+///   f_with_demag  <  f_no_demag
+///
+/// This qualitatively matches what FDM time-domain simulations would show when
+/// the same geometry is excited with a broadband pulse (the resonance peak
+/// in the FFT shifts to lower frequency when demag is switched on).
+#[test]
+fn fem_eigen_demag_lowers_frequency() {
+    // Use a large external field so that the system is well-saturated even
+    // after the demagnetisation field is accounted for.
+    let h_x = 636_620.0_f64; // ≈ 800 mT / μ₀
+
+    let make_plan = |include_demag: bool| {
+        let mesh = cube_mesh(20.0);
+        let m0 = vec![[1.0_f64, 0.0, 0.0]; mesh.nodes.len()];
+        FemEigenPlanIR {
+            mesh_name: format!("cube_20nm_demag_{include_demag}"),
+            mesh_source: None,
+            mesh,
+            fe_order: 1,
+            hmax: 20e-9,
+            equilibrium_magnetization: m0,
+            material: fem_permalloy(),
+            operator: EigenOperatorConfigIR {
+                kind: EigenOperatorIR::LinearizedLlg,
+                include_demag,
+            },
+            count: 3,
+            target: EigenTargetIR::Lowest,
+            equilibrium: EquilibriumSourceIR::Provided,
+            k_sampling: None,
+            normalization: EigenNormalizationIR::UnitL2,
+            damping_policy: EigenDampingPolicyIR::Ignore,
+            enable_exchange: true,
+            enable_demag: include_demag,
+            external_field: Some([h_x, 0.0, 0.0]),
+            gyromagnetic_ratio: 2.211e5,
+            precision: ExecutionPrecision::Double,
+            exchange_bc: ExchangeBoundaryCondition::Neumann,
+            demag_realization: None,
+        }
+    };
+
+    let outputs = vec![OutputIR::EigenSpectrum {
+        quantity: "eigenfrequency".to_string(),
+    }];
+
+    let result_no_demag = fullmag_runner::run_reference_fem_eigen(&make_plan(false), &outputs)
+        .expect("FEM eigen (no demag) must succeed");
+    let result_with_demag = fullmag_runner::run_reference_fem_eigen(&make_plan(true), &outputs)
+        .expect("FEM eigen (with demag) must succeed");
+
+    let f_no_demag = extract_lowest_frequency(&result_no_demag)
+        .expect("no-demag run must return a lowest frequency");
+    let f_with_demag = extract_lowest_frequency(&result_with_demag)
+        .expect("with-demag run must return a lowest frequency");
+
+    assert!(
+        f_no_demag.is_finite() && f_no_demag > 0.0,
+        "no-demag frequency must be positive finite, got {f_no_demag:.3e}"
+    );
+    assert!(
+        f_with_demag.is_finite() && f_with_demag > 0.0,
+        "with-demag frequency must be positive finite, got {f_with_demag:.3e}"
+    );
+
+    // Including demag must reduce the lowest resonance frequency.
+    // Allow a small relative slack (1 %) to guard against numerical noise.
+    assert!(
+        f_with_demag < f_no_demag * 1.01,
+        "demag should lower the uniform-mode frequency: \
+         f_with_demag={f_with_demag:.3e} Hz, f_no_demag={f_no_demag:.3e} Hz"
     );
 }

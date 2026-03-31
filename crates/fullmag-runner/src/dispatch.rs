@@ -671,6 +671,7 @@ fn execute_cuda_fdm(
                     fem_mesh: None,
                     magnetization: None,
                     preview_field,
+                    cached_preview_fields: None,
                     scalar_row_due: preview_due && preview_targets_global_scalar,
                     finished: false,
                 });
@@ -749,6 +750,7 @@ fn execute_cuda_fdm(
                 fem_mesh: None,
                 magnetization,
                 preview_field,
+                cached_preview_fields: None,
                 scalar_row_due: due_scalar_row || (preview_due && preview_targets_global_scalar),
                 finished: false,
             });
@@ -914,6 +916,7 @@ fn execute_native_fem(
                     }),
                     magnetization: None,
                     preview_field,
+                    cached_preview_fields: None,
                     scalar_row_due: preview_due && preview_targets_global_scalar,
                     finished: false,
                 });
@@ -970,6 +973,7 @@ fn execute_native_fem(
                 }),
                 magnetization,
                 preview_field,
+                cached_preview_fields: None,
                 scalar_row_due: preview_due && preview_targets_global_scalar,
                 finished: false,
             });

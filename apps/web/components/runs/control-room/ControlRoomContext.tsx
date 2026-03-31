@@ -163,6 +163,8 @@ function sameDisplaySelection(
 
 function commandKindLabel(kind: string | null | undefined): string {
   switch (kind) {
+    case "display_selection_update":
+      return "Display selection";
     case "preview_update":
       return "Display update";
     case "preview_refresh":

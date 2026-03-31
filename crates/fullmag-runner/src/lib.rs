@@ -306,6 +306,7 @@ pub fn run_problem_with_callback(
             | BackendPlanIR::FemEigen(_) => None,
         },
         preview_field: None,
+        cached_preview_fields: None,
         scalar_row_due: true,
         finished: true,
     });
@@ -480,6 +481,7 @@ pub fn run_problem_with_live_preview_interruptible(
         },
         magnetization: None,
         preview_field: None,
+        cached_preview_fields: None,
         scalar_row_due: true,
         finished: true,
     });
@@ -603,6 +605,7 @@ pub fn run_problem_with_interactive_fdm_runtime_live_preview_interruptible(
         fem_mesh: None,
         magnetization: Some(final_m),
         preview_field: None,
+        cached_preview_fields: None,
         scalar_row_due: true,
         finished: true,
     });
@@ -729,6 +732,7 @@ pub fn run_problem_with_interactive_fem_runtime_live_preview_interruptible(
                 .collect(),
         ),
         preview_field: None,
+        cached_preview_fields: None,
         scalar_row_due: true,
         finished: true,
     });

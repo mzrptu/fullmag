@@ -333,9 +333,9 @@ export default function EngineConsole({
     <div className="flex flex-col h-full bg-background/50 overflow-hidden isolate">
       {/* ─── Header Bar ──────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-background/50 backdrop-blur-md border-b border-white/5 shadow-sm">
-        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground mr-auto">Engine Console</span>
+        <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground mr-auto">Engine Console</span>
         <span className={cn("w-2 h-2 rounded-full shrink-0", (liveState?.finished || run?.status === "completed" ? "completed" : connection) === "completed" ? "bg-emerald-500 shadow-[0_0_6px_var(--status-completed)]" : connection === "connected" ? "bg-primary shadow-[0_0_6px_rgba(99,102,241,0.5)]" : connection === "connecting" ? "bg-amber-500 animate-pulse" : "bg-destructive")} />
-        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
+        <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
           {liveState?.finished || run?.status === "completed"
             ? "Completed"
             : connection === "connected"
@@ -345,7 +345,7 @@ export default function EngineConsole({
             : "Offline"}
         </span>
         {session && (
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground ml-auto">
+          <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground ml-auto">
             {session.problem_name} · {session.requested_backend.toUpperCase()}
           </span>
         )}
@@ -355,7 +355,7 @@ export default function EngineConsole({
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ConsoleTab)} className="flex flex-col min-h-0 flex-1">
         <TabsList className="flex gap-1 px-2 border-b border-white/5 bg-background/40 backdrop-blur-md">
           {TABS.map((tab) => (
-            <TabsTrigger key={tab.value} value={tab.value} className="text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary pb-2 pt-2.5 px-3 rounded-none bg-transparent shadow-none border-t-0 border-l-0 border-r-0">
+            <TabsTrigger key={tab.value} value={tab.value} className="text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary pb-2 pt-2.5 px-3 rounded-none bg-transparent shadow-none border-t-0 border-l-0 border-r-0">
               {tab.label}
             </TabsTrigger>
           ))}
@@ -367,50 +367,50 @@ export default function EngineConsole({
           <>
             {/* Live telemetry grid */}
             <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2 p-3">
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-primary">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Status</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-primary">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Status</span>
                 <span className={cn("font-mono text-sm font-semibold text-foreground", statusValueClassName)}>
                   {workspaceStatus}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-sky-500">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Step</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-sky-500">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Step</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtStepValue(liveState?.step ?? run?.total_steps ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-violet-500">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Sim Time</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-violet-500">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Sim Time</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtTimeOrDash(liveState?.time ?? run?.final_time ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-amber-500">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Δt</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-amber-500">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Δt</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtSIOrDash(liveState?.dt ?? 0, "s", hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-emerald-500">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">max dm/dt</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-emerald-500">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">max dm/dt</span>
                 <span
                   className={cn("font-mono text-sm font-semibold text-foreground", hasSolverTelemetry && (liveState?.max_dm_dt ?? 0) < convergenceThreshold && "text-emerald-500")}
                 >
                   {fmtExpOrDash(liveState?.max_dm_dt ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-rose-500">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">max |H_eff|</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-rose-500">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">max |H_eff|</span>
                 <span className="font-mono text-sm font-semibold text-foreground">
                   {fmtExpOrDash(liveState?.max_h_eff ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-slate-400">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Elapsed</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-slate-400">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Elapsed</span>
                 <span className="font-mono text-sm font-semibold text-foreground">{fmtDuration(elapsed)}</span>
               </div>
-              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-orange-500">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Throughput</span>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-orange-500">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Throughput</span>
                 <span className="font-mono text-sm font-semibold text-foreground">{stepsPerSec > 0 ? `${stepsPerSec.toFixed(1)} st/s` : "—"}</span>
               </div>
             </div>
@@ -479,26 +479,26 @@ export default function EngineConsole({
 
         <TabsContent value="energy" className="min-h-0 flex-1 flex flex-col focus-visible:outline-none data-[state=inactive]:hidden outline-none">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 p-3">
-            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-sky-500">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_exchange</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-sky-500">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">E_exchange</span>
               <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_ex ?? run?.final_e_ex ?? 0, "J")}
               </span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-amber-500">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_demag</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-amber-500">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">E_demag</span>
               <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_demag ?? run?.final_e_demag ?? 0, "J")}
               </span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-emerald-500">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_ext</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-emerald-500">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">E_ext</span>
               <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_ext ?? run?.final_e_ext ?? 0, "J")}
               </span>
             </div>
-            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-indigo-500">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">E_total</span>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-indigo-500">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">E_total</span>
               <span className="font-mono text-sm font-semibold text-foreground">
                 {fmtSI(liveState?.e_total ?? run?.final_e_total ?? 0, "J")}
               </span>
@@ -512,14 +512,14 @@ export default function EngineConsole({
               const dStep = last.step - prev.step;
               return (
                 <>
-                  <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-muted-foreground">
-                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">ΔE_total / step</span>
+                  <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-muted-foreground">
+                    <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">ΔE_total / step</span>
                     <span className={cn("font-mono text-sm font-semibold text-foreground", dE < 0 ? "text-emerald-500" : "text-destructive")}>
                       {dStep > 0 ? fmtExp(dE / dStep) : "—"}
                     </span>
                   </div>
-                  <div className="flex flex-col gap-1 p-2.5 rounded-md bg-gradient-to-br from-card/60 to-background/50 border border-white/5 shadow-md ring-1 ring-inset ring-white/5 border-l-[3px] border-l-muted-foreground">
-                    <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">History points</span>
+                  <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/20 shadow-sm border-l-[3px] border-l-muted-foreground">
+                    <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">History points</span>
                     <span className="font-mono text-sm font-semibold text-foreground">{scalarRows.length}</span>
                   </div>
                 </>
@@ -534,7 +534,7 @@ export default function EngineConsole({
               {(Object.keys(CHART_PRESETS) as ChartPreset[]).map((key) => (
                 <button
                   key={key}
-                  className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-2.5 py-1.5 rounded-md border border-border/40 bg-muted/30 hover:bg-muted/60 transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary data-[active=true]:border-primary/50 whitespace-nowrap"
+                  className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground px-2.5 py-1.5 rounded-md border border-border/40 bg-muted/30 hover:bg-muted/60 transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary data-[active=true]:border-primary/50 whitespace-nowrap"
                   data-active={chartPreset === key}
                   onClick={() => setChartPreset(key)}
                 >
@@ -603,19 +603,19 @@ export default function EngineConsole({
             {/* Key metrics */}
             <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2 p-0 mt-2">
               <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Steps</span>
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Steps</span>
                 <span className="font-mono text-sm font-semibold text-foreground">{(liveState?.step ?? run?.total_steps ?? 0).toLocaleString()}</span>
               </div>
               <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Sim Time</span>
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Sim Time</span>
                 <span className="font-mono text-sm font-semibold text-foreground">{fmtTimeOrDash(liveState?.time ?? 0, hasSolverTelemetry)}</span>
               </div>
               <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Elapsed</span>
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Elapsed</span>
                 <span className="font-mono text-sm font-semibold text-foreground">{fmtDuration(elapsed)}</span>
               </div>
               <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">max dm/dt</span>
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">max dm/dt</span>
                 <span
                   className={cn("font-mono text-sm font-semibold text-foreground", hasSolverTelemetry && (liveState?.max_dm_dt ?? 1) < convergenceThreshold && "text-emerald-500")}
                 >
@@ -629,41 +629,41 @@ export default function EngineConsole({
         <TabsContent value="perf" className="min-h-0 flex-1 flex flex-col focus-visible:outline-none data-[state=inactive]:hidden outline-none">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 p-3">
             <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Backend</span>
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Backend</span>
               <span className="font-mono text-sm font-semibold text-foreground">{session?.requested_backend?.toUpperCase() ?? "—"}</span>
             </div>
             <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Mode</span>
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Mode</span>
               <span className="font-mono text-sm font-semibold text-foreground">{session?.execution_mode ?? "—"}</span>
             </div>
             <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Precision</span>
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Precision</span>
               <span className="font-mono text-sm font-semibold text-foreground">{session?.precision ?? "—"}</span>
             </div>
             <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Total Steps</span>
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Total Steps</span>
               <span className="font-mono text-sm font-semibold text-foreground">{(liveState?.step ?? run?.total_steps ?? 0).toLocaleString()}</span>
             </div>
             <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Throughput</span>
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Throughput</span>
               <span className="font-mono text-sm font-semibold text-foreground">{stepsPerSec > 0 ? `${stepsPerSec.toFixed(1)} st/s` : "—"}</span>
             </div>
             <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Wall/step</span>
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Wall/step</span>
               <span className="font-mono text-sm font-semibold text-foreground">{wallTimePerStep > 0 ? `${wallTimePerStep.toFixed(2)} ms` : "—"}</span>
             </div>
             <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Elapsed</span>
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Elapsed</span>
               <span className="font-mono text-sm font-semibold text-foreground">{fmtDuration(elapsed)}</span>
             </div>
             <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Artifacts</span>
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Artifacts</span>
               <span className="font-mono text-sm font-semibold text-foreground">{artifacts.length}</span>
             </div>
 
             {/* Throughput bar */}
             <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm col-span-full">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Throughput (steps/sec)</span>
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Throughput (steps/sec)</span>
               <progress
                 className="w-full h-1.5 rounded-full overflow-hidden bg-muted appearance-none fill-primary [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary data-[tone=success]:[&::-webkit-progress-value]:bg-emerald-500 data-[tone=warn]:[&::-webkit-progress-value]:bg-amber-500 data-[tone=danger]:[&::-webkit-progress-value]:bg-destructive"
                 value={throughputDisplay}

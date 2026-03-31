@@ -16,14 +16,17 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 /**
- * RunSidebar — two-zone panel: narrow ModelTree + wider SettingsPanel.
- * All data consumed via useControlRoom() — zero prop drilling.
+ * RunSidebar — horizontal two-column Master-Detail layout.
+ * Column 1 (narrow): Model Builder tree — always visible, serves as the
+ *   navigation spine of the project.
+ * Column 2 (wider):  Inspector / SettingsPanel — shows contextual properties
+ *   for whichever tree node is selected.
  */
 export default function RunSidebar() {
   const ctx = useControlRoom();
-  const navigatorPanelRef = usePanelRef();
+  const treePanelRef = usePanelRef();
   const inspectorPanelRef = usePanelRef();
-  const [navigatorOpen, setNavigatorOpen] = useState(true);
+  const [treeOpen, setTreeOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
 
   /* ── Build model tree nodes ── */
@@ -93,6 +96,12 @@ export default function RunSidebar() {
   /* ── Tree click handler ── */
   const handleTreeClick = useCallback((id: string) => {
     ctx.setSelectedSidebarNodeId(id);
+    // Ensure inspector is visible when a node is clicked
+    const panel = inspectorPanelRef.current;
+    if (panel?.isCollapsed()) {
+      panel.expand();
+      setInspectorOpen(true);
+    }
     switch (id) {
       case "geometry": case "geo-body": case "regions": case "reg-domain": case "reg-boundary":
         if (ctx.isFemBackend) ctx.openFemMeshWorkspace("mesh");
@@ -121,19 +130,19 @@ export default function RunSidebar() {
         }
       }
     }
-  }, [ctx]);
+  }, [ctx, inspectorPanelRef]);
 
-  const handleNavigatorToggle = useCallback(() => {
-    const panel = navigatorPanelRef.current;
+  const handleTreeToggle = useCallback(() => {
+    const panel = treePanelRef.current;
     if (!panel) return;
     if (panel.isCollapsed()) {
       panel.expand();
-      setNavigatorOpen(true);
-      return;
+      setTreeOpen(true);
+    } else {
+      panel.collapse();
+      setTreeOpen(false);
     }
-    panel.collapse();
-    setNavigatorOpen(false);
-  }, [navigatorPanelRef]);
+  }, [treePanelRef]);
 
   const handleInspectorToggle = useCallback(() => {
     const panel = inspectorPanelRef.current;
@@ -141,14 +150,14 @@ export default function RunSidebar() {
     if (panel.isCollapsed()) {
       panel.expand();
       setInspectorOpen(true);
-      return;
+    } else {
+      panel.collapse();
+      setInspectorOpen(false);
     }
-    panel.collapse();
-    setInspectorOpen(false);
   }, [inspectorPanelRef]);
 
-  const handleNavigatorResize = useCallback((panelSize: PanelSize) => {
-    setNavigatorOpen(panelSize.inPixels > 68);
+  const handleTreeResize = useCallback((panelSize: PanelSize) => {
+    setTreeOpen(panelSize.inPixels > 68);
   }, []);
 
   const handleInspectorResize = useCallback((panelSize: PanelSize) => {
@@ -158,31 +167,32 @@ export default function RunSidebar() {
   return (
     <div className="flex w-full h-full border-l border-white/5 bg-gradient-to-br from-card/60 to-background/40 backdrop-blur-2xl shadow-[-8px_0_32px_rgba(0,0,0,0.4)] z-30">
       <PanelGroup
-        orientation="vertical"
-        className="flex w-full h-full flex-col"
+        orientation="horizontal"
+        className="flex w-full h-full"
         resizeTargetMinimumSize={{ coarse: 32, fine: 10 }}
       >
+        {/* ── Column 1: Model Builder Tree ── */}
         <Panel
-          id="sidebar-model-outline"
-          defaultSize={34}
-          minSize={15}
+          id="sidebar-model-tree"
+          defaultSize={40}
+          minSize={20}
           collapsible
           collapsedSize={4}
-          panelRef={navigatorPanelRef}
-          onResize={handleNavigatorResize}
+          panelRef={treePanelRef}
+          onResize={handleTreeResize}
         >
-          <section className="flex flex-col h-full bg-transparent">
+          <section className="flex flex-col h-full bg-transparent border-r border-border/20">
             <button
               type="button"
-              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-white/5 border-l-[3px] border-l-primary shadow-[0_4px_12px_rgba(0,0,0,0.1)] z-10 shrink-0 relative"
-              onClick={handleNavigatorToggle}
-              aria-expanded={navigatorOpen}
+              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-white/5 border-l-[3px] border-l-primary z-10 shrink-0 relative"
+              onClick={handleTreeToggle}
+              aria-expanded={treeOpen}
             >
-              <span className={cn("text-primary/70 mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", navigatorOpen && "rotate-90")}>▸</span>
-              <span className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-foreground">Model</span>
+              <span className={cn("text-primary/70 mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", treeOpen && "rotate-90")}>▸</span>
+              <span className="text-[0.65rem] font-medium uppercase tracking-wider text-foreground">Model</span>
               <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-primary-foreground bg-primary/80 px-1.5 py-0.5 rounded-sm">{ctx.isFemBackend ? "FEM" : "FDM"}</span>
             </button>
-            {navigatorOpen && (
+            {treeOpen && (
               <div className="flex-1 min-h-0 min-w-0 pr-1 overflow-hidden isolate relative">
                 <ScrollArea className="h-full w-full">
                   <div className="p-2 select-none">
@@ -194,12 +204,14 @@ export default function RunSidebar() {
           </section>
         </Panel>
 
-        <PanelResizeHandle className="flex shrink-0 items-center justify-center bg-transparent h-1.5 cursor-row-resize relative z-10 hover:bg-primary/20 transition-colors after:absolute after:inset-x-0 after:top-1/2 after:-translate-y-1/2 after:h-px after:w-8 after:mx-auto after:bg-border/60 hover:after:bg-primary" />
+        {/* ── Resize handle (vertical divider) ── */}
+        <PanelResizeHandle className="flex shrink-0 items-center justify-center bg-transparent w-1.5 cursor-col-resize relative z-10 hover:bg-primary/20 transition-colors after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:h-8 after:my-auto after:bg-border/60 hover:after:bg-primary" />
 
+        {/* ── Column 2: Inspector / SettingsPanel ── */}
         <Panel
           id="sidebar-inspector"
-          defaultSize={66}
-          minSize={20}
+          defaultSize={60}
+          minSize={25}
           collapsible
           collapsedSize={4}
           panelRef={inspectorPanelRef}
@@ -208,12 +220,12 @@ export default function RunSidebar() {
           <section className="flex flex-col h-full bg-transparent">
             <button
               type="button"
-              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-white/5 border-l-[3px] border-l-emerald-500 shadow-[0_4px_12px_rgba(0,0,0,0.1)] z-10 shrink-0 relative"
+              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-white/5 border-l-[3px] border-l-emerald-500 z-10 shrink-0 relative"
               onClick={handleInspectorToggle}
               aria-expanded={inspectorOpen}
             >
               <span className={cn("text-emerald-500/70 mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", inspectorOpen && "rotate-90")}>▸</span>
-              <span className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-foreground">
+              <span className="text-[0.65rem] font-medium uppercase tracking-wider text-foreground">
                 Inspector
               </span>
               <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-muted-foreground bg-emerald-500/10 px-1.5 py-0.5 rounded-sm border border-emerald-500/20">

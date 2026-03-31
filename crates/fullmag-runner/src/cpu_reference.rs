@@ -405,6 +405,7 @@ pub(crate) fn execute_reference_fdm(
                         fem_mesh: None,
                         magnetization: None,
                         preview_field,
+                        cached_preview_fields: None,
                         finished: false,
                     });
                     if preview_due {
@@ -516,6 +517,7 @@ pub(crate) fn execute_reference_fdm(
                     fem_mesh: None,
                     magnetization,
                     preview_field,
+                    cached_preview_fields: None,
                     finished: false,
                 });
                 if preview_due {

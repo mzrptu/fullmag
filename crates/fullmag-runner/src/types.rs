@@ -167,6 +167,10 @@ pub struct StepUpdate {
     /// Optional active preview field driven by the current UI preview request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview_field: Option<LivePreviewField>,
+    /// Optional cached preview fields warmed in the background for instant
+    /// quantity switching without waiting for a fresh live preview snapshot.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_preview_fields: Option<Vec<LivePreviewField>>,
     /// True when this update also represents a due scalar-row sample.
     #[serde(default)]
     pub scalar_row_due: bool,

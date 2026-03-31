@@ -43,8 +43,6 @@ struct AppState {
     current_live_events: broadcast::Sender<String>,
     /// Typed display selection for the sessionless root workspace.
     current_display_selection: Arc<RwLock<CurrentDisplaySelection>>,
-    /// Change notifications for display selection so the CLI can wait instead of polling.
-    current_display_events: watch::Sender<CurrentDisplaySelection>,
     /// In-memory sequenced control queue for the root local-live workspace.
     current_control_queue: Arc<Mutex<VecDeque<SessionCommand>>>,
     /// Latest queued control sequence number.
@@ -459,14 +457,6 @@ struct PreviewAutoScaleRequest {
     auto_scale_enabled: bool,
 }
 
-#[derive(Debug, Deserialize)]
-struct PreviewConfigWaitQuery {
-    #[serde(rename = "afterRevision", default)]
-    after_revision: u64,
-    #[serde(rename = "timeoutMs", default = "default_preview_wait_timeout_ms")]
-    timeout_ms: u64,
-}
-
 const fn default_preview_wait_timeout_ms() -> u64 {
     15_000
 }
@@ -758,7 +748,6 @@ async fn main() {
         current_live_public_snapshot: Arc::new(RwLock::new(None)),
         current_live_events: broadcast::channel(256).0,
         current_display_selection: Arc::new(RwLock::new(CurrentDisplaySelection::default())),
-        current_display_events: watch::channel(CurrentDisplaySelection::default()).0,
         current_control_queue: Arc::new(Mutex::new(VecDeque::new())),
         current_control_events: watch::channel(0).0,
         current_control_next_seq: Arc::new(Mutex::new(0)),
@@ -780,16 +769,8 @@ async fn main() {
         .route("/v1/live/current/events", get(get_current_live_events))
         .route("/v1/live/current/publish", post(publish_current_live_state))
         .route(
-            "/v1/live/current/preview/config",
-            get(get_current_preview_config),
-        )
-        .route(
             "/v1/live/current/preview/selection",
             get(get_current_display_selection).post(set_current_preview_selection),
-        )
-        .route(
-            "/v1/live/current/preview/config/wait",
-            get(wait_current_preview_config),
         )
         .route(
             "/v1/live/current/preview/quantity",
@@ -971,53 +952,10 @@ async fn get_current_live_state(State(state): State<Arc<AppState>>) -> Result<Re
     get_current_live_bootstrap(State(state)).await
 }
 
-async fn get_current_preview_config(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<CurrentPreviewConfig>, ApiError> {
-    Ok(Json(
-        state
-            .current_display_selection
-            .read()
-            .await
-            .preview_request(),
-    ))
-}
-
 async fn get_current_display_selection(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<CurrentDisplaySelection>, ApiError> {
     Ok(Json(state.current_display_selection.read().await.clone()))
-}
-
-async fn wait_current_preview_config(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<PreviewConfigWaitQuery>,
-) -> Result<Response, ApiError> {
-    let current = state.current_display_selection.read().await.clone();
-    if current.revision != query.after_revision {
-        return Ok(Json(current.preview_request()).into_response());
-    }
-
-    let timeout_ms = query.timeout_ms.clamp(100, 20_000);
-    let mut rx = state.current_display_events.subscribe();
-    let waited = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async move {
-        loop {
-            rx.changed()
-                .await
-                .map_err(|_| ApiError::internal("display selection stream closed"))?;
-            let next = rx.borrow().clone();
-            if next.revision != query.after_revision {
-                return Ok::<CurrentPreviewConfig, ApiError>(next.preview_request());
-            }
-        }
-    })
-    .await;
-
-    match waited {
-        Ok(Ok(config)) => Ok(Json(config).into_response()),
-        Ok(Err(error)) => Err(error),
-        Err(_) => Ok(StatusCode::NO_CONTENT.into_response()),
-    }
 }
 
 async fn get_current_live_events(
@@ -1048,7 +986,10 @@ async fn get_current_live_events(
 }
 
 fn is_preview_control_command(command: &SessionCommand) -> bool {
-    matches!(command.kind.as_str(), "preview_update" | "preview_refresh")
+    matches!(
+        command.kind.as_str(),
+        "display_selection_update" | "preview_update" | "preview_refresh"
+    )
 }
 
 async fn enqueue_current_control_command(
@@ -1106,13 +1047,13 @@ fn build_preview_control_command(
             if refresh_only {
                 format!("preview-refresh-{}", uuid_v4_hex())
             } else {
-                format!("preview-{}", uuid_v4_hex())
+                format!("display-selection-{}", uuid_v4_hex())
             }
         ),
         kind: if refresh_only {
             "preview_refresh".to_string()
         } else {
-            "preview_update".to_string()
+            "display_selection_update".to_string()
         },
         created_at_unix_ms: unix_time_millis_now(),
         until_seconds: None,
@@ -1150,7 +1091,6 @@ async fn publish_current_live_state(
     let has_live_state_update = req.live_state.is_some();
     let has_scalar_row_update = req.latest_scalar_row.is_some();
     let has_latest_fields_update = req.latest_fields.is_some();
-    let has_cached_preview_update = req.preview_fields.is_some() || req.clear_preview_cache;
     let allow_previous_preview_fallback = !req.clear_preview_cache;
     let reset_preview = state
         .current_live_state
@@ -1162,13 +1102,17 @@ async fn publish_current_live_state(
     if reset_preview {
         let display_selection = CurrentDisplaySelection::default();
         *state.current_display_selection.write().await = display_selection.clone();
-        let _ = state.current_display_events.send(display_selection);
         state.current_control_queue.lock().await.clear();
         *state.current_control_next_seq.lock().await = 0;
         let _ = state.current_control_events.send(0);
         let _ = std::fs::remove_dir_all(&state.current_workspace_root);
     }
     let display_selection = state.current_display_selection.read().await.clone();
+    let selected_cached_preview_updated = req
+        .preview_fields
+        .as_ref()
+        .is_some_and(|fields| cached_preview_update_matches_selection(fields, &display_selection));
+    let has_cached_preview_update = req.clear_preview_cache || selected_cached_preview_updated;
     let preview_config = display_selection.preview_request();
     let mut current = state.current_live_state.write().await;
     let mut next = match current.take() {
@@ -2282,7 +2226,6 @@ where
         current.clone()
     };
     let preview_config = display_selection.preview_request();
-    let _ = state.current_display_events.send(display_selection.clone());
 
     let (session_id, json, public_json, display_updated_json) = {
         let mut current = state.current_live_state.write().await;
@@ -3040,22 +2983,22 @@ fn cached_preview_field_owned(
     current: &SessionStateResponse,
     quantity: &str,
 ) -> Option<LivePreviewField> {
-    current
-        .preview_cache
-        .get(quantity)
-        .cloned()
-        .or_else(|| load_cached_preview_field_from_artifacts(current, quantity))
+    current.preview_cache.get(quantity).cloned()
 }
 
-fn load_cached_preview_field_from_artifacts(
-    current: &SessionStateResponse,
-    quantity: &str,
-) -> Option<LivePreviewField> {
-    let artifact_dir = current_artifact_dir(current)?;
-    let cache_path = artifact_dir.join("interactive_preview_cache.json");
-    let bytes = std::fs::read(cache_path).ok()?;
-    let fields = serde_json::from_slice::<Vec<LivePreviewField>>(&bytes).ok()?;
-    fields.into_iter().find(|field| field.quantity == quantity)
+fn cached_preview_update_matches_selection(
+    fields: &[LivePreviewField],
+    display_selection: &CurrentDisplaySelection,
+) -> bool {
+    if matches!(
+        display_selection.selection.kind,
+        fullmag_runner::DisplayKind::GlobalScalar
+    ) {
+        return false;
+    }
+    fields
+        .iter()
+        .any(|field| field.quantity == display_selection.selection.quantity)
 }
 
 fn parse_field_value(raw: &Value) -> Option<(Vec<[f64; 3]>, [usize; 3])> {

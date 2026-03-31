@@ -300,14 +300,19 @@ inline void restore_m_from_tmp(Context &ctx) {
     cudaMemcpy(ctx.m.z, ctx.tmp.z, bytes, cudaMemcpyDeviceToDevice);
 }
 
-inline bool abort_step_from_tmp(Context &ctx, bool invalidate_fsal = true) {
-    if (!poll_interrupt(ctx)) {
-        return false;
-    }
+inline void abort_step_after_interrupt(Context &ctx, bool invalidate_fsal = true) {
+    ctx.step_interrupted = true;
     if (invalidate_fsal) {
         ctx.fsal_valid = false;
     }
     restore_m_from_tmp(ctx);
+}
+
+inline bool abort_step_from_tmp(Context &ctx, bool invalidate_fsal = true) {
+    if (!poll_interrupt(ctx)) {
+        return false;
+    }
+    abort_step_after_interrupt(ctx, invalidate_fsal);
     return true;
 }
 #endif

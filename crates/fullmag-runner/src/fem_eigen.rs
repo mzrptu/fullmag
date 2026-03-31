@@ -111,6 +111,8 @@ pub(crate) fn execute_reference_fem_eigen(
         let angular_frequency =
             angular_frequency_from_eigenvalue(plan.gyromagnetic_ratio, *eigenvalue);
         let norm = modal_norm(&normalized, &mass).sqrt();
+        let dominant_polarization =
+            classify_polarization(&amplitude, &active_nodes, &equilibrium, max_amplitude);
         let mode_summary = serde_json::json!({
             "index": mode_index,
             "frequency_hz": frequency_hz,
@@ -118,7 +120,7 @@ pub(crate) fn execute_reference_fem_eigen(
             "eigenvalue_field_au_per_m": (*eigenvalue).max(0.0),
             "norm": norm,
             "max_amplitude": max_amplitude,
-            "dominant_polarization": "right_circular",
+            "dominant_polarization": dominant_polarization,
             "k_vector": k_vector_json(plan.k_sampling.as_ref()),
         });
         modes_summary.push(mode_summary.clone());
@@ -128,9 +130,10 @@ pub(crate) fn execute_reference_fem_eigen(
                 "index": mode_index,
                 "frequency_hz": frequency_hz,
                 "angular_frequency_rad_per_s": angular_frequency,
+                "max_amplitude": max_amplitude,
                 "normalization": normalization_label(plan.normalization),
                 "damping_policy": damping_policy_label(plan.damping_policy),
-                "dominant_polarization": "right_circular",
+                "dominant_polarization": dominant_polarization,
                 "k_vector": k_vector_json(plan.k_sampling.as_ref()),
                 "real": real,
                 "imag": imag,
@@ -678,4 +681,48 @@ fn scale_vector(a: Vector3, factor: f64) -> Vector3 {
 
 fn add_vector(a: Vector3, b: Vector3) -> Vector3 {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+/// Classify the dominant polarization character of a spin-wave mode.
+///
+/// Heuristics (all for the real scalar LLG linearization):
+/// - `"uniform"`: mode amplitude is spatially homogeneous (Kittel / macrospin mode).
+///   Criterion: mean amplitude over active nodes ≥ 60 % of the maximum.
+/// - `"op"`: equilibrium is predominantly out-of-plane (|⟨mz⟩| > 0.7 ⇒ mz-dominated modes).
+/// - `"ip"`: default for in-plane equilibrium configurations.
+/// - `"mixed"`: fallback when the active node set is empty or max amplitude is degenerate.
+fn classify_polarization(
+    amplitude: &[f64],
+    active_nodes: &[usize],
+    equilibrium: &[Vector3],
+    max_amplitude: f64,
+) -> &'static str {
+    if active_nodes.is_empty() || max_amplitude < 1e-30 {
+        return "mixed";
+    }
+
+    let n = active_nodes.len() as f64;
+
+    // Spatial uniformity: mean / max over active nodes.
+    let mean_amplitude: f64 = active_nodes.iter().map(|&i| amplitude[i]).sum::<f64>() / n;
+    if mean_amplitude / max_amplitude > 0.6 {
+        return "uniform";
+    }
+
+    // Determine equilibrium orientation: average |mz| over active nodes.
+    let mean_mz_abs: f64 = if equilibrium.len() > *active_nodes.iter().max().unwrap_or(&0) {
+        active_nodes
+            .iter()
+            .map(|&i| equilibrium[i][2].abs())
+            .sum::<f64>()
+            / n
+    } else {
+        0.0
+    };
+
+    if mean_mz_abs > 0.7 {
+        "op"
+    } else {
+        "ip"
+    }
 }

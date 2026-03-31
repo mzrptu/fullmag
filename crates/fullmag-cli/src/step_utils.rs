@@ -152,6 +152,7 @@ pub(crate) fn initial_step_update(backend_plan: &BackendPlanIR) -> fullmag_runne
             fem_mesh: None,
             magnetization: Some(flatten_magnetization(&fdm.initial_magnetization)),
             preview_field: None,
+            cached_preview_fields: None,
             scalar_row_due: false,
             finished: false,
         },
@@ -165,6 +166,7 @@ pub(crate) fn initial_step_update(backend_plan: &BackendPlanIR) -> fullmag_runne
             fem_mesh: None,
             magnetization: None,
             preview_field: None,
+            cached_preview_fields: None,
             scalar_row_due: false,
             finished: false,
         },
@@ -178,6 +180,7 @@ pub(crate) fn initial_step_update(backend_plan: &BackendPlanIR) -> fullmag_runne
             }),
             magnetization: Some(flatten_magnetization(&fem.initial_magnetization)),
             preview_field: None,
+            cached_preview_fields: None,
             scalar_row_due: false,
             finished: false,
         },
@@ -191,6 +194,7 @@ pub(crate) fn initial_step_update(backend_plan: &BackendPlanIR) -> fullmag_runne
             }),
             magnetization: Some(flatten_magnetization(&fem.equilibrium_magnetization)),
             preview_field: None,
+            cached_preview_fields: None,
             scalar_row_due: false,
             finished: false,
         },
@@ -218,6 +222,7 @@ pub(crate) fn final_stage_step_update(
             fem_mesh: None,
             magnetization: Some(flatten_magnetization(final_magnetization)),
             preview_field: None,
+            cached_preview_fields: None,
             scalar_row_due: true,
             finished,
         },
@@ -231,6 +236,7 @@ pub(crate) fn final_stage_step_update(
             fem_mesh: None,
             magnetization: None,
             preview_field: None,
+            cached_preview_fields: None,
             scalar_row_due: true,
             finished,
         },
@@ -244,6 +250,7 @@ pub(crate) fn final_stage_step_update(
             }),
             magnetization: Some(flatten_magnetization(final_magnetization)),
             preview_field: None,
+            cached_preview_fields: None,
             scalar_row_due: true,
             finished,
         },
@@ -257,6 +264,7 @@ pub(crate) fn final_stage_step_update(
             }),
             magnetization: Some(flatten_magnetization(final_magnetization)),
             preview_field: None,
+            cached_preview_fields: None,
             scalar_row_due: true,
             finished,
         },
@@ -533,9 +541,5 @@ pub(crate) fn build_resumable_interactive_command(
 }
 
 pub(crate) fn supports_dynamic_live_preview(backend_plan: &BackendPlanIR) -> bool {
-    matches!(backend_plan, BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_))
-}
-
-pub(crate) fn supports_interactive_latest_field_cache(backend_plan: &BackendPlanIR) -> bool {
     matches!(backend_plan, BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_))
 }

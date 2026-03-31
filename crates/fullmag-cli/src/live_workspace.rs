@@ -341,6 +341,20 @@ pub(crate) fn upsert_cached_preview_field(
     state.pending_preview_fields.insert(field.clone());
 }
 
+pub(crate) fn merge_cached_preview_fields_from_update(
+    state: &mut LocalLiveWorkspaceState,
+    update: &fullmag_runner::StepUpdate,
+) {
+    if let Some(fields) = update.cached_preview_fields.as_ref() {
+        for field in fields {
+            upsert_cached_preview_field(state, field);
+        }
+    }
+    if let Some(preview_field) = update.preview_field.as_ref() {
+        upsert_cached_preview_field(state, preview_field);
+    }
+}
+
 pub(crate) fn apply_python_progress_event(
     live_workspace: &LocalLiveWorkspace,
     event: PythonProgressEvent,

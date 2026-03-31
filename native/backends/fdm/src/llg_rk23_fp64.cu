@@ -159,12 +159,28 @@ static void copy_field_d2d(DeviceVectorField &dst, const DeviceVectorField &src,
 
 /* ── Compute fields + LLG RHS ── */
 
-static void compute_rhs_into(Context &ctx, DeviceVectorField &rhs_out,
+static bool compute_rhs_into(Context &ctx, DeviceVectorField &rhs_out,
     int n, int grid, double gamma_bar, double alpha)
 {
-    if (ctx.enable_exchange) launch_exchange_field_fp64(ctx);
-    if (ctx.enable_demag)    launch_demag_field_fp64(ctx);
+    if (ctx.enable_exchange) {
+        launch_exchange_field_fp64(ctx);
+        if (poll_interrupt(ctx)) {
+            abort_step_after_interrupt(ctx);
+            return false;
+        }
+    }
+    if (ctx.enable_demag) {
+        launch_demag_field_fp64(ctx);
+        if (poll_interrupt(ctx)) {
+            abort_step_after_interrupt(ctx);
+            return false;
+        }
+    }
     launch_effective_field_fp64(ctx);
+    if (poll_interrupt(ctx)) {
+        abort_step_after_interrupt(ctx);
+        return false;
+    }
 
     llg_rhs_fp64_kernel<<<grid, 256>>>(
         static_cast<const double*>(ctx.m.x),
@@ -178,6 +194,11 @@ static void compute_rhs_into(Context &ctx, DeviceVectorField &rhs_out,
         static_cast<double*>(rhs_out.z),
         n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0,
         stt_params_from_ctx(ctx));
+    if (poll_interrupt(ctx)) {
+        abort_step_after_interrupt(ctx);
+        return false;
+    }
+    return true;
 }
 
 /* ── Max reduction for error ── */
@@ -215,7 +236,7 @@ void launch_rk23_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         if (ctx.fsal_valid) {
             copy_field_d2d(ctx.k1, ctx.k_fsal, ctx.cell_count);
         } else {
-            compute_rhs_into(ctx, ctx.k1, n, grid, gamma_bar, alpha);
+            if (!compute_rhs_into(ctx, ctx.k1, n, grid, gamma_bar, alpha)) return;
         }
         if (abort_step_from_tmp(ctx)) return;
 
@@ -225,7 +246,7 @@ void launch_rk23_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<const double*>(ctx.k1.x), static_cast<const double*>(ctx.k1.y), static_cast<const double*>(ctx.k1.z),
             static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
             n, dt, A21);
-        compute_rhs_into(ctx, ctx.k2, n, grid, gamma_bar, alpha);
+        if (!compute_rhs_into(ctx, ctx.k2, n, grid, gamma_bar, alpha)) return;
         if (abort_step_from_tmp(ctx)) return;
 
         // Stage 3: y3 = m0 + dt*(0*k1 + A32*k2) → compute k3
@@ -234,7 +255,7 @@ void launch_rk23_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<const double*>(ctx.k2.x), static_cast<const double*>(ctx.k2.y), static_cast<const double*>(ctx.k2.z),
             static_cast<double*>(ctx.m.x), static_cast<double*>(ctx.m.y), static_cast<double*>(ctx.m.z),
             n, dt, A32);
-        compute_rhs_into(ctx, ctx.k3, n, grid, gamma_bar, alpha);
+        if (!compute_rhs_into(ctx, ctx.k3, n, grid, gamma_bar, alpha)) return;
         if (abort_step_from_tmp(ctx)) return;
 
         // 3rd-order solution: y3 = m0 + dt*(B1*k1 + B2*k2 + B3*k3)
@@ -248,7 +269,7 @@ void launch_rk23_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         if (abort_step_from_tmp(ctx)) return;
 
         // Stage 4 (FSAL): k4 = RHS(y3) — this becomes k1 for next step
-        compute_rhs_into(ctx, ctx.k_fsal, n, grid, gamma_bar, alpha);
+        if (!compute_rhs_into(ctx, ctx.k_fsal, n, grid, gamma_bar, alpha)) return;
         if (abort_step_from_tmp(ctx)) return;
 
         // Error estimate: |y3 - y2|

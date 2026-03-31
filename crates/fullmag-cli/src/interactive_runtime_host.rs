@@ -1,6 +1,4 @@
 use std::collections::VecDeque;
-use std::fs;
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -57,16 +55,21 @@ impl CurrentLiveDisplaySelectionHandle {
                         after_seq = after_seq.max(command.seq);
                         if matches!(
                             command.kind.as_str(),
-                            "preview_update"
+                            "display_selection_update"
+                                | "preview_update"
                                 | "preview_refresh"
                                 | "pause"
                                 | "stop"
                                 | "break"
                                 | "close"
                         ) {
+                            let requests_interrupt = matches!(
+                                command.kind.as_str(),
+                                "preview_refresh" | "pause" | "stop" | "break" | "close"
+                            );
                             worker
                                 .running_interrupt_requested
-                                .store(true, Ordering::Relaxed);
+                                .store(requests_interrupt, Ordering::Relaxed);
                         }
                         let (lock, cvar) = &*worker.shared;
                         if let Ok(mut state) = lock.lock() {
@@ -157,13 +160,21 @@ impl CurrentLiveDisplaySelectionHandle {
             let Some(command) = self.pop_front_matching(|command| {
                 matches!(
                     command.kind.as_str(),
-                    "preview_update" | "preview_refresh" | "pause" | "stop" | "break" | "close"
+                    "display_selection_update"
+                        | "preview_update"
+                        | "preview_refresh"
+                        | "pause"
+                        | "stop"
+                        | "break"
+                        | "close"
                 )
             }) else {
                 return None;
             };
             match command.kind.as_str() {
-                "preview_update" | "preview_refresh" => self.apply_preview_command(&command),
+                "display_selection_update" | "preview_update" | "preview_refresh" => {
+                    self.apply_preview_command(&command)
+                }
                 "pause" => {
                     self.set_running_interrupt(InteractiveStageInterrupt::Pause);
                     eprintln!(
@@ -203,7 +214,10 @@ fn apply_preview_command_to_state(state: &mut CurrentLiveControlState, command: 
     }) else {
         return;
     };
-    if matches!(command.kind.as_str(), "preview_update" | "preview_refresh") {
+    if matches!(
+        command.kind.as_str(),
+        "display_selection_update" | "preview_update" | "preview_refresh"
+    ) {
         state.display_selection = display_selection;
     }
 }
@@ -236,17 +250,14 @@ pub(super) struct InteractiveRuntimeHost {
     preview_source: Arc<Mutex<InteractivePreviewSourceState>>,
     runtime: Option<fullmag_runner::InteractiveRuntime>,
     base_problem: ProblemIR,
-    artifact_dir: PathBuf,
     runtime_capable: bool,
     dynamic_idle_preview_supported: bool,
-    latest_field_cache_supported: bool,
 }
 
 impl InteractiveRuntimeHost {
     pub(super) fn new(
         control: CurrentLiveDisplaySelectionHandle,
         base_problem: ProblemIR,
-        artifact_dir: PathBuf,
         backend_plan: &BackendPlanIR,
     ) -> Self {
         Self {
@@ -258,10 +269,8 @@ impl InteractiveRuntimeHost {
             })),
             runtime: None,
             base_problem,
-            artifact_dir,
             runtime_capable: matches!(backend_plan, BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_)),
             dynamic_idle_preview_supported: supports_dynamic_live_preview(backend_plan),
-            latest_field_cache_supported: supports_interactive_latest_field_cache(backend_plan),
         }
     }
 
@@ -305,10 +314,9 @@ impl InteractiveRuntimeHost {
         let continuation_slice = continuation_magnetization.as_deref();
         self.ensure_base_runtime_ready(continuation_slice, live_workspace);
 
-        if self.latest_field_cache_supported {
+        if self.dynamic_idle_preview_supported {
             let preview_request = self.control.preview_request();
             spawn_interactive_preview_cache_refresh(
-                self.artifact_dir.clone(),
                 self.base_problem.clone(),
                 Arc::clone(&self.preview_source),
                 live_workspace.clone(),
@@ -337,10 +345,9 @@ impl InteractiveRuntimeHost {
         let continuation_slice = continuation_magnetization.as_deref();
         self.ensure_base_runtime_ready(continuation_slice, live_workspace);
 
-        if self.latest_field_cache_supported {
+        if self.dynamic_idle_preview_supported {
             let preview_request = self.control.preview_request();
             spawn_interactive_preview_cache_refresh(
-                self.artifact_dir.clone(),
                 self.base_problem.clone(),
                 Arc::clone(&self.preview_source),
                 live_workspace.clone(),
@@ -357,7 +364,10 @@ impl InteractiveRuntimeHost {
         command: &SessionCommand,
         live_workspace: &LocalLiveWorkspace,
     ) -> bool {
-        if !matches!(command.kind.as_str(), "preview_update" | "preview_refresh") {
+        if !matches!(
+            command.kind.as_str(),
+            "display_selection_update" | "preview_update" | "preview_refresh"
+        ) {
             return false;
         }
 
@@ -369,10 +379,9 @@ impl InteractiveRuntimeHost {
             .map(|state| state.generation)
             .unwrap_or(0);
 
-        if self.latest_field_cache_supported {
+        if self.dynamic_idle_preview_supported {
             let preview_request = self.control.preview_request();
             spawn_interactive_preview_cache_refresh(
-                self.artifact_dir.clone(),
                 self.base_problem.clone(),
                 Arc::clone(&self.preview_source),
                 live_workspace.clone(),
@@ -432,10 +441,9 @@ impl InteractiveRuntimeHost {
             clear_cached_preview_fields(state);
         });
 
-        if self.latest_field_cache_supported {
+        if self.dynamic_idle_preview_supported {
             let preview_request = self.control.preview_request();
             spawn_interactive_preview_cache_refresh(
-                self.artifact_dir.clone(),
                 self.base_problem.clone(),
                 Arc::clone(&self.preview_source),
                 live_workspace.clone(),
@@ -548,6 +556,7 @@ fn refresh_interactive_preview_snapshot(
     live_workspace.update(|state| {
         state.live_state.updated_at_unix_ms = unix_time_millis().unwrap_or(0);
         state.live_state.latest_step.preview_field = Some(preview_field.clone());
+        upsert_cached_preview_field(state, &preview_field);
     });
     Ok(())
 }
@@ -607,6 +616,9 @@ fn refresh_interactive_preview_runtime_display(
         state.live_state.latest_step.max_h_demag = step_stats.max_h_demag;
         state.latest_scalar_row = Some(scalar_row_from_stats(&step_stats));
         state.live_state.latest_step.preview_field = preview_field.clone();
+        if let Some(preview_field) = preview_field.as_ref() {
+            upsert_cached_preview_field(state, preview_field);
+        }
     });
     Ok(())
 }
@@ -629,27 +641,7 @@ fn refresh_interactive_preview_fields(
     )?)
 }
 
-fn interactive_preview_cache_path(artifact_dir: &Path) -> PathBuf {
-    artifact_dir.join("interactive_preview_cache.json")
-}
-
-fn write_interactive_preview_cache(
-    artifact_dir: &Path,
-    preview_fields: &[fullmag_runner::LivePreviewField],
-) -> Result<()> {
-    fs::create_dir_all(artifact_dir)?;
-    let path = interactive_preview_cache_path(artifact_dir);
-    let tmp_path = path.with_extension("json.tmp");
-    let payload =
-        serde_json::to_vec(preview_fields).context("failed to encode interactive preview cache")?;
-    fs::write(&tmp_path, payload)
-        .with_context(|| format!("failed to write {}", tmp_path.display()))?;
-    fs::rename(&tmp_path, &path).with_context(|| format!("failed to move {}", path.display()))?;
-    Ok(())
-}
-
 fn spawn_interactive_preview_cache_refresh(
-    artifact_dir: PathBuf,
     base_problem: ProblemIR,
     source_state: Arc<Mutex<InteractivePreviewSourceState>>,
     live_workspace: LocalLiveWorkspace,
@@ -691,10 +683,6 @@ fn spawn_interactive_preview_cache_refresh(
         live_workspace.update(|state| {
             replace_cached_preview_fields(state, preview_fields.clone());
         });
-
-        if let Err(error) = write_interactive_preview_cache(&artifact_dir, &preview_fields) {
-            eprintln!("interactive preview-cache warning: {}", error);
-        }
     });
 }
 

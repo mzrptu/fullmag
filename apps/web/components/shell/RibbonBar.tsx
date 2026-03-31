@@ -250,14 +250,14 @@ export default function RibbonBar(props: RibbonBarProps) {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex flex-col w-full border-b border-white/5 bg-gradient-to-br from-card/40 to-background/40 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.4)] shrink-0 z-30">
+      <div className="flex flex-col w-full bg-card/20 border-b border-border/20 backdrop-blur-xl shadow-sm shrink-0 z-30">
         {/* ── Tab row ── */}
         <div className="flex px-3 pt-2 gap-1 border-b border-border/20">
           {TABS.map((tab) => (
             <button
               key={tab}
               className={cn(
-                "px-5 py-2 min-w-[80px] text-xs font-semibold uppercase tracking-wider transition-colors rounded-t-lg border-b-2",
+                "px-5 py-2 min-w-[80px] text-[0.82rem] font-medium transition-colors rounded-t-lg border-b-2 font-sans",
                 tab === inferredTab 
                   ? "border-primary bg-primary/10 text-primary" 
                   : "border-transparent text-muted-foreground hover:bg-muted/30 hover:text-foreground"

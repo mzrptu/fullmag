@@ -383,6 +383,7 @@ fn execute_cuda_assisted_multilayer_double(
                 fem_mesh: None,
                 magnetization: None,
                 preview_field: None,
+                cached_preview_fields: None,
                 scalar_row_due: false,
                 finished: false,
             });
@@ -581,6 +582,7 @@ fn execute_cuda_assisted_multilayer_single(
                 fem_mesh: None,
                 magnetization: None,
                 preview_field: None,
+                cached_preview_fields: None,
                 scalar_row_due: false,
                 finished: false,
             });
@@ -976,6 +978,7 @@ fn execute_native_stacked_cuda_multilayer(
                     fem_mesh: None,
                     magnetization: None,
                     preview_field: None,
+                    cached_preview_fields: None,
                     scalar_row_due: false,
                     finished: false,
                 });
@@ -990,6 +993,7 @@ fn execute_native_stacked_cuda_multilayer(
                 fem_mesh: None,
                 magnetization: None,
                 preview_field: None,
+                cached_preview_fields: None,
                 scalar_row_due: false,
                 finished: false,
             });

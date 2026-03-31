@@ -218,6 +218,7 @@ impl InteractiveRuntime {
             fem_mesh,
             magnetization: Some(final_m),
             preview_field: None,
+            cached_preview_fields: None,
             scalar_row_due: true,
             finished: true,
         });

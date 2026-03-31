@@ -47,7 +47,7 @@ export function Sidebar({ items, collapsed, mobileOpen, onCloseMobile, onToggleC
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary font-bold shadow-inner border border-primary/20">
               F
             </div>
-            {!collapsed && <span className="text-lg font-bold tracking-tight text-foreground whitespace-nowrap">Fullmag</span>}
+            {!collapsed && <span className="text-base font-semibold tracking-tight text-foreground whitespace-nowrap">Fullmag</span>}
           </div>
           {onToggleCollapse && (
             <button 

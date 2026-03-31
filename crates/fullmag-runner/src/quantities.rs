@@ -178,10 +178,7 @@ pub fn cached_preview_quantity_ids() -> Vec<&'static str> {
     QUANTITY_SPECS
         .iter()
         .filter(|spec| {
-            spec.ui_exposed
-                && spec.interactive_preview
-                && spec.kind == QuantityKind::VectorField
-                && spec.id != "m"
+            spec.ui_exposed && spec.interactive_preview && spec.kind == QuantityKind::VectorField
         })
         .map(|spec| spec.id)
         .collect()

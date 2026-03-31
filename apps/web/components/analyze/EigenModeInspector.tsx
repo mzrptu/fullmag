@@ -256,7 +256,7 @@ export default function EigenModeInspector({
               <Badge variant="outline">{mode.damping_policy}</Badge>
               <Badge variant="outline">{mode.dominant_polarization}</Badge>
             </div>
-            <h3 className="text-xl font-semibold tracking-tight text-[var(--ide-text-1)]">
+            <h3 className="text-base font-semibold tracking-tight text-[var(--ide-text-1)]">
               {formatGHz(mode.frequency_hz)}
             </h3>
             <p className="max-w-2xl text-sm text-[var(--ide-text-3)]">

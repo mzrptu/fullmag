@@ -22,24 +22,24 @@ export function ViewportBar() {
   const selectedDisplayIsGlobalScalar = ctx.quantityDescriptor?.kind === "global_scalar";
 
   return (
-    <div className="flex flex-wrap items-center gap-2 px-2.5 py-1.5 bg-card/30 border-b border-border/40 shrink-0">
+    <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 bg-card/20 backdrop-blur-xl border-b border-border/20 z-20 shadow-sm shrink-0">
       {ctx.isMeshWorkspaceView ? (
         <>
-          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Mesh</span>
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Mesh</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.meshName ?? "boundary surface"}</span>
           <span className="w-[1px] h-4 bg-border/40 shrink-0" />
           <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.effectiveFemMesh?.nodes.length.toLocaleString() ?? "0"} nodes</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.effectiveFemMesh?.elements.length.toLocaleString() ?? "0"} tets</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">{ctx.effectiveFemMesh?.boundary_faces.length.toLocaleString() ?? "0"} faces</span>
           <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Render</span>
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Render</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">
             {ctx.meshRenderMode === "surface+edges" ? "surface+edges" : ctx.meshRenderMode}
           </span>
           {ctx.meshSelection.primaryFaceIndex != null && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Face</span>
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Face</span>
               <span className="font-mono text-[0.65rem] text-muted-foreground">#{ctx.meshSelection.primaryFaceIndex}</span>
             </>
           )}
@@ -47,19 +47,19 @@ export function ViewportBar() {
       ) : ctx.isMeshWorkspaceView && !ctx.isFemBackend ? (
         /* FDM geometry bar */
         <>
-          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Geometry</span>
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Geometry</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">
             {ctx.solverGrid[0]}×{ctx.solverGrid[1]}×{ctx.solverGrid[2]}
           </span>
           <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Cells</span>
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Cells</span>
           <span className="font-mono text-[0.65rem] text-muted-foreground">
             {ctx.totalCells?.toLocaleString() ?? "—"}
           </span>
           {ctx.activeMaskPresent && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Active</span>
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Active</span>
               <span className="font-mono text-[0.65rem] text-muted-foreground">
                 {ctx.activeCells?.toLocaleString() ?? "—"}
               </span>
@@ -68,56 +68,10 @@ export function ViewportBar() {
         </>
       ) : (
         <>
-          <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Qty</span>
-          <Select
-            value={ctx.selectedQuantity}
-            onValueChange={(val) => ctx.requestPreviewQuantity(val)}
-            disabled={ctx.previewBusy}
-          >
-            <SelectTrigger className="h-6 min-w-[120px] max-w-[200px] border-border/40 bg-card/30 text-[0.65rem]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {((ctx.quantityOptions).length
-                ? ctx.quantityOptions
-                : [{ value: "m", label: "Magnetization", disabled: false }]).map((opt) => (
-                <SelectItem key={opt.value} value={opt.value} disabled={opt.disabled}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {ctx.quickPreviewTargets.length > 0 && (
-            <div className="flex max-w-full flex-wrap items-center gap-1">
-              {ctx.quickPreviewTargets.slice(0, 6).map((target) => {
-                const active = ctx.requestedPreviewQuantity === target.id;
-                return (
-                  <button
-                    key={target.id}
-                    type="button"
-                    className={cn(
-                      "rounded-md border px-2 py-1 text-[0.62rem] font-bold uppercase tracking-[0.15em] transition-colors",
-                      active
-                        ? "border-primary/30 bg-primary/12 text-primary"
-                        : "border-border/40 bg-card/20 text-muted-foreground hover:bg-card/50 hover:text-foreground",
-                      ctx.previewBusy && active && "animate-pulse",
-                      (!target.available || ctx.previewBusy) && !active && "opacity-45",
-                    )}
-                    onClick={() => ctx.requestPreviewQuantity(target.id)}
-                    disabled={!target.available || ctx.previewBusy}
-                    title={`Switch preview to ${target.shortLabel}`}
-                  >
-                    {target.shortLabel}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
           {ctx.isVectorQuantity && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Comp</span>
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Comp</span>
               {ctx.previewControlsActive ? (
                 <Select
                   value={ctx.requestedPreviewComponent}
@@ -156,7 +110,7 @@ export function ViewportBar() {
           {ctx.previewControlsActive && !selectedDisplayIsGlobalScalar && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Every</span>
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Every</span>
               <Select
                 value={String(ctx.requestedPreviewEveryN)}
                 onValueChange={(val) => void ctx.updatePreview("/everyN", { everyN: Number(val) })}
@@ -171,7 +125,7 @@ export function ViewportBar() {
                   ))}
                 </SelectContent>
               </Select>
-              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Pts</span>
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Pts</span>
               <Select
                 value={String(ctx.requestedPreviewMaxPoints)}
                 onValueChange={(val) => void ctx.updatePreview("/maxPoints", { maxPoints: Number(val) })}
@@ -195,7 +149,7 @@ export function ViewportBar() {
                 spatialPreview.y_possible_sizes.length > 0 && (
                 <>
                   <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-                  <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">X</span>
+                  <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">X</span>
                   <Select
                     value={String(ctx.requestedPreviewXChosenSize)}
                     onValueChange={(val) => void ctx.updatePreview("/XChosenSize", { xChosenSize: Number(val) })}
@@ -210,7 +164,7 @@ export function ViewportBar() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Y</span>
+                  <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Y</span>
                   <Select
                     value={String(ctx.requestedPreviewYChosenSize)}
                     onValueChange={(val) => void ctx.updatePreview("/YChosenSize", { yChosenSize: Number(val) })}
@@ -243,7 +197,7 @@ export function ViewportBar() {
               {spatialPreview.spatial_kind === "grid" && ctx.solverGrid[2] > 1 && (
                 <>
                   <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-                  <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Z-Slice</span>
+                  <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Z-Slice</span>
                   <span className="font-mono text-[0.65rem] tabular-nums text-muted-foreground min-w-[2.5rem] text-center">
                     {ctx.requestedPreviewAllLayers ? "avg" : `${ctx.requestedPreviewLayer}/${ctx.solverGrid[2] - 1}`}
                   </span>
@@ -272,7 +226,7 @@ export function ViewportBar() {
               {spatialPreview.spatial_kind === "mesh" && ctx.effectiveViewMode === "2D" && (
                 <>
                   <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-                  <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Plane</span>
+                  <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Plane</span>
                   <Select value={ctx.plane} onValueChange={(val) => ctx.setPlane(val as any)}>
                     <SelectTrigger className="h-6 w-16 bg-card/30 border-border/40 text-[0.65rem]">
                       <SelectValue />
@@ -283,7 +237,7 @@ export function ViewportBar() {
                       <SelectItem value="yz">YZ</SelectItem>
                     </SelectContent>
                   </Select>
-                  <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Slice</span>
+                  <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Slice</span>
                   <Select value={String(ctx.sliceIndex)} onValueChange={(val) => ctx.setSliceIndex(Number(val))}>
                     <SelectTrigger className="h-6 min-w-[3.5rem] bg-card/30 border-border/40 text-[0.65rem]">
                       <SelectValue />
@@ -300,7 +254,7 @@ export function ViewportBar() {
           ) : ctx.effectiveViewMode === "2D" && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
-              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Plane</span>
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Plane</span>
               <Select value={ctx.plane} onValueChange={(val) => ctx.setPlane(val as any)}>
                 <SelectTrigger className="h-6 w-16 bg-card/30 border-border/40 text-[0.65rem]">
                   <SelectValue />
@@ -311,7 +265,7 @@ export function ViewportBar() {
                   <SelectItem value="yz">YZ</SelectItem>
                 </SelectContent>
               </Select>
-              <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-sm border border-border/40 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">Slice</span>
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Slice</span>
               <Select value={String(ctx.sliceIndex)} onValueChange={(val) => ctx.setSliceIndex(Number(val))}>
                 <SelectTrigger className="h-6 min-w-[3.5rem] bg-card/30 border-border/40 text-[0.65rem]">
                   <SelectValue />
@@ -350,14 +304,14 @@ export function ViewportCanvasArea() {
         <div className="flex h-full w-full items-center justify-center p-6">
           <div className="flex min-w-[280px] max-w-[520px] flex-col gap-4 rounded-2xl border border-border/50 bg-card/70 p-8 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur">
             <div className="space-y-1">
-              <p className="text-[0.68rem] font-bold uppercase tracking-[0.28em] text-muted-foreground">
+              <p className="text-[0.68rem] font-semibold uppercase tracking-widest text-muted-foreground">
                 Global Scalar
               </p>
-              <h3 className="text-xl font-semibold text-foreground">
+              <h3 className="text-base font-semibold text-foreground">
                 {ctx.quantityDescriptor?.label ?? globalScalarPreview.quantity}
               </h3>
             </div>
-            <div className="font-mono text-4xl font-semibold tracking-tight text-foreground">
+            <div className="font-mono text-lg font-medium tracking-tight text-foreground">
               {fmtExp(globalScalarPreview.value)}
             </div>
             <div className="flex flex-wrap gap-3 text-[0.72rem] text-muted-foreground">
