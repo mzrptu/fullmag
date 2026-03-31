@@ -27,6 +27,11 @@ interface Segment2D {
   vb: number;
 }
 
+interface Polygon2D {
+  points: Point2[];
+  value: number;
+}
+
 const BG = "#1e1e2e";
 const BORDER = "#313244"; /* Catppuccin Surface0 */
 const TEXT = "#a6adc8"; /* Catppuccin Subtext0 */
@@ -143,7 +148,7 @@ function uniquePoints(points: { point: Point3; value: number }[], epsilon: numbe
   return out;
 }
 
-function collectSegments(
+function collectBoundarySegments(
   meshData: FemMeshData,
   plane: SlicePlane,
   component: VectorComponent,
@@ -300,8 +305,211 @@ function collectSegments(
     vLabel: axisLabel(v),
     bounds: { uMin, uMax, vMin, vMax },
     segments,
+    polygons: [] as Polygon2D[],
     valueRange: hasFieldData ? effectiveRange : effectiveRange,
   };
+}
+
+function sortIntersectionLoop(
+  points: { point: Point3; value: number }[],
+  plane: SlicePlane,
+) {
+  if (points.length <= 2) {
+    return points;
+  }
+  const projected = points.map((entry) => ({
+    ...entry,
+    uv: project(entry.point, plane),
+  }));
+  const centerU = projected.reduce((sum, entry) => sum + entry.uv[0], 0) / projected.length;
+  const centerV = projected.reduce((sum, entry) => sum + entry.uv[1], 0) / projected.length;
+  projected.sort(
+    (left, right) =>
+      Math.atan2(left.uv[1] - centerV, left.uv[0] - centerU) -
+      Math.atan2(right.uv[1] - centerV, right.uv[0] - centerU),
+  );
+  return projected.map(({ point, value }) => ({ point, value }));
+}
+
+function collectTetraSegments(
+  meshData: FemMeshData,
+  plane: SlicePlane,
+  component: VectorComponent,
+  sliceIndex: number,
+  sliceCount: number,
+) {
+  const flatNodes = meshData.nodes;
+  const flatElements = meshData.elements;
+  const numNodes = flatNodes.length / 3;
+  const numElements = flatElements.length / 4;
+
+  const { normal, u, v } = axisIndices(plane);
+
+  let minN = Number.POSITIVE_INFINITY;
+  let maxN = Number.NEGATIVE_INFINITY;
+  let uMin = Number.POSITIVE_INFINITY;
+  let uMax = Number.NEGATIVE_INFINITY;
+  let vMin = Number.POSITIVE_INFINITY;
+  let vMax = Number.NEGATIVE_INFINITY;
+
+  for (let i = 0; i < numNodes; i++) {
+    const pn = flatNodes[i * 3 + normal];
+    const pu = flatNodes[i * 3 + u];
+    const pv = flatNodes[i * 3 + v];
+    if (pn < minN) minN = pn;
+    if (pn > maxN) maxN = pn;
+    if (pu < uMin) uMin = pu;
+    if (pu > uMax) uMax = pu;
+    if (pv < vMin) vMin = pv;
+    if (pv > vMax) vMax = pv;
+  }
+
+  const planeCoord =
+    sliceCount <= 1 || Math.abs(maxN - minN) <= 1e-18
+      ? minN
+      : lerp(minN, maxN, clamp(sliceIndex, 0, sliceCount - 1) / (sliceCount - 1));
+  const epsilon = Math.max(((maxN - minN) / Math.max(sliceCount - 1, 1)) * 0.25, 1e-15);
+
+  const polygons: Polygon2D[] = [];
+  let valueMin = Number.POSITIVE_INFINITY;
+  let valueMax = Number.NEGATIVE_INFINITY;
+
+  const edges = [
+    [0, 1],
+    [0, 2],
+    [0, 3],
+    [1, 2],
+    [1, 3],
+    [2, 3],
+  ] as const;
+
+  for (let elementIndex = 0; elementIndex < numElements; elementIndex++) {
+    const ids = [
+      flatElements[elementIndex * 4],
+      flatElements[elementIndex * 4 + 1],
+      flatElements[elementIndex * 4 + 2],
+      flatElements[elementIndex * 4 + 3],
+    ] as const;
+
+    const points = ids.map(
+      (nodeIndex) =>
+        [
+          flatNodes[nodeIndex * 3],
+          flatNodes[nodeIndex * 3 + 1],
+          flatNodes[nodeIndex * 3 + 2],
+        ] as Point3,
+    ) as [Point3, Point3, Point3, Point3];
+
+    const values = ids.map((nodeIndex) => nodeScalar(meshData, nodeIndex, component)) as [
+      number,
+      number,
+      number,
+      number,
+    ];
+
+    const signed = points.map((point) => point[normal] - planeCoord) as [
+      number,
+      number,
+      number,
+      number,
+    ];
+
+    const intersections: { point: Point3; value: number }[] = [];
+
+    for (const [a, b] of edges) {
+      const da = signed[a];
+      const db = signed[b];
+      const va = values[a];
+      const vb = values[b];
+
+      if (Math.abs(da) <= epsilon && Math.abs(db) <= epsilon) {
+        intersections.push({ point: points[a], value: va });
+        intersections.push({ point: points[b], value: vb });
+        continue;
+      }
+      if (Math.abs(da) <= epsilon) {
+        intersections.push({ point: points[a], value: va });
+        continue;
+      }
+      if (Math.abs(db) <= epsilon) {
+        intersections.push({ point: points[b], value: vb });
+        continue;
+      }
+      if (da * db > 0) {
+        continue;
+      }
+
+      const t = da / (da - db);
+      intersections.push({
+        point: lerpPoint(points[a], points[b], t),
+        value: lerp(va, vb, t),
+      });
+    }
+
+    const unique = sortIntersectionLoop(uniquePoints(intersections, epsilon), plane);
+    if (unique.length < 3) {
+      continue;
+    }
+
+    let avgValue = 0;
+    const pts: Point2[] = [];
+    let minVal = unique[0].value, maxVal = unique[0].value;
+    for (const v of unique) {
+      avgValue += v.value;
+      pts.push(project(v.point, plane));
+      if (v.value < minVal) minVal = v.value;
+      if (v.value > maxVal) maxVal = v.value;
+    }
+    avgValue /= unique.length;
+
+    valueMin = Math.min(valueMin, minVal);
+    valueMax = Math.max(valueMax, maxVal);
+
+    polygons.push({
+      points: pts,
+      value: avgValue,
+    });
+  }
+
+  if (!Number.isFinite(valueMin)) {
+    valueMin = 0;
+    valueMax = 0;
+  }
+
+  const hasFieldData = !!meshData.fieldData;
+  const effectiveRange =
+    component === "magnitude"
+      ? { min: 0, max: Math.max(1, valueMax) }
+      : valueMin < 0 && valueMax > 0
+        ? {
+            min: -Math.max(Math.abs(valueMin), Math.abs(valueMax)),
+            max: Math.max(Math.abs(valueMin), Math.abs(valueMax)),
+          }
+        : { min: valueMin, max: valueMax };
+
+  return {
+    planeCoord,
+    normalLabel: axisLabel(normal),
+    uLabel: axisLabel(u),
+    vLabel: axisLabel(v),
+    bounds: { uMin, uMax, vMin, vMax },
+    segments: [] as Segment2D[],
+    polygons,
+    valueRange: hasFieldData ? effectiveRange : effectiveRange,
+  };
+}
+
+function collectSegments(
+  meshData: FemMeshData,
+  plane: SlicePlane,
+  component: VectorComponent,
+  sliceIndex: number,
+  sliceCount: number,
+) {
+  if (meshData.elements.length >= 4) {
+    return collectTetraSegments(meshData, plane, component, sliceIndex, sliceCount);
+  }
+  return collectBoundarySegments(meshData, plane, component, sliceIndex, sliceCount);
 }
 
 export default function FemMeshSlice2D({
@@ -376,7 +584,7 @@ export default function FemMeshSlice2D({
       ctx.stroke();
     }
 
-    if (slice.segments.length === 0) {
+    if (slice.segments.length === 0 && slice.polygons.length === 0) {
       ctx.fillStyle = EMPTY;
       ctx.font = "600 14px IBM Plex Sans, sans-serif";
       ctx.textAlign = "center";
@@ -390,6 +598,28 @@ export default function FemMeshSlice2D({
       );
     } else {
       const { min, max } = slice.valueRange;
+
+      // Draw volume polygons
+      for (const poly of slice.polygons) {
+        if (poly.points.length < 3) continue;
+        ctx.fillStyle = colorForValue(poly.value, min, max, quantityId);
+        ctx.beginPath();
+        const first = map(poly.points[0]);
+        ctx.moveTo(first[0], first[1]);
+        for (let i = 1; i < poly.points.length; i++) {
+          const pt = map(poly.points[i]);
+          ctx.lineTo(pt[0], pt[1]);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        // Thin element boundaries
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+      }
+
+      // Draw surface segments
       for (const segment of slice.segments) {
         const [x1, y1] = map(segment.a);
         const [x2, y2] = map(segment.b);
@@ -418,8 +648,9 @@ export default function FemMeshSlice2D({
     ctx.fillStyle = TEXT_STRONG;
     ctx.font = "600 12px IBM Plex Mono, monospace";
     ctx.textAlign = "right";
+    const elementCount = slice.segments.length + slice.polygons.length;
     ctx.fillText(
-      `${quantityLabel}.${component} | ${slice.normalLabel}=${slice.planeCoord.toExponential(3)} m | ${slice.segments.length} segments`,
+      `${quantityLabel}.${component} | ${slice.normalLabel}=${slice.planeCoord.toExponential(3)} m | ${elementCount} elements`,
       width - 16,
       18,
     );

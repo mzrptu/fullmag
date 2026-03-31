@@ -18,11 +18,13 @@ import type {
   EngineLogEntry,
   FemLiveMesh,
   LiveState,
+  MeshWorkspaceState,
   PreviewState,
   QuantityDescriptor,
   RunManifest,
   RuntimeStatusState,
   ScalarRow,
+  ScriptBuilderStageState,
   ScriptBuilderState,
   SessionManifest,
 } from "../../../lib/useSessionStream";
@@ -65,6 +67,11 @@ import {
   sameDisplaySelection,
   solverSettingsFromBuilder,
 } from "./helpers";
+import {
+  MESH_WORKSPACE_PRESETS,
+  deriveMeshWorkspacePreset,
+  type MeshWorkspacePresetId,
+} from "./meshWorkspace";
 export type {
   ActivityInfo,
   FieldStats,
@@ -159,6 +166,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [meshQualityData, setMeshQualityData] = useState<MeshQualityData | null>(null);
   const [meshGenerating, setMeshGenerating] = useState(false);
   const [solverSettings, setSolverSettings] = useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
+  const [studyStages, setStudyStages] = useState<ScriptBuilderStageState[]>([]);
   const builderHydratedSessionRef = useRef<string | null>(null);
   const builderPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastBuilderPushSignatureRef = useRef<string | null>(null);
@@ -189,6 +197,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const quantities = state?.quantities ?? [];
   const artifactsArr = state?.artifacts ?? [];
   const metadata = (state?.metadata as Record<string, unknown> | null) ?? null;
+  const meshWorkspace = (state?.mesh_workspace as MeshWorkspaceState | null) ?? null;
   const latestEngineMessage = engineLog.length > 0 ? engineLog[engineLog.length - 1]?.message ?? null : null;
   const workspaceStatus =
     runtimeStatus?.code ?? liveState?.status ?? session?.status ?? run?.status ?? "idle";
@@ -200,13 +209,25 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     workspaceStatus === "completed" ||
     workspaceStatus === "failed";
 
+  /* Detect FEM */
+  const planSummary = session?.plan_summary as Record<string, unknown> | undefined;
+  const resolvedBackend =
+    (typeof planSummary?.resolved_backend === "string" ? planSummary.resolved_backend : null) ??
+    (typeof session?.requested_backend === "string" ? session.requested_backend : null);
+  const isFemBackend =
+    resolvedBackend === "fem" || femMesh != null || spatialPreview?.spatial_kind === "mesh";
+
   const solverNotStartedMessage =
     workspaceStatus === "materializing_script"
-      ? "Solver has not started yet. FEM materialization and tetrahedral meshing are still in progress."
+      ? (isFemBackend
+          ? "Solver has not started yet. FEM materialization and tetrahedral meshing are still in progress."
+          : "Solver has not started yet. Workspace materialization is still in progress.")
       : workspaceStatus === "bootstrapping"
         ? "Solver has not started yet. Workspace bootstrap is still in progress."
         : workspaceStatus === "waiting_for_compute"
-          ? "Waiting for compute — adjust mesh in the control room, then click COMPUTE."
+          ? (isFemBackend
+              ? "Waiting for compute — adjust mesh in the control room, then click COMPUTE."
+              : "Waiting for compute — inspect the workspace in the control room, then click COMPUTE.")
           : "Solver telemetry is not available yet.";
 
   const isWaitingForCompute = workspaceStatus === "waiting_for_compute";
@@ -245,14 +266,6 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     : 0;
   const stepsPerSec = elapsed > 0 ? (effectiveStep / elapsed) * 1000 : 0;
 
-  /* Detect FEM */
-  const planSummary = session?.plan_summary as Record<string, unknown> | undefined;
-  const resolvedBackend =
-    (typeof planSummary?.resolved_backend === "string" ? planSummary.resolved_backend : null) ??
-    (typeof session?.requested_backend === "string" ? session.requested_backend : null);
-  const isFemBackend =
-    resolvedBackend === "fem" || femMesh != null || spatialPreview?.spatial_kind === "mesh";
-
   const runtimeEngine = (metadata?.runtime_engine as Record<string, unknown> | undefined) ?? undefined;
   const runtimeEngineLabel = typeof runtimeEngine?.engine_label === "string" ? runtimeEngine.engine_label : null;
   const solverPlan = useMemo(() => extractSolverPlan(metadata, session), [metadata, session]);
@@ -272,8 +285,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     }
   }, [quantityDescriptorById]);
   const localBuilderDraft = useMemo(
-    () => buildScriptBuilderUpdatePayload(solverSettings, meshOptions),
-    [meshOptions, solverSettings],
+    () => buildScriptBuilderUpdatePayload(solverSettings, meshOptions, studyStages),
+    [meshOptions, solverSettings, studyStages],
   );
   const localBuilderSignature = useMemo(
     () => JSON.stringify(localBuilderDraft),
@@ -282,7 +295,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const remoteBuilderSignature = useMemo(
     () =>
       scriptBuilder
-        ? JSON.stringify({ solver: scriptBuilder.solver, mesh: scriptBuilder.mesh })
+        ? JSON.stringify({
+            solver: scriptBuilder.solver,
+            mesh: scriptBuilder.mesh,
+            stages: scriptBuilder.stages,
+          })
         : null,
     [scriptBuilder],
   );
@@ -293,6 +310,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     builderHydratedSessionRef.current = null;
     lastBuilderPushSignatureRef.current = null;
     setSolverSettingsHydrated(false);
+    setStudyStages([]);
     if (builderPushTimerRef.current) {
       clearTimeout(builderPushTimerRef.current);
       builderPushTimerRef.current = null;
@@ -334,14 +352,22 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       ...prev,
       ...solverSettingsFromBuilder(scriptBuilder.solver),
     }));
+    setStudyStages(scriptBuilder.stages);
     setMeshOptions((prev) => ({
       ...prev,
       ...meshOptionsFromBuilder(scriptBuilder.mesh),
     }));
+    const firstRunStage = scriptBuilder.stages.find(
+      (stage) => stage.kind === "run" && stage.until_seconds.trim().length > 0,
+    );
+    if (firstRunStage) {
+      setRunUntilInput(firstRunStage.until_seconds);
+    }
     builderHydratedSessionRef.current = workspaceHydrationKey;
     lastBuilderPushSignatureRef.current = JSON.stringify({
       solver: scriptBuilder.solver,
       mesh: scriptBuilder.mesh,
+      stages: scriptBuilder.stages,
     });
     setSolverSettingsHydrated(true);
   }, [scriptBuilder, workspaceHydrationKey]);
@@ -442,6 +468,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const meshSource = typeof femArtifactLayout?.mesh_source === "string" ? femArtifactLayout.mesh_source : null;
   const meshFeOrder = typeof femArtifactLayout?.fe_order === "number" ? femArtifactLayout.fe_order : null;
   const meshHmax = typeof femArtifactLayout?.hmax === "number" ? femArtifactLayout.hmax : null;
+  const meshSummary = meshWorkspace?.mesh_summary ?? null;
 
   /* Unified world extent (metres) for both FDM and FEM */
   const worldExtent = useMemo<[number, number, number] | null>(() => {
@@ -505,7 +532,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     runtimeStatus?.can_accept_commands ?? interactiveEnabled;
   const interactiveControlsEnabled =
     interactiveEnabled &&
-    (awaitingCommand || workspaceStatus === "running" || workspaceStatus === "paused");
+    (awaitingCommand || isWaitingForCompute || workspaceStatus === "running" || workspaceStatus === "paused");
 
   /* Preview derived — keep the user's explicit viewport mode stable.
    * A transient preview payload should not silently downgrade 3D to 2D. */
@@ -692,12 +719,38 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     void enqueueCommand({ kind: "solve" });
   }, [enqueueCommand]);
 
-  const openFemMeshWorkspace = useCallback((tab: "mesh" | "quality" = "mesh") => {
+  const openFemMeshWorkspace = useCallback((tab: FemDockTab = "mesh") => {
     startTransition(() => {
       setViewMode("Mesh");
       setFemDockTab(tab);
     });
     setMeshRenderMode((c) => (c === "surface" ? "surface+edges" : c));
+  }, []);
+
+  const applyMeshWorkspacePreset = useCallback((presetId: MeshWorkspacePresetId) => {
+    const preset = MESH_WORKSPACE_PRESETS.find((entry) => entry.id === presetId);
+    if (!preset) return;
+
+    startTransition(() => {
+      if (preset.viewMode === "2D") {
+        setComponent((prev) => (prev === "magnitude" ? "x" : prev));
+      }
+      setViewMode(preset.viewMode);
+      setFemDockTab(preset.dockTab);
+      setSelectedSidebarNodeId(
+        preset.dockTab === "quality"
+          ? "mesh-quality"
+          : preset.dockTab === "mesher"
+            ? "mesh-size"
+            : preset.dockTab === "pipeline"
+              ? "mesh-pipeline"
+              : "mesh-view",
+      );
+    });
+
+    setMeshRenderMode(preset.renderMode);
+    if (preset.clipEnabled !== undefined) setMeshClipEnabled(preset.clipEnabled);
+    if (preset.opacity != null) setMeshOpacity(preset.opacity);
   }, []);
 
   const handleViewModeChange = useCallback((mode: string) => {
@@ -713,6 +766,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [isFemBackend, openFemMeshWorkspace]);
 
   const handleSimulationAction = useCallback((action: string) => {
+    if (action === "compute" || action === "solve") {
+      handleCompute();
+      return;
+    }
+
     if (action === "run") {
       if (workspaceStatus === "paused") {
         void enqueueCommand({ kind: "resume" });
@@ -764,9 +822,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     }
   }, [
     enqueueCommand,
+    handleCompute,
     runUntilInput,
+    solverSettings.fixedTimestep,
+    solverSettings.integrator,
     solverSettings.energyTolerance,
     solverSettings.maxRelaxSteps,
+    solverSettings.relaxAlgorithm,
+    solverSettings.relaxAlpha,
     solverSettings.torqueTolerance,
     workspaceStatus,
   ]);
@@ -951,7 +1014,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const commandBusy = commandPostInFlight;
   const canRunCommand =
     interactiveEnabled &&
-    (awaitingCommand || workspaceStatus === "paused") &&
+    (awaitingCommand || isWaitingForCompute || workspaceStatus === "paused") &&
     runtimeCanAcceptCommands &&
     !commandBusy;
   const canRelaxCommand =
@@ -966,11 +1029,13 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     !commandBusy;
   const canStopCommand =
     interactiveEnabled &&
-    (workspaceStatus === "running" || workspaceStatus === "paused") &&
+    (isWaitingForCompute || workspaceStatus === "running" || workspaceStatus === "paused") &&
     runtimeCanAcceptCommands &&
     !commandBusy;
-  const primaryRunAction = workspaceStatus === "paused" ? "resume" : "run";
-  const primaryRunLabel = workspaceStatus === "paused" ? "Resume" : "Run";
+  const primaryRunAction =
+    isWaitingForCompute ? "compute" : workspaceStatus === "paused" ? "resume" : "run";
+  const primaryRunLabel =
+    isWaitingForCompute ? "Compute" : workspaceStatus === "paused" ? "Resume" : "Run";
 
   const requestPreviewQuantity = useCallback((nextQuantity: string) => {
     startTransition(() => {
@@ -1086,19 +1151,23 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     () => (isMeshPreview && renderPreview?.fem_mesh ? renderPreview.fem_mesh : femMesh),
     [femMesh, isMeshPreview, renderPreview?.fem_mesh],
   );
-  const [flatNodes, flatFaces] = useMemo(() => {
-    if (!effectiveFemMesh) return [null, null];
-    return [effectiveFemMesh.nodes.flatMap((n) => n), effectiveFemMesh.boundary_faces.flatMap((f) => f)];
+  const [flatNodes, flatFaces, flatElements] = useMemo(() => {
+    if (!effectiveFemMesh) return [null, null, null];
+    return [
+      effectiveFemMesh.nodes.flatMap((n) => n),
+      effectiveFemMesh.boundary_faces.flatMap((f) => f),
+      effectiveFemMesh.elements.flatMap((element) => element),
+    ];
   }, [effectiveFemMesh]);
 
   // Topology base: stable reference that only changes when mesh structure changes.
   // This prevents full geometry rebuild (and camera reset) on every field data update.
   const femMeshBase = useMemo<Omit<FemMeshData, "fieldData"> | null>(() => {
-    if (!isFemBackend || !effectiveFemMesh || !flatNodes || !flatFaces) return null;
+    if (!effectiveFemMesh || !flatNodes || !flatFaces || !flatElements) return null;
     const nNodes = effectiveFemMesh.nodes.length;
     const nElements = femMesh?.elements.length ?? effectiveFemMesh.elements.length;
-    return { nodes: flatNodes, boundaryFaces: flatFaces, nNodes, nElements };
-  }, [isFemBackend, effectiveFemMesh, femMesh?.elements.length, flatNodes, flatFaces]);
+    return { nodes: flatNodes, elements: flatElements, boundaryFaces: flatFaces, nNodes, nElements };
+  }, [effectiveFemMesh, femMesh?.elements.length, flatNodes, flatFaces, flatElements]);
 
   // Field data: updated on every solver tick when selectedVectors changes.
   const femFieldData = useMemo<FemMeshData["fieldData"] | undefined>(() => {
@@ -1121,7 +1190,19 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   const femTopologyKey = useMemo(() => {
     if (!effectiveFemMesh) return null;
-    return `${effectiveFemMesh.nodes.length}:${femMesh?.elements.length ?? effectiveFemMesh.elements.length}:${effectiveFemMesh.boundary_faces.length}`;
+    const firstNode = effectiveFemMesh.nodes[0]?.join(",") ?? "";
+    const middleNode = effectiveFemMesh.nodes[Math.floor(effectiveFemMesh.nodes.length / 2)]?.join(",") ?? "";
+    const lastNode = effectiveFemMesh.nodes[effectiveFemMesh.nodes.length - 1]?.join(",") ?? "";
+    const firstElement = effectiveFemMesh.elements[0]?.join(",") ?? "";
+    return [
+      effectiveFemMesh.nodes.length,
+      femMesh?.elements.length ?? effectiveFemMesh.elements.length,
+      effectiveFemMesh.boundary_faces.length,
+      firstNode,
+      middleNode,
+      lastNode,
+      firstElement,
+    ].join(":");
   }, [effectiveFemMesh, femMesh?.elements.length]);
 
   const femColorField = useMemo<FemColorField>(() => {
@@ -1138,6 +1219,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [femTopologyKey]);
 
   const isMeshWorkspaceView = effectiveViewMode === "Mesh";
+  const meshWorkspacePreset = useMemo(
+    () => deriveMeshWorkspacePreset({ viewMode: effectiveViewMode, femDockTab, meshRenderMode }),
+    [effectiveViewMode, femDockTab, meshRenderMode],
+  );
   const meshFaceDetail = useMemo(
     () => computeMeshFaceDetail(effectiveFemMesh, meshSelection.primaryFaceIndex),
     [effectiveFemMesh, meshSelection.primaryFaceIndex],
@@ -1308,29 +1393,39 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   ]);
 
   const modelValue = useMemo<ModelContextValue>(() => ({
-    material, solverPlan, solverSettings, femMesh,
+    material, solverPlan, solverSettings, studyStages, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
     femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
-    meshFaceDetail, meshQualitySummary,
-    meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder,
-    worldExtent, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
+    meshFaceDetail, meshQualitySummary, meshWorkspace,
+    meshName: meshSummary?.mesh_name ?? meshName,
+    meshSource: meshSummary?.mesh_source ?? meshSource,
+    meshExtent: meshSummary?.world_extent ?? meshExtent,
+    meshBoundsMin: meshSummary?.bounds_min ?? meshBoundsMin,
+    meshBoundsMax: meshSummary?.bounds_max ?? meshBoundsMax,
+    meshFeOrder: meshSummary?.order ?? meshFeOrder,
+    worldExtent: meshSummary?.world_extent ?? worldExtent,
+    meshHmax: Number.isFinite(meshSummary?.hmax ?? NaN) ? (meshSummary?.hmax ?? null) : meshHmax,
+    mesherBackend, mesherSourceKind, mesherCurrentSettings,
+    meshWorkspacePreset,
     selectedSidebarNodeId,
-    setSolverSettings, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
+    setSolverSettings, setStudyStages, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
-    setSelectedSidebarNodeId, handleMeshGenerate, openFemMeshWorkspace,
+    setSelectedSidebarNodeId, handleMeshGenerate, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
-    material, solverPlan, solverSettings, femMesh,
+    material, solverPlan, solverSettings, studyStages, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
     femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
-    meshFaceDetail, meshQualitySummary,
-    meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder,
+    meshFaceDetail, meshQualitySummary, meshWorkspace,
+    meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder,
     worldExtent, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
+    meshWorkspacePreset,
     selectedSidebarNodeId,
-    handleMeshGenerate, openFemMeshWorkspace,
+    setStudyStages,
+    handleMeshGenerate, openFemMeshWorkspace, applyMeshWorkspacePreset,
   ]);
 
   if (!state) {

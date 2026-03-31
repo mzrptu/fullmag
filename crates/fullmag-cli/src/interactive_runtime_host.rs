@@ -53,20 +53,11 @@ impl CurrentLiveDisplaySelectionHandle {
                 match wait_for_current_live_control(after_seq, 15_000) {
                     Ok(Some(command)) => {
                         after_seq = after_seq.max(command.seq);
-                        if matches!(
-                            command.kind.as_str(),
-                            "display_selection_update"
-                                | "preview_update"
-                                | "preview_refresh"
-                                | "pause"
-                                | "stop"
-                                | "break"
-                                | "close"
-                        ) {
-                            let requests_interrupt = matches!(
-                                command.kind.as_str(),
-                                "preview_refresh" | "pause" | "stop" | "break" | "close"
-                            );
+                        // Parse into typed command to determine control classification
+                        let typed = crate::command_bridge::classify_command(&command);
+                        if let Some(ref typed_cmd) = typed {
+                            let requests_interrupt =
+                                crate::command_bridge::is_interrupt_command(typed_cmd);
                             worker
                                 .running_interrupt_requested
                                 .store(requests_interrupt, Ordering::Relaxed);
@@ -157,33 +148,29 @@ impl CurrentLiveDisplaySelectionHandle {
         self.running_interrupt_requested
             .store(false, Ordering::Relaxed);
         loop {
+            // Pop any command that parses as a LiveControlCommand
             let Some(command) = self.pop_front_matching(|command| {
-                matches!(
-                    command.kind.as_str(),
-                    "display_selection_update"
-                        | "preview_update"
-                        | "preview_refresh"
-                        | "pause"
-                        | "stop"
-                        | "break"
-                        | "close"
-                )
+                crate::command_bridge::classify_command(command).is_some()
             }) else {
                 return None;
             };
-            match command.kind.as_str() {
-                "display_selection_update" | "preview_update" | "preview_refresh" => {
-                    self.apply_preview_command(&command)
+
+            let typed = crate::command_bridge::classify_command(&command);
+
+            match typed {
+                Some(fullmag_runner::LiveControlCommand::SetDisplaySelection(_))
+                | Some(fullmag_runner::LiveControlCommand::RefreshDisplay) => {
+                    self.apply_preview_command(&command);
                 }
-                "pause" => {
+                Some(fullmag_runner::LiveControlCommand::Pause) => {
                     self.set_running_interrupt(InteractiveStageInterrupt::Pause);
                     eprintln!(
-                        "interactive: received '{}' command — cancelling stage",
+                        "interactive: received '{}' command — pausing stage",
                         command.kind
                     );
-                    return Some(fullmag_runner::StepAction::Stop);
+                    return Some(fullmag_runner::StepAction::Pause);
                 }
-                "stop" | "break" => {
+                Some(fullmag_runner::LiveControlCommand::Break) => {
                     self.set_running_interrupt(InteractiveStageInterrupt::Break);
                     eprintln!(
                         "interactive: received '{}' command — cancelling stage",
@@ -191,7 +178,7 @@ impl CurrentLiveDisplaySelectionHandle {
                     );
                     return Some(fullmag_runner::StepAction::Stop);
                 }
-                "close" => {
+                Some(fullmag_runner::LiveControlCommand::Close) => {
                     self.set_running_interrupt(InteractiveStageInterrupt::Close);
                     eprintln!(
                         "interactive: received '{}' command — cancelling stage",
@@ -199,6 +186,7 @@ impl CurrentLiveDisplaySelectionHandle {
                     );
                     return Some(fullmag_runner::StepAction::Stop);
                 }
+                // Run/Relax/Resume are not handled during running — they go to orchestrator
                 _ => {}
             }
         }
@@ -206,19 +194,22 @@ impl CurrentLiveDisplaySelectionHandle {
 }
 
 fn apply_preview_command_to_state(state: &mut CurrentLiveControlState, command: &SessionCommand) {
-    let Some(display_selection) = command.display_selection.clone().or_else(|| {
-        command
-            .preview_config
-            .as_ref()
-            .map(CurrentDisplaySelection::from_preview_request)
-    }) else {
-        return;
-    };
-    if matches!(
-        command.kind.as_str(),
-        "display_selection_update" | "preview_update" | "preview_refresh"
-    ) {
-        state.display_selection = display_selection;
+    let typed = crate::command_bridge::classify_command(command);
+    match typed {
+        Some(fullmag_runner::LiveControlCommand::SetDisplaySelection(_))
+        | Some(fullmag_runner::LiveControlCommand::RefreshDisplay) => {
+            // Resolve the actual display selection from the command payload
+            let resolved = command.display_selection.clone().or_else(|| {
+                command
+                    .preview_config
+                    .as_ref()
+                    .map(CurrentDisplaySelection::from_preview_request)
+            });
+            if let Some(display_selection) = resolved {
+                state.display_selection = display_selection;
+            }
+        }
+        _ => {} // Non-display commands don't update display selection state
     }
 }
 

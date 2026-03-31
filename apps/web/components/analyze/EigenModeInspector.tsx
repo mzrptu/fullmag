@@ -80,11 +80,13 @@ export default function EigenModeInspector({
   const meshData = useMemo(() => {
     if (!mesh || !mode) return null;
     const nodeCount = mesh.nodes.length;
+    const elements = mesh.elements.flatMap((element) => element);
     const zero = zeroArray(nodeCount);
 
     if (fieldView === "amplitude") {
       return {
         nodes: flattenNodes(mesh),
+        elements,
         boundaryFaces: flattenBoundaryFaces(mesh),
         nNodes: nodeCount,
         nElements: mesh.elements.length,
@@ -94,6 +96,7 @@ export default function EigenModeInspector({
     if (fieldView === "phase") {
       return {
         nodes: flattenNodes(mesh),
+        elements,
         boundaryFaces: flattenBoundaryFaces(mesh),
         nNodes: nodeCount,
         nElements: mesh.elements.length,
@@ -103,6 +106,7 @@ export default function EigenModeInspector({
     const source = fieldView === "real" ? mode.real : mode.imag;
     return {
       nodes: flattenNodes(mesh),
+      elements,
       boundaryFaces: flattenBoundaryFaces(mesh),
       nNodes: nodeCount,
       nElements: mesh.elements.length,

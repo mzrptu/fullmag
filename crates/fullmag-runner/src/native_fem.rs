@@ -966,6 +966,7 @@ mod tests {
                 exchange: plan.enable_exchange,
                 demag: plan.enable_demag,
                 external_field: plan.external_field,
+                magnetoelastic: None,
             },
         );
         let mut state =

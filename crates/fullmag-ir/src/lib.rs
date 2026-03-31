@@ -304,6 +304,15 @@ pub enum EnergyTermIR {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         time_dependence: Option<TimeDependenceIR>,
     },
+    /// Magnetoelastic coupling energy between a magnet and an elastic body.
+    Magnetoelastic {
+        /// Name of the MagnetIR.
+        magnet: String,
+        /// Name of the ElasticBodyIR.
+        body: String,
+        /// Name of the MagnetostrictionLawIR.
+        law: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -315,6 +324,9 @@ pub enum DynamicsIR {
         fixed_timestep: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         adaptive_timestep: Option<AdaptiveTimeStepIR>,
+        /// Optional mechanical coupling mode.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mechanics: Option<MechanicsIR>,
     },
 }
 
@@ -752,6 +764,89 @@ pub struct ValidationProfileIR {
     pub execution_mode: ExecutionMode,
 }
 
+// ---------------------------------------------------------------------------
+// Magnetoelastic IR types
+// ---------------------------------------------------------------------------
+
+/// Linear elastic material with cubic symmetry constants.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ElasticMaterialIR {
+    pub name: String,
+    /// Elastic constant C11 [Pa].
+    pub c11: f64,
+    /// Elastic constant C12 [Pa].
+    pub c12: f64,
+    /// Elastic constant C44 [Pa].
+    pub c44: f64,
+    /// Mass density [kg/m³].
+    pub density: f64,
+    /// Mechanical damping coefficient (dimensionless, for elastodynamics).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mechanical_damping: Option<f64>,
+}
+
+/// Elastic domain bound to a geometry and an elastic material.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ElasticBodyIR {
+    pub name: String,
+    /// References a GeometryIR entry name.
+    pub geometry: String,
+    /// References an ElasticMaterialIR name.
+    pub elastic_material: String,
+}
+
+/// Magnetostriction coupling law.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MagnetostrictionLawIR {
+    /// Cubic magnetostriction: B1, B2 coupling constants [Pa].
+    Cubic { name: String, b1: f64, b2: f64 },
+    /// Isotropic magnetostriction: saturation magnetostriction λ_s [1].
+    Isotropic { name: String, lambda_s: f64 },
+}
+
+impl MagnetostrictionLawIR {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Cubic { name, .. } | Self::Isotropic { name, .. } => name,
+        }
+    }
+}
+
+/// Mechanical boundary condition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MechanicalBoundaryConditionIR {
+    TractionFree { surface: String },
+    Clamped { surface: String },
+    PrescribedDisplacement { surface: String, u: [f64; 3] },
+    PrescribedTraction { surface: String, t: [f64; 3] },
+}
+
+/// External mechanical load.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MechanicalLoadIR {
+    BodyForce { f: [f64; 3] },
+    PrescribedStrain { strain: [f64; 6] },
+    PrescribedStress { stress: [f64; 6] },
+}
+
+/// Mechanical coupling mode within DynamicsIR.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MechanicsIR {
+    PrescribedStrain,
+    QuasistaticElasticity {
+        max_picard_iterations: u32,
+        picard_tolerance: f64,
+    },
+    Elastodynamics {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mechanical_dt: Option<f64>,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProblemIR {
     pub ir_version: String,
@@ -790,6 +885,23 @@ pub struct ProblemIR {
     /// Temperature in Kelvin for Brown thermal field (sLLG). None or 0 = no thermal noise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
+
+    // ── Magnetoelastic extensions ──────────────────────────
+    /// Elastic material definitions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub elastic_materials: Vec<ElasticMaterialIR>,
+    /// Elastic body definitions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub elastic_bodies: Vec<ElasticBodyIR>,
+    /// Magnetostriction coupling law definitions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub magnetostriction_laws: Vec<MagnetostrictionLawIR>,
+    /// Mechanical boundary conditions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mechanical_bcs: Vec<MechanicalBoundaryConditionIR>,
+    /// External mechanical loads.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mechanical_loads: Vec<MechanicalLoadIR>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1166,6 +1278,7 @@ impl ProblemIR {
                     integrator: "heun".to_string(),
                     fixed_timestep: Some(1e-13),
                     adaptive_timestep: None,
+                    mechanics: None,
                 },
                 sampling: SamplingIR {
                     outputs: vec![
@@ -1213,6 +1326,11 @@ impl ProblemIR {
             stt_lambda: None,
             stt_epsilon_prime: None,
             temperature: None,
+            elastic_materials: vec![],
+            elastic_bodies: vec![],
+            magnetostriction_laws: vec![],
+            mechanical_bcs: vec![],
+            mechanical_loads: vec![],
         }
     }
 
@@ -1900,6 +2018,7 @@ mod tests {
                 integrator: "bogus".to_string(),
                 fixed_timestep: None,
                 adaptive_timestep: None,
+                mechanics: None,
             },
             sampling: ir.study.sampling().clone(),
         };

@@ -244,8 +244,9 @@ The event stream is the live runtime channel for one session.
 
 ### 9.1 Transport
 
-SSE is the baseline transport.
-WebSocket may be added later, but the semantic event model should remain the same.
+SSE and WebSocket are both acceptable transports.
+The semantic event model remains canonical even when a concrete deployment chooses one transport for
+historical session/run streams and another for local current-live UX.
 
 ### 9.2 Required event fields
 
@@ -284,6 +285,27 @@ The stream carries:
 - artifact availability notices.
 
 Field data is fetched on demand through run endpoints.
+
+### 9.5 Local current-live projection
+
+Local interactive control-room deployments may additionally expose a singleton projection such as:
+
+```text
+GET    /v1/live/current/bootstrap
+GET    /ws/live/current
+POST   /v1/live/current/commands
+POST   /v1/live/current/preview/selection
+```
+
+Rules for this projection:
+
+- it is a convenience view over the active local workspace, not a replacement for the canonical
+  session/run resource model,
+- the browser may consume a canonical `session_state` snapshot message instead of many small
+  per-field events,
+- heavy live preview vectors may be delivered as binary WebSocket frames associated with that
+  snapshot,
+- the browser must not require URL-level `?session=` routing for this singleton local-live flow.
 
 ## 10. Browser contract
 

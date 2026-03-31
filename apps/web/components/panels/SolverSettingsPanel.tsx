@@ -29,7 +29,7 @@ export const DEFAULT_SOLVER_SETTINGS: SolverSettingsState = {
   torqueTolerance: "1e-6",
   energyTolerance: "",
   maxRelaxSteps: "5000",
-  relaxAlpha: "",
+  relaxAlpha: "1.0",
 };
 
 export interface IntegratorSettingsPanelProps {

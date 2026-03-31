@@ -9,7 +9,7 @@ export type ViewportMode = "3D" | "2D" | "Mesh" | "Analyze";
 export type VectorComponent = "x" | "y" | "z" | "magnitude";
 export type PreviewComponent = "3D" | "x" | "y" | "z";
 export type SlicePlane = "xy" | "xz" | "yz";
-export type FemDockTab = "mesh" | "mesher" | "view" | "quality";
+export type FemDockTab = "mesh" | "mesher" | "view" | "quality" | "pipeline";
 
 export interface MeshFaceDetail {
   faceIndex: number;

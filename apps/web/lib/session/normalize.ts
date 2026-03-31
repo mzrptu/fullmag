@@ -6,6 +6,7 @@ import type {
   DisplayKind,
   LatestFields,
   LiveState,
+  MeshWorkspaceState,
   PreviewConfig,
   PreviewState,
   RuntimeStatusKind,
@@ -323,6 +324,19 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
       compute_quality: Boolean(raw.mesh?.compute_quality),
       per_element_quality: Boolean(raw.mesh?.per_element_quality),
     },
+    stages: Array.isArray(raw.stages)
+      ? raw.stages.map((stage: any) => ({
+          kind: String(stage?.kind ?? "run"),
+          entrypoint_kind: String(stage?.entrypoint_kind ?? ""),
+          integrator: String(stage?.integrator ?? ""),
+          fixed_timestep: String(stage?.fixed_timestep ?? ""),
+          until_seconds: String(stage?.until_seconds ?? ""),
+          relax_algorithm: String(stage?.relax_algorithm ?? ""),
+          torque_tolerance: String(stage?.torque_tolerance ?? ""),
+          energy_tolerance: String(stage?.energy_tolerance ?? ""),
+          max_steps: String(stage?.max_steps ?? ""),
+        }))
+      : [],
     initial_state:
       raw.initial_state && typeof raw.initial_state === "object"
         ? {
@@ -342,6 +356,118 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
                 : null,
           }
         : null,
+  };
+}
+
+function normalizeVec3(raw: unknown): [number, number, number] | null {
+  if (!Array.isArray(raw) || raw.length !== 3) {
+    return null;
+  }
+  return [Number(raw[0] ?? 0), Number(raw[1] ?? 0), Number(raw[2] ?? 0)];
+}
+
+function normalizeMeshWorkspace(raw: any): MeshWorkspaceState | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const meshSummaryRaw = raw.mesh_summary;
+  const qualityRaw = raw.mesh_quality_summary;
+  return {
+    mesh_summary:
+      meshSummaryRaw && typeof meshSummaryRaw === "object"
+        ? {
+            mesh_name: String(meshSummaryRaw.mesh_name ?? ""),
+            mesh_source:
+              typeof meshSummaryRaw.mesh_source === "string"
+                ? meshSummaryRaw.mesh_source
+                : null,
+            backend: String(meshSummaryRaw.backend ?? ""),
+            source_kind: String(meshSummaryRaw.source_kind ?? ""),
+            order: Number(meshSummaryRaw.order ?? 1),
+            hmax: Number(meshSummaryRaw.hmax ?? 0),
+            node_count: Number(meshSummaryRaw.node_count ?? 0),
+            element_count: Number(meshSummaryRaw.element_count ?? 0),
+            boundary_face_count: Number(meshSummaryRaw.boundary_face_count ?? 0),
+            bounds_min: normalizeVec3(meshSummaryRaw.bounds_min),
+            bounds_max: normalizeVec3(meshSummaryRaw.bounds_max),
+            world_extent: normalizeVec3(meshSummaryRaw.world_extent),
+            generation_id: String(meshSummaryRaw.generation_id ?? ""),
+          }
+        : null,
+    mesh_quality_summary:
+      qualityRaw && typeof qualityRaw === "object"
+        ? {
+            n_elements: Number(qualityRaw.n_elements ?? 0),
+            sicn_min: Number(qualityRaw.sicn_min ?? 0),
+            sicn_max: Number(qualityRaw.sicn_max ?? 0),
+            sicn_mean: Number(qualityRaw.sicn_mean ?? 0),
+            sicn_p5: Number(qualityRaw.sicn_p5 ?? 0),
+            gamma_min: Number(qualityRaw.gamma_min ?? 0),
+            gamma_mean: Number(qualityRaw.gamma_mean ?? 0),
+            avg_quality: Number(qualityRaw.avg_quality ?? 0),
+          }
+        : null,
+    mesh_pipeline_status: Array.isArray(raw.mesh_pipeline_status)
+      ? raw.mesh_pipeline_status.map((phase: any) => ({
+          id: String(phase?.id ?? ""),
+          label: String(phase?.label ?? ""),
+          status:
+            phase?.status === "active" ||
+            phase?.status === "done" ||
+            phase?.status === "warning"
+              ? phase.status
+              : "idle",
+          detail: typeof phase?.detail === "string" ? phase.detail : null,
+        }))
+      : [],
+    mesh_capabilities:
+      raw.mesh_capabilities && typeof raw.mesh_capabilities === "object"
+        ? {
+            has_volume_mesh: Boolean(raw.mesh_capabilities.has_volume_mesh),
+            has_quality_arrays: Boolean(raw.mesh_capabilities.has_quality_arrays),
+            supports_adaptive_remesh: Boolean(raw.mesh_capabilities.supports_adaptive_remesh),
+            supports_compare_snapshots: Boolean(raw.mesh_capabilities.supports_compare_snapshots),
+            supports_size_field_remesh: Boolean(raw.mesh_capabilities.supports_size_field_remesh),
+            supports_mesh_error_preview: Boolean(raw.mesh_capabilities.supports_mesh_error_preview),
+            supports_target_h_preview: Boolean(raw.mesh_capabilities.supports_target_h_preview),
+          }
+        : null,
+    mesh_adaptivity_state:
+      raw.mesh_adaptivity_state && typeof raw.mesh_adaptivity_state === "object"
+        ? {
+            enabled: Boolean(raw.mesh_adaptivity_state.enabled),
+            policy: String(raw.mesh_adaptivity_state.policy ?? "manual"),
+            pass_count: Number(raw.mesh_adaptivity_state.pass_count ?? 0),
+            max_passes: Number(raw.mesh_adaptivity_state.max_passes ?? 0),
+            convergence_status: String(raw.mesh_adaptivity_state.convergence_status ?? "idle"),
+            last_target_h_summary:
+              raw.mesh_adaptivity_state.last_target_h_summary &&
+              typeof raw.mesh_adaptivity_state.last_target_h_summary === "object"
+                ? raw.mesh_adaptivity_state.last_target_h_summary
+                : null,
+          }
+        : null,
+    mesh_history: Array.isArray(raw.mesh_history)
+      ? raw.mesh_history.map((entry: any) => ({
+          mesh_name: String(entry?.mesh_name ?? ""),
+          generation_mode:
+            typeof entry?.generation_mode === "string" ? entry.generation_mode : null,
+          node_count: Number(entry?.node_count ?? 0),
+          element_count: Number(entry?.element_count ?? 0),
+          boundary_face_count: Number(entry?.boundary_face_count ?? 0),
+          kind: typeof entry?.kind === "string" ? entry.kind : undefined,
+          quality:
+            entry?.quality && typeof entry.quality === "object" ? entry.quality : null,
+          mesh_provenance:
+            entry?.mesh_provenance && typeof entry.mesh_provenance === "object"
+              ? entry.mesh_provenance
+              : null,
+          size_field_stats:
+            entry?.size_field_stats && typeof entry.size_field_stats === "object"
+              ? entry.size_field_stats
+              : null,
+        }))
+      : [],
   };
 }
 
@@ -391,6 +517,7 @@ export function normalizeSessionState(
     live_state: liveState,
     runtime_status: normalizeRuntimeStatus(raw.runtime_status),
     metadata: raw.metadata ?? null,
+    mesh_workspace: normalizeMeshWorkspace(raw.mesh_workspace),
     script_builder: normalizeScriptBuilder(raw.script_builder),
     scalar_rows: Array.isArray(raw.scalar_rows)
       ? raw.scalar_rows.map((row: any) => ({

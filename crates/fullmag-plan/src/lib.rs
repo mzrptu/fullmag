@@ -1737,6 +1737,12 @@ fn plan_fem(
             fullmag_ir::EnergyTermIR::OerstedCylinder { .. } => {
                 // Oersted field: extracted separately below.
             }
+            other => {
+                errors.push(format!(
+                    "energy term '{:?}' is semantic-only in the current FEM executable path",
+                    other
+                ));
+            }
         }
     }
     if !(enable_exchange
@@ -2282,7 +2288,11 @@ fn validate_executable_outputs(
     enable_zeeman: bool,
     errors: &mut Vec<String>,
 ) {
-    let allowed_fields = ["m", "H_ex", "H_demag", "H_ext", "H_eff", "H_ani", "H_dmi"];
+    let allowed_fields = [
+        "m", "H_ex", "H_demag", "H_ext", "H_eff", "H_ani", "H_dmi",
+        // Magnetoelastic (semantic-only)
+        "H_mel", "u", "u_dot", "eps", "sigma",
+    ];
     let allowed_scalars = [
         "E_ex",
         "E_demag",
@@ -2298,6 +2308,13 @@ fn validate_executable_outputs(
         "mz",
         "max_dm_dt",
         "max_h_eff",
+        // Magnetoelastic (semantic-only)
+        "E_mel",
+        "E_el",
+        "E_kin_el",
+        "max_u",
+        "max_sigma_vm",
+        "elastic_residual_norm",
     ];
     let mut seen = BTreeSet::new();
 

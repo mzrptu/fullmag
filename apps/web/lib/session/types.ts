@@ -247,6 +247,18 @@ export interface ScriptBuilderMeshState {
   per_element_quality: boolean;
 }
 
+export interface ScriptBuilderStageState {
+  kind: string;
+  entrypoint_kind: string;
+  integrator: string;
+  fixed_timestep: string;
+  until_seconds: string;
+  relax_algorithm: string;
+  torque_tolerance: string;
+  energy_tolerance: string;
+  max_steps: string;
+}
+
 export interface ScriptBuilderInitialState {
   magnet_name: string | null;
   source_path: string;
@@ -259,7 +271,82 @@ export interface ScriptBuilderState {
   revision: number;
   solver: ScriptBuilderSolverState;
   mesh: ScriptBuilderMeshState;
+  stages: ScriptBuilderStageState[];
   initial_state: ScriptBuilderInitialState | null;
+}
+
+export interface MeshSummaryState {
+  mesh_name: string;
+  mesh_source: string | null;
+  backend: string;
+  source_kind: string;
+  order: number;
+  hmax: number;
+  node_count: number;
+  element_count: number;
+  boundary_face_count: number;
+  bounds_min: [number, number, number] | null;
+  bounds_max: [number, number, number] | null;
+  world_extent: [number, number, number] | null;
+  generation_id: string;
+}
+
+export interface MeshQualitySummaryState {
+  n_elements: number;
+  sicn_min: number;
+  sicn_max: number;
+  sicn_mean: number;
+  sicn_p5: number;
+  gamma_min: number;
+  gamma_mean: number;
+  avg_quality: number;
+}
+
+export interface MeshPipelinePhaseState {
+  id: string;
+  label: string;
+  status: "idle" | "active" | "done" | "warning";
+  detail: string | null;
+}
+
+export interface MeshCapabilitiesState {
+  has_volume_mesh: boolean;
+  has_quality_arrays: boolean;
+  supports_adaptive_remesh: boolean;
+  supports_compare_snapshots: boolean;
+  supports_size_field_remesh: boolean;
+  supports_mesh_error_preview: boolean;
+  supports_target_h_preview: boolean;
+}
+
+export interface MeshAdaptivityState {
+  enabled: boolean;
+  policy: string;
+  pass_count: number;
+  max_passes: number;
+  convergence_status: string;
+  last_target_h_summary: Record<string, unknown> | null;
+}
+
+export interface MeshHistoryEntryState {
+  mesh_name: string;
+  generation_mode: string | null;
+  node_count: number;
+  element_count: number;
+  boundary_face_count: number;
+  kind?: string;
+  quality?: Record<string, unknown> | null;
+  mesh_provenance?: Record<string, unknown> | null;
+  size_field_stats?: Record<string, unknown> | null;
+}
+
+export interface MeshWorkspaceState {
+  mesh_summary: MeshSummaryState | null;
+  mesh_quality_summary: MeshQualitySummaryState | null;
+  mesh_pipeline_status: MeshPipelinePhaseState[];
+  mesh_capabilities: MeshCapabilitiesState | null;
+  mesh_adaptivity_state: MeshAdaptivityState | null;
+  mesh_history: MeshHistoryEntryState[];
 }
 
 export interface SessionState {
@@ -268,6 +355,7 @@ export interface SessionState {
   live_state: LiveState | null;
   runtime_status: RuntimeStatusState | null;
   metadata: Record<string, unknown> | null;
+  mesh_workspace: MeshWorkspaceState | null;
   script_builder: ScriptBuilderState | null;
   scalar_rows: ScalarRow[];
   engine_log: EngineLogEntry[];

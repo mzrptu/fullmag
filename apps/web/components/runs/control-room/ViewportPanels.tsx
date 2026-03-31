@@ -37,6 +37,20 @@ export function ViewportBar() {
           <span className="font-mono text-[0.65rem] text-muted-foreground">
             {ctx.meshRenderMode === "surface+edges" ? "surface+edges" : ctx.meshRenderMode}
           </span>
+          <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Preset</span>
+          <span className="font-mono text-[0.65rem] text-muted-foreground">
+            {ctx.meshWorkspacePreset.replaceAll("-", " ")}
+          </span>
+          {ctx.meshClipEnabled && (
+            <>
+              <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Clip</span>
+              <span className="font-mono text-[0.65rem] text-amber-300">
+                {ctx.meshClipAxis.toUpperCase()} @{Math.round(ctx.meshClipPos)}%
+              </span>
+            </>
+          )}
           {ctx.meshSelection.primaryFaceIndex != null && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
@@ -297,7 +311,8 @@ export function ViewportCanvasArea() {
     !ctx.isFemBackend &&
     (ctx.isVectorQuantity || hasVectorData) &&
     !globalScalarPreview;
-  const isFdmMeshActive = ctx.effectiveViewMode === "Mesh" && !ctx.isFemBackend;
+  // Use classic FDM mesh view ONLY if no unstructured mesh data is available
+  const isFdmMeshActive = ctx.effectiveViewMode === "Mesh" && !ctx.isFemBackend && !ctx.femMeshData;
   const showFdm3D = isFdm3DActive || isFdmMeshActive;
 
   /* ── Determine what goes into the conditional slot ── */
@@ -358,29 +373,27 @@ export function ViewportCanvasArea() {
         max={spatialPreview.max}
       />
     );
-  } else if (ctx.effectiveViewMode === "Mesh" && ctx.isFemBackend && ctx.femMeshData) {
+  } else if (ctx.effectiveViewMode === "Mesh" && ctx.femMeshData) {
     conditionalContent = (
       <FemMeshView3D
         topologyKey={ctx.femTopologyKey ?? undefined}
         meshData={ctx.femMeshData}
         colorField="none"
-        toolbarMode="hidden"
+        toolbarMode="visible" // Mesh workspace should show tools!
         renderMode={ctx.meshRenderMode}
         opacity={ctx.meshOpacity}
         clipEnabled={ctx.meshClipEnabled}
         clipAxis={ctx.meshClipAxis}
         clipPos={ctx.meshClipPos}
-        showArrows={false}
         onRenderModeChange={ctx.setMeshRenderMode}
         onOpacityChange={ctx.setMeshOpacity}
         onClipEnabledChange={ctx.setMeshClipEnabled}
         onClipAxisChange={ctx.setMeshClipAxis}
         onClipPosChange={ctx.setMeshClipPos}
-        onShowArrowsChange={ctx.setMeshShowArrows}
         onSelectionChange={ctx.setMeshSelection}
       />
     );
-  } else if (ctx.effectiveViewMode === "3D" && ctx.isFemBackend && ctx.femMeshData) {
+  } else if (ctx.effectiveViewMode === "3D" && ctx.femMeshData) {
     conditionalContent = (
       <FemMeshView3D
         topologyKey={ctx.femTopologyKey ?? undefined}
@@ -388,7 +401,6 @@ export function ViewportCanvasArea() {
         fieldLabel={ctx.quantityDescriptor?.label ?? ctx.selectedQuantity}
         colorField={ctx.femColorField}
         showOrientationLegend={ctx.femMagnetization3DActive}
-        toolbarMode="hidden"
         renderMode={ctx.meshRenderMode}
         opacity={ctx.meshOpacity}
         clipEnabled={ctx.meshClipEnabled}
@@ -404,7 +416,7 @@ export function ViewportCanvasArea() {
         onSelectionChange={ctx.setMeshSelection}
       />
     );
-  } else if (ctx.effectiveViewMode === "2D" && ctx.isFemBackend && ctx.femMeshData) {
+  } else if (ctx.effectiveViewMode === "2D" && ctx.femMeshData) {
     conditionalContent = (
       <FemMeshSlice2D
         meshData={ctx.femMeshData}

@@ -12,6 +12,7 @@ import fullmag as fm
 from fullmag import _core as fullmag_core
 from fullmag.meshing.asset_pipeline import realize_fdm_grid_asset, realize_fem_mesh_asset
 from fullmag.meshing.gmsh_bridge import MeshData, SizeFieldData, _extract_gmsh_connectivity
+from fullmag.meshing.remesh_cli import _mesh_result_payload, _size_field_from_dict
 from fullmag.meshing.quality import validate_mesh
 from fullmag.meshing.surface_assets import export_geometry_to_stl
 from fullmag.meshing.voxelization import VoxelMaskData, voxelize_geometry
@@ -93,6 +94,35 @@ class MeshScaffoldTests(unittest.TestCase):
         np.testing.assert_array_equal(mesh.element_markers, loaded.element_markers)
         np.testing.assert_array_equal(mesh.boundary_faces, loaded.boundary_faces)
         np.testing.assert_array_equal(mesh.boundary_markers, loaded.boundary_markers)
+
+    def test_remesh_cli_size_field_parser_builds_canonical_arrays(self) -> None:
+        size_field = _size_field_from_dict(
+            {
+                "node_coords": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                "h_values": [2.0e-9, 4.0e-9],
+            }
+        )
+
+        self.assertIsInstance(size_field, SizeFieldData)
+        self.assertEqual(size_field.node_coords.shape, (2, 3))
+        self.assertEqual(size_field.h_values.shape, (2,))
+        self.assertAlmostEqual(float(size_field.h_values[0]), 2.0e-9)
+
+    def test_remesh_cli_payload_includes_generation_mode_and_provenance(self) -> None:
+        mesh = self._unit_tet_mesh()
+
+        payload = _mesh_result_payload(
+            mesh,
+            mesh_name="adaptive_mesh",
+            generation_mode="adaptive_size_field",
+            mesh_provenance={"geometry_kind": "box", "order": 1, "hmax": 5e-9},
+            size_field_stats={"n_nodes": 4, "h_min": 2e-9, "h_max": 5e-9, "h_mean": 3e-9},
+        )
+
+        self.assertEqual(payload["mesh_name"], "adaptive_mesh")
+        self.assertEqual(payload["generation_mode"], "adaptive_size_field")
+        self.assertEqual(payload["mesh_provenance"]["geometry_kind"], "box")
+        self.assertEqual(payload["size_field_stats"]["n_nodes"], 4)
 
     def test_meshdata_to_ir_has_canonical_shape(self) -> None:
         mesh = self._unit_tet_mesh()
@@ -400,6 +430,35 @@ class MeshScaffoldTests(unittest.TestCase):
 
             mocked.assert_called_once()
             self.assertIsInstance(mesh, MeshData)
+
+    def test_realize_fem_mesh_asset_supports_surface_only_imported_geometry(self) -> None:
+        preview = {
+            "nodes": [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            "elements": [],
+            "boundary_faces": [[0, 1, 2]],
+        }
+
+        with patch(
+            "fullmag.meshing.asset_pipeline.build_surface_preview_payload",
+            return_value=preview,
+        ):
+            mesh = realize_fem_mesh_asset(
+                fm.ImportedGeometry(
+                    source="shape.stl",
+                    name="shape",
+                    volume="surface",
+                ),
+                fm.FEM(order=1, hmax=0.1),
+            )
+
+        self.assertIsInstance(mesh, MeshData)
+        self.assertEqual(mesh.n_elements, 0)
+        self.assertEqual(mesh.n_boundary_faces, 1)
+        np.testing.assert_array_equal(mesh.boundary_faces, np.asarray([[0, 1, 2]], dtype=np.int32))
 
     def test_generate_mesh_from_json_works_without_optional_meshing_stack(self) -> None:
         mesh = self._unit_tet_mesh()

@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::ffi::OsString;
 
 mod args;
+mod command_bridge;
 mod control_room;
 mod diagnostics;
 mod formatting;
@@ -13,6 +14,7 @@ mod interactive_runtime_host;
 mod live_workspace;
 mod orchestrator;
 mod python_bridge;
+mod runtime_supervisor;
 mod step_utils;
 mod types;
 
@@ -386,6 +388,24 @@ mod tests {
             relaxation: None,
             boundary_correction: None,
             boundary_geometry: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
+            temperature: None,
             inter_region_exchange: vec![],
         });
 
@@ -458,6 +478,23 @@ mod tests {
             dind_field: None,
             dbulk_field: None,
             temperature: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
         });
 
         let update = initial_step_update(&plan);
@@ -497,6 +534,24 @@ mod tests {
             relaxation: None,
             boundary_correction: None,
             boundary_geometry: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
+            temperature: None,
             inter_region_exchange: vec![],
         };
 
@@ -550,6 +605,24 @@ mod tests {
             }),
             boundary_correction: None,
             boundary_geometry: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
+            temperature: None,
             inter_region_exchange: vec![],
         };
 

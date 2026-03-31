@@ -1,6 +1,8 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, ValueEnum};
-use fullmag_ir::{BackendPlanIR, BackendTarget, ExecutionPlanIR, ProblemIR};
+use fullmag_ir::{
+    BackendPlanIR, BackendTarget, DiscretizationHintsIR, ExecutionPlanIR, FemHintsIR, ProblemIR,
+};
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
@@ -59,8 +61,663 @@ fn current_live_metadata(
     })
 }
 
+fn current_fem_mesh_workspace(
+    mesh: &fullmag_ir::MeshIR,
+    mesh_source: Option<&str>,
+    fe_order: u32,
+    hmax: f64,
+    status: &str,
+    adaptive_mesh: Option<&serde_json::Value>,
+    adaptive_runtime_state: Option<&serde_json::Value>,
+    quality_summary: Option<&crate::python_bridge::RemeshQualitySummary>,
+    mesh_history: &[serde_json::Value],
+) -> serde_json::Value {
+    let (bounds_min, bounds_max, extent) = fem_mesh_bbox(mesh)
+        .map(|(min, max)| {
+            (
+                Some(min),
+                Some(max),
+                Some([max[0] - min[0], max[1] - min[1], max[2] - min[2]]),
+            )
+        })
+        .unwrap_or((None, None, None));
+
+    let source_kind = match mesh_source {
+        Some(source) if source.ends_with(".stl") => "stl_surface",
+        Some(source)
+            if source.ends_with(".step")
+                || source.ends_with(".stp")
+                || source.ends_with(".iges")
+                || source.ends_with(".igs") =>
+        {
+            "cad_file"
+        }
+        Some(source)
+            if source.ends_with(".msh")
+                || source.ends_with(".vtk")
+                || source.ends_with(".vtu")
+                || source.ends_with(".xdmf")
+                || source.ends_with(".json")
+                || source.ends_with(".npz") =>
+        {
+            "prebuilt_mesh"
+        }
+        Some(_) => "external_source",
+        None => "generated_inline_mesh",
+    };
+    let ram_estimate_gb = estimate_fem_dense_ram(mesh.nodes.len()) as f64 / 1e9;
+    let available_ram_gb = available_system_ram_bytes() as f64 / 1e9;
+    let readiness_status = if mesh.nodes.len() > 50_000 {
+        "warning"
+    } else if mesh.nodes.is_empty() {
+        "idle"
+    } else {
+        "done"
+    };
+    let adaptive_settings = adaptive_mesh.and_then(|value| value.as_object());
+    let adaptive_enabled = adaptive_settings
+        .and_then(|settings| settings.get("enabled"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let adaptive_policy = adaptive_settings
+        .and_then(|settings| settings.get("policy"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("manual");
+    let adaptive_max_passes = adaptive_settings
+        .and_then(|settings| settings.get("max_passes"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let adaptive_runtime = adaptive_runtime_state.and_then(|value| value.as_object());
+    let adaptive_pass_count = adaptive_runtime
+        .and_then(|state| state.get("pass_count"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let adaptive_convergence_status = adaptive_runtime
+        .and_then(|state| state.get("convergence_status"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            if adaptive_enabled {
+                "configured".to_string()
+            } else {
+                "idle".to_string()
+            }
+        });
+    let adaptive_last_target_h_summary = adaptive_runtime
+        .and_then(|state| state.get("last_target_h_summary"))
+        .cloned()
+        .or_else(|| adaptive_settings.cloned().map(serde_json::Value::Object));
+    let supports_mesh_error_preview = adaptive_runtime
+        .and_then(|state| state.get("last_error_summary"))
+        .is_some();
+    let supports_target_h_preview = adaptive_runtime
+        .and_then(|state| state.get("last_target_h_summary"))
+        .is_some();
+
+    serde_json::json!({
+        "mesh_summary": {
+            "mesh_name": mesh.mesh_name,
+            "mesh_source": mesh_source,
+            "backend": "fem",
+            "source_kind": source_kind,
+            "order": fe_order,
+            "hmax": hmax,
+            "node_count": mesh.nodes.len(),
+            "element_count": mesh.elements.len(),
+            "boundary_face_count": mesh.boundary_faces.len(),
+            "bounds_min": bounds_min,
+            "bounds_max": bounds_max,
+            "world_extent": extent,
+            "generation_id": format!("{}:{}:{}", mesh.mesh_name, mesh.nodes.len(), mesh.elements.len()),
+        },
+        "mesh_quality_summary": quality_summary.map(|quality| serde_json::json!({
+            "n_elements": quality.n_elements,
+            "sicn_min": quality.sicn_min,
+            "sicn_max": quality.sicn_max,
+            "sicn_mean": quality.sicn_mean,
+            "sicn_p5": quality.sicn_p5,
+            "gamma_min": quality.gamma_min,
+            "gamma_mean": quality.gamma_mean,
+            "avg_quality": quality.avg_quality,
+        })),
+        "mesh_pipeline_status": [
+            {"id": "import", "label": "Import", "status": "done", "detail": mesh_source.map(|source| source.to_string()).unwrap_or_else(|| "Inline/generated geometry".to_string())},
+            {"id": "classify", "label": "Classify", "status": if source_kind == "stl_surface" { "done" } else { "idle" }, "detail": if source_kind == "stl_surface" { "Surface classification completed for STL import".to_string() } else { "No explicit surface classification stage".to_string() }},
+            {"id": "generate", "label": "Generate", "status": if mesh.elements.is_empty() { "idle" } else { "done" }, "detail": format!("{} nodes, {} tetrahedra", mesh.nodes.len(), mesh.elements.len())},
+            {"id": "optimize", "label": "Optimize", "status": "idle", "detail": "Optimization policy depends on remesh request".to_string()},
+            {"id": "quality", "label": "Quality", "status": if quality_summary.is_some() { "done" } else { "idle" }, "detail": quality_summary.map(|quality| format!("SICN p5 {:.3}, gamma min {:.3}", quality.sicn_p5, quality.gamma_min)).unwrap_or_else(|| "Quality metrics not extracted yet".to_string())},
+            {"id": "validation", "label": "Validation", "status": if mesh.elements.is_empty() { "warning" } else { "done" }, "detail": if mesh.elements.is_empty() { "Mesh has no tetrahedra".to_string() } else { "Mesh validated and ready for FEM plan lowering".to_string() }},
+            {"id": "solver_readiness", "label": "Solver Readiness", "status": readiness_status, "detail": format!("Estimated dense RAM {:.1} GB / {:.1} GB available · status {}", ram_estimate_gb, available_ram_gb, status)},
+        ],
+        "mesh_capabilities": {
+            "has_volume_mesh": true,
+            "has_quality_arrays": quality_summary.is_some(),
+            "supports_adaptive_remesh": true,
+            "supports_compare_snapshots": true,
+            "supports_size_field_remesh": true,
+            "supports_mesh_error_preview": supports_mesh_error_preview,
+            "supports_target_h_preview": supports_target_h_preview,
+        },
+        "mesh_adaptivity_state": {
+            "enabled": adaptive_enabled,
+            "policy": adaptive_policy,
+            "pass_count": adaptive_pass_count,
+            "max_passes": adaptive_max_passes,
+            "convergence_status": adaptive_convergence_status,
+            "last_target_h_summary": adaptive_last_target_h_summary,
+        },
+        "mesh_history": mesh_history,
+    })
+}
+
+fn current_mesh_workspace(
+    problem: &ProblemIR,
+    plan: &ExecutionPlanIR,
+    status: &str,
+    quality_summary: Option<&crate::python_bridge::RemeshQualitySummary>,
+    mesh_history: &[serde_json::Value],
+) -> Option<serde_json::Value> {
+    let (mesh, mesh_source, fe_order, hmax) = match &plan.backend_plan {
+        BackendPlanIR::Fem(fem) => (&fem.mesh, fem.mesh_source.as_deref(), fem.fe_order, fem.hmax),
+        BackendPlanIR::FemEigen(fem) => (&fem.mesh, fem.mesh_source.as_deref(), fem.fe_order, fem.hmax),
+        _ => return None,
+    };
+    Some(current_fem_mesh_workspace(
+        mesh,
+        mesh_source,
+        fe_order,
+        hmax,
+        status,
+        problem.problem_meta.runtime_metadata.get("adaptive_mesh"),
+        problem
+            .problem_meta
+            .runtime_metadata
+            .get("adaptive_mesh_runtime_state"),
+        quality_summary,
+        mesh_history,
+    ))
+}
+
+#[derive(Debug, Clone)]
+struct AdaptiveMeshSettings {
+    enabled: bool,
+    policy: String,
+    theta: f64,
+    h_min: Option<f64>,
+    h_max: Option<f64>,
+    max_passes: u32,
+    error_tolerance: f64,
+}
+
+fn adaptive_mesh_settings(problem: &ProblemIR) -> Option<AdaptiveMeshSettings> {
+    let adaptive = problem
+        .problem_meta
+        .runtime_metadata
+        .get("adaptive_mesh")?
+        .as_object()?;
+    Some(AdaptiveMeshSettings {
+        enabled: adaptive
+            .get("enabled")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true),
+        policy: adaptive
+            .get("policy")
+            .and_then(|value| value.as_str())
+            .unwrap_or("manual")
+            .to_string(),
+        theta: adaptive
+            .get("theta")
+            .and_then(|value| value.as_f64())
+            .unwrap_or(0.3),
+        h_min: adaptive.get("h_min").and_then(|value| value.as_f64()),
+        h_max: adaptive.get("h_max").and_then(|value| value.as_f64()),
+        max_passes: adaptive
+            .get("max_passes")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(5) as u32,
+        error_tolerance: adaptive
+            .get("error_tolerance")
+            .and_then(|value| value.as_f64())
+            .unwrap_or(1e-3),
+    })
+}
+
+fn apply_current_fem_overrides(
+    problem: &mut ProblemIR,
+    mesh_override: Option<&fullmag_ir::MeshIR>,
+    hmax_override: Option<f64>,
+    adaptive_runtime_state: Option<&serde_json::Value>,
+) {
+    if let Some(mesh) = mesh_override {
+        if let Some(assets) = problem.geometry_assets.as_mut() {
+            for fem_asset in &mut assets.fem_mesh_assets {
+                fem_asset.mesh = Some(mesh.clone());
+            }
+        }
+    }
+
+    if let Some(hmax) = hmax_override {
+        let hints = problem
+            .backend_policy
+            .discretization_hints
+            .get_or_insert(DiscretizationHintsIR {
+                fdm: None,
+                fem: None,
+                hybrid: None,
+            });
+        match hints.fem.as_mut() {
+            Some(fem) => fem.hmax = hmax,
+            None => {
+                hints.fem = Some(FemHintsIR {
+                    order: 1,
+                    hmax,
+                    mesh: None,
+                });
+            }
+        }
+    }
+
+    match adaptive_runtime_state {
+        Some(state) => {
+            problem.problem_meta.runtime_metadata.insert(
+                "adaptive_mesh_runtime_state".to_string(),
+                state.clone(),
+            );
+        }
+        None => {
+            problem
+                .problem_meta
+                .runtime_metadata
+                .remove("adaptive_mesh_runtime_state");
+        }
+    }
+}
+
+fn renormalize_magnetization(values: &mut [[f64; 3]]) {
+    for value in values {
+        let norm =
+            (value[0] * value[0] + value[1] * value[1] + value[2] * value[2]).sqrt();
+        if norm > 0.0 {
+            value[0] /= norm;
+            value[1] /= norm;
+            value[2] /= norm;
+        } else {
+            *value = [1.0, 0.0, 0.0];
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-fn build_session_manifest(
+fn maybe_execute_adaptive_relaxation_followup_passes(
+    stage: &mut ResolvedScriptStage,
+    execution_plan: &mut ExecutionPlanIR,
+    stage_result: &mut fullmag_runner::RunResult,
+    live_workspace: &LocalLiveWorkspace,
+    stage_index: usize,
+    stage_count: usize,
+    run_id: &str,
+    session_id: &str,
+    artifact_dir: &Path,
+    current_stage_artifact_dir: &Path,
+    field_every_n: u64,
+    global_step_offset: u64,
+    global_time_offset: f64,
+    current_mesh_quality: &mut Option<crate::python_bridge::RemeshQualitySummary>,
+    current_mesh_history: &mut Vec<serde_json::Value>,
+    current_fem_mesh_override: &mut Option<fullmag_ir::MeshIR>,
+    current_fem_hmax_override: &mut Option<f64>,
+    current_adaptive_runtime_state: &mut Option<serde_json::Value>,
+) -> Result<bool> {
+    let Some(settings) = adaptive_mesh_settings(&stage.ir) else {
+        return Ok(false);
+    };
+    if !settings.enabled || settings.policy != "auto" || settings.max_passes == 0 {
+        return Ok(false);
+    }
+    if !matches!(stage.ir.study, fullmag_ir::StudyIR::Relaxation { .. }) {
+        live_workspace.push_log(
+            "warning",
+            "Adaptive mesh auto policy is currently implemented only for FEM relaxation stages",
+        );
+        return Ok(false);
+    }
+    if stage.ir.geometry.entries.len() != 1 {
+        live_workspace.push_log(
+            "warning",
+            "Adaptive mesh auto policy currently requires exactly one geometry entry",
+        );
+        return Ok(false);
+    }
+    if !matches!(stage_result.status, fullmag_runner::RunStatus::Completed) {
+        return Ok(false);
+    }
+    let runtime_engine = fullmag_runner::resolve_runtime_engine(&stage.ir)
+        .map_err(|error| anyhow!(error.message))?;
+    if runtime_engine.engine_id != "fem_cpu_reference" {
+        live_workspace.push_log(
+            "warning",
+            format!(
+                "Adaptive mesh auto policy is currently limited to FEM CPU reference; current engine is {}",
+                runtime_engine.engine_label
+            ),
+        );
+        return Ok(false);
+    }
+
+    let geometry_entry = stage
+        .ir
+        .geometry
+        .entries
+        .first()
+        .cloned()
+        .ok_or_else(|| anyhow!("adaptive FEM remesh requires a geometry entry"))?;
+    let mut afem_history = fullmag_engine::fem_afem_loop::AfemHistory::new();
+    let mut remesh_pass_count = 0u32;
+    let mut local_step_offset = stage_result.steps.last().map(|step| step.step).unwrap_or(0);
+    let mut local_time_offset = stage_result.steps.last().map(|step| step.time).unwrap_or(0.0);
+    let mut mutated = false;
+
+    while remesh_pass_count < settings.max_passes {
+        let fem_plan = match &execution_plan.backend_plan {
+            BackendPlanIR::Fem(plan) => plan.clone(),
+            _ => break,
+        };
+        let topo = fullmag_engine::fem::MeshTopology::from_ir(&fem_plan.mesh)
+            .map_err(|error| anyhow!("adaptive mesh topology build failed: {error}"))?;
+        let afem_config = fullmag_engine::fem_afem_loop::AfemConfig {
+            tolerance: settings.error_tolerance,
+            max_iterations: settings.max_passes,
+            theta: settings.theta,
+            h_min: settings.h_min.unwrap_or((fem_plan.hmax * 0.25).max(1e-12)),
+            h_max: settings.h_max.unwrap_or(fem_plan.hmax),
+            grad_limit: 1.3,
+            max_mark_fraction: 0.8,
+            ..Default::default()
+        };
+        let afem_step = fullmag_engine::fem_afem_loop::afem_step_vector_field(
+            &topo,
+            &stage_result.final_magnetization,
+            &afem_config,
+            &mut afem_history,
+        )
+        .map_err(|error| anyhow!("adaptive AFEM step failed: {error}"))?;
+
+        let target_h_min = afem_step
+            .size_field
+            .h_target
+            .iter()
+            .copied()
+            .reduce(f64::min)
+            .unwrap_or(afem_config.h_max);
+        let target_h_max = afem_step
+            .size_field
+            .h_target
+            .iter()
+            .copied()
+            .reduce(f64::max)
+            .unwrap_or(afem_config.h_max);
+        let target_h_mean = if afem_step.size_field.h_target.is_empty() {
+            afem_config.h_max
+        } else {
+            afem_step.size_field.h_target.iter().sum::<f64>()
+                / afem_step.size_field.h_target.len() as f64
+        };
+        let convergence_status = match afem_step.stop_reason {
+            fullmag_engine::fem_afem_loop::StopReason::Continue if afem_step.marking.n_marked > 0 => {
+                "remesh_requested"
+            }
+            fullmag_engine::fem_afem_loop::StopReason::Continue => "stable",
+            fullmag_engine::fem_afem_loop::StopReason::Converged => "converged",
+            fullmag_engine::fem_afem_loop::StopReason::MaxIterations => "max_passes_reached",
+            fullmag_engine::fem_afem_loop::StopReason::MaxElements => "max_elements_reached",
+            fullmag_engine::fem_afem_loop::StopReason::Stagnation => "stagnated",
+        };
+        let adaptive_runtime_state = serde_json::json!({
+            "pass_count": remesh_pass_count,
+            "max_passes": settings.max_passes,
+            "convergence_status": convergence_status,
+            "last_target_h_summary": {
+                "h_target_min": target_h_min,
+                "h_target_mean": target_h_mean,
+                "h_target_max": target_h_max,
+                "gradation_iterations": afem_step.size_field.gradation_iterations,
+                "recommended_action": if matches!(afem_step.stop_reason, fullmag_engine::fem_afem_loop::StopReason::Continue) && afem_step.marking.n_marked > 0 { "remesh" } else { "stop" },
+            },
+            "last_error_summary": {
+                "eta_global": afem_step.indicators.eta_global,
+                "eta_max": afem_step.indicators.eta.iter().copied().reduce(f64::max).unwrap_or(0.0),
+            },
+            "last_marking_summary": {
+                "n_marked": afem_step.marking.n_marked,
+                "fraction_marked": afem_step.marking.fraction_marked,
+                "captured_error_fraction": afem_step.marking.captured_error_fraction,
+            },
+        });
+        stage.ir.problem_meta.runtime_metadata.insert(
+            "adaptive_mesh_runtime_state".to_string(),
+            adaptive_runtime_state.clone(),
+        );
+        *current_adaptive_runtime_state = Some(adaptive_runtime_state);
+        live_workspace.update(|state| {
+            state.mesh_workspace = current_mesh_workspace(
+                &stage.ir,
+                execution_plan,
+                "running",
+                current_mesh_quality.as_ref(),
+                current_mesh_history,
+            );
+        });
+
+        if !matches!(
+            afem_step.stop_reason,
+            fullmag_engine::fem_afem_loop::StopReason::Continue
+        ) || afem_step.marking.n_marked == 0
+        {
+            live_workspace.push_log(
+                "info",
+                format!(
+                    "Adaptive mesh pass {} reached status '{}' (eta={:.3e}, marked={})",
+                    remesh_pass_count,
+                    convergence_status,
+                    afem_step.indicators.eta_global,
+                    afem_step.marking.n_marked
+                ),
+            );
+            break;
+        }
+
+        let remesh_hmax = settings.h_max.unwrap_or(fem_plan.hmax);
+        live_workspace.push_log(
+            "system",
+            format!(
+                "Adaptive mesh pass {} — eta={:.3e}, marked {} elements, remeshing",
+                remesh_pass_count + 1,
+                afem_step.indicators.eta_global,
+                afem_step.marking.n_marked
+            ),
+        );
+        let remesh_result = invoke_adaptive_remesh_full(
+            &geometry_entry,
+            remesh_hmax,
+            fem_plan.fe_order,
+            &serde_json::json!({
+                "compute_quality": true,
+                "per_element_quality": false,
+            }),
+            &serde_json::json!({
+                "node_coords": fem_plan.mesh.nodes,
+                "h_values": afem_step.nodal_h,
+            }),
+        )?;
+        let new_mesh = remesh_result.clone().into_mesh_ir();
+        let new_topo = fullmag_engine::fem::MeshTopology::from_ir(&new_mesh)
+            .map_err(|error| anyhow!("new adaptive mesh topology failed: {error}"))?;
+        let transfer = fullmag_engine::fem_solution_transfer::transfer_vector_field(
+            &topo,
+            &stage_result.final_magnetization,
+            &new_topo,
+        );
+        let mut transferred_magnetization = transfer.values;
+        renormalize_magnetization(&mut transferred_magnetization);
+
+        remesh_pass_count += 1;
+        mutated = true;
+        *current_mesh_quality = remesh_result.quality.clone();
+        current_mesh_history.push(serde_json::json!({
+            "mesh_name": new_mesh.mesh_name,
+            "generation_mode": remesh_result.generation_mode,
+            "node_count": new_mesh.nodes.len(),
+            "element_count": new_mesh.elements.len(),
+            "boundary_face_count": new_mesh.boundary_faces.len(),
+            "kind": "adaptive_pass",
+            "adaptive_pass": remesh_pass_count,
+            "quality": remesh_result.quality.as_ref().map(|quality| serde_json::json!({
+                "sicn_p5": quality.sicn_p5,
+                "gamma_min": quality.gamma_min,
+                "avg_quality": quality.avg_quality,
+            })),
+            "mesh_provenance": remesh_result.mesh_provenance,
+            "size_field_stats": remesh_result.size_field_stats,
+        }));
+        let remeshed_runtime_state = serde_json::json!({
+            "pass_count": remesh_pass_count,
+            "max_passes": settings.max_passes,
+            "convergence_status": "remeshed",
+            "last_target_h_summary": {
+                "h_target_min": target_h_min,
+                "h_target_mean": target_h_mean,
+                "h_target_max": target_h_max,
+                "gradation_iterations": afem_step.size_field.gradation_iterations,
+                "recommended_action": "rerun_relaxation",
+            },
+            "last_error_summary": {
+                "eta_global": afem_step.indicators.eta_global,
+                "eta_max": afem_step.indicators.eta.iter().copied().reduce(f64::max).unwrap_or(0.0),
+            },
+            "last_marking_summary": {
+                "n_marked": afem_step.marking.n_marked,
+                "fraction_marked": afem_step.marking.fraction_marked,
+                "captured_error_fraction": afem_step.marking.captured_error_fraction,
+            },
+            "last_transfer_summary": {
+                "n_total": transfer.n_total,
+                "n_located": transfer.n_located,
+                "n_nearest_fallback": transfer.n_nearest_fallback,
+            },
+        });
+        *current_fem_mesh_override = Some(new_mesh.clone());
+        *current_fem_hmax_override = Some(remesh_hmax);
+        *current_adaptive_runtime_state = Some(remeshed_runtime_state.clone());
+        apply_current_fem_overrides(
+            &mut stage.ir,
+            current_fem_mesh_override.as_ref(),
+            *current_fem_hmax_override,
+            current_adaptive_runtime_state.as_ref(),
+        );
+        apply_continuation_initial_state(&mut stage.ir, &transferred_magnetization)?;
+
+        *execution_plan =
+            fullmag_plan::plan(&stage.ir).map_err(|error| anyhow!(error.to_string()))?;
+        let mesh_payload = fullmag_runner::FemMeshPayload {
+            nodes: new_mesh.nodes.clone(),
+            elements: new_mesh.elements.clone(),
+            boundary_faces: new_mesh.boundary_faces.clone(),
+        };
+        live_workspace.update(|state| {
+            state.metadata = Some(current_live_metadata(&stage.ir, execution_plan, "running"));
+            state.live_state.latest_step.fem_mesh = Some(mesh_payload);
+            state.live_state.latest_step.magnetization =
+                Some(flatten_magnetization(&transferred_magnetization));
+            state.mesh_workspace = current_mesh_workspace(
+                &stage.ir,
+                execution_plan,
+                "running",
+                current_mesh_quality.as_ref(),
+                current_mesh_history,
+            );
+            clear_cached_preview_fields(state);
+        });
+        live_workspace.push_log(
+            "success",
+            format!(
+                "Adaptive remesh {} complete — {} nodes, {} elements (transfer fallback: {})",
+                remesh_pass_count,
+                new_mesh.nodes.len(),
+                new_mesh.elements.len(),
+                transfer.n_nearest_fallback
+            ),
+        );
+
+        let pass_output_dir = current_stage_artifact_dir.join(format!(
+            "adaptive_pass_{:02}",
+            remesh_pass_count
+        ));
+        fs::create_dir_all(&pass_output_dir)?;
+        let pass_result = fullmag_runner::run_problem_with_callback(
+            &stage.ir,
+            stage.until_seconds,
+            &pass_output_dir,
+            field_every_n,
+            |update| {
+                let adjusted = offset_step_update(
+                    &update,
+                    global_step_offset + local_step_offset,
+                    global_time_offset + local_time_offset,
+                    false,
+                );
+                if adjusted.stats.step <= 1
+                    || adjusted.stats.step % field_every_n == 0
+                    || adjusted.scalar_row_due
+                {
+                    live_workspace.update(|state| {
+                        state.session.status = "running".to_string();
+                        state.run = running_run_manifest_from_update(
+                            run_id,
+                            session_id,
+                            artifact_dir,
+                            &adjusted,
+                        );
+                        state.live_state = live_state_manifest_from_update(&adjusted);
+                        state.metadata =
+                            Some(current_live_metadata(&stage.ir, execution_plan, "running"));
+                        state.mesh_workspace = current_mesh_workspace(
+                            &stage.ir,
+                            execution_plan,
+                            "running",
+                            current_mesh_quality.as_ref(),
+                            current_mesh_history,
+                        );
+                        set_latest_scalar_row_if_due(state, &adjusted);
+                    });
+                }
+                fullmag_runner::StepAction::Continue
+            },
+        )
+        .map_err(|error| anyhow!(error.message))?;
+
+        let pass_steps = offset_step_stats(&pass_result.steps, local_step_offset, local_time_offset);
+        if let Some(last) = pass_steps.last() {
+            local_step_offset = last.step;
+            local_time_offset = last.time;
+        }
+        stage_result.steps.extend(pass_steps);
+        stage_result.final_magnetization = pass_result.final_magnetization;
+        stage_result.status = pass_result.status;
+
+        eprintln!(
+            "stage {}/{} ({}) adaptive pass {} complete",
+            stage_index + 1,
+            stage_count,
+            stage.entrypoint_kind,
+            remesh_pass_count
+        );
+    }
+
+    Ok(mutated)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_session_manifest(
     session_id: &str,
     run_id: &str,
     status: &str,
@@ -101,7 +758,7 @@ fn build_run_manifest(
     run_manifest_from_steps(run_id, session_id, status, artifact_dir, &[])
 }
 
-fn run_manifest_from_steps(
+pub(crate) fn run_manifest_from_steps(
     run_id: &str,
     session_id: &str,
     status: &str,
@@ -232,6 +889,22 @@ fn is_control_checkpoint_only(update: &fullmag_runner::StepUpdate) -> bool {
         && !update.finished
 }
 
+fn wait_for_solve_supported(backend_plan: &BackendPlanIR) -> bool {
+    matches!(backend_plan, BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_))
+}
+
+fn wait_for_solve_prompt(backend_plan: &BackendPlanIR) -> &'static str {
+    match backend_plan {
+        BackendPlanIR::Fem(_) => {
+            "Waiting for compute — adjust mesh in the control room, then click COMPUTE"
+        }
+        BackendPlanIR::Fdm(_) => {
+            "Waiting for compute — inspect the workspace in the control room, then click COMPUTE"
+        }
+        _ => "Waiting for compute — click COMPUTE to continue",
+    }
+}
+
 // ── main orchestration entry point ───────────────────────────────────────────
 
 pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
@@ -297,6 +970,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             run: bootstrapping_run_manifest.clone(),
             live_state: bootstrap_live_state_manifest.clone(),
             metadata: None,
+            mesh_workspace: None,
             latest_scalar_row: None,
             latest_fields: CurrentLiveLatestFields::default(),
             preview_fields: CurrentLivePreviewFieldCache::default(),
@@ -398,6 +1072,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     live_state
                 },
                 metadata: None,
+                mesh_workspace: None,
                 latest_scalar_row: None,
                 latest_fields: CurrentLiveLatestFields::default(),
                 preview_fields: CurrentLivePreviewFieldCache::default(),
@@ -425,6 +1100,11 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         .ir
         .plan_for(args.backend.map(BackendTarget::from))
         .map_err(join_errors)?;
+    let mut current_mesh_history = Vec::<serde_json::Value>::new();
+    let mut current_mesh_quality: Option<crate::python_bridge::RemeshQualitySummary> = None;
+    let mut current_fem_mesh_override: Option<fullmag_ir::MeshIR> = None;
+    let mut current_fem_hmax_override: Option<f64> = None;
+    let mut current_adaptive_runtime_state: Option<serde_json::Value> = None;
     let initial_execution_plan = stage_execution_plans[0].clone();
     let initial_update = initial_step_update(&initial_execution_plan.backend_plan);
 
@@ -453,7 +1133,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         .ir
         .backend_policy
         .execution_precision;
-    let interactive_template_ir = stages
+    let mut interactive_template_ir = stages
         .last()
         .expect("stages should be non-empty after validation")
         .ir
@@ -495,6 +1175,13 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             &initial_execution_plan,
             "running",
         )),
+        mesh_workspace: current_mesh_workspace(
+            &stages[0].ir,
+            &initial_execution_plan,
+            "running",
+            current_mesh_quality.as_ref(),
+            &current_mesh_history,
+        ),
         latest_scalar_row: None,
         latest_fields: CurrentLiveLatestFields::default(),
         preview_fields: CurrentLivePreviewFieldCache::default(),
@@ -542,18 +1229,24 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 .unwrap_or(false)
         })
         .unwrap_or(false);
-    let is_fem_backend = matches!(&initial_execution_plan.backend_plan, BackendPlanIR::Fem(_));
+    let _is_fem_backend = matches!(&initial_execution_plan.backend_plan, BackendPlanIR::Fem(_));
+    let wait_for_solve_supported = wait_for_solve_supported(&initial_execution_plan.backend_plan);
 
-    if wait_for_solve_requested && is_fem_backend {
-        eprintln!("[fullmag] waiting for compute — adjust mesh in GUI, then click COMPUTE");
-        live_workspace.push_log(
-            "system",
-            "Waiting for compute — adjust mesh in the control room, then click COMPUTE",
-        );
+    if wait_for_solve_requested && wait_for_solve_supported {
+        let wait_message = wait_for_solve_prompt(&initial_execution_plan.backend_plan);
+        eprintln!("[fullmag] {}", wait_message.to_lowercase());
+        live_workspace.push_log("system", wait_message);
         live_workspace.update(|state| {
             state.session.status = "waiting_for_compute".to_string();
             state.run.status = "waiting_for_compute".to_string();
             set_live_state_status(&mut state.live_state, "waiting_for_compute", Some(false));
+            state.mesh_workspace = current_mesh_workspace(
+                &stages[0].ir,
+                &initial_execution_plan,
+                "waiting_for_compute",
+                current_mesh_quality.as_ref(),
+                &current_mesh_history,
+            );
         });
 
         // ── Auto-coarsen: if mesh exceeds available RAM, remesh with larger hmax ──
@@ -599,13 +1292,14 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             ),
                         );
 
-                        match invoke_remesh(
+                        match invoke_remesh_full(
                             &geom,
                             current_hmax,
                             fe_order,
                             &serde_json::json!({"compute_quality": true}),
                         ) {
-                            Ok(new_mesh) => {
+                            Ok(remesh_result) => {
+                                let new_mesh = remesh_result.clone().into_mesh_ir();
                                 let new_nodes = new_mesh.nodes.len();
                                 let new_ram = estimate_fem_dense_ram(new_nodes);
                                 eprintln!(
@@ -621,8 +1315,39 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                         }
                                     }
                                 }
+                                current_mesh_quality = remesh_result.quality.clone();
+                                current_fem_mesh_override = Some(new_mesh.clone());
+                                current_fem_hmax_override = Some(current_hmax);
+                                current_mesh_history.push(serde_json::json!({
+                                    "mesh_name": new_mesh.mesh_name,
+                                    "generation_mode": remesh_result.generation_mode,
+                                    "node_count": new_nodes,
+                                    "element_count": new_mesh.elements.len(),
+                                    "boundary_face_count": new_mesh.boundary_faces.len(),
+                                    "kind": "auto_coarsen",
+                                    "mesh_provenance": remesh_result.mesh_provenance,
+                                }));
 
                                 if new_ram <= ram_budget {
+                                    let mesh_payload = fullmag_runner::FemMeshPayload {
+                                        nodes: new_mesh.nodes.clone(),
+                                        elements: new_mesh.elements.clone(),
+                                        boundary_faces: new_mesh.boundary_faces.clone(),
+                                    };
+                                    live_workspace.update(|state| {
+                                        state.live_state.latest_step.fem_mesh = Some(mesh_payload);
+                                        state.mesh_workspace = Some(current_fem_mesh_workspace(
+                                            &new_mesh,
+                                            fem_plan.mesh_source.as_deref(),
+                                            fe_order,
+                                            current_hmax,
+                                            "waiting_for_compute",
+                                            stages[0].ir.problem_meta.runtime_metadata.get("adaptive_mesh"),
+                                            current_adaptive_runtime_state.as_ref(),
+                                            current_mesh_quality.as_ref(),
+                                            &current_mesh_history,
+                                        ));
+                                    });
                                     live_workspace.push_log(
                                         "success",
                                         format!(
@@ -764,19 +1489,25 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     eprintln!("[fullmag] remesh requested with options: {}", opts);
                     live_workspace
                         .push_log("info", format!("Remesh requested — options: {}", opts));
-                    let first_stage = &stages[0];
-                    let geometry_entry = first_stage.ir.geometry.entries.first();
+                    let geometry_entry = stages[0].ir.geometry.entries.first().cloned();
+                    let adaptive_mesh_runtime = stages[0]
+                        .ir
+                        .problem_meta
+                        .runtime_metadata
+                        .get("adaptive_mesh")
+                        .cloned();
                     let fem_plan = match &stage_execution_plans[0].backend_plan {
                         BackendPlanIR::Fem(plan) => Some(plan),
                         _ => None,
                     };
-                    if let (Some(geom), Some(plan)) = (geometry_entry, fem_plan) {
+                    if let (Some(geom), Some(plan)) = (geometry_entry.as_ref(), fem_plan) {
                         let hmax = opts
                             .get("hmax")
                             .and_then(|v| v.as_f64())
                             .unwrap_or(plan.hmax);
-                        match invoke_remesh(geom, hmax, plan.fe_order, &opts) {
-                            Ok(new_mesh) => {
+                        match invoke_remesh_full(geom, hmax, plan.fe_order, &opts) {
+                            Ok(remesh_result) => {
+                                let new_mesh = remesh_result.clone().into_mesh_ir();
                                 let node_count = new_mesh.nodes.len();
                                 let elem_count = new_mesh.elements.len();
                                 let face_count = new_mesh.boundary_faces.len();
@@ -808,6 +1539,23 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                         ),
                                     );
                                 }
+                                current_mesh_quality = remesh_result.quality.clone();
+                                current_fem_mesh_override = Some(new_mesh.clone());
+                                current_fem_hmax_override = Some(hmax);
+                                current_mesh_history.push(serde_json::json!({
+                                    "mesh_name": new_mesh.mesh_name,
+                                    "generation_mode": remesh_result.generation_mode,
+                                    "node_count": node_count,
+                                    "element_count": elem_count,
+                                    "boundary_face_count": face_count,
+                                    "quality": remesh_result.quality.as_ref().map(|quality| serde_json::json!({
+                                        "sicn_p5": quality.sicn_p5,
+                                        "gamma_min": quality.gamma_min,
+                                        "avg_quality": quality.avg_quality,
+                                    })),
+                                    "mesh_provenance": remesh_result.mesh_provenance,
+                                    "size_field_stats": remesh_result.size_field_stats,
+                                }));
                                 for stage in stages.iter_mut() {
                                     if let Some(assets) = stage.ir.geometry_assets.as_mut() {
                                         for fem_asset in assets.fem_mesh_assets.iter_mut() {
@@ -815,6 +1563,27 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                         }
                                     }
                                 }
+
+                                let mesh_payload = fullmag_runner::FemMeshPayload {
+                                    nodes: new_mesh.nodes.clone(),
+                                    elements: new_mesh.elements.clone(),
+                                    boundary_faces: new_mesh.boundary_faces.clone(),
+                                };
+
+                                live_workspace.update(|state| {
+                                    state.live_state.latest_step.fem_mesh = Some(mesh_payload);
+                                    state.mesh_workspace = Some(current_fem_mesh_workspace(
+                                        &new_mesh,
+                                        plan.mesh_source.as_deref(),
+                                        plan.fe_order,
+                                        hmax,
+                                        "waiting_for_compute",
+                                        adaptive_mesh_runtime.as_ref(),
+                                        current_adaptive_runtime_state.as_ref(),
+                                        current_mesh_quality.as_ref(),
+                                        &current_mesh_history,
+                                    ));
+                                });
                             }
                             Err(e) => {
                                 eprintln!("[fullmag] remesh failed: {}", e);
@@ -846,11 +1615,11 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 }
             }
         }
-    } else if wait_for_solve_requested && !is_fem_backend {
-        eprintln!("[fullmag] wait_for_solve ignored — only supported for FEM backend");
+    } else if wait_for_solve_requested && !wait_for_solve_supported {
+        eprintln!("[fullmag] wait_for_solve ignored — only supported for FDM/FEM solve backends");
         live_workspace.push_log(
             "warn",
-            "wait_for_solve is only supported for FEM backend — proceeding immediately",
+            "wait_for_solve is only supported for FDM/FEM solve backends — proceeding immediately",
         );
     }
 
@@ -862,6 +1631,12 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             );
             continue;
         }
+        apply_current_fem_overrides(
+            &mut stage.ir,
+            current_fem_mesh_override.as_ref(),
+            current_fem_hmax_override,
+            current_adaptive_runtime_state.as_ref(),
+        );
         if let Some(previous_final_magnetization) = continuation_magnetization.as_deref() {
             apply_continuation_initial_state(&mut stage.ir, previous_final_magnetization)?;
         }
@@ -871,7 +1646,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             .ir
             .plan_for(args.backend.map(BackendTarget::from))
             .map_err(join_errors)?;
-        let execution_plan =
+        let mut execution_plan =
             fullmag_plan::plan(&stage.ir).map_err(|error| anyhow!(error.to_string()))?;
         emit_initial_state_warnings(Some(&live_workspace), &execution_plan.backend_plan)?;
         let use_live_callback = matches!(
@@ -926,6 +1701,13 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 plan_summary_json(&current_plan_summary),
             );
             state.metadata = Some(current_live_metadata(&stage.ir, &execution_plan, "running"));
+            state.mesh_workspace = current_mesh_workspace(
+                &stage.ir,
+                &execution_plan,
+                "running",
+                current_mesh_quality.as_ref(),
+                &current_mesh_history,
+            );
             state.run = running_run_manifest_from_update(
                 &run_id,
                 &session_id,
@@ -936,7 +1718,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             clear_cached_preview_fields(state);
         });
 
-        let stage_result = match if use_live_callback {
+        let mut stage_result = match if use_live_callback {
             if supports_dynamic_live_preview(&execution_plan.backend_plan) {
                 let display_selection = || display_selection_handle.display_selection_snapshot();
                 let interrupt_signal = display_selection_handle.running_interrupt_signal();
@@ -1098,6 +1880,13 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 );
                 snapshot.metadata =
                     Some(current_live_metadata(&stage.ir, &execution_plan, "failed"));
+                snapshot.mesh_workspace = current_mesh_workspace(
+                    &stage.ir,
+                    &execution_plan,
+                    "failed",
+                    current_mesh_quality.as_ref(),
+                    &current_mesh_history,
+                );
                 snapshot.run = run_manifest_from_steps(
                     &run_id,
                     &session_id,
@@ -1111,6 +1900,35 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 return Err(anyhow!(error.to_string()));
             }
         };
+
+        let adaptive_followup_ran = maybe_execute_adaptive_relaxation_followup_passes(
+            &mut stage,
+            &mut execution_plan,
+            &mut stage_result,
+            &live_workspace,
+            stage_index,
+            stage_count,
+            &run_id,
+            &session_id,
+            &artifact_dir,
+            &current_stage_artifact_dir,
+            field_every_n,
+            step_offset,
+            time_offset,
+            &mut current_mesh_quality,
+            &mut current_mesh_history,
+            &mut current_fem_mesh_override,
+            &mut current_fem_hmax_override,
+            &mut current_adaptive_runtime_state,
+        )?;
+        if adaptive_followup_ran {
+            current_plan_summary = stage
+                .ir
+                .plan_for(args.backend.map(BackendTarget::from))
+                .map_err(join_errors)?;
+            execution_plan =
+                fullmag_plan::plan(&stage.ir).map_err(|error| anyhow!(error.to_string()))?;
+        }
 
         if !use_live_callback {
             let grid = match &execution_plan.backend_plan {
@@ -1215,6 +2033,43 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         }
         aggregated_steps.extend(offset_steps);
         continuation_magnetization = Some(stage_result.final_magnetization);
+
+        // If the stage was cancelled (user clicked Stop) or paused, skip
+        // remaining scripted stages so that the interactive command loop can
+        // take over.  Without this, pressing Stop during fm.relax() would
+        // merely cancel the relax and immediately start the next fm.run().
+        if stage_result.status == fullmag_runner::RunStatus::Cancelled
+            || stage_result.status == fullmag_runner::RunStatus::Paused
+        {
+            live_workspace.push_log(
+                "system",
+                format!(
+                    "Stage {}/{} ({}) {} by user — skipping remaining scripted stages",
+                    stage_index + 1,
+                    stage_count,
+                    stage.entrypoint_kind,
+                    if stage_result.status == fullmag_runner::RunStatus::Cancelled {
+                        "stopped"
+                    } else {
+                        "paused"
+                    },
+                ),
+            );
+            eprintln!(
+                "stage {}/{} ({}) {} — skipping {} remaining scripted stage(s)",
+                stage_index + 1,
+                stage_count,
+                stage.entrypoint_kind,
+                if stage_result.status == fullmag_runner::RunStatus::Cancelled {
+                    "cancelled"
+                } else {
+                    "paused"
+                },
+                stage_count - stage_index - 1,
+            );
+            break;
+        }
+
         live_workspace.push_log(
             "success",
             format!(
@@ -1228,29 +2083,36 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
 
     if interactive_requested {
         let awaiting_at_unix_ms = unix_time_millis()?;
+        apply_current_fem_overrides(
+            &mut interactive_template_ir,
+            current_fem_mesh_override.as_ref(),
+            current_fem_hmax_override,
+            current_adaptive_runtime_state.as_ref(),
+        );
+
+        // Build session context for interactive command loop
+        let ctx = crate::runtime_supervisor::InteractiveSessionContext {
+            session_id: session_id.clone(),
+            run_id: run_id.clone(),
+            interactive_requested,
+            script_path: script_path.clone(),
+            final_problem_name: final_problem_name.clone(),
+            requested_backend: final_requested_backend,
+            execution_mode: final_execution_mode,
+            precision: final_precision,
+            artifact_dir: artifact_dir.clone(),
+            workspace_dir: workspace_dir.clone(),
+            started_at_unix_ms,
+            field_every_n,
+        };
+
         live_workspace.update(|state| {
-            state.session = build_session_manifest(
-                &session_id,
-                &run_id,
+            state.session = ctx.build_session(
                 "awaiting_command",
-                interactive_requested,
-                &script_path,
-                &final_problem_name,
-                backend_target_name(final_requested_backend),
-                execution_mode_name(final_execution_mode),
-                execution_precision_name(final_precision),
-                &artifact_dir,
-                started_at_unix_ms,
+                &plan_summary_json(&current_plan_summary),
                 awaiting_at_unix_ms,
-                plan_summary_json(&current_plan_summary),
             );
-            state.run = run_manifest_from_steps(
-                &run_id,
-                &session_id,
-                "awaiting_command",
-                &artifact_dir,
-                &aggregated_steps,
-            );
+            state.run = ctx.build_run("awaiting_command", &aggregated_steps);
             set_live_state_status(&mut state.live_state, "awaiting_command", Some(false));
         });
         live_workspace.push_log(
@@ -1282,7 +2144,10 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 continue;
             }
 
-            if command.kind == "pause" {
+            // Parse into typed command for control protocol dispatch
+            let typed_cmd = crate::command_bridge::classify_command(&command);
+
+            if matches!(typed_cmd, Some(fullmag_runner::LiveControlCommand::Pause)) {
                 if paused_stage.is_some() {
                     live_workspace.push_log(
                         "system",
@@ -1297,31 +2162,15 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 continue;
             }
 
-            if matches!(command.kind.as_str(), "stop" | "break") {
+            if matches!(typed_cmd, Some(fullmag_runner::LiveControlCommand::Break)) {
                 if paused_stage.take().is_some() {
                     live_workspace.update(|state| {
-                        state.session = build_session_manifest(
-                            &session_id,
-                            &run_id,
+                        state.session = ctx.build_session(
                             "awaiting_command",
-                            interactive_requested,
-                            &script_path,
-                            &final_problem_name,
-                            backend_target_name(final_requested_backend),
-                            execution_mode_name(final_execution_mode),
-                            execution_precision_name(final_precision),
-                            &artifact_dir,
-                            started_at_unix_ms,
+                            &plan_summary_json(&current_plan_summary),
                             unix_time_millis().unwrap_or(0),
-                            plan_summary_json(&current_plan_summary),
                         );
-                        state.run = run_manifest_from_steps(
-                            &run_id,
-                            &session_id,
-                            "awaiting_command",
-                            &artifact_dir,
-                            &aggregated_steps,
-                        );
+                        state.run = ctx.build_run("awaiting_command", &aggregated_steps);
                         set_live_state_status(
                             &mut state.live_state,
                             "awaiting_command",
@@ -1345,27 +2194,28 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 continue;
             }
 
-            if command.kind == "close" {
+            if matches!(typed_cmd, Some(fullmag_runner::LiveControlCommand::Close)) {
                 break;
             }
 
-            let (command, command_kind_label) = if command.kind == "resume" {
-                let Some(paused) = paused_stage.take() else {
+            let (command, command_kind_label) =
+                if matches!(typed_cmd, Some(fullmag_runner::LiveControlCommand::Resume)) {
+                    let Some(paused) = paused_stage.take() else {
+                        live_workspace.push_log(
+                            "warning",
+                            "Resume requested, but there is no paused interactive stage",
+                        );
+                        continue;
+                    };
                     live_workspace.push_log(
-                        "warning",
-                        "Resume requested, but there is no paused interactive stage",
+                        "system",
+                        format!("Resuming paused interactive {} stage", paused.source_kind),
                     );
-                    continue;
+                    (paused.command, format!("resume ({})", paused.source_kind))
+                } else {
+                    let kind = command.kind.clone();
+                    (command, kind)
                 };
-                live_workspace.push_log(
-                    "system",
-                    format!("Resuming paused interactive {} stage", paused.source_kind),
-                );
-                (paused.command, format!("resume ({})", paused.source_kind))
-            } else {
-                let kind = command.kind.clone();
-                (command, kind)
-            };
 
             if command.kind == "load_state" {
                 if paused_stage.is_some() {
@@ -1414,7 +2264,13 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 continue;
             }
 
-            if paused_stage.is_some() && matches!(command.kind.as_str(), "run" | "relax") {
+            if paused_stage.is_some()
+                && matches!(
+                    typed_cmd,
+                    Some(fullmag_runner::LiveControlCommand::Run { .. })
+                        | Some(fullmag_runner::LiveControlCommand::Relax { .. })
+                )
+            {
                 paused_stage = None;
                 live_workspace.push_log(
                     "warning",
@@ -1436,6 +2292,12 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 break;
             };
 
+            apply_current_fem_overrides(
+                &mut stage.ir,
+                current_fem_mesh_override.as_ref(),
+                current_fem_hmax_override,
+                current_adaptive_runtime_state.as_ref(),
+            );
             if let Some(previous_final_magnetization) = continuation_magnetization.as_deref() {
                 apply_continuation_initial_state(&mut stage.ir, previous_final_magnetization)?;
             }
@@ -1477,29 +2339,20 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             );
             interactive_runtime_host.mark_running();
             live_workspace.update(|state| {
-                state.session = build_session_manifest(
-                    &session_id,
-                    &run_id,
+                state.session = ctx.build_session(
                     "running",
-                    interactive_requested,
-                    &script_path,
-                    &final_problem_name,
-                    backend_target_name(final_requested_backend),
-                    execution_mode_name(final_execution_mode),
-                    execution_precision_name(final_precision),
-                    &artifact_dir,
-                    started_at_unix_ms,
+                    &plan_summary_json(&current_plan_summary),
                     running_at_unix_ms,
-                    plan_summary_json(&current_plan_summary),
                 );
-                state.run = run_manifest_from_steps(
-                    &run_id,
-                    &session_id,
-                    "running",
-                    &artifact_dir,
-                    &aggregated_steps,
-                );
+                state.run = ctx.build_run("running", &aggregated_steps);
                 state.metadata = Some(current_live_metadata(&stage.ir, &execution_plan, "running"));
+                state.mesh_workspace = current_mesh_workspace(
+                    &stage.ir,
+                    &execution_plan,
+                    "running",
+                    current_mesh_quality.as_ref(),
+                    &current_mesh_history,
+                );
                 state.live_state = live_state_manifest_from_update(&stage_initial_update);
                 clear_cached_preview_fields(state);
             });
@@ -1668,28 +2521,12 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 Err(error) => {
                     let failed_ready_at_unix_ms = unix_time_millis().unwrap_or(awaiting_at_unix_ms);
                     live_workspace.update(|state| {
-                        state.session = build_session_manifest(
-                            &session_id,
-                            &run_id,
+                        state.session = ctx.build_session(
                             "awaiting_command",
-                            interactive_requested,
-                            &script_path,
-                            &final_problem_name,
-                            backend_target_name(final_requested_backend),
-                            execution_mode_name(final_execution_mode),
-                            execution_precision_name(final_precision),
-                            &artifact_dir,
-                            started_at_unix_ms,
+                            &plan_summary_json(&current_plan_summary),
                             failed_ready_at_unix_ms,
-                            plan_summary_json(&current_plan_summary),
                         );
-                        state.run = run_manifest_from_steps(
-                            &run_id,
-                            &session_id,
-                            "awaiting_command",
-                            &artifact_dir,
-                            &aggregated_steps,
-                        );
+                        state.run = ctx.build_run("awaiting_command", &aggregated_steps);
                         set_live_state_status(
                             &mut state.live_state,
                             "awaiting_command",
@@ -1713,7 +2550,75 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 }
             };
 
-            // Handle mid-stage cancellation
+            // Handle mid-stage pause (first-class RunStatus::Paused from runner)
+            if stage_result.status == fullmag_runner::RunStatus::Paused {
+                let offset_steps = offset_step_stats(&stage_result.steps, step_offset, time_offset);
+                if let Some(last) = offset_steps.last() {
+                    step_offset = last.step;
+                    time_offset = last.time;
+                }
+                aggregated_steps.extend(offset_steps);
+                continuation_magnetization = Some(stage_result.final_magnetization.clone());
+                interactive_stage_index += 1;
+
+                let paused_at_unix_ms = unix_time_millis()?;
+                let resumable_command =
+                    build_resumable_interactive_command(&command, &stage_result);
+                if let Some(resumable_command) = resumable_command {
+                    paused_stage = Some(PausedInteractiveStage {
+                        command: resumable_command,
+                        source_kind: command.kind.clone(),
+                    });
+                    live_workspace.update(|state| {
+                        state.session = ctx.build_session(
+                            "paused",
+                            &plan_summary_json(&current_plan_summary),
+                            paused_at_unix_ms,
+                        );
+                        state.run = ctx.build_run("paused", &aggregated_steps);
+                        set_live_state_status(&mut state.live_state, "paused", Some(false));
+                    });
+                    interactive_runtime_host
+                        .enter_paused(continuation_magnetization.clone(), &live_workspace);
+                    eprintln!("interactive command {} paused by user", command_kind_label);
+                    live_workspace.push_log(
+                        "system",
+                        format!(
+                            "Interactive command {} paused — use resume to continue",
+                            command_kind_label,
+                        ),
+                    );
+                } else {
+                    paused_stage = None;
+                    live_workspace.update(|state| {
+                        state.session = ctx.build_session(
+                            "awaiting_command",
+                            &plan_summary_json(&current_plan_summary),
+                            paused_at_unix_ms,
+                        );
+                        state.run = ctx.build_run("awaiting_command", &aggregated_steps);
+                        set_live_state_status(
+                            &mut state.live_state,
+                            "awaiting_command",
+                            Some(false),
+                        );
+                    });
+                    interactive_runtime_host.enter_awaiting_command(
+                        continuation_magnetization.clone(),
+                        &live_workspace,
+                    );
+                    live_workspace.push_log(
+                        "system",
+                        format!(
+                            "Interactive command {} reached its target before pause completed",
+                            command_kind_label,
+                        ),
+                    );
+                }
+                continue;
+            }
+
+            // Handle mid-stage cancellation (break/close — still uses take_running_interrupt)
             if stage_result.status == fullmag_runner::RunStatus::Cancelled {
                 let offset_steps = offset_step_stats(&stage_result.steps, step_offset, time_offset);
                 if let Some(last) = offset_steps.last() {
@@ -1730,118 +2635,42 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     .unwrap_or(crate::interactive_runtime_host::InteractiveStageInterrupt::Break)
                 {
                     crate::interactive_runtime_host::InteractiveStageInterrupt::Pause => {
-                        let resumable_command =
-                            build_resumable_interactive_command(&command, &stage_result);
-                        if let Some(resumable_command) = resumable_command {
-                            paused_stage = Some(PausedInteractiveStage {
-                                command: resumable_command,
-                                source_kind: command.kind.clone(),
-                            });
-                            live_workspace.update(|state| {
-                                state.session = build_session_manifest(
-                                    &session_id,
-                                    &run_id,
-                                    "paused",
-                                    interactive_requested,
-                                    &script_path,
-                                    &final_problem_name,
-                                    backend_target_name(final_requested_backend),
-                                    execution_mode_name(final_execution_mode),
-                                    execution_precision_name(final_precision),
-                                    &artifact_dir,
-                                    started_at_unix_ms,
-                                    cancelled_at_unix_ms,
-                                    plan_summary_json(&current_plan_summary),
-                                );
-                                state.run = run_manifest_from_steps(
-                                    &run_id,
-                                    &session_id,
-                                    "paused",
-                                    &artifact_dir,
-                                    &aggregated_steps,
-                                );
-                                set_live_state_status(&mut state.live_state, "paused", Some(false));
-                            });
-                            interactive_runtime_host
-                                .enter_paused(continuation_magnetization.clone(), &live_workspace);
-                            eprintln!("interactive command {} paused by user", command_kind_label);
-                            live_workspace.push_log(
-                                "system",
-                                format!(
-                                    "Interactive command {} paused — use resume to continue",
-                                    command_kind_label,
-                                ),
+                        // Legacy fallback: if the runner somehow returned Cancelled
+                        // but the host recorded a Pause interrupt, treat it as pause.
+                        // This path should not occur after the Phase 4 wiring.
+                        paused_stage = None;
+                        live_workspace.update(|state| {
+                            state.session = ctx.build_session(
+                                "awaiting_command",
+                                &plan_summary_json(&current_plan_summary),
+                                cancelled_at_unix_ms,
                             );
-                        } else {
-                            paused_stage = None;
-                            live_workspace.update(|state| {
-                                state.session = build_session_manifest(
-                                    &session_id,
-                                    &run_id,
-                                    "awaiting_command",
-                                    interactive_requested,
-                                    &script_path,
-                                    &final_problem_name,
-                                    backend_target_name(final_requested_backend),
-                                    execution_mode_name(final_execution_mode),
-                                    execution_precision_name(final_precision),
-                                    &artifact_dir,
-                                    started_at_unix_ms,
-                                    cancelled_at_unix_ms,
-                                    plan_summary_json(&current_plan_summary),
-                                );
-                                state.run = run_manifest_from_steps(
-                                    &run_id,
-                                    &session_id,
-                                    "awaiting_command",
-                                    &artifact_dir,
-                                    &aggregated_steps,
-                                );
-                                set_live_state_status(
-                                    &mut state.live_state,
-                                    "awaiting_command",
-                                    Some(false),
-                                );
-                            });
-                            interactive_runtime_host.enter_awaiting_command(
-                                continuation_magnetization.clone(),
-                                &live_workspace,
+                            state.run = ctx.build_run("awaiting_command", &aggregated_steps);
+                            set_live_state_status(
+                                &mut state.live_state,
+                                "awaiting_command",
+                                Some(false),
                             );
-                            live_workspace.push_log(
-                                "system",
-                                format!(
-                                    "Interactive command {} reached its target before pause completed",
-                                    command_kind_label,
-                                ),
-                            );
-                        }
+                        });
+                        interactive_runtime_host.enter_awaiting_command(
+                            continuation_magnetization.clone(),
+                            &live_workspace,
+                        );
+                        live_workspace.push_log(
+                            "warning",
+                            "Unexpected pause-as-cancel fallback — entered awaiting_command",
+                        );
                         continue;
                     }
                     crate::interactive_runtime_host::InteractiveStageInterrupt::Break => {
                         paused_stage = None;
                         live_workspace.update(|state| {
-                            state.session = build_session_manifest(
-                                &session_id,
-                                &run_id,
+                            state.session = ctx.build_session(
                                 "awaiting_command",
-                                interactive_requested,
-                                &script_path,
-                                &final_problem_name,
-                                backend_target_name(final_requested_backend),
-                                execution_mode_name(final_execution_mode),
-                                execution_precision_name(final_precision),
-                                &artifact_dir,
-                                started_at_unix_ms,
+                                &plan_summary_json(&current_plan_summary),
                                 cancelled_at_unix_ms,
-                                plan_summary_json(&current_plan_summary),
                             );
-                            state.run = run_manifest_from_steps(
-                                &run_id,
-                                &session_id,
-                                "awaiting_command",
-                                &artifact_dir,
-                                &aggregated_steps,
-                            );
+                            state.run = ctx.build_run("awaiting_command", &aggregated_steps);
                             set_live_state_status(
                                 &mut state.live_state,
                                 "awaiting_command",
@@ -1976,28 +2805,12 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
 
             let ready_at_unix_ms = unix_time_millis()?;
             live_workspace.update(|state| {
-                state.session = build_session_manifest(
-                    &session_id,
-                    &run_id,
+                state.session = ctx.build_session(
                     "awaiting_command",
-                    interactive_requested,
-                    &script_path,
-                    &final_problem_name,
-                    backend_target_name(final_requested_backend),
-                    execution_mode_name(final_execution_mode),
-                    execution_precision_name(final_precision),
-                    &artifact_dir,
-                    started_at_unix_ms,
+                    &plan_summary_json(&current_plan_summary),
                     ready_at_unix_ms,
-                    plan_summary_json(&current_plan_summary),
                 );
-                state.run = run_manifest_from_steps(
-                    &run_id,
-                    &session_id,
-                    "awaiting_command",
-                    &artifact_dir,
-                    &aggregated_steps,
-                );
+                state.run = ctx.build_run("awaiting_command", &aggregated_steps);
                 set_live_state_status(&mut state.live_state, "awaiting_command", Some(false));
             });
             interactive_runtime_host
@@ -2121,4 +2934,157 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{wait_for_solve_prompt, wait_for_solve_supported};
+    use fullmag_ir::{
+        BackendPlanIR, ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, FdmPlanIR,
+        FemPlanIR, GridDimensions, IntegratorChoice, MaterialIR, MeshIR,
+    };
+
+    fn tiny_fdm_plan() -> BackendPlanIR {
+        BackendPlanIR::Fdm(FdmPlanIR {
+            grid: GridDimensions { cells: [1, 1, 1] },
+            cell_size: [5e-9, 5e-9, 5e-9],
+            region_mask: vec![0],
+            active_mask: None,
+            initial_magnetization: vec![[1.0, 0.0, 0.0]],
+            material: FdmMaterialIR {
+                name: "Py".to_string(),
+                saturation_magnetisation: 800e3,
+                exchange_stiffness: 13e-12,
+                damping: 0.5,
+            },
+            enable_exchange: true,
+            enable_demag: false,
+            external_field: None,
+            gyromagnetic_ratio: 2.211e5,
+            precision: ExecutionPrecision::Double,
+            exchange_bc: ExchangeBoundaryCondition::Neumann,
+            integrator: IntegratorChoice::Heun,
+            fixed_timestep: Some(1e-13),
+            adaptive_timestep: None,
+            relaxation: None,
+            boundary_correction: None,
+            boundary_geometry: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
+            temperature: None,
+            inter_region_exchange: vec![],
+        })
+    }
+
+    fn tiny_fem_plan() -> BackendPlanIR {
+        BackendPlanIR::Fem(FemPlanIR {
+            mesh_name: "tiny".to_string(),
+            mesh_source: None,
+            mesh: MeshIR {
+                mesh_name: "tiny".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                elements: vec![[0, 1, 2, 3]],
+                element_markers: vec![1],
+                boundary_faces: vec![[0, 1, 2]],
+                boundary_markers: vec![1],
+            },
+            fe_order: 1,
+            hmax: 1.0,
+            initial_magnetization: vec![[0.0, 0.0, 1.0]; 4],
+            material: MaterialIR {
+                name: "Py".to_string(),
+                saturation_magnetisation: 800e3,
+                exchange_stiffness: 13e-12,
+                damping: 0.5,
+                uniaxial_anisotropy: None,
+                anisotropy_axis: None,
+                uniaxial_anisotropy_k2: None,
+                cubic_anisotropy_kc1: None,
+                cubic_anisotropy_kc2: None,
+                cubic_anisotropy_kc3: None,
+                cubic_anisotropy_axis1: None,
+                cubic_anisotropy_axis2: None,
+                ms_field: None,
+                a_field: None,
+                alpha_field: None,
+                ku_field: None,
+                ku2_field: None,
+                kc1_field: None,
+                kc2_field: None,
+                kc3_field: None,
+            },
+            enable_exchange: true,
+            enable_demag: true,
+            external_field: None,
+            gyromagnetic_ratio: 2.211e5,
+            precision: ExecutionPrecision::Double,
+            exchange_bc: ExchangeBoundaryCondition::Neumann,
+            integrator: IntegratorChoice::Heun,
+            fixed_timestep: Some(1e-13),
+            adaptive_timestep: None,
+            relaxation: None,
+            demag_realization: None,
+            air_box_config: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
+            dind_field: None,
+            dbulk_field: None,
+            temperature: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
+        })
+    }
+
+    #[test]
+    fn wait_for_solve_is_supported_for_fdm_and_fem() {
+        assert!(wait_for_solve_supported(&tiny_fdm_plan()));
+        assert!(wait_for_solve_supported(&tiny_fem_plan()));
+    }
+
+    #[test]
+    fn wait_for_solve_prompt_mentions_mesh_only_for_fem() {
+        assert!(
+            wait_for_solve_prompt(&tiny_fem_plan()).contains("adjust mesh"),
+            "FEM wait message should mention mesh refinement"
+        );
+        assert!(
+            !wait_for_solve_prompt(&tiny_fdm_plan()).contains("adjust mesh"),
+            "FDM wait message should stay generic"
+        );
+    }
 }

@@ -8,9 +8,10 @@ import fullmag as fm
 
 # ── Engine ──────────────────────────────────────────────────
 fm.name("nanoflower_fdm")
-fm.engine("fdm")
-fm.device("cuda:0", precision="single")
-fm.cell(5e-9, 5e-9, 5e-9)
+fm.engine("fem")
+fm.device("cuda:0", precision="double")
+# fm.cell(5e-9, 5e-9, 5e-9)
+fm.interactive(True)
 
 # ── Geometry & Material ─────────────────────────────────────
 flower = fm.geometry(
@@ -18,9 +19,11 @@ flower = fm.geometry(
         source="nanoflower.stl",
         units="nm",
         name="nanoflower",
+        volume="full",
     ),
     name="nanoflower",
 )
+
 flower.Ms = 752e3       # saturation magnetisation [A/m]
 flower.Aex = 15.5e-12   # exchange stiffness [J/m]
 flower.alpha = 0.1      # Gilbert damping
@@ -29,8 +32,9 @@ flower.m = fm.uniform(0.1,0.0001,0.99)
 # ── External field ──────────────────────────────────────────
 # Cartesian:  fm.b_ext(0, 0, 0.1)          # 0.1 T along z
 # Spherical:  fm.b_ext(0.1, theta=0, phi=0) # same, via angles (degrees)
-fm.b_ext(0.1, theta=0, phi=0)  # 0.1 T along +z
+flower.mesh(hmax=20e-9, order=1).build() 
 
+fm.b_ext(0.1, theta=0, phi=0)  # 0.1 T along +z
 # ── Solver ──────────────────────────────────────────────────
 # fm.solver(dt=1e-15, g=2.115)
 fm.solver(max_error=1e-6, integrator="rk45", g=2.115)
@@ -40,10 +44,10 @@ fm.solver(max_error=1e-6, integrator="rk45", g=2.115)
 fm.tableautosave(1e-13)
 
 # ── Run ─────────────────────────────────────────────────────
+fm.wait_for_solve(True)
 fm.relax(
     tol=1e-6,                       # torque tolerance (max_dm_dt)
     max_steps=100_000,               # limit kroków
     algorithm="llg_overdamped",     # algorytm relaksacji
-    energy_tolerance=None,          # opcjonalnie: tolerancja energetyczna
 )
 fm.run(1e-9)

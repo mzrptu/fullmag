@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from fullmag._validation import (
     as_vector3,
@@ -44,6 +44,7 @@ def _derived_translate_name(base_name: str, offset: tuple[float, float, float]) 
 # ---------------------------------------------------------------------------
 ImportedGeometryScale: TypeAlias = float | tuple[float, float, float]
 ImportedGeometryUnits: TypeAlias = str
+ImportedGeometryVolume: TypeAlias = Literal["full", "surface"]
 
 _IMPORTED_GEOMETRY_UNIT_SCALES: dict[str, float] = {
     "m": 1.0,
@@ -55,6 +56,7 @@ _IMPORTED_GEOMETRY_UNIT_SCALES: dict[str, float] = {
     "nm": 1e-9,
     "pm": 1e-12,
 }
+_IMPORTED_GEOMETRY_VOLUMES: tuple[ImportedGeometryVolume, ...] = ("full", "surface")
 
 
 def _normalize_import_units(units: ImportedGeometryUnits | None) -> tuple[ImportedGeometryUnits | None, float]:
@@ -77,18 +79,30 @@ def _apply_unit_scale(
     return tuple(float(component) * unit_scale for component in scale)
 
 
+def _normalize_import_volume(volume: ImportedGeometryVolume | None) -> ImportedGeometryVolume:
+    if volume is None:
+        return "full"
+    normalized = require_non_empty(volume, "volume").strip().lower()
+    if normalized not in _IMPORTED_GEOMETRY_VOLUMES:
+        supported = ", ".join(_IMPORTED_GEOMETRY_VOLUMES)
+        raise ValueError(f"volume must be one of: {supported}")
+    return normalized  # type: ignore[return-value]
+
+
 @dataclass(frozen=True, slots=True)
 class ImportedGeometry(_GeometryOps):
     source: str
     scale: ImportedGeometryScale = 1.0
     units: ImportedGeometryUnits | None = None
     name: str | None = None
+    volume: ImportedGeometryVolume = "full"
 
     def __post_init__(self) -> None:
         source = require_non_empty(self.source, "source")
         object.__setattr__(self, "source", source)
         normalized_units, unit_scale = _normalize_import_units(self.units)
         object.__setattr__(self, "units", normalized_units)
+        object.__setattr__(self, "volume", _normalize_import_volume(self.volume))
         effective_scale = _apply_unit_scale(self.scale, unit_scale)
         if isinstance(self.scale, (int, float)):
             object.__setattr__(self, "scale", require_positive(float(effective_scale), "scale"))
@@ -118,6 +132,7 @@ class ImportedGeometry(_GeometryOps):
             "source": self.source,
             "format": infer_geometry_format(self.source),
             "scale": scale_ir,
+            **({"volume": self.volume} if self.volume != "full" else {}),
         }
 
 

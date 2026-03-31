@@ -201,7 +201,7 @@ class _MeshOperationSpec:
 
 @dataclass
 class _MeshSpecState:
-    hmax: float | None = None
+    hmax: float | str | None = None
     hmin: float | None = None
     order: int | None = None
     source: str | None = None
@@ -252,7 +252,7 @@ class GeometryMeshHandle:
     def __call__(
         self,
         *,
-        hmax: float | None = None,
+        hmax: float | str | None = None,
         hmin: float | None = None,
         order: int | None = None,
         source: str | None = None,
@@ -279,7 +279,7 @@ class GeometryMeshHandle:
     def configure(
         self,
         *,
-        hmax: float | None = None,
+        hmax: float | str | None = None,
         hmin: float | None = None,
         order: int | None = None,
         source: str | None = None,
@@ -327,6 +327,8 @@ class GeometryMeshHandle:
         """
         spec = self._owner._mesh_spec
         if hmax is not None:
+            if isinstance(hmax, str) and hmax != "auto":
+                raise ValueError(f"hmax must be a positive float or \"auto\", got {hmax!r}")
             spec.hmax = hmax
         if hmin is not None:
             spec.hmin = hmin
@@ -444,7 +446,7 @@ class _WorldState:
 
     # Grid
     _cell: tuple[float, float, float] | None = None
-    _hmax: float | None = None
+    _hmax: float | str | None = None
     _fem_order: int = 1
     _mesh_source: str | None = None
 
@@ -461,6 +463,7 @@ class _WorldState:
     _gamma: float | None = None
     _interactive: bool = False
     _wait_for_solve: bool = False
+    _adaptive_mesh: dict[str, object] | None = None
 
     # Outputs
     _outputs: list = field(default_factory=list)
@@ -496,6 +499,29 @@ _HBAR = 1.054_571_817e-34
 
 def _gamma_from_g_factor(g_factor: float) -> float:
     return _MU_0 * g_factor * (_MU_B / _HBAR)
+
+
+def _estimate_auto_hmax() -> float:
+    """Estimate optimal hmax from the exchange length of registered magnets.
+
+    Uses ``l_ex = sqrt(2A / (mu0 * Ms^2))`` — the fundamental length scale
+    below which exchange dominates.  Returns ``min(l_ex)`` across all magnets
+    that have both ``Ms`` and ``Aex`` set, or ``5e-9`` as a safe fallback.
+    """
+    l_ex_values: list[float] = []
+    for handle in _state._magnets:
+        if handle.Ms is not None and handle.Aex is not None and handle.Ms > 0:
+            l_ex = math.sqrt(2.0 * handle.Aex / (_MU_0 * handle.Ms ** 2))
+            l_ex_values.append(l_ex)
+    if l_ex_values:
+        chosen = min(l_ex_values)
+        emit_progress(
+            f"hmax='auto': exchange length(s) {[f'{v*1e9:.2f} nm' for v in l_ex_values]}, "
+            f"using hmax = {chosen*1e9:.2f} nm"
+        )
+        return chosen
+    emit_progress("hmax='auto': no materials set yet, falling back to 5 nm")
+    return 5e-9
 
 
 def reset() -> None:
@@ -603,12 +629,14 @@ def boundary_correction(mode: str) -> None:
 
 def mesh(
     *,
-    hmax: float | None = None,
+    hmax: float | str | None = None,
     order: int | None = None,
     source: str | None = None,
 ) -> None:
     """Configure the default explicit FEM mesh workflow for the flat API."""
     if hmax is not None:
+        if isinstance(hmax, str) and hmax != "auto":
+            raise ValueError(f"hmax must be a positive float or \"auto\", got {hmax!r}")
         _state._default_mesh_spec.hmax = hmax
         _state._hmax = hmax
     if order is not None:
@@ -619,7 +647,7 @@ def mesh(
         _state._mesh_source = source
 
 
-def hmax(val: float) -> None:
+def hmax(val: float | str) -> None:
     """Compatibility alias for ``fm.mesh(hmax=...)``."""
     mesh(hmax=val)
 
@@ -646,13 +674,65 @@ def interactive(enabled: bool = True) -> None:
 
 
 def wait_for_solve(enabled: bool = True) -> None:
-    """Gate FEM execution: parse → materialize → WAIT → user clicks Compute → solve.
+    """Gate solver execution: parse/materialize → WAIT → user clicks Compute → solve.
 
     When enabled, the launcher pauses after mesh generation so the user can
-    inspect and refine the mesh in the GUI before committing to the solver.
-    Only applies to the FEM backend; FDM scripts ignore this flag.
+    inspect the workspace in the GUI before committing to the solver.
+    Supported for the interactive FDM and FEM solve paths. Mesh re-generation
+    during the wait gate remains FEM-specific.
     """
     _state._wait_for_solve = bool(enabled)
+
+
+def adaptive_mesh(
+    enabled: bool = True,
+    *,
+    policy: str = "manual",
+    theta: float = 0.3,
+    h_min: float | None = None,
+    h_max: float | None = None,
+    max_passes: int = 5,
+    error_tolerance: float | None = None,
+    chunk_until_seconds: float | None = None,
+    steps_per_pass: int | None = None,
+) -> None:
+    """Configure FEM adaptive mesh policy metadata for the runtime/orchestrator.
+
+    This call is declarative: it stores the requested adaptive-mesh policy
+    in runtime metadata so the control room and future orchestration layers
+    can inspect it. Current runtimes may ignore parts of this payload until
+    the full AFEM execution loop is enabled.
+    """
+    if policy not in {"manual", "auto"}:
+        raise ValueError("adaptive_mesh policy must be 'manual' or 'auto'")
+    if theta <= 0.0 or theta > 1.0:
+        raise ValueError("adaptive_mesh theta must satisfy 0 < theta <= 1")
+    if max_passes < 0:
+        raise ValueError("adaptive_mesh max_passes must be >= 0")
+    if h_min is not None and h_min <= 0.0:
+        raise ValueError("adaptive_mesh h_min must be positive")
+    if h_max is not None and h_max <= 0.0:
+        raise ValueError("adaptive_mesh h_max must be positive")
+    if h_min is not None and h_max is not None and h_min > h_max:
+        raise ValueError("adaptive_mesh h_min must be <= h_max")
+    if error_tolerance is not None and error_tolerance <= 0.0:
+        raise ValueError("adaptive_mesh error_tolerance must be positive")
+    if chunk_until_seconds is not None and chunk_until_seconds <= 0.0:
+        raise ValueError("adaptive_mesh chunk_until_seconds must be positive")
+    if steps_per_pass is not None and steps_per_pass <= 0:
+        raise ValueError("adaptive_mesh steps_per_pass must be > 0")
+
+    _state._adaptive_mesh = {
+        "enabled": bool(enabled),
+        "policy": policy,
+        "theta": float(theta),
+        "h_min": h_min,
+        "h_max": h_max,
+        "max_passes": int(max_passes),
+        "error_tolerance": error_tolerance,
+        "chunk_until_seconds": chunk_until_seconds,
+        "steps_per_pass": steps_per_pass,
+    }
 
 
 def _mesh_source_root() -> Path:
@@ -684,8 +764,16 @@ def _resolve_flat_fem_hint() -> FEM | None:
     shared_source = candidate_specs[0].source if candidate_specs else s._mesh_source
 
     for spec in candidate_specs[1:]:
+        if spec.hmax is not None and shared_hmax is not None:
+            both_numeric = isinstance(spec.hmax, (int, float)) and isinstance(shared_hmax, (int, float))
+            hmax_mismatch = (
+                (both_numeric and not math.isclose(spec.hmax, shared_hmax))
+                or (not both_numeric and spec.hmax != shared_hmax)
+            )
+        else:
+            hmax_mismatch = False
         if (
-            spec.hmax is not None and shared_hmax is not None and not math.isclose(spec.hmax, shared_hmax)
+            hmax_mismatch
         ) or (
             spec.order is not None and spec.order != shared_order
         ) or (
@@ -708,6 +796,10 @@ def _resolve_flat_fem_hint() -> FEM | None:
 
     if resolved_hmax is None:
         return None
+
+    # Resolve "auto" sentinel → exchange-length-based float
+    if resolved_hmax == "auto":
+        resolved_hmax = _estimate_auto_hmax()
 
     return FEM(order=shared_order or 1, hmax=resolved_hmax, mesh=shared_source)
 
@@ -1125,6 +1217,8 @@ def _build_problem(
     runtime_metadata: dict[str, Any] = {"interactive_session_requested": s._interactive}
     if s._wait_for_solve:
         runtime_metadata["wait_for_solve"] = True
+    if s._adaptive_mesh is not None:
+        runtime_metadata["adaptive_mesh"] = dict(s._adaptive_mesh)
     mesh_workflow = _collect_mesh_workflow_metadata()
     if mesh_workflow is not None:
         runtime_metadata["mesh_workflow"] = mesh_workflow
@@ -1181,8 +1275,27 @@ def relax(
     max_steps: int = 50_000,
     algorithm: str = "llg_overdamped",
     energy_tolerance: float | None = None,
+    relax_alpha: float | None = 1.0,
 ) -> Any:
-    """Build the problem and run a relaxation study."""
+    """Build the problem and run a relaxation study.
+
+    Parameters
+    ----------
+    tol : float
+        Torque convergence tolerance (max |m × H_eff|).
+    max_steps : int
+        Maximum number of relaxation steps.
+    algorithm : str
+        Relaxation algorithm: ``"llg_overdamped"``, ``"projected_gradient_bb"``,
+        ``"nonlinear_cg"``, or ``"tangent_plane_implicit"``.
+    energy_tolerance : float, optional
+        Energy convergence tolerance (|ΔE| between steps).
+    relax_alpha : float or None
+        Gilbert damping override used *only* during relaxation.
+        Default ``1.0`` gives optimal convergence for overdamped LLG.
+        Set to ``None`` to keep each magnet's own material α.
+        The original material α is automatically restored after relaxation.
+    """
     from fullmag.runtime import Simulation
     problem = _build_problem(
         study_kind="relaxation",
@@ -1191,6 +1304,20 @@ def relax(
         relax_energy_tolerance=energy_tolerance,
         relax_max_steps=max_steps,
     )
+
+    # Override damping for relaxation (does not affect subsequent fm.run()
+    # calls because _build_problem() constructs a fresh Problem each time).
+    if relax_alpha is not None:
+        import dataclasses
+        new_magnets = [
+            dataclasses.replace(
+                magnet,
+                material=dataclasses.replace(magnet.material, alpha=relax_alpha),
+            )
+            for magnet in problem.magnets
+        ]
+        problem = dataclasses.replace(problem, magnets=new_magnets)
+
     if _capture_enabled:
         _captured_stages.append(
             CapturedStage(

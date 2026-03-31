@@ -1,15 +1,29 @@
 from .discretization import DiscretizationHints, FDM, FDMDemag, FDMGrid, FEM, Hybrid
-from .dynamics import AdaptiveTimestep, LLG
+from .dynamics import (
+    AdaptiveTimestep,
+    Elastodynamics,
+    LLG,
+    PrescribedStrain,
+    QuasistaticElasticity,
+)
 from .energy import (
     BulkDMI,
     Constant,
     Demag,
     Exchange,
     InterfacialDMI,
+    Magnetoelastic,
     OerstedCylinder,
     Pulse,
     Sinusoidal,
     Zeeman,
+)
+from .mechanics import (
+    ElasticBody,
+    ElasticMaterial,
+    MagnetostrictionLaw,
+    MechanicalBoundaryCondition,
+    MechanicalLoad,
 )
 from .geometry import (
     Box,
@@ -48,6 +62,9 @@ __all__ = [
     "Difference",
     "DiscretizationHints",
     "Eigenmodes",
+    "ElasticBody",
+    "ElasticMaterial",
+    "Elastodynamics",
     "Ellipse",
     "Ellipsoid",
     "Exchange",
@@ -63,9 +80,15 @@ __all__ = [
     "Intersection",
     "InterfacialDMI",
     "LLG",
+    "Magnetoelastic",
+    "MagnetostrictionLaw",
     "Material",
+    "MechanicalBoundaryCondition",
+    "MechanicalLoad",
     "OerstedCylinder",
+    "PrescribedStrain",
     "Problem",
+    "QuasistaticElasticity",
     "Region",
     "Relaxation",
     "RuntimeSelection",

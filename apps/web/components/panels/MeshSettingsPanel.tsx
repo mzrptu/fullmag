@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Button } from "../ui/button";
+import { Loader2, ArrowRightLeft } from "lucide-react";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -566,19 +567,55 @@ export default function MeshSettingsPanel({
       )}
       {/* ── Generate button ── */}
       {onGenerate && (
-        <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
+        <div className="flex flex-col gap-3 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm transition-all duration-300">
           <Button
-            className="w-full h-8 text-sm font-semibold"
+            className="w-full h-8 text-sm font-semibold transition-all duration-300 relative overflow-hidden"
             variant="default"
             onClick={onGenerate}
             disabled={disabled || generating}
           >
             {generating ? (
-              <><span className="w-4 h-4 mr-2 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" /> Generating…</>
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-primary-foreground/70" />
+                Generating Mesh...
+              </span>
             ) : (
               "⚡ Generate Mesh"
             )}
           </Button>
+
+          {generating && (
+            <div className="flex flex-col gap-2 pt-1 animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-emerald-500 flex items-center gap-1.5">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                  </span>
+                  TX: REMESH
+                </span>
+                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-amber-500 flex items-center gap-1.5">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping delay-150 absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                  </span>
+                  RX: AWAITING
+                </span>
+              </div>
+              
+              <div className="relative h-1.5 w-full bg-muted/40 rounded-full overflow-hidden">
+                <div className="absolute inset-y-0 w-1/3 bg-primary rounded-full animate-pulse opacity-80" />
+                <div className="absolute inset-y-0 w-2/3 right-0 bg-primary/30 rounded-full animate-pulse" style={{ animationDelay: "150ms" }} />
+              </div>
+              
+              <div className="flex items-center justify-between px-1 mt-0.5 opacity-60">
+                <span className="text-[0.6rem] font-mono text-muted-foreground uppercase tracking-wider">Backend computing</span>
+                <span className="text-[0.6rem] font-mono text-muted-foreground uppercase tracking-wider tabular-nums flex items-center gap-1">
+                  <ArrowRightLeft className="w-2.5 h-2.5" /> active
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

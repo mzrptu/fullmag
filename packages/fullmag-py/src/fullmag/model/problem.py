@@ -14,7 +14,14 @@ from fullmag._progress import emit_progress
 from fullmag._validation import ensure_unique_names, require_non_empty
 from fullmag.model.discretization import DiscretizationHints, FEM
 from fullmag.model.dynamics import LLG
-from fullmag.model.energy import BulkDMI, Demag, Exchange, InterfacialDMI, Zeeman
+from fullmag.model.energy import BulkDMI, Demag, Exchange, InterfacialDMI, Magnetoelastic, Zeeman
+from fullmag.model.mechanics import (
+    ElasticBody,
+    ElasticMaterial,
+    MagnetostrictionLaw,
+    MechanicalBoundaryCondition,
+    MechanicalLoad,
+)
 from fullmag.model.outputs import (
     SaveDispersion,
     SaveField,
@@ -98,6 +105,7 @@ def resolve_geometry_sources(
             source=str((root / source_path).resolve()),
             scale=geometry.scale,
             name=geometry.name,
+            volume=geometry.volume,
         )
     if isinstance(geometry, Difference):
         return Difference(
@@ -179,6 +187,11 @@ def build_geometry_assets_for_request(
         fem_mesh_cache_dir = _fem_mesh_cache_dir()
 
         for geometry in geometries:
+            imported_surface_only = (
+                discretization.fem.mesh is None
+                and isinstance(geometry, ImportedGeometry)
+                and geometry.volume == "surface"
+            )
             mesh_source = discretization.fem.mesh
             if mesh_source is None and isinstance(geometry, ImportedGeometry):
                 mesh_source = geometry.source
@@ -210,11 +223,18 @@ def build_geometry_assets_for_request(
                         f"Preparing FEM mesh asset for '{geometry.geometry_name}'"
                     )
                     mesh = realize_fem_mesh_asset(geometry, discretization.fem)
-                    if cache_path is not None:
+                    if cache_path is not None and not imported_surface_only:
                         mesh.save(cache_path)
                         emit_progress(
                             f"Cached FEM mesh for '{geometry.geometry_name}'"
                         )
+                if imported_surface_only:
+                    raise ValueError(
+                        f"geometry '{geometry.geometry_name}' uses "
+                        "ImportedGeometry(volume='surface'), which is preview-only. "
+                        "The FEM solver requires tetrahedral volume elements. "
+                        "Use volume='full' to build an executable FEM mesh."
+                    )
                 emit_progress(
                     f"FEM mesh ready for '{geometry.geometry_name}': "
                     f"{mesh.n_nodes} nodes, {mesh.n_elements} elements, "
@@ -431,7 +451,7 @@ class RuntimeSelection:
 backend = RuntimeSelection()
 
 
-EnergyTerm = Exchange | Demag | InterfacialDMI | BulkDMI | Zeeman
+EnergyTerm = Exchange | Demag | InterfacialDMI | BulkDMI | Zeeman | Magnetoelastic
 LegacyOutputSpec = SaveField | SaveScalar | Snapshot
 OutputSpec = LegacyOutputSpec | SaveSpectrum | SaveMode | SaveDispersion
 
@@ -532,6 +552,12 @@ class Problem:
         repr=False,
         compare=False,
     )
+    # Magnetoelastic (optional)
+    elastic_materials: Sequence[ElasticMaterial] = ()
+    elastic_bodies: Sequence[ElasticBody] = ()
+    magnetostriction_laws: Sequence[MagnetostrictionLaw] = ()
+    mechanical_bcs: Sequence[MechanicalBoundaryCondition] = ()
+    mechanical_loads: Sequence[MechanicalLoad] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", require_non_empty(self.name, "name"))
@@ -633,6 +659,12 @@ class Problem:
                 "discretization_hints": discretization.to_ir() if discretization else None,
             },
             "validation_profile": {"execution_mode": runtime.execution_mode.value},
+            # Magnetoelastic extensions
+            "elastic_materials": [em.to_ir() for em in self.elastic_materials],
+            "elastic_bodies": [eb.to_ir() for eb in self.elastic_bodies],
+            "magnetostriction_laws": [ml.to_ir() for ml in self.magnetostriction_laws],
+            "mechanical_bcs": [bc.to_ir() for bc in self.mechanical_bcs],
+            "mechanical_loads": [ml.to_ir() for ml in self.mechanical_loads],
         }
 
     def _resolve_discretization(

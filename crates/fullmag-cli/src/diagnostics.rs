@@ -173,6 +173,7 @@ pub(crate) fn diagnose_initial_fdm_plan(plan: &FdmPlanIR) -> Result<InitialState
             exchange: plan.enable_exchange,
             demag: plan.enable_demag,
             external_field: plan.external_field,
+            magnetoelastic: None,
         },
         plan.active_mask.clone(),
     )
@@ -234,6 +235,7 @@ pub(crate) fn diagnose_initial_fem_plan(plan: &FemPlanIR) -> Result<InitialState
             exchange: plan.enable_exchange,
             demag: plan.enable_demag,
             external_field: plan.external_field,
+            magnetoelastic: None,
         },
         Some([plan.hmax, plan.hmax, plan.hmax]),
     );

@@ -65,8 +65,8 @@ fullmag -i examples/exchange_relax.py
 By default this attempts to:
 
 - run the simulation,
-- create a local live workspace under `.fullmag/local-live/`,
-- start the bootstrap control room,
+- create or update the singleton local live workspace under `.fullmag/local-live/`,
+- start the current-live control room,
 - open the browser to `/`.
 
 The control room now reuses one local web server URL when possible, instead of allocating a new
@@ -88,7 +88,8 @@ The repository now includes:
 - `Model + Study + Runtime` public API with `TimeEvolution`,
 - typed `ProblemIR` and `StudyIR` sections in Rust,
 - a Rust-hosted `fullmag script.py` launcher path with a spawned Python helper,
-- bootstrap file-based session manifests and session/run API routes,
+- a singleton local current-live workspace API with `session_state` streaming,
+- binary WebSocket preview transport for heavy live vector payloads,
 - a canonical Python example in `examples/dw_track.py`,
 - mirrored agent instructions between `.agents` and `.github`,
 - repo consistency checks and a hard `docs/physics` gate in CI.
@@ -182,7 +183,7 @@ This keeps the heavyweight FEM GPU toolchain in the managed build container whil
 host-side runtime bundle under `.fullmag/runtimes/` and a host package staging directory under
 `.fullmag/dist/`.
 
-### 5. Run the bootstrap control room manually
+### 5. Run the current-live control room manually
 
 ```bash
 ./scripts/dev-control-room.sh
@@ -196,6 +197,10 @@ This starts:
 
 - `fullmag-api` on `http://localhost:8080`
 - the Next.js control room on `http://localhost:3000`
+
+The current local browser flow targets the singleton workspace at `/`.
+Live control data is streamed through `/ws/live/current`, and heavy preview vectors are delivered as
+binary WebSocket frames instead of inline JSON arrays.
 
 ### 6. Inspect the canonical example
 

@@ -26,7 +26,7 @@ What exists today is still narrower than the desired product shell:
 
 - CPU/FDM reference execution exists for a narrow `Exchange + Demag + Zeeman` slice,
 - the browser is still not a real live control room,
-- a bootstrap file-based session/run shell now exists,
+- a singleton local current-live workspace shell now exists,
 - launcher ownership is now implemented through the Rust host plus Python helper bridge,
 - the public model now has the explicit `Study` layer,
 - GPU/FDM and rich control-room behavior still need to be hardened under that shell.
@@ -229,7 +229,10 @@ Behavior:
 6. Rust starts execution.
 7. Rust starts a local API server.
 8. Rust opens the browser.
-9. Browser shows `/runs/<session_id>` live.
+9. Browser shows the local control room at `/`, backed by the singleton current-live workspace.
+
+Longer-term session-oriented routes such as `/runs/<session_id>` remain valid architectural targets,
+but they are not the current local-live entrypoint.
 
 ## 6.2 Script mode without UI
 
@@ -257,7 +260,8 @@ Same control plane, but no browser unless explicitly requested.
 
 ## 6.5 Visualization-first control room
 
-The `/runs/<session_id>` screen must be designed around field visualization first.
+The local control room screen, whether exposed as the current `/` workspace view or future
+session-oriented `/runs/<session_id>` views, must be designed around field visualization first.
 
 The priority order is:
 
@@ -697,6 +701,11 @@ Event kinds:
 Heavy field payloads are **not** pushed through the event stream.
 Only metadata and availability notices are streamed.
 Field data is fetched on demand.
+
+For the current singleton local-live control room, the implementation may expose a separate
+projection stream such as `/ws/live/current` with a canonical `session_state` envelope and binary
+preview payloads for the active live display. That projection is a local UX transport, not a
+replacement for the longer-term session/run resource model.
 
 ---
 

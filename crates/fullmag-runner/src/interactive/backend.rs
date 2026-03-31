@@ -66,4 +66,18 @@ pub(crate) trait InteractiveBackend {
         artifact_writer: Option<ArtifactPipelineSender>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError>;
+
+    // --- Cooperative checkpoint interface (Phase 0: flag only) ---
+
+    /// Whether this backend supports cooperative mid-step checkpoints.
+    ///
+    /// When `true`, the runtime may poll for pending display refreshes,
+    /// pause requests, etc. without waiting for the current solver step
+    /// to complete.
+    ///
+    /// Default: `false` — the backend only responds to control between steps.
+    #[allow(dead_code)]
+    fn supports_cooperative_checkpoints(&self) -> bool {
+        false
+    }
 }

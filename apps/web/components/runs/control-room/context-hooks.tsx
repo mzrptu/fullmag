@@ -27,6 +27,8 @@ import type {
   RunManifest,
   RuntimeStatusState,
   ScalarRow,
+  MeshWorkspaceState,
+  ScriptBuilderStageState,
   ScriptBuilderState,
   SessionManifest,
 } from "../../../lib/useSessionStream";
@@ -56,6 +58,7 @@ import type {
   SessionFooterData,
   SolverPlanSummary,
 } from "./types";
+import type { MeshWorkspacePresetId } from "./meshWorkspace";
 
 /* ── Transport: high-frequency telemetry ── */
 export interface TransportContextValue {
@@ -203,6 +206,7 @@ export interface ModelContextValue {
   material: MaterialSummary | null;
   solverPlan: SolverPlanSummary | null;
   solverSettings: SolverSettingsState;
+  studyStages: ScriptBuilderStageState[];
   femMesh: FemLiveMesh | null;
   meshRenderMode: RenderMode;
   meshOpacity: number;
@@ -224,6 +228,7 @@ export interface ModelContextValue {
   isMeshWorkspaceView: boolean;
   meshFaceDetail: ReturnType<typeof computeMeshFaceDetail>;
   meshQualitySummary: MeshQualitySummary | null;
+  meshWorkspace: MeshWorkspaceState | null;
   meshName: string | null;
   meshSource: string | null;
   meshExtent: [number, number, number] | null;
@@ -235,9 +240,11 @@ export interface ModelContextValue {
   mesherBackend: string | null;
   mesherSourceKind: string | null;
   mesherCurrentSettings: Record<string, unknown> | null;
+  meshWorkspacePreset: MeshWorkspacePresetId;
   selectedSidebarNodeId: string | null;
   /* Actions */
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
+  setStudyStages: React.Dispatch<React.SetStateAction<ScriptBuilderStageState[]>>;
   setMeshRenderMode: React.Dispatch<React.SetStateAction<RenderMode>>;
   setMeshOpacity: React.Dispatch<React.SetStateAction<number>>;
   setMeshClipEnabled: React.Dispatch<React.SetStateAction<boolean>>;
@@ -249,7 +256,8 @@ export interface ModelContextValue {
   setFemDockTab: React.Dispatch<React.SetStateAction<FemDockTab>>;
   setSelectedSidebarNodeId: React.Dispatch<React.SetStateAction<string | null>>;
   handleMeshGenerate: () => Promise<void>;
-  openFemMeshWorkspace: (tab?: "mesh" | "quality") => void;
+  openFemMeshWorkspace: (tab?: FemDockTab) => void;
+  applyMeshWorkspacePreset: (presetId: MeshWorkspacePresetId) => void;
 }
 
 /* ── Legacy combined type (for facade) ── */

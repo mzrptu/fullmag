@@ -11,6 +11,57 @@ use crate::types::{
     ScriptExecutionConfig,
 };
 
+#[derive(Debug, Clone, serde::Deserialize)]
+pub(crate) struct RemeshQualitySummary {
+    #[serde(rename = "nElements")]
+    pub n_elements: usize,
+    #[serde(rename = "sicnMin")]
+    pub sicn_min: f64,
+    #[serde(rename = "sicnMax")]
+    pub sicn_max: f64,
+    #[serde(rename = "sicnMean")]
+    pub sicn_mean: f64,
+    #[serde(rename = "sicnP5")]
+    pub sicn_p5: f64,
+    #[serde(rename = "gammaMin")]
+    pub gamma_min: f64,
+    #[serde(rename = "gammaMean")]
+    pub gamma_mean: f64,
+    #[serde(rename = "avgQuality")]
+    pub avg_quality: f64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub(crate) struct RemeshCliResponse {
+    pub mesh_name: String,
+    pub nodes: Vec<[f64; 3]>,
+    pub elements: Vec<[u32; 4]>,
+    pub element_markers: Vec<u32>,
+    pub boundary_faces: Vec<[u32; 3]>,
+    pub boundary_markers: Vec<u32>,
+    #[serde(default)]
+    pub quality: Option<RemeshQualitySummary>,
+    #[serde(default)]
+    pub generation_mode: Option<String>,
+    #[serde(default)]
+    pub mesh_provenance: Option<serde_json::Value>,
+    #[serde(default)]
+    pub size_field_stats: Option<serde_json::Value>,
+}
+
+impl RemeshCliResponse {
+    pub(crate) fn into_mesh_ir(self) -> fullmag_ir::MeshIR {
+        fullmag_ir::MeshIR {
+            mesh_name: self.mesh_name,
+            nodes: self.nodes,
+            elements: self.elements,
+            element_markers: self.element_markers,
+            boundary_faces: self.boundary_faces,
+            boundary_markers: self.boundary_markers,
+        }
+    }
+}
+
 pub(crate) const PYTHON_PROGRESS_PREFIX: &str = "[fullmag-progress] ";
 const PYTHON_PROGRESS_JSON_PREFIX: &str = "json:";
 
@@ -275,13 +326,14 @@ pub(crate) fn read_magnetization_state(
         .context("failed to parse magnetization state payload")
 }
 
-pub(crate) fn invoke_remesh(
+pub(crate) fn invoke_remesh_full(
     geometry_entry: &fullmag_ir::GeometryEntryIR,
     hmax: f64,
     fe_order: u32,
     mesh_options: &serde_json::Value,
-) -> Result<fullmag_ir::MeshIR> {
+) -> Result<RemeshCliResponse> {
     let payload = serde_json::json!({
+        "mode": "manual_remesh",
         "geometry": geometry_entry,
         "hmax": hmax,
         "order": fe_order,
@@ -295,17 +347,80 @@ pub(crate) fn invoke_remesh(
         payload_json = serde_json::to_string(&payload_str)?,
     );
     let output = run_python_helper(&["-c".to_string(), script])?;
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
+    if !stderr_text.is_empty() {
+        eprintln!("[fullmag] remesh stderr:\n{}", stderr_text.trim());
+    }
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
             "remesh_cli.py failed (exit {}):\n{}",
             output.status.code().unwrap_or(-1),
-            stderr.trim()
+            stderr_text.trim()
         );
     }
-    let mesh: fullmag_ir::MeshIR =
-        serde_json::from_slice(&output.stdout).context("failed to parse remesh output")?;
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    let mesh: RemeshCliResponse = serde_json::from_slice(&output.stdout)
+        .with_context(|| {
+            format!(
+                "failed to parse remesh output ({} bytes):\n{}",
+                output.stdout.len(),
+                &stdout_text[..stdout_text.len().min(2000)]
+            )
+        })?;
     Ok(mesh)
+}
+
+pub(crate) fn invoke_remesh(
+    geometry_entry: &fullmag_ir::GeometryEntryIR,
+    hmax: f64,
+    fe_order: u32,
+    mesh_options: &serde_json::Value,
+) -> Result<fullmag_ir::MeshIR> {
+    Ok(invoke_remesh_full(geometry_entry, hmax, fe_order, mesh_options)?.into_mesh_ir())
+}
+
+pub(crate) fn invoke_adaptive_remesh_full(
+    geometry_entry: &fullmag_ir::GeometryEntryIR,
+    hmax: f64,
+    fe_order: u32,
+    mesh_options: &serde_json::Value,
+    size_field: &serde_json::Value,
+) -> Result<RemeshCliResponse> {
+    let payload = serde_json::json!({
+        "mode": "adaptive_size_field",
+        "geometry": geometry_entry,
+        "hmax": hmax,
+        "order": fe_order,
+        "mesh_options": mesh_options,
+        "size_field": size_field,
+    });
+    let payload_str = serde_json::to_string(&payload)?;
+
+    let script = format!(
+        "import sys; sys.stdin = __import__('io').StringIO({payload_json}); \
+         from fullmag.meshing.remesh_cli import main; main()",
+        payload_json = serde_json::to_string(&payload_str)?,
+    );
+    let output = run_python_helper(&["-c".to_string(), script])?;
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
+    if !stderr_text.is_empty() {
+        eprintln!("[fullmag] adaptive remesh stderr:\n{}", stderr_text.trim());
+    }
+    if !output.status.success() {
+        bail!(
+            "adaptive remesh_cli.py failed (exit {}):\n{}",
+            output.status.code().unwrap_or(-1),
+            stderr_text.trim()
+        );
+    }
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_slice(&output.stdout).with_context(|| {
+        format!(
+            "failed to parse adaptive remesh output ({} bytes):\n{}",
+            output.stdout.len(),
+            &stdout_text[..stdout_text.len().min(2000)]
+        )
+    })
 }
 
 #[cfg(test)]

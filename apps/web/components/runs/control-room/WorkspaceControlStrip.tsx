@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import { fmtExp, fmtSI } from "./shared";
 import { useControlRoom } from "./ControlRoomContext";
+import { MESH_WORKSPACE_PRESETS } from "./meshWorkspace";
 
 function quantityIcon(quantityId: string, label: string) {
   const lowerId = quantityId.toLowerCase();
@@ -284,6 +285,45 @@ export default function WorkspaceControlStrip() {
                 );
               })}
             </div>
+
+            {ctx.isFemBackend && (
+              <div className="flex flex-col gap-2 rounded-xl border border-border/50 bg-background/45 px-2.5 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[0.62rem] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                    Mesh Presets
+                  </span>
+                  <span className="text-[0.68rem] text-muted-foreground">
+                    {MESH_WORKSPACE_PRESETS.find((preset) => preset.id === ctx.meshWorkspacePreset)?.label ?? "Custom"}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {MESH_WORKSPACE_PRESETS.map((preset) => {
+                    const active = ctx.meshWorkspacePreset === preset.id;
+                    const disabled = !ctx.effectiveFemMesh && preset.id !== "optimize";
+                    const Icon = preset.icon;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[0.68rem] font-bold uppercase tracking-[0.16em] transition-colors",
+                          active
+                            ? "border-primary/30 bg-primary/12 text-primary"
+                            : "border-border/50 bg-background/45 text-muted-foreground hover:bg-background/75 hover:text-foreground",
+                          disabled && "cursor-not-allowed opacity-35",
+                        )}
+                        onClick={() => ctx.applyMeshWorkspacePreset(preset.id)}
+                        disabled={disabled}
+                        title={preset.description}
+                      >
+                        <Icon size={14} className={cn(active ? "text-primary" : "opacity-60")} />
+                        {preset.shortLabel}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/50 bg-background/45 px-2.5 py-2">
               <span className="text-[0.62rem] font-bold uppercase tracking-[0.18em] text-muted-foreground">

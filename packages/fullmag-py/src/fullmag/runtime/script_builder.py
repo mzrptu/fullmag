@@ -73,6 +73,7 @@ def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
             "compute_quality": bool(mesh_options.get("compute_quality", False)),
             "per_element_quality": bool(mesh_options.get("per_element_quality", False)),
         },
+        "stages": [_export_stage_draft(stage) for stage in _builder_stage_sequence(loaded)],
         "initial_state": _export_initial_state(base_problem),
     }
 
@@ -184,6 +185,60 @@ def _first_relax_stage(loaded: LoadedProblem) -> Relaxation | None:
     return None
 
 
+def _builder_stage_sequence(loaded: LoadedProblem) -> tuple[LoadedStage, ...]:
+    if loaded.stages:
+        return loaded.stages
+    if loaded.entrypoint_kind == "flat_workspace":
+        return ()
+    return (
+        LoadedStage(
+            problem=loaded.problem,
+            entrypoint_kind=loaded.entrypoint_kind,
+            default_until_seconds=loaded.default_until_seconds,
+        ),
+    )
+
+
+def _export_stage_draft(stage: LoadedStage) -> dict[str, object]:
+    study = stage.problem.study
+    dynamics = study.dynamics
+    if isinstance(study, Relaxation):
+        return {
+            "kind": "relax",
+            "entrypoint_kind": stage.entrypoint_kind,
+            "integrator": dynamics.integrator,
+            "fixed_timestep": _text_number(dynamics.fixed_timestep),
+            "until_seconds": "",
+            "relax_algorithm": study.algorithm,
+            "torque_tolerance": _text_number(study.torque_tolerance),
+            "energy_tolerance": _text_number(study.energy_tolerance),
+            "max_steps": str(study.max_steps),
+        }
+    if isinstance(study, Eigenmodes):
+        return {
+            "kind": "eigenmodes",
+            "entrypoint_kind": stage.entrypoint_kind,
+            "integrator": dynamics.integrator,
+            "fixed_timestep": _text_number(dynamics.fixed_timestep),
+            "until_seconds": "",
+            "relax_algorithm": "",
+            "torque_tolerance": "",
+            "energy_tolerance": "",
+            "max_steps": "",
+        }
+    return {
+        "kind": "run",
+        "entrypoint_kind": stage.entrypoint_kind,
+        "integrator": dynamics.integrator,
+        "fixed_timestep": _text_number(dynamics.fixed_timestep),
+        "until_seconds": _text_number(stage.default_until_seconds),
+        "relax_algorithm": "",
+        "torque_tolerance": "",
+        "energy_tolerance": "",
+        "max_steps": "",
+    }
+
+
 def _render_header(script_path: Path, entrypoint_kind: str) -> list[str]:
     return [
         '"""Canonical Fullmag script generated from the model builder.',
@@ -229,6 +284,34 @@ def _render_runtime(
         lines.append("fm.interactive(True)")
     if runtime_metadata.get("wait_for_solve") is True:
         lines.append("fm.wait_for_solve(True)")
+    adaptive_mesh = _normalize_mapping(runtime_metadata.get("adaptive_mesh"))
+    if adaptive_mesh:
+        kwargs: list[str] = []
+        if adaptive_mesh.get("policy") is not None:
+            kwargs.append(f"policy={_py_repr(str(adaptive_mesh.get('policy')))}")
+        if adaptive_mesh.get("theta") is not None:
+            kwargs.append(f"theta={_py_number(float(adaptive_mesh.get('theta')))}")
+        if adaptive_mesh.get("h_min") is not None:
+            kwargs.append(f"h_min={_py_number(float(adaptive_mesh.get('h_min')))}")
+        if adaptive_mesh.get("h_max") is not None:
+            kwargs.append(f"h_max={_py_number(float(adaptive_mesh.get('h_max')))}")
+        if adaptive_mesh.get("max_passes") is not None:
+            kwargs.append(f"max_passes={int(adaptive_mesh.get('max_passes'))}")
+        if adaptive_mesh.get("error_tolerance") is not None:
+            kwargs.append(
+                f"error_tolerance={_py_number(float(adaptive_mesh.get('error_tolerance')))}"
+            )
+        if adaptive_mesh.get("chunk_until_seconds") is not None:
+            kwargs.append(
+                f"chunk_until_seconds={_py_number(float(adaptive_mesh.get('chunk_until_seconds')))}"
+            )
+        if adaptive_mesh.get("steps_per_pass") is not None:
+            kwargs.append(f"steps_per_pass={int(adaptive_mesh.get('steps_per_pass'))}")
+        enabled = bool(adaptive_mesh.get("enabled", True))
+        if kwargs:
+            lines.append(f"fm.adaptive_mesh({str(enabled)}, {', '.join(kwargs)})")
+        elif enabled is not True:
+            lines.append(f"fm.adaptive_mesh({str(enabled)})")
     return lines
 
 
@@ -464,15 +547,17 @@ def _render_stages(
     if not stages:
         return []
     solver_override = _normalize_mapping(overrides.get("solver"))
+    stage_overrides = overrides.get("stages")
     lines = ["# Run"]
     previous_dynamics_signature: dict[str, object] | None = None
-    for stage in stages:
+    for index, stage in enumerate(stages):
         dynamics_signature = stage.problem.study.dynamics.to_ir()
         if previous_dynamics_signature is not None and dynamics_signature != previous_dynamics_signature:
             lines.append(_render_solver_call(stage.problem.study.dynamics, solver_override))
         previous_dynamics_signature = dynamics_signature
 
         study = stage.problem.study
+        stage_override = _stage_override_for(stage_overrides, index=index, stage=stage)
         if isinstance(study, Eigenmodes):
             raise ValueError(
                 "canonical flat-script rewrite does not yet support Eigenmodes studies; "
@@ -480,18 +565,34 @@ def _render_stages(
             )
         if isinstance(study, Relaxation):
             relax_override = _normalize_mapping(solver_override.get("relax"))
-            algorithm = _override_string(relax_override, "algorithm", study.algorithm) or study.algorithm
+            algorithm = (
+                _override_string(stage_override, "relax_algorithm", None)
+                or _override_string(relax_override, "algorithm", study.algorithm)
+                or study.algorithm
+            )
             torque_tolerance = _override_number(
-                relax_override,
+                stage_override,
                 "torque_tolerance",
-                study.torque_tolerance,
+                _override_number(
+                    relax_override,
+                    "torque_tolerance",
+                    study.torque_tolerance,
+                ),
             )
             energy_tolerance = _override_number(
-                relax_override,
+                stage_override,
                 "energy_tolerance",
-                study.energy_tolerance,
+                _override_number(
+                    relax_override,
+                    "energy_tolerance",
+                    study.energy_tolerance,
+                ),
             )
-            max_steps = _override_int(relax_override, "max_steps", study.max_steps)
+            max_steps = _override_int(
+                stage_override,
+                "max_steps",
+                _override_int(relax_override, "max_steps", study.max_steps),
+            )
             call_parts = [
                 f"tol={_py_number(torque_tolerance)}",
                 f"max_steps={max_steps}",
@@ -502,12 +603,37 @@ def _render_stages(
             lines.append(f"fm.relax({', '.join(call_parts)})")
             continue
 
-        if stage.default_until_seconds is None:
+        until_seconds = _override_number(
+            stage_override,
+            "until_seconds",
+            stage.default_until_seconds,
+        )
+        if until_seconds is None:
             raise ValueError(
                 "canonical rewrite requires DEFAULT_UNTIL for time-evolution scripts"
             )
-        lines.append(f"fm.run({_py_number(stage.default_until_seconds)})")
+        lines.append(f"fm.run({_py_number(until_seconds)})")
     return lines
+
+
+def _stage_override_for(
+    raw_stage_overrides: object,
+    *,
+    index: int,
+    stage: LoadedStage,
+) -> dict[str, object]:
+    if not isinstance(raw_stage_overrides, list):
+        return {}
+    if index >= len(raw_stage_overrides):
+        return {}
+    override = _normalize_mapping(raw_stage_overrides[index])
+    if not override:
+        return {}
+    expected_kind = "relax" if isinstance(stage.problem.study, Relaxation) else "run"
+    override_kind = override.get("kind")
+    if isinstance(override_kind, str) and override_kind and override_kind != expected_kind:
+        return {}
+    return override
 
 
 def _render_solver_call(dynamics: LLG, solver_override: dict[str, object]) -> str:
@@ -537,6 +663,8 @@ def _render_geometry_expr(geometry: object, *, magnet_name: str, source_root: Pa
         kwargs = [f"source={_py_repr(_relativize_path(geometry.source, source_root))}"]
         if geometry.scale != 1.0:
             kwargs.append(f"scale={_py_literal(geometry.scale)}")
+        if geometry.volume != "full":
+            kwargs.append(f"volume={_py_repr(geometry.volume)}")
         default_name = Path(geometry.source).stem
         if geometry.name is not None and geometry.name not in {default_name, f"{magnet_name}_geom"}:
             kwargs.append(f"name={_py_repr(geometry.name)}")
@@ -803,7 +931,7 @@ def _stage_signature(problem: Problem) -> dict[str, object]:
         "name": problem.name,
         "runtime": problem.runtime.to_runtime_metadata(),
         "geometries": [_geometry_signature(magnet.geometry) for magnet in problem.magnets],
-        "materials": [magnet.material.to_ir() for magnet in problem.magnets],
+        "materials": [_material_signature(magnet) for magnet in problem.magnets],
         "magnets": [
             {
                 "name": magnet.name,
@@ -825,6 +953,16 @@ def _geometry_signature(geometry: object) -> dict[str, object]:
     if hasattr(geometry, "to_ir"):
         return geometry.to_ir()
     raise ValueError(f"unsupported geometry signature kind: {type(geometry).__name__}")
+
+
+def _material_signature(magnet) -> dict[str, object]:
+    material = dict(magnet.material.to_ir())
+    # Flat relax stages temporarily rewrite damping to the relaxation alpha, but
+    # the canonical script still expresses that as fm.relax(...), not as a
+    # stage-local material mutation. Ignore alpha here so ordinary relax->run
+    # sequences remain rewriteable.
+    material.pop("damping", None)
+    return material
 
 
 def _relativize_path(path_value: str, source_root: Path) -> str:

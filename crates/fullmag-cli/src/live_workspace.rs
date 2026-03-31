@@ -13,6 +13,7 @@ pub(crate) struct LocalLiveWorkspaceState {
     pub run: RunManifest,
     pub live_state: LiveStateManifest,
     pub metadata: Option<serde_json::Value>,
+    pub mesh_workspace: Option<serde_json::Value>,
     pub latest_scalar_row: Option<CurrentLiveScalarRow>,
     pub latest_fields: CurrentLiveLatestFields,
     pub preview_fields: CurrentLivePreviewFieldCache,
@@ -40,7 +41,9 @@ impl LocalLiveWorkspaceState {
             session_status: Some(self.session.status.clone()),
             metadata,
             run: Some(self.run.clone()),
+            runtime_status: live_state.runtime_status,
             live_state: Some(live_state),
+            mesh_workspace: self.mesh_workspace.clone(),
             latest_scalar_row: self.latest_scalar_row.clone(),
             latest_fields: (!self.latest_fields.is_empty()).then_some(self.latest_fields.clone()),
             preview_fields,
@@ -253,6 +256,7 @@ fn current_live_publisher_loop(
 pub(crate) fn bootstrap_live_state(status: &str) -> LiveStateManifest {
     LiveStateManifest {
         status: status.to_string(),
+        runtime_status: Some(fullmag_runner::RuntimeStatus::from_status_code(status)),
         updated_at_unix_ms: unix_time_millis().unwrap_or(0),
         latest_step: LiveStepView {
             step: 0,
@@ -281,6 +285,7 @@ pub(crate) fn set_live_state_status(
     finished: Option<bool>,
 ) {
     live_state.status = status.to_string();
+    live_state.runtime_status = Some(fullmag_runner::RuntimeStatus::from_status_code(status));
     live_state.updated_at_unix_ms = unix_time_millis().unwrap_or(0);
     if let Some(finished) = finished {
         live_state.latest_step.finished = finished;

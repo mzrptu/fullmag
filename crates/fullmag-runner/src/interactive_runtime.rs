@@ -646,7 +646,7 @@ impl CpuInteractiveFdmPreviewRuntime {
         grid: [u32; 3],
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
-        _interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         if !self.plan_signature.eq(&normalize_plan_signature(plan)) {
@@ -687,9 +687,14 @@ impl CpuInteractiveFdmPreviewRuntime {
             .unwrap_or(1e-13);
         let mut previous_total_energy =
             Some(cpu_reference::observe_state(&self.problem, &self.state)?.total_energy);
-        let mut last_preview_revision: Option<u64> = None;
+        let mut checkpoint = crate::interactive::CheckpointContext {
+            display_selection,
+            interrupt_requested,
+            last_preview_revision: None,
+        };
         let mut last_cached_preview_revision: Option<u64> = None;
         let mut cancelled = false;
+        let mut paused = false;
         let mut steps: Vec<StepStats> = Vec::new();
         let initial_observables = cpu_reference::observe_state(&self.problem, &self.state)?;
         let mut current_observables = initial_observables;
@@ -704,9 +709,9 @@ impl CpuInteractiveFdmPreviewRuntime {
         current_local_stats.time -= base_time;
 
         while self.state.time_seconds - base_time < until_seconds {
-            let display_state = display_selection();
+            let display_state = (checkpoint.display_selection)();
             let preview_due = display_refresh_due(
-                last_preview_revision,
+                checkpoint.last_preview_revision,
                 &display_state,
                 current_local_stats.step,
             );
@@ -748,14 +753,21 @@ impl CpuInteractiveFdmPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
             if cached_preview_due {
                 last_cached_preview_revision = Some(display_state.revision);
             }
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let dt_step = dt.min(until_seconds - (self.state.time_seconds - base_time));
@@ -790,9 +802,12 @@ impl CpuInteractiveFdmPreviewRuntime {
             local_stats.step -= base_step;
             local_stats.time -= base_time;
             current_local_stats = local_stats.clone();
-            let display_state = display_selection();
-            let preview_due =
-                display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let display_state = (checkpoint.display_selection)();
+            let preview_due = display_refresh_due(
+                checkpoint.last_preview_revision,
+                &display_state,
+                local_stats.step,
+            );
             let cached_preview_due = cached_preview_refresh_due(
                 last_cached_preview_revision,
                 &display_state,
@@ -834,15 +849,22 @@ impl CpuInteractiveFdmPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
             if cached_preview_due {
                 last_cached_preview_revision = Some(display_state.revision);
             }
             steps.push(local_stats.clone());
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
@@ -863,7 +885,9 @@ impl CpuInteractiveFdmPreviewRuntime {
         }
 
         Ok(RunResult {
-            status: if cancelled {
+            status: if paused {
+                RunStatus::Paused
+            } else if cancelled {
                 RunStatus::Cancelled
             } else {
                 RunStatus::Completed
@@ -990,8 +1014,13 @@ impl CpuInteractiveFdmPreviewRuntime {
             .unwrap_or(1e-13);
         let mut previous_total_energy =
             Some(cpu_reference::observe_state(&self.problem, &self.state)?.total_energy);
-        let mut last_preview_revision: Option<u64> = None;
+        let mut checkpoint = crate::interactive::CheckpointContext {
+            display_selection,
+            interrupt_requested: None, // CPU FDM checks interrupt via on_step StepAction
+            last_preview_revision: None,
+        };
         let mut cancelled = false;
+        let mut paused = false;
         let mut latest_local_stats: Option<StepStats> = None;
         let mut current_observables = cpu_reference::observe_state(&self.problem, &self.state)?;
         let mut current_local_stats = make_step_stats(
@@ -1005,9 +1034,9 @@ impl CpuInteractiveFdmPreviewRuntime {
         current_local_stats.time -= base_time;
 
         while self.state.time_seconds - base_time < until_seconds {
-            let display_state = display_selection();
+            let display_state = (checkpoint.display_selection)();
             let preview_due = display_refresh_due(
-                last_preview_revision,
+                checkpoint.last_preview_revision,
                 &display_state,
                 current_local_stats.step,
             );
@@ -1033,11 +1062,18 @@ impl CpuInteractiveFdmPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let dt_step = dt.min(until_seconds - (self.state.time_seconds - base_time));
@@ -1086,9 +1122,12 @@ impl CpuInteractiveFdmPreviewRuntime {
                 artifacts,
             )?;
 
-            let display_state = display_selection();
-            let preview_due =
-                display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let display_state = (checkpoint.display_selection)();
+            let preview_due = display_refresh_due(
+                checkpoint.last_preview_revision,
+                &display_state,
+                local_stats.step,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(build_grid_preview_field(
@@ -1114,9 +1153,23 @@ impl CpuInteractiveFdmPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
-            if action == StepAction::Stop {
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
+            }
+
+            // Cooperative checkpoint: poll for pending control requests
+            let control = checkpoint.check_control();
+            if control != crate::interactive::commands::RuntimeControlOutcome::Continue {
                 cancelled = true;
                 break;
             }
@@ -1153,7 +1206,9 @@ impl CpuInteractiveFdmPreviewRuntime {
         }
 
         Ok(RunResult {
-            status: if cancelled {
+            status: if paused {
+                RunStatus::Paused
+            } else if cancelled {
                 RunStatus::Cancelled
             } else {
                 RunStatus::Completed
@@ -1283,25 +1338,30 @@ impl CudaInteractiveFdmPreviewRuntime {
             })
             .unwrap_or(1e-13);
         let mut previous_total_energy: Option<f64> = None;
-        let mut last_preview_revision: Option<u64> = None;
+        let mut checkpoint = crate::interactive::CheckpointContext {
+            display_selection,
+            interrupt_requested,
+            last_preview_revision: None,
+        };
         let mut last_cached_preview_revision: Option<u64> = None;
         let cell_count = (self.original_grid[0] as usize)
             * (self.original_grid[1] as usize)
             * (self.original_grid[2] as usize);
         let mut cancelled = false;
+        let mut paused = false;
         let mut steps: Vec<StepStats> = Vec::new();
         let pure_damping_relax = llg_overdamped_uses_pure_damping(plan.relaxation.as_ref());
         let mut current_local_stats = self.backend.snapshot_step_stats(grid)?;
         current_local_stats.step -= base_step;
         current_local_stats.time -= base_time;
-        let initial_display_state = display_selection();
+        let initial_display_state = (checkpoint.display_selection)();
         let mut pending_cached_preview_snapshots =
             self.begin_cached_preview_prefetch(&initial_display_state)?;
 
         while self.total_time - base_time < until_seconds {
-            let display_state = display_selection();
+            let display_state = (checkpoint.display_selection)();
             let preview_due = display_refresh_due(
-                last_preview_revision,
+                checkpoint.last_preview_revision,
                 &display_state,
                 current_local_stats.step,
             );
@@ -1348,14 +1408,21 @@ impl CudaInteractiveFdmPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
             if cached_preview_due {
                 last_cached_preview_revision = Some(display_state.revision);
             }
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let dt_step = dt.min(until_seconds - (self.total_time - base_time));
@@ -1370,7 +1437,7 @@ impl CudaInteractiveFdmPreviewRuntime {
             if let Some(next) = total_stats.dt_suggested {
                 dt = next;
             }
-            let post_step_display_state = display_selection();
+            let post_step_display_state = (checkpoint.display_selection)();
             pending_cached_preview_snapshots =
                 self.begin_cached_preview_prefetch(&post_step_display_state)?;
 
@@ -1378,9 +1445,12 @@ impl CudaInteractiveFdmPreviewRuntime {
             local_stats.step -= base_step;
             local_stats.time -= base_time;
             current_local_stats = local_stats.clone();
-            let display_state = display_selection();
-            let preview_due =
-                display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let display_state = (checkpoint.display_selection)();
+            let preview_due = display_refresh_due(
+                checkpoint.last_preview_revision,
+                &display_state,
+                local_stats.step,
+            );
             let cached_preview_due = cached_preview_refresh_due(
                 last_cached_preview_revision,
                 &display_state,
@@ -1411,15 +1481,22 @@ impl CudaInteractiveFdmPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
             if cached_preview_due {
                 last_cached_preview_revision = Some(display_state.revision);
             }
             steps.push(local_stats.clone());
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
@@ -1440,7 +1517,9 @@ impl CudaInteractiveFdmPreviewRuntime {
         }
 
         Ok(RunResult {
-            status: if cancelled {
+            status: if paused {
+                RunStatus::Paused
+            } else if cancelled {
                 RunStatus::Cancelled
             } else {
                 RunStatus::Completed
@@ -1505,23 +1584,28 @@ impl CudaInteractiveFdmPreviewRuntime {
             })
             .unwrap_or(1e-13);
         let mut previous_total_energy: Option<f64> = None;
-        let mut last_preview_revision: Option<u64> = None;
+        let mut checkpoint = crate::interactive::CheckpointContext {
+            display_selection,
+            interrupt_requested,
+            last_preview_revision: None,
+        };
         let mut last_cached_preview_revision: Option<u64> = None;
         let mut cancelled = false;
+        let mut paused = false;
         let mut steps: Vec<StepStats> = Vec::new();
         let pure_damping_relax = llg_overdamped_uses_pure_damping(plan.relaxation.as_ref());
         let mut latest_local_stats: Option<StepStats> = None;
         let mut current_local_stats = self.backend.snapshot_step_stats(grid)?;
         current_local_stats.step -= base_step;
         current_local_stats.time -= base_time;
-        let initial_display_state = display_selection();
+        let initial_display_state = (checkpoint.display_selection)();
         let mut pending_cached_preview_snapshots =
             self.begin_cached_preview_prefetch(&initial_display_state)?;
 
         while self.total_time - base_time < until_seconds {
-            let display_state = display_selection();
+            let display_state = (checkpoint.display_selection)();
             let preview_due = display_refresh_due(
-                last_preview_revision,
+                checkpoint.last_preview_revision,
                 &display_state,
                 current_local_stats.step,
             );
@@ -1568,14 +1652,21 @@ impl CudaInteractiveFdmPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
             if cached_preview_due {
                 last_cached_preview_revision = Some(display_state.revision);
             }
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let dt_step = dt.min(until_seconds - (self.total_time - base_time));
@@ -1590,7 +1681,7 @@ impl CudaInteractiveFdmPreviewRuntime {
             if let Some(next) = total_stats.dt_suggested {
                 dt = next;
             }
-            let post_step_display_state = display_selection();
+            let post_step_display_state = (checkpoint.display_selection)();
             pending_cached_preview_snapshots =
                 self.begin_cached_preview_prefetch(&post_step_display_state)?;
 
@@ -1599,9 +1690,12 @@ impl CudaInteractiveFdmPreviewRuntime {
             local_stats.time -= base_time;
             current_local_stats = local_stats.clone();
             latest_local_stats = Some(local_stats.clone());
-            let display_state = display_selection();
-            let preview_due =
-                display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let display_state = (checkpoint.display_selection)();
+            let preview_due = display_refresh_due(
+                checkpoint.last_preview_revision,
+                &display_state,
+                local_stats.step,
+            );
             let cached_preview_due = cached_preview_refresh_due(
                 last_cached_preview_revision,
                 &display_state,
@@ -1632,14 +1726,21 @@ impl CudaInteractiveFdmPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
             if cached_preview_due {
                 last_cached_preview_revision = Some(display_state.revision);
             }
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             record_due_cuda_runtime_outputs(
@@ -1684,7 +1785,9 @@ impl CudaInteractiveFdmPreviewRuntime {
         let (field_snapshots, field_snapshot_count, provenance) = artifacts.finish();
         Ok(ExecutedRun {
             result: RunResult {
-                status: if cancelled {
+                status: if paused {
+                    RunStatus::Paused
+                } else if cancelled {
                     RunStatus::Cancelled
                 } else {
                     RunStatus::Completed
@@ -1766,7 +1869,7 @@ impl CpuInteractiveFemPreviewRuntime {
         until_seconds: f64,
         field_every_n: u64,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
-        _interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<RunResult, RunError> {
         if !self.plan_signature.eq(&normalize_fem_plan_signature(plan)) {
@@ -1795,9 +1898,14 @@ impl CpuInteractiveFemPreviewRuntime {
             .unwrap_or(1e-13);
         let mut previous_total_energy =
             Some(fem_reference::observe_state(&self.problem, &self.state)?.total_energy);
-        let mut last_preview_revision: Option<u64> = None;
+        let mut checkpoint = crate::interactive::CheckpointContext {
+            display_selection,
+            interrupt_requested,
+            last_preview_revision: None,
+        };
         let mut last_cached_preview_revision: Option<u64> = None;
         let mut cancelled = false;
+        let mut paused = false;
         let mut steps: Vec<StepStats> = Vec::new();
         let initial_observables = fem_reference::observe_state(&self.problem, &self.state)?;
         let mut current_observables = initial_observables;
@@ -1812,9 +1920,9 @@ impl CpuInteractiveFemPreviewRuntime {
         current_local_stats.time -= base_time;
 
         while self.state.time_seconds - base_time < until_seconds {
-            let display_state = display_selection();
+            let display_state = (checkpoint.display_selection)();
             let preview_due = display_refresh_due(
-                last_preview_revision,
+                checkpoint.last_preview_revision,
                 &display_state,
                 current_local_stats.step,
             );
@@ -1849,14 +1957,21 @@ impl CpuInteractiveFemPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
             if cached_preview_due {
                 last_cached_preview_revision = Some(display_state.revision);
             }
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let dt_step = dt.min(until_seconds - (self.state.time_seconds - base_time));
@@ -1886,9 +2001,12 @@ impl CpuInteractiveFemPreviewRuntime {
             local_stats.step -= base_step;
             local_stats.time -= base_time;
             current_local_stats = local_stats.clone();
-            let display_state = display_selection();
-            let preview_due =
-                display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let display_state = (checkpoint.display_selection)();
+            let preview_due = display_refresh_due(
+                checkpoint.last_preview_revision,
+                &display_state,
+                local_stats.step,
+            );
             let cached_preview_due = cached_preview_refresh_due(
                 last_cached_preview_revision,
                 &display_state,
@@ -1923,15 +2041,22 @@ impl CpuInteractiveFemPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
             if cached_preview_due {
                 last_cached_preview_revision = Some(display_state.revision);
             }
             steps.push(local_stats.clone());
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
@@ -1952,7 +2077,9 @@ impl CpuInteractiveFemPreviewRuntime {
         }
 
         Ok(RunResult {
-            status: if cancelled {
+            status: if paused {
+                RunStatus::Paused
+            } else if cancelled {
                 RunStatus::Cancelled
             } else {
                 RunStatus::Completed
@@ -1970,7 +2097,7 @@ impl CpuInteractiveFemPreviewRuntime {
         field_every_n: u64,
         artifact_writer: Option<ArtifactPipelineSender>,
         display_selection: &(dyn Fn() -> DisplaySelectionState + Send + Sync),
-        _interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
+        interrupt_requested: Option<&std::sync::atomic::AtomicBool>,
         on_step: &mut dyn FnMut(StepUpdate) -> StepAction,
     ) -> Result<ExecutedRun, RunError> {
         if !self.plan_signature.eq(&normalize_fem_plan_signature(plan)) {
@@ -2028,8 +2155,13 @@ impl CpuInteractiveFemPreviewRuntime {
             .unwrap_or(1e-13);
         let mut previous_total_energy =
             Some(fem_reference::observe_state(&self.problem, &self.state)?.total_energy);
-        let mut last_preview_revision: Option<u64> = None;
+        let mut checkpoint = crate::interactive::CheckpointContext {
+            display_selection,
+            interrupt_requested,
+            last_preview_revision: None,
+        };
         let mut cancelled = false;
+        let mut paused = false;
         let mut latest_local_stats: Option<StepStats> = None;
         let mut current_observables = fem_reference::observe_state(&self.problem, &self.state)?;
         let mut current_local_stats = make_step_stats(
@@ -2043,9 +2175,9 @@ impl CpuInteractiveFemPreviewRuntime {
         current_local_stats.time -= base_time;
 
         while self.state.time_seconds - base_time < until_seconds {
-            let display_state = display_selection();
+            let display_state = (checkpoint.display_selection)();
             let preview_due = display_refresh_due(
-                last_preview_revision,
+                checkpoint.last_preview_revision,
                 &display_state,
                 current_local_stats.step,
             );
@@ -2069,11 +2201,18 @@ impl CpuInteractiveFemPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let dt_step = dt.min(until_seconds - (self.state.time_seconds - base_time));
@@ -2117,9 +2256,12 @@ impl CpuInteractiveFemPreviewRuntime {
                 &mut artifacts,
             )?;
 
-            let display_state = display_selection();
-            let preview_due =
-                display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let display_state = (checkpoint.display_selection)();
+            let preview_due = display_refresh_due(
+                checkpoint.last_preview_revision,
+                &display_state,
+                local_stats.step,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(crate::preview::build_mesh_preview_field(
@@ -2143,11 +2285,18 @@ impl CpuInteractiveFemPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
@@ -2184,7 +2333,9 @@ impl CpuInteractiveFemPreviewRuntime {
         let (field_snapshots, field_snapshot_count, provenance) = artifacts.finish();
         Ok(ExecutedRun {
             result: RunResult {
-                status: if cancelled {
+                status: if paused {
+                    RunStatus::Paused
+                } else if cancelled {
                     RunStatus::Cancelled
                 } else {
                     RunStatus::Completed
@@ -2280,9 +2431,14 @@ impl GpuInteractiveFemPreviewRuntime {
             })
             .unwrap_or(1e-13);
         let mut previous_total_energy: Option<f64> = None;
-        let mut last_preview_revision: Option<u64> = None;
+        let mut checkpoint = crate::interactive::CheckpointContext {
+            display_selection,
+            interrupt_requested,
+            last_preview_revision: None,
+        };
         let mut last_cached_preview_revision: Option<u64> = None;
         let mut cancelled = false;
+        let mut paused = false;
         let mut steps: Vec<StepStats> = Vec::new();
         let pure_damping_relax = llg_overdamped_uses_pure_damping(plan.relaxation.as_ref());
         let mut current_local_stats = self.backend.snapshot_step_stats(self.node_count)?;
@@ -2290,9 +2446,9 @@ impl GpuInteractiveFemPreviewRuntime {
         current_local_stats.time -= base_time;
 
         while self.total_time - base_time < until_seconds {
-            let display_state = display_selection();
+            let display_state = (checkpoint.display_selection)();
             let preview_due = display_refresh_due(
-                last_preview_revision,
+                checkpoint.last_preview_revision,
                 &display_state,
                 current_local_stats.step,
             );
@@ -2333,14 +2489,21 @@ impl GpuInteractiveFemPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
             if cached_preview_due {
                 last_cached_preview_revision = Some(display_state.revision);
             }
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let dt_step = dt.min(until_seconds - (self.total_time - base_time));
@@ -2360,9 +2523,12 @@ impl GpuInteractiveFemPreviewRuntime {
             local_stats.step -= base_step;
             local_stats.time -= base_time;
             current_local_stats = local_stats.clone();
-            let display_state = display_selection();
-            let preview_due =
-                display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let display_state = (checkpoint.display_selection)();
+            let preview_due = display_refresh_due(
+                checkpoint.last_preview_revision,
+                &display_state,
+                local_stats.step,
+            );
             let cached_preview_due = cached_preview_refresh_due(
                 last_cached_preview_revision,
                 &display_state,
@@ -2403,15 +2569,22 @@ impl GpuInteractiveFemPreviewRuntime {
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
             if cached_preview_due {
                 last_cached_preview_revision = Some(display_state.revision);
             }
             steps.push(local_stats.clone());
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
@@ -2432,7 +2605,9 @@ impl GpuInteractiveFemPreviewRuntime {
         }
 
         Ok(RunResult {
-            status: if cancelled {
+            status: if paused {
+                RunStatus::Paused
+            } else if cancelled {
                 RunStatus::Cancelled
             } else {
                 RunStatus::Completed
@@ -2493,8 +2668,13 @@ impl GpuInteractiveFemPreviewRuntime {
             })
             .unwrap_or(1e-13);
         let mut previous_total_energy: Option<f64> = None;
-        let mut last_preview_revision: Option<u64> = None;
+        let mut checkpoint = crate::interactive::CheckpointContext {
+            display_selection,
+            interrupt_requested,
+            last_preview_revision: None,
+        };
         let mut cancelled = false;
+        let mut paused = false;
         let mut steps: Vec<StepStats> = Vec::new();
         let pure_damping_relax = llg_overdamped_uses_pure_damping(plan.relaxation.as_ref());
         let mut latest_local_stats: Option<StepStats> = None;
@@ -2503,9 +2683,9 @@ impl GpuInteractiveFemPreviewRuntime {
         current_local_stats.time -= base_time;
 
         while self.total_time - base_time < until_seconds {
-            let display_state = display_selection();
+            let display_state = (checkpoint.display_selection)();
             let preview_due = display_refresh_due(
-                last_preview_revision,
+                checkpoint.last_preview_revision,
                 &display_state,
                 current_local_stats.step,
             );
@@ -2524,15 +2704,23 @@ impl GpuInteractiveFemPreviewRuntime {
                 fem_mesh: (current_local_stats.step == 0).then_some(self.mesh.clone()),
                 magnetization: None,
                 preview_field,
+                cached_preview_fields: None,
                 scalar_row_due: preview_due && display_is_global_scalar(&display_state),
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             let dt_step = dt.min(until_seconds - (self.total_time - base_time));
@@ -2553,9 +2741,12 @@ impl GpuInteractiveFemPreviewRuntime {
             local_stats.time -= base_time;
             current_local_stats = local_stats.clone();
             latest_local_stats = Some(local_stats.clone());
-            let display_state = display_selection();
-            let preview_due =
-                display_refresh_due(last_preview_revision, &display_state, local_stats.step);
+            let display_state = (checkpoint.display_selection)();
+            let preview_due = display_refresh_due(
+                checkpoint.last_preview_revision,
+                &display_state,
+                local_stats.step,
+            );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
                 Some(
@@ -2574,15 +2765,23 @@ impl GpuInteractiveFemPreviewRuntime {
                 fem_mesh: (local_stats.step <= 1).then_some(self.mesh.clone()),
                 magnetization: None,
                 preview_field,
+                cached_preview_fields: None,
                 scalar_row_due,
                 finished: false,
             });
             if preview_due {
-                last_preview_revision = Some(display_state.revision);
+                checkpoint.mark_display_refreshed(display_state.revision);
             }
-            if action == StepAction::Stop {
-                cancelled = true;
-                break;
+            match action {
+                StepAction::Stop => {
+                    cancelled = true;
+                    break;
+                }
+                StepAction::Pause => {
+                    paused = true;
+                    break;
+                }
+                _ => {}
             }
 
             record_due_native_fem_runtime_outputs(
@@ -2627,7 +2826,9 @@ impl GpuInteractiveFemPreviewRuntime {
         let (field_snapshots, field_snapshot_count, provenance) = artifacts.finish();
         Ok(ExecutedRun {
             result: RunResult {
-                status: if cancelled {
+                status: if paused {
+                    RunStatus::Paused
+                } else if cancelled {
                     RunStatus::Cancelled
                 } else {
                     RunStatus::Completed

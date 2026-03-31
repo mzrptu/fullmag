@@ -275,6 +275,124 @@ pub fn afem_step(
     })
 }
 
+/// Perform one AFEM step for a nodal vector field such as magnetization.
+///
+/// The current MVP reduces the vector field to a scalar H1-like indicator by
+/// summing the per-component residual estimators for `mx`, `my`, and `mz`.
+/// This gives us a stable refinement signal for:
+/// - sharp magnetization gradients,
+/// - vortex / wall cores,
+/// - regions where continuation after remesh benefits from local refinement.
+pub fn afem_step_vector_field(
+    topo: &MeshTopology,
+    vector_solution: &[[f64; 3]],
+    config: &AfemConfig,
+    history: &mut AfemHistory,
+) -> Result<AfemStepResult> {
+    if vector_solution.len() != topo.n_nodes {
+        return Err(crate::EngineError::new(format!(
+            "vector_solution length {} ≠ node count {}",
+            vector_solution.len(),
+            topo.n_nodes
+        )));
+    }
+
+    let iteration = history.eta_history.len() as u32;
+    let faces = FaceTopology::build(
+        &topo.elements,
+        &topo.coords,
+        &topo.boundary_faces,
+        &topo.element_markers,
+    );
+
+    let n_el = topo.n_elements;
+    let nu = vec![1.0; n_el];
+    let source = vec![0.0; n_el];
+    let mut eta_vol_sq = vec![0.0; n_el];
+    let mut eta_jump_sq = vec![0.0; n_el];
+
+    for component in 0..3 {
+        let scalar_solution: Vec<f64> = vector_solution
+            .iter()
+            .map(|value| value[component])
+            .collect();
+        let component_indicators = compute_h1_error_indicators(&H1EstimatorParams {
+            topology: topo,
+            faces: &faces,
+            solution: &scalar_solution,
+            nu: &nu,
+            source: &source,
+        })?;
+        for element in 0..n_el {
+            eta_vol_sq[element] += component_indicators.eta_vol_sq[element];
+            eta_jump_sq[element] += component_indicators.eta_jump_sq[element];
+        }
+    }
+
+    let mut eta_sq = Vec::with_capacity(n_el);
+    let mut eta = Vec::with_capacity(n_el);
+    let mut sum_sq = 0.0;
+    for element in 0..n_el {
+        let total = eta_vol_sq[element] + eta_jump_sq[element];
+        eta_sq.push(total);
+        eta.push(total.sqrt());
+        sum_sq += total;
+    }
+    let indicators = ErrorIndicators {
+        eta_vol_sq,
+        eta_jump_sq,
+        eta_sq,
+        eta,
+        eta_global: sum_sq.sqrt(),
+    };
+
+    let stop_reason = history.record_and_check(indicators.eta_global, topo.n_elements, config);
+    if stop_reason != StopReason::Continue {
+        return Ok(AfemStepResult {
+            indicators,
+            marking: MarkingResult {
+                marked: vec![false; n_el],
+                n_marked: 0,
+                fraction_marked: 0.0,
+                captured_error_fraction: 0.0,
+            },
+            size_field: SizeField {
+                h_target: vec![config.h_max; n_el],
+                h_current: topo
+                    .elements
+                    .iter()
+                    .map(|e| crate::fem_face_topology::tet_diameter(&topo.coords, e))
+                    .collect(),
+                ratio: vec![1.0; n_el],
+                gradation_iterations: 0,
+            },
+            nodal_h: vec![config.h_max; topo.n_nodes],
+            stop_reason,
+            iteration,
+        });
+    }
+
+    let marking = doerfler_marking(&indicators, config.theta, config.max_mark_fraction)?;
+    let sf_config = SizeFieldConfig {
+        tolerance: config.tolerance,
+        alpha: config.alpha,
+        h_min: config.h_min,
+        h_max: config.h_max,
+        grad_limit: config.grad_limit,
+    };
+    let size_field = compute_continuous_size_field(topo, &indicators, &faces, &sf_config)?;
+    let nodal_h = element_to_nodal_size_field(topo, &size_field.h_target)?;
+
+    Ok(AfemStepResult {
+        indicators,
+        marking,
+        size_field,
+        nodal_h,
+        stop_reason,
+        iteration,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -518,5 +636,32 @@ mod tests {
                 config.h_max,
             );
         }
+    }
+
+    #[test]
+    fn vector_field_step_detects_gradient_and_builds_target_h() {
+        let (topo, _, _, _) = two_tet_mesh();
+        let config = AfemConfig {
+            tolerance: 1e-9,
+            h_min: 0.05,
+            h_max: 1.5,
+            ..Default::default()
+        };
+        let mut history = AfemHistory::new();
+        let vector_solution = vec![
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+        ];
+
+        let result = afem_step_vector_field(&topo, &vector_solution, &config, &mut history)
+            .expect("vector AFEM step");
+
+        assert_eq!(result.stop_reason, StopReason::Continue);
+        assert!(result.indicators.eta_global > 0.0);
+        assert!(result.marking.n_marked > 0);
+        assert_eq!(result.nodal_h.len(), topo.n_nodes);
     }
 }

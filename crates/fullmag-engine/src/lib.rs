@@ -7,6 +7,7 @@ pub mod fem_goal_estimator;
 pub mod fem_hcurl_estimator;
 pub mod fem_size_field;
 pub mod fem_solution_transfer;
+pub mod magnetoelastic;
 pub mod multilayer;
 pub mod newell;
 pub mod studies;
@@ -268,11 +269,20 @@ impl LlgConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EffectiveFieldTerms {
     pub exchange: bool,
     pub demag: bool,
     pub external_field: Option<Vector3>,
+    /// Optional magnetoelastic prescribed-strain configuration.
+    pub magnetoelastic: Option<MagnetoelasticTermConfig>,
+}
+
+/// Configuration for the magnetoelastic effective field term.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MagnetoelasticTermConfig {
+    pub params: magnetoelastic::MagnetoelasticParams,
+    pub strain: magnetoelastic::PrescribedStrainField,
 }
 
 impl Default for EffectiveFieldTerms {
@@ -281,6 +291,7 @@ impl Default for EffectiveFieldTerms {
             exchange: true,
             demag: true,
             external_field: None,
+            magnetoelastic: None,
         }
     }
 }
@@ -2189,7 +2200,9 @@ impl ExchangeLlgProblem {
             zero_vectors(self.grid.cell_count())
         };
         let external_field = self.external_field_vectors();
-        let effective_field = combine_fields(&exchange_field, &demag_field, &external_field);
+        let mel_field = self.magnetoelastic_field(magnetization);
+        let effective_field =
+            combine_fields_4(&exchange_field, &demag_field, &external_field, &mel_field);
         let rhs = {
             let compute = |i: usize| self.llg_rhs_from_field(magnetization[i], effective_field[i]);
             #[cfg(feature = "parallel")]
@@ -2220,8 +2233,11 @@ impl ExchangeLlgProblem {
         } else {
             0.0
         };
-        let total_energy_joules =
-            exchange_energy_joules + demag_energy_joules + external_energy_joules;
+        let mel_energy_joules = self.magnetoelastic_energy(magnetization);
+        let total_energy_joules = exchange_energy_joules
+            + demag_energy_joules
+            + external_energy_joules
+            + mel_energy_joules;
 
         let max_effective_field_amplitude = max_norm(&effective_field);
         let max_demag_field_amplitude = max_norm(&demag_field);
@@ -2418,6 +2434,38 @@ impl ExchangeLlgProblem {
             .collect()
     }
 
+    /// Compute the magnetoelastic effective field [A/m] from prescribed strain.
+    /// Returns zero vectors if no magnetoelastic term is configured.
+    fn magnetoelastic_field(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
+        match &self.terms.magnetoelastic {
+            Some(config) => magnetoelastic::h_mel_field(
+                magnetization,
+                &config.strain,
+                &config.params,
+                self.active_mask.as_deref(),
+            ),
+            None => zero_vectors(self.grid.cell_count()),
+        }
+    }
+
+    /// Compute the total magnetoelastic energy [J] from prescribed strain.
+    /// Returns 0.0 if no magnetoelastic term is configured.
+    fn magnetoelastic_energy(&self, magnetization: &[Vector3]) -> f64 {
+        match &self.terms.magnetoelastic {
+            Some(config) => {
+                let cell_volume = self.cell_size.dx * self.cell_size.dy * self.cell_size.dz;
+                magnetoelastic::e_mel_total(
+                    magnetization,
+                    &config.strain,
+                    &config.params,
+                    cell_volume,
+                    self.active_mask.as_deref(),
+                )
+            }
+            None => 0.0,
+        }
+    }
+
     /// Compute effective field using a disposable FFT workspace.
     ///
     /// **Performance warning**: rebuilds the FFT workspace on every call.
@@ -2447,7 +2495,9 @@ impl ExchangeLlgProblem {
             zero_vectors(self.grid.cell_count())
         };
         let external_field = self.external_field_vectors();
-        let mut h_eff = combine_fields(&exchange_field, &demag_field, &external_field);
+        let mel_field = self.magnetoelastic_field(magnetization);
+        let mut h_eff =
+            combine_fields_4(&exchange_field, &demag_field, &external_field, &mel_field);
 
         // Add Brown thermal field if temperature > 0
         if self.temperature > 0.0
@@ -2606,7 +2656,9 @@ impl ExchangeLlgProblem {
             zero_vectors(self.grid.cell_count())
         };
         let external_field = self.external_field_vectors();
-        let effective_field = combine_fields(&exchange_field, &demag_field, &external_field);
+        let mel_field = self.magnetoelastic_field(magnetization);
+        let effective_field =
+            combine_fields_4(&exchange_field, &demag_field, &external_field, &mel_field);
 
         let rhs: Vec<Vector3> = magnetization
             .iter()
@@ -2629,6 +2681,7 @@ impl ExchangeLlgProblem {
         } else {
             0.0
         };
+        let mel_energy_joules = self.magnetoelastic_energy(magnetization);
 
         let eval = RhsEvaluation {
             exchange_energy_joules,
@@ -2636,7 +2689,8 @@ impl ExchangeLlgProblem {
             external_energy_joules,
             total_energy_joules: exchange_energy_joules
                 + demag_energy_joules
-                + external_energy_joules,
+                + external_energy_joules
+                + mel_energy_joules,
             max_effective_field_amplitude: max_norm(&effective_field),
             max_demag_field_amplitude: max_norm(&demag_field),
             max_rhs_amplitude: max_norm(&rhs),
@@ -2794,6 +2848,7 @@ pub fn run_reference_exchange_demo(steps: usize, dt: f64) -> Result<ReferenceDem
             exchange: true,
             demag: false,
             external_field: None,
+            magnetoelastic: None,
         },
     );
     let mut state = problem.new_state(vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]])?;
@@ -2932,6 +2987,38 @@ fn combine_fields(
     }
 }
 
+/// Combine 4 field contributions into H_eff.
+fn combine_fields_4(
+    exchange_field: &[Vector3],
+    demag_field: &[Vector3],
+    external_field: &[Vector3],
+    mel_field: &[Vector3],
+) -> Vec<Vector3> {
+    #[cfg(feature = "parallel")]
+    {
+        (0..exchange_field.len())
+            .into_par_iter()
+            .map(|i| {
+                add(
+                    add(add(exchange_field[i], demag_field[i]), external_field[i]),
+                    mel_field[i],
+                )
+            })
+            .collect()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        (0..exchange_field.len())
+            .map(|i| {
+                add(
+                    add(add(exchange_field[i], demag_field[i]), external_field[i]),
+                    mel_field[i],
+                )
+            })
+            .collect()
+    }
+}
+
 // Vector math utilities — re-exported from vector module
 pub use vector::{add, cross, dot, max_norm, norm, normalized, scale, squared_norm, sub};
 
@@ -2950,6 +3037,7 @@ mod tests {
                 exchange: true,
                 demag: false,
                 external_field: None,
+                magnetoelastic: None,
             },
         )
     }
@@ -2965,6 +3053,7 @@ mod tests {
                 exchange: false,
                 demag: false,
                 external_field: Some(field),
+                magnetoelastic: None,
             },
         )
     }
@@ -2988,6 +3077,7 @@ mod tests {
                 exchange: false,
                 demag: true,
                 external_field: None,
+                magnetoelastic: None,
             },
         )
     }
@@ -3003,6 +3093,7 @@ mod tests {
                 exchange: true,
                 demag: false,
                 external_field: None,
+                magnetoelastic: None,
             },
             Some(mask),
         )
@@ -3020,6 +3111,7 @@ mod tests {
                 exchange: false,
                 demag: true,
                 external_field: Some([0.0, 0.0, 1.0]),
+                magnetoelastic: None,
             },
             Some(mask),
         )
@@ -3264,6 +3356,7 @@ mod tests {
                 exchange: true,
                 demag: true,
                 external_field: None,
+                magnetoelastic: None,
             },
         );
 

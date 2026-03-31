@@ -130,6 +130,7 @@ pub(crate) fn build_snapshot_problem_and_state(
             exchange: plan.enable_exchange,
             demag: plan.enable_demag,
             external_field: plan.external_field,
+            magnetoelastic: None,
         },
         plan.active_mask.clone(),
     )
@@ -232,6 +233,7 @@ pub(crate) fn execute_reference_fdm(
             exchange: plan.enable_exchange,
             demag: plan.enable_demag,
             external_field: plan.external_field,
+            magnetoelastic: None,
         },
         plan.active_mask.clone(),
     )

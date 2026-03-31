@@ -29,7 +29,8 @@ mod types;
 
 // Public re-exports (unchanged API surface).
 pub use interactive::backend::BackendGeometry;
-pub use interactive::commands::LiveControlCommand;
+pub use interactive::checkpoints::RunOutcome;
+pub use interactive::commands::{parse_session_command, LiveControlCommand, RuntimeControlOutcome};
 pub use interactive::display::{
     DisplayKind, DisplayPayload, DisplaySelection, DisplaySelectionState,
 };

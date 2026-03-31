@@ -17,7 +17,7 @@ from fullmag.meshing.voxelization import VoxelMaskData
 from fullmag.runtime import cli as runtime_cli
 from fullmag.runtime import helper as runtime_helper
 from fullmag.runtime.loader import load_problem_from_script
-from fullmag.runtime.script_builder import rewrite_loaded_problem_script
+from fullmag.runtime.script_builder import export_builder_draft, rewrite_loaded_problem_script
 from fullmag.meshing.gmsh_bridge import MeshData
 
 
@@ -438,6 +438,15 @@ class ProblemApiTests(unittest.TestCase):
             [1.0, 2.0, 0.5],
         )
 
+    def test_imported_geometry_supports_surface_volume_in_ir(self) -> None:
+        geometry = fm.ImportedGeometry(
+            source="examples/nanoflower.stl",
+            name="flower",
+            volume="surface",
+        )
+
+        self.assertEqual(geometry.to_ir()["volume"], "surface")
+
     def test_imported_geometry_units_are_converted_to_scale(self) -> None:
         geometry = fm.ImportedGeometry(
             source="examples/nanoflower.stl",
@@ -499,6 +508,43 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(len(assets), 1)
         self.assertEqual(assets[0]["geometry_name"], "box")
         self.assertEqual(assets[0]["mesh"]["mesh_name"], "box")
+
+    def test_surface_only_imported_geometry_is_rejected_for_executable_fem_assets(self) -> None:
+        geometry = fm.ImportedGeometry(
+            source="examples/nanoflower.stl",
+            name="flower",
+            volume="surface",
+        )
+        material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
+        magnet = fm.Ferromagnet(name="flower", geometry=geometry, material=material)
+        problem = fm.Problem(
+            name="surface_only_mesh_problem",
+            magnets=[magnet],
+            energy=[fm.Exchange()],
+            study=fm.TimeEvolution(
+                dynamics=fm.LLG(),
+                outputs=[fm.SaveField("m", every=1e-12)],
+            ),
+            discretization=fm.DiscretizationHints(fem=fm.FEM(order=1, hmax=2e-9)),
+        )
+
+        surface_mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                ]
+            ),
+            elements=np.zeros((0, 4), dtype=np.int32),
+            element_markers=np.zeros((0,), dtype=np.int32),
+            boundary_faces=np.asarray([[0, 1, 2]], dtype=np.int32),
+            boundary_markers=np.asarray([1], dtype=np.int32),
+        )
+
+        with patch("fullmag.meshing.realize_fem_mesh_asset", return_value=surface_mesh):
+            with self.assertRaisesRegex(ValueError, "volume='surface'"):
+                problem.to_ir(requested_backend=fm.BackendTarget.FEM)
 
     def test_fem_backend_derives_mesh_hints_from_fdm_cell_when_missing(self) -> None:
         geometry = fm.Box(size=(40e-9, 20e-9, 10e-9), name="box")
@@ -618,7 +664,7 @@ class ProblemApiTests(unittest.TestCase):
             return fm.Problem(
                 name="flower_problem",
                 magnets=[magnet],
-                energy=[fm.Exchange()],
+                energy=[fm.Exchange(), fm.Demag()],
                 study=fm.TimeEvolution(
                     dynamics=fm.LLG(),
                     outputs=[fm.SaveField("m", every=1e-12)],
@@ -659,6 +705,105 @@ class ProblemApiTests(unittest.TestCase):
             ir["geometry_assets"]["fdm_grid_assets"][0]["geometry_name"],
             "flower",
         )
+
+    def test_script_rewrite_preserves_imported_geometry_surface_volume(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fdm")
+        fm.cell(5e-9, 5e-9, 5e-9)
+        flower = fm.geometry(
+            fm.ImportedGeometry(source="flower.stl", name="flower", volume="surface"),
+            name="flower",
+        )
+        flower.Ms = 800e3
+        flower.Aex = 13e-12
+        flower.alpha = 0.01
+        fm.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_surface_imported_geometry.py"
+            stl = Path(tmp_dir) / "flower.stl"
+            stl.write_text("solid flower\nendsolid flower\n", encoding="utf-8")
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+
+            rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+
+        self.assertIn('volume="surface"', rewritten)
+
+    def test_builder_draft_exports_flat_stage_sequence(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fdm")
+        fm.cell(5e-9, 5e-9, 5e-9)
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        fm.save("m", every=1e-12)
+        fm.relax(max_steps=25, tol=1e-5, algorithm="llg_overdamped")
+        fm.run(4e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_builder_stage_sequence.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+
+        draft = export_builder_draft(loaded)
+        self.assertEqual(len(draft["stages"]), 2)
+        self.assertEqual(draft["stages"][0]["kind"], "relax")
+        self.assertEqual(draft["stages"][0]["max_steps"], "25")
+        self.assertEqual(draft["stages"][0]["torque_tolerance"], "1e-05")
+        self.assertEqual(draft["stages"][1]["kind"], "run")
+        self.assertEqual(draft["stages"][1]["until_seconds"], "4e-12")
+
+    def test_script_rewrite_applies_stage_overrides(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fdm")
+        fm.cell(5e-9, 5e-9, 5e-9)
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        fm.save("m", every=1e-12)
+        fm.relax(max_steps=25, tol=1e-5, algorithm="llg_overdamped")
+        fm.run(4e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_builder_stage_overrides.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+
+        rewritten = rewrite_loaded_problem_script(
+            loaded,
+            overrides={
+                "stages": [
+                    {
+                        "kind": "relax",
+                        "relax_algorithm": "nonlinear_cg",
+                        "torque_tolerance": 2e-6,
+                        "energy_tolerance": 3e-12,
+                        "max_steps": 250,
+                    },
+                    {
+                        "kind": "run",
+                        "until_seconds": 9e-12,
+                    },
+                ],
+            },
+        )["rendered_source"]
+
+        self.assertIn('fm.relax(tol=2e-06, max_steps=250, algorithm="nonlinear_cg", energy_tolerance=3e-12)', rewritten)
+        self.assertIn("fm.run(9e-12)", rewritten)
 
     def test_flat_run_entrypoint_is_supported(self) -> None:
         script = """
@@ -822,6 +967,66 @@ class ProblemApiTests(unittest.TestCase):
             path.write_text(textwrap.dedent(script), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Per-geometry FEM mesh settings are not yet supported"):
                 fm.load_problem_from_script(path)
+
+    def test_flat_adaptive_mesh_policy_lowers_to_runtime_metadata(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fem")
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        body.mesh(hmax=4e-9, order=1).build()
+        fm.adaptive_mesh(
+            policy="auto",
+            theta=0.25,
+            h_min=2e-9,
+            h_max=8e-9,
+            max_passes=4,
+            error_tolerance=1e-3,
+            chunk_until_seconds=2e-12,
+        )
+        fm.run(2e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_flat_adaptive_mesh_policy.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with patch("fullmag.world.build_geometry_assets_for_request", return_value=None):
+                loaded = fm.load_problem_from_script(path)
+
+        adaptive = loaded.problem.runtime_metadata["adaptive_mesh"]
+        self.assertTrue(adaptive["enabled"])
+        self.assertEqual(adaptive["policy"], "auto")
+        self.assertEqual(adaptive["max_passes"], 4)
+        self.assertEqual(adaptive["theta"], 0.25)
+        self.assertEqual(adaptive["chunk_until_seconds"], 2e-12)
+
+    def test_script_rewrite_preserves_adaptive_mesh_policy(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fem")
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        body.mesh(hmax=4e-9, order=1).build()
+        fm.adaptive_mesh(policy="auto", theta=0.25, max_passes=4, error_tolerance=1e-3)
+        fm.run(2e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_rewrite_adaptive_mesh.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with patch("fullmag.world.build_geometry_assets_for_request", return_value=None):
+                loaded = fm.load_problem_from_script(path)
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn("fm.adaptive_mesh(True, policy=\"auto\", theta=0.25, max_passes=4, error_tolerance=0.001)", rewritten)
 
     def test_flat_solver_accepts_g_factor(self) -> None:
         script = """

@@ -1,0 +1,373 @@
+//! Grid resampling, preview math, and vector field utilities.
+
+use crate::types::*;
+use fullmag_runner::quantities::quantity_spec;
+use fullmag_runner::LivePreviewField;
+use fullmag_runner::quantities::QuantityKind;
+use serde_json::Value;
+
+pub(crate) fn live_step_metric_value(step: &StepUpdateView, metric_key: &str) -> Option<f64> {
+    match metric_key {
+        "e_ex" => Some(step.e_ex),
+        "e_demag" => Some(step.e_demag),
+        "e_ext" => Some(step.e_ext),
+        "e_total" => Some(step.e_total),
+        _ => None,
+    }
+}
+
+pub(crate) fn display_kind_for_quantity(quantity: &str) -> &'static str {
+    quantity_spec(quantity)
+        .map(|spec| spec.kind.as_api_kind())
+        .unwrap_or(QuantityKind::VectorField.as_api_kind())
+}
+
+pub(crate) fn normalize_preview_component(component: &str) -> &str {
+    match component {
+        "x" | "y" | "z" => component,
+        _ => "3D",
+    }
+}
+
+pub(crate) fn quantity_unit(quantity: &str) -> &'static str {
+    fullmag_runner::quantities::quantity_unit(quantity)
+}
+
+pub(crate) fn current_vector_field(
+    current: &SessionStateResponse,
+    quantity: &str,
+) -> Option<(Vec<[f64; 3]>, [usize; 3])> {
+    if quantity == "m" {
+        if let Some(live) = current.live_state.as_ref() {
+            if let Some(values) = live.latest_step.magnetization.as_ref() {
+                let vectors = values
+                    .chunks_exact(3)
+                    .map(|chunk| [chunk[0], chunk[1], chunk[2]])
+                    .collect::<Vec<_>>();
+                let grid = [
+                    live.latest_step.grid[0] as usize,
+                    live.latest_step.grid[1] as usize,
+                    live.latest_step.grid[2] as usize,
+                ];
+                return Some((vectors, grid));
+            }
+        }
+    }
+    parse_field_value(current.latest_fields.get(quantity)?)
+}
+
+pub(crate) fn cached_preview_field_owned(
+    current: &SessionStateResponse,
+    quantity: &str,
+) -> Option<LivePreviewField> {
+    current.preview_cache.get(quantity).cloned()
+}
+
+pub(crate) fn cached_preview_update_matches_selection(
+    fields: &[LivePreviewField],
+    display_selection: &CurrentDisplaySelection,
+) -> bool {
+    if matches!(
+        display_selection.selection.kind,
+        fullmag_runner::DisplayKind::GlobalScalar
+    ) {
+        return false;
+    }
+    fields
+        .iter()
+        .any(|field| field.quantity == display_selection.selection.quantity)
+}
+
+pub(crate) fn parse_field_value(raw: &Value) -> Option<(Vec<[f64; 3]>, [usize; 3])> {
+    let grid = raw
+        .get("layout")?
+        .get("grid_cells")?
+        .as_array()
+        .and_then(|grid| {
+            if grid.len() == 3 {
+                Some([
+                    grid[0].as_u64()? as usize,
+                    grid[1].as_u64()? as usize,
+                    grid[2].as_u64()? as usize,
+                ])
+            } else {
+                None
+            }
+        })?;
+    let values = raw.get("values")?.as_array()?;
+    let vectors = values
+        .iter()
+        .filter_map(|value| {
+            let vector = value.as_array()?;
+            if vector.len() < 3 {
+                return None;
+            }
+            Some([
+                vector[0].as_f64()?,
+                vector[1].as_f64()?,
+                vector[2].as_f64()?,
+            ])
+        })
+        .collect::<Vec<_>>();
+    Some((vectors, grid))
+}
+
+pub(crate) fn flatten_vectors(values: &[[f64; 3]]) -> Vec<f64> {
+    values
+        .iter()
+        .flat_map(|vector| [vector[0], vector[1], vector[2]])
+        .collect()
+}
+
+pub(crate) fn component_min_max(values: &[[f64; 3]], component: &str) -> (f64, f64) {
+    if values.is_empty() {
+        return (0.0, 0.0);
+    }
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    for [x, y, z] in values.iter().copied() {
+        let value = match component {
+            "x" => x,
+            "y" => y,
+            "z" => z,
+            _ => (x * x + y * y + z * z).sqrt(),
+        };
+        min = min.min(value);
+        max = max.max(value);
+    }
+    (min, max)
+}
+
+pub(crate) fn scalar_min_max(values: &[[f64; 3]]) -> (f64, f64) {
+    if values.is_empty() {
+        return (0.0, 0.0);
+    }
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    for point in values {
+        min = min.min(point[2]);
+        max = max.max(point[2]);
+    }
+    (min, max)
+}
+
+pub(crate) fn candidate_preview_sizes(full: usize) -> Vec<usize> {
+    let mut sizes = vec![full.max(1)];
+    let mut current = full.max(1);
+    while current > 1 {
+        current = current.div_ceil(2);
+        if sizes.last().copied() != Some(current) {
+            sizes.push(current);
+        }
+    }
+    sizes
+}
+
+pub(crate) fn fit_preview_grid_3d(
+    requested_x: usize,
+    requested_y: usize,
+    full_z: usize,
+    max_points: usize,
+) -> (usize, usize, usize, bool) {
+    if max_points == 0 {
+        return (requested_x.max(1), requested_y.max(1), 1, false);
+    }
+    let requested_x = requested_x.max(1);
+    let requested_y = requested_y.max(1);
+    let full_z = full_z.max(1);
+    let total = requested_x
+        .saturating_mul(requested_y)
+        .saturating_mul(full_z);
+    if total <= max_points {
+        return (requested_x, requested_y, 1, false);
+    }
+
+    let scale = (max_points as f64 / total as f64).cbrt().clamp(0.0, 1.0);
+    let mut applied_x = ((requested_x as f64 * scale).round() as usize).clamp(1, requested_x);
+    let mut applied_y = ((requested_y as f64 * scale).round() as usize).clamp(1, requested_y);
+    let target_z = ((full_z as f64 * scale).round() as usize).clamp(1, full_z);
+    let mut stride = full_z.div_ceil(target_z).max(1);
+    let mut preview_z = full_z.div_ceil(stride).max(1);
+
+    while applied_x
+        .saturating_mul(applied_y)
+        .saturating_mul(preview_z)
+        > max_points
+    {
+        let ratio_x = applied_x as f64 / requested_x as f64;
+        let ratio_y = applied_y as f64 / requested_y as f64;
+        let ratio_z = preview_z as f64 / full_z as f64;
+        if ratio_x >= ratio_y && ratio_x >= ratio_z && applied_x > 1 {
+            applied_x -= 1;
+        } else if ratio_y >= ratio_z && applied_y > 1 {
+            applied_y -= 1;
+        } else {
+            stride += 1;
+            preview_z = full_z.div_ceil(stride).max(1);
+        }
+    }
+
+    (applied_x, applied_y, stride, true)
+}
+
+pub(crate) fn fit_preview_grid_2d(
+    requested_x: usize,
+    requested_y: usize,
+    effective_layers: usize,
+    max_points: usize,
+) -> (usize, usize, bool) {
+    if max_points == 0 {
+        return (requested_x.max(1), requested_y.max(1), false);
+    }
+    let requested_x = requested_x.max(1);
+    let requested_y = requested_y.max(1);
+    let effective_layers = effective_layers.max(1);
+    let total = requested_x
+        .saturating_mul(requested_y)
+        .saturating_mul(effective_layers);
+    if total <= max_points {
+        return (requested_x, requested_y, false);
+    }
+
+    let scale = (max_points as f64 / total as f64).sqrt().clamp(0.0, 1.0);
+    let mut applied_x = ((requested_x as f64 * scale).round() as usize).clamp(1, requested_x);
+    let mut applied_y = ((requested_y as f64 * scale).round() as usize).clamp(1, requested_y);
+
+    while applied_x
+        .saturating_mul(applied_y)
+        .saturating_mul(effective_layers)
+        > max_points
+    {
+        let ratio_x = applied_x as f64 / requested_x as f64;
+        let ratio_y = applied_y as f64 / requested_y as f64;
+        if ratio_x >= ratio_y && applied_x > 1 {
+            applied_x -= 1;
+        } else if applied_y > 1 {
+            applied_y -= 1;
+        } else {
+            break;
+        }
+    }
+
+    (applied_x, applied_y, true)
+}
+
+pub(crate) fn choose_preview_size(requested: usize, possible: &[usize], full: usize) -> usize {
+    if requested == 0 {
+        return full.max(1);
+    }
+    possible
+        .iter()
+        .copied()
+        .find(|size| *size <= requested)
+        .unwrap_or(1)
+}
+
+pub(crate) fn resample_grid_vectors_3d(
+    values: &[[f64; 3]],
+    full: [usize; 3],
+    preview: [usize; 3],
+    z_stride: usize,
+) -> Vec<[f64; 3]> {
+    let [full_x, full_y, full_z] = full;
+    let [preview_x, preview_y, preview_z] = preview;
+    let mut out = Vec::with_capacity(preview_x * preview_y * preview_z);
+    for pz in 0..preview_z {
+        let z_start = (pz * z_stride).min(full_z.saturating_sub(1));
+        let z_end = ((pz + 1) * z_stride).min(full_z);
+        for py in 0..preview_y {
+            let y_start = py * full_y / preview_y;
+            let y_end = ((py + 1) * full_y / preview_y).max(y_start + 1).min(full_y);
+            for px in 0..preview_x {
+                let x_start = px * full_x / preview_x;
+                let x_end = ((px + 1) * full_x / preview_x).max(x_start + 1).min(full_x);
+                let mut accum = [0.0, 0.0, 0.0];
+                let mut count = 0.0;
+                for z in z_start..z_end {
+                    for y in y_start..y_end {
+                        for x in x_start..x_end {
+                            let vector = values[(z * full_y + y) * full_x + x];
+                            accum[0] += vector[0];
+                            accum[1] += vector[1];
+                            accum[2] += vector[2];
+                            count += 1.0;
+                        }
+                    }
+                }
+                out.push([accum[0] / count, accum[1] / count, accum[2] / count]);
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn resample_grid_scalar_2d(
+    values: &[[f64; 3]],
+    full: [usize; 3],
+    preview: [usize; 2],
+    component: &str,
+    layer: usize,
+    all_layers: bool,
+) -> Vec<[f64; 3]> {
+    let [full_x, full_y, full_z] = full;
+    let [preview_x, preview_y] = preview;
+    let z_start = if all_layers {
+        0
+    } else {
+        layer.min(full_z.saturating_sub(1))
+    };
+    let z_end = if all_layers { full_z } else { z_start + 1 };
+    let component_index = match component {
+        "x" => 0,
+        "y" => 1,
+        "z" => 2,
+        _ => 2,
+    };
+    let mut out = Vec::with_capacity(preview_x * preview_y);
+    for py in 0..preview_y {
+        let y_start = py * full_y / preview_y;
+        let y_end = ((py + 1) * full_y / preview_y).max(y_start + 1).min(full_y);
+        for px in 0..preview_x {
+            let x_start = px * full_x / preview_x;
+            let x_end = ((px + 1) * full_x / preview_x).max(x_start + 1).min(full_x);
+            let mut accum = 0.0;
+            let mut count = 0.0;
+            for z in z_start..z_end {
+                for y in y_start..y_end {
+                    for x in x_start..x_end {
+                        accum += values[(z * full_y + y) * full_x + x][component_index];
+                        count += 1.0;
+                    }
+                }
+            }
+            out.push([px as f64, py as f64, accum / count]);
+        }
+    }
+    out
+}
+
+pub(crate) fn sampled_grid_scalar_2d(
+    values: &[[f64; 3]],
+    preview_grid: [usize; 3],
+    component: &str,
+) -> Vec<[f64; 3]> {
+    let component_index = match component {
+        "x" => 0,
+        "y" => 1,
+        "z" => 2,
+        _ => 2,
+    };
+    let mut out = Vec::with_capacity(preview_grid[0] * preview_grid[1]);
+    for py in 0..preview_grid[1] {
+        for px in 0..preview_grid[0] {
+            let index = py * preview_grid[0] + px;
+            let value = values
+                .get(index)
+                .map(|vector| vector[component_index])
+                .unwrap_or(0.0);
+            out.push([px as f64, py as f64, value]);
+        }
+    }
+    out
+}
+

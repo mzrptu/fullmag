@@ -17,6 +17,7 @@ import { computeFaceAspectRatios } from "./r3f/colorUtils";
 
 export interface FemMeshData {
   nodes: number[];
+  elements: number[];
   boundaryFaces: number[];
   nNodes: number;
   nElements: number;
@@ -47,12 +48,14 @@ interface Props {
   showArrows?: boolean;
   showOrientationLegend?: boolean;
   qualityPerFace?: number[] | null;
+  shrinkFactor?: number;
   onRenderModeChange?: (value: RenderMode) => void;
   onOpacityChange?: (value: number) => void;
   onClipEnabledChange?: (value: boolean) => void;
   onClipAxisChange?: (value: ClipAxis) => void;
   onClipPosChange?: (value: number) => void;
   onShowArrowsChange?: (value: boolean) => void;
+  onShrinkFactorChange?: (value: number) => void;
   onSelectionChange?: (selection: MeshSelectionSnapshot) => void;
 }
 
@@ -134,12 +137,14 @@ function FemMeshView3DInner({
   showOrientationLegend = false,
   qualityPerFace,
   topologyKey,
+  shrinkFactor: controlledShrinkFactor,
   onRenderModeChange,
   onOpacityChange,
   onClipEnabledChange,
   onClipAxisChange,
   onClipPosChange,
   onShowArrowsChange,
+  onShrinkFactorChange,
   onSelectionChange,
 }: Props) {
   const [internalRenderMode, setInternalRenderMode] = useState<RenderMode>("surface");
@@ -151,6 +156,7 @@ function FemMeshView3DInner({
   const [showClipDrop, setShowClipDrop] = useState(false);
   const [internalShowArrows, setInternalShowArrows] = useState(false);
   const [arrowDensity, setArrowDensity] = useState(1200);
+  const [internalShrinkFactor, setInternalShrinkFactor] = useState(1);
   
   const [hoveredFace, setHoveredFace] = useState<{ idx: number; x: number; y: number } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; faceIdx: number } | null>(null);
@@ -173,6 +179,7 @@ function FemMeshView3DInner({
   const clipAxis = controlledClipAxis ?? internalClipAxis;
   const clipPos = controlledClipPos ?? internalClipPos;
   const showArrows = controlledShowArrows ?? internalShowArrows;
+  const shrinkFactor = controlledShrinkFactor ?? internalShrinkFactor;
 
   useEffect(() => { setField(colorField); }, [colorField]);
   useEffect(() => {
@@ -296,6 +303,7 @@ function FemMeshView3DInner({
         
         <FemGeometry
           meshData={meshData} field={field} renderMode={renderMode} opacity={opacity} qualityPerFace={qualityPerFace}
+          shrinkFactor={shrinkFactor} clipEnabled={clipEnabled} clipAxis={clipAxis} clipPos={clipPos}
           onGeometryCenter={handleGeometryCenter}
           onFaceClick={handleFaceClick} onFaceHover={handleFaceHover} onFaceUnhover={handleFaceUnhover} onFaceContextMenu={handleFaceContextMenu}
         />
@@ -346,6 +354,13 @@ function FemMeshView3DInner({
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-1 select-none">Opac</span>
             <input type="range" className="w-[50px] h-[3px] accent-primary" min={10} max={100} value={opacity} onChange={(e) => { const v = Number(e.target.value); onOpacityChange ? onOpacityChange(v) : setInternalOpacity(v); }} />
           </div>
+          {/* Shrink */}
+          {meshData.elements.length >= 4 && (
+            <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-1 select-none" title="Shrink Elements">Shrink</span>
+              <input type="range" className="w-[50px] h-[3px] accent-primary" min={10} max={100} value={Math.round(shrinkFactor * 100)} onChange={(e) => { const v = Number(e.target.value) / 100; onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v); }} />
+            </div>
+          )}
           {/* Arrows */}
           <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
             <button className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={showArrows} onClick={() => { const v = !showArrows; onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v); }}>↗ Arrows</button>

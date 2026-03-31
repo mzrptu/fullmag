@@ -61,6 +61,10 @@ pub(crate) struct RunManifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct LiveStateManifest {
     pub status: String,
+    /// Typed runtime status enum — canonical source of truth for state machine.
+    /// Published alongside the string `status` for backward compatibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_status: Option<fullmag_runner::RuntimeStatus>,
     pub updated_at_unix_ms: u128,
     pub latest_step: LiveStepView,
 }
@@ -200,6 +204,11 @@ pub(crate) struct CurrentLivePublishPayload {
     pub preview_fields: Option<Vec<fullmag_runner::LivePreviewField>>,
     pub clear_preview_cache: bool,
     pub engine_log: Option<Vec<EngineLogEntry>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_workspace: Option<serde_json::Value>,
+    /// Typed runtime status for the frontend typed protocol.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_status: Option<fullmag_runner::RuntimeStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -269,6 +278,8 @@ pub(crate) struct CurrentLivePublishRequest<'a> {
     pub clear_preview_cache: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engine_log: Option<&'a [EngineLogEntry]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_workspace: Option<&'a serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]

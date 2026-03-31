@@ -215,10 +215,12 @@ Aim for:
 - `crates/fullmag-runner` — reference runner: executes planned simulations via native backends.
 - `crates/fullmag-engine` — reference CPU solver for trusted baseline behavior.
 - `crates/fullmag-cli` — CLI for IR validation, planning, script execution, and session launching.
-- `crates/fullmag-api` — control-plane HTTP API.
+- `crates/fullmag-api` — control-plane HTTP API and singleton current-live workspace bridge.
 - `crates/fullmag-py-core` — private PyO3 bridge for Python/Rust integration.
 - `apps/web` — Next.js control room for scripts, sessions, runs, artifacts, and future script-export
-  authoring flows. Uses **Tailwind CSS v4** for styling and **shadcn/ui** for UI primitives.
+  authoring flows. The current local live UI consumes the singleton current-live workspace at `/`
+  with `session_state` as the canonical stream message and binary WebSocket payloads for heavy
+  preview vectors. Uses **Tailwind CSS v4** for styling and **shadcn/ui** for UI primitives.
 - `native/` — native backends and C ABI.
 - `docs/specs` — canonical architecture, runtime, and packaging specs.
 - `docs/plans` — active and archived implementation plans.

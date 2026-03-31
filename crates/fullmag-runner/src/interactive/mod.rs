@@ -7,6 +7,8 @@
 //! - [`LiveControlCommand`] — typed control commands replacing string-based `kind`
 
 pub mod backend;
+pub mod cache;
+pub mod checkpoints;
 pub mod commands;
 pub mod display;
 pub mod events;
@@ -14,7 +16,9 @@ pub mod runtime;
 
 pub use backend::BackendGeometry;
 pub(crate) use backend::InteractiveBackend;
-pub use commands::LiveControlCommand;
+pub(crate) use checkpoints::CheckpointContext;
+pub use checkpoints::RunOutcome;
+pub use commands::{parse_session_command, LiveControlCommand, RuntimeControlOutcome};
 pub use display::{DisplayKind, DisplayPayload, DisplaySelection, DisplaySelectionState};
 pub use events::{
     CommandAckEvent, CommandCompletedEvent, CommandRejectedEvent, DisplayUpdatedEvent,

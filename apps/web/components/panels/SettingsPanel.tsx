@@ -58,7 +58,7 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
           generating={ctx.meshGenerating}
           onGenerate={ctx.handleMeshGenerate}
           nodeCount={ctx.effectiveFemMesh?.nodes.length}
-          disabled={ctx.meshGenerating || !ctx.awaitingCommand}
+          disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
           waitMode={ctx.isWaitingForCompute}
         />
       );

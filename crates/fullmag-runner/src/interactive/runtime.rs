@@ -9,6 +9,7 @@ use crate::types::{
 use fullmag_ir::ProblemIR;
 
 use super::backend::{BackendGeometry, InteractiveBackend};
+use super::cache::DisplayCache;
 use super::display::{DisplayKind, DisplayPayload, DisplaySelection, DisplaySelectionState};
 
 /// Unified interactive runtime facade.
@@ -21,6 +22,7 @@ pub struct InteractiveRuntime {
     state_revision: u64,
     display_revision: u64,
     selected_display: DisplaySelection,
+    display_cache: DisplayCache,
 }
 
 impl InteractiveRuntime {
@@ -31,6 +33,7 @@ impl InteractiveRuntime {
             state_revision: 0,
             display_revision: 0,
             selected_display: DisplaySelection::default(),
+            display_cache: DisplayCache::new(),
         }
     }
 
@@ -39,6 +42,7 @@ impl InteractiveRuntime {
     pub fn upload_magnetization(&mut self, magnetization: &[[f64; 3]]) -> Result<(), RunError> {
         self.backend.upload_magnetization(magnetization)?;
         self.state_revision += 1;
+        self.display_cache.invalidate();
         Ok(())
     }
 
@@ -80,33 +84,52 @@ impl InteractiveRuntime {
     ) -> Result<DisplayPayload, RunError> {
         self.selected_display = selection;
         self.display_revision += 1;
-        self.refresh_display()
+        self.display_cache.invalidate();
+        let payload = self.refresh_display()?;
+        Ok(payload)
     }
 
     /// Refresh the display from the current backend state without changing selection.
     pub fn refresh_display(&mut self) -> Result<DisplayPayload, RunError> {
         let selection = &self.selected_display;
-        match selection.kind {
+        let payload = match selection.kind {
             DisplayKind::VectorField | DisplayKind::SpatialScalar => {
                 let request = selection.to_preview_request(self.display_revision);
                 let field = self.backend.snapshot_preview(&request)?;
-                Ok(DisplayPayload::from_live_preview_field(
-                    selection.kind,
-                    field,
-                ))
+                DisplayPayload::from_live_preview_field(selection.kind, field)
             }
             DisplayKind::GlobalScalar => {
                 let stats = self.backend.snapshot_step_stats()?;
-                DisplayPayload::from_global_scalar(&selection.quantity, &stats).ok_or_else(|| {
-                    RunError {
+                DisplayPayload::from_global_scalar(&selection.quantity, &stats).ok_or_else(
+                    || RunError {
                         message: format!(
                             "global scalar display for '{}' is not available from runtime stats",
                             selection.quantity
                         ),
-                    }
-                })
+                    },
+                )?
             }
+        };
+        self.display_cache.put(
+            self.state_revision,
+            self.selected_display.clone(),
+            payload.clone(),
+        );
+        Ok(payload)
+    }
+
+    /// Return the cached display payload if valid, otherwise snapshot and cache.
+    ///
+    /// This is the preferred method for display reads — it avoids redundant
+    /// backend snapshots when neither the state nor the selection has changed.
+    pub fn cached_display(&mut self) -> Result<DisplayPayload, RunError> {
+        if let Some(cached) = self
+            .display_cache
+            .get(self.state_revision, &self.selected_display)
+        {
+            return Ok(cached.clone());
         }
+        self.refresh_display()
     }
 
     /// Snapshot current scalar diagnostics without advancing the simulation.
@@ -224,6 +247,7 @@ impl InteractiveRuntime {
         });
 
         self.state_revision += 1;
+        self.display_cache.invalidate();
         Ok(executed.result)
     }
 }

@@ -14,12 +14,17 @@ Protocol:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
+import numpy as np
+
 from fullmag.meshing.gmsh_bridge import (
     MeshOptions,
+    SizeFieldData,
     generate_mesh,
+    remesh_with_size_field,
 )
 from fullmag.model.geometry import (
     Box,
@@ -53,9 +58,17 @@ def _geometry_from_ir(entry: dict[str, Any]) -> Any:
         radii = entry["radii"]
         return Ellipse(radii[0], radii[1], entry["height"])
     if kind == "imported_geometry":
+        raw_scale = entry.get("scale", 1.0)
+        # Rust serializes ImportedGeometryScaleIR as {"Uniform": f} or {"Anisotropic": [x,y,z]}
+        if isinstance(raw_scale, dict):
+            if "Uniform" in raw_scale:
+                raw_scale = raw_scale["Uniform"]
+            elif "Anisotropic" in raw_scale:
+                raw_scale = tuple(raw_scale["Anisotropic"])
         return ImportedGeometry(
             source=entry["source"],
-            scale=entry.get("scale", 1.0),
+            scale=raw_scale,
+            volume=entry.get("volume", "full"),
         )
     if kind == "difference":
         return Difference(
@@ -97,27 +110,36 @@ def _mesh_options_from_dict(opts: dict[str, Any]) -> MeshOptions:
     )
 
 
-def main() -> None:
-    raw = sys.stdin.read()
-    config = json.loads(raw)
+def _size_field_from_dict(raw: dict[str, Any]) -> SizeFieldData:
+    node_coords = raw.get("node_coords")
+    h_values = raw.get("h_values")
+    return SizeFieldData(
+        node_coords=np.asarray(node_coords, dtype=np.float64),
+        h_values=np.asarray(h_values, dtype=np.float64),
+    )
 
-    geometry = _geometry_from_ir(config["geometry"])
-    mesh_opts_dict = config.get("mesh_options", {})
-    # hmax can come from mesh_options (GUI override) or top-level config
-    hmax = mesh_opts_dict.get("hmax") or config["hmax"]
-    order = config.get("order", 1)
-    mesh_opts = _mesh_options_from_dict(mesh_opts_dict)
 
-    mesh_data = generate_mesh(geometry, hmax=hmax, order=order, options=mesh_opts)
-
+def _mesh_result_payload(
+    mesh_data: Any,
+    *,
+    mesh_name: str,
+    generation_mode: str,
+    mesh_provenance: dict[str, Any],
+    size_field_stats: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "mesh_name": config.get("mesh_name", "remeshed"),
+        "mesh_name": mesh_name,
         "nodes": mesh_data.nodes.tolist(),
         "elements": mesh_data.elements.tolist(),
         "element_markers": mesh_data.element_markers.tolist(),
         "boundary_faces": mesh_data.boundary_faces.tolist(),
         "boundary_markers": mesh_data.boundary_markers.tolist(),
+        "generation_mode": generation_mode,
+        "mesh_provenance": mesh_provenance,
     }
+
+    if size_field_stats is not None:
+        result["size_field_stats"] = size_field_stats
 
     if mesh_data.quality is not None:
         q = mesh_data.quality
@@ -138,9 +160,90 @@ def main() -> None:
             "avgQuality": q.avg_quality,
         }
 
-    json.dump(result, sys.stdout, separators=(",", ":"))
-    sys.stdout.flush()
+    return result
 
 
-if __name__ == "__main__":
-    main()
+def main() -> None:
+    try:
+        raw = sys.stdin.read()
+        config = json.loads(raw)
+
+        geometry = _geometry_from_ir(config["geometry"])
+        mode = str(config.get("mode", "manual_remesh") or "manual_remesh")
+        mesh_opts_dict = config.get("mesh_options", {})
+        # hmax can come from mesh_options (GUI override) or top-level config
+        hmax = mesh_opts_dict.get("hmax") or config["hmax"]
+        order = config.get("order", 1)
+        mesh_opts = _mesh_options_from_dict(mesh_opts_dict)
+        if mode == "adaptive_size_field":
+            mesh_opts.compute_quality = bool(mesh_opts_dict.get("compute_quality", True))
+            mesh_opts.per_element_quality = bool(mesh_opts_dict.get("per_element_quality", False))
+
+        # Redirect the real stdout fd to /dev/null during mesh generation —
+        # C libraries like MMG3D print progress banners directly to fd 1,
+        # bypassing Python's sys.stdout, which would corrupt the JSON we
+        # send back to the Rust caller.
+        real_stdout_fd = os.dup(1)
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, 1)
+        os.close(devnull_fd)
+        try:
+            if mode == "adaptive_size_field":
+                if not isinstance(config.get("size_field"), dict):
+                    raise ValueError(
+                        "adaptive_size_field mode requires a size_field payload with node_coords and h_values"
+                    )
+                size_field = _size_field_from_dict(config["size_field"])
+                mesh_data = remesh_with_size_field(
+                    geometry,
+                    size_field=size_field,
+                    hmax=hmax,
+                    order=order,
+                    options=mesh_opts,
+                )
+            elif mode == "manual_remesh":
+                mesh_data = generate_mesh(geometry, hmax=hmax, order=order, options=mesh_opts)
+            else:
+                raise ValueError(
+                    f"unsupported remesh_cli mode {mode!r}; expected 'manual_remesh' or 'adaptive_size_field'"
+                )
+        finally:
+            # Flush any C-level buffered output (still aimed at /dev/null)
+            # before restoring the real stdout fd.
+            import ctypes
+            libc = ctypes.CDLL(None)
+            libc.fflush(None)
+            os.dup2(real_stdout_fd, 1)
+            os.close(real_stdout_fd)
+            # Re-attach Python's sys.stdout to the restored fd 1
+            sys.stdout = os.fdopen(1, "w", closefd=False)
+
+        size_field_stats = None
+        if mode == "adaptive_size_field":
+            size_field = _size_field_from_dict(config["size_field"])
+            size_field_stats = {
+                "n_nodes": int(size_field.node_coords.shape[0]),
+                "h_min": float(np.min(size_field.h_values)),
+                "h_max": float(np.max(size_field.h_values)),
+                "h_mean": float(np.mean(size_field.h_values)),
+            }
+
+        result = _mesh_result_payload(
+            mesh_data,
+            mesh_name=config.get("mesh_name", "remeshed"),
+            generation_mode=mode,
+            mesh_provenance={
+                "geometry_kind": config["geometry"].get("kind"),
+                "order": int(order),
+                "hmax": float(hmax),
+                "mesh_options": mesh_opts_dict,
+            },
+            size_field_stats=size_field_stats,
+        )
+
+        json.dump(result, sys.stdout, separators=(",", ":"))
+        sys.stdout.flush()
+    except Exception as exc:
+        import traceback
+        print(json.dumps({"error": str(exc), "traceback": traceback.format_exc()}), file=sys.stderr)
+        sys.exit(1)

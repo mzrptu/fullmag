@@ -990,6 +990,7 @@ impl FemLlgProblem {
                         exchange: false,
                         demag: true,
                         external_field: None,
+                    magnetoelastic: None,
                     },
                     Some(rasterized.active_mask.clone()),
                 )?;
@@ -1655,6 +1656,7 @@ mod tests {
                 exchange: true,
                 demag: false,
                 external_field: None,
+                    magnetoelastic: None,
             },
         )
     }
@@ -1706,6 +1708,7 @@ mod tests {
                 exchange: true,
                 demag,
                 external_field: None,
+                    magnetoelastic: None,
             },
         )
     }
@@ -1757,6 +1760,7 @@ mod tests {
                 exchange: true,
                 demag,
                 external_field: None,
+                    magnetoelastic: None,
             },
             Some([10e-9, 10e-9, 10e-9]),
         )
@@ -1891,6 +1895,7 @@ mod tests {
                 exchange: false,
                 demag: true,
                 external_field: None,
+                    magnetoelastic: None,
             },
         );
         let fdm_state = fdm_problem

@@ -128,6 +128,10 @@ export function mergeSessionState(prev: SessionState | null, next: SessionState)
     merged.runtime_status = prev.runtime_status;
   }
 
+  if (!merged.mesh_workspace && prev.mesh_workspace) {
+    merged.mesh_workspace = prev.mesh_workspace;
+  }
+
   if (
     prev.script_builder &&
     (

@@ -1,7 +1,12 @@
 /* ── ControlRoom pure helper functions ──
  * Stateless functions extracted from ControlRoomContext.tsx to reduce file size. */
 
-import type { DisplaySelection, ScriptBuilderState, SessionManifest } from "../../../lib/useSessionStream";
+import type {
+  DisplaySelection,
+  ScriptBuilderStageState,
+  ScriptBuilderState,
+  SessionManifest,
+} from "../../../lib/useSessionStream";
 import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import { DEFAULT_MESH_OPTIONS } from "../../panels/MeshSettingsPanel";
@@ -108,6 +113,7 @@ export function meshOptionsFromBuilder(
 export function buildScriptBuilderUpdatePayload(
   solverSettings: SolverSettingsState,
   meshOptions: MeshOptionsState,
+  stages: ScriptBuilderStageState[],
 ) {
   return {
     solver: {
@@ -131,6 +137,7 @@ export function buildScriptBuilderUpdatePayload(
       compute_quality: meshOptions.computeQuality,
       per_element_quality: meshOptions.perElementQuality,
     },
+    stages,
   };
 }
 

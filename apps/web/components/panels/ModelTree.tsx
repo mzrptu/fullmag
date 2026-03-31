@@ -335,9 +335,11 @@ export function buildFullmagModelTree(opts: {
       status: opts.meshStatus ?? "pending",
       onClick: opts.onMeshClick,
       children: [
+        { id: "mesh-view", label: "Inspect View", icon: "👁" },
         { id: "mesh-size", label: opts.meshFeOrder != null ? `Order: P${opts.meshFeOrder}` : "Size", icon: "📏" },
         { id: "mesh-algorithm", label: "Algorithm", icon: "⚙" },
         { id: "mesh-quality", label: "Quality", icon: "📊" },
+        { id: "mesh-pipeline", label: "Pipeline", icon: "🧭" },
       ],
     },
     {

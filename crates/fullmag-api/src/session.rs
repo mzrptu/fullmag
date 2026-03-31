@@ -1,0 +1,250 @@
+//! Session state management: publish, refresh, default state.
+
+use crate::types::*;
+use crate::error::ApiError;
+use crate::artifacts::collect_artifacts;
+use crate::quantities::{build_quantities, extract_fem_mesh_from_metadata};
+use fullmag_runner::{LivePreviewField, RuntimeStatus};
+use std::path::{Path, PathBuf};
+
+pub(crate) async fn current_live_session_id(state: &AppState) -> Result<String, ApiError> {
+    let current = state.current_live_state.read().await;
+    current
+        .as_ref()
+        .map(|snapshot| snapshot.session.session_id.clone())
+        .ok_or_else(|| ApiError::not_found("no active local live workspace"))
+}
+
+pub(crate) fn build_runtime_status_view(status_code: &str) -> RuntimeStatusView {
+    let kind = RuntimeStatus::from_status_code(status_code);
+    RuntimeStatusView {
+        kind,
+        code: status_code.to_string(),
+        is_busy: kind.is_busy(),
+        can_accept_commands: kind.can_accept_commands(),
+    }
+}
+
+pub(crate) fn effective_runtime_status_code(snapshot: &SessionStateResponse) -> String {
+    snapshot
+        .live_state
+        .as_ref()
+        .map(|state| state.status.clone())
+        .unwrap_or_else(|| snapshot.session.status.clone())
+}
+
+pub(crate) fn refresh_runtime_status(snapshot: &mut SessionStateResponse) {
+    snapshot.runtime_status = build_runtime_status_view(&effective_runtime_status_code(snapshot));
+}
+
+pub(crate) fn default_current_live_state(req: &CurrentLivePublishRequest) -> SessionStateResponse {
+    let now = unix_time_millis_now();
+    let run_id = req
+        .session
+        .as_ref()
+        .map(|session| session.run_id.clone())
+        .or_else(|| req.run.as_ref().map(|run| run.run_id.clone()))
+        .unwrap_or_else(|| format!("run-{}", req.session_id));
+    let status = req
+        .session
+        .as_ref()
+        .map(|session| session.status.clone())
+        .or_else(|| req.session_status.clone())
+        .or_else(|| req.live_state.as_ref().map(|state| state.status.clone()))
+        .or_else(|| req.run.as_ref().map(|run| run.status.clone()))
+        .unwrap_or_else(|| "bootstrapping".to_string());
+    let artifact_dir = req
+        .session
+        .as_ref()
+        .map(|session| session.artifact_dir.clone())
+        .or_else(|| req.run.as_ref().map(|run| run.artifact_dir.clone()))
+        .unwrap_or_default();
+
+    SessionStateResponse {
+        session: req.session.clone().unwrap_or(SessionManifest {
+            session_id: req.session_id.clone(),
+            run_id,
+            status: status.clone(),
+            interactive_session_requested: false,
+            script_path: String::new(),
+            problem_name: "Local Live Workspace".to_string(),
+            requested_backend: "auto".to_string(),
+            execution_mode: "strict".to_string(),
+            precision: "double".to_string(),
+            artifact_dir,
+            started_at_unix_ms: now,
+            finished_at_unix_ms: now,
+            plan_summary: serde_json::json!({}),
+        }),
+        run: None,
+        live_state: None,
+        runtime_status: build_runtime_status_view(&status),
+        metadata: None,
+        mesh_workspace: None,
+        script_builder: None,
+        scalar_rows: Vec::new(),
+        engine_log: Vec::new(),
+        quantities: Vec::new(),
+        fem_mesh: None,
+        latest_fields: LatestFields::default(),
+        preview_cache: CachedPreviewFields::default(),
+        artifacts: Vec::new(),
+        display_selection: CurrentDisplaySelection::default(),
+        preview_config: CurrentPreviewConfig::default(),
+        preview: None,
+    }
+}
+
+pub(crate) fn apply_current_live_publish(
+    current: &mut SessionStateResponse,
+    req: CurrentLivePublishRequest,
+) -> Result<(), ApiError> {
+    if let Some(session) = req.session {
+        current.session = session;
+    }
+    current.session.session_id = req.session_id.clone();
+
+    if let Some(status) = req.session_status {
+        current.session.status = status;
+    }
+    if let Some(metadata) = req.metadata {
+        current.metadata = Some(metadata);
+    }
+    if let Some(mesh_workspace) = req.mesh_workspace {
+        current.mesh_workspace = Some(mesh_workspace);
+    }
+    if let Some(run) = req.run {
+        current.session.run_id = run.run_id.clone();
+        current.session.artifact_dir = run.artifact_dir.clone();
+        current.run = Some(run);
+    }
+    if let Some(live_state) = req.live_state {
+        if current.run.is_none() && current.session.status == "bootstrapping" {
+            current.session.status = live_state.status.clone();
+        }
+        if let Some(fem_mesh) = live_state.latest_step.fem_mesh.clone() {
+            current.fem_mesh = Some(fem_mesh);
+        }
+        current.live_state = Some(live_state);
+    }
+    if let Some(row) = req.latest_scalar_row {
+        upsert_scalar_row(&mut current.scalar_rows, row);
+    }
+    if let Some(latest_fields) = req.latest_fields {
+        merge_latest_fields(&mut current.latest_fields, latest_fields);
+    }
+    if req.clear_preview_cache {
+        current.preview_cache = CachedPreviewFields::default();
+    }
+    if let Some(preview_fields) = req.preview_fields {
+        merge_cached_preview_fields(&mut current.preview_cache, preview_fields);
+    }
+    if let Some(engine_log) = req.engine_log {
+        current.engine_log = engine_log;
+    }
+
+    if let Some(run) = current.run.as_ref() {
+        current.session.run_id = run.run_id.clone();
+        if current.session.artifact_dir.is_empty() {
+            current.session.artifact_dir = run.artifact_dir.clone();
+        }
+    }
+
+    if current.fem_mesh.is_none() {
+        current.fem_mesh = current
+            .live_state
+            .as_ref()
+            .and_then(|state| state.latest_step.fem_mesh.clone())
+            .or_else(|| {
+                current
+                    .metadata
+                    .as_ref()
+                    .and_then(extract_fem_mesh_from_metadata)
+            });
+    }
+
+    if matches!(
+        current.session.status.as_str(),
+        "completed" | "failed" | "cancelled"
+    ) {
+        current.session.finished_at_unix_ms = unix_time_millis_now();
+    }
+
+    refresh_runtime_status(current);
+
+    let field_location = if current.fem_mesh.is_some() {
+        "node"
+    } else {
+        "cell"
+    };
+    current.quantities = build_quantities(
+        &current.latest_fields,
+        &current.preview_cache,
+        current.live_state.as_ref(),
+        current.run.as_ref(),
+        current.metadata.as_ref(),
+        &current.scalar_rows,
+        field_location,
+    );
+
+    let artifact_dir = current_artifact_dir(current);
+    if current.artifacts.is_empty()
+        || current
+            .live_state
+            .as_ref()
+            .map(|state| state.latest_step.finished)
+            .unwrap_or(false)
+    {
+        current.artifacts = read_artifacts_from_dir(artifact_dir.as_deref())?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn current_artifact_dir(current: &SessionStateResponse) -> Option<PathBuf> {
+    let from_run = current
+        .run
+        .as_ref()
+        .map(|run| run.artifact_dir.as_str())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let from_session = (!current.session.artifact_dir.is_empty())
+        .then(|| PathBuf::from(&current.session.artifact_dir));
+    from_run.or(from_session)
+}
+
+pub(crate) fn read_artifacts_from_dir(artifact_dir: Option<&Path>) -> Result<Vec<ArtifactEntry>, ApiError> {
+    let Some(artifact_dir) = artifact_dir else {
+        return Ok(Vec::new());
+    };
+    if !artifact_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut artifacts = Vec::new();
+    collect_artifacts(artifact_dir, artifact_dir, &mut artifacts)?;
+    Ok(artifacts)
+}
+
+pub(crate) fn upsert_scalar_row(rows: &mut Vec<ScalarRow>, row: ScalarRow) {
+    match rows.last_mut() {
+        Some(last) if last.step == row.step => *last = row,
+        _ => rows.push(row),
+    }
+}
+
+pub(crate) fn merge_latest_fields(current: &mut LatestFields, incoming: LatestFields) {
+    current.extend(incoming);
+}
+
+pub(crate) fn merge_cached_preview_fields(current: &mut CachedPreviewFields, incoming: Vec<LivePreviewField>) {
+    for field in incoming {
+        current.insert(field);
+    }
+}
+
+pub(crate) fn unix_time_millis_now() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}

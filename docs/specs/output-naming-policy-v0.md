@@ -94,11 +94,23 @@ When additional energy terms are implemented, the following names will be added:
 |------|------|------|-------|
 | `H_ani` | vector field | A/m | anisotropy field |
 | `H_dmi` | vector field | A/m | DMI effective field |
+| `H_mel` | vector field | A/m | magnetoelastic effective field |
 | `E_ani` | scalar | J | anisotropy energy |
 | `E_dmi` | scalar | J | DMI energy |
+| `E_mel` | scalar | J | magnetoelastic coupling energy |
+| `E_el` | scalar | J | elastic strain energy |
+| `E_kin_el` | scalar | J | mechanical kinetic energy (elastodynamics) |
+| `u` | vector field | m | displacement field |
+| `u_dot` | vector field | m/s | velocity field (elastodynamics) |
+| `eps` | tensor field | 1 | strain tensor (Voigt 6-component) |
+| `sigma` | tensor field | Pa | stress tensor (Voigt 6-component) |
+| `max_u` | scalar | m | maximum displacement magnitude |
+| `max_sigma_vm` | scalar | Pa | maximum von Mises stress |
+| `elastic_residual_norm` | scalar | 1 | mechanical solver convergence residual |
 | `max_torque` | scalar | A/m | maximum $|\mathbf{m} \times \mathbf{H}_{\mathrm{eff}}|$ |
 
 These names are reserved — no output with these names may be created with different semantics.
+See `docs/specs/output-naming-policy-magnetoelastic-v1.md` for full magnetoelastic output specification.
 
 ## 6. Backend contract
 

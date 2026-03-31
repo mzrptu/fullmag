@@ -71,6 +71,7 @@ pub fn run_exchange_density_study(
                 exchange: true,
                 demag: false,
                 external_field: None,
+                    magnetoelastic: None,
             },
         );
         let fdm_state = fdm_problem.new_state(sample_fdm_magnetization(
@@ -104,6 +105,7 @@ pub fn run_exchange_density_study(
                 exchange: true,
                 demag: false,
                 external_field: None,
+                    magnetoelastic: None,
             },
         );
         let fem_state = fem_problem.new_state(sample_fem_magnetization(&fem_mesh, box_size_m)?)?;

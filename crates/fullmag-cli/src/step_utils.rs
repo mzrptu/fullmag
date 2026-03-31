@@ -77,12 +77,14 @@ pub(crate) fn flatten_magnetization(values: &[[f64; 3]]) -> Vec<f64> {
 pub(crate) fn live_state_manifest_from_update(
     update: &fullmag_runner::StepUpdate,
 ) -> LiveStateManifest {
+    let status_str = if update.finished {
+        "completed"
+    } else {
+        "running"
+    };
     LiveStateManifest {
-        status: if update.finished {
-            "completed".to_string()
-        } else {
-            "running".to_string()
-        },
+        status: status_str.to_string(),
+        runtime_status: Some(fullmag_runner::RuntimeStatus::from_status_code(status_str)),
         updated_at_unix_ms: unix_time_millis().unwrap_or(0),
         latest_step: LiveStepView {
             step: update.stats.step,
@@ -467,10 +469,11 @@ pub(crate) fn build_interactive_command_stage(
             let max_steps = command.max_steps.unwrap_or(50_000);
             let torque_tolerance = command.torque_tolerance.unwrap_or(1e-6);
 
-            if let Some(alpha) = command.relax_alpha {
-                for mat in &mut ir.materials {
-                    mat.damping = alpha;
-                }
+            // Default relax_alpha = 1.0 for optimal overdamped convergence
+            // (user can still override to any value via command.relax_alpha)
+            let effective_alpha = command.relax_alpha.unwrap_or(1.0);
+            for mat in &mut ir.materials {
+                mat.damping = effective_alpha;
             }
 
             let algorithm = command

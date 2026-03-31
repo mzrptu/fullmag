@@ -12,6 +12,7 @@ import ModelTree, { buildFullmagModelTree } from "../../panels/ModelTree";
 import SettingsPanel from "../../panels/SettingsPanel";
 import { useCommand, useModel, useTransport, useViewport } from "./ControlRoomContext";
 import { findTreeNodeById, previewQuantityForTreeNode } from "./shared";
+import { meshWorkspaceNodeToDockTab, meshWorkspaceNodeToPreset } from "./meshWorkspace";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
@@ -80,6 +81,8 @@ export default function RunSidebar() {
     const isMeshView = cmd.isFemBackend && vp.effectiveViewMode === "Mesh";
     if (isMeshView) {
       if (model.femDockTab === "quality") return "mesh-quality";
+      if (model.femDockTab === "pipeline") return "mesh-pipeline";
+      if (model.femDockTab === "view") return "mesh-view";
       if (model.femDockTab === "mesher") return "mesh-size";
       return "mesh";
     }
@@ -111,18 +114,23 @@ export default function RunSidebar() {
         else vp.setViewMode("3D");
         return;
       case "mesh":
-        if (cmd.isFemBackend) model.openFemMeshWorkspace("mesh");
-        return;
-      case "mesh-size": case "mesh-algorithm":
-        if (cmd.isFemBackend) {
-          vp.setViewMode("Mesh");
-          model.setFemDockTab("mesher");
-          model.setMeshRenderMode((c) => (c === "surface" ? "surface+edges" : c));
+      case "mesh-view":
+      case "mesh-size":
+      case "mesh-algorithm":
+      case "mesh-quality":
+      case "mesh-pipeline": {
+        if (!cmd.isFemBackend) return;
+        const preset = meshWorkspaceNodeToPreset(id);
+        if (preset) {
+          model.applyMeshWorkspacePreset(preset);
+          return;
+        }
+        const dockTab = meshWorkspaceNodeToDockTab(id);
+        if (dockTab) {
+          model.openFemMeshWorkspace(dockTab);
         }
         return;
-      case "mesh-quality":
-        if (cmd.isFemBackend) model.openFemMeshWorkspace("quality");
-        return;
+      }
       case "results": case "res-fields":
         if (cmd.isFemBackend && vp.effectiveViewMode === "Mesh") vp.setViewMode("3D");
         return;

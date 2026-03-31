@@ -1,5 +1,6 @@
 "use client";
 
+import type { ScriptBuilderStageState } from "../../../lib/useSessionStream";
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
 import { fmtExp, fmtSI, fmtSIOrDash } from "../../runs/control-room/shared";
 import {
@@ -17,6 +18,47 @@ import {
   precessionModeForPlan,
 } from "./helpers";
 
+const EDITABLE_STAGE_STATES = new Set(["relax", "run"]);
+
+function stageTitle(stage: ScriptBuilderStageState, index: number): string {
+  switch (stage.kind) {
+    case "relax":
+      return `Stage ${index + 1} · Relax`;
+    case "run":
+      return `Stage ${index + 1} · Run`;
+    case "eigenmodes":
+      return `Stage ${index + 1} · Eigenmodes`;
+    default:
+      return `Stage ${index + 1} · ${humanizeToken(stage.kind)}`;
+  }
+}
+
+function stageSummary(stage: ScriptBuilderStageState): string {
+  if (stage.kind === "relax") {
+    return [
+      stage.relax_algorithm ? humanizeToken(stage.relax_algorithm) : null,
+      stage.torque_tolerance ? `tol ${stage.torque_tolerance}` : null,
+      stage.max_steps ? `${stage.max_steps} steps` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || "Relaxation stage";
+  }
+  if (stage.kind === "run") {
+    return stage.until_seconds ? `Run until ${stage.until_seconds} s` : "Time-evolution stage";
+  }
+  return stage.entrypoint_kind ? humanizeToken(stage.entrypoint_kind) : "Stage details unavailable";
+}
+
+function stageBadgeClass(kind: string): string {
+  if (kind === "relax") {
+    return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+  }
+  if (kind === "run") {
+    return "border-sky-500/30 bg-sky-500/10 text-sky-300";
+  }
+  return "border-border/40 bg-card/20 text-muted-foreground";
+}
+
 export default function StudyPanel() {
   const ctx = useControlRoom();
   const solverPlan = ctx.solverPlan;
@@ -31,6 +73,29 @@ export default function StudyPanel() {
     : ctx.totalCells && ctx.totalCells > 0
       ? `${ctx.totalCells.toLocaleString()} cells`
       : "—";
+  const stageEditingDisabled = ctx.commandBusy || !(ctx.awaitingCommand || ctx.isWaitingForCompute);
+  const firstRunStageIndex = ctx.studyStages.findIndex((stage) => stage.kind === "run");
+  const firstRelaxStageIndex = ctx.studyStages.findIndex((stage) => stage.kind === "relax");
+
+  const updateStage = (index: number, patch: Partial<ScriptBuilderStageState>) => {
+    ctx.setStudyStages((current) =>
+      current.map((stage, stageIndex) => (
+        stageIndex === index ? { ...stage, ...patch } : stage
+      )),
+    );
+    if (index === firstRunStageIndex && typeof patch.until_seconds === "string") {
+      ctx.setRunUntilInput(patch.until_seconds);
+    }
+    if (index === firstRelaxStageIndex) {
+      ctx.setSolverSettings((current) => ({
+        ...current,
+        ...(typeof patch.relax_algorithm === "string" ? { relaxAlgorithm: patch.relax_algorithm } : {}),
+        ...(typeof patch.torque_tolerance === "string" ? { torqueTolerance: patch.torque_tolerance } : {}),
+        ...(typeof patch.energy_tolerance === "string" ? { energyTolerance: patch.energy_tolerance } : {}),
+        ...(typeof patch.max_steps === "string" ? { maxRelaxSteps: patch.max_steps } : {}),
+      }));
+    }
+  };
 
   const insightCards = [
     {
@@ -212,6 +277,118 @@ export default function StudyPanel() {
       </div>
 
       <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
+        <div className="text-[0.6rem] font-black uppercase tracking-[0.2em] text-muted-foreground mb-4">Stage Sequence</div>
+        {ctx.studyStages.length > 0 ? (
+          <div className="flex flex-col gap-3">
+            {ctx.studyStages.map((stage, index) => (
+              <div key={`${stage.kind}-${index}-${stage.entrypoint_kind}`} className="rounded-xl border border-border/50 bg-card/30 p-3.5 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-1">
+                    <div className="text-[0.65rem] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                      {stageTitle(stage, index)}
+                    </div>
+                    <div className="text-sm font-semibold text-foreground">{stageSummary(stage)}</div>
+                    <div className="text-[0.7rem] text-muted-foreground">
+                      Entrypoint: <span className="font-mono text-foreground/90">{stage.entrypoint_kind || "—"}</span>
+                    </div>
+                  </div>
+                  <span className={`inline-flex rounded-md border px-2 py-1 text-[0.55rem] font-bold uppercase tracking-[0.18em] ${stageBadgeClass(stage.kind)}`}>
+                    {humanizeToken(stage.kind)}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-background/20 p-2.5">
+                    <span className="text-[0.55rem] font-medium uppercase tracking-wider text-muted-foreground">Integrator</span>
+                    <span className="font-mono text-xs text-foreground">{humanizeToken(stage.integrator)}</span>
+                  </div>
+                  <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-background/20 p-2.5">
+                    <span className="text-[0.55rem] font-medium uppercase tracking-wider text-muted-foreground">Fixed Δt</span>
+                    <span className="font-mono text-xs text-foreground">{stage.fixed_timestep || "adaptive / backend default"}</span>
+                  </div>
+                </div>
+
+                {stage.kind === "run" && (
+                  <div className="mt-3">
+                    <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
+                      Run until [s]
+                      <input
+                        className="flex h-8 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
+                        value={stage.until_seconds}
+                        onChange={(e) => updateStage(index, { until_seconds: e.target.value })}
+                        placeholder="1e-12"
+                        disabled={stageEditingDisabled}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {stage.kind === "relax" && (
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground col-span-2">
+                      Relax algorithm
+                      <select
+                        className="flex h-8 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
+                        value={stage.relax_algorithm || "llg_overdamped"}
+                        onChange={(e) => updateStage(index, { relax_algorithm: e.target.value })}
+                        disabled={stageEditingDisabled}
+                      >
+                        {Object.entries(RELAXATION_PROFILES).map(([value, profile]) => (
+                          <option key={value} value={value}>
+                            {profile.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
+                      Max steps
+                      <input
+                        className="flex h-8 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
+                        value={stage.max_steps}
+                        onChange={(e) => updateStage(index, { max_steps: e.target.value })}
+                        placeholder="5000"
+                        disabled={stageEditingDisabled}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
+                      Torque tol.
+                      <input
+                        className="flex h-8 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
+                        value={stage.torque_tolerance}
+                        onChange={(e) => updateStage(index, { torque_tolerance: e.target.value })}
+                        placeholder="1e-6"
+                        disabled={stageEditingDisabled}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground col-span-2">
+                      Energy tol.
+                      <input
+                        className="flex h-8 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
+                        value={stage.energy_tolerance}
+                        onChange={(e) => updateStage(index, { energy_tolerance: e.target.value })}
+                        placeholder="disabled"
+                        disabled={stageEditingDisabled}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {!EDITABLE_STAGE_STATES.has(stage.kind) && (
+                  <div className="mt-3 rounded-lg border border-border/30 bg-background/20 p-2.5 text-xs text-muted-foreground leading-relaxed">
+                    This stage is visible in the builder sequence, but inline editing is not wired yet for this study kind.
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-border/50 bg-card/20 p-4 text-sm text-muted-foreground leading-relaxed">
+            No scripted stage sequence is attached to this workspace yet. Flat scripts that call `fm.relax(...)`, `fm.run(...)`, or a sequence of both will appear here automatically.
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
         <div className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground mb-4">Performance And Physics</div>
         <div className="grid gap-3">
           {insightCards.map((card) => (
@@ -233,7 +410,7 @@ export default function StudyPanel() {
               className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
               value={ctx.runUntilInput}
               onChange={(e) => ctx.setRunUntilInput(e.target.value)}
-              disabled={ctx.commandBusy || !ctx.awaitingCommand}
+              disabled={stageEditingDisabled}
             />
           </label>
         </div>
@@ -242,19 +419,19 @@ export default function StudyPanel() {
             Relax steps
             <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.maxRelaxSteps}
               onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, maxRelaxSteps: e.target.value }))}
-              disabled={ctx.commandBusy || !ctx.awaitingCommand} />
+              disabled={stageEditingDisabled} />
           </label>
           <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
             Torque tol.
             <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.torqueTolerance}
               onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, torqueTolerance: e.target.value }))}
-              disabled={ctx.commandBusy || !ctx.awaitingCommand} />
+              disabled={stageEditingDisabled} />
           </label>
           <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground col-span-2">
             Energy tol.
             <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.energyTolerance}
               onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, energyTolerance: e.target.value }))}
-              placeholder="disabled" disabled={ctx.commandBusy || !ctx.awaitingCommand} />
+              placeholder="disabled" disabled={stageEditingDisabled} />
           </label>
         </div>
       </div>

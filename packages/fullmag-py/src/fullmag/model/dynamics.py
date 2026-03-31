@@ -116,3 +116,76 @@ class LLG:
         if self.adaptive_timestep is not None:
             d["adaptive_timestep"] = self.adaptive_timestep.to_ir()
         return d
+
+
+# ── Mechanical dynamics modes ─────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class PrescribedStrain:
+    """Prescribed strain/stress mode — no mechanical solve.
+
+    The strain or stress field is provided externally via MechanicalLoad.
+    Only H_mel is computed from the given deformation state.
+    """
+
+    def to_ir(self) -> dict[str, object]:
+        return {"kind": "prescribed_strain"}
+
+
+@dataclass(frozen=True, slots=True)
+class QuasistaticElasticity:
+    """Quasistatic elasticity mode — full bidirectional coupling.
+
+    At each LLG step, the quasistatic equilibrium ∇·σ = 0 is solved
+    for the displacement field u, then H_mel is computed.
+
+    Parameters
+    ----------
+    max_picard_iterations : int
+        Maximum Picard iterations for nonlinear coupling (default: 3).
+    picard_tolerance : float
+        Convergence tolerance for Picard iterations (default: 1e-6).
+    """
+
+    max_picard_iterations: int = 3
+    picard_tolerance: float = 1e-6
+
+    def __post_init__(self) -> None:
+        if self.max_picard_iterations < 1:
+            raise ValueError("max_picard_iterations must be >= 1")
+        require_positive(self.picard_tolerance, "picard_tolerance")
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "kind": "quasistatic_elasticity",
+            "max_picard_iterations": self.max_picard_iterations,
+            "picard_tolerance": self.picard_tolerance,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Elastodynamics:
+    """Full elastodynamics mode — coupled m-u-v system.
+
+    Parameters
+    ----------
+    mechanical_dt : float, optional
+        Timestep for mechanical integration [s]. If None, matched to LLG dt.
+    """
+
+    mechanical_dt: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.mechanical_dt is not None:
+            require_positive(self.mechanical_dt, "mechanical_dt")
+
+    def to_ir(self) -> dict[str, object]:
+        d: dict[str, object] = {"kind": "elastodynamics"}
+        if self.mechanical_dt is not None:
+            d["mechanical_dt"] = self.mechanical_dt
+        return d
+
+
+MechanicsMode = PrescribedStrain | QuasistaticElasticity | Elastodynamics
+

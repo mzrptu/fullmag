@@ -166,3 +166,38 @@ class OerstedCylinder:
         if self.time_dependence is not None:
             ir["time_dependence"] = self.time_dependence.to_ir()
         return ir
+
+
+@dataclass(frozen=True, slots=True)
+class Magnetoelastic:
+    """Magnetoelastic coupling energy between a magnet and an elastic body.
+
+    Parameters
+    ----------
+    magnet : str
+        Name of the ``Ferromagnet``.
+    body : str
+        Name of the ``ElasticBody``.
+    law : str
+        Name of the ``MagnetostrictionLaw``.
+    """
+
+    magnet: str
+    body: str
+    law: str
+
+    def __post_init__(self) -> None:
+        from fullmag._validation import require_non_empty
+
+        object.__setattr__(self, "magnet", require_non_empty(self.magnet, "magnet"))
+        object.__setattr__(self, "body", require_non_empty(self.body, "body"))
+        object.__setattr__(self, "law", require_non_empty(self.law, "law"))
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "kind": "magnetoelastic",
+            "magnet": self.magnet,
+            "body": self.body,
+            "law": self.law,
+        }
+

@@ -62,6 +62,9 @@ pub enum RunStatus {
     Completed,
     Failed,
     Cancelled,
+    /// The solver paused cleanly (user-requested). The runtime state is
+    /// preserved and can be resumed.
+    Paused,
 }
 
 /// Returned by the `on_step` callback to signal whether the runner should continue.
@@ -71,6 +74,8 @@ pub enum StepAction {
     Continue,
     /// Stop the simulation as soon as possible (user-requested cancellation).
     Stop,
+    /// Pause the simulation cleanly — preserve runtime state for resume.
+    Pause,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

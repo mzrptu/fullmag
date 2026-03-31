@@ -47,3 +47,55 @@ pub struct SequencedCommand {
     pub issued_at_unix_ms: u64,
     pub command: LiveControlCommand,
 }
+
+/// Outcome from a cooperative checkpoint poll within a running backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeControlOutcome {
+    /// Continue the current operation.
+    Continue,
+    /// A pause has been requested — backend should yield cleanly.
+    PauseRequested,
+    /// A break has been requested — end the current segment cleanly.
+    BreakRequested,
+    /// Display has been updated — continue execution.
+    DisplayUpdated,
+    /// Close the runtime entirely.
+    CloseRequested,
+}
+
+/// Bridge: convert a legacy string-based session command (from the API)
+/// into a typed `LiveControlCommand`.
+///
+/// Returns `None` for command kinds that are not part of the live control
+/// protocol (e.g. `"remesh"`, `"save_vtk"`, `"solve"`) — those remain
+/// handled by the orchestrator's own dispatch.
+pub fn parse_session_command(
+    kind: &str,
+    until_seconds: Option<f64>,
+    max_steps: Option<u64>,
+    torque_tolerance: Option<f64>,
+    energy_tolerance: Option<f64>,
+    display_selection: Option<&super::DisplaySelectionState>,
+) -> Option<LiveControlCommand> {
+    match kind {
+        "run" => Some(LiveControlCommand::Run {
+            until_seconds: until_seconds.unwrap_or(0.0),
+            max_steps,
+        }),
+        "relax" => Some(LiveControlCommand::Relax {
+            until_seconds,
+            max_steps,
+            torque_tolerance,
+            energy_tolerance,
+        }),
+        "pause" => Some(LiveControlCommand::Pause),
+        "resume" => Some(LiveControlCommand::Resume),
+        "stop" | "break" => Some(LiveControlCommand::Break),
+        "close" => Some(LiveControlCommand::Close),
+        "display_selection_update" | "preview_update" => display_selection
+            .cloned()
+            .map(|ds| LiveControlCommand::SetDisplaySelection(ds.selection)),
+        "preview_refresh" => Some(LiveControlCommand::RefreshDisplay),
+        _ => None,
+    }
+}
