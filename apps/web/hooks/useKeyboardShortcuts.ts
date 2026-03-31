@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useControlRoom } from "../components/runs/control-room/ControlRoomContext";
+import { useCommand, useViewport, useModel } from "../components/runs/control-room/ControlRoomContext";
 
 /**
  * useKeyboardShortcuts — global keyboard shortcut handler for the control room.
@@ -16,7 +16,9 @@ import { useControlRoom } from "../components/runs/control-room/ControlRoomConte
  * - Ctrl+Shift+P     → Toggle solver setup
  */
 export function useKeyboardShortcuts() {
-  const ctx = useControlRoom();
+  const { handleSimulationAction } = useCommand();
+  const { handleViewModeChange, setSidebarCollapsed } = useViewport();
+  const { setSelectedSidebarNodeId } = useModel();
 
   useEffect(() => {
     function handler(e: KeyboardEvent) {
@@ -30,45 +32,45 @@ export function useKeyboardShortcuts() {
       /* F5 → Run */
       if (e.key === "F5" && !shift && !ctrl) {
         e.preventDefault();
-        ctx.handleSimulationAction("run");
+        handleSimulationAction("run");
         return;
       }
 
       /* Shift+F5 → Stop */
       if (e.key === "F5" && shift) {
         e.preventDefault();
-        ctx.handleSimulationAction("stop");
+        handleSimulationAction("stop");
         return;
       }
 
       /* Ctrl+Enter → Run */
       if (e.key === "Enter" && ctrl) {
         e.preventDefault();
-        ctx.handleSimulationAction("run");
+        handleSimulationAction("run");
         return;
       }
 
       /* Ctrl+B → Toggle sidebar */
       if (e.key === "b" && ctrl) {
         e.preventDefault();
-        ctx.setSidebarCollapsed((v: boolean) => !v);
+        setSidebarCollapsed((v: boolean) => !v);
         return;
       }
 
       /* 1/2/3 → View modes */
-      if (e.key === "1" && !ctrl) { e.preventDefault(); ctx.handleViewModeChange("3D"); return; }
-      if (e.key === "2" && !ctrl) { e.preventDefault(); ctx.handleViewModeChange("2D"); return; }
-      if (e.key === "3" && !ctrl) { e.preventDefault(); ctx.handleViewModeChange("Mesh"); return; }
+      if (e.key === "1" && !ctrl) { e.preventDefault(); handleViewModeChange("3D"); return; }
+      if (e.key === "2" && !ctrl) { e.preventDefault(); handleViewModeChange("2D"); return; }
+      if (e.key === "3" && !ctrl) { e.preventDefault(); handleViewModeChange("Mesh"); return; }
 
       /* Ctrl+Shift+P → Solver setup */
       if (e.key === "P" && ctrl && shift) {
         e.preventDefault();
-        ctx.setSelectedSidebarNodeId("study-integrator");
+        setSelectedSidebarNodeId("study-integrator");
         return;
       }
     }
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [ctx]);
+  }, [handleSimulationAction, handleViewModeChange, setSidebarCollapsed, setSelectedSidebarNodeId]);
 }

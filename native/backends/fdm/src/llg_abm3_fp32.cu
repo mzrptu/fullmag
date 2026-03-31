@@ -116,7 +116,7 @@ static void abm3_fill_diagnostics_fp32(Context &ctx, double dt, fullmag_fdm_step
         static_cast<const float*>(ctx.m.x), static_cast<const float*>(ctx.m.y), static_cast<const float*>(ctx.m.z),
         static_cast<const float*>(ctx.work.x), static_cast<const float*>(ctx.work.y), static_cast<const float*>(ctx.work.z),
         static_cast<float*>(ctx.k1.x), static_cast<float*>(ctx.k1.y), static_cast<float*>(ctx.k1.z),
-        n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0);,
+        n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
         stt_params_from_ctx(ctx));
     double max_dm_dt = reduce_max_norm_fp32(ctx, ctx.k1.x, ctx.k1.y, ctx.k1.z, ctx.cell_count);
     cudaDeviceSynchronize();
@@ -162,7 +162,7 @@ void launch_abm3_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<const float*>(ctx.m.x), static_cast<const float*>(ctx.m.y), static_cast<const float*>(ctx.m.z),
             static_cast<const float*>(ctx.work.x), static_cast<const float*>(ctx.work.y), static_cast<const float*>(ctx.work.z),
             static_cast<float*>(ctx.k1.x), static_cast<float*>(ctx.k1.y), static_cast<float*>(ctx.k1.z),
-            n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0);,
+            n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
             stt_params_from_ctx(ctx));
         if (abort_step_from_tmp(ctx, false)) return;
 
@@ -182,7 +182,7 @@ void launch_abm3_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<const float*>(ctx.m.x), static_cast<const float*>(ctx.m.y), static_cast<const float*>(ctx.m.z),
             static_cast<const float*>(ctx.work.x), static_cast<const float*>(ctx.work.y), static_cast<const float*>(ctx.work.z),
             static_cast<float*>(ctx.h_ex.x), static_cast<float*>(ctx.h_ex.y), static_cast<float*>(ctx.h_ex.z),
-            n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0);,
+            n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
             stt_params_from_ctx(ctx));
         if (abort_step_from_tmp(ctx, false)) return;
 
@@ -207,7 +207,7 @@ void launch_abm3_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
             static_cast<const float*>(ctx.m.x), static_cast<const float*>(ctx.m.y), static_cast<const float*>(ctx.m.z),
             static_cast<const float*>(ctx.work.x), static_cast<const float*>(ctx.work.y), static_cast<const float*>(ctx.work.z),
             static_cast<float*>(ctx.abm_f_n.x), static_cast<float*>(ctx.abm_f_n.y), static_cast<float*>(ctx.abm_f_n.z),
-            n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0);,
+            n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
             stt_params_from_ctx(ctx));
 
         ctx.abm_startup++;
@@ -239,7 +239,7 @@ void launch_abm3_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<const float*>(ctx.m.x), static_cast<const float*>(ctx.m.y), static_cast<const float*>(ctx.m.z),
         static_cast<const float*>(ctx.work.x), static_cast<const float*>(ctx.work.y), static_cast<const float*>(ctx.work.z),
         static_cast<float*>(ctx.k1.x), static_cast<float*>(ctx.k1.y), static_cast<float*>(ctx.k1.z),
-        n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0);,
+        n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
         stt_params_from_ctx(ctx));
     if (abort_step_from_tmp(ctx, false)) return;
 

@@ -215,7 +215,7 @@ static bool compute_rhs_into(Context &ctx, DeviceVectorField &rhs_out,
         static_cast<double*>(rhs_out.x),
         static_cast<double*>(rhs_out.y),
         static_cast<double*>(rhs_out.z),
-        n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0);,
+        n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0,
         stt_params_from_ctx(ctx));
     if (poll_interrupt(ctx)) {
         abort_step_after_interrupt(ctx);

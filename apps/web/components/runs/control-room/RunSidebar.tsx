@@ -10,7 +10,7 @@ import {
 } from "react-resizable-panels";
 import ModelTree, { buildFullmagModelTree } from "../../panels/ModelTree";
 import SettingsPanel from "../../panels/SettingsPanel";
-import { useControlRoom } from "./ControlRoomContext";
+import { useCommand, useModel, useTransport, useViewport } from "./ControlRoomContext";
 import { findTreeNodeById, previewQuantityForTreeNode } from "./shared";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -23,7 +23,10 @@ import { cn } from "@/lib/utils";
  *   for whichever tree node is selected.
  */
 export default function RunSidebar() {
-  const ctx = useControlRoom();
+  const model = useModel();
+  const cmd = useCommand();
+  const tp = useTransport();
+  const vp = useViewport();
   const treePanelRef = usePanelRef();
   const inspectorPanelRef = usePanelRef();
   const [treeOpen, setTreeOpen] = useState(true);
@@ -33,61 +36,61 @@ export default function RunSidebar() {
   const modelTreeNodes = useMemo(
     () =>
       buildFullmagModelTree({
-        backend: ctx.isFemBackend ? "FEM" : "FDM",
-        geometryKind: ctx.mesherSourceKind ?? undefined,
+        backend: cmd.isFemBackend ? "FEM" : "FDM",
+        geometryKind: model.mesherSourceKind ?? undefined,
         materialName:
-          ctx.material?.name
-            ?? (ctx.material?.msat != null ? `Msat=${(ctx.material.msat / 1e3).toFixed(0)} kA/m` : undefined),
-        materialMsat: ctx.material?.msat,
-        materialAex: ctx.material?.aex,
-        materialAlpha: ctx.material?.alpha,
-        meshStatus: ctx.effectiveFemMesh ? "ready" : "pending",
-        meshElements: ctx.effectiveFemMesh?.elements.length,
-        meshNodes: ctx.effectiveFemMesh?.nodes.length,
-        meshFeOrder: ctx.meshFeOrder,
-        meshName: ctx.meshName,
-        solverStatus: ctx.hasSolverTelemetry ? "active" : "pending",
-        solverIntegrator: ctx.solverPlan?.integrator ?? ctx.solverSettings.integrator,
-        solverRelaxAlgorithm: ctx.solverPlan?.relaxation?.algorithm ?? ctx.solverSettings.relaxAlgorithm,
+          model.material?.name
+            ?? (model.material?.msat != null ? `Msat=${(model.material.msat / 1e3).toFixed(0)} kA/m` : undefined),
+        materialMsat: model.material?.msat,
+        materialAex: model.material?.aex,
+        materialAlpha: model.material?.alpha,
+        meshStatus: model.effectiveFemMesh ? "ready" : "pending",
+        meshElements: model.effectiveFemMesh?.elements.length,
+        meshNodes: model.effectiveFemMesh?.nodes.length,
+        meshFeOrder: model.meshFeOrder,
+        meshName: model.meshName,
+        solverStatus: tp.hasSolverTelemetry ? "active" : "pending",
+        solverIntegrator: model.solverPlan?.integrator ?? model.solverSettings.integrator,
+        solverRelaxAlgorithm: model.solverPlan?.relaxation?.algorithm ?? model.solverSettings.relaxAlgorithm,
         demagMethod: "transfer-grid",
-        exchangeEnabled: ctx.material?.exchangeEnabled,
-        demagEnabled: ctx.material?.demagEnabled,
-        zeemanField: ctx.material?.zeemanField,
+        exchangeEnabled: model.material?.exchangeEnabled,
+        demagEnabled: model.material?.demagEnabled,
+        zeemanField: model.material?.zeemanField,
         convergenceStatus:
-          ctx.hasSolverTelemetry && ctx.effectiveDmDt > 0 && ctx.effectiveDmDt < (Number(ctx.solverSettings.torqueTolerance) || 1e-5)
+          tp.hasSolverTelemetry && tp.effectiveDmDt > 0 && tp.effectiveDmDt < (Number(model.solverSettings.torqueTolerance) || 1e-5)
             ? "ready"
-            : ctx.hasSolverTelemetry
+            : tp.hasSolverTelemetry
               ? "active"
               : undefined,
-        scalarRowCount: ctx.scalarRows.length,
-        initialStatePath: ctx.scriptInitialState?.source_path ?? null,
-        initialStateFormat: ctx.scriptInitialState?.format ?? null,
+        scalarRowCount: tp.scalarRows.length,
+        initialStatePath: cmd.scriptInitialState?.source_path ?? null,
+        initialStateFormat: cmd.scriptInitialState?.format ?? null,
       }),
     [
-      ctx.effectiveFemMesh, ctx.hasSolverTelemetry, ctx.isFemBackend, ctx.material,
-      ctx.mesherSourceKind, ctx.meshFeOrder, ctx.meshName,
-      ctx.solverPlan?.integrator, ctx.solverPlan?.relaxation?.algorithm,
-      ctx.solverSettings.integrator, ctx.solverSettings.relaxAlgorithm,
-      ctx.effectiveDmDt, ctx.scalarRows.length, ctx.scriptInitialState,
+      model.effectiveFemMesh, tp.hasSolverTelemetry, cmd.isFemBackend, model.material,
+      model.mesherSourceKind, model.meshFeOrder, model.meshName,
+      model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
+      model.solverSettings.integrator, model.solverSettings.relaxAlgorithm,
+      tp.effectiveDmDt, tp.scalarRows.length, cmd.scriptInitialState,
     ],
   );
 
   /* ── Determine active node (from explicit selection or viewport context) ── */
   const fallbackNodeId = useMemo(() => {
-    const isMeshView = ctx.isFemBackend && ctx.effectiveViewMode === "Mesh";
+    const isMeshView = cmd.isFemBackend && vp.effectiveViewMode === "Mesh";
     if (isMeshView) {
-      if (ctx.femDockTab === "quality") return "mesh-quality";
-      if (ctx.femDockTab === "mesher") return "mesh-size";
+      if (model.femDockTab === "quality") return "mesh-quality";
+      if (model.femDockTab === "mesher") return "mesh-size";
       return "mesh";
     }
-    if (ctx.previewControlsActive) return "res-fields";
-    if (ctx.interactiveControlsEnabled) return "study-solver";
-    if (ctx.material) return "materials";
+    if (vp.previewControlsActive) return "res-fields";
+    if (cmd.interactiveControlsEnabled) return "study-solver";
+    if (model.material) return "materials";
     return "geometry";
-  }, [ctx.effectiveViewMode, ctx.femDockTab, ctx.interactiveControlsEnabled,
-      ctx.isFemBackend, ctx.material, ctx.previewControlsActive]);
+  }, [vp.effectiveViewMode, model.femDockTab, cmd.interactiveControlsEnabled,
+      cmd.isFemBackend, model.material, vp.previewControlsActive]);
 
-  const activeNodeId = ctx.selectedSidebarNodeId ?? fallbackNodeId;
+  const activeNodeId = model.selectedSidebarNodeId ?? fallbackNodeId;
   const activeNode = useMemo(
     () => findTreeNodeById(modelTreeNodes, activeNodeId),
     [activeNodeId, modelTreeNodes],
@@ -95,7 +98,7 @@ export default function RunSidebar() {
 
   /* ── Tree click handler ── */
   const handleTreeClick = useCallback((id: string) => {
-    ctx.setSelectedSidebarNodeId(id);
+    model.setSelectedSidebarNodeId(id);
     // Ensure inspector is visible when a node is clicked
     const panel = inspectorPanelRef.current;
     if (panel?.isCollapsed()) {
@@ -104,33 +107,33 @@ export default function RunSidebar() {
     }
     switch (id) {
       case "geometry": case "geo-body": case "regions": case "reg-domain": case "reg-boundary":
-        if (ctx.isFemBackend) ctx.openFemMeshWorkspace("mesh");
-        else ctx.setViewMode("3D");
+        if (cmd.isFemBackend) model.openFemMeshWorkspace("mesh");
+        else vp.setViewMode("3D");
         return;
       case "mesh":
-        if (ctx.isFemBackend) ctx.openFemMeshWorkspace("mesh");
+        if (cmd.isFemBackend) model.openFemMeshWorkspace("mesh");
         return;
       case "mesh-size": case "mesh-algorithm":
-        if (ctx.isFemBackend) {
-          ctx.setViewMode("Mesh");
-          ctx.setFemDockTab("mesher");
-          ctx.setMeshRenderMode((c) => (c === "surface" ? "surface+edges" : c));
+        if (cmd.isFemBackend) {
+          vp.setViewMode("Mesh");
+          model.setFemDockTab("mesher");
+          model.setMeshRenderMode((c) => (c === "surface" ? "surface+edges" : c));
         }
         return;
       case "mesh-quality":
-        if (ctx.isFemBackend) ctx.openFemMeshWorkspace("quality");
+        if (cmd.isFemBackend) model.openFemMeshWorkspace("quality");
         return;
       case "results": case "res-fields":
-        if (ctx.isFemBackend && ctx.effectiveViewMode === "Mesh") ctx.setViewMode("3D");
+        if (cmd.isFemBackend && vp.effectiveViewMode === "Mesh") vp.setViewMode("3D");
         return;
       default: {
         const previewTarget = previewQuantityForTreeNode(id);
-        if (previewTarget && ctx.quickPreviewTargets.some((t) => t.id === previewTarget && t.available)) {
-          ctx.requestPreviewQuantity(previewTarget);
+        if (previewTarget && vp.quickPreviewTargets.some((t) => t.id === previewTarget && t.available)) {
+          vp.requestPreviewQuantity(previewTarget);
         }
       }
     }
-  }, [ctx, inspectorPanelRef]);
+  }, [cmd.isFemBackend, model, vp, inspectorPanelRef]);
 
   const handleTreeToggle = useCallback(() => {
     const panel = treePanelRef.current;
@@ -190,7 +193,7 @@ export default function RunSidebar() {
             >
               <span className={cn("text-primary/70 mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", treeOpen && "rotate-90")}>▸</span>
               <span className="text-[0.65rem] font-medium uppercase tracking-wider text-foreground">Model</span>
-              <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-primary-foreground bg-primary/80 px-1.5 py-0.5 rounded-sm">{ctx.isFemBackend ? "FEM" : "FDM"}</span>
+              <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-primary-foreground bg-primary/80 px-1.5 py-0.5 rounded-sm">{cmd.isFemBackend ? "FEM" : "FDM"}</span>
             </button>
             {treeOpen && (
               <div className="flex-1 min-h-0 min-w-0 pr-1 overflow-hidden isolate relative">

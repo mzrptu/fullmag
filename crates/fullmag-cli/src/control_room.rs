@@ -75,7 +75,7 @@ impl Drop for ControlRoomGuard {
 }
 
 pub(crate) fn spawn_control_room(
-    session_id: &str,
+    _session_id: &str,
     dev_mode: bool,
     requested_port: Option<u16>,
     live_workspace: &LocalLiveWorkspace,
@@ -180,7 +180,7 @@ pub(crate) fn spawn_control_room(
             eprintln!("  reusing control room on :{}", web_port);
         }
 
-        let url = format!("http://localhost:{web_port}/?session={session_id}");
+        let url = format!("http://localhost:{web_port}/");
         eprintln!("  gui server: {}", url);
         if let Ok(opener) = which_opener() {
             let _ = ProcessCommand::new(opener)
@@ -201,10 +201,7 @@ pub(crate) fn spawn_control_room(
             );
         }
 
-        let url = format!(
-            "http://{LOCALHOST_HTTP_HOST}:{}/?session={session_id}",
-            api_port()
-        );
+        let url = format!("http://{LOCALHOST_HTTP_HOST}:{}/", api_port());
         eprintln!("  gui server: {}", url);
         if let Ok(opener) = which_opener() {
             let _ = ProcessCommand::new(opener)

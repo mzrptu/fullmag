@@ -1,0 +1,227 @@
+/* ── Session state merge logic ──
+ * Merges incremental SSE snapshots without regressing data. */
+
+import type {
+  EngineLogEntry,
+  PreviewState,
+  RuntimeCurrentLiveEvent,
+  ScalarRow,
+  SessionState,
+} from "./types";
+import { normalizeDisplaySelection } from "./normalize";
+
+function lastScalarStep(rows: ScalarRow[]): number {
+  return rows.length > 0 ? rows[rows.length - 1]?.step ?? -1 : -1;
+}
+
+function lastLogTimestamp(entries: EngineLogEntry[]): number {
+  return entries.length > 0 ? entries[entries.length - 1]?.timestamp_unix_ms ?? -1 : -1;
+}
+
+function previewSequence(preview: PreviewState | null): [number, number, number] {
+  if (!preview) return [-1, -1, -1];
+  return [preview.config_revision, preview.source_step, preview.source_time];
+}
+
+function compareLexicographic(
+  lhs: [number, number, number],
+  rhs: [number, number, number],
+): number {
+  for (let i = 0; i < lhs.length; i += 1) {
+    if (lhs[i] > rhs[i]) return 1;
+    if (lhs[i] < rhs[i]) return -1;
+  }
+  return 0;
+}
+
+export function mergeSessionState(prev: SessionState | null, next: SessionState): SessionState {
+  if (!prev) {
+    return next;
+  }
+  if (prev.session.session_id !== next.session.session_id) {
+    return next;
+  }
+
+  const prevLiveTs = prev.live_state?.updated_at_unix_ms ?? -1;
+  const nextLiveTs = next.live_state?.updated_at_unix_ms ?? -1;
+  const prevLiveStep = prev.live_state?.step ?? -1;
+  const nextLiveStep = next.live_state?.step ?? -1;
+  const prevScalarStep = lastScalarStep(prev.scalar_rows);
+  const nextScalarStep = lastScalarStep(next.scalar_rows);
+  const timelineReset =
+    prev.live_state != null &&
+    next.live_state != null &&
+    nextLiveTs > prevLiveTs &&
+    (
+      nextLiveStep < prevLiveStep ||
+      (prevScalarStep >= 0 && nextScalarStep >= 0 && nextScalarStep < prevScalarStep)
+    );
+
+  if (timelineReset) {
+    return {
+      ...next,
+      command_status: next.command_status ?? prev.command_status,
+    };
+  }
+
+  const merged: SessionState = { ...next };
+
+  if (!merged.fem_mesh && prev.fem_mesh) {
+    merged.fem_mesh = prev.fem_mesh;
+  }
+
+  const liveRegressed =
+    prev.live_state != null &&
+    (
+      next.live_state == null ||
+      nextLiveTs < prevLiveTs ||
+      (nextLiveTs === prevLiveTs && nextLiveStep < prevLiveStep)
+    );
+
+  if (liveRegressed) {
+    merged.live_state = prev.live_state;
+    merged.latest_fields = prev.latest_fields;
+    if (prev.fem_mesh) {
+      merged.fem_mesh = prev.fem_mesh;
+    }
+  }
+
+  const prevRunSteps = prev.run?.total_steps ?? -1;
+  const nextRunSteps = next.run?.total_steps ?? -1;
+  if (prev.run && next.run && nextRunSteps < prevRunSteps) {
+    merged.run = prev.run;
+  }
+
+  if (
+    prev.display_selection &&
+    (
+      !next.display_selection ||
+      next.display_selection.revision < prev.display_selection.revision
+    )
+  ) {
+    merged.display_selection = prev.display_selection;
+  }
+
+  if (
+    prev.preview_config &&
+    (
+      !next.preview_config ||
+      next.preview_config.revision < prev.preview_config.revision
+    )
+  ) {
+    merged.preview_config = prev.preview_config;
+  }
+
+  const previewOrdering = compareLexicographic(
+    previewSequence(next.preview),
+    previewSequence(prev.preview),
+  );
+  const previewRegressed =
+    prev.preview != null &&
+    next.preview != null &&
+    previewOrdering < 0;
+  if (previewRegressed || (prev.preview != null && next.preview == null)) {
+    merged.preview = prev.preview;
+  }
+
+  if (prev.runtime_status && !next.runtime_status) {
+    merged.runtime_status = prev.runtime_status;
+  }
+
+  if (
+    prev.script_builder &&
+    (
+      !next.script_builder ||
+      next.script_builder.revision < prev.script_builder.revision
+    )
+  ) {
+    merged.script_builder = prev.script_builder;
+  }
+
+  if (nextScalarStep < prevScalarStep) {
+    merged.scalar_rows = prev.scalar_rows;
+  } else if (next.scalar_rows.length === prev.scalar_rows.length && nextScalarStep === prevScalarStep) {
+    const prevLast = prev.scalar_rows[prev.scalar_rows.length - 1];
+    const nextLast = next.scalar_rows[next.scalar_rows.length - 1];
+    if (prevLast?.e_total === nextLast?.e_total && prevLast?.max_dm_dt === nextLast?.max_dm_dt) {
+      merged.scalar_rows = prev.scalar_rows;
+    }
+  }
+
+  const prevLogTs = lastLogTimestamp(prev.engine_log);
+  const nextLogTs = lastLogTimestamp(next.engine_log);
+  if (nextLogTs < prevLogTs) {
+    merged.engine_log = prev.engine_log;
+  } else if (next.engine_log.length === prev.engine_log.length) {
+    merged.engine_log = prev.engine_log;
+  }
+
+  if (!merged.command_status && prev.command_status) {
+    merged.command_status = prev.command_status;
+  }
+
+  return merged;
+}
+
+export function mergeCommandStatusEvent(
+  prev: SessionState | null,
+  raw: RuntimeCurrentLiveEvent,
+): SessionState | null {
+  if (!prev || prev.session.session_id !== raw.session_id) {
+    return prev;
+  }
+
+  if (raw.kind === "command_ack") {
+    const displaySelection =
+      normalizeDisplaySelection(raw.display_selection) ?? prev.display_selection;
+    return {
+      ...prev,
+      command_status: {
+        session_id: raw.session_id,
+        seq: Number(raw.seq ?? 0),
+        command_id: String(raw.command_id ?? ""),
+        command_kind: String(raw.command_kind ?? ""),
+        state: "acknowledged",
+        issued_at_unix_ms: Number(raw.issued_at_unix_ms ?? 0),
+        completed_at_unix_ms: null,
+        completion_state: null,
+        reason: null,
+        display_selection: displaySelection,
+      },
+    };
+  }
+
+  if (raw.kind === "command_rejected") {
+    return {
+      ...prev,
+      command_status: {
+        session_id: raw.session_id,
+        seq: null,
+        command_id: String(raw.command_id ?? ""),
+        command_kind: String(raw.command_kind ?? ""),
+        state: "rejected",
+        issued_at_unix_ms: Number(raw.issued_at_unix_ms ?? 0),
+        completed_at_unix_ms: null,
+        completion_state: null,
+        reason: String(raw.reason ?? ""),
+        display_selection: prev.display_selection,
+      },
+    };
+  }
+
+  return {
+    ...prev,
+    command_status: {
+      session_id: raw.session_id,
+      seq: Number(raw.seq ?? 0),
+      command_id: String(raw.command_id ?? ""),
+      command_kind: String(raw.command_kind ?? ""),
+      state: "completed",
+      issued_at_unix_ms: null,
+      completed_at_unix_ms: Number(raw.completed_at_unix_ms ?? 0),
+      completion_state: String(raw.completion_state ?? ""),
+      reason: null,
+      display_selection: prev.display_selection,
+    },
+  };
+}

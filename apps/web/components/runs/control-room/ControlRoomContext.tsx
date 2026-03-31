@@ -1,10 +1,8 @@
 "use client";
 
 import {
-  createContext,
   startTransition,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -57,563 +55,74 @@ import {
   parseOptionalNumber,
   parseStageExecutionMessage,
 } from "./shared";
+import {
+  buildScriptBuilderUpdatePayload,
+  commandKindLabel,
+  downloadBase64File,
+  extractSolverPlan,
+  fileToBase64,
+  meshOptionsFromBuilder,
+  sameDisplaySelection,
+  solverSettingsFromBuilder,
+} from "./helpers";
+export type {
+  ActivityInfo,
+  FieldStats,
+  MaterialSummary,
+  MeshQualitySummary,
+  PreviewOption,
+  QuickPreviewTarget,
+  SessionFooterData,
+  SolverAdaptiveSummary,
+  SolverPlanSummary,
+  SolverRelaxationSummary,
+} from "./types";
+import type {
+  ActivityInfo,
+  FieldStats,
+  MaterialSummary,
+  MeshQualitySummary,
+  PreviewOption,
+  QuickPreviewTarget,
+  SessionFooterData,
+  SolverPlanSummary,
+} from "./types";
 
 /* ── Stable empty arrays ── */
 const EMPTY_SCALAR_ROWS: ScalarRow[] = [];
 const EMPTY_ENGINE_LOG: EngineLogEntry[] = [];
 
-/* ── Activity descriptor ── */
-export interface ActivityInfo {
-  label: string;
-  detail: string;
-  progressMode: "idle" | "indeterminate" | "determinate";
-  progressValue: number | undefined;
-}
-
-/* ── Material summary ── */
-export interface MaterialSummary {
-  msat: number | null;
-  aex: number | null;
-  alpha: number | null;
-  exchangeEnabled: boolean;
-  demagEnabled: boolean;
-  zeemanField: number[] | null;
-  name: string | null;
-}
-
-export interface SolverAdaptiveSummary {
-  atol: number | null;
-  dtInitial: number | null;
-  dtMin: number | null;
-  dtMax: number | null;
-  safety: number | null;
-}
-
-export interface SolverRelaxationSummary {
-  algorithm: string | null;
-  torqueTolerance: number | null;
-  energyTolerance: number | null;
-  maxSteps: number | null;
-}
-
-export interface SolverPlanSummary {
-  backendKind: string | null;
-  requestedBackend: string | null;
-  resolvedBackend: string | null;
-  executionMode: string | null;
-  precision: string | null;
-  integrator: string | null;
-  fixedTimestep: number | null;
-  adaptive: SolverAdaptiveSummary | null;
-  relaxation: SolverRelaxationSummary | null;
-  gyromagneticRatio: number | null;
-  exchangeBoundary: string | null;
-  externalField: [number, number, number] | null;
-  exchangeEnabled: boolean;
-  demagEnabled: boolean;
-  cellSize: [number, number, number] | null;
-  gridCells: [number, number, number] | null;
-  meshName: string | null;
-  meshSource: string | null;
-  feOrder: number | null;
-  hmax: number | null;
-  materialName: string | null;
-  materialMsat: number | null;
-  materialAex: number | null;
-  materialAlpha: number | null;
-  notes: string[];
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value != null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null;
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-}
-
-function sameDisplaySelection(
-  left: DisplaySelection | null | undefined,
-  right: DisplaySelection | null | undefined,
-): boolean {
-  if (!left || !right) return false;
-  return (
-    left.quantity === right.quantity &&
-    left.kind === right.kind &&
-    left.component === right.component &&
-    left.layer === right.layer &&
-    left.all_layers === right.all_layers &&
-    left.x_chosen_size === right.x_chosen_size &&
-    left.y_chosen_size === right.y_chosen_size &&
-    left.every_n === right.every_n &&
-    left.max_points === right.max_points &&
-    left.auto_scale_enabled === right.auto_scale_enabled
-  );
-}
-
-function commandKindLabel(kind: string | null | undefined): string {
-  switch (kind) {
-    case "display_selection_update":
-      return "Display selection";
-    case "preview_update":
-      return "Display update";
-    case "preview_refresh":
-      return "Preview refresh";
-    case "run":
-      return "Run";
-    case "relax":
-      return "Relax";
-    case "pause":
-      return "Pause";
-    case "resume":
-      return "Resume";
-    case "stop":
-    case "break":
-      return "Stop";
-    case "solve":
-      return "Compute";
-    case "remesh":
-      return "Remesh";
-    case "save_vtk":
-      return "Export VTK";
-    default:
-      return kind && kind.trim().length > 0 ? kind : "Command";
-  }
-}
-
-function solverSettingsFromBuilder(
-  builder: ScriptBuilderState["solver"],
-): SolverSettingsState {
-  return {
-    ...DEFAULT_SOLVER_SETTINGS,
-    integrator: builder.integrator || DEFAULT_SOLVER_SETTINGS.integrator,
-    fixedTimestep: builder.fixed_timestep,
-    relaxAlgorithm: builder.relax_algorithm || DEFAULT_SOLVER_SETTINGS.relaxAlgorithm,
-    torqueTolerance: builder.torque_tolerance,
-    energyTolerance: builder.energy_tolerance,
-    maxRelaxSteps: builder.max_relax_steps,
-  };
-}
-
-function meshOptionsFromBuilder(
-  builder: ScriptBuilderState["mesh"],
-): MeshOptionsState {
-  return {
-    ...DEFAULT_MESH_OPTIONS,
-    algorithm2d: builder.algorithm_2d,
-    algorithm3d: builder.algorithm_3d,
-    hmax: builder.hmax,
-    hmin: builder.hmin,
-    sizeFactor: builder.size_factor,
-    sizeFromCurvature: builder.size_from_curvature,
-    smoothingSteps: builder.smoothing_steps,
-    optimize: builder.optimize,
-    optimizeIters: builder.optimize_iterations,
-    computeQuality: builder.compute_quality,
-    perElementQuality: builder.per_element_quality,
-  };
-}
-
-function buildScriptBuilderUpdatePayload(
-  solverSettings: SolverSettingsState,
-  meshOptions: MeshOptionsState,
-) {
-  return {
-    solver: {
-      integrator: solverSettings.integrator || "",
-      fixed_timestep: solverSettings.fixedTimestep,
-      relax_algorithm: solverSettings.relaxAlgorithm || "",
-      torque_tolerance: solverSettings.torqueTolerance,
-      energy_tolerance: solverSettings.energyTolerance,
-      max_relax_steps: solverSettings.maxRelaxSteps,
-    },
-    mesh: {
-      algorithm_2d: meshOptions.algorithm2d,
-      algorithm_3d: meshOptions.algorithm3d,
-      hmax: meshOptions.hmax,
-      hmin: meshOptions.hmin,
-      size_factor: meshOptions.sizeFactor,
-      size_from_curvature: meshOptions.sizeFromCurvature,
-      smoothing_steps: meshOptions.smoothingSteps,
-      optimize: meshOptions.optimize,
-      optimize_iterations: meshOptions.optimizeIters,
-      compute_quality: meshOptions.computeQuality,
-      per_element_quality: meshOptions.perElementQuality,
-    },
-  };
-}
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string") {
-        reject(new Error("Failed to read uploaded file"));
-        return;
-      }
-      const base64 = result.includes(",") ? result.split(",", 2)[1] ?? "" : result;
-      resolve(base64);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read uploaded file"));
-    reader.readAsDataURL(file);
-  });
-}
-
-function downloadBase64File(fileName: string, contentBase64: string) {
-  const binary = atob(contentBase64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  const blob = new Blob([bytes], { type: "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function extractSolverPlan(
-  metadata: Record<string, unknown> | null,
-  session: SessionManifest | null,
-): SolverPlanSummary | null {
-  const executionPlan = asRecord(metadata?.execution_plan);
-  const backendPlan = asRecord(executionPlan?.backend_plan);
-  if (!backendPlan) return null;
-
-  const common = asRecord(executionPlan?.common);
-  const material = asRecord(backendPlan.material);
-  const adaptive = asRecord(backendPlan.adaptive_timestep);
-  const relaxation = asRecord(backendPlan.relaxation);
-  const planSummary = asRecord(session?.plan_summary);
-
-  return {
-    backendKind: asString(backendPlan.kind),
-    requestedBackend:
-      asString(common?.requested_backend) ?? asString(planSummary?.requested_backend) ?? session?.requested_backend ?? null,
-    resolvedBackend:
-      asString(common?.resolved_backend) ?? asString(planSummary?.resolved_backend) ?? null,
-    executionMode:
-      asString(common?.execution_mode) ?? asString(planSummary?.execution_mode) ?? session?.execution_mode ?? null,
-    precision: asString(backendPlan.precision) ?? session?.precision ?? null,
-    integrator: asString(backendPlan.integrator),
-    fixedTimestep: asNumber(backendPlan.fixed_timestep),
-    adaptive: adaptive
-      ? {
-          atol: asNumber(adaptive.atol),
-          dtInitial: asNumber(adaptive.dt_initial),
-          dtMin: asNumber(adaptive.dt_min),
-          dtMax: asNumber(adaptive.dt_max),
-          safety: asNumber(adaptive.safety),
-        }
-      : null,
-    relaxation: relaxation
-      ? {
-          algorithm: asString(relaxation.algorithm),
-          torqueTolerance: asNumber(relaxation.torque_tolerance),
-          energyTolerance: asNumber(relaxation.energy_tolerance),
-          maxSteps: asNumber(relaxation.max_steps),
-        }
-      : null,
-    gyromagneticRatio: asNumber(backendPlan.gyromagnetic_ratio),
-    exchangeBoundary: asString(backendPlan.exchange_bc),
-    externalField: asVec3(backendPlan.external_field),
-    exchangeEnabled: backendPlan.enable_exchange === true,
-    demagEnabled: backendPlan.enable_demag === true,
-    cellSize: asVec3(backendPlan.cell_size),
-    gridCells: asVec3(asRecord(backendPlan.grid)?.cells),
-    meshName: asString(backendPlan.mesh_name),
-    meshSource: asString(backendPlan.mesh_source),
-    feOrder: asNumber(backendPlan.fe_order),
-    hmax: asNumber(backendPlan.hmax),
-    materialName: asString(material?.name),
-    materialMsat: asNumber(material?.saturation_magnetisation),
-    materialAex: asNumber(material?.exchange_stiffness),
-    materialAlpha: asNumber(material?.damping),
-    notes: asStringArray(planSummary?.notes),
-  };
-}
-
-/* ── Preview option ── */
-export interface PreviewOption {
-  value: string;
-  label: string;
-  disabled: boolean;
-}
-
-/* ── Quick preview target ── */
-export interface QuickPreviewTarget {
-  id: string;
-  shortLabel: string;
-  available: boolean;
-}
-
-/* ── Session footer ── */
-export interface SessionFooterData {
-  requestedBackend: string | null;
-  scriptPath: string | null;
-  artifactDir: string | null;
-}
-
-/* ── Field stats ── */
-export interface FieldStats {
-  meanX: number; meanY: number; meanZ: number;
-  minX: number; minY: number; minZ: number;
-  maxX: number; maxY: number; maxZ: number;
-}
-
-/* ── Mesh quality summary ── */
-export interface MeshQualitySummary {
-  min: number; max: number; mean: number;
-  good: number; fair: number; poor: number;
-  count: number;
-}
-
-/* ── Context shape ── */
-export interface ControlRoomState {
-  /* Connection */
-  connection: "connecting" | "connected" | "disconnected";
-  error: string | null;
-
-  /* Raw session data */
-  session: SessionManifest | null;
-  run: RunManifest | null;
-  liveState: LiveState | null;
-  effectiveLiveState: LiveState | null;
-  preview: PreviewState | null;
-  femMesh: FemLiveMesh | null;
-  scalarRows: ScalarRow[];
-  engineLog: EngineLogEntry[];
-  quantities: QuantityDescriptor[];
-  artifacts: ArtifactEntry[];
-  metadata: Record<string, unknown> | null;
-
-  /* Workspace status */
-  workspaceStatus: string;
-  isWaitingForCompute: boolean;
-  hasSolverTelemetry: boolean;
-  solverNotStartedMessage: string;
-  isFemBackend: boolean;
-  runtimeEngineLabel: string | null;
-  activity: ActivityInfo;
-  sessionFooter: SessionFooterData;
-  runtimeStatus: RuntimeStatusState | null;
-  runtimeCanAcceptCommands: boolean;
-  commandStatus: CommandStatus | null;
-  activeCommandKind: string | null;
-  activeCommandState: CommandStatus["state"] | null;
-  canRunCommand: boolean;
-  canRelaxCommand: boolean;
-  canPauseCommand: boolean;
-  canStopCommand: boolean;
-  primaryRunAction: string;
-  primaryRunLabel: string;
-
-  /* Effective solver telemetry */
-  effectiveStep: number;
-  effectiveTime: number;
-  effectiveDt: number;
-  effectiveDmDt: number;
-  effectiveHEff: number;
-  effectiveHDemag: number;
-  effectiveEEx: number;
-  effectiveEDemag: number;
-  effectiveEExt: number;
-  effectiveETotal: number;
-
-  /* Status bar extras */
-  elapsed: number;
-  stepsPerSec: number;
-
-  /* View state */
-  viewMode: ViewportMode;
-  effectiveViewMode: ViewportMode;
-  component: VectorComponent;
-  plane: SlicePlane;
-  sliceIndex: number;
-  selectedQuantity: string;
-  consoleCollapsed: boolean;
-  sidebarCollapsed: boolean;
-
-  /* Mesh state */
-  meshRenderMode: RenderMode;
-  meshOpacity: number;
-  meshClipEnabled: boolean;
-  meshClipAxis: ClipAxis;
-  meshClipPos: number;
-  meshShowArrows: boolean;
-  meshSelection: MeshSelectionSnapshot;
-  meshOptions: MeshOptionsState;
-  meshQualityData: MeshQualityData | null;
-  meshGenerating: boolean;
-
-  /* FEM dock */
-  femDockTab: FemDockTab;
-
-  /* Solver settings */
-  solverSettings: SolverSettingsState;
-
-  /* Interactive */
-  interactiveEnabled: boolean;
-  interactiveControlsEnabled: boolean;
-  awaitingCommand: boolean;
-  commandBusy: boolean;
-  commandMessage: string | null;
-  scriptSyncBusy: boolean;
-  scriptSyncMessage: string | null;
-  stateIoBusy: boolean;
-  stateIoMessage: string | null;
-  scriptInitialState: ScriptBuilderState["initial_state"];
-  runUntilInput: string;
-
-  /* Preview config */
-  previewBusy: boolean;
-  previewMessage: string | null;
-  previewControlsActive: boolean;
-  requestedPreviewQuantity: string;
-  requestedPreviewComponent: string;
-  requestedPreviewLayer: number;
-  requestedPreviewAllLayers: boolean;
-  requestedPreviewEveryN: number;
-  requestedPreviewXChosenSize: number;
-  requestedPreviewYChosenSize: number;
-  requestedPreviewAutoScale: boolean;
-  requestedPreviewMaxPoints: number;
-  previewEveryNOptions: number[];
-  previewMaxPointOptions: number[];
-  previewIsStale: boolean;
-  previewIsBootstrapStale: boolean;
-
-  /* Quantity options */
-  quantityOptions: PreviewOption[];
-  previewQuantityOptions: PreviewOption[];
-  quantityDescriptor: QuantityDescriptor | null;
-  isVectorQuantity: boolean;
-  quickPreviewTargets: QuickPreviewTarget[];
-  selectedScalarValue: number | null;
-  selectedQuantityLabel: string;
-  selectedQuantityUnit: string | null;
-
-  /* Grid / topology */
-  solverGrid: [number, number, number];
-  previewGrid: [number, number, number];
-  totalCells: number | null;
-  activeCells: number | null;
-  inactiveCells: number | null;
-  activeMaskPresent: boolean;
-  activeMask: boolean[] | null;
-  maxSliceCount: number;
-
-  /* FEM derived */
-  effectiveFemMesh: FemLiveMesh | null;
-  femMeshData: FemMeshData | null;
-  femTopologyKey: string | null;
-  femColorField: FemColorField;
-  femMagnetization3DActive: boolean;
-  femShouldShowArrows: boolean;
-  isMeshWorkspaceView: boolean;
-  meshFaceDetail: ReturnType<typeof computeMeshFaceDetail>;
-  meshQualitySummary: MeshQualitySummary | null;
-
-  /* Field data */
-  selectedVectors: Float64Array | null;
-  effectiveVectorComponent: VectorComponent;
-  fieldStats: FieldStats | null;
-
-  /* Material */
-  material: MaterialSummary | null;
-  solverPlan: SolverPlanSummary | null;
-
-  /* Sparklines */
-  dmDtSpark: number[];
-  dtSpark: number[];
-  eTotalSpark: number[];
-
-  /* Mesh metadata */
-  meshName: string | null;
-  meshSource: string | null;
-  meshExtent: [number, number, number] | null;
-  meshBoundsMin: [number, number, number] | null;
-  meshBoundsMax: [number, number, number] | null;
-  meshFeOrder: number | null;
-  /** Physical world extent [x,y,z] in metres — works for both FDM and FEM */
-  worldExtent: [number, number, number] | null;
-  meshHmax: number | null;
-  mesherBackend: string | null;
-  mesherSourceKind: string | null;
-  mesherCurrentSettings: Record<string, unknown> | null;
-
-  /* Sidebar */
-  selectedSidebarNodeId: string | null;
-
-  /* Empty state */
-  emptyStateMessage: { title: string; description: string };
-}
-
-export interface ControlRoomActions {
-  setViewMode: React.Dispatch<React.SetStateAction<ViewportMode>>;
-  setComponent: React.Dispatch<React.SetStateAction<VectorComponent>>;
-  setPlane: React.Dispatch<React.SetStateAction<SlicePlane>>;
-  setSliceIndex: React.Dispatch<React.SetStateAction<number>>;
-  setSelectedQuantity: React.Dispatch<React.SetStateAction<string>>;
-  setConsoleCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
-  setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
-  setMeshRenderMode: React.Dispatch<React.SetStateAction<RenderMode>>;
-  setMeshOpacity: React.Dispatch<React.SetStateAction<number>>;
-  setMeshClipEnabled: React.Dispatch<React.SetStateAction<boolean>>;
-  setMeshClipAxis: React.Dispatch<React.SetStateAction<ClipAxis>>;
-  setMeshClipPos: React.Dispatch<React.SetStateAction<number>>;
-  setMeshShowArrows: React.Dispatch<React.SetStateAction<boolean>>;
-  setMeshSelection: React.Dispatch<React.SetStateAction<MeshSelectionSnapshot>>;
-  setMeshOptions: React.Dispatch<React.SetStateAction<MeshOptionsState>>;
-  setFemDockTab: React.Dispatch<React.SetStateAction<FemDockTab>>;
-  setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
-  setRunUntilInput: React.Dispatch<React.SetStateAction<string>>;
-  setSelectedSidebarNodeId: React.Dispatch<React.SetStateAction<string | null>>;
-  enqueueCommand: (payload: Record<string, unknown>) => Promise<void>;
-  handleCompute: () => void;
-  updatePreview: (path: string, payload?: Record<string, unknown>) => Promise<void>;
-  handleMeshGenerate: () => Promise<void>;
-  openFemMeshWorkspace: (tab?: "mesh" | "quality") => void;
-  handleViewModeChange: (mode: string) => void;
-  handleSimulationAction: (action: string) => void;
-  handleCapture: () => void;
-  handleExport: () => void;
-  handleStateExport: (format: string) => Promise<void>;
-  handleStateImport: (
-    file: File,
-    options?: {
-      format?: string;
-      applyToWorkspace?: boolean;
-      attachToScriptBuilder?: boolean;
-    },
-  ) => Promise<void>;
-  requestPreviewQuantity: (nextQuantity: string) => void;
-  syncScriptBuilder: () => Promise<void>;
-}
-
-export type ControlRoomContextValue = ControlRoomState & ControlRoomActions;
-
-const ControlRoomContext = createContext<ControlRoomContextValue | null>(null);
-
-/* ── Hook ── */
-export function useControlRoom(): ControlRoomContextValue {
-  const ctx = useContext(ControlRoomContext);
-  if (!ctx) throw new Error("useControlRoom must be used within <ControlRoomProvider>");
-  return ctx;
-}
+/* Context interfaces, hooks, and React context objects are in context-hooks.tsx */
+export {
+  useTransport,
+  useViewport,
+  useCommand,
+  useModel,
+  useControlRoom,
+  TransportCtx,
+  ViewportCtx,
+  CommandCtx,
+  ModelCtx,
+} from "./context-hooks";
+export type {
+  TransportContextValue,
+  ViewportContextValue,
+  CommandContextValue,
+  ModelContextValue,
+  ControlRoomContextValue,
+} from "./context-hooks";
+import {
+  TransportCtx,
+  ViewportCtx,
+  CommandCtx,
+  ModelCtx,
+} from "./context-hooks";
+import type {
+  TransportContextValue,
+  ViewportContextValue,
+  CommandContextValue,
+  ModelContextValue,
+} from "./context-hooks";
 
 /* ── Provider ── */
 export function ControlRoomProvider({ children }: { children: ReactNode }) {
@@ -660,6 +169,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   /* ── Derived from SSE state ── */
   const session = state?.session ?? null;
+  const workspaceHydrationKey = session
+    ? `${session.started_at_unix_ms}:${session.run_id}:${session.script_path}`
+    : null;
   const run = state?.run ?? null;
   const liveState = state?.live_state ?? null;
   const displaySelection = state?.display_selection ?? null;
@@ -785,7 +297,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       clearTimeout(builderPushTimerRef.current);
       builderPushTimerRef.current = null;
     }
-  }, [session?.session_id]);
+  }, [workspaceHydrationKey]);
 
   useEffect(() => {
     if (solverSettingsHydrated || !solverPlan || scriptBuilder) return;
@@ -812,11 +324,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [scriptBuilder, solverPlan, solverSettingsHydrated]);
 
   useEffect(() => {
-    const sessionId = session?.session_id ?? null;
-    if (!sessionId || !scriptBuilder) {
+    if (!workspaceHydrationKey || !scriptBuilder) {
       return;
     }
-    if (builderHydratedSessionRef.current === sessionId) {
+    if (builderHydratedSessionRef.current === workspaceHydrationKey) {
       return;
     }
     setSolverSettings((prev) => ({
@@ -827,20 +338,19 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       ...prev,
       ...meshOptionsFromBuilder(scriptBuilder.mesh),
     }));
-    builderHydratedSessionRef.current = sessionId;
+    builderHydratedSessionRef.current = workspaceHydrationKey;
     lastBuilderPushSignatureRef.current = JSON.stringify({
       solver: scriptBuilder.solver,
       mesh: scriptBuilder.mesh,
     });
     setSolverSettingsHydrated(true);
-  }, [scriptBuilder, session?.session_id]);
+  }, [scriptBuilder, workspaceHydrationKey]);
 
   useEffect(() => {
-    const sessionId = session?.session_id ?? null;
-    if (!sessionId || !scriptBuilder) {
+    if (!workspaceHydrationKey || !scriptBuilder) {
       return;
     }
-    if (builderHydratedSessionRef.current !== sessionId) {
+    if (builderHydratedSessionRef.current !== workspaceHydrationKey) {
       return;
     }
     if (remoteBuilderSignature === localBuilderSignature) {
@@ -876,7 +386,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     localBuilderSignature,
     remoteBuilderSignature,
     scriptBuilder,
-    session?.session_id,
+    workspaceHydrationKey,
   ]);
 
   useEffect(() => {
@@ -1722,83 +1232,105 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     artifactDir: session?.artifact_dir ?? null,
   }), [session?.requested_backend, session?.script_path, session?.artifact_dir]);
 
-  /* ── Build context value ── */
-  const value = useMemo<ControlRoomContextValue>(() => ({
-    connection, error,
-    session, run, liveState, effectiveLiveState, preview, femMesh, scalarRows, engineLog,
-    quantities, artifacts: artifactsArr, metadata,
-    workspaceStatus, isWaitingForCompute, hasSolverTelemetry, solverNotStartedMessage, isFemBackend, runtimeEngineLabel,
-    activity, sessionFooter, runtimeStatus, runtimeCanAcceptCommands, commandStatus, activeCommandKind, activeCommandState,
-    canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,
+  /* ═══════════════════════════════════════════════════════════════
+   * SPLIT useMemo — each context domain has its own memo so that
+   * a telemetry tick does NOT invalidate model/command/viewport.
+   * ═══════════════════════════════════════════════════════════════ */
+
+  const transportValue = useMemo<TransportContextValue>(() => ({
     effectiveStep, effectiveTime, effectiveDt, effectiveDmDt, effectiveHEff, effectiveHDemag,
     effectiveEEx, effectiveEDemag, effectiveEExt, effectiveETotal,
     elapsed, stepsPerSec,
+    liveState, effectiveLiveState, scalarRows,
+    dmDtSpark, dtSpark, eTotalSpark,
+    preview, selectedVectors, fieldStats, hasSolverTelemetry,
+  }), [
+    effectiveStep, effectiveTime, effectiveDt, effectiveDmDt, effectiveHEff, effectiveHDemag,
+    effectiveEEx, effectiveEDemag, effectiveEExt, effectiveETotal,
+    elapsed, stepsPerSec,
+    liveState, effectiveLiveState, scalarRows,
+    dmDtSpark, dtSpark, eTotalSpark,
+    preview, selectedVectors, fieldStats, hasSolverTelemetry,
+  ]);
+
+  const viewportValue = useMemo<ViewportContextValue>(() => ({
     viewMode, effectiveViewMode, component, plane, sliceIndex, selectedQuantity,
     consoleCollapsed, sidebarCollapsed,
-    meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
-    meshSelection, meshOptions, meshQualityData, meshGenerating,
-    femDockTab, solverSettings,
-    interactiveEnabled, interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage,
-    scriptSyncBusy, scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState,
-    runUntilInput, previewBusy, previewMessage,
-    previewControlsActive, requestedPreviewQuantity, requestedPreviewComponent,
-    requestedPreviewLayer, requestedPreviewAllLayers, requestedPreviewEveryN,
-    requestedPreviewXChosenSize, requestedPreviewYChosenSize, requestedPreviewAutoScale,
-    requestedPreviewMaxPoints, previewEveryNOptions, previewMaxPointOptions,
-    previewIsStale, previewIsBootstrapStale,
     quantityOptions, previewQuantityOptions, quantityDescriptor, isVectorQuantity,
     quickPreviewTargets, selectedScalarValue, selectedQuantityLabel, selectedQuantityUnit,
     solverGrid, previewGrid, totalCells, activeCells, inactiveCells, activeMaskPresent, activeMask,
-    maxSliceCount,
-    effectiveFemMesh, femMeshData, femTopologyKey, femColorField, femMagnetization3DActive,
-    femShouldShowArrows, isMeshWorkspaceView, meshFaceDetail, meshQualitySummary,
-    selectedVectors, effectiveVectorComponent, fieldStats, material, solverPlan,
-    dmDtSpark, dtSpark, eTotalSpark,
-    meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder, meshHmax, worldExtent,
-    mesherBackend, mesherSourceKind, mesherCurrentSettings,
-    selectedSidebarNodeId, emptyStateMessage,
-    /* actions */
+    maxSliceCount, effectiveVectorComponent, emptyStateMessage,
+    previewBusy, previewMessage, previewControlsActive,
+    requestedPreviewQuantity, requestedPreviewComponent, requestedPreviewLayer,
+    requestedPreviewAllLayers, requestedPreviewEveryN,
+    requestedPreviewXChosenSize, requestedPreviewYChosenSize, requestedPreviewAutoScale,
+    requestedPreviewMaxPoints, previewEveryNOptions, previewMaxPointOptions,
+    previewIsStale, previewIsBootstrapStale,
     setViewMode, setComponent, setPlane, setSliceIndex, setSelectedQuantity,
     setConsoleCollapsed, setSidebarCollapsed,
-    setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis, setMeshClipPos,
-    setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
-    setSolverSettings, setRunUntilInput, setSelectedSidebarNodeId,
-    enqueueCommand, handleCompute, updatePreview, handleMeshGenerate, openFemMeshWorkspace,
-    handleViewModeChange, handleSimulationAction, handleCapture, handleExport,
-    handleStateExport, handleStateImport,
-    requestPreviewQuantity, syncScriptBuilder,
+    updatePreview, handleViewModeChange, handleCapture, handleExport, requestPreviewQuantity,
   }), [
-    connection, error, session, run, liveState, effectiveLiveState, preview, femMesh, scalarRows,
-    engineLog, quantities, artifactsArr, metadata, workspaceStatus, hasSolverTelemetry,
-    solverNotStartedMessage, isFemBackend, runtimeEngineLabel, activity, sessionFooter,
-    runtimeStatus, runtimeCanAcceptCommands, commandStatus, activeCommandKind, activeCommandState,
-    canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,
-    effectiveStep, effectiveTime, effectiveDt, effectiveDmDt, effectiveHEff, effectiveHDemag,
-    effectiveEEx, effectiveEDemag, effectiveEExt, effectiveETotal, elapsed, stepsPerSec,
     viewMode, effectiveViewMode, component, plane, sliceIndex, selectedQuantity,
-    consoleCollapsed, sidebarCollapsed, meshRenderMode, meshOpacity, meshClipEnabled,
-    meshClipAxis, meshClipPos, meshShowArrows, meshSelection, meshOptions, meshQualityData,
-    meshGenerating, femDockTab, solverSettings, interactiveEnabled,
-    interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage, scriptSyncBusy,
-    scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState, runUntilInput,
-    previewBusy, previewMessage, previewControlsActive, requestedPreviewQuantity,
-    requestedPreviewComponent, requestedPreviewLayer, requestedPreviewAllLayers,
-    requestedPreviewEveryN, requestedPreviewXChosenSize, requestedPreviewYChosenSize,
-    requestedPreviewAutoScale, requestedPreviewMaxPoints, previewEveryNOptions,
-    previewMaxPointOptions, previewIsStale, previewIsBootstrapStale, quantityOptions,
-    previewQuantityOptions, quantityDescriptor, isVectorQuantity, quickPreviewTargets,
-    selectedScalarValue, selectedQuantityLabel, selectedQuantityUnit,
-    solverGrid, previewGrid, totalCells, activeCells, inactiveCells,
-    activeMaskPresent, activeMask, maxSliceCount, effectiveFemMesh, femMeshData, femTopologyKey,
-    femColorField, femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
-    meshFaceDetail, meshQualitySummary, selectedVectors, effectiveVectorComponent, fieldStats,
-    material, solverPlan, dmDtSpark, dtSpark, eTotalSpark, meshName, meshSource, meshExtent, meshBoundsMin,
-    meshBoundsMax, meshFeOrder, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
-    selectedSidebarNodeId, emptyStateMessage,
-    enqueueCommand, handleCompute, updatePreview, handleMeshGenerate, openFemMeshWorkspace,
-    handleViewModeChange, handleSimulationAction, handleCapture, handleExport,
-    handleStateExport, handleStateImport,
-    requestPreviewQuantity, syncScriptBuilder,
+    consoleCollapsed, sidebarCollapsed,
+    quantityOptions, previewQuantityOptions, quantityDescriptor, isVectorQuantity,
+    quickPreviewTargets, selectedScalarValue, selectedQuantityLabel, selectedQuantityUnit,
+    solverGrid, previewGrid, totalCells, activeCells, inactiveCells, activeMaskPresent, activeMask,
+    maxSliceCount, effectiveVectorComponent, emptyStateMessage,
+    previewBusy, previewMessage, previewControlsActive,
+    requestedPreviewQuantity, requestedPreviewComponent, requestedPreviewLayer,
+    requestedPreviewAllLayers, requestedPreviewEveryN,
+    requestedPreviewXChosenSize, requestedPreviewYChosenSize, requestedPreviewAutoScale,
+    requestedPreviewMaxPoints, previewEveryNOptions, previewMaxPointOptions,
+    previewIsStale, previewIsBootstrapStale,
+    updatePreview, handleViewModeChange, handleCapture, handleExport, requestPreviewQuantity,
+  ]);
+
+  const commandValue = useMemo<CommandContextValue>(() => ({
+    connection, error, session, run, metadata, engineLog, quantities, artifacts: artifactsArr,
+    workspaceStatus, isWaitingForCompute, solverNotStartedMessage, isFemBackend, runtimeEngineLabel,
+    activity, sessionFooter, runtimeStatus, runtimeCanAcceptCommands,
+    commandStatus, activeCommandKind, activeCommandState,
+    canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,
+    interactiveEnabled, interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage,
+    scriptSyncBusy, scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState, runUntilInput,
+    setRunUntilInput, enqueueCommand, handleCompute, handleSimulationAction,
+    handleStateExport, handleStateImport, syncScriptBuilder,
+  }), [
+    connection, error, session, run, metadata, engineLog, quantities, artifactsArr,
+    workspaceStatus, isWaitingForCompute, solverNotStartedMessage, isFemBackend, runtimeEngineLabel,
+    activity, sessionFooter, runtimeStatus, runtimeCanAcceptCommands,
+    commandStatus, activeCommandKind, activeCommandState,
+    canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,
+    interactiveEnabled, interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage,
+    scriptSyncBusy, scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState, runUntilInput,
+    enqueueCommand, handleCompute, handleSimulationAction,
+    handleStateExport, handleStateImport, syncScriptBuilder,
+  ]);
+
+  const modelValue = useMemo<ModelContextValue>(() => ({
+    material, solverPlan, solverSettings, femMesh,
+    meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
+    meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
+    effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
+    femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
+    meshFaceDetail, meshQualitySummary,
+    meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder,
+    worldExtent, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
+    selectedSidebarNodeId,
+    setSolverSettings, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
+    setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
+    setSelectedSidebarNodeId, handleMeshGenerate, openFemMeshWorkspace,
+  }), [
+    material, solverPlan, solverSettings, femMesh,
+    meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
+    meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
+    effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
+    femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
+    meshFaceDetail, meshQualitySummary,
+    meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder,
+    worldExtent, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
+    selectedSidebarNodeId,
+    handleMeshGenerate, openFemMeshWorkspace,
   ]);
 
   if (!state) {
@@ -1813,8 +1345,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <ControlRoomContext.Provider value={value}>
-      {children}
-    </ControlRoomContext.Provider>
+    <TransportCtx.Provider value={transportValue}>
+      <ViewportCtx.Provider value={viewportValue}>
+        <CommandCtx.Provider value={commandValue}>
+          <ModelCtx.Provider value={modelValue}>
+            {children}
+          </ModelCtx.Provider>
+        </CommandCtx.Provider>
+      </ViewportCtx.Provider>
+    </TransportCtx.Provider>
   );
 }
