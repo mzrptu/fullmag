@@ -264,6 +264,67 @@ pub enum TimeDependenceIR {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RfDriveIR {
+    pub current_a: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waveform: Option<TimeDependenceIR>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AntennaIR {
+    Microstrip {
+        width: f64,
+        thickness: f64,
+        height_above_magnet: f64,
+        preview_length: f64,
+        #[serde(default)]
+        center_x: f64,
+        #[serde(default)]
+        center_y: f64,
+        #[serde(default = "default_current_distribution_uniform")]
+        current_distribution: String,
+    },
+    Cpw {
+        signal_width: f64,
+        gap: f64,
+        ground_width: f64,
+        thickness: f64,
+        height_above_magnet: f64,
+        preview_length: f64,
+        #[serde(default)]
+        center_x: f64,
+        #[serde(default)]
+        center_y: f64,
+        #[serde(default = "default_current_distribution_uniform")]
+        current_distribution: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CurrentModuleIR {
+    AntennaFieldSource {
+        name: String,
+        solver: String,
+        antenna: AntennaIR,
+        drive: RfDriveIR,
+        #[serde(default = "default_antenna_air_box_factor")]
+        air_box_factor: f64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExcitationAnalysisIR {
+    pub source: String,
+    pub method: String,
+    pub propagation_axis: [f64; 3],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub k_max_rad_per_m: Option<f64>,
+    pub samples: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EnergyTermIR {
     Exchange,
@@ -861,6 +922,10 @@ pub struct ProblemIR {
     pub study: StudyIR,
     pub backend_policy: BackendPolicyIR,
     pub validation_profile: ValidationProfileIR,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub current_modules: Vec<CurrentModuleIR>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excitation_analysis: Option<ExcitationAnalysisIR>,
 
     /// Global current density for Zhang-Li STT [A/m^2]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1088,6 +1153,8 @@ pub struct FemPlanIR {
     pub enable_demag: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_field: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub current_modules: Vec<CurrentModuleIR>,
     pub gyromagnetic_ratio: f64,
     pub precision: ExecutionPrecision,
     pub exchange_bc: ExchangeBoundaryCondition,
@@ -1156,6 +1223,23 @@ pub struct FemPlanIR {
     pub oersted_time_dep_t_on: f64,
     #[serde(default)]
     pub oersted_time_dep_t_off: f64,
+
+    /// Prescribed-strain magnetoelastic coupling
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub magnetoelastic: Option<FemMagnetoelasticPlanIR>,
+}
+
+/// Prescribed-strain magnetoelastic coupling plan for FEM backend.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemMagnetoelasticPlanIR {
+    /// First magnetoelastic coupling constant B₁ [Pa].
+    pub b1: f64,
+    /// Second magnetoelastic coupling constant B₂ [Pa].
+    pub b2: f64,
+    /// Prescribed strain in Voigt notation [ε₁₁, ε₂₂, ε₃₃, 2ε₂₃, 2ε₁₃, 2ε₁₂].
+    /// If Some, treated as uniform strain across the entire body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prescribed_strain: Option<[f64; 6]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1319,6 +1403,8 @@ impl ProblemIR {
             validation_profile: ValidationProfileIR {
                 execution_mode: ExecutionMode::Strict,
             },
+            current_modules: Vec::new(),
+            excitation_analysis: None,
             current_density: None,
             stt_degree: None,
             stt_beta: None,
@@ -1623,6 +1709,31 @@ impl ProblemIR {
             "magnets",
             &mut errors,
         );
+        validate_unique_names(
+            self.current_modules.iter().map(|module| match module {
+                CurrentModuleIR::AntennaFieldSource { name, .. } => name.as_str(),
+            }),
+            "current modules",
+            &mut errors,
+        );
+
+        if let Some(analysis) = self.excitation_analysis.as_ref() {
+            let source_exists = self.current_modules.iter().any(|module| match module {
+                CurrentModuleIR::AntennaFieldSource { name, .. } => name == &analysis.source,
+            });
+            if !source_exists {
+                errors.push(format!(
+                    "excitation_analysis.source '{}' must reference one of current_modules",
+                    analysis.source
+                ));
+            }
+            if analysis.method.trim().is_empty() {
+                errors.push("excitation_analysis.method must not be empty".to_string());
+            }
+            if analysis.samples < 2 {
+                errors.push("excitation_analysis.samples must be >= 2".to_string());
+            }
+        }
 
         for geometry in &self.geometry.entries {
             match geometry {
@@ -1888,6 +1999,14 @@ impl RelaxationAlgorithmIR {
 
 fn default_axis_z() -> [f64; 3] {
     [0.0, 0.0, 1.0]
+}
+
+fn default_current_distribution_uniform() -> String {
+    "uniform".to_string()
+}
+
+fn default_antenna_air_box_factor() -> f64 {
+    12.0
 }
 
 fn validate_unique_names<'a>(

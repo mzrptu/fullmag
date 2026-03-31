@@ -32,6 +32,11 @@ import type {
   ScriptBuilderState,
   SessionManifest,
 } from "../../../lib/useSessionStream";
+import type {
+  ScriptBuilderCurrentModuleEntry,
+  ScriptBuilderExcitationAnalysisEntry,
+  ScriptBuilderGeometryEntry,
+} from "../../../lib/session/types";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import type { MeshOptionsState, MeshQualityData } from "../../panels/MeshSettingsPanel";
 import type {
@@ -42,6 +47,7 @@ import type {
   RenderMode,
 } from "../../preview/FemMeshView3D";
 import type {
+  AntennaOverlay,
   FemDockTab,
   SlicePlane,
   VectorComponent,
@@ -183,6 +189,9 @@ export interface CommandContextValue {
   stateIoBusy: boolean;
   stateIoMessage: string | null;
   scriptInitialState: ScriptBuilderState["initial_state"];
+  scriptBuilderGeometries: ScriptBuilderGeometryEntry[];
+  scriptBuilderCurrentModules: ScriptBuilderCurrentModuleEntry[];
+  scriptBuilderExcitationAnalysis: ScriptBuilderExcitationAnalysisEntry | null;
   runUntilInput: string;
   /* Actions */
   setRunUntilInput: React.Dispatch<React.SetStateAction<string>>;
@@ -207,6 +216,10 @@ export interface ModelContextValue {
   solverPlan: SolverPlanSummary | null;
   solverSettings: SolverSettingsState;
   studyStages: ScriptBuilderStageState[];
+  scriptBuilderGeometries: ScriptBuilderGeometryEntry[];
+  scriptBuilderCurrentModules: ScriptBuilderCurrentModuleEntry[];
+  scriptBuilderExcitationAnalysis: ScriptBuilderExcitationAnalysisEntry | null;
+  antennaOverlays: AntennaOverlay[];
   femMesh: FemLiveMesh | null;
   meshRenderMode: RenderMode;
   meshOpacity: number;
@@ -245,6 +258,13 @@ export interface ModelContextValue {
   /* Actions */
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
   setStudyStages: React.Dispatch<React.SetStateAction<ScriptBuilderStageState[]>>;
+  setScriptBuilderGeometries: React.Dispatch<React.SetStateAction<ScriptBuilderGeometryEntry[]>>;
+  setScriptBuilderCurrentModules: React.Dispatch<
+    React.SetStateAction<ScriptBuilderCurrentModuleEntry[]>
+  >;
+  setScriptBuilderExcitationAnalysis: React.Dispatch<
+    React.SetStateAction<ScriptBuilderExcitationAnalysisEntry | null>
+  >;
   setMeshRenderMode: React.Dispatch<React.SetStateAction<RenderMode>>;
   setMeshOpacity: React.Dispatch<React.SetStateAction<number>>;
   setMeshClipEnabled: React.Dispatch<React.SetStateAction<boolean>>;

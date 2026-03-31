@@ -53,6 +53,7 @@ pub enum fullmag_fem_observable {
     FULLMAG_FEM_OBSERVABLE_H_EFF = 5,
     FULLMAG_FEM_OBSERVABLE_H_ANI = 6,
     FULLMAG_FEM_OBSERVABLE_H_DMI = 7,
+    FULLMAG_FEM_OBSERVABLE_H_MEL = 8,
 }
 
 #[repr(C)]
@@ -187,6 +188,13 @@ pub struct fullmag_fem_plan_desc {
     pub oersted_time_dep_t_off: f64,
     // Thermal noise
     pub temperature: f64,
+    // Magnetoelastic coupling (prescribed-strain)
+    pub has_magnetoelastic: i32,
+    pub mel_b1: f64,
+    pub mel_b2: f64,
+    pub mel_uniform_strain: i32,
+    pub mel_strain_voigt: *const f64,
+    pub mel_strain_len: u64,
 }
 
 #[repr(C)]
@@ -201,6 +209,7 @@ pub struct fullmag_fem_step_stats {
     pub anisotropy_energy_joules: f64,
     pub dmi_energy_joules: f64,
     pub total_energy_joules: f64,
+    pub magnetoelastic_energy_joules: f64,
     pub max_effective_field_amplitude: f64,
     pub max_demag_field_amplitude: f64,
     pub max_rhs_amplitude: f64,
@@ -280,4 +289,11 @@ extern "C" {
     pub fn fullmag_fem_backend_last_error(handle: *mut fullmag_fem_backend) -> *const c_char;
 
     pub fn fullmag_fem_backend_destroy(handle: *mut fullmag_fem_backend);
+
+    pub fn fullmag_fem_backend_upload_strain(
+        handle: *mut fullmag_fem_backend,
+        strain_voigt: *const f64,
+        len: u64,
+        uniform: i32,
+    ) -> i32;
 }

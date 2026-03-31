@@ -287,7 +287,7 @@ export function buildFullmagModelTree(opts: {
     ? `${geos.length} ${geos.length === 1 ? "body" : "bodies"}`
     : opts.materialName ?? "—";
 
-  return [
+  const tree: TreeNodeData[] = [
     {
       id: "geometry",
       label: "Geometry",
@@ -310,34 +310,38 @@ export function buildFullmagModelTree(opts: {
         { id: "reg-boundary", label: "Boundary", icon: "▢" },
       ],
     },
-    {
+  ];
+
+  if (geos.length === 0) {
+    tree.push({
       id: "materials",
       label: "Materials",
       icon: "●",
       badge: materialBadge,
       status: materialStatus,
       onClick: opts.onMaterialClick,
-      children: geos.length > 0
-        ? geos.map((geo) => _buildMaterialNode(geo))
-        : [
-            { id: "mat-body", label: opts.materialName ?? "Material 1", icon: "●",
-              children: [
-                { id: "mat-ms", label: opts.materialMsat != null ? `Ms = ${fmtCompact(opts.materialMsat)} A/m` : "Ms (saturation)", icon: "𝑀", status: opts.materialMsat != null ? "ready" : "pending" },
-                { id: "mat-aex", label: opts.materialAex != null ? `A = ${opts.materialAex.toExponential(1)} J/m` : "A (exchange)", icon: "𝐴", status: opts.materialAex != null ? "ready" : "pending" },
-                { id: "mat-alpha", label: opts.materialAlpha != null ? `α = ${opts.materialAlpha}` : "α (damping)", icon: "α", status: opts.materialAlpha != null ? "ready" : "pending" },
-              ],
-            },
-            {
-              id: "initial-state",
-              label: "Initial State (m₀)",
-              icon: "📂",
-              status: opts.initialStatePath ? "ready" : "pending",
-              badge: opts.initialStatePath
-                ? (opts.initialStateFormat ?? "file")
-                : "uniform",
-            },
+      children: [
+        { id: "mat-body", label: opts.materialName ?? "Material 1", icon: "●",
+          children: [
+            { id: "mat-ms", label: opts.materialMsat != null ? `Ms = ${fmtCompact(opts.materialMsat)} A/m` : "Ms (saturation)", icon: "𝑀", status: opts.materialMsat != null ? "ready" : "pending" },
+            { id: "mat-aex", label: opts.materialAex != null ? `A = ${opts.materialAex.toExponential(1)} J/m` : "A (exchange)", icon: "𝐴", status: opts.materialAex != null ? "ready" : "pending" },
+            { id: "mat-alpha", label: opts.materialAlpha != null ? `α = ${opts.materialAlpha}` : "α (damping)", icon: "α", status: opts.materialAlpha != null ? "ready" : "pending" },
           ],
-    },
+        },
+        {
+          id: "initial-state",
+          label: "Initial State (m₀)",
+          icon: "📂",
+          status: opts.initialStatePath ? "ready" : "pending",
+          badge: opts.initialStatePath
+            ? (opts.initialStateFormat ?? "file")
+            : "uniform",
+        },
+      ],
+    });
+  }
+
+  tree.push(
     {
       id: "physics",
       label: "Physics",
@@ -388,11 +392,161 @@ export function buildFullmagModelTree(opts: {
         { id: "res-export", label: "Export", icon: "💾" },
       ],
     },
-  ];
+  );
+
+  return tree;
 }
 
 function fmtCompact(v: number): string {
   if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(0)}M`;
   if (Math.abs(v) >= 1e3) return `${(v / 1e3).toFixed(0)}k`;
   return v.toFixed(0);
+}
+
+/* ── Per-geometry node builders ───────────────────────────────────── */
+
+const GEOMETRY_ICONS: Record<string, string> = {
+  Box: "◻",
+  Cylinder: "⬡",
+  Ellipsoid: "⬭",
+  Ellipse: "◯",
+  ImportedGeometry: "📦",
+  Difference: "✂",
+  Union: "∪",
+  Intersection: "∩",
+};
+
+function _buildGeometryNode(
+  geo: import("@/lib/session/types").ScriptBuilderGeometryEntry,
+): TreeNodeData {
+  const geoId = `geo-${geo.name}`;
+  const icon = GEOMETRY_ICONS[geo.geometry_kind] ?? "◻";
+
+  const meshNode: TreeNodeData = {
+    id: `${geoId}-mesh`,
+    label: "Mesh Override",
+    icon: "◫",
+    status: geo.mesh ? "ready" : "pending",
+    badge: geo.mesh ? (geo.mesh.order ? `P${geo.mesh.order}` : "auto") : undefined,
+    children: [
+      { id: `${geoId}-mesh-hmax`, label: geo.mesh?.hmax ? `hmax = ${geo.mesh.hmax}` : "hmax (auto)", icon: "📏" }
+    ],
+  };
+
+  return {
+    id: geoId,
+    label: geo.name,
+    icon,
+    badge: geo.geometry_kind,
+    status: "ready",
+    children: [
+      {
+        id: `${geoId}-params`,
+        label: "Properties",
+        icon: "⚙",
+        children: _buildGeometryParamChildren(geoId, geo),
+      },
+      _buildMaterialNode(geo),
+      meshNode,
+    ],
+  };
+}
+
+function _buildGeometryParamChildren(
+  parentId: string,
+  geo: import("@/lib/session/types").ScriptBuilderGeometryEntry,
+): TreeNodeData[] {
+  const params = geo.geometry_params;
+  const children: TreeNodeData[] = [];
+
+  if (geo.geometry_kind === "Box" && Array.isArray(params.size)) {
+    const [dx, dy, dz] = (params.size as number[]).map((v) => (v * 1e9).toFixed(1));
+    children.push({ id: `${parentId}-size`, label: `${dx} × ${dy} × ${dz} nm`, icon: "📏" });
+  } else if (geo.geometry_kind === "Cylinder") {
+    const r = params.radius != null ? `r=${((params.radius as number) * 1e9).toFixed(1)}` : "";
+    const h = params.height != null ? `h=${((params.height as number) * 1e9).toFixed(1)}` : "";
+    children.push({ id: `${parentId}-dim`, label: `${r} ${h} nm`, icon: "📏" });
+  } else if (geo.geometry_kind === "Ellipsoid") {
+    const rx = params.rx != null ? ((params.rx as number) * 1e9).toFixed(1) : "?";
+    const ry = params.ry != null ? ((params.ry as number) * 1e9).toFixed(1) : "?";
+    const rz = params.rz != null ? ((params.rz as number) * 1e9).toFixed(1) : "?";
+    children.push({ id: `${parentId}-dim`, label: `${rx} × ${ry} × ${rz} nm`, icon: "📏" });
+  } else if (geo.geometry_kind === "ImportedGeometry" && typeof params.source === "string") {
+    const basename = (params.source as string).split("/").pop() ?? params.source;
+    children.push({ id: `${parentId}-source`, label: basename as string, icon: "📄" });
+  }
+
+  return children;
+}
+
+function _buildMaterialNode(
+  geo: import("@/lib/session/types").ScriptBuilderGeometryEntry,
+): TreeNodeData {
+  const matId = `mat-${geo.name}`;
+  const mat = geo.material;
+  const mag = geo.magnetization;
+
+  const matChildren: TreeNodeData[] = [
+    {
+      id: `${matId}-ms`,
+      label: mat.Ms != null ? `Ms = ${fmtCompact(mat.Ms)} A/m` : "Ms (saturation)",
+      icon: "𝑀",
+      status: mat.Ms != null ? "ready" : "pending",
+    },
+    {
+      id: `${matId}-aex`,
+      label: mat.Aex != null ? `A = ${mat.Aex.toExponential(1)} J/m` : "A (exchange)",
+      icon: "𝐴",
+      status: mat.Aex != null ? "ready" : "pending",
+    },
+    {
+      id: `${matId}-alpha`,
+      label: `α = ${mat.alpha}`,
+      icon: "α",
+      status: "ready",
+    },
+  ];
+
+  if (mat.Dind != null) {
+    matChildren.push({
+      id: `${matId}-dind`,
+      label: `Dind = ${mat.Dind.toExponential(1)} J/m²`,
+      icon: "𝐷",
+      status: "ready",
+    });
+  }
+
+  // Magnetization node
+  const magLabel = _magnetizationLabel(mag);
+  matChildren.push({
+    id: `${matId}-m0`,
+    label: `m₀: ${magLabel}`,
+    icon: "🧭",
+    status: "ready",
+    badge: mag.kind,
+  });
+
+  return {
+    id: matId,
+    label: "Material & State",
+    icon: "●",
+    status: mat.Ms != null ? "ready" : "pending",
+    children: matChildren,
+  };
+}
+
+function _magnetizationLabel(
+  mag: import("@/lib/session/types").ScriptBuilderMagnetizationEntry,
+): string {
+  if (mag.kind === "uniform" && mag.value) {
+    return `(${mag.value.map((v) => v.toFixed(2)).join(", ")})`;
+  }
+  if (mag.kind === "random") {
+    return mag.seed != null ? `random(seed=${mag.seed})` : "random";
+  }
+  if (mag.kind === "file" && mag.source_path) {
+    const basename = mag.source_path.split("/").pop() ?? mag.source_path;
+    return basename;
+  }
+  return mag.kind;
 }

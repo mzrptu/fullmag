@@ -64,7 +64,10 @@ pub(crate) fn collect_field_schedules(
                 name,
                 every_seconds,
             } => {
-                if !matches!(name.as_str(), "m" | "H_ex" | "H_demag" | "H_ext" | "H_eff") {
+                if !matches!(
+                    name.as_str(),
+                    "m" | "H_ex" | "H_demag" | "H_ant" | "H_ext" | "H_eff"
+                ) {
                     return Err(RunError {
                         message: format!("field output '{}' is not executable in Phase 1", name),
                     });
@@ -82,7 +85,10 @@ pub(crate) fn collect_field_schedules(
                 every_seconds,
                 ..
             } => {
-                if !matches!(field.as_str(), "m" | "H_ex" | "H_demag" | "H_ext" | "H_eff") {
+                if !matches!(
+                    field.as_str(),
+                    "m" | "H_ex" | "H_demag" | "H_ant" | "H_ext" | "H_eff"
+                ) {
                     return Err(RunError {
                         message: format!("snapshot field '{}' is not executable in Phase 1", field),
                     });

@@ -29,7 +29,7 @@ pub struct QuantitySpec {
     pub ui_exposed: bool,
 }
 
-const QUANTITY_SPECS: [QuantitySpec; 13] = [
+const QUANTITY_SPECS: [QuantitySpec; 14] = [
     QuantitySpec {
         id: "m",
         label: "Magnetization",
@@ -67,6 +67,16 @@ const QUANTITY_SPECS: [QuantitySpec; 13] = [
         unit: "A/m",
         interactive_preview: true,
         quick_access_label: Some("H_ext"),
+        scalar_metric_key: None,
+        ui_exposed: true,
+    },
+    QuantitySpec {
+        id: "H_ant",
+        label: "Antenna Field",
+        kind: QuantityKind::VectorField,
+        unit: "A/m",
+        interactive_preview: true,
+        quick_access_label: Some("H_ant"),
         scalar_metric_key: None,
         ui_exposed: true,
     },

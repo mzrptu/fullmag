@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FemMeshData } from "./FemMeshView3D";
 import { DIVERGING_PALETTE, POSITIVE_PALETTE } from "../../lib/colorPalettes";
+import type { AntennaOverlay } from "../runs/control-room/shared";
 
 type SlicePlane = "xy" | "xz" | "yz";
 type VectorComponent = "x" | "y" | "z" | "magnitude";
@@ -15,6 +16,8 @@ interface Props {
   plane: SlicePlane;
   sliceIndex: number;
   sliceCount?: number;
+  antennaOverlays?: AntennaOverlay[];
+  selectedAntennaId?: string | null;
 }
 
 type Point3 = [number, number, number];
@@ -30,6 +33,13 @@ interface Segment2D {
 interface Polygon2D {
   points: Point2[];
   value: number;
+}
+
+interface AntennaRect2D {
+  id: string;
+  role: AntennaOverlay["conductors"][number]["role"];
+  bounds: { uMin: number; uMax: number; vMin: number; vMax: number };
+  selected: boolean;
 }
 
 const BG = "#1e1e2e";
@@ -512,6 +522,56 @@ function collectSegments(
   return collectBoundarySegments(meshData, plane, component, sliceIndex, sliceCount);
 }
 
+function collectAntennaRects(
+  overlays: AntennaOverlay[],
+  plane: SlicePlane,
+  planeCoord: number,
+  selectedAntennaId?: string | null,
+): AntennaRect2D[] {
+  const { normal, u, v } = axisIndices(plane);
+  const epsilon = 1e-15;
+  const rects: AntennaRect2D[] = [];
+
+  for (const overlay of overlays) {
+    const selected = selectedAntennaId === overlay.id;
+    for (const conductor of overlay.conductors) {
+      if (
+        planeCoord < conductor.boundsMin[normal] - epsilon ||
+        planeCoord > conductor.boundsMax[normal] + epsilon
+      ) {
+        continue;
+      }
+      rects.push({
+        id: conductor.id,
+        role: conductor.role,
+        selected,
+        bounds: {
+          uMin: conductor.boundsMin[u],
+          uMax: conductor.boundsMax[u],
+          vMin: conductor.boundsMin[v],
+          vMax: conductor.boundsMax[v],
+        },
+      });
+    }
+  }
+
+  return rects;
+}
+
+function antennaRectColors(
+  role: AntennaRect2D["role"],
+  selected: boolean,
+): { fill: string; stroke: string } {
+  if (role === "ground") {
+    return selected
+      ? { fill: "rgba(103, 232, 249, 0.28)", stroke: "#a5f3fc" }
+      : { fill: "rgba(14, 165, 233, 0.16)", stroke: "#67e8f9" };
+  }
+  return selected
+    ? { fill: "rgba(251, 146, 60, 0.32)", stroke: "#fdba74" }
+    : { fill: "rgba(249, 115, 22, 0.18)", stroke: "#fb923c" };
+}
+
 export default function FemMeshSlice2D({
   meshData,
   quantityLabel,
@@ -520,6 +580,8 @@ export default function FemMeshSlice2D({
   plane,
   sliceIndex,
   sliceCount = 25,
+  antennaOverlays = [],
+  selectedAntennaId,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [canvasSize, setCanvasSize] = useState<[number, number]>([0, 0]);
@@ -527,6 +589,10 @@ export default function FemMeshSlice2D({
   const slice = useMemo(
     () => collectSegments(meshData, plane, component, sliceIndex, sliceCount),
     [meshData, plane, component, sliceIndex, sliceCount],
+  );
+  const antennaRects = useMemo(
+    () => collectAntennaRects(antennaOverlays, plane, slice.planeCoord, selectedAntennaId),
+    [antennaOverlays, plane, selectedAntennaId, slice.planeCoord],
   );
 
   // Track container size so the canvas re-draws on resize
@@ -655,6 +721,21 @@ export default function FemMeshSlice2D({
         ctx.lineTo(x2, y2);
         ctx.stroke();
       }
+
+      for (const rect of antennaRects) {
+        const [ax1, ay1] = map([rect.bounds.uMin, rect.bounds.vMin]);
+        const [ax2, ay2] = map([rect.bounds.uMax, rect.bounds.vMax]);
+        const x = Math.min(ax1, ax2);
+        const y = Math.min(ay1, ay2);
+        const width = Math.max(Math.abs(ax2 - ax1), 1);
+        const height = Math.max(Math.abs(ay2 - ay1), 1);
+        const colors = antennaRectColors(rect.role, rect.selected);
+        ctx.fillStyle = colors.fill;
+        ctx.strokeStyle = colors.stroke;
+        ctx.lineWidth = rect.selected ? 2.4 : 1.5;
+        ctx.fillRect(x, y, width, height);
+        ctx.strokeRect(x, y, width, height);
+      }
     }
 
     ctx.fillStyle = TEXT;
@@ -679,7 +760,17 @@ export default function FemMeshSlice2D({
       width - 16,
       18,
     );
-  }, [canvasSize, component, meshData.fieldData, plane, quantityId, quantityLabel, slice, sliceCount]);
+  }, [
+    antennaRects,
+    canvasSize,
+    component,
+    meshData.fieldData,
+    plane,
+    quantityId,
+    quantityLabel,
+    slice,
+    sliceCount,
+  ]);
 
   return (
     <div className="relative h-full min-h-[360px] w-full overflow-hidden rounded-[8px] bg-[#1e1e2e]">

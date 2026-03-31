@@ -11,9 +11,16 @@ from fullmag.init.magnetization import (
     UniformMagnetization,
 )
 from fullmag.init.state_io import infer_magnetization_state_format
+from fullmag.model.antenna import (
+    AntennaFieldSource,
+    CPWAntenna,
+    MicrostripAntenna,
+    RfDrive,
+    SpinWaveExcitationAnalysis,
+)
 from fullmag.model.discretization import FDM, FEM
 from fullmag.model.dynamics import DEFAULT_GAMMA, LLG
-from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Zeeman
+from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Pulse, Zeeman
 from fullmag.model.geometry import (
     Box,
     Cylinder,
@@ -76,6 +83,10 @@ def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
         "stages": [_export_stage_draft(stage) for stage in _builder_stage_sequence(loaded)],
         "initial_state": _export_initial_state(base_problem),
         "geometries": [_export_geometry_entry(magnet, base_problem) for magnet in base_problem.magnets],
+        "current_modules": [
+            _export_current_module_entry(module) for module in base_problem.current_modules
+        ],
+        "excitation_analysis": _export_excitation_analysis(base_problem),
     }
 
 
@@ -124,7 +135,7 @@ def render_loaded_problem_as_flat_script(
     )
 
     base_problem = stages[0].problem if stages else loaded.problem
-    magnet_vars = _magnet_variable_names(base_problem)
+    magnet_vars = _magnet_variable_names(base_problem, overrides=overrides)
     lines: list[str] = []
     source_root = loaded.source_path.parent
 
@@ -150,6 +161,11 @@ def render_loaded_problem_as_flat_script(
         lines.append("")
         lines.extend(external_field_lines)
 
+    current_module_lines = _render_current_modules(base_problem, overrides=overrides)
+    if current_module_lines:
+        lines.append("")
+        lines.extend(current_module_lines)
+
     mesh_lines = _render_mesh_workflow(
         base_problem,
         magnet_vars,
@@ -167,6 +183,11 @@ def render_loaded_problem_as_flat_script(
     if output_lines:
         lines.append("")
         lines.extend(output_lines)
+
+    excitation_lines = _render_excitation_analysis(base_problem, overrides=overrides)
+    if excitation_lines:
+        lines.append("")
+        lines.extend(excitation_lines)
 
     stage_lines = _render_stages(stages, overrides=overrides)
     if stage_lines:
@@ -323,6 +344,15 @@ def _render_geometry_and_materials(
     source_root: Path,
     overrides: dict[str, object],
 ) -> list[str]:
+    geometries_override = overrides.get("geometries")
+    if isinstance(geometries_override, list):
+        return _render_geometries_from_override(
+            geometries_override,
+            magnet_vars=magnet_vars,
+            source_root=source_root,
+            overrides=overrides,
+        )
+
     initial_state_override = _normalize_mapping(overrides.get("initial_state"))
     lines = ["# Geometry & Material"]
     for magnet in problem.magnets:
@@ -368,6 +398,94 @@ def _render_geometry_and_materials(
     return lines
 
 
+def _render_geometries_from_override(
+    geometries: list[object],
+    *,
+    magnet_vars: dict[str, str],
+    source_root: Path,
+    overrides: dict[str, object],
+) -> list[str]:
+    initial_state_override = _normalize_mapping(overrides.get("initial_state"))
+    lines = ["# Geometry & Material"]
+    for geo_obj in geometries:
+        g = _normalize_mapping(geo_obj)
+        name = str(g.get("name", ""))
+        var_name = magnet_vars.get(name, "body")
+
+        kind = str(g.get("geometry_kind", "Box"))
+        params = _normalize_mapping(g.get("geometry_params"))
+
+        args = []
+        if kind == "Box":
+            size = params.get("size")
+            if isinstance(size, list) and len(size) == 3:
+                args = [f"{_py_number(float(size[0]))}", f"{_py_number(float(size[1]))}", f"{_py_number(float(size[2]))}"]
+            elif isinstance(size, (int, float)):
+                args = [f"{_py_number(float(size))}"] * 3
+            else:
+                args = ["1e-9", "1e-9", "1e-9"]
+            expr = f"fm.Box({', '.join(args)}, name={_py_repr(name)})"
+        elif kind == "Cylinder":
+            expr = f"fm.Cylinder(radius={_py_number(float(str(params.get('radius', 1e-9))))}, height={_py_number(float(str(params.get('height', 1e-9))))}, name={_py_repr(name)})"
+        elif kind == "Ellipsoid":
+            expr = f"fm.Ellipsoid({_py_number(float(str(params.get('rx', 1e-9))))}, {_py_number(float(str(params.get('ry', 1e-9))))}, {_py_number(float(str(params.get('rz', 1e-9))))}, name={_py_repr(name)})"
+        elif kind == "ImportedGeometry":
+            source = str(params.get("source", ""))
+            expr = f"fm.ImportedGeometry(source={_py_repr(_relativize_path(source, source_root))}, name={_py_repr(name)})"
+        else:
+            expr = f"fm.Box(1e-9, 1e-9, 1e-9, name={_py_repr(name)})"
+
+        t = params.get("translation")
+        if isinstance(t, list) and len(t) == 3 and any(float(v) != 0 for v in t):
+            expr = f"{expr}.translate(({_py_number(float(t[0]))}, {_py_number(float(t[1]))}, {_py_number(float(t[2]))}))"
+
+        lines.append(f"{var_name} = fm.geometry({expr}, name={_py_repr(name)})")
+
+        mat = _normalize_mapping(g.get("material"))
+        lines.append(f"{var_name}.Ms = {_py_number(float(str(mat.get('Ms', 800000))))}")
+        lines.append(f"{var_name}.Aex = {_py_number(float(str(mat.get('Aex', 1.3e-11))))}")
+        lines.append(f"{var_name}.alpha = {_py_number(float(str(mat.get('alpha', 0.02))))}")
+        if mat.get("Dind") is not None:
+            lines.append(f"{var_name}.Dind = {_py_number(float(str(mat.get('Dind'))))}")
+
+        rendered_initial_override = _render_initial_state_override(
+            initial_state_override,
+            magnet_name=name,
+            magnet_var=var_name,
+            source_root=source_root,
+        )
+        if rendered_initial_override is not None:
+            lines.extend(rendered_initial_override)
+        else:
+            mag = _normalize_mapping(g.get("magnetization"))
+            mag_kind = str(mag.get("kind", "uniform"))
+            if mag_kind == "uniform":
+                val = mag.get("value")
+                if isinstance(val, list) and len(val) == 3:
+                    lines.append(f"{var_name}.m = fm.uniform({_py_number(float(val[0]))}, {_py_number(float(val[1]))}, {_py_number(float(val[2]))})")
+            elif mag_kind == "random":
+                seed = mag.get("seed")
+                if seed is not None:
+                    lines.append(f"{var_name}.m = fm.random(seed={int(str(seed))})")
+                else:
+                    lines.append(f"{var_name}.m = fm.random()")
+            elif mag_kind == "vortex":
+                lines.append(f"{var_name}.m = fm.vortex(core_radius=10e-9)")
+            elif mag_kind == "file":
+                src = str(mag.get("source_path", ""))
+                if src:
+                    kwargs = []
+                    if mag.get("dataset"): kwargs.append(f"dataset={_py_repr(mag.get('dataset'))}")
+                    if mag.get("sample_index"): kwargs.append(f"sample={int(str(mag.get('sample_index')))}")
+                    lines.append(f"{var_name}.m = fm.sampled({_py_repr(_relativize_path(src, source_root))}{', ' + ', '.join(kwargs) if kwargs else ''})")
+        
+        lines.append("")
+
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def _render_external_field(problem: Problem) -> list[str]:
     for term in problem.energy:
         if isinstance(term, Zeeman):
@@ -376,6 +494,67 @@ def _render_external_field(problem: Problem) -> list[str]:
                 f"fm.b_ext({_py_number(term.B[0])}, {_py_number(term.B[1])}, {_py_number(term.B[2])})",
             ]
     return []
+
+
+def _render_current_modules(
+    problem: Problem,
+    *,
+    overrides: dict[str, object],
+) -> list[str]:
+    override_modules = overrides.get("current_modules")
+    if isinstance(override_modules, list):
+        modules = override_modules
+    else:
+        modules = list(problem.current_modules)
+    if not modules:
+        return []
+    lines = ["# Antennas"]
+    for module in modules:
+        if isinstance(module, AntennaFieldSource):
+            kwargs = [
+                f"name={_py_repr(module.name)}",
+                f"antenna={_render_antenna_expr(module.antenna)}",
+                f"drive={_render_drive_expr(module.drive)}",
+            ]
+            if module.solver != "mqs_2p5d_az":
+                kwargs.append(f"solver={_py_repr(module.solver)}")
+            if abs(module.air_box_factor - 12.0) > 1e-12:
+                kwargs.append(f"air_box_factor={_py_number(module.air_box_factor)}")
+            lines.append(f"fm.antenna_field_source({', '.join(kwargs)})")
+            continue
+        if isinstance(module, dict):
+            lines.append(_render_current_module_override(module))
+            continue
+        raise ValueError(
+            f"canonical flat-script rewrite does not yet support current module {type(module).__name__}"
+        )
+    return lines
+
+
+def _render_excitation_analysis(
+    problem: Problem,
+    *,
+    overrides: dict[str, object],
+) -> list[str]:
+    analysis_override = overrides.get("excitation_analysis")
+    analysis = analysis_override if isinstance(analysis_override, dict) else problem.excitation_analysis
+    if analysis is None:
+        return []
+    if not isinstance(analysis, SpinWaveExcitationAnalysis):
+        if isinstance(analysis, dict):
+            return ["# Excitation analysis", _render_excitation_analysis_override(analysis)]
+        raise ValueError(
+            "canonical flat-script rewrite does not yet support non-antenna excitation analyses"
+        )
+    kwargs = [
+        f"source={_py_repr(analysis.source)}",
+        f"method={_py_repr(analysis.method)}",
+        f"propagation_axis={_py_literal(list(analysis.propagation_axis))}",
+        f"samples={analysis.samples}",
+    ]
+    if analysis.k_max_rad_per_m is not None:
+        kwargs.append(f"k_max_rad_per_m={_py_number(analysis.k_max_rad_per_m)}")
+    return ["# Excitation analysis", f"fm.spin_wave_excitation({', '.join(kwargs)})"]
 
 
 def _render_mesh_workflow(
@@ -659,6 +838,150 @@ def _render_solver_call(dynamics: LLG, solver_override: dict[str, object]) -> st
     return f"fm.solver({', '.join(kwargs)})"
 
 
+def _render_drive_expr(drive: RfDrive) -> str:
+    kwargs = [f"current_a={_py_number(drive.current_a)}"]
+    if drive.waveform is not None:
+        kwargs.append(f"waveform={_render_time_dependence_expr(drive.waveform)}")
+    elif drive.frequency_hz is not None:
+        kwargs.append(f"frequency_hz={_py_number(drive.frequency_hz)}")
+        if abs(drive.phase_rad) > 1e-15:
+            kwargs.append(f"phase_rad={_py_number(drive.phase_rad)}")
+    return f"fm.RfDrive({', '.join(kwargs)})"
+
+
+def _render_time_dependence_expr(waveform: object) -> str:
+    if isinstance(waveform, Sinusoidal):
+        kwargs = [f"frequency_hz={_py_number(waveform.frequency_hz)}"]
+        if abs(waveform.phase_rad) > 1e-15:
+            kwargs.append(f"phase_rad={_py_number(waveform.phase_rad)}")
+        if abs(waveform.offset) > 1e-15:
+            kwargs.append(f"offset={_py_number(waveform.offset)}")
+        return f"fm.Sinusoidal({', '.join(kwargs)})"
+    if isinstance(waveform, Pulse):
+        return (
+            f"fm.Pulse(t_on={_py_number(waveform.t_on)}, "
+            f"t_off={_py_number(waveform.t_off)})"
+        )
+    return f"fm.{type(waveform).__name__}()"
+
+
+def _render_antenna_expr(antenna: object) -> str:
+    if isinstance(antenna, MicrostripAntenna):
+        return (
+            "fm.MicrostripAntenna("
+            f"width={_py_number(antenna.width)}, "
+            f"thickness={_py_number(antenna.thickness)}, "
+            f"height_above_magnet={_py_number(antenna.height_above_magnet)}, "
+            f"preview_length={_py_number(antenna.preview_length)}, "
+            f"center_x={_py_number(antenna.center_x)}, "
+            f"center_y={_py_number(antenna.center_y)})"
+        )
+    if isinstance(antenna, CPWAntenna):
+        return (
+            "fm.CPWAntenna("
+            f"signal_width={_py_number(antenna.signal_width)}, "
+            f"gap={_py_number(antenna.gap)}, "
+            f"ground_width={_py_number(antenna.ground_width)}, "
+            f"thickness={_py_number(antenna.thickness)}, "
+            f"height_above_magnet={_py_number(antenna.height_above_magnet)}, "
+            f"preview_length={_py_number(antenna.preview_length)}, "
+            f"center_x={_py_number(antenna.center_x)}, "
+            f"center_y={_py_number(antenna.center_y)})"
+        )
+    raise ValueError(
+        f"canonical flat-script rewrite does not yet support antenna kind {type(antenna).__name__}"
+    )
+
+
+def _render_current_module_override(module: dict[str, object]) -> str:
+    antenna_kind = str(module.get("antenna_kind") or "")
+    antenna_params = _normalize_mapping(module.get("antenna_params"))
+    drive = _normalize_mapping(module.get("drive"))
+    kwargs = [
+        f"name={_py_repr(str(module.get('name') or 'antenna'))}",
+        f"antenna={_render_antenna_override(antenna_kind, antenna_params)}",
+        f"drive={_render_drive_override(drive)}",
+    ]
+    solver = str(module.get("solver") or "mqs_2p5d_az")
+    if solver != "mqs_2p5d_az":
+        kwargs.append(f"solver={_py_repr(solver)}")
+    air_box_factor = module.get("air_box_factor")
+    if air_box_factor is not None and abs(float(air_box_factor) - 12.0) > 1e-12:
+        kwargs.append(f"air_box_factor={_py_number(float(air_box_factor))}")
+    return f"fm.antenna_field_source({', '.join(kwargs)})"
+
+
+def _render_antenna_override(kind: str, params: dict[str, object]) -> str:
+    if kind == "MicrostripAntenna":
+        return (
+            "fm.MicrostripAntenna("
+            f"width={_py_number(float(params.get('width', 1.0)))}, "
+            f"thickness={_py_number(float(params.get('thickness', 1.0)))}, "
+            f"height_above_magnet={_py_number(float(params.get('height_above_magnet', 0.0)))}, "
+            f"preview_length={_py_number(float(params.get('preview_length', 1.0)))}, "
+            f"center_x={_py_number(float(params.get('center_x', 0.0)))}, "
+            f"center_y={_py_number(float(params.get('center_y', 0.0)))})"
+        )
+    if kind == "CPWAntenna":
+        return (
+            "fm.CPWAntenna("
+            f"signal_width={_py_number(float(params.get('signal_width', 1.0)))}, "
+            f"gap={_py_number(float(params.get('gap', 1.0)))}, "
+            f"ground_width={_py_number(float(params.get('ground_width', 1.0)))}, "
+            f"thickness={_py_number(float(params.get('thickness', 1.0)))}, "
+            f"height_above_magnet={_py_number(float(params.get('height_above_magnet', 0.0)))}, "
+            f"preview_length={_py_number(float(params.get('preview_length', 1.0)))}, "
+            f"center_x={_py_number(float(params.get('center_x', 0.0)))}, "
+            f"center_y={_py_number(float(params.get('center_y', 0.0)))})"
+        )
+    raise ValueError(f"unsupported antenna override kind: {kind}")
+
+
+def _render_drive_override(drive: dict[str, object]) -> str:
+    kwargs = [f"current_a={_py_number(float(drive.get('current_a', 0.0)))}"]
+    frequency_hz = drive.get("frequency_hz")
+    if frequency_hz is not None:
+        kwargs.append(f"frequency_hz={_py_number(float(frequency_hz))}")
+    phase_rad = drive.get("phase_rad")
+    if phase_rad is not None and abs(float(phase_rad)) > 1e-15:
+        kwargs.append(f"phase_rad={_py_number(float(phase_rad))}")
+    waveform = drive.get("waveform")
+    if isinstance(waveform, dict):
+        kwargs.append(f"waveform={_render_waveform_override(waveform)}")
+    return f"fm.RfDrive({', '.join(kwargs)})"
+
+
+def _render_waveform_override(waveform: dict[str, object]) -> str:
+    kind = str(waveform.get("kind") or "")
+    if kind == "sinusoidal":
+        kwargs = [f"frequency_hz={_py_number(float(waveform.get('frequency_hz', 0.0)))}"]
+        if abs(float(waveform.get("phase_rad", 0.0))) > 1e-15:
+            kwargs.append(f"phase_rad={_py_number(float(waveform.get('phase_rad', 0.0)))}")
+        if abs(float(waveform.get("offset", 0.0))) > 1e-15:
+            kwargs.append(f"offset={_py_number(float(waveform.get('offset', 0.0)))}")
+        return f"fm.Sinusoidal({', '.join(kwargs)})"
+    if kind == "pulse":
+        return (
+            f"fm.Pulse(t_on={_py_number(float(waveform.get('t_on', 0.0)))}, "
+            f"t_off={_py_number(float(waveform.get('t_off', 0.0)))})"
+        )
+    raise ValueError(f"unsupported waveform override kind: {kind}")
+
+
+def _render_excitation_analysis_override(analysis: dict[str, object]) -> str:
+    axis = analysis.get("propagation_axis")
+    propagation_axis = axis if isinstance(axis, list) and len(axis) == 3 else [1.0, 0.0, 0.0]
+    kwargs = [
+        f"source={_py_repr(str(analysis.get('source') or 'antenna'))}",
+        f"method={_py_repr(str(analysis.get('method') or 'source_k_profile'))}",
+        f"propagation_axis={_py_literal(propagation_axis)}",
+        f"samples={int(analysis.get('samples', 256))}",
+    ]
+    if analysis.get("k_max_rad_per_m") is not None:
+        kwargs.append(f"k_max_rad_per_m={_py_number(float(analysis['k_max_rad_per_m']))}")
+    return f"fm.spin_wave_excitation({', '.join(kwargs)})"
+
+
 def _render_geometry_expr(geometry: object, *, magnet_name: str, source_root: Path) -> str:
     if isinstance(geometry, ImportedGeometry):
         kwargs = [f"source={_py_repr(_relativize_path(geometry.source, source_root))}"]
@@ -852,6 +1175,58 @@ def _export_geometry_entry(magnet: object, problem: Problem) -> dict[str, object
     }
 
 
+def _export_current_module_entry(module: object) -> dict[str, object]:
+    if not isinstance(module, AntennaFieldSource):
+        raise ValueError(f"unsupported current module kind: {type(module).__name__}")
+    antenna = module.antenna
+    antenna_kind = type(antenna).__name__
+    if isinstance(antenna, MicrostripAntenna):
+        antenna_params = {
+            "width": antenna.width,
+            "thickness": antenna.thickness,
+            "height_above_magnet": antenna.height_above_magnet,
+            "preview_length": antenna.preview_length,
+            "center_x": antenna.center_x,
+            "center_y": antenna.center_y,
+        }
+    elif isinstance(antenna, CPWAntenna):
+        antenna_params = {
+            "signal_width": antenna.signal_width,
+            "gap": antenna.gap,
+            "ground_width": antenna.ground_width,
+            "thickness": antenna.thickness,
+            "height_above_magnet": antenna.height_above_magnet,
+            "preview_length": antenna.preview_length,
+            "center_x": antenna.center_x,
+            "center_y": antenna.center_y,
+        }
+    else:
+        raise ValueError(f"unsupported antenna kind: {type(antenna).__name__}")
+
+    drive = {
+        "current_a": module.drive.current_a,
+        "frequency_hz": module.drive.frequency_hz,
+        "phase_rad": module.drive.phase_rad,
+        "waveform": module.drive.waveform.to_ir() if module.drive.waveform is not None else None,
+    }
+    return {
+        "kind": "antenna_field_source",
+        "name": module.name,
+        "solver": module.solver,
+        "air_box_factor": module.air_box_factor,
+        "antenna_kind": antenna_kind,
+        "antenna_params": antenna_params,
+        "drive": drive,
+    }
+
+
+def _export_excitation_analysis(problem: Problem) -> dict[str, object] | None:
+    analysis = problem.excitation_analysis
+    if analysis is None:
+        return None
+    return analysis.to_ir()
+
+
 def _export_geometry_kind_params(geom: object) -> tuple[str, dict[str, object]]:
     """Extract kind string and parameter dict from a geometry object."""
     if isinstance(geom, ImportedGeometry):
@@ -911,7 +1286,20 @@ def _runtime_device_spec(runtime) -> str:
     return device
 
 
-def _magnet_variable_names(problem: Problem) -> dict[str, str]:
+def _magnet_variable_names(
+    problem: Problem,
+    overrides: dict[str, object] | None = None,
+) -> dict[str, str]:
+    geometries_override = (overrides or {}).get("geometries")
+    if isinstance(geometries_override, list):
+        if len(geometries_override) == 1:
+            name = _normalize_mapping(geometries_override[0]).get("name")
+            return {str(name): "body"} if name else {}
+        return {
+            str(_normalize_mapping(g).get("name")): f"body_{i}"
+            for i, g in enumerate(geometries_override, 1)
+        }
+
     used: set[str] = set()
     mapping: dict[str, str] = {}
     for magnet in problem.magnets:
@@ -1028,6 +1416,10 @@ def _stage_signature(problem: Problem) -> dict[str, object]:
             for magnet in problem.magnets
         ],
         "energy_terms": [term.to_ir() for term in problem.energy],
+        "current_modules": [module.to_ir() for module in problem.current_modules],
+        "excitation_analysis": problem.excitation_analysis.to_ir()
+        if problem.excitation_analysis is not None
+        else None,
         "discretization": problem.discretization.to_ir() if problem.discretization else None,
         "outputs": [output.to_ir() for output in _study_outputs(problem.study)],
         "mesh_workflow": runtime_metadata.get("mesh_workflow"),

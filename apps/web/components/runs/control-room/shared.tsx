@@ -11,6 +11,23 @@ export type PreviewComponent = "3D" | "x" | "y" | "z";
 export type SlicePlane = "xy" | "xz" | "yz";
 export type FemDockTab = "mesh" | "mesher" | "view" | "quality" | "pipeline";
 
+export interface AntennaOverlayConductor {
+  id: string;
+  label: string;
+  role: "signal" | "ground" | "strip";
+  boundsMin: [number, number, number];
+  boundsMax: [number, number, number];
+  currentA: number;
+}
+
+export interface AntennaOverlay {
+  id: string;
+  name: string;
+  antennaKind: string;
+  solver: string;
+  conductors: AntennaOverlayConductor[];
+}
+
 export interface MeshFaceDetail {
   faceIndex: number;
   nodeIndices: [number, number, number];
@@ -178,6 +195,9 @@ export function findTreeNodeById(nodes: TreeNodeData[], id: string | null): Tree
 }
 
 export function previewQuantityForTreeNode(id: string): string | null {
+  if (id === "antennas" || id.startsWith("ant-")) {
+    return "H_ant";
+  }
   switch (id) {
     case "phys-llg":
       return "m";
@@ -192,6 +212,23 @@ export function previewQuantityForTreeNode(id: string): string | null {
     default:
       return null;
   }
+}
+
+export function resolveAntennaNodeName(
+  nodeId: string | null | undefined,
+  antennaNames: readonly string[],
+): string | null {
+  if (!nodeId || !nodeId.startsWith("ant-")) {
+    return null;
+  }
+  const orderedNames = [...antennaNames].sort((left, right) => right.length - left.length);
+  for (const name of orderedNames) {
+    const prefix = `ant-${name}`;
+    if (nodeId === prefix || nodeId.startsWith(`${prefix}-`)) {
+      return name;
+    }
+  }
+  return null;
 }
 
 export function Section({

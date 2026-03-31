@@ -26,9 +26,14 @@ fn current_live_metadata(
     status: &str,
 ) -> serde_json::Value {
     let live_preview_supported_quantities = match &plan.backend_plan {
-        BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_) => {
-            fullmag_runner::quantities::interactive_preview_quantity_ids()
-        }
+        BackendPlanIR::Fdm(_) => fullmag_runner::quantities::interactive_preview_quantity_ids()
+            .into_iter()
+            .filter(|quantity| *quantity != "H_ant")
+            .collect::<Vec<_>>(),
+        BackendPlanIR::Fem(_) => fullmag_runner::quantities::interactive_preview_quantity_ids()
+            .into_iter()
+            .filter(|quantity| *quantity != "H_ant" || !problem.current_modules.is_empty())
+            .collect::<Vec<_>>(),
         BackendPlanIR::FdmMultilayer(_) => vec!["m"],
         BackendPlanIR::FemEigen(_) => vec![],
     };
@@ -1505,8 +1510,18 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             .get("hmax")
                             .and_then(|v| v.as_f64())
                             .unwrap_or(plan.hmax);
+                        eprintln!(
+                            "[fullmag] meshing in progress — hmax={:.3e} m, order=P{} ...",
+                            hmax, plan.fe_order
+                        );
+                        live_workspace.push_log(
+                            "info",
+                            format!("Meshing in progress — hmax={:.3e}, order=P{}", hmax, plan.fe_order),
+                        );
+                        let mesh_start = std::time::Instant::now();
                         match invoke_remesh_full(geom, hmax, plan.fe_order, &opts) {
                             Ok(remesh_result) => {
+                                let elapsed = mesh_start.elapsed();
                                 let new_mesh = remesh_result.clone().into_mesh_ir();
                                 let node_count = new_mesh.nodes.len();
                                 let elem_count = new_mesh.elements.len();
@@ -1514,13 +1529,13 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                 live_workspace.push_log(
                                     "success",
                                     format!(
-                                        "Remesh complete — {} nodes, {} elements, {} boundary faces",
-                                        node_count, elem_count, face_count
+                                        "Remesh complete — {} nodes, {} elements, {} boundary faces ({:.1}s)",
+                                        node_count, elem_count, face_count, elapsed.as_secs_f64()
                                     ),
                                 );
                                 eprintln!(
-                                    "[fullmag] remesh complete — {} nodes, {} elements",
-                                    node_count, elem_count
+                                    "[fullmag] ✓ remesh complete — {} nodes, {} elements ({:.1}s)",
+                                    node_count, elem_count, elapsed.as_secs_f64()
                                 );
                                 if node_count > 50_000 {
                                     live_workspace.push_log(
@@ -1586,14 +1601,21 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                 });
                             }
                             Err(e) => {
-                                eprintln!("[fullmag] remesh failed: {}", e);
+                                let elapsed = mesh_start.elapsed();
+                                eprintln!("[fullmag] ✗ remesh FAILED after {:.1}s: {}", elapsed.as_secs_f64(), e);
                                 live_workspace.push_log("error", format!("Remesh failed: {}", e));
                             }
                         }
                     } else {
+                        let reason = if geometry_entry.is_none() {
+                            "no geometry entry available"
+                        } else {
+                            "no FEM plan available (wrong backend?)"
+                        };
+                        eprintln!("[fullmag] ✗ cannot remesh — {}", reason);
                         live_workspace.push_log(
                             "warn",
-                            "Cannot remesh — no geometry entry or FEM plan available",
+                            format!("Cannot remesh — {}", reason),
                         );
                     }
                 }
@@ -3036,6 +3058,7 @@ mod tests {
             enable_exchange: true,
             enable_demag: true,
             external_field: None,
+            current_modules: vec![],
             gyromagnetic_ratio: 2.211e5,
             precision: ExecutionPrecision::Double,
             exchange_bc: ExchangeBoundaryCondition::Neumann,

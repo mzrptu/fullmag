@@ -1,4 +1,11 @@
 from .discretization import DiscretizationHints, FDM, FDMDemag, FDMGrid, FEM, Hybrid
+from .antenna import (
+    AntennaFieldSource,
+    CPWAntenna,
+    MicrostripAntenna,
+    RfDrive,
+    SpinWaveExcitationAnalysis,
+)
 from .dynamics import (
     AdaptiveTimestep,
     Elastodynamics,
@@ -53,8 +60,10 @@ from .study import Eigenmodes, Relaxation, TimeEvolution
 __all__ = [
     "BackendTarget",
     "AdaptiveTimestep",
+    "AntennaFieldSource",
     "Box",
     "BulkDMI",
+    "CPWAntenna",
     "Constant",
     "Cylinder",
     "Demag",
@@ -85,10 +94,12 @@ __all__ = [
     "Material",
     "MechanicalBoundaryCondition",
     "MechanicalLoad",
+    "MicrostripAntenna",
     "OerstedCylinder",
     "PrescribedStrain",
     "Problem",
     "QuasistaticElasticity",
+    "RfDrive",
     "Region",
     "Relaxation",
     "RuntimeSelection",
@@ -101,6 +112,7 @@ __all__ = [
     "Sinusoidal",
     "Snapshot",
     "Sphere",
+    "SpinWaveExcitationAnalysis",
     "TimeEvolution",
     "Translate",
     "Union",

@@ -12,6 +12,7 @@ import { FemArrows } from "./r3f/FemArrows";
 import { FemHighlightView } from "./r3f/FemHighlightView";
 import SceneAxes3D from "./r3f/SceneAxes3D";
 import { computeFaceAspectRatios } from "./r3f/colorUtils";
+import type { AntennaOverlay } from "../runs/control-room/shared";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -58,6 +59,8 @@ interface Props {
   onShrinkFactorChange?: (value: number) => void;
   onSelectionChange?: (selection: MeshSelectionSnapshot) => void;
   onRefine?: (faceIndices: number[], factor: number) => void;
+  antennaOverlays?: AntennaOverlay[];
+  selectedAntennaId?: string | null;
 }
 
 const RENDER_OPTIONS: { value: RenderMode; label: string }[] = [
@@ -123,6 +126,76 @@ function SyncedControls({
   return <TrackballControls ref={controlsRefObject} rotateSpeed={3} zoomSpeed={1.2} panSpeed={0.8} target={[0, 0, 0]} />;
 }
 
+function antennaOverlayColors(role: AntennaOverlay["conductors"][number]["role"], selected: boolean) {
+  if (role === "ground") {
+    return selected
+      ? { fill: "#67e8f9", wire: "#a5f3fc" }
+      : { fill: "#0ea5e9", wire: "#67e8f9" };
+  }
+  return selected
+    ? { fill: "#fb923c", wire: "#fdba74" }
+    : { fill: "#f97316", wire: "#fb923c" };
+}
+
+function AntennaOverlayMeshes({
+  overlays,
+  geomCenter,
+  selectedAntennaId,
+}: {
+  overlays: AntennaOverlay[];
+  geomCenter: THREE.Vector3;
+  selectedAntennaId?: string | null;
+}) {
+  return (
+    <group>
+      {overlays.map((overlay) => {
+        const selected = selectedAntennaId === overlay.id;
+        return overlay.conductors.map((conductor) => {
+          const size = [
+            conductor.boundsMax[0] - conductor.boundsMin[0],
+            conductor.boundsMax[1] - conductor.boundsMin[1],
+            conductor.boundsMax[2] - conductor.boundsMin[2],
+          ] as const;
+          if (size.some((value) => value <= 0)) {
+            return null;
+          }
+          const center = [
+            0.5 * (conductor.boundsMin[0] + conductor.boundsMax[0]) - geomCenter.x,
+            0.5 * (conductor.boundsMin[1] + conductor.boundsMax[1]) - geomCenter.y,
+            0.5 * (conductor.boundsMin[2] + conductor.boundsMax[2]) - geomCenter.z,
+          ] as const;
+          const colors = antennaOverlayColors(conductor.role, selected);
+          return (
+            <group key={conductor.id}>
+              <mesh position={center} renderOrder={8}>
+                <boxGeometry args={size} />
+                <meshStandardMaterial
+                  color={colors.fill}
+                  emissive={colors.fill}
+                  emissiveIntensity={selected ? 0.35 : 0.18}
+                  transparent
+                  opacity={selected ? 0.34 : 0.16}
+                  depthWrite={false}
+                />
+              </mesh>
+              <mesh position={center} renderOrder={9}>
+                <boxGeometry args={size} />
+                <meshBasicMaterial
+                  color={colors.wire}
+                  wireframe
+                  transparent
+                  opacity={selected ? 0.95 : 0.72}
+                  depthWrite={false}
+                />
+              </mesh>
+            </group>
+          );
+        });
+      })}
+    </group>
+  );
+}
+
 /* ── Component ─────────────────────────────────────────────────────── */
 
 function FemMeshView3DInner({
@@ -148,6 +221,8 @@ function FemMeshView3DInner({
   onShrinkFactorChange,
   onSelectionChange,
   onRefine,
+  antennaOverlays = [],
+  selectedAntennaId,
 }: Props) {
   const [internalRenderMode, setInternalRenderMode] = useState<RenderMode>("surface");
   const [field, setField] = useState<FemColorField>(colorField);
@@ -314,6 +389,13 @@ function FemMeshView3DInner({
         />
         <FemArrows meshData={meshData} field={field} arrowDensity={arrowDensity} center={geomCenter} maxDim={maxDim} visible={showArrows} />
         <FemHighlightView meshData={meshData} selectedFaces={selectedFaces} center={geomCenter} />
+        {antennaOverlays.length > 0 ? (
+          <AntennaOverlayMeshes
+            overlays={antennaOverlays}
+            geomCenter={geomCenter}
+            selectedAntennaId={selectedAntennaId}
+          />
+        ) : null}
         <SceneAxes3D worldExtent={geomSize} center={[0, 0, 0]} sceneScale={[1, 1, 1]} />
         
         <SyncedControls controlsRefObject={controlsRef} viewCubeBridgeRef={viewCubeSceneRef} />

@@ -243,4 +243,29 @@ void fullmag_fem_backend_destroy(fullmag_fem_backend *handle) {
     delete handle;
 }
 
+int fullmag_fem_backend_upload_strain(
+    fullmag_fem_backend *handle,
+    const double *strain_voigt,
+    uint64_t len,
+    int uniform
+) {
+    if (handle == nullptr) {
+        fullmag_fem_set_global_error("fullmag_fem_backend_upload_strain received null handle");
+        return FULLMAG_FEM_ERR_INVALID;
+    }
+    if (strain_voigt == nullptr || len == 0) {
+        fullmag_fem_set_handle_error(handle, "strain data pointer is null or length is zero");
+        return FULLMAG_FEM_ERR_INVALID;
+    }
+    handle->last_error.clear();
+    auto &ctx = handle->context;
+    ctx.mel_uniform_strain = uniform != 0;
+    ctx.mel_strain_voigt.assign(strain_voigt, strain_voigt + static_cast<size_t>(len));
+    // Recompute H_mel with new strain
+    if (ctx.enable_magnetoelastic) {
+        fullmag::fem::compute_magnetoelastic_field(ctx, ctx.m_xyz);
+    }
+    return FULLMAG_FEM_OK;
+}
+
 } // extern "C"

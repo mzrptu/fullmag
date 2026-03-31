@@ -411,6 +411,19 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     }
 
     context_populate_device_info(ctx);
+
+    // ── Magnetoelastic coupling (prescribed-strain) ──
+    ctx.enable_magnetoelastic = plan.has_magnetoelastic != 0;
+    ctx.mel_b1 = plan.mel_b1;
+    ctx.mel_b2 = plan.mel_b2;
+    ctx.mel_uniform_strain = plan.mel_uniform_strain != 0;
+    if (ctx.enable_magnetoelastic && plan.mel_strain_voigt != nullptr && plan.mel_strain_len > 0) {
+        ctx.mel_strain_voigt.assign(
+            plan.mel_strain_voigt,
+            plan.mel_strain_voigt + static_cast<size_t>(plan.mel_strain_len));
+    }
+    fill_zero_vector_field(ctx.h_mel_xyz, ctx.n_nodes);
+    ctx.mel_energy = 0.0;
 #if FULLMAG_HAS_MFEM_STACK
     if (!context_initialize_mfem(ctx, error)) {
         return false;
@@ -470,6 +483,9 @@ int context_copy_field_f64(
             break;
         case FULLMAG_FEM_OBSERVABLE_H_DMI:
             source = &ctx.h_dmi_xyz;
+            break;
+        case FULLMAG_FEM_OBSERVABLE_H_MEL:
+            source = &ctx.h_mel_xyz;
             break;
         default:
             error = "unsupported FEM observable";
@@ -544,6 +560,13 @@ int context_upload_magnetization_f64(
         }
         for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
             ctx.h_eff_xyz[i] += I_scale * ctx.h_oe_xyz[i];
+        }
+    }
+    // Add magnetoelastic field: H_eff += H_mel
+    if (ctx.enable_magnetoelastic && !ctx.h_mel_xyz.empty()) {
+        compute_magnetoelastic_field(ctx, ctx.m_xyz);
+        for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
+            ctx.h_eff_xyz[i] += ctx.h_mel_xyz[i];
         }
     }
 
@@ -644,3 +667,68 @@ void context_populate_device_info(Context &ctx) {
 }
 
 } // namespace fullmag::fem
+
+void fullmag::fem::compute_magnetoelastic_field(
+    Context &ctx,
+    const std::vector<double> &m_xyz)
+{
+    // Implements: H_mel,x = −(2 B₁ m_x ε₁₁ + B₂ (m_y ε₁₂ + m_z ε₁₃)) / (μ₀ M_s)
+    //             H_mel,y = −(2 B₁ m_y ε₂₂ + B₂ (m_x ε₁₂ + m_z ε₂₃)) / (μ₀ M_s)
+    //             H_mel,z = −(2 B₁ m_z ε₃₃ + B₂ (m_x ε₁₃ + m_y ε₂₃)) / (μ₀ M_s)
+    // Voigt: [ε₁₁, ε₂₂, ε₃₃, 2ε₂₃, 2ε₁₃, 2ε₁₂]
+    constexpr double kMu0_local = 4.0e-7 * 3.14159265358979323846;
+    const size_t n = ctx.n_nodes;
+    ctx.h_mel_xyz.assign(n * 3u, 0.0);
+    ctx.mel_energy = 0.0;
+
+    if (!ctx.enable_magnetoelastic || ctx.mel_strain_voigt.empty()) {
+        return;
+    }
+
+    const double b1 = ctx.mel_b1;
+    const double b2 = ctx.mel_b2;
+    const double uniform_Ms = ctx.material.saturation_magnetisation;
+    double energy = 0.0;
+
+    for (size_t i = 0; i < n; ++i) {
+        if (!ctx.magnetic_node_mask.empty() && ctx.magnetic_node_mask[i] == 0u) {
+            continue;
+        }
+
+        const double Ms_i = ctx.Ms_field.empty() ? uniform_Ms : ctx.Ms_field[i];
+        const double inv_mu0_ms = -1.0 / (kMu0_local * Ms_i);
+
+        // Get strain for this node
+        const double *eps;
+        if (ctx.mel_uniform_strain) {
+            eps = ctx.mel_strain_voigt.data();  // always 6 values
+        } else {
+            eps = ctx.mel_strain_voigt.data() + i * 6u;  // per-node
+        }
+        const double e11 = eps[0];
+        const double e22 = eps[1];
+        const double e33 = eps[2];
+        const double e23 = eps[3] * 0.5;  // engineering → tensor
+        const double e13 = eps[4] * 0.5;
+        const double e12 = eps[5] * 0.5;
+
+        const size_t base = i * 3u;
+        const double mx = m_xyz[base + 0];
+        const double my = m_xyz[base + 1];
+        const double mz = m_xyz[base + 2];
+
+        ctx.h_mel_xyz[base + 0] = inv_mu0_ms * (2.0 * b1 * mx * e11 + b2 * (my * e12 + mz * e13));
+        ctx.h_mel_xyz[base + 1] = inv_mu0_ms * (2.0 * b1 * my * e22 + b2 * (mx * e12 + mz * e23));
+        ctx.h_mel_xyz[base + 2] = inv_mu0_ms * (2.0 * b1 * mz * e33 + b2 * (mx * e13 + my * e23));
+
+        // Energy density: e_mel = B₁(mx²ε₁₁ + my²ε₂₂ + mz²ε₃₃) + B₂(mx*my*ε₁₂ + mx*mz*ε₁₃ + my*mz*ε₂₃)
+        if (!ctx.mfem_lumped_mass.empty()) {
+            const double e_density =
+                b1 * (mx*mx*e11 + my*my*e22 + mz*mz*e33) +
+                b2 * (mx*my*e12 + mx*mz*e13 + my*mz*e23);
+            energy += e_density * ctx.mfem_lumped_mass[i];
+        }
+    }
+
+    ctx.mel_energy = energy;
+}

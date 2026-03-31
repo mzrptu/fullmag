@@ -742,6 +742,7 @@ pub(crate) fn observe_state(
         exchange_field: observables.exchange_field,
         demag_field: observables.demag_field,
         external_field: observables.external_field,
+        antenna_field: vec![[0.0, 0.0, 0.0]; state.magnetization().len()],
         effective_field: observables.effective_field,
         exchange_energy: observables.exchange_energy_joules,
         demag_energy: observables.demag_energy_joules,

@@ -256,6 +256,39 @@ pub(crate) struct ScriptBuilderGeometryEntry {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct ScriptBuilderDriveState {
+    pub current_a: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_hz: Option<f64>,
+    #[serde(default)]
+    pub phase_rad: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waveform: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct ScriptBuilderCurrentModuleState {
+    pub kind: String,
+    pub name: String,
+    pub solver: String,
+    pub air_box_factor: f64,
+    pub antenna_kind: String,
+    #[serde(default)]
+    pub antenna_params: serde_json::Value,
+    pub drive: ScriptBuilderDriveState,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct ScriptBuilderExcitationAnalysisState {
+    pub source: String,
+    pub method: String,
+    pub propagation_axis: [f64; 3],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub k_max_rad_per_m: Option<f64>,
+    pub samples: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct ScriptBuilderState {
     pub revision: u64,
     pub solver: ScriptBuilderSolverState,
@@ -266,6 +299,10 @@ pub(crate) struct ScriptBuilderState {
     pub initial_state: Option<ScriptBuilderInitialState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub geometries: Vec<ScriptBuilderGeometryEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub current_modules: Vec<ScriptBuilderCurrentModuleState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excitation_analysis: Option<ScriptBuilderExcitationAnalysisState>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -638,6 +675,12 @@ pub(crate) struct ScriptBuilderUpdateRequest {
     pub stages: Option<Vec<ScriptBuilderStageState>>,
     #[serde(default)]
     pub initial_state: Option<ScriptBuilderInitialState>,
+    #[serde(default)]
+    pub geometries: Option<Vec<ScriptBuilderGeometryEntry>>,
+    #[serde(default)]
+    pub current_modules: Option<Vec<ScriptBuilderCurrentModuleState>>,
+    #[serde(default)]
+    pub excitation_analysis: Option<Option<ScriptBuilderExcitationAnalysisState>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

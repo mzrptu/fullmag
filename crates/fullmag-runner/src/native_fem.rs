@@ -361,6 +361,13 @@ impl NativeFemBackend {
             oersted_time_dep_t_on: plan.oersted_time_dep_t_on,
             oersted_time_dep_t_off: plan.oersted_time_dep_t_off,
             temperature: plan.temperature.unwrap_or(0.0),
+            // Magnetoelastic coupling
+            has_magnetoelastic: if plan.magnetoelastic.is_some() { 1 } else { 0 },
+            mel_b1: plan.magnetoelastic.as_ref().map_or(0.0, |m| m.b1),
+            mel_b2: plan.magnetoelastic.as_ref().map_or(0.0, |m| m.b2),
+            mel_uniform_strain: if plan.magnetoelastic.as_ref().and_then(|m| m.prescribed_strain).is_some() { 1 } else { 0 },
+            mel_strain_voigt: std::ptr::null(),  // will be set below
+            mel_strain_len: 0,
         };
 
         // Build adaptive config if present
@@ -379,6 +386,16 @@ impl NativeFemBackend {
                 });
         if let Some(ref cfg) = adaptive_cfg {
             plan_desc.adaptive_config = cfg as *const ffi::fullmag_fem_adaptive_config;
+        }
+
+        // Set up prescribed strain if present
+        let mel_strain_data: Option<[f64; 6]> = plan
+            .magnetoelastic
+            .as_ref()
+            .and_then(|m| m.prescribed_strain);
+        if let Some(ref strain) = mel_strain_data {
+            plan_desc.mel_strain_voigt = strain.as_ptr();
+            plan_desc.mel_strain_len = 6;
         }
 
         let handle = unsafe { ffi::fullmag_fem_backend_create(&plan_desc) };
@@ -431,6 +448,7 @@ impl NativeFemBackend {
             anisotropy_energy_joules: 0.0,
             dmi_energy_joules: 0.0,
             total_energy_joules: 0.0,
+            magnetoelastic_energy_joules: 0.0,
             max_effective_field_amplitude: 0.0,
             max_demag_field_amplitude: 0.0,
             max_rhs_amplitude: 0.0,
@@ -557,6 +575,7 @@ impl NativeFemBackend {
             anisotropy_energy_joules: 0.0,
             dmi_energy_joules: 0.0,
             total_energy_joules: 0.0,
+            magnetoelastic_energy_joules: 0.0,
             max_effective_field_amplitude: 0.0,
             max_demag_field_amplitude: 0.0,
             max_rhs_amplitude: 0.0,
@@ -649,6 +668,13 @@ impl NativeFemBackend {
         )
     }
 
+    pub fn copy_h_mel(&self, node_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
+        self.copy_field(
+            ffi::fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_MEL,
+            node_count,
+        )
+    }
+
     pub fn copy_live_preview_field(
         &self,
         request: &LivePreviewRequest,
@@ -661,6 +687,7 @@ impl NativeFemBackend {
             "H_eff" => self.copy_h_eff(node_count)?,
             "H_ani" => self.copy_h_ani(node_count)?,
             "H_dmi" => self.copy_h_dmi(node_count)?,
+            "H_mel" => self.copy_h_mel(node_count)?,
             _ => self.copy_m(node_count)?,
         };
         Ok(build_mesh_preview_field(request, &values))
@@ -793,6 +820,7 @@ mod tests {
             enable_exchange: true,
             enable_demag: true,
             external_field: Some([1.0, 2.0, 3.0]),
+            current_modules: vec![],
             gyromagnetic_ratio: 2.211e5,
             precision: ExecutionPrecision::Double,
             exchange_bc: ExchangeBoundaryCondition::Neumann,
@@ -873,6 +901,7 @@ mod tests {
             enable_exchange: true,
             enable_demag: false,
             external_field: Some([1.5e3, -2.0e3, 7.5e2]),
+            current_modules: vec![],
             gyromagnetic_ratio: 2.211e5,
             precision: ExecutionPrecision::Double,
             exchange_bc: ExchangeBoundaryCondition::Neumann,

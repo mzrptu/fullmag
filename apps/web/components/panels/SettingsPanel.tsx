@@ -8,6 +8,7 @@ import { IntegratorSettingsPanel, RelaxationSettingsPanel } from "./SolverSettin
 import { SidebarSection } from "./settings/primitives";
 import { humanizeToken, readBuilderContract } from "./settings/helpers";
 import GeometryPanel from "./settings/GeometryPanel";
+import AntennaPanel from "./settings/AntennaPanel";
 import MaterialPanel from "./settings/MaterialPanel";
 import MeshPanel from "./settings/MeshPanel";
 import StudyPanel from "./settings/StudyPanel";
@@ -64,13 +65,14 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
       );
     }
     if (nodeId === "mesh" || nodeId.startsWith("mesh-")) return <MeshPanel />;
+    if (nodeId === "antennas" || nodeId.startsWith("ant-")) return <AntennaPanel nodeId={nodeId} />;
     if (nodeId === "results" || nodeId.startsWith("res-") || nodeId === "physics" || nodeId.startsWith("phys-")) {
       if (nodeId === "res-state-io") return <StateIoPanel />;
       return <ResultsPanel />;
     }
     if (nodeId === "initial-state") return <StateIoPanel />;
-    if (nodeId === "materials" || nodeId.startsWith("mat-")) return <MaterialPanel />;
-    return <GeometryPanel />;
+    if (nodeId === "materials" || nodeId.startsWith("mat-")) return <MaterialPanel nodeId={nodeId} />;
+    return <GeometryPanel nodeId={nodeId} />;
   };
 
   return (

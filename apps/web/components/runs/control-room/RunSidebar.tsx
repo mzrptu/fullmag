@@ -11,7 +11,7 @@ import {
 import ModelTree, { buildFullmagModelTree } from "../../panels/ModelTree";
 import SettingsPanel from "../../panels/SettingsPanel";
 import { useCommand, useModel, useTransport, useViewport } from "./ControlRoomContext";
-import { findTreeNodeById, previewQuantityForTreeNode } from "./shared";
+import { findTreeNodeById, previewQuantityForTreeNode, resolveAntennaNodeName } from "./shared";
 import { meshWorkspaceNodeToDockTab, meshWorkspaceNodeToPreset } from "./meshWorkspace";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -66,13 +66,14 @@ export default function RunSidebar() {
         scalarRowCount: tp.scalarRows.length,
         initialStatePath: cmd.scriptInitialState?.source_path ?? null,
         initialStateFormat: cmd.scriptInitialState?.format ?? null,
+        geometries: model.scriptBuilderGeometries,
       }),
     [
       model.effectiveFemMesh, tp.hasSolverTelemetry, cmd.isFemBackend, model.material,
       model.mesherSourceKind, model.meshFeOrder, model.meshName,
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm,
-      tp.effectiveDmDt, tp.scalarRows.length, cmd.scriptInitialState,
+      tp.effectiveDmDt, tp.scalarRows.length, cmd.scriptInitialState, model.scriptBuilderGeometries,
     ],
   );
 
@@ -98,6 +99,19 @@ export default function RunSidebar() {
     () => findTreeNodeById(modelTreeNodes, activeNodeId),
     [activeNodeId, modelTreeNodes],
   );
+  const activeAntennaName = useMemo(
+    () =>
+      resolveAntennaNodeName(
+        activeNodeId,
+        model.scriptBuilderCurrentModules.map((module) => module.name),
+      ),
+    [activeNodeId, model.scriptBuilderCurrentModules],
+  );
+  const activeNodeLabel =
+    activeNode?.label ??
+    (activeNodeId === "antennas"
+      ? "Antenna / RF Source"
+      : activeAntennaName ?? "Workspace");
 
   /* ── Tree click handler ── */
   const handleTreeClick = useCallback((id: string) => {
@@ -240,14 +254,14 @@ export default function RunSidebar() {
                 Inspector
               </span>
               <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-muted-foreground bg-emerald-500/10 px-1.5 py-0.5 rounded-sm border border-emerald-500/20">
-                {activeNode?.label ?? "Workspace"}
+                {activeNodeLabel}
               </span>
             </button>
             {inspectorOpen && (
               <div className="flex-1 min-h-0 min-w-0 overflow-hidden isolate relative">
                 <ScrollArea className="h-full w-full">
                   <div className="p-0 select-none">
-                    <SettingsPanel nodeId={activeNodeId} nodeLabel={activeNode?.label ?? null} />
+                    <SettingsPanel nodeId={activeNodeId} nodeLabel={activeNodeLabel} />
                   </div>
                 </ScrollArea>
               </div>

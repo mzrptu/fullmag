@@ -125,6 +125,15 @@ struct Context {
     std::array<double, 3> cubic_axis2{0.0, 1.0, 0.0};
     std::vector<double> h_cubic_ani_xyz;
 
+    // ── Magnetoelastic coupling (prescribed-strain) ──────────────────
+    bool enable_magnetoelastic = false;
+    double mel_b1 = 0.0;             // B₁ [Pa]
+    double mel_b2 = 0.0;             // B₂ [Pa]
+    bool mel_uniform_strain = true;  // true = single 6-vector, false = per-node
+    std::vector<double> mel_strain_voigt;  // 6 (uniform) or 6*n_nodes
+    std::vector<double> h_mel_xyz;         // per-node H_mel buffer (AOS-3)
+    double mel_energy = 0.0;               // E_mel [J] from last evaluation
+
     // ── Per-node spatially varying material fields ────────────────────
     // When non-empty (size == n_nodes), kernels use per-node values.
     // When empty, scalar fallback (ctx.material.saturation_magnetisation etc.).
@@ -309,6 +318,9 @@ bool context_compute_demag_poisson(
     double &demag_energy,
     bool allow_interrupt,
     std::string &error);
+void compute_magnetoelastic_field(
+    Context &ctx,
+    const std::vector<double> &m_xyz);
 #endif
 
 inline bool poll_interrupt(Context &ctx) {

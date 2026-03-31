@@ -12,6 +12,7 @@ use fullmag_engine::{
 };
 use fullmag_ir::{ExecutionPrecision, FemPlanIR, IntegratorChoice, OutputIR};
 
+use crate::antenna_fields::compute_antenna_field;
 use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
 use crate::interactive_runtime::{display_is_global_scalar, display_refresh_due};
 use crate::preview::{
@@ -47,7 +48,8 @@ pub(crate) fn snapshot_preview(
     request: &LivePreviewRequest,
 ) -> Result<crate::LivePreviewField, RunError> {
     let (problem, state) = build_problem_and_state(plan)?;
-    let observables = observe_state(&problem, &state)?;
+    let antenna_field = compute_antenna_field(plan)?;
+    let observables = observe_state(&problem, &state, &antenna_field)?;
     Ok(build_mesh_preview_field(
         request,
         select_observables(&observables, &request.quantity),
@@ -60,7 +62,8 @@ pub(crate) fn snapshot_vector_fields(
     request: &LivePreviewRequest,
 ) -> Result<Vec<crate::LivePreviewField>, RunError> {
     let (problem, state) = build_problem_and_state(plan)?;
-    let observables = observe_state(&problem, &state)?;
+    let antenna_field = compute_antenna_field(plan)?;
+    let observables = observe_state(&problem, &state, &antenna_field)?;
     let mut cached = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for quantity in quantities
@@ -171,6 +174,7 @@ fn execute_reference_fem_impl(
     }
 
     let (problem, mut state) = build_problem_and_state(plan)?;
+    let antenna_field = compute_antenna_field(plan)?;
     let initial_magnetization = state.magnetization().to_vec();
 
     let mut dt = plan
@@ -190,11 +194,21 @@ fn execute_reference_fem_impl(
     let default_scalar_trace = scalar_schedules.is_empty();
 
     if default_scalar_trace {
-        record_scalar_snapshot(&problem, &state, 0, 0.0, 0, &mut steps, &mut artifacts)?;
+        record_scalar_snapshot(
+            &problem,
+            &state,
+            &antenna_field,
+            0,
+            0.0,
+            0,
+            &mut steps,
+            &mut artifacts,
+        )?;
     } else {
         record_due_outputs(
             &problem,
             &state,
+            &antenna_field,
             0,
             0.0,
             0,
@@ -205,10 +219,11 @@ fn execute_reference_fem_impl(
         )?;
     }
 
-    let mut previous_total_energy = Some(observe_state(&problem, &state)?.total_energy);
+    let mut previous_total_energy =
+        Some(observe_state(&problem, &state, &antenna_field)?.total_energy);
     let mut last_preview_revision: Option<u64> = None;
     let mut cancelled = false;
-    let mut current_observables = observe_state(&problem, &state)?;
+    let mut current_observables = observe_state(&problem, &state, &antenna_field)?;
     let mut current_stats =
         make_step_stats(step_count, state.time_seconds, 0.0, 0, &current_observables);
 
@@ -284,6 +299,7 @@ fn execute_reference_fem_impl(
             record_due_outputs(
                 &problem,
                 &state,
+                &antenna_field,
                 step_count,
                 dt_step,
                 wall_elapsed,
@@ -295,7 +311,7 @@ fn execute_reference_fem_impl(
         }
 
         if let Some(live) = live.as_mut() {
-            let observables = observe_state(&problem, &state)?;
+            let observables = observe_state(&problem, &state, &antenna_field)?;
             current_observables = observables.clone();
             let emit_every = live.field_every_n.max(1);
             let display_selection = live.display_selection.map(|get| get());
@@ -389,6 +405,7 @@ fn execute_reference_fem_impl(
     record_final_outputs(
         &problem,
         &state,
+        &antenna_field,
         step_count,
         dt,
         default_scalar_trace,
@@ -420,6 +437,7 @@ fn execute_reference_fem_impl(
 fn record_due_outputs(
     problem: &FemLlgProblem,
     state: &FemLlgState,
+    antenna_field: &[[f64; 3]],
     step: u64,
     solver_dt: f64,
     wall_time_ns: u64,
@@ -441,7 +459,7 @@ fn record_due_outputs(
         return Ok(());
     }
 
-    let observables = observe_state(problem, state)?;
+    let observables = observe_state(problem, state, antenna_field)?;
 
     if scalar_due {
         let stats = make_step_stats(
@@ -475,13 +493,14 @@ fn record_due_outputs(
 fn record_scalar_snapshot(
     problem: &FemLlgProblem,
     state: &FemLlgState,
+    antenna_field: &[[f64; 3]],
     step: u64,
     solver_dt: f64,
     wall_time_ns: u64,
     steps: &mut Vec<StepStats>,
     artifacts: &mut ArtifactRecorder,
 ) -> Result<(), RunError> {
-    let observables = observe_state(problem, state)?;
+    let observables = observe_state(problem, state, antenna_field)?;
     let stats = make_step_stats(
         step,
         state.time_seconds,
@@ -497,6 +516,7 @@ fn record_scalar_snapshot(
 fn record_final_outputs(
     problem: &FemLlgProblem,
     state: &FemLlgState,
+    antenna_field: &[[f64; 3]],
     step: u64,
     solver_dt: f64,
     default_scalar_trace: bool,
@@ -526,7 +546,7 @@ fn record_final_outputs(
         return Ok(());
     }
 
-    let observables = observe_state(problem, state)?;
+    let observables = observe_state(problem, state, antenna_field)?;
     if need_scalar {
         let stats = make_step_stats(step, state.time_seconds, solver_dt, 0, &observables);
         artifacts.record_scalar(&stats)?;
@@ -548,6 +568,7 @@ fn record_final_outputs(
 pub(crate) fn observe_state(
     problem: &FemLlgProblem,
     state: &FemLlgState,
+    antenna_field: &[[f64; 3]],
 ) -> Result<StateObservables, RunError> {
     let observables = problem.observe(state).map_err(|e| RunError {
         message: format!("FEM engine observables: {}", e),
@@ -557,6 +578,7 @@ pub(crate) fn observe_state(
         exchange_field: observables.exchange_field,
         demag_field: observables.demag_field,
         external_field: observables.external_field,
+        antenna_field: antenna_field.to_vec(),
         effective_field: observables.effective_field,
         exchange_energy: observables.exchange_energy_joules,
         demag_energy: observables.demag_energy_joules,
@@ -614,6 +636,7 @@ fn select_base_field(observables: &StateObservables, name: &str) -> Vec<[f64; 3]
         "m" => observables.magnetization.clone(),
         "H_ex" => observables.exchange_field.clone(),
         "H_demag" => observables.demag_field.clone(),
+        "H_ant" => observables.antenna_field.clone(),
         "H_ext" => observables.external_field.clone(),
         "H_eff" => observables.effective_field.clone(),
         other => panic!("unsupported FEM field snapshot '{}'", other),
@@ -673,6 +696,7 @@ mod tests {
             enable_exchange: true,
             enable_demag,
             external_field: None,
+            current_modules: vec![],
             gyromagnetic_ratio: 2.211e5,
             precision: ExecutionPrecision::Double,
             exchange_bc: ExchangeBoundaryCondition::Neumann,
@@ -776,6 +800,7 @@ mod tests {
             enable_exchange: true,
             enable_demag: true,
             external_field: None,
+            current_modules: vec![],
             gyromagnetic_ratio: 2.211e5,
             precision: ExecutionPrecision::Double,
             exchange_bc: ExchangeBoundaryCondition::Neumann,

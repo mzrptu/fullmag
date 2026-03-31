@@ -472,6 +472,7 @@ fn observe_multilayer(
         exchange_field,
         demag_field,
         external_field,
+        antenna_field: vec![[0.0, 0.0, 0.0]; effective_field.len()],
         effective_field,
         exchange_energy,
         demag_energy,

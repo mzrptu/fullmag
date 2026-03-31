@@ -1575,6 +1575,14 @@ bool compute_effective_fields_for_magnetization(
             h_eff_xyz[i] = h_ex_xyz[i] + h_demag_xyz[i] + ctx.h_ext_xyz[i] +
                            ctx.h_ani_xyz[i] + ctx.h_dmi_xyz[i];
         }
+
+        // Add magnetoelastic field
+        if (ctx.enable_magnetoelastic) {
+            compute_magnetoelastic_field(ctx, m_xyz);
+            for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
+                h_eff_xyz[i] += ctx.h_mel_xyz[i];
+            }
+        }
         if (allow_interrupt && poll_interrupt(ctx)) {
             return false;
         }
@@ -1637,10 +1645,16 @@ void fill_common_step_metrics(
     }
     stats.dmi_energy_joules = dmi_energy;
 
+    // Magnetoelastic energy
+    if (ctx.enable_magnetoelastic) {
+        compute_magnetoelastic_field(ctx, ctx.m_xyz);
+    }
+    stats.magnetoelastic_energy_joules = ctx.mel_energy;
+
     stats.total_energy_joules =
         stats.exchange_energy_joules + stats.demag_energy_joules +
         stats.external_energy_joules + stats.anisotropy_energy_joules +
-        stats.dmi_energy_joules;
+        stats.dmi_energy_joules + stats.magnetoelastic_energy_joules;
     stats.max_effective_field_amplitude = max_norm_aos(ctx.h_eff_xyz);
     stats.max_demag_field_amplitude = max_norm_aos(ctx.h_demag_xyz);
     stats.max_rhs_amplitude = max_rhs;

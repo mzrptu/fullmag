@@ -7,6 +7,11 @@ import type {
   ScriptBuilderState,
   SessionManifest,
 } from "../../../lib/useSessionStream";
+import type {
+  ScriptBuilderCurrentModuleEntry,
+  ScriptBuilderExcitationAnalysisEntry,
+  ScriptBuilderGeometryEntry,
+} from "../../../lib/session/types";
 import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import { DEFAULT_MESH_OPTIONS } from "../../panels/MeshSettingsPanel";
@@ -121,6 +126,9 @@ export function buildScriptBuilderUpdatePayload(
   solverSettings: SolverSettingsState,
   meshOptions: MeshOptionsState,
   stages: ScriptBuilderStageState[],
+  geometries: ScriptBuilderGeometryEntry[],
+  currentModules: ScriptBuilderCurrentModuleEntry[],
+  excitationAnalysis: ScriptBuilderExcitationAnalysisEntry | null,
 ) {
   return {
     solver: {
@@ -152,6 +160,9 @@ export function buildScriptBuilderUpdatePayload(
       adaptive_error_tolerance: meshOptions.adaptiveErrorTolerance,
     },
     stages,
+    geometries,
+    current_modules: currentModules,
+    excitation_analysis: excitationAnalysis,
   };
 }
 

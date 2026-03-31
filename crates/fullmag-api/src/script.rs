@@ -175,6 +175,27 @@ pub(crate) fn script_builder_overrides(builder: &ScriptBuilderState) -> Value {
                 "build_requested": m.build_requested,
             })),
         })).collect::<Vec<_>>(),
+        "current_modules": builder.current_modules.iter().map(|module| serde_json::json!({
+            "kind": module.kind,
+            "name": module.name,
+            "solver": module.solver,
+            "air_box_factor": module.air_box_factor,
+            "antenna_kind": module.antenna_kind,
+            "antenna_params": module.antenna_params,
+            "drive": {
+                "current_a": module.drive.current_a,
+                "frequency_hz": module.drive.frequency_hz,
+                "phase_rad": module.drive.phase_rad,
+                "waveform": module.drive.waveform,
+            },
+        })).collect::<Vec<_>>(),
+        "excitation_analysis": builder.excitation_analysis.as_ref().map(|analysis| serde_json::json!({
+            "source": analysis.source,
+            "method": analysis.method,
+            "propagation_axis": analysis.propagation_axis,
+            "k_max_rad_per_m": analysis.k_max_rad_per_m,
+            "samples": analysis.samples,
+        })).unwrap_or(Value::Null),
     })
 }
 

@@ -18,6 +18,7 @@ pub(crate) fn normalize_quantity_id(requested: &str) -> &'static str {
     match requested {
         "H_ex" => "H_ex",
         "H_demag" => "H_demag",
+        "H_ant" => "H_ant",
         "H_ext" => "H_ext",
         "H_eff" => "H_eff",
         "H_ani" => "H_ani",
@@ -29,7 +30,7 @@ pub(crate) fn normalize_quantity_id(requested: &str) -> &'static str {
 pub(crate) fn quantity_unit(quantity: &str) -> &'static str {
     match normalize_quantity_id(quantity) {
         "m" => "dimensionless",
-        "H_ex" | "H_demag" | "H_ext" | "H_eff" | "H_ani" | "H_dmi" => "A/m",
+        "H_ex" | "H_demag" | "H_ant" | "H_ext" | "H_eff" | "H_ani" | "H_dmi" => "A/m",
         _ => "",
     }
 }
@@ -41,6 +42,7 @@ pub(crate) fn select_observables<'a>(
     match normalize_quantity_id(quantity) {
         "H_ex" => observables.exchange_field.as_slice(),
         "H_demag" => observables.demag_field.as_slice(),
+        "H_ant" => observables.antenna_field.as_slice(),
         "H_ext" => observables.external_field.as_slice(),
         "H_eff" => observables.effective_field.as_slice(),
         _ => observables.magnetization.as_slice(),

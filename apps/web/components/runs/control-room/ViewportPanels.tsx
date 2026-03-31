@@ -13,7 +13,7 @@ import AnalyzeViewport from "./AnalyzeViewport";
 
 import { Slider } from "../../ui/slider";
 import { Switch } from "../../ui/switch";
-import { fmtExp, fmtPreviewMaxPoints, fmtSI } from "./shared";
+import { fmtExp, fmtPreviewMaxPoints, fmtSI, resolveAntennaNodeName } from "./shared";
 import { useControlRoom } from "./ControlRoomContext";
 
 export function ViewportBar() {
@@ -304,6 +304,13 @@ export function ViewportCanvasArea() {
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
   const globalScalarPreview = ctx.preview?.kind === "global_scalar" ? ctx.preview : null;
   const hasVectorData = Boolean(ctx.selectedVectors && ctx.selectedVectors.length > 0);
+  const selectedAntennaName = resolveAntennaNodeName(
+    ctx.selectedSidebarNodeId,
+    ctx.scriptBuilderCurrentModules.map((module) => module.name),
+  );
+  const antennaPreviewBadgeVisible =
+    ctx.antennaOverlays.length > 0 &&
+    (ctx.requestedPreviewQuantity === "H_ant" || selectedAntennaName != null);
 
   /* ── Determine which viewport is active ── */
   const isFdm3DActive =
@@ -392,6 +399,8 @@ export function ViewportCanvasArea() {
         onClipPosChange={ctx.setMeshClipPos}
         onSelectionChange={ctx.setMeshSelection}
         onRefine={ctx.handleLassoRefine}
+        antennaOverlays={ctx.antennaOverlays}
+        selectedAntennaId={selectedAntennaName}
       />
     );
   } else if (ctx.effectiveViewMode === "3D" && ctx.femMeshData) {
@@ -415,6 +424,8 @@ export function ViewportCanvasArea() {
         onClipPosChange={ctx.setMeshClipPos}
         onShowArrowsChange={ctx.setMeshShowArrows}
         onSelectionChange={ctx.setMeshSelection}
+        antennaOverlays={ctx.antennaOverlays}
+        selectedAntennaId={selectedAntennaName}
       />
     );
   } else if (ctx.effectiveViewMode === "2D" && ctx.femMeshData) {
@@ -427,6 +438,8 @@ export function ViewportCanvasArea() {
         plane={ctx.plane}
         sliceIndex={ctx.sliceIndex}
         sliceCount={ctx.maxSliceCount}
+        antennaOverlays={ctx.antennaOverlays}
+        selectedAntennaId={selectedAntennaName}
       />
     );
   } else if (ctx.effectiveViewMode === "2D" && !showFdm3D) {
@@ -466,6 +479,11 @@ export function ViewportCanvasArea() {
           </span>
         )}
       </div>
+      {antennaPreviewBadgeVisible ? (
+        <div className="viewportOverlay absolute right-3 top-3 z-10 rounded-full border border-cyan-400/25 bg-background/70 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-cyan-200 shadow-md backdrop-blur-md">
+          physics 2.5D · preview extruded
+        </div>
+      ) : null}
 
       {/* ── Always-mounted FDM 3D Canvas ──
        * The R3F <Canvas> holds a WebGL context and camera state that is extremely

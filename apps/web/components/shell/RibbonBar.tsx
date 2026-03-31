@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo } from "react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   FileText, Play, Pause, Square, Box, Columns2, Grid3X3,
   PanelRight, Camera, Download, BarChart3,
   Shapes, FlaskConical, Hexagon, Cog, Eye,
-  RefreshCw, Ruler, ListChecks, Zap, Magnet, Target, Save,
+  RefreshCw, Ruler, ListChecks, Zap, Magnet, Target, Save, Plus, RadioTower,
 } from "lucide-react";
 import {
   Tooltip, TooltipTrigger, TooltipContent, TooltipProvider,
@@ -24,6 +25,18 @@ interface RibbonAction {
   active?: boolean;
   accent?: boolean;
   iconColor?: string;
+  action?: () => void;
+  menuItems?: RibbonMenuItem[];
+}
+
+interface RibbonMenuItem {
+  id: string;
+  label: string;
+  icon?: React.ReactNode;
+  description?: string;
+  disabled?: boolean;
+  active?: boolean;
+  separator?: boolean;
   action?: () => void;
 }
 
@@ -61,6 +74,14 @@ interface RibbonBarProps {
   onExport?: () => void;
   onCapture?: () => void;
   onStateExport?: () => void;
+  antennaSources?: Array<{
+    name: string;
+    kind: string;
+    currentA: number;
+  }>;
+  selectedAntennaName?: string | null;
+  onAddAntenna?: (kind: "MicrostripAntenna" | "CPWAntenna") => void;
+  onSelectModelNode?: (nodeId: string) => void;
 }
 
 /* ── Tab inference from tree node ── */
@@ -75,6 +96,44 @@ function inferTab(nodeId: string | null | undefined): RibbonTab {
 
 /* ── Group builders per tab ── */
 function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
+  const antennaMenuItems: RibbonMenuItem[] = [
+    {
+      id: "manage-antennas",
+      label: "Manage RF Sources",
+      icon: <Cog size={14} />,
+      description: "Open antenna placement and drive settings",
+      action: () => p.onSelectModelNode?.("antennas"),
+    },
+    {
+      id: "add-microstrip",
+      label: "Add Microstrip",
+      icon: <Plus size={14} />,
+      description: "Single strip conductor over the magnetic guide",
+      action: () => p.onAddAntenna?.("MicrostripAntenna"),
+    },
+    {
+      id: "add-cpw",
+      label: "Add CPW",
+      icon: <Plus size={14} />,
+      description: "Signal strip with symmetric return grounds",
+      action: () => p.onAddAntenna?.("CPWAntenna"),
+    },
+  ];
+
+  if ((p.antennaSources?.length ?? 0) > 0) {
+    antennaMenuItems.push({ id: "sep-existing", label: "", separator: true });
+    for (const antenna of p.antennaSources ?? []) {
+      antennaMenuItems.push({
+        id: `ant-${antenna.name}`,
+        label: antenna.name,
+        icon: <RadioTower size={14} />,
+        description: `${antenna.kind} · ${(antenna.currentA * 1e3).toFixed(2)} mA`,
+        active: p.selectedAntennaName === antenna.name,
+        action: () => p.onSelectModelNode?.(`ant-${antenna.name}`),
+      });
+    }
+  }
+
   return [
     {
       id: "script", title: "Script",
@@ -84,10 +143,19 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
       ],
     },
     {
-      id: "model", title: "Model",
+      id: "additions", title: "Additions",
       actions: [
         { id: "geometry", icon: <Shapes size={20} />, label: "Geometry", tooltip: "Define geometry", disabled: true, iconColor: "text-emerald-400" },
         { id: "material", icon: <FlaskConical size={20} />, label: "Material", tooltip: "Material properties", disabled: true, iconColor: "text-amber-400" },
+        {
+          id: "antenna",
+          icon: <RadioTower size={20} />,
+          label: "Antennas",
+          tooltip: "Add and select microwave RF sources",
+          active: p.selectedNodeId === "antennas" || Boolean(p.selectedAntennaName),
+          iconColor: "text-cyan-400",
+          menuItems: antennaMenuItems,
+        },
         { id: "mesh", icon: <Hexagon size={20} />, label: "Mesh", tooltip: "Mesh / geometry view", active: p.viewMode === "Mesh", action: () => p.onViewChange?.("Mesh"), iconColor: "text-fuchsia-400" },
       ],
     },
@@ -219,6 +287,56 @@ function buildViewGroup(p: RibbonBarProps): RibbonGroup {
   };
 }
 
+function RibbonActionTrigger({
+  action,
+  previewPending,
+}: {
+  action: RibbonAction;
+  previewPending?: boolean;
+}) {
+  return (
+    <button
+      className={cn(
+        "flex min-h-[56px] min-w-[60px] flex-col items-center justify-center gap-1.5 rounded-md border p-1 transition-all",
+        action.active
+          ? "border-primary/20 bg-primary/10 text-primary shadow-inner"
+          : action.accent
+            ? "border-transparent bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
+            : "border-transparent text-foreground hover:border-border/50 hover:bg-muted/80",
+        previewPending && action.active && "animate-pulse shadow-[0_0_0_1px_rgba(99,102,241,0.35)]",
+        action.disabled && "pointer-events-none cursor-not-allowed opacity-40",
+      )}
+      disabled={action.disabled}
+      onClick={action.action}
+    >
+      <span
+        className={cn(
+          "flex flex-col items-center",
+          action.accent
+            ? "text-primary-foreground"
+            : action.active
+              ? "text-primary"
+              : action.iconColor ?? "text-muted-foreground",
+        )}
+      >
+        {action.icon}
+      </span>
+      <span
+        className={cn(
+          "text-[0.65rem] font-medium leading-none",
+          action.accent
+            ? "text-primary-foreground"
+            : action.active
+              ? "text-primary"
+              : "text-foreground",
+        )}
+      >
+        {action.label}
+      </span>
+    </button>
+  );
+}
+
 const TABS: RibbonTab[] = ["Home", "Mesh", "Study", "Results"];
 
 /* ── Component ──────────────────────────────────── */
@@ -240,12 +358,15 @@ export default function RibbonBar(props: RibbonBarProps) {
     props.isFemBackend,
     props.solverRunning,
     props.sidebarVisible,
+    props.selectedNodeId,
     props.canRun,
     props.canRelax,
     props.canPause,
     props.canStop,
     props.quickPreviewTargets,
     props.selectedQuantity,
+    props.antennaSources,
+    props.selectedAntennaName,
   ]);
 
   return (
@@ -276,45 +397,67 @@ export default function RibbonBar(props: RibbonBarProps) {
               {gi > 0 && <div className="w-px bg-border/40 mx-2 self-stretch my-3 shadow-[1px_0_0_hsla(0,0%,100%,0.02)]" />}
               <div className="flex flex-col justify-between items-center px-1 shrink-0">
                 <div className="flex items-center gap-1">
-                  {group.actions.map((action) => (
-                    <Tooltip key={action.id}>
-                      <TooltipTrigger asChild>
-                        <button
-                          className={cn(
-                            "flex flex-col items-center justify-center rounded-md p-1 min-w-[60px] min-h-[56px] transition-all gap-1.5",
-                            action.active ? "bg-primary/10 text-primary shadow-inner border border-primary/20" : 
-                            action.accent ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm border border-transparent" :
-                            "text-foreground hover:bg-muted/80 border border-transparent hover:border-border/50",
-                            props.previewPending && action.active && "animate-pulse shadow-[0_0_0_1px_rgba(99,102,241,0.35)]",
-                            action.disabled && "opacity-40 cursor-not-allowed pointer-events-none"
-                          )}
-                          disabled={action.disabled}
-                          onClick={action.action}
-                        >
-                          <span className={cn(
-                            "flex flex-col items-center", 
-                            action.accent ? "text-primary-foreground" : action.active ? "text-primary" : action.iconColor ? action.iconColor : "text-muted-foreground"
-                          )}>
-                            {action.icon}
-                          </span>
-                          <span className={cn(
-                            "text-[0.65rem] font-medium leading-none",
-                            action.accent ? "text-primary-foreground" : action.active ? "text-primary" : "text-foreground"
-                          )}>
-                            {action.label}
-                          </span>
-                        </button>
-                      </TooltipTrigger>
-                      {action.tooltip && (
-                        <TooltipContent side="bottom" className="text-xs border border-border shadow-xl">
-                          <span className="font-semibold">{action.tooltip}</span>
-                          {action.shortcut && (
-                            <kbd className="opacity-80 font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded ml-2 border border-border">{action.shortcut}</kbd>
-                          )}
-                        </TooltipContent>
-                      )}
-                    </Tooltip>
-                  ))}
+                  {group.actions.map((action) =>
+                    action.menuItems && action.menuItems.length > 0 ? (
+                      <DropdownMenu.Root key={action.id}>
+                        <DropdownMenu.Trigger asChild>
+                          <RibbonActionTrigger action={action} previewPending={props.previewPending} />
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            className="z-[100] min-w-[280px] rounded-md border border-border/50 bg-popover/95 p-1 text-popover-foreground shadow-md backdrop-blur-xl animate-in fade-in-80 slide-in-from-top-1"
+                            sideOffset={8}
+                            align="start"
+                          >
+                            {action.menuItems.map((item) =>
+                              item.separator ? (
+                                <DropdownMenu.Separator
+                                  key={item.id}
+                                  className="my-1 h-px bg-border/50"
+                                />
+                              ) : (
+                                <DropdownMenu.Item
+                                  key={item.id}
+                                  className={cn(
+                                    "relative flex cursor-default select-none items-start gap-2 rounded-sm px-2 py-2 text-xs outline-none transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-muted data-[highlighted]:text-foreground",
+                                    item.active && "bg-primary/10 text-primary",
+                                  )}
+                                  disabled={item.disabled}
+                                  onSelect={() => item.action?.()}
+                                >
+                                  <span className="mt-0.5 flex h-4 w-4 items-center justify-center text-muted-foreground opacity-80">
+                                    {item.icon}
+                                  </span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block truncate font-medium">{item.label}</span>
+                                    {item.description ? (
+                                      <span className="block truncate text-[0.68rem] text-muted-foreground">
+                                        {item.description}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                </DropdownMenu.Item>
+                              ),
+                            )}
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
+                    ) : (
+                      <Tooltip key={action.id}>
+                        <TooltipTrigger asChild>
+                          <RibbonActionTrigger action={action} previewPending={props.previewPending} />
+                        </TooltipTrigger>
+                        {action.tooltip && (
+                          <TooltipContent side="bottom" className="text-xs border border-border shadow-xl">
+                            <span className="font-semibold">{action.tooltip}</span>
+                            {action.shortcut && (
+                              <kbd className="opacity-80 font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded ml-2 border border-border">{action.shortcut}</kbd>
+                            )}
+                          </TooltipContent>
+                        )}
+                      </Tooltip>
+                    ),
+                  )}
                 </div>
                 <span className="text-[0.6rem] font-medium text-muted-foreground mt-1 pt-1 opacity-70 border-t border-border/20 w-full text-center">
                   {group.title}

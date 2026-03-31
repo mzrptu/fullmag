@@ -306,6 +306,31 @@ export interface ScriptBuilderGeometryEntry {
   mesh: ScriptBuilderPerGeometryMeshEntry | null;
 }
 
+export interface ScriptBuilderDriveEntry {
+  current_a: number;
+  frequency_hz: number | null;
+  phase_rad: number;
+  waveform: Record<string, unknown> | null;
+}
+
+export interface ScriptBuilderCurrentModuleEntry {
+  kind: string;
+  name: string;
+  solver: string;
+  air_box_factor: number;
+  antenna_kind: string;
+  antenna_params: Record<string, unknown>;
+  drive: ScriptBuilderDriveEntry;
+}
+
+export interface ScriptBuilderExcitationAnalysisEntry {
+  source: string;
+  method: string;
+  propagation_axis: [number, number, number];
+  k_max_rad_per_m: number | null;
+  samples: number;
+}
+
 export interface ScriptBuilderState {
   revision: number;
   solver: ScriptBuilderSolverState;
@@ -313,6 +338,8 @@ export interface ScriptBuilderState {
   stages: ScriptBuilderStageState[];
   initial_state: ScriptBuilderInitialState | null;
   geometries: ScriptBuilderGeometryEntry[];
+  current_modules: ScriptBuilderCurrentModuleEntry[];
+  excitation_analysis: ScriptBuilderExcitationAnalysisEntry | null;
 }
 
 export interface MeshSummaryState {

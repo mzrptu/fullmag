@@ -12,6 +12,7 @@ from typing import Any, Sequence
 
 from fullmag._progress import emit_progress
 from fullmag._validation import ensure_unique_names, require_non_empty
+from fullmag.model.antenna import AntennaFieldSource, SpinWaveExcitationAnalysis
 from fullmag.model.discretization import DiscretizationHints, FEM
 from fullmag.model.dynamics import LLG
 from fullmag.model.energy import BulkDMI, Demag, Exchange, InterfacialDMI, Magnetoelastic, Zeeman
@@ -452,6 +453,7 @@ backend = RuntimeSelection()
 
 
 EnergyTerm = Exchange | Demag | InterfacialDMI | BulkDMI | Zeeman | Magnetoelastic
+CurrentModule = AntennaFieldSource
 LegacyOutputSpec = SaveField | SaveScalar | Snapshot
 OutputSpec = LegacyOutputSpec | SaveSpectrum | SaveMode | SaveDispersion
 
@@ -474,6 +476,8 @@ def _builder_editable_scopes(
     mesh_workflow: dict[str, object] | None,
 ) -> list[str]:
     scopes = ["runtime", "geometry", "materials", "energies", "study", "outputs"]
+    if problem.current_modules:
+        scopes.append("antennas")
     if mesh_workflow is not None or (
         problem.discretization is not None and problem.discretization.fem is not None
     ):
@@ -512,6 +516,10 @@ def build_problem_builder_manifest(
             "materials": [material.to_ir() for material in materials],
             "magnets": [magnet.to_ir() for magnet in problem.magnets],
             "energy_terms": [term.to_ir() for term in problem.energy],
+            "current_modules": [module.to_ir() for module in problem.current_modules],
+            "excitation_analysis": problem.excitation_analysis.to_ir()
+            if problem.excitation_analysis is not None
+            else None,
             "study": problem.study.to_ir(),
             "discretization": problem.discretization.to_ir() if problem.discretization else None,
             "mesh_workflow": mesh_workflow,
@@ -547,6 +555,8 @@ class Problem:
     description: str | None = None
     runtime: RuntimeSelection = field(default_factory=RuntimeSelection)
     runtime_metadata: dict[str, object] = field(default_factory=dict)
+    current_modules: Sequence[CurrentModule] = ()
+    excitation_analysis: SpinWaveExcitationAnalysis | None = None
     geometry_asset_cache: dict[str, dict[str, Any] | None] = field(
         default_factory=dict,
         repr=False,
@@ -570,6 +580,15 @@ class Problem:
         object.__setattr__(self, "study", normalized_study)
 
         ensure_unique_names((magnet.name for magnet in self.magnets), "magnet names")
+        ensure_unique_names(
+            (module.name for module in self.current_modules), "current module names"
+        )
+        if self.excitation_analysis is not None:
+            source_names = {module.name for module in self.current_modules}
+            if self.excitation_analysis.source not in source_names:
+                raise ValueError(
+                    "excitation_analysis.source must reference one of Problem.current_modules"
+                )
         self._validate_material_consistency()
         self._validate_geometry_consistency()
         self._validate_region_consistency()
@@ -652,6 +671,10 @@ class Problem:
             "materials": [material.to_ir() for material in materials],
             "magnets": [magnet.to_ir() for magnet in self.magnets],
             "energy_terms": [term.to_ir() for term in self.energy],
+            "current_modules": [module.to_ir() for module in self.current_modules],
+            "excitation_analysis": self.excitation_analysis.to_ir()
+            if self.excitation_analysis is not None
+            else None,
             "study": self.study.to_ir(),
             "backend_policy": {
                 "requested_backend": runtime.backend_target.value,

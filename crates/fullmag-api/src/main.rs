@@ -452,12 +452,21 @@ async fn publish_current_live_state(
     next.display_selection = display_selection.clone();
     next.preview_config = preview_config.clone();
     if next.script_builder.is_none() && !next.session.script_path.trim().is_empty() {
-        if let Ok(builder_state) = load_script_builder_state(
+        match load_script_builder_state(
             &state.repo_root,
             &state.current_workspace_root,
             Path::new(next.session.script_path.trim()),
         ) {
-            next.script_builder = Some(builder_state);
+            Ok(builder_state) => {
+                next.script_builder = Some(builder_state);
+            }
+            Err(e) => {
+                eprintln!(
+                    "[fullmag-api] failed to load script builder state for '{}': {:?}",
+                    next.session.script_path.trim(),
+                    e
+                );
+            }
         }
     }
     let has_fresh_preview = live_state_has_fresh_preview(next.live_state.as_ref());
@@ -1484,6 +1493,18 @@ async fn update_current_live_script_builder(
         }
         if let Some(initial_state) = req.initial_state {
             builder.initial_state = Some(initial_state);
+            changed = true;
+        }
+        if let Some(geometries) = req.geometries {
+            builder.geometries = geometries;
+            changed = true;
+        }
+        if let Some(current_modules) = req.current_modules {
+            builder.current_modules = current_modules;
+            changed = true;
+        }
+        if let Some(excitation_analysis) = req.excitation_analysis {
+            builder.excitation_analysis = excitation_analysis;
             changed = true;
         }
         if changed {

@@ -28,6 +28,11 @@ import type {
   ScriptBuilderState,
   SessionManifest,
 } from "../../../lib/useSessionStream";
+import type {
+  ScriptBuilderCurrentModuleEntry,
+  ScriptBuilderExcitationAnalysisEntry,
+  ScriptBuilderGeometryEntry,
+} from "../../../lib/session/types";
 import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import { DEFAULT_MESH_OPTIONS } from "../../panels/MeshSettingsPanel";
@@ -40,6 +45,7 @@ import type {
   RenderMode,
 } from "../../preview/FemMeshView3D";
 import {
+  type AntennaOverlay,
   type FemDockTab,
   type SlicePlane,
   type VectorComponent,
@@ -169,6 +175,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const femMeshDataRef = useRef<FemMeshData | null>(null);
   const [solverSettings, setSolverSettings] = useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
   const [studyStages, setStudyStages] = useState<ScriptBuilderStageState[]>([]);
+  const [scriptBuilderGeometries, setScriptBuilderGeometries] = useState<ScriptBuilderGeometryEntry[]>([]);
+  const [scriptBuilderCurrentModules, setScriptBuilderCurrentModules] = useState<ScriptBuilderCurrentModuleEntry[]>([]);
+  const [scriptBuilderExcitationAnalysis, setScriptBuilderExcitationAnalysis] =
+    useState<ScriptBuilderExcitationAnalysisEntry | null>(null);
   const builderHydratedSessionRef = useRef<string | null>(null);
   const builderPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastBuilderPushSignatureRef = useRef<string | null>(null);
@@ -287,8 +297,23 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     }
   }, [quantityDescriptorById]);
   const localBuilderDraft = useMemo(
-    () => buildScriptBuilderUpdatePayload(solverSettings, meshOptions, studyStages),
-    [meshOptions, solverSettings, studyStages],
+    () =>
+      buildScriptBuilderUpdatePayload(
+        solverSettings,
+        meshOptions,
+        studyStages,
+        scriptBuilderGeometries,
+        scriptBuilderCurrentModules,
+        scriptBuilderExcitationAnalysis,
+      ),
+    [
+      meshOptions,
+      solverSettings,
+      studyStages,
+      scriptBuilderGeometries,
+      scriptBuilderCurrentModules,
+      scriptBuilderExcitationAnalysis,
+    ],
   );
   const localBuilderSignature = useMemo(
     () => JSON.stringify(localBuilderDraft),
@@ -301,6 +326,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
             solver: scriptBuilder.solver,
             mesh: scriptBuilder.mesh,
             stages: scriptBuilder.stages,
+            geometries: scriptBuilder.geometries,
+            current_modules: scriptBuilder.current_modules,
+            excitation_analysis: scriptBuilder.excitation_analysis,
           })
         : null,
     [scriptBuilder],
@@ -313,6 +341,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     lastBuilderPushSignatureRef.current = null;
     setSolverSettingsHydrated(false);
     setStudyStages([]);
+    setScriptBuilderGeometries([]);
+    setScriptBuilderCurrentModules([]);
+    setScriptBuilderExcitationAnalysis(null);
     if (builderPushTimerRef.current) {
       clearTimeout(builderPushTimerRef.current);
       builderPushTimerRef.current = null;
@@ -359,6 +390,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       ...prev,
       ...meshOptionsFromBuilder(scriptBuilder.mesh),
     }));
+    setScriptBuilderGeometries(scriptBuilder.geometries);
+    setScriptBuilderCurrentModules(scriptBuilder.current_modules);
+    setScriptBuilderExcitationAnalysis(scriptBuilder.excitation_analysis);
     const firstRunStage = scriptBuilder.stages.find(
       (stage) => stage.kind === "run" && stage.until_seconds.trim().length > 0,
     );
@@ -370,6 +404,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       solver: scriptBuilder.solver,
       mesh: scriptBuilder.mesh,
       stages: scriptBuilder.stages,
+      geometries: scriptBuilder.geometries,
+      current_modules: scriptBuilder.current_modules,
+      excitation_analysis: scriptBuilder.excitation_analysis,
     });
     setSolverSettingsHydrated(true);
   }, [scriptBuilder, workspaceHydrationKey]);
@@ -488,6 +525,82 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     }
     return null;
   }, [meshExtent, artifactLayout]);
+  const antennaOverlays = useMemo<AntennaOverlay[]>(() => {
+    if (!meshBoundsMin || !meshBoundsMax || scriptBuilderCurrentModules.length === 0) {
+      return [];
+    }
+    const centerX0 = 0.5 * (meshBoundsMin[0] + meshBoundsMax[0]);
+    const centerY0 = 0.5 * (meshBoundsMin[1] + meshBoundsMax[1]);
+    const topZ = meshBoundsMax[2];
+    const num = (record: Record<string, unknown>, key: string, fallback: number) =>
+      typeof record[key] === "number" ? Number(record[key]) : fallback;
+
+    return scriptBuilderCurrentModules.flatMap((module) => {
+      const params = module.antenna_params ?? {};
+      const centerX = centerX0 + num(params, "center_x", 0);
+      const centerY = centerY0 + num(params, "center_y", 0);
+      const thickness = num(params, "thickness", 100e-9);
+      const previewLength = num(params, "preview_length", 5e-6);
+      const heightAboveMagnet = num(params, "height_above_magnet", 0);
+      const zBottom = topZ + heightAboveMagnet;
+      const zTop = zBottom + thickness;
+      const yMin = centerY - previewLength * 0.5;
+      const yMax = centerY + previewLength * 0.5;
+      const conductors: AntennaOverlay["conductors"] = [];
+
+      if (module.antenna_kind === "MicrostripAntenna") {
+        const width = num(params, "width", 1e-6);
+        conductors.push({
+          id: `${module.name}:strip`,
+          label: module.name,
+          role: "strip",
+          boundsMin: [centerX - width * 0.5, yMin, zBottom],
+          boundsMax: [centerX + width * 0.5, yMax, zTop],
+          currentA: module.drive.current_a,
+        });
+      } else if (module.antenna_kind === "CPWAntenna") {
+        const signalWidth = num(params, "signal_width", 1e-6);
+        const gap = num(params, "gap", 0.25e-6);
+        const groundWidth = num(params, "ground_width", 1e-6);
+        const groundOffset = 0.5 * signalWidth + gap + 0.5 * groundWidth;
+        conductors.push({
+          id: `${module.name}:signal`,
+          label: `${module.name} signal`,
+          role: "signal",
+          boundsMin: [centerX - signalWidth * 0.5, yMin, zBottom],
+          boundsMax: [centerX + signalWidth * 0.5, yMax, zTop],
+          currentA: module.drive.current_a,
+        });
+        conductors.push({
+          id: `${module.name}:ground_l`,
+          label: `${module.name} ground`,
+          role: "ground",
+          boundsMin: [centerX - groundOffset - groundWidth * 0.5, yMin, zBottom],
+          boundsMax: [centerX - groundOffset + groundWidth * 0.5, yMax, zTop],
+          currentA: -0.5 * module.drive.current_a,
+        });
+        conductors.push({
+          id: `${module.name}:ground_r`,
+          label: `${module.name} ground`,
+          role: "ground",
+          boundsMin: [centerX + groundOffset - groundWidth * 0.5, yMin, zBottom],
+          boundsMax: [centerX + groundOffset + groundWidth * 0.5, yMax, zTop],
+          currentA: -0.5 * module.drive.current_a,
+        });
+      }
+
+      if (conductors.length === 0) {
+        return [];
+      }
+      return [{
+        id: module.name,
+        name: module.name,
+        antennaKind: module.antenna_kind,
+        solver: module.solver,
+        conductors,
+      }];
+    });
+  }, [meshBoundsMax, meshBoundsMin, scriptBuilderCurrentModules]);
   const meshingCapabilities = (metadata?.meshing_capabilities as Record<string, unknown> | undefined) ?? undefined;
   const mesherBackend = typeof meshingCapabilities?.backend === "string" ? meshingCapabilities.backend : null;
   const mesherSourceKind = typeof meshingCapabilities?.source_kind === "string" ? meshingCapabilities.source_kind : null;
@@ -1473,7 +1586,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     commandStatus, activeCommandKind, activeCommandState,
     canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,
     interactiveEnabled, interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage,
-    scriptSyncBusy, scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState, runUntilInput,
+    scriptSyncBusy, scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, runUntilInput,
     setRunUntilInput, enqueueCommand, handleCompute, handleSimulationAction,
     handleStateExport, handleStateImport, syncScriptBuilder,
   }), [
@@ -1483,13 +1596,13 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     commandStatus, activeCommandKind, activeCommandState,
     canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,
     interactiveEnabled, interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage,
-    scriptSyncBusy, scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState, runUntilInput,
+    scriptSyncBusy, scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, runUntilInput,
     enqueueCommand, handleCompute, handleSimulationAction,
     handleStateExport, handleStateImport, syncScriptBuilder,
   ]);
 
   const modelValue = useMemo<ModelContextValue>(() => ({
-    material, solverPlan, solverSettings, studyStages, femMesh,
+    material, solverPlan, solverSettings, studyStages, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
@@ -1506,11 +1619,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
     selectedSidebarNodeId,
-    setSolverSettings, setStudyStages, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
+    setSolverSettings, setStudyStages, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
     setSelectedSidebarNodeId, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
-    material, solverPlan, solverSettings, studyStages, femMesh,
+    material, solverPlan, solverSettings, studyStages, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
@@ -1520,7 +1633,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     worldExtent, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
     selectedSidebarNodeId,
-    setStudyStages,
+    setStudyStages, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   ]);
 

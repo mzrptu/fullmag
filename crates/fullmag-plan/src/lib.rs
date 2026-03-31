@@ -10,8 +10,9 @@ use fullmag_ir::{
     BackendPlanIR, BackendTarget, CommonPlanMeta, DiscretizationHintsIR, EnergyTermIR,
     ExchangeBoundaryCondition, ExecutionMode, ExecutionPlanIR, ExecutionPrecision, FdmGridAssetIR,
     FdmHintsIR, FdmLayerPlanIR, FdmMaterialIR, FdmMultilayerPlanIR, FdmMultilayerSummaryIR,
-    FdmPlanIR, FemEigenPlanIR, FemPlanIR, GeometryEntryIR, GridDimensions, InitialMagnetizationIR,
-    IntegratorChoice, MeshIR, OutputIR, OutputPlanIR, ProblemIR, ProvenancePlanIR,
+    FdmPlanIR, FemEigenPlanIR, FemMagnetoelasticPlanIR, FemPlanIR, GeometryEntryIR,
+    GridDimensions, InitialMagnetizationIR, IntegratorChoice, MagnetostrictionLawIR,
+    MechanicalLoadIR, MeshIR, OutputIR, OutputPlanIR, ProblemIR, ProvenancePlanIR,
     RelaxationAlgorithmIR, RelaxationControlIR, TimeDependenceIR, IR_VERSION,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -596,6 +597,7 @@ pub fn plan(problem: &ProblemIR) -> Result<ExecutionPlanIR, PlanError> {
         enable_exchange,
         enable_demag,
         external_field.is_some(),
+        false,
         &mut errors,
     );
     if problem.backend_policy.execution_precision != ExecutionPrecision::Double
@@ -1131,6 +1133,7 @@ fn plan_fdm_multilayer(
         enable_exchange,
         enable_demag,
         external_field.is_some(),
+        false,
         &mut errors,
     );
     if problem.backend_policy.execution_precision != ExecutionPrecision::Double
@@ -1762,6 +1765,7 @@ fn plan_fem(
         enable_exchange,
         enable_demag,
         external_field.is_some(),
+        !problem.current_modules.is_empty(),
         &mut errors,
     );
     if problem.backend_policy.execution_precision != ExecutionPrecision::Double
@@ -1825,6 +1829,7 @@ fn plan_fem(
         enable_exchange,
         enable_demag,
         external_field,
+        current_modules: problem.current_modules.clone(),
         gyromagnetic_ratio,
         precision: problem.backend_policy.execution_precision,
         exchange_bc: ExchangeBoundaryCondition::Neumann,
@@ -1856,6 +1861,7 @@ fn plan_fem(
         oersted_time_dep_offset: 0.0,
         oersted_time_dep_t_on: 0.0,
         oersted_time_dep_t_off: 0.0,
+        magnetoelastic: None,
     };
 
     // ── Extract Oersted cylinder from energy terms ──
@@ -1897,6 +1903,42 @@ fn plan_fem(
                         fem_plan.oersted_time_dep_kind = 0;
                     }
                 }
+            }
+            break;
+        }
+    }
+
+    // ── Extract magnetoelastic coupling from energy terms ──
+    for term in &problem.energy_terms {
+        if let EnergyTermIR::Magnetoelastic { law, .. } = term {
+            // Find the MagnetostrictionLawIR by name
+            if let Some(law_ir) = problem
+                .magnetostriction_laws
+                .iter()
+                .find(|l| l.name() == law)
+            {
+                let (b1, b2) = match law_ir {
+                    MagnetostrictionLawIR::Cubic { b1, b2, .. } => (*b1, *b2),
+                    MagnetostrictionLawIR::Isotropic { lambda_s, .. } => {
+                        // Isotropic approximation: B₁ ≈ -3/2 λ_s (C₁₁ - C₁₂), B₂ ≈ -3 λ_s C₄₄
+                        // Without elastic constants, use simplified B₁ = B₂ = 0 and log warning.
+                        eprintln!("FEM planner: isotropic magnetostriction (λ_s={lambda_s}) not yet mapped to B₁/B₂ without elastic constants; setting B₁=B₂=0");
+                        (0.0, 0.0)
+                    }
+                };
+                // Find prescribed strain from mechanical loads
+                let prescribed_strain = problem.mechanical_loads.iter().find_map(|load| {
+                    if let MechanicalLoadIR::PrescribedStrain { strain } = load {
+                        Some(*strain)
+                    } else {
+                        None
+                    }
+                });
+                fem_plan.magnetoelastic = Some(FemMagnetoelasticPlanIR {
+                    b1,
+                    b2,
+                    prescribed_strain,
+                });
             }
             break;
         }
@@ -2286,6 +2328,7 @@ fn validate_executable_outputs(
     enable_exchange: bool,
     enable_demag: bool,
     enable_zeeman: bool,
+    enable_antenna_field: bool,
     errors: &mut Vec<String>,
 ) {
     let allowed_fields = [
@@ -2321,7 +2364,9 @@ fn validate_executable_outputs(
     for output in outputs {
         match output {
             OutputIR::Field { name, .. } => {
-                if !allowed_fields.contains(&name.as_str()) {
+                if !allowed_fields.contains(&name.as_str())
+                    && !(enable_antenna_field && name == "H_ant")
+                {
                     errors.push(format!(
                         "field output '{}' is not executable in the current FDM path; allowed fields are m, H_ex, H_demag, H_ext, and H_eff",
                         name
@@ -2332,6 +2377,8 @@ fn validate_executable_outputs(
                     errors.push("field output 'H_demag' requires Demag()".to_string());
                 } else if name == "H_ext" && !enable_zeeman {
                     errors.push("field output 'H_ext' requires Zeeman(...)".to_string());
+                } else if name == "H_ant" && !enable_antenna_field {
+                    errors.push("field output 'H_ant' requires at least one antenna current module".to_string());
                 }
                 if !seen.insert(format!("field:{name}")) {
                     errors.push(format!(
@@ -2363,7 +2410,9 @@ fn validate_executable_outputs(
             OutputIR::Snapshot {
                 field, component, ..
             } => {
-                if !allowed_fields.contains(&field.as_str()) {
+                if !allowed_fields.contains(&field.as_str())
+                    && !(enable_antenna_field && field == "H_ant")
+                {
                     errors.push(format!(
                         "snapshot field '{}' is not executable in the current path; allowed fields are m, H_ex, H_demag, H_ext, and H_eff",
                         field
@@ -2374,6 +2423,11 @@ fn validate_executable_outputs(
                     errors.push("snapshot field 'H_demag' requires Demag()".to_string());
                 } else if field == "H_ext" && !enable_zeeman {
                     errors.push("snapshot field 'H_ext' requires Zeeman(...)".to_string());
+                } else if field == "H_ant" && !enable_antenna_field {
+                    errors.push(
+                        "snapshot field 'H_ant' requires at least one antenna current module"
+                            .to_string(),
+                    );
                 }
                 let key = if component == "3D" {
                     format!("snapshot:{field}")

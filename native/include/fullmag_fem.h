@@ -45,6 +45,7 @@ typedef enum {
     FULLMAG_FEM_OBSERVABLE_H_EFF = 5,
     FULLMAG_FEM_OBSERVABLE_H_ANI = 6,
     FULLMAG_FEM_OBSERVABLE_H_DMI = 7,
+    FULLMAG_FEM_OBSERVABLE_H_MEL = 8,
 } fullmag_fem_observable;
 
 typedef enum {
@@ -159,6 +160,14 @@ typedef struct {
 
     /* Thermal noise */
     double                     temperature;            /* Temperature in K (0 = no thermal noise) */
+
+    /* Magnetoelastic coupling (prescribed-strain mode) */
+    int                        has_magnetoelastic;
+    double                     mel_b1;                 /* First magnetoelastic coupling constant B₁ [Pa] */
+    double                     mel_b2;                 /* Second magnetoelastic coupling constant B₂ [Pa] */
+    int                        mel_uniform_strain;     /* 1 = uniform (6 doubles), 0 = per-node (6*n_nodes) */
+    const double              *mel_strain_voigt;       /* Voigt strain [ε₁₁,ε₂₂,ε₃₃,2ε₂₃,2ε₁₃,2ε₁₂] */
+    uint64_t                   mel_strain_len;         /* Length of strain array (6 or 6*n_nodes) */
 } fullmag_fem_plan_desc;
 
 typedef struct {
@@ -171,6 +180,7 @@ typedef struct {
     double anisotropy_energy_joules;
     double dmi_energy_joules;
     double total_energy_joules;
+    double magnetoelastic_energy_joules;
     double max_effective_field_amplitude;
     double max_demag_field_amplitude;
     double max_rhs_amplitude;
@@ -239,6 +249,13 @@ int fullmag_fem_backend_snapshot_stats(
 int fullmag_fem_backend_get_device_info(
     fullmag_fem_backend *handle,
     fullmag_fem_device_info *out_info
+);
+
+int fullmag_fem_backend_upload_strain(
+    fullmag_fem_backend *handle,
+    const double *strain_voigt,
+    uint64_t len,
+    int uniform
 );
 
 const char *fullmag_fem_backend_last_error(fullmag_fem_backend *handle);

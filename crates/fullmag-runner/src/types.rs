@@ -360,6 +360,7 @@ pub(crate) struct StateObservables {
     pub exchange_field: Vec<[f64; 3]>,
     pub demag_field: Vec<[f64; 3]>,
     pub external_field: Vec<[f64; 3]>,
+    pub antenna_field: Vec<[f64; 3]>,
     pub effective_field: Vec<[f64; 3]>,
     pub exchange_energy: f64,
     pub demag_energy: f64,

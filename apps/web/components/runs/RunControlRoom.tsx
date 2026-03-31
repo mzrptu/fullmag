@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
 import EngineConsole from "../panels/EngineConsole";
 import TopHeader from "../shell/TopHeader";
@@ -8,6 +9,7 @@ import StatusBar from "../shell/StatusBar";
 import RunSidebar from "./control-room/RunSidebar";
 import { ViewportBar, ViewportCanvasArea } from "./control-room/ViewportPanels";
 import FullmagLogo from "../brand/FullmagLogo";
+import type { ScriptBuilderCurrentModuleEntry } from "../../lib/session/types";
 import {
   ControlRoomProvider,
   useControlRoom,
@@ -15,17 +17,104 @@ import {
 import {
   PANEL_SIZES,
   fmtDuration,
+  resolveAntennaNodeName,
   fmtSIOrDash,
   fmtStepValue,
 } from "./control-room/shared";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
+
+function nextAntennaName(
+  prefix: string,
+  modules: readonly ScriptBuilderCurrentModuleEntry[],
+): string {
+  let index = modules.length + 1;
+  while (modules.some((module) => module.name === `${prefix}_${index}`)) {
+    index += 1;
+  }
+  return `${prefix}_${index}`;
+}
+
+function makeRibbonAntenna(
+  kind: "MicrostripAntenna" | "CPWAntenna",
+  modules: readonly ScriptBuilderCurrentModuleEntry[],
+): ScriptBuilderCurrentModuleEntry {
+  return {
+    kind: "antenna_field_source",
+    name: nextAntennaName(kind === "CPWAntenna" ? "cpw" : "microstrip", modules),
+    solver: "mqs_2p5d_az",
+    air_box_factor: 12,
+    antenna_kind: kind,
+    antenna_params:
+      kind === "CPWAntenna"
+        ? {
+            signal_width: 1e-6,
+            gap: 0.25e-6,
+            ground_width: 1e-6,
+            thickness: 100e-9,
+            height_above_magnet: 200e-9,
+            preview_length: 5e-6,
+            center_x: 0,
+            center_y: 0,
+            current_distribution: "uniform",
+          }
+        : {
+            width: 1e-6,
+            thickness: 100e-9,
+            height_above_magnet: 200e-9,
+            preview_length: 5e-6,
+            center_x: 0,
+            center_y: 0,
+            current_distribution: "uniform",
+          },
+    drive: {
+      current_a: 0.01,
+      frequency_hz: null,
+      phase_rad: 0,
+      waveform: null,
+    },
+  };
+}
 
 /* ── Inner shell (consumes context) ── */
 
 function ControlRoomShell() {
   const ctx = useControlRoom();
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
+  const selectedAntennaName = useMemo(
+    () =>
+      resolveAntennaNodeName(
+        ctx.selectedSidebarNodeId,
+        ctx.scriptBuilderCurrentModules.map((module) => module.name),
+      ),
+    [ctx.selectedSidebarNodeId, ctx.scriptBuilderCurrentModules],
+  );
   useKeyboardShortcuts();
+
+  const maybePreviewAntennaField = () => {
+    if (ctx.quickPreviewTargets.some((target) => target.id === "H_ant" && target.available)) {
+      ctx.requestPreviewQuantity("H_ant");
+    }
+  };
+
+  const handleSelectModelNode = (nodeId: string) => {
+    ctx.setSelectedSidebarNodeId(nodeId);
+    if (ctx.sidebarCollapsed) {
+      ctx.setSidebarCollapsed(false);
+    }
+    if (nodeId === "antennas" || nodeId.startsWith("ant-")) {
+      maybePreviewAntennaField();
+    }
+  };
+
+  const handleAddAntenna = (kind: "MicrostripAntenna" | "CPWAntenna") => {
+    const nextModule = makeRibbonAntenna(kind, ctx.scriptBuilderCurrentModules);
+    ctx.setScriptBuilderCurrentModules((prev) => [...prev, nextModule]);
+    if (ctx.sidebarCollapsed) {
+      ctx.setSidebarCollapsed(false);
+    }
+    ctx.setSelectedSidebarNodeId(`ant-${nextModule.name}`);
+    maybePreviewAntennaField();
+  };
 
   /* ── Loading state ── */
   if (!ctx.session) {
@@ -127,6 +216,14 @@ function ControlRoomShell() {
         onCapture={ctx.handleCapture}
         onExport={ctx.handleExport}
         onStateExport={() => void ctx.handleStateExport("json")}
+        antennaSources={ctx.scriptBuilderCurrentModules.map((module) => ({
+          name: module.name,
+          kind: module.antenna_kind === "CPWAntenna" ? "CPW" : "Microstrip",
+          currentA: module.drive.current_a,
+        }))}
+        selectedAntennaName={selectedAntennaName}
+        onAddAntenna={handleAddAntenna}
+        onSelectModelNode={handleSelectModelNode}
       />
       <PanelGroup
         orientation="horizontal"

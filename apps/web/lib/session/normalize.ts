@@ -390,6 +390,45 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
           } : null,
         }))
       : [],
+    current_modules: Array.isArray(raw.current_modules)
+      ? raw.current_modules.map((module: any) => ({
+          kind: String(module?.kind ?? "antenna_field_source"),
+          name: String(module?.name ?? ""),
+          solver: String(module?.solver ?? "mqs_2p5d_az"),
+          air_box_factor: Number(module?.air_box_factor ?? 12),
+          antenna_kind: String(module?.antenna_kind ?? ""),
+          antenna_params:
+            module?.antenna_params && typeof module.antenna_params === "object"
+              ? module.antenna_params
+              : {},
+          drive: {
+            current_a: Number(module?.drive?.current_a ?? 0),
+            frequency_hz:
+              module?.drive?.frequency_hz != null
+                ? Number(module.drive.frequency_hz)
+                : null,
+            phase_rad: Number(module?.drive?.phase_rad ?? 0),
+            waveform:
+              module?.drive?.waveform && typeof module.drive.waveform === "object"
+                ? module.drive.waveform
+                : null,
+          },
+        }))
+      : [],
+    excitation_analysis:
+      raw.excitation_analysis && typeof raw.excitation_analysis === "object"
+        ? {
+            source: String(raw.excitation_analysis.source ?? ""),
+            method: String(raw.excitation_analysis.method ?? ""),
+            propagation_axis:
+              normalizeVec3(raw.excitation_analysis.propagation_axis) ?? [1, 0, 0],
+            k_max_rad_per_m:
+              raw.excitation_analysis.k_max_rad_per_m != null
+                ? Number(raw.excitation_analysis.k_max_rad_per_m)
+                : null,
+            samples: Number(raw.excitation_analysis.samples ?? 256),
+          }
+        : null,
   };
 }
 

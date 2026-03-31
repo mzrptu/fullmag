@@ -8,6 +8,7 @@
 //! - `dispatch`      — engine selection (CPU now, CUDA in Phase 2)
 
 pub mod artifact_pipeline;
+mod antenna_fields;
 mod artifacts;
 mod cpu_reference;
 mod dispatch;

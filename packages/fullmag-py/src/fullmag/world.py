@@ -37,6 +37,12 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from fullmag._progress import emit_progress
+from fullmag.model.antenna import (
+    AntennaFieldSource,
+    Antenna,
+    RfDrive,
+    SpinWaveExcitationAnalysis,
+)
 from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Zeeman
 from fullmag.model.dynamics import AdaptiveTimestep, DEFAULT_GAMMA, LLG
 from fullmag.model.outputs import SaveField, SaveScalar, Snapshot, parse_snapshot_quantity
@@ -467,6 +473,8 @@ class _WorldState:
 
     # Outputs
     _outputs: list = field(default_factory=list)
+    _current_modules: list[AntennaFieldSource] = field(default_factory=list)
+    _excitation_analysis: SpinWaveExcitationAnalysis | None = None
 
     # Problem name
     _name: str = "fullmag_sim"
@@ -1008,6 +1016,44 @@ def b_ext(
         _state._b_ext = (magnitude, by, bz)
 
 
+def antenna_field_source(
+    *,
+    name: str,
+    antenna: Antenna,
+    drive: RfDrive,
+    solver: str = "mqs_2p5d_az",
+    air_box_factor: float = 12.0,
+) -> AntennaFieldSource:
+    source = AntennaFieldSource(
+        name=name,
+        antenna=antenna,
+        drive=drive,
+        solver=solver,
+        air_box_factor=air_box_factor,
+    )
+    _state._current_modules.append(source)
+    return source
+
+
+def spin_wave_excitation(
+    *,
+    source: str,
+    method: str = "source_k_profile",
+    propagation_axis: Sequence[float] = (1.0, 0.0, 0.0),
+    k_max_rad_per_m: float | None = None,
+    samples: int = 256,
+) -> SpinWaveExcitationAnalysis:
+    analysis = SpinWaveExcitationAnalysis(
+        source=source,
+        method=method,
+        propagation_axis=tuple(float(component) for component in propagation_axis),
+        k_max_rad_per_m=k_max_rad_per_m,
+        samples=samples,
+    )
+    _state._excitation_analysis = analysis
+    return analysis
+
+
 # ---------------------------------------------------------------------------
 # Outputs
 # ---------------------------------------------------------------------------
@@ -1243,6 +1289,8 @@ def _build_problem(
         discretization=DiscretizationHints(**disc_kwargs) if disc_kwargs else None,
         runtime=rt,
         runtime_metadata=runtime_metadata,
+        current_modules=tuple(s._current_modules),
+        excitation_analysis=s._excitation_analysis,
         geometry_asset_cache=s._geometry_asset_cache,
     )
 

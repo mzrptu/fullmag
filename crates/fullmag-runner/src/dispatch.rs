@@ -122,6 +122,9 @@ pub(crate) fn resolve_fdm_engine(problem: &ProblemIR) -> Result<FdmEngine, RunEr
 
 /// Resolve which FEM engine to use based on environment and availability.
 pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunError> {
+    if !problem.current_modules.is_empty() {
+        return Ok(FemEngine::CpuReference);
+    }
     apply_runtime_gpu_index(problem, "fem");
     let ir_policy = runtime_fem_policy(problem);
     let fe_order = runtime_fem_order(problem);

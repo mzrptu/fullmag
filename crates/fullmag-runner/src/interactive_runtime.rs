@@ -163,6 +163,7 @@ enum InteractiveFemPreviewRuntimeInner {
 struct CpuInteractiveFemPreviewRuntime {
     problem: FemLlgProblem,
     state: FemLlgState,
+    antenna_field: Vec<[f64; 3]>,
     mesh: crate::types::FemMeshPayload,
     plan_signature: FemPlanIR,
     provenance: ExecutionProvenance,
@@ -409,9 +410,11 @@ impl InteractiveFemPreviewRuntime {
                     });
                 }
                 let (problem, state) = fem_reference::build_problem_and_state(plan)?;
+                let antenna_field = crate::antenna_fields::compute_antenna_field(plan)?;
                 InteractiveFemPreviewRuntimeInner::Cpu(CpuInteractiveFemPreviewRuntime {
                     problem,
                     state,
+                    antenna_field,
                     mesh,
                     plan_signature: normalize_fem_plan_signature(plan),
                     provenance: fem_reference::execution_provenance(plan),
@@ -1820,7 +1823,8 @@ impl CpuInteractiveFemPreviewRuntime {
         &mut self,
         request: &LivePreviewRequest,
     ) -> Result<LivePreviewField, RunError> {
-        let observables = fem_reference::observe_state(&self.problem, &self.state)?;
+        let observables =
+            fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?;
         Ok(crate::preview::build_mesh_preview_field(
             request,
             select_observables(&observables, &request.quantity),
@@ -1832,7 +1836,8 @@ impl CpuInteractiveFemPreviewRuntime {
         quantities: &[&str],
         request: &LivePreviewRequest,
     ) -> Result<Vec<LivePreviewField>, RunError> {
-        let observables = fem_reference::observe_state(&self.problem, &self.state)?;
+        let observables =
+            fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?;
         let mut cached = Vec::new();
         let mut seen = HashSet::new();
         for quantity in quantities
@@ -1853,7 +1858,8 @@ impl CpuInteractiveFemPreviewRuntime {
     }
 
     fn snapshot_step_stats(&mut self) -> Result<StepStats, RunError> {
-        let observables = fem_reference::observe_state(&self.problem, &self.state)?;
+        let observables =
+            fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?;
         Ok(make_step_stats(
             self.total_steps,
             self.state.time_seconds,
@@ -1896,8 +1902,10 @@ impl CpuInteractiveFemPreviewRuntime {
                     .and_then(|adaptive| adaptive.dt_initial)
             })
             .unwrap_or(1e-13);
-        let mut previous_total_energy =
-            Some(fem_reference::observe_state(&self.problem, &self.state)?.total_energy);
+        let mut previous_total_energy = Some(
+            fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?
+                .total_energy,
+        );
         let mut checkpoint = crate::interactive::CheckpointContext {
             display_selection,
             interrupt_requested,
@@ -1907,7 +1915,8 @@ impl CpuInteractiveFemPreviewRuntime {
         let mut cancelled = false;
         let mut paused = false;
         let mut steps: Vec<StepStats> = Vec::new();
-        let initial_observables = fem_reference::observe_state(&self.problem, &self.state)?;
+        let initial_observables =
+            fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?;
         let mut current_observables = initial_observables;
         let mut current_local_stats = make_step_stats(
             self.total_steps,
@@ -1988,7 +1997,8 @@ impl CpuInteractiveFemPreviewRuntime {
                 dt = next;
             }
 
-            let observables = fem_reference::observe_state(&self.problem, &self.state)?;
+            let observables =
+                fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?;
             current_observables = observables.clone();
             let total_stats = make_step_stats(
                 self.total_steps,
@@ -2122,7 +2132,8 @@ impl CpuInteractiveFemPreviewRuntime {
         let mut scalar_schedules = collect_scalar_schedules(outputs)?;
         let mut field_schedules = collect_field_schedules(outputs)?;
         let default_scalar_trace = scalar_schedules.is_empty();
-        let initial_observables = fem_reference::observe_state(&self.problem, &self.state)?;
+        let initial_observables =
+            fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?;
         let mut steps = Vec::new();
         if default_scalar_trace {
             let stats = make_step_stats(0, 0.0, 0.0, 0, &initial_observables);
@@ -2153,8 +2164,10 @@ impl CpuInteractiveFemPreviewRuntime {
                     .and_then(|adaptive| adaptive.dt_initial)
             })
             .unwrap_or(1e-13);
-        let mut previous_total_energy =
-            Some(fem_reference::observe_state(&self.problem, &self.state)?.total_energy);
+        let mut previous_total_energy = Some(
+            fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?
+                .total_energy,
+        );
         let mut checkpoint = crate::interactive::CheckpointContext {
             display_selection,
             interrupt_requested,
@@ -2163,7 +2176,8 @@ impl CpuInteractiveFemPreviewRuntime {
         let mut cancelled = false;
         let mut paused = false;
         let mut latest_local_stats: Option<StepStats> = None;
-        let mut current_observables = fem_reference::observe_state(&self.problem, &self.state)?;
+        let mut current_observables =
+            fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?;
         let mut current_local_stats = make_step_stats(
             self.total_steps,
             self.state.time_seconds,
@@ -2229,7 +2243,8 @@ impl CpuInteractiveFemPreviewRuntime {
                 dt = next;
             }
 
-            let observables = fem_reference::observe_state(&self.problem, &self.state)?;
+            let observables =
+                fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?;
             current_observables = observables.clone();
             let total_stats = make_step_stats(
                 self.total_steps,
@@ -2317,7 +2332,8 @@ impl CpuInteractiveFemPreviewRuntime {
         }
 
         if let Some(final_stats) = latest_local_stats {
-            let final_observables = fem_reference::observe_state(&self.problem, &self.state)?;
+            let final_observables =
+                fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?;
             record_final_cpu_outputs(
                 &final_observables,
                 final_stats.step,
@@ -2988,6 +3004,7 @@ fn select_output_base_field_from_observables(
         "m" => observables.magnetization.clone(),
         "H_ex" => observables.exchange_field.clone(),
         "H_demag" => observables.demag_field.clone(),
+        "H_ant" => observables.antenna_field.clone(),
         "H_ext" => observables.external_field.clone(),
         "H_eff" => observables.effective_field.clone(),
         other => {
