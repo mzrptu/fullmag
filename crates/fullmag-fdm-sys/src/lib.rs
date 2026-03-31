@@ -257,6 +257,11 @@ pub struct fullmag_fdm_field_snapshot {
     _private: [u8; 0],
 }
 
+#[repr(C)]
+pub struct fullmag_fdm_preview_snapshot {
+    _private: [u8; 0],
+}
+
 // ── Functions ──
 
 #[cfg_attr(not(feature = "build-native"), allow(dead_code))]
@@ -322,6 +327,16 @@ extern "C" {
         observable: fullmag_fdm_observable,
     ) -> *mut fullmag_fdm_field_snapshot;
 
+    pub fn fullmag_fdm_backend_begin_preview_snapshot(
+        handle: *mut fullmag_fdm_backend,
+        observable: fullmag_fdm_observable,
+        preview_nx: u32,
+        preview_ny: u32,
+        preview_nz: u32,
+        z_origin: u32,
+        z_stride: u32,
+    ) -> *mut fullmag_fdm_preview_snapshot;
+
     pub fn fullmag_fdm_field_snapshot_wait(
         snapshot: *mut fullmag_fdm_field_snapshot,
         out_data: *mut *const std::ffi::c_void,
@@ -329,7 +344,16 @@ extern "C" {
         out_desc: *mut fullmag_fdm_snapshot_desc,
     ) -> i32;
 
+    pub fn fullmag_fdm_preview_snapshot_wait(
+        snapshot: *mut fullmag_fdm_preview_snapshot,
+        out_data: *mut *const std::ffi::c_void,
+        out_len_bytes: *mut u64,
+        out_desc: *mut fullmag_fdm_snapshot_desc,
+    ) -> i32;
+
     pub fn fullmag_fdm_field_snapshot_destroy(snapshot: *mut fullmag_fdm_field_snapshot);
+
+    pub fn fullmag_fdm_preview_snapshot_destroy(snapshot: *mut fullmag_fdm_preview_snapshot);
 
     pub fn fullmag_fdm_backend_upload_magnetization_f64(
         handle: *mut fullmag_fdm_backend,

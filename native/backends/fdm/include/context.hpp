@@ -233,6 +233,18 @@ struct AsyncFieldSnapshot {
     bool needs_wait = false;
 };
 
+struct AsyncPreviewSnapshot {
+    fullmag_fdm_precision precision = FULLMAG_FDM_PRECISION_DOUBLE;
+    uint64_t preview_count = 0;
+    void *device_xyz = nullptr;
+    void *host_xyz = nullptr;
+    size_t host_xyz_len_bytes = 0;
+    void *stream = nullptr;      // cudaStream_t
+    void *ready_event = nullptr; // cudaEvent_t
+    void *done_event = nullptr;  // cudaEvent_t
+    bool needs_wait = false;
+};
+
 /// Plain-old-data copy of STT-related fields from Context.
 /// Passed by value to CUDA kernels so they don't need host-side Context access.
 struct SttParams {
@@ -456,6 +468,27 @@ bool context_wait_async_field_snapshot(
 
 /// Destroy an asynchronous field snapshot and free all owned resources.
 void context_destroy_async_field_snapshot(AsyncFieldSnapshot *snapshot);
+
+/// Begin an asynchronous downsampled preview snapshot.
+AsyncPreviewSnapshot *context_begin_async_preview_snapshot(
+    Context &ctx,
+    fullmag_fdm_observable observable,
+    uint32_t preview_nx,
+    uint32_t preview_ny,
+    uint32_t preview_nz,
+    uint32_t z_origin,
+    uint32_t z_stride);
+
+/// Wait for an asynchronous preview snapshot to complete and expose the payload.
+bool context_wait_async_preview_snapshot(
+    AsyncPreviewSnapshot &snapshot,
+    const void **out_data,
+    uint64_t &out_len_bytes,
+    fullmag_fdm_snapshot_desc &out_desc,
+    std::string &error);
+
+/// Destroy an asynchronous preview snapshot and free all owned resources.
+void context_destroy_async_preview_snapshot(AsyncPreviewSnapshot *snapshot);
 
 #endif // FULLMAG_HAS_CUDA
 

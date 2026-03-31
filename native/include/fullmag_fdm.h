@@ -294,6 +294,7 @@ typedef struct {
 
 typedef struct fullmag_fdm_backend fullmag_fdm_backend;
 typedef struct fullmag_fdm_field_snapshot fullmag_fdm_field_snapshot;
+typedef struct fullmag_fdm_preview_snapshot fullmag_fdm_preview_snapshot;
 
 /* ── Functions ── */
 
@@ -398,6 +399,26 @@ fullmag_fdm_field_snapshot *fullmag_fdm_backend_begin_field_snapshot(
     fullmag_fdm_observable observable);
 
 /**
+ * Begin an asynchronous downsampled preview snapshot.
+ *
+ * The payload layout exposed by `fullmag_fdm_preview_snapshot_wait` matches
+ * `fullmag_fdm_backend_copy_field_preview_*`:
+ *   [x0,y0,z0, x1,y1,z1, ...]
+ *
+ * The snapshot owns a private device preview buffer plus pinned host storage.
+ * Device downsampling is scheduled on the backend compute/default stream,
+ * then the device-to-host transfer continues on a dedicated preview stream.
+ */
+fullmag_fdm_preview_snapshot *fullmag_fdm_backend_begin_preview_snapshot(
+    fullmag_fdm_backend   *handle,
+    fullmag_fdm_observable observable,
+    uint32_t               preview_nx,
+    uint32_t               preview_ny,
+    uint32_t               preview_nz,
+    uint32_t               z_origin,
+    uint32_t               z_stride);
+
+/**
  * Wait for an asynchronous snapshot to complete and expose the pinned payload.
  *
  * On success:
@@ -414,11 +435,27 @@ int fullmag_fdm_field_snapshot_wait(
     fullmag_fdm_snapshot_desc *out_desc);
 
 /**
+ * Wait for an asynchronous preview snapshot to complete and expose the payload.
+ */
+int fullmag_fdm_preview_snapshot_wait(
+    fullmag_fdm_preview_snapshot *snapshot,
+    const void                 **out_data,
+    uint64_t                    *out_len_bytes,
+    fullmag_fdm_snapshot_desc   *out_desc);
+
+/**
  * Destroy an asynchronous field snapshot handle.
  * Safe to call with NULL.
  */
 void fullmag_fdm_field_snapshot_destroy(
     fullmag_fdm_field_snapshot *snapshot);
+
+/**
+ * Destroy an asynchronous preview snapshot handle.
+ * Safe to call with NULL.
+ */
+void fullmag_fdm_preview_snapshot_destroy(
+    fullmag_fdm_preview_snapshot *snapshot);
 
 /**
  * Replace the backend magnetization state from host-side f64 AoS storage.

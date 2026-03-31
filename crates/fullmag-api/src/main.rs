@@ -17,6 +17,7 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, watch, Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
@@ -25,8 +26,8 @@ use tracing::info;
 
 use fullmag_runner::quantities::{quantity_spec, quantity_specs, QuantityKind};
 use fullmag_runner::{
-    CommandAckEvent, DisplaySelection, DisplayUpdatedEvent, FemMeshPayload, LivePreviewField,
-    LivePreviewRequest, RuntimeEventEnvelope, RuntimeStatus, RuntimeStatusChangedEvent, StepUpdate,
+    CommandAckEvent, DisplaySelection, FemMeshPayload, LivePreviewField, LivePreviewRequest,
+    RuntimeEventEnvelope, RuntimeStatus, StepUpdate,
 };
 
 #[derive(Debug, Clone)]
@@ -37,10 +38,12 @@ struct AppState {
     live_channels: Arc<RwLock<HashMap<String, broadcast::Sender<StepUpdate>>>>,
     /// Sessionless local-live workspace snapshot used by the root `/` GUI.
     current_live_state: Arc<RwLock<Option<SessionStateResponse>>>,
-    /// Latest public snapshot JSON served to `/state`, bootstrap, and initial WS/SSE clients.
+    /// Latest public snapshot JSON served to `/state` and bootstrap HTTP clients.
     current_live_public_snapshot: Arc<RwLock<Option<String>>>,
-    /// Full current-workspace snapshots broadcast to SSE/WS clients.
-    current_live_events: broadcast::Sender<String>,
+    /// Canonical current-workspace wire messages broadcast to SSE/WS clients.
+    current_live_events: broadcast::Sender<CurrentLiveWireMessage>,
+    /// Monotonic payload id for binary vector preview frames.
+    current_live_vector_payload_seq: Arc<AtomicU32>,
     /// Typed display selection for the sessionless root workspace.
     current_display_selection: Arc<RwLock<CurrentDisplaySelection>>,
     /// In-memory sequenced control queue for the root local-live workspace.
@@ -49,6 +52,12 @@ struct AppState {
     current_control_events: watch::Sender<u64>,
     /// Monotonic sequence generator for the current session control stream.
     current_control_next_seq: Arc<Mutex<u64>>,
+}
+
+#[derive(Debug, Clone)]
+enum CurrentLiveWireMessage {
+    Text(String),
+    Binary(Vec<u8>),
 }
 
 #[derive(Debug, Serialize)]
@@ -256,16 +265,7 @@ struct SessionStateResponse {
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum CurrentLiveEvent<'a> {
-    Snapshot {
-        state: SessionStateEventView<'a>,
-    },
-    Preview {
-        session_id: &'a str,
-        display_selection: &'a CurrentDisplaySelection,
-        preview_config: &'a CurrentPreviewConfig,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        preview: Option<&'a PreviewState>,
-    },
+    SessionState { state: SessionStateEventView<'a> },
 }
 
 #[derive(Debug, Serialize)]
@@ -285,7 +285,7 @@ struct SessionStateEventView<'a> {
     display_selection: &'a CurrentDisplaySelection,
     preview_config: &'a CurrentPreviewConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
-    preview: Option<&'a PreviewState>,
+    preview: Option<PreviewState>,
 }
 
 #[derive(Debug, Serialize)]
@@ -374,6 +374,8 @@ struct SpatialPreviewState {
     all_layers: bool,
     #[serde(rename = "type")]
     view_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vector_payload_id: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     vector_field_values: Option<Vec<f64>>,
     scalar_field: Vec<[f64; 3]>,
@@ -747,6 +749,7 @@ async fn main() {
         current_live_state: Arc::new(RwLock::new(None)),
         current_live_public_snapshot: Arc::new(RwLock::new(None)),
         current_live_events: broadcast::channel(256).0,
+        current_live_vector_payload_seq: Arc::new(AtomicU32::new(0)),
         current_display_selection: Arc::new(RwLock::new(CurrentDisplaySelection::default())),
         current_control_queue: Arc::new(Mutex::new(VecDeque::new())),
         current_control_events: watch::channel(0).0,
@@ -975,7 +978,17 @@ async fn get_current_live_events(
 
         loop {
             match rx.recv().await {
-                Ok(json) => yield Ok(Event::default().event("session_state").data(json)),
+                Ok(_) => {
+                    let current_json = state
+                        .current_live_public_snapshot
+                        .read()
+                        .await
+                        .as_ref()
+                        .cloned();
+                    if let Some(json) = current_json {
+                        yield Ok(Event::default().event("session_state").data(json));
+                    }
+                }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => break,
             }
@@ -1119,7 +1132,6 @@ async fn publish_current_live_state(
         Some(existing) if existing.session.session_id == req.session_id => existing,
         _ => default_current_live_state(&req),
     };
-    let previous_runtime_status = next.runtime_status.clone();
     let previous_preview = next.preview.clone();
     apply_current_live_publish(&mut next, req)?;
     next.display_selection = display_selection.clone();
@@ -1151,48 +1163,13 @@ async fn publish_current_live_state(
     } else {
         previous_preview
     };
-    let snapshot_json = serialize_current_live_snapshot_event(&next, false)?;
+    let session_state_messages = build_current_live_ws_messages(&state, &next)?;
     let public_json = serialize_current_live_response(&next, true)?;
-    let preview_json = if should_rebuild_preview {
-        Some(serialize_current_live_preview(
-            &next.session.session_id,
-            &next.display_selection,
-            &next.preview_config,
-            next.preview.as_ref(),
-        )?)
-    } else {
-        None
-    };
-    let runtime_status_json = build_runtime_status_changed_event(
-        &next.session.session_id,
-        &previous_runtime_status,
-        &next.runtime_status,
-    )
-    .map(|event| serialize_runtime_event(&event))
-    .transpose()?;
-    let display_updated_json = if should_rebuild_preview {
-        Some(serialize_runtime_event(&build_display_updated_event(
-            &next.session.session_id,
-            &next.display_selection,
-            next.preview.as_ref(),
-        ))?)
-    } else {
-        None
-    };
     *current = Some(next);
     drop(current);
     *state.current_live_public_snapshot.write().await = Some(public_json);
 
-    let _ = state.current_live_events.send(snapshot_json);
-    if let Some(preview_json) = preview_json {
-        let _ = state.current_live_events.send(preview_json);
-    }
-    if let Some(runtime_status_json) = runtime_status_json {
-        let _ = state.current_live_events.send(runtime_status_json);
-    }
-    if let Some(display_updated_json) = display_updated_json {
-        let _ = state.current_live_events.send(display_updated_json);
-    }
+    send_current_live_ws_messages(&state, session_state_messages);
     Ok(Json(serde_json::json!({ "status": "ok" })))
 }
 
@@ -1309,7 +1286,9 @@ async fn enqueue_current_live_command(
     let session_id = current_live_session_id(&state).await?;
     let command = enqueue_current_control_command(&state, build_session_command(req)?).await;
     let ack_json = serialize_runtime_event(&build_command_ack_event(&session_id, &command))?;
-    let _ = state.current_live_events.send(ack_json);
+    let _ = state
+        .current_live_events
+        .send(CurrentLiveWireMessage::Text(ack_json));
     let response = SessionCommandResponse {
         command_id: command.command_id.clone(),
         session_id,
@@ -1594,14 +1573,31 @@ async fn handle_ws(mut socket: WebSocket, tx: broadcast::Sender<StepUpdate>) {
 }
 
 async fn handle_current_live_ws(mut socket: WebSocket, state: Arc<AppState>) {
-    if let Some(json) = state
-        .current_live_public_snapshot
-        .read()
-        .await
-        .as_ref()
-        .cloned()
-    {
-        if socket.send(Message::Text(json.into())).await.is_err() {
+    let initial_snapshot = {
+        let current = state.current_live_state.read().await;
+        current
+            .as_ref()
+            .map(|snapshot| build_current_live_ws_messages(&state, snapshot))
+            .transpose()
+    };
+    match initial_snapshot {
+        Ok(Some(messages)) => {
+            for message in messages {
+                let outbound = match message {
+                    CurrentLiveWireMessage::Text(text) => Message::Text(text.into()),
+                    CurrentLiveWireMessage::Binary(bytes) => Message::Binary(bytes.into()),
+                };
+                if socket.send(outbound).await.is_err() {
+                    return;
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                "failed to serialize initial current-live session_state: {:?}",
+                error
+            );
             return;
         }
     }
@@ -1611,8 +1607,12 @@ async fn handle_current_live_ws(mut socket: WebSocket, state: Arc<AppState>) {
         tokio::select! {
             result = rx.recv() => {
                 match result {
-                    Ok(json) => {
-                        if socket.send(Message::Text(json.into())).await.is_err() {
+                    Ok(message) => {
+                        let outbound = match message {
+                            CurrentLiveWireMessage::Text(text) => Message::Text(text.into()),
+                            CurrentLiveWireMessage::Binary(bytes) => Message::Binary(bytes.into()),
+                        };
+                        if socket.send(outbound).await.is_err() {
                             break;
                         }
                     }
@@ -1713,18 +1713,18 @@ async fn import_asset_for_current_workspace(
 
     let response = import_asset_into_dir(state, &session_id, imports_dir.clone(), req)?;
     let artifacts = read_artifacts_from_dir(imports_dir.parent())?;
-    let (json, public_json) = {
+    let (messages, public_json) = {
         let mut current = state.current_live_state.write().await;
         let snapshot = current
             .as_mut()
             .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
         snapshot.artifacts = artifacts;
-        let snapshot_json = serialize_current_live_snapshot_event(snapshot, false)?;
+        let messages = build_current_live_ws_messages(&state, snapshot)?;
         let public_json = serialize_current_live_response(snapshot, true)?;
-        (snapshot_json, public_json)
+        (messages, public_json)
     };
     *state.current_live_public_snapshot.write().await = Some(public_json);
-    let _ = state.current_live_events.send(json);
+    send_current_live_ws_messages(&state, messages);
     Ok(response)
 }
 
@@ -1943,18 +1943,18 @@ async fn export_magnetization_state_for_current_workspace(
         base64::engine::general_purpose::STANDARD.encode(std::fs::read(&export_path)?);
     let vector_count = vectors.len();
     let artifacts = read_artifacts_from_dir(Some(&artifact_dir))?;
-    let (json, public_json) = {
+    let (messages, public_json) = {
         let mut current = state.current_live_state.write().await;
         let snapshot = current
             .as_mut()
             .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
         snapshot.artifacts = artifacts;
-        let snapshot_json = serialize_current_live_snapshot_event(snapshot, false)?;
+        let messages = build_current_live_ws_messages(&state, snapshot)?;
         let public_json = serialize_current_live_response(snapshot, true)?;
-        (snapshot_json, public_json)
+        (messages, public_json)
     };
     *state.current_live_public_snapshot.write().await = Some(public_json);
-    let _ = state.current_live_events.send(json);
+    send_current_live_ws_messages(&state, messages);
 
     Ok(ExportMagnetizationStateResponse {
         file_name,
@@ -2048,7 +2048,7 @@ async fn import_magnetization_state_for_current_workspace(
     };
 
     let artifacts = read_artifacts_from_dir(imports_dir.parent())?;
-    let (json, public_json) = {
+    let (messages, public_json) = {
         let mut current = state.current_live_state.write().await;
         let snapshot = current
             .as_mut()
@@ -2074,12 +2074,12 @@ async fn import_magnetization_state_for_current_workspace(
                 builder.revision = builder.revision.saturating_add(1);
             }
         }
-        let snapshot_json = serialize_current_live_snapshot_event(snapshot, false)?;
+        let messages = build_current_live_ws_messages(&state, snapshot)?;
         let public_json = serialize_current_live_response(snapshot, true)?;
-        (snapshot_json, public_json)
+        (messages, public_json)
     };
     *state.current_live_public_snapshot.write().await = Some(public_json);
-    let _ = state.current_live_events.send(json);
+    send_current_live_ws_messages(&state, messages);
 
     if let Some(command) = command {
         let _ = command;
@@ -2139,7 +2139,7 @@ async fn update_current_live_script_builder(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ScriptBuilderUpdateRequest>,
 ) -> Result<Json<ScriptBuilderState>, ApiError> {
-    let (builder_state, snapshot_json, public_json) = {
+    let (builder_state, session_state_messages, public_json) = {
         let mut current = state.current_live_state.write().await;
         let snapshot = current
             .as_mut()
@@ -2171,13 +2171,13 @@ async fn update_current_live_script_builder(
             builder.revision = builder.revision.saturating_add(1);
         }
         let builder_state = builder.clone();
-        let snapshot_json = serialize_current_live_snapshot_event(snapshot, false)?;
+        let session_state_messages = build_current_live_ws_messages(&state, snapshot)?;
         let public_json = serialize_current_live_response(snapshot, true)?;
-        (builder_state, snapshot_json, public_json)
+        (builder_state, session_state_messages, public_json)
     };
 
     *state.current_live_public_snapshot.write().await = Some(public_json);
-    let _ = state.current_live_events.send(snapshot_json);
+    send_current_live_ws_messages(&state, session_state_messages);
     Ok(Json(builder_state))
 }
 
@@ -2227,7 +2227,7 @@ where
     };
     let preview_config = display_selection.preview_request();
 
-    let (session_id, json, public_json, display_updated_json) = {
+    let (session_id, session_state_messages, public_json) = {
         let mut current = state.current_live_state.write().await;
         let snapshot = current
             .as_mut()
@@ -2239,22 +2239,10 @@ where
             build_preview_state(snapshot, &snapshot.display_selection, &preview_config)
                 .or(previous_preview);
         let public_json = serialize_current_live_response(snapshot, true)?;
-        let preview_json = serialize_current_live_preview(
-            &snapshot.session.session_id,
-            &snapshot.display_selection,
-            &snapshot.preview_config,
-            snapshot.preview.as_ref(),
-        )?;
-        let display_updated_json = serialize_runtime_event(&build_display_updated_event(
-            &snapshot.session.session_id,
-            &snapshot.display_selection,
-            snapshot.preview.as_ref(),
-        ))?;
         (
             snapshot.session.session_id.clone(),
-            preview_json,
+            build_current_live_ws_messages(&state, snapshot)?,
             public_json,
-            display_updated_json,
         )
     };
     *state.current_live_public_snapshot.write().await = Some(public_json);
@@ -2268,19 +2256,94 @@ where
     )
     .await;
     let ack_json = serialize_runtime_event(&build_command_ack_event(&session_id, &command))?;
-    let _ = state.current_live_events.send(ack_json);
-    let _ = state.current_live_events.send(json);
-    let _ = state.current_live_events.send(display_updated_json);
+    let _ = state.current_live_events.send(CurrentLiveWireMessage::Text(ack_json));
+    send_current_live_ws_messages(&state, session_state_messages);
     Ok(Json(
         serde_json::json!({ "status": "ok", "control_seq": command.seq }),
     ))
 }
 
-fn serialize_current_live_snapshot_event(
+const CURRENT_LIVE_VECTOR_FRAME_MAGIC: [u8; 4] = *b"FMVP";
+const CURRENT_LIVE_VECTOR_FRAME_VERSION: u8 = 1;
+const CURRENT_LIVE_VECTOR_FRAME_KIND_F64: u8 = 1;
+const CURRENT_LIVE_VECTOR_FRAME_HEADER_LEN: usize = 16;
+
+fn next_current_live_vector_payload_id(state: &AppState) -> u32 {
+    state
+        .current_live_vector_payload_seq
+        .fetch_add(1, Ordering::Relaxed)
+        .wrapping_add(1)
+}
+
+fn preview_vector_values(preview: Option<&PreviewState>) -> Option<&[f64]> {
+    match preview {
+        Some(PreviewState::Spatial(state)) => state.vector_field_values.as_deref(),
+        _ => None,
+    }
+}
+
+fn ws_preview_state(
+    preview: Option<&PreviewState>,
+    vector_payload_id: Option<u32>,
+) -> Option<PreviewState> {
+    match preview {
+        Some(PreviewState::Spatial(state)) => {
+            let mut cloned = state.clone();
+            if vector_payload_id.is_some() {
+                cloned.vector_payload_id = vector_payload_id;
+                cloned.vector_field_values = None;
+            }
+            Some(PreviewState::Spatial(cloned))
+        }
+        Some(PreviewState::GlobalScalar(state)) => Some(PreviewState::GlobalScalar(state.clone())),
+        None => None,
+    }
+}
+
+fn serialize_current_live_vector_binary(payload_id: u32, values: &[f64]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(CURRENT_LIVE_VECTOR_FRAME_HEADER_LEN + values.len() * 8);
+    out.extend_from_slice(&CURRENT_LIVE_VECTOR_FRAME_MAGIC);
+    out.push(CURRENT_LIVE_VECTOR_FRAME_VERSION);
+    out.push(CURRENT_LIVE_VECTOR_FRAME_KIND_F64);
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&payload_id.to_le_bytes());
+    out.extend_from_slice(&(values.len() as u32).to_le_bytes());
+    for value in values {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out
+}
+
+fn build_current_live_ws_messages(
+    state: &AppState,
     snapshot: &SessionStateResponse,
-    include_preview: bool,
+) -> Result<Vec<CurrentLiveWireMessage>, ApiError> {
+    let vector_payload_id = preview_vector_values(snapshot.preview.as_ref())
+        .map(|_| next_current_live_vector_payload_id(state));
+    let mut messages = Vec::new();
+    if let (Some(payload_id), Some(values)) = (vector_payload_id, preview_vector_values(snapshot.preview.as_ref())) {
+        messages.push(CurrentLiveWireMessage::Binary(
+            serialize_current_live_vector_binary(payload_id, values),
+        ));
+    }
+    messages.push(CurrentLiveWireMessage::Text(serialize_current_live_session_event(
+        snapshot,
+        vector_payload_id,
+    )?));
+    Ok(messages)
+}
+
+fn send_current_live_ws_messages(state: &AppState, messages: Vec<CurrentLiveWireMessage>) {
+    for message in messages {
+        let _ = state.current_live_events.send(message);
+    }
+}
+
+fn serialize_current_live_session_event(
+    snapshot: &SessionStateResponse,
+    vector_payload_id: Option<u32>,
 ) -> Result<String, ApiError> {
-    serde_json::to_string(&CurrentLiveEvent::Snapshot {
+    serde_json::to_string(&CurrentLiveEvent::SessionState {
         state: SessionStateEventView {
             session: &snapshot.session,
             run: snapshot.run.as_ref(),
@@ -2296,9 +2359,7 @@ fn serialize_current_live_snapshot_event(
             artifacts: &snapshot.artifacts,
             display_selection: &snapshot.display_selection,
             preview_config: &snapshot.preview_config,
-            preview: include_preview
-                .then_some(snapshot.preview.as_ref())
-                .flatten(),
+            preview: ws_preview_state(snapshot.preview.as_ref(), vector_payload_id),
         },
     })
     .map_err(|error| ApiError::internal(format!("failed to serialize current state: {}", error)))
@@ -2330,21 +2391,6 @@ fn serialize_current_live_response(
     .map_err(|error| ApiError::internal(format!("failed to serialize current state: {}", error)))
 }
 
-fn serialize_current_live_preview(
-    session_id: &str,
-    display_selection: &CurrentDisplaySelection,
-    preview_config: &CurrentPreviewConfig,
-    preview: Option<&PreviewState>,
-) -> Result<String, ApiError> {
-    serde_json::to_string(&CurrentLiveEvent::Preview {
-        session_id,
-        display_selection,
-        preview_config,
-        preview,
-    })
-    .map_err(|error| ApiError::internal(format!("failed to serialize preview state: {}", error)))
-}
-
 fn serialize_runtime_event(event: &RuntimeEventEnvelope) -> Result<String, ApiError> {
     serde_json::to_string(event).map_err(|error| {
         ApiError::internal(format!("failed to serialize runtime event: {}", error))
@@ -2360,50 +2406,6 @@ fn build_command_ack_event(session_id: &str, command: &SessionCommand) -> Runtim
         issued_at_unix_ms: command.created_at_unix_ms,
         display_selection: command.display_selection.clone(),
     })
-}
-
-fn build_display_updated_event(
-    session_id: &str,
-    display_selection: &CurrentDisplaySelection,
-    preview: Option<&PreviewState>,
-) -> RuntimeEventEnvelope {
-    let (source_step, source_time) = match preview {
-        Some(PreviewState::Spatial(state)) => (Some(state.source_step), Some(state.source_time)),
-        Some(PreviewState::GlobalScalar(state)) => {
-            (Some(state.source_step), Some(state.source_time))
-        }
-        None => (None, None),
-    };
-    RuntimeEventEnvelope::DisplayUpdated(DisplayUpdatedEvent {
-        session_id: session_id.to_string(),
-        display_selection: display_selection.clone(),
-        display_kind: display_selection.selection.kind,
-        published_at_unix_ms: unix_time_millis_now(),
-        source_step,
-        source_time,
-    })
-}
-
-fn build_runtime_status_changed_event(
-    session_id: &str,
-    previous: &RuntimeStatusView,
-    next: &RuntimeStatusView,
-) -> Option<RuntimeEventEnvelope> {
-    if previous == next {
-        return None;
-    }
-    Some(RuntimeEventEnvelope::RuntimeStatusChanged(
-        RuntimeStatusChangedEvent {
-            session_id: session_id.to_string(),
-            status: next.kind,
-            status_code: next.code.clone(),
-            is_busy: next.is_busy,
-            can_accept_commands: next.can_accept_commands,
-            changed_at_unix_ms: unix_time_millis_now(),
-            previous_status: Some(previous.kind),
-            previous_status_code: Some(previous.code.clone()),
-        },
-    ))
 }
 
 fn live_state_has_fresh_preview(live_state: Option<&LiveState>) -> bool {
@@ -2507,6 +2509,7 @@ fn build_spatial_preview_state(
             layer: 0,
             all_layers: true,
             view_type: if component == "3D" { "3D" } else { "2D" }.to_string(),
+            vector_payload_id: None,
             vector_field_values: Some(flatten_vectors(&vectors)),
             scalar_field: Vec::new(),
             min,
@@ -2579,6 +2582,7 @@ fn build_spatial_preview_state(
             layer: (config.layer as usize).min(full_z.saturating_sub(1)),
             all_layers: config.all_layers,
             view_type: "3D".to_string(),
+            vector_payload_id: None,
             vector_field_values: Some(flatten_vectors(&vectors)),
             scalar_field: Vec::new(),
             min,
@@ -2643,6 +2647,7 @@ fn build_spatial_preview_state(
         layer,
         all_layers: config.all_layers,
         view_type: "2D".to_string(),
+        vector_payload_id: None,
         vector_field_values: None,
         scalar_field,
         min,
@@ -2736,6 +2741,7 @@ fn build_preview_state_from_live_field(
             layer: 0,
             all_layers: true,
             view_type: if component == "3D" { "3D" } else { "2D" }.to_string(),
+            vector_payload_id: None,
             vector_field_values: Some(field.vector_field_values.clone()),
             scalar_field: Vec::new(),
             min,
@@ -2789,6 +2795,7 @@ fn build_preview_state_from_live_field(
                 .min(field.original_grid[2].saturating_sub(1)) as usize,
             all_layers: display_selection.selection.all_layers,
             view_type: "3D".to_string(),
+            vector_payload_id: None,
             vector_field_values: Some(field.vector_field_values.clone()),
             scalar_field: Vec::new(),
             min,
@@ -2831,6 +2838,7 @@ fn build_preview_state_from_live_field(
             .min(field.original_grid[2].saturating_sub(1)) as usize,
         all_layers: display_selection.selection.all_layers,
         view_type: "2D".to_string(),
+        vector_payload_id: None,
         vector_field_values: None,
         scalar_field,
         min,

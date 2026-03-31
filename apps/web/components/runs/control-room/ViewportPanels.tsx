@@ -19,7 +19,8 @@ import { useControlRoom } from "./ControlRoomContext";
 export function ViewportBar() {
   const ctx = useControlRoom();
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
-  const selectedDisplayIsGlobalScalar = ctx.quantityDescriptor?.kind === "global_scalar";
+  const selectedDisplayIsGlobalScalar =
+    ctx.preview?.kind === "global_scalar" || ctx.quantityDescriptor?.kind === "global_scalar";
 
   return (
     <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 bg-card/20 backdrop-blur-xl border-b border-border/20 z-20 shadow-sm shrink-0">
@@ -288,6 +289,158 @@ export function ViewportCanvasArea() {
   const ctx = useControlRoom();
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
   const globalScalarPreview = ctx.preview?.kind === "global_scalar" ? ctx.preview : null;
+  const hasVectorData = Boolean(ctx.selectedVectors && ctx.selectedVectors.length > 0);
+
+  /* ── Determine which viewport is active ── */
+  const isFdm3DActive =
+    ctx.effectiveViewMode === "3D" &&
+    !ctx.isFemBackend &&
+    (ctx.isVectorQuantity || hasVectorData) &&
+    !globalScalarPreview;
+  const isFdmMeshActive = ctx.effectiveViewMode === "Mesh" && !ctx.isFemBackend;
+  const showFdm3D = isFdm3DActive || isFdmMeshActive;
+
+  /* ── Determine what goes into the conditional slot ── */
+  let conditionalContent: React.ReactNode = null;
+
+  if (globalScalarPreview) {
+    conditionalContent = (
+      <div className="flex h-full w-full items-center justify-center p-6">
+        <div className="flex min-w-[280px] max-w-[520px] flex-col gap-4 rounded-2xl border border-border/50 bg-card/70 p-8 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+          <div className="space-y-1">
+            <p className="text-[0.68rem] font-semibold uppercase tracking-widest text-muted-foreground">
+              Global Scalar
+            </p>
+            <h3 className="text-base font-semibold text-foreground">
+              {ctx.quantityDescriptor?.label ?? globalScalarPreview.quantity}
+            </h3>
+          </div>
+          <div className="font-mono text-lg font-medium tracking-tight text-foreground">
+            {fmtExp(globalScalarPreview.value)}
+          </div>
+          <div className="flex flex-wrap gap-3 text-[0.72rem] text-muted-foreground">
+            <span>{globalScalarPreview.unit}</span>
+            <span>step {globalScalarPreview.source_step.toLocaleString()}</span>
+            <span>{fmtSI(globalScalarPreview.source_time, "s")}</span>
+          </div>
+        </div>
+      </div>
+    );
+  } else if (!ctx.isVectorQuantity && !hasVectorData) {
+    conditionalContent = (
+      <div className="flex flex-col items-center justify-center h-full w-full opacity-60">
+        <EmptyState
+          title={ctx.quantityDescriptor?.label ?? "Scalar quantity"}
+          description={
+            ctx.selectedScalarValue !== null
+              ? `Latest: ${ctx.selectedScalarValue.toExponential(4)} ${ctx.quantityDescriptor?.unit ?? ""}`
+              : "Scalar — see Scalars in sidebar."
+          }
+          tone="info"
+          compact
+        />
+      </div>
+    );
+  } else if (
+    spatialPreview &&
+    spatialPreview.spatial_kind === "grid" &&
+    spatialPreview.type === "2D" &&
+    spatialPreview.scalar_field.length > 0
+  ) {
+    conditionalContent = (
+      <PreviewScalarField2D
+        data={spatialPreview.scalar_field}
+        grid={spatialPreview.preview_grid}
+        quantityLabel={ctx.quantityDescriptor?.label ?? spatialPreview.quantity}
+        quantityUnit={spatialPreview.unit}
+        component={spatialPreview.component}
+        min={spatialPreview.min}
+        max={spatialPreview.max}
+      />
+    );
+  } else if (ctx.effectiveViewMode === "Mesh" && ctx.isFemBackend && ctx.femMeshData) {
+    conditionalContent = (
+      <FemMeshView3D
+        topologyKey={ctx.femTopologyKey ?? undefined}
+        meshData={ctx.femMeshData}
+        colorField="none"
+        toolbarMode="hidden"
+        renderMode={ctx.meshRenderMode}
+        opacity={ctx.meshOpacity}
+        clipEnabled={ctx.meshClipEnabled}
+        clipAxis={ctx.meshClipAxis}
+        clipPos={ctx.meshClipPos}
+        showArrows={false}
+        onRenderModeChange={ctx.setMeshRenderMode}
+        onOpacityChange={ctx.setMeshOpacity}
+        onClipEnabledChange={ctx.setMeshClipEnabled}
+        onClipAxisChange={ctx.setMeshClipAxis}
+        onClipPosChange={ctx.setMeshClipPos}
+        onShowArrowsChange={ctx.setMeshShowArrows}
+        onSelectionChange={ctx.setMeshSelection}
+      />
+    );
+  } else if (ctx.effectiveViewMode === "3D" && ctx.isFemBackend && ctx.femMeshData) {
+    conditionalContent = (
+      <FemMeshView3D
+        topologyKey={ctx.femTopologyKey ?? undefined}
+        meshData={ctx.femMeshData}
+        fieldLabel={ctx.quantityDescriptor?.label ?? ctx.selectedQuantity}
+        colorField={ctx.femColorField}
+        showOrientationLegend={ctx.femMagnetization3DActive}
+        toolbarMode="hidden"
+        renderMode={ctx.meshRenderMode}
+        opacity={ctx.meshOpacity}
+        clipEnabled={ctx.meshClipEnabled}
+        clipAxis={ctx.meshClipAxis}
+        clipPos={ctx.meshClipPos}
+        showArrows={ctx.femShouldShowArrows}
+        onRenderModeChange={ctx.setMeshRenderMode}
+        onOpacityChange={ctx.setMeshOpacity}
+        onClipEnabledChange={ctx.setMeshClipEnabled}
+        onClipAxisChange={ctx.setMeshClipAxis}
+        onClipPosChange={ctx.setMeshClipPos}
+        onShowArrowsChange={ctx.setMeshShowArrows}
+        onSelectionChange={ctx.setMeshSelection}
+      />
+    );
+  } else if (ctx.effectiveViewMode === "2D" && ctx.isFemBackend && ctx.femMeshData) {
+    conditionalContent = (
+      <FemMeshSlice2D
+        meshData={ctx.femMeshData}
+        quantityLabel={ctx.quantityDescriptor?.label ?? ctx.selectedQuantity}
+        quantityId={ctx.selectedQuantity}
+        component={ctx.effectiveVectorComponent}
+        plane={ctx.plane}
+        sliceIndex={ctx.sliceIndex}
+        sliceCount={ctx.maxSliceCount}
+      />
+    );
+  } else if (ctx.effectiveViewMode === "2D" && !showFdm3D) {
+    conditionalContent = (
+      <MagnetizationSlice2D
+        grid={ctx.previewGrid}
+        vectors={ctx.selectedVectors}
+        quantityLabel={ctx.quantityDescriptor?.label ?? spatialPreview?.quantity ?? ctx.selectedQuantity}
+        quantityId={spatialPreview?.quantity ?? ctx.selectedQuantity}
+        component={ctx.component}
+        plane={ctx.plane}
+        sliceIndex={ctx.sliceIndex}
+      />
+    );
+  } else if (ctx.effectiveViewMode === "Analyze") {
+    conditionalContent = <AnalyzeViewport />;
+  } else if (!showFdm3D) {
+    conditionalContent = (
+      <div className="flex flex-col items-center justify-center h-full w-full opacity-60">
+        <EmptyState
+          title={ctx.emptyStateMessage.title}
+          description={ctx.emptyStateMessage.description}
+          tone="info"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 relative overflow-hidden [&>*]:min-w-0 [&>*]:min-h-0 [&>*:not(.viewportOverlay)]:flex-1 [&>*:not(.viewportOverlay)]:w-full">
@@ -300,143 +453,28 @@ export function ViewportCanvasArea() {
           </span>
         )}
       </div>
-      {globalScalarPreview ? (
-        <div className="flex h-full w-full items-center justify-center p-6">
-          <div className="flex min-w-[280px] max-w-[520px] flex-col gap-4 rounded-2xl border border-border/50 bg-card/70 p-8 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur">
-            <div className="space-y-1">
-              <p className="text-[0.68rem] font-semibold uppercase tracking-widest text-muted-foreground">
-                Global Scalar
-              </p>
-              <h3 className="text-base font-semibold text-foreground">
-                {ctx.quantityDescriptor?.label ?? globalScalarPreview.quantity}
-              </h3>
-            </div>
-            <div className="font-mono text-lg font-medium tracking-tight text-foreground">
-              {fmtExp(globalScalarPreview.value)}
-            </div>
-            <div className="flex flex-wrap gap-3 text-[0.72rem] text-muted-foreground">
-              <span>{globalScalarPreview.unit}</span>
-              <span>step {globalScalarPreview.source_step.toLocaleString()}</span>
-              <span>{fmtSI(globalScalarPreview.source_time, "s")}</span>
-            </div>
-          </div>
-        </div>
-      ) : !ctx.isVectorQuantity ? (
-        <div className="flex flex-col items-center justify-center h-full w-full opacity-60">
-          <EmptyState
-            title={ctx.quantityDescriptor?.label ?? "Scalar quantity"}
-            description={
-              ctx.selectedScalarValue !== null
-                ? `Latest: ${ctx.selectedScalarValue.toExponential(4)} ${ctx.quantityDescriptor?.unit ?? ""}`
-                : "Scalar — see Scalars in sidebar."
-            }
-            tone="info"
-            compact
-          />
-        </div>
-      ) : spatialPreview &&
-        spatialPreview.spatial_kind === "grid" &&
-        spatialPreview.type === "2D" &&
-        spatialPreview.scalar_field.length > 0 ? (
-        <PreviewScalarField2D
-          data={spatialPreview.scalar_field}
-          grid={spatialPreview.preview_grid}
-          quantityLabel={ctx.quantityDescriptor?.label ?? spatialPreview.quantity}
-          quantityUnit={spatialPreview.unit}
-          component={spatialPreview.component}
-          min={spatialPreview.min}
-          max={spatialPreview.max}
-        />
-      ) : ctx.effectiveViewMode === "Mesh" && ctx.isFemBackend && ctx.femMeshData ? (
-        <FemMeshView3D
-          topologyKey={ctx.femTopologyKey ?? undefined}
-          meshData={ctx.femMeshData}
-          colorField="none"
-          toolbarMode="hidden"
-          renderMode={ctx.meshRenderMode}
-          opacity={ctx.meshOpacity}
-          clipEnabled={ctx.meshClipEnabled}
-          clipAxis={ctx.meshClipAxis}
-          clipPos={ctx.meshClipPos}
-          showArrows={false}
-          onRenderModeChange={ctx.setMeshRenderMode}
-          onOpacityChange={ctx.setMeshOpacity}
-          onClipEnabledChange={ctx.setMeshClipEnabled}
-          onClipAxisChange={ctx.setMeshClipAxis}
-          onClipPosChange={ctx.setMeshClipPos}
-          onShowArrowsChange={ctx.setMeshShowArrows}
-          onSelectionChange={ctx.setMeshSelection}
-        />
-      ) : ctx.effectiveViewMode === "Mesh" && !ctx.isFemBackend ? (
+
+      {/* ── Always-mounted FDM 3D Canvas ──
+       * The R3F <Canvas> holds a WebGL context and camera state that is extremely
+       * expensive to recreate. We keep MagnetizationView3D always in the DOM and
+       * toggle visibility via CSS, preventing GL context destruction on data swaps. */}
+      <div className={cn("absolute inset-0", showFdm3D ? "block" : "hidden")}>
         <MagnetizationView3D
           grid={ctx.previewGrid}
-          vectors={null}
-          fieldLabel="Geometry"
-          geometryMode
+          vectors={isFdm3DActive ? ctx.selectedVectors : null}
+          fieldLabel={
+            isFdmMeshActive
+              ? "Geometry"
+              : ctx.quantityDescriptor?.label ?? spatialPreview?.quantity ?? ctx.selectedQuantity
+          }
+          geometryMode={isFdmMeshActive}
           activeMask={ctx.activeMask}
           worldExtent={ctx.worldExtent}
         />
-      ) : ctx.effectiveViewMode === "3D" && ctx.isFemBackend && ctx.femMeshData ? (
-        <FemMeshView3D
-          topologyKey={ctx.femTopologyKey ?? undefined}
-          meshData={ctx.femMeshData}
-          fieldLabel={ctx.quantityDescriptor?.label ?? ctx.selectedQuantity}
-          colorField={ctx.femColorField}
-          showOrientationLegend={ctx.femMagnetization3DActive}
-          toolbarMode="hidden"
-          renderMode={ctx.meshRenderMode}
-          opacity={ctx.meshOpacity}
-          clipEnabled={ctx.meshClipEnabled}
-          clipAxis={ctx.meshClipAxis}
-          clipPos={ctx.meshClipPos}
-          showArrows={ctx.femShouldShowArrows}
-          onRenderModeChange={ctx.setMeshRenderMode}
-          onOpacityChange={ctx.setMeshOpacity}
-          onClipEnabledChange={ctx.setMeshClipEnabled}
-          onClipAxisChange={ctx.setMeshClipAxis}
-          onClipPosChange={ctx.setMeshClipPos}
-          onShowArrowsChange={ctx.setMeshShowArrows}
-          onSelectionChange={ctx.setMeshSelection}
-        />
-      ) : ctx.effectiveViewMode === "2D" && ctx.isFemBackend && ctx.femMeshData ? (
-        <FemMeshSlice2D
-          meshData={ctx.femMeshData}
-          quantityLabel={ctx.quantityDescriptor?.label ?? ctx.selectedQuantity}
-          quantityId={ctx.selectedQuantity}
-          component={ctx.effectiveVectorComponent}
-          plane={ctx.plane}
-          sliceIndex={ctx.sliceIndex}
-          sliceCount={ctx.maxSliceCount}
-        />
-      ) : ctx.effectiveViewMode === "3D" ? (
-        <MagnetizationView3D
-          grid={ctx.previewGrid}
-          vectors={ctx.selectedVectors}
-          fieldLabel={ctx.quantityDescriptor?.label ?? spatialPreview?.quantity ?? ctx.selectedQuantity}
-          activeMask={ctx.activeMask}
-          worldExtent={ctx.worldExtent}
-        />
-      ) : ctx.effectiveViewMode === "2D" ? (
-        <MagnetizationSlice2D
-          grid={ctx.previewGrid}
-          vectors={ctx.selectedVectors}
-          quantityLabel={ctx.quantityDescriptor?.label ?? spatialPreview?.quantity ?? ctx.selectedQuantity}
-          quantityId={spatialPreview?.quantity ?? ctx.selectedQuantity}
-          component={ctx.component}
-          plane={ctx.plane}
-          sliceIndex={ctx.sliceIndex}
-        />
-      ) : ctx.effectiveViewMode === "Analyze" ? (
-        <AnalyzeViewport />
-      ) : (
-        <div className="flex flex-col items-center justify-center h-full w-full opacity-60">
-          <EmptyState
-            title={ctx.emptyStateMessage.title}
-            description={ctx.emptyStateMessage.description}
-            tone="info"
-          />
-        </div>
-      )}
+      </div>
+
+      {/* ── Conditionally-rendered non-GL viewports ── */}
+      {conditionalContent}
     </div>
   );
 }

@@ -120,6 +120,7 @@ export interface SpatialPreviewState {
   layer: number;
   all_layers: boolean;
   type: string;
+  vector_payload_id: number | null;
   vector_field_values: Float64Array | null;
   scalar_field: [number, number, number][];
   min: number;
@@ -290,17 +291,9 @@ interface UseSessionStreamResult {
   error: string | null;
 }
 
-interface SnapshotCurrentLiveEvent {
-  kind: "snapshot";
+interface SessionStateCurrentLiveEvent {
+  kind: "session_state";
   state: unknown;
-}
-
-interface PreviewCurrentLiveEvent {
-  kind: "preview";
-  session_id: string;
-  display_selection?: unknown;
-  preview_config: unknown;
-  preview?: unknown;
 }
 
 interface CommandAckCurrentLiveEvent {
@@ -332,34 +325,19 @@ interface CommandCompletedCurrentLiveEvent {
   completion_state: string;
 }
 
-interface DisplayUpdatedCurrentLiveEvent {
-  kind: "display_updated";
-  session_id: string;
-  display_selection: unknown;
-  display_kind: DisplayKind;
-  published_at_unix_ms: number;
-  source_step?: number;
-  source_time?: number;
-}
-
-interface RuntimeStatusChangedCurrentLiveEvent {
-  kind: "runtime_status_changed";
-  session_id: string;
-  status: RuntimeStatusKind;
-  status_code: string;
-  is_busy: boolean;
-  can_accept_commands: boolean;
-  changed_at_unix_ms: number;
-  previous_status?: RuntimeStatusKind;
-  previous_status_code?: string;
-}
-
 type RuntimeCurrentLiveEvent =
   | CommandAckCurrentLiveEvent
   | CommandRejectedCurrentLiveEvent
-  | CommandCompletedCurrentLiveEvent
-  | DisplayUpdatedCurrentLiveEvent
-  | RuntimeStatusChangedCurrentLiveEvent;
+  | CommandCompletedCurrentLiveEvent;
+
+const PREVIEW_BINARY_FRAME_MAGIC = "FMVP";
+const PREVIEW_BINARY_FRAME_HEADER_LEN = 16;
+const PREVIEW_BINARY_FRAME_KIND_F64 = 1;
+
+interface PreviewBinaryPayload {
+  payloadId: number;
+  vectorFieldValues: Float64Array;
+}
 
 function currentSessionHint(): string | null {
   if (typeof window === "undefined") {
@@ -457,9 +435,11 @@ function mergeSessionState(prev: SessionState | null, next: SessionState): Sessi
     previewSequence(next.preview),
     previewSequence(prev.preview),
   );
-  const previewRegressed = prev.preview != null && previewOrdering < 0;
-  const previewUnchanged = prev.preview != null && previewOrdering === 0;
-  if (previewRegressed || previewUnchanged) {
+  const previewRegressed =
+    prev.preview != null &&
+    next.preview != null &&
+    previewOrdering < 0;
+  if (previewRegressed || (prev.preview != null && next.preview == null)) {
     merged.preview = prev.preview;
   }
 
@@ -554,6 +534,64 @@ function normalizeVectorFieldValues(raw: unknown): Float64Array | null {
     return flattened;
   }
   return toFloat64Array(raw);
+}
+
+function decodePreviewBinaryFrame(data: ArrayBuffer): PreviewBinaryPayload | null {
+  if (data.byteLength < PREVIEW_BINARY_FRAME_HEADER_LEN) {
+    return null;
+  }
+
+  const view = new DataView(data);
+  const magic = String.fromCharCode(
+    view.getUint8(0),
+    view.getUint8(1),
+    view.getUint8(2),
+    view.getUint8(3),
+  );
+  if (magic !== PREVIEW_BINARY_FRAME_MAGIC) {
+    return null;
+  }
+
+  const version = view.getUint8(4);
+  const kind = view.getUint8(5);
+  if (version !== 1 || kind !== PREVIEW_BINARY_FRAME_KIND_F64) {
+    return null;
+  }
+
+  const payloadId = view.getUint32(8, true);
+  const elementCount = view.getUint32(12, true);
+  const expectedLength = PREVIEW_BINARY_FRAME_HEADER_LEN + elementCount * 8;
+  if (data.byteLength !== expectedLength) {
+    return null;
+  }
+
+  return {
+    payloadId,
+    vectorFieldValues: new Float64Array(data, PREVIEW_BINARY_FRAME_HEADER_LEN, elementCount),
+  };
+}
+
+function attachPreviewBinaryPayload(
+  prev: SessionState | null,
+  payloadId: number,
+  vectorFieldValues: Float64Array,
+): SessionState | null {
+  if (!prev || !prev.preview || prev.preview.kind !== "spatial") {
+    return prev;
+  }
+  if (prev.preview.vector_payload_id !== payloadId) {
+    return prev;
+  }
+  if (prev.preview.vector_field_values === vectorFieldValues) {
+    return prev;
+  }
+  return {
+    ...prev,
+    preview: {
+      ...prev.preview,
+      vector_field_values: vectorFieldValues,
+    },
+  };
 }
 
 function fieldGrid(raw: any): [number, number, number] | null {
@@ -693,7 +731,10 @@ function previewConfigFromDisplaySelection(
   };
 }
 
-function normalizePreviewState(raw: any): PreviewState | null {
+function normalizePreviewState(
+  raw: any,
+  pendingVectorPayloads?: Map<number, Float64Array>,
+): PreviewState | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
@@ -723,7 +764,13 @@ function normalizePreviewState(raw: any): PreviewState | null {
     layer: Number(raw.layer ?? 0),
     all_layers: Boolean(raw.all_layers),
     type: String(raw.type ?? "3D"),
-    vector_field_values: normalizeVectorFieldValues(raw.vector_field_values),
+    vector_payload_id:
+      raw.vector_payload_id != null ? Number(raw.vector_payload_id) : null,
+    vector_field_values:
+      normalizeVectorFieldValues(raw.vector_field_values) ??
+      (raw.vector_payload_id != null
+        ? pendingVectorPayloads?.get(Number(raw.vector_payload_id)) ?? null
+        : null),
     scalar_field: Array.isArray(raw.scalar_field)
       ? raw.scalar_field
           .filter((point: unknown) => Array.isArray(point) && point.length >= 3)
@@ -823,100 +870,12 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
   };
 }
 
-function mergePreviewEvent(
-  prev: SessionState | null,
-  raw: PreviewCurrentLiveEvent,
-): SessionState | null {
-  if (!prev || prev.session.session_id !== raw.session_id) {
-    return prev;
-  }
-
-  let displaySelection =
-    normalizeDisplaySelection(raw.display_selection) ?? prev.display_selection;
-  if (
-    displaySelection &&
-    prev.display_selection &&
-    displaySelection.revision < prev.display_selection.revision
-  ) {
-    displaySelection = prev.display_selection;
-  }
-
-  let previewConfig =
-    normalizePreviewConfig(raw.preview_config) ??
-    previewConfigFromDisplaySelection(displaySelection) ??
-    prev.preview_config;
-  if (
-    previewConfig &&
-    prev.preview_config &&
-    previewConfig.revision < prev.preview_config.revision
-  ) {
-    previewConfig = prev.preview_config;
-  }
-  if (
-    displaySelection &&
-    (!previewConfig || displaySelection.revision > previewConfig.revision)
-  ) {
-    previewConfig = previewConfigFromDisplaySelection(displaySelection);
-  }
-
-  let preview = normalizePreviewState(raw.preview);
-  const previewOrdering = compareLexicographic(
-    previewSequence(preview),
-    previewSequence(prev.preview),
-  );
-  if (!preview || (prev.preview != null && previewOrdering <= 0)) {
-    preview = prev.preview;
-  }
-
-  return {
-    ...prev,
-    display_selection: displaySelection,
-    preview_config: previewConfig,
-    preview,
-  };
-}
-
-function mergeRuntimeEvent(
+function mergeCommandStatusEvent(
   prev: SessionState | null,
   raw: RuntimeCurrentLiveEvent,
 ): SessionState | null {
   if (!prev || prev.session.session_id !== raw.session_id) {
     return prev;
-  }
-
-  if (raw.kind === "runtime_status_changed") {
-    const runtime_status: RuntimeStatusState = {
-      kind: normalizeRuntimeStatusKind(raw.status),
-      code: String(raw.status_code ?? raw.status),
-      is_busy: Boolean(raw.is_busy),
-      can_accept_commands: Boolean(raw.can_accept_commands),
-    };
-    return {
-      ...prev,
-      runtime_status,
-      live_state: prev.live_state
-        ? { ...prev.live_state, status: runtime_status.code }
-        : prev.live_state,
-    };
-  }
-
-  if (raw.kind === "display_updated") {
-    let displaySelection =
-      normalizeDisplaySelection(raw.display_selection) ?? prev.display_selection;
-    if (
-      displaySelection &&
-      prev.display_selection &&
-      displaySelection.revision < prev.display_selection.revision
-    ) {
-      displaySelection = prev.display_selection;
-    }
-    const previewConfig =
-      previewConfigFromDisplaySelection(displaySelection) ?? prev.preview_config;
-    return {
-      ...prev,
-      display_selection: displaySelection,
-      preview_config: previewConfig,
-    };
   }
 
   if (raw.kind === "command_ack") {
@@ -974,7 +933,10 @@ function mergeRuntimeEvent(
   };
 }
 
-function normalizeSessionState(raw: any): SessionState {
+function normalizeSessionState(
+  raw: any,
+  pendingVectorPayloads?: Map<number, Float64Array>,
+): SessionState {
   const rawLive = raw.live_state;
   const latestFields = normalizeLatestFields(raw.latest_fields);
   const rawPreview = raw.preview ?? null;
@@ -1056,7 +1018,7 @@ function normalizeSessionState(raw: any): SessionState {
     preview_config:
       normalizePreviewConfig(rawPreviewConfig) ??
       previewConfigFromDisplaySelection(displaySelection),
-    preview: normalizePreviewState(rawPreview),
+    preview: normalizePreviewState(rawPreview, pendingVectorPayloads),
     command_status: null,
   };
 }
@@ -1073,6 +1035,7 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
   const reconnectAttemptRef = useRef(0);
   const unmountedRef = useRef(false);
   const intentionallyClosedRef = useRef(new WeakSet<WebSocket>());
+  const pendingPreviewPayloadsRef = useRef(new Map<number, Float64Array>());
 
   const connect = useCallback(() => {
     const client = currentLiveApiClient();
@@ -1089,7 +1052,7 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
         if (unmountedRef.current) {
           return;
         }
-        const nextState = normalizeSessionState(raw);
+        const nextState = normalizeSessionState(raw, pendingPreviewPayloadsRef.current);
         if (sessionHint && nextState.session.session_id !== sessionHint) {
           setState(null);
           setError(null);
@@ -1117,6 +1080,7 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
       });
 
     const ws = client.connectWebSocket();
+    ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -1136,15 +1100,34 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
       reconnectAttemptRef.current = 0;
     };
 
-    ws.onmessage = (event: MessageEvent<string>) => {
+    ws.onmessage = (event: MessageEvent<string | ArrayBuffer>) => {
       if (unmountedRef.current || wsRef.current !== ws) {
+        return;
+      }
+      if (event.data instanceof ArrayBuffer) {
+        const payload = decodePreviewBinaryFrame(event.data);
+        if (!payload) {
+          return;
+        }
+        pendingPreviewPayloadsRef.current.set(payload.payloadId, payload.vectorFieldValues);
+        if (pendingPreviewPayloadsRef.current.size > 16) {
+          const oldestKey = pendingPreviewPayloadsRef.current.keys().next().value;
+          if (oldestKey != null) {
+            pendingPreviewPayloadsRef.current.delete(oldestKey);
+          }
+        }
+        setState((prevState) =>
+          attachPreviewBinaryPayload(prevState, payload.payloadId, payload.vectorFieldValues));
         return;
       }
       try {
         const raw = JSON.parse(event.data);
         setState((prevState) => {
-          if (raw?.kind === "snapshot" && raw.state) {
-            const nextState = normalizeSessionState((raw as SnapshotCurrentLiveEvent).state);
+          if (raw?.kind === "session_state" && raw.state) {
+            const nextState = normalizeSessionState(
+              (raw as SessionStateCurrentLiveEvent).state,
+              pendingPreviewPayloadsRef.current,
+            );
             if (sessionHint && nextState.session.session_id !== sessionHint) {
               return null;
             }
@@ -1154,25 +1137,19 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
             return mergeSessionState(prevState, nextState);
           }
 
-          if (raw?.kind === "preview" && typeof raw.session_id === "string") {
-            return mergePreviewEvent(prevState, raw as PreviewCurrentLiveEvent);
-          }
-
           if (
             typeof raw?.kind === "string" &&
             typeof raw?.session_id === "string" &&
             (
               raw.kind === "command_ack" ||
               raw.kind === "command_rejected" ||
-              raw.kind === "command_completed" ||
-              raw.kind === "display_updated" ||
-              raw.kind === "runtime_status_changed"
+              raw.kind === "command_completed"
             )
           ) {
-            return mergeRuntimeEvent(prevState, raw as RuntimeCurrentLiveEvent);
+            return mergeCommandStatusEvent(prevState, raw as RuntimeCurrentLiveEvent);
           }
 
-          const nextState = normalizeSessionState(raw);
+          const nextState = normalizeSessionState(raw, pendingPreviewPayloadsRef.current);
           if (sessionHint && nextState.session.session_id !== sessionHint) {
             return null;
           }

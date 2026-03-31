@@ -14,7 +14,7 @@ use fullmag_fdm_sys as ffi;
 #[cfg(feature = "cuda")]
 use crate::preview::{
     build_grid_preview_field_from_flat_plan, normalize_quantity_id, plan_grid_preview,
-    resample_grid_mask,
+    resample_grid_mask, GridPreviewPlan,
 };
 #[cfg(feature = "cuda")]
 use crate::relaxation::llg_overdamped_uses_pure_damping;
@@ -91,6 +91,19 @@ pub(crate) struct NativeFdmFieldSnapshot {
 
 #[cfg(feature = "cuda")]
 unsafe impl Send for NativeFdmFieldSnapshot {}
+
+#[cfg(feature = "cuda")]
+#[derive(Debug)]
+pub(crate) struct NativeFdmPreviewSnapshot {
+    handle: *mut ffi::fullmag_fdm_preview_snapshot,
+    request: LivePreviewRequest,
+    plan: GridPreviewPlan,
+    quantity: String,
+    ready: Option<NativeFieldSnapshotReady>,
+}
+
+#[cfg(feature = "cuda")]
+unsafe impl Send for NativeFdmPreviewSnapshot {}
 
 #[cfg(feature = "cuda")]
 impl NativeFdmBackend {
@@ -663,6 +676,39 @@ impl NativeFdmBackend {
         })
     }
 
+    pub fn begin_live_preview_snapshot(
+        &self,
+        request: &LivePreviewRequest,
+        original_grid: [u32; 3],
+    ) -> Result<NativeFdmPreviewSnapshot, RunError> {
+        let plan = plan_grid_preview(request, original_grid);
+        let quantity = normalize_quantity_id(&request.quantity).to_string();
+        let observable = snapshot_observable(&quantity).ok_or_else(|| RunError {
+            message: format!("unsupported CUDA preview snapshot '{}'", request.quantity),
+        })?;
+        let handle = unsafe {
+            ffi::fullmag_fdm_backend_begin_preview_snapshot(
+                self.handle,
+                observable,
+                plan.preview_grid[0],
+                plan.preview_grid[1],
+                plan.preview_grid[2],
+                plan.z_origin,
+                plan.applied_layer_stride,
+            )
+        };
+        if handle.is_null() {
+            return Err(self.last_error_or("begin_live_preview_snapshot failed"));
+        }
+        Ok(NativeFdmPreviewSnapshot {
+            handle,
+            request: request.clone(),
+            plan,
+            quantity,
+            ready: None,
+        })
+    }
+
     pub fn copy_live_preview_field(
         &self,
         request: &LivePreviewRequest,
@@ -949,10 +995,98 @@ impl NativeFdmFieldSnapshot {
 }
 
 #[cfg(feature = "cuda")]
+impl NativeFdmPreviewSnapshot {
+    fn ensure_ready(&mut self) -> Result<&NativeFieldSnapshotReady, RunError> {
+        if self.ready.is_none() {
+            let mut data = std::ptr::null();
+            let mut len_bytes = 0u64;
+            let mut desc = ffi::fullmag_fdm_snapshot_desc {
+                cell_count: 0,
+                component_count: 0,
+                scalar_bytes: 0,
+                scalar_type: ffi::fullmag_fdm_snapshot_scalar_type::FULLMAG_FDM_SNAPSHOT_SCALAR_F64,
+            };
+            let rc = unsafe {
+                ffi::fullmag_fdm_preview_snapshot_wait(
+                    self.handle,
+                    &mut data,
+                    &mut len_bytes,
+                    &mut desc,
+                )
+            };
+            if rc != ffi::FULLMAG_FDM_OK {
+                return Err(RunError {
+                    message: format!(
+                        "waiting for CUDA preview snapshot '{}' failed",
+                        self.quantity
+                    ),
+                });
+            }
+            let scalar_type = match desc.scalar_type {
+                ffi::fullmag_fdm_snapshot_scalar_type::FULLMAG_FDM_SNAPSHOT_SCALAR_F32 => {
+                    NativeFieldSnapshotScalarType::F32
+                }
+                ffi::fullmag_fdm_snapshot_scalar_type::FULLMAG_FDM_SNAPSHOT_SCALAR_F64 => {
+                    NativeFieldSnapshotScalarType::F64
+                }
+            };
+            self.ready = Some(NativeFieldSnapshotReady {
+                ptr: data.cast::<u8>(),
+                info: NativeFieldSnapshotInfo {
+                    cell_count: desc.cell_count as usize,
+                    component_count: desc.component_count as usize,
+                    scalar_bytes: desc.scalar_bytes as usize,
+                    scalar_type,
+                    len_bytes: len_bytes as usize,
+                },
+            });
+        }
+        Ok(self.ready.as_ref().expect("preview snapshot ready cached"))
+    }
+
+    pub fn into_live_preview_field(
+        mut self,
+        active_mask: Option<&[bool]>,
+    ) -> Result<LivePreviewField, RunError> {
+        let ready = self.ensure_ready()?;
+        let expected_len = ready.info.cell_count * ready.info.component_count as usize;
+        let vector_field_values = match ready.info.scalar_type {
+            NativeFieldSnapshotScalarType::F32 => {
+                let flat =
+                    unsafe { std::slice::from_raw_parts(ready.ptr.cast::<f32>(), expected_len) };
+                flat.iter().copied().map(f64::from).collect()
+            }
+            NativeFieldSnapshotScalarType::F64 => {
+                let flat =
+                    unsafe { std::slice::from_raw_parts(ready.ptr.cast::<f64>(), expected_len) };
+                flat.to_vec()
+            }
+        };
+        Ok(build_grid_preview_field_from_flat_plan(
+            &self.request,
+            &self.plan,
+            vector_field_values,
+            &self.quantity,
+            active_mask.map(|mask| resample_grid_mask(mask, &self.plan)),
+        ))
+    }
+}
+
+#[cfg(feature = "cuda")]
 impl Drop for NativeFdmFieldSnapshot {
     fn drop(&mut self) {
         if !self.handle.is_null() {
             unsafe { ffi::fullmag_fdm_field_snapshot_destroy(self.handle) };
+            self.handle = std::ptr::null_mut();
+        }
+    }
+}
+
+#[cfg(feature = "cuda")]
+impl Drop for NativeFdmPreviewSnapshot {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe { ffi::fullmag_fdm_preview_snapshot_destroy(self.handle) };
             self.handle = std::ptr::null_mut();
         }
     }

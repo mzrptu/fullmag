@@ -997,12 +997,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     interactiveEnabled &&
     (awaitingCommand || workspaceStatus === "running" || workspaceStatus === "paused");
 
-  /* Preview derived — respect user's explicit 2D/Mesh choice */
-  const previewDrivenMode: ViewportMode | null =
-    spatialPreview && !isFemBackend && viewMode === "3D"
-      ? (spatialPreview.type === "3D" ? "3D" : "2D")
-      : null;
-  const effectiveViewMode = previewDrivenMode ?? viewMode;
+  /* Preview derived — keep the user's explicit viewport mode stable.
+   * A transient preview payload should not silently downgrade 3D to 2D. */
+  const effectiveViewMode = viewMode;
   const requestedDisplaySelection = useMemo<DisplaySelection>(() => {
     if (optimisticDisplaySelection) {
       return optimisticDisplaySelection;
@@ -1524,14 +1521,38 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     if (requestedPreviewQuantity) setSelectedQuantity(requestedPreviewQuantity);
   }, [requestedPreviewQuantity]);
 
+  const fieldMap = useMemo<Record<string, Float64Array | null>>(
+    () => ({
+      ...(state?.latest_fields.fields ?? {}),
+      m: liveState?.magnetization ?? state?.latest_fields.fields.m ?? null,
+    }),
+    [liveState?.magnetization, state?.latest_fields.fields],
+  );
+  const renderPreviewMatchesActiveQuantity = renderPreview?.quantity === activeQuantityId;
+
+  const selectedVectors = useMemo(() => {
+    if (isGlobalScalarQuantity(activeQuantityId)) return null;
+    if (renderPreviewMatchesActiveQuantity && renderPreview?.vector_field_values) {
+      return renderPreview.vector_field_values;
+    }
+    return fieldMap[activeQuantityId] ?? null;
+  }, [
+    activeQuantityId,
+    fieldMap,
+    isGlobalScalarQuantity,
+    renderPreviewMatchesActiveQuantity,
+    renderPreview?.vector_field_values,
+  ]);
+
   const quantityDescriptor = useMemo(
     () => (activeQuantityId ? quantityDescriptorById.get(activeQuantityId) ?? null : null),
     [activeQuantityId, quantityDescriptorById],
   );
-  // Default to true (vector) when descriptors haven't arrived yet — the default
-  // quantity "m" is always a vector field and we don't want to gate the 3D
-  // viewport behind EmptyState during the loading phase.
-  const isVectorQuantity = quantityDescriptor ? quantityDescriptor.kind === "vector_field" : true;
+  const hasVectorData = Boolean(selectedVectors && selectedVectors.length > 0);
+  const isVectorQuantity =
+    requestedDisplaySelection.kind === "vector_field" ||
+    quantityDescriptor?.kind === "vector_field" ||
+    (!isGlobalScalarQuantity(activeQuantityId) && hasVectorData);
 
   const quickPreviewTargets = useMemo(
     () => quantities
@@ -1549,21 +1570,6 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [globalScalarPreview]);
   const selectedQuantityLabel = quantityDescriptor?.label ?? requestedPreviewQuantity;
   const selectedQuantityUnit = quantityDescriptor?.unit ?? null;
-
-  /* Field data */
-  const fieldMap = useMemo<Record<string, Float64Array | null>>(
-    () => ({
-      ...(state?.latest_fields.fields ?? {}),
-      m: liveState?.magnetization ?? state?.latest_fields.fields.m ?? null,
-    }),
-    [liveState?.magnetization, state?.latest_fields.fields],
-  );
-
-  const selectedVectors = useMemo(() => {
-    if (isGlobalScalarQuantity(activeQuantityId)) return null;
-    if (!previewIsStale && renderPreview?.vector_field_values) return renderPreview.vector_field_values;
-    return fieldMap[activeQuantityId] ?? null;
-  }, [activeQuantityId, fieldMap, isGlobalScalarQuantity, previewIsStale, renderPreview?.vector_field_values]);
 
   /* FEM mesh data */
   const effectiveFemMesh = useMemo(

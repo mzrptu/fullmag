@@ -207,11 +207,11 @@ export function Section({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="border-b border-border/40 last:border-0">
+    <div className="border-b border-border/20 last:border-0">
       <div className="flex items-center gap-2 py-2 px-3 cursor-pointer select-none hover:bg-muted/30 transition-colors" onClick={() => setOpen((v) => !v)}>
-        <span className="text-[0.65rem] text-muted-foreground transition-transform data-[open=true]:rotate-90" data-open={open}>▸</span>
-        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-foreground mr-auto">{title}</span>
-        {badge && <span className="text-[0.65rem] font-mono text-muted-foreground/70 bg-muted px-1.5 py-0.5 rounded">{badge}</span>}
+        <span className="text-[0.6rem] text-muted-foreground transition-transform data-[open=true]:rotate-90" data-open={open}>▸</span>
+        <span className="text-[0.6rem] font-medium uppercase tracking-wider text-foreground mr-auto">{title}</span>
+        {badge && <span className="text-[0.6rem] font-mono text-muted-foreground/70 bg-muted/40 px-1.5 py-0.5 rounded">{badge}</span>}
       </div>
       {open && <div className="px-3 pb-3 grid gap-2">{children}</div>}
     </div>
@@ -229,7 +229,7 @@ export function DockTabButton({
 }) {
   return (
     <button
-      className="appearance-none border border-border/40 bg-card/30 text-muted-foreground text-[0.65rem] font-bold uppercase tracking-widest rounded-md py-1.5 px-2 cursor-pointer transition-all hover:bg-muted/50 data-[active=true]:bg-primary/20 data-[active=true]:border-primary/50 data-[active=true]:text-primary"
+      className="appearance-none border border-border/30 bg-card/20 text-muted-foreground text-[0.6rem] font-medium uppercase tracking-wider rounded-md py-1.5 px-2 cursor-pointer transition-all hover:bg-muted/30 data-[active=true]:bg-primary/15 data-[active=true]:border-primary/40 data-[active=true]:text-primary"
       data-active={active}
       onClick={onClick}
       type="button"

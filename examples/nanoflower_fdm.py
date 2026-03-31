@@ -33,14 +33,7 @@ fm.b_ext(0.1, theta=0, phi=0)  # 0.1 T along +z
 
 # ── Solver ──────────────────────────────────────────────────
 # fm.solver(dt=1e-15, g=2.115)
-fm.solver(
-    # dt=1e-15,            # initial timestep [s] when max_error is enabled
-    max_error=1e-6,      # tolerancja adaptywnego kroku (atol)
-    integrator="rk23",   # nazwa integratora
-    g=2.115,             # g-faktor elektronu (→ gamma = μ₀·g·μ_B/ℏ)
-    # LUB
-    # gamma=2.211e5,       # gamma bezpośrednio [m/(A·s)]
-)
+fm.solver(max_error=1e-6, integrator="rk45", g=2.115)
 
 # ── Outputs ─────────────────────────────────────────────────
 # fm.save("m", every=1e-13)

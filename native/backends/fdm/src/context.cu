@@ -223,6 +223,31 @@ static void destroy_async_snapshot_resources(AsyncFieldSnapshot &snapshot) {
     snapshot.needs_wait = false;
 }
 
+static void destroy_async_preview_resources(AsyncPreviewSnapshot &snapshot) {
+    if (snapshot.done_event) {
+        cudaEventDestroy(reinterpret_cast<cudaEvent_t>(snapshot.done_event));
+        snapshot.done_event = nullptr;
+    }
+    if (snapshot.ready_event) {
+        cudaEventDestroy(reinterpret_cast<cudaEvent_t>(snapshot.ready_event));
+        snapshot.ready_event = nullptr;
+    }
+    if (snapshot.stream) {
+        cudaStreamDestroy(reinterpret_cast<cudaStream_t>(snapshot.stream));
+        snapshot.stream = nullptr;
+    }
+    if (snapshot.host_xyz) {
+        cudaFreeHost(snapshot.host_xyz);
+        snapshot.host_xyz = nullptr;
+    }
+    if (snapshot.device_xyz) {
+        cudaFree(snapshot.device_xyz);
+        snapshot.device_xyz = nullptr;
+    }
+    snapshot.host_xyz_len_bytes = 0;
+    snapshot.needs_wait = false;
+}
+
 template <typename InputScalar, typename OutputScalar>
 __global__ void downsample_field_preview_kernel(
     const InputScalar *field_x,
@@ -1416,6 +1441,293 @@ void context_destroy_async_field_snapshot(AsyncFieldSnapshot *snapshot) {
         return;
     }
     destroy_async_snapshot_resources(*snapshot);
+    delete snapshot;
+}
+
+AsyncPreviewSnapshot *context_begin_async_preview_snapshot(
+    Context &ctx,
+    fullmag_fdm_observable observable,
+    uint32_t preview_nx,
+    uint32_t preview_ny,
+    uint32_t preview_nz,
+    uint32_t z_origin,
+    uint32_t z_stride)
+{
+    if (preview_nx == 0 || preview_ny == 0 || preview_nz == 0 || z_stride == 0 || z_origin >= ctx.nz) {
+        ctx.last_error = "invalid preview snapshot dimensions";
+        return nullptr;
+    }
+
+    auto *snapshot = new (std::nothrow) AsyncPreviewSnapshot();
+    if (snapshot == nullptr) {
+        ctx.last_error = "failed to allocate async preview snapshot";
+        return nullptr;
+    }
+    snapshot->precision = ctx.precision;
+    snapshot->preview_count = static_cast<uint64_t>(preview_nx) * preview_ny * preview_nz;
+    snapshot->host_xyz_len_bytes = snapshot->preview_count * 3u * scalar_size(ctx.precision);
+
+    auto fail = [&](const char *label, cudaError_t err) -> AsyncPreviewSnapshot * {
+        ctx.last_error = std::string(label) + ": " + cudaGetErrorString(err);
+        destroy_async_preview_resources(*snapshot);
+        delete snapshot;
+        return nullptr;
+    };
+
+    auto fail_message = [&](const std::string &message) -> AsyncPreviewSnapshot * {
+        ctx.last_error = message;
+        destroy_async_preview_resources(*snapshot);
+        delete snapshot;
+        return nullptr;
+    };
+
+    const DeviceVectorField *field = nullptr;
+    switch (observable) {
+        case FULLMAG_FDM_OBSERVABLE_M:
+            field = &ctx.m;
+            break;
+        case FULLMAG_FDM_OBSERVABLE_H_EX:
+            field = &ctx.h_ex;
+            break;
+        case FULLMAG_FDM_OBSERVABLE_H_DEMAG:
+            field = &ctx.h_demag;
+            break;
+        case FULLMAG_FDM_OBSERVABLE_H_EFF:
+            field = &ctx.work;
+            break;
+        case FULLMAG_FDM_OBSERVABLE_H_EXT:
+            break;
+        default:
+            return fail_message("unsupported async preview observable");
+    }
+
+    cudaError_t err =
+        cudaHostAlloc(&snapshot->host_xyz, snapshot->host_xyz_len_bytes, cudaHostAllocDefault);
+    if (err != cudaSuccess) return fail("cudaHostAlloc(preview_snapshot.host_xyz)", err);
+
+    cudaStream_t io_stream{};
+    err = cudaStreamCreateWithFlags(&io_stream, cudaStreamNonBlocking);
+    if (err != cudaSuccess) return fail("cudaStreamCreate(preview_snapshot.io_stream)", err);
+    snapshot->stream = reinterpret_cast<void *>(io_stream);
+
+    cudaEvent_t ready_event{};
+    err = cudaEventCreateWithFlags(&ready_event, cudaEventDisableTiming);
+    if (err != cudaSuccess) return fail("cudaEventCreate(preview_snapshot.ready_event)", err);
+    snapshot->ready_event = reinterpret_cast<void *>(ready_event);
+
+    cudaEvent_t done_event{};
+    err = cudaEventCreateWithFlags(&done_event, cudaEventDisableTiming);
+    if (err != cudaSuccess) return fail("cudaEventCreate(preview_snapshot.done_event)", err);
+    snapshot->done_event = reinterpret_cast<void *>(done_event);
+
+    if (observable == FULLMAG_FDM_OBSERVABLE_H_EXT) {
+        if (ctx.precision == FULLMAG_FDM_PRECISION_DOUBLE) {
+            auto *out_xyz = reinterpret_cast<double *>(snapshot->host_xyz);
+            for (uint32_t pz = 0; pz < preview_nz; ++pz) {
+                uint32_t z_start = z_origin + pz * z_stride;
+                if (z_start >= ctx.nz) z_start = ctx.nz - 1;
+                uint32_t z_end = z_origin + (pz + 1) * z_stride;
+                if (z_end <= z_start) z_end = z_start + 1;
+                if (z_end > ctx.nz) z_end = ctx.nz;
+                for (uint32_t py = 0; py < preview_ny; ++py) {
+                    uint32_t y_start = static_cast<uint32_t>(
+                        (static_cast<uint64_t>(py) * ctx.ny) / preview_ny);
+                    uint32_t y_end = static_cast<uint32_t>(
+                        (static_cast<uint64_t>(py + 1) * ctx.ny) / preview_ny);
+                    if (y_end <= y_start) y_end = y_start + 1;
+                    if (y_end > ctx.ny) y_end = ctx.ny;
+                    for (uint32_t px = 0; px < preview_nx; ++px) {
+                        uint32_t x_start = static_cast<uint32_t>(
+                            (static_cast<uint64_t>(px) * ctx.nx) / preview_nx);
+                        uint32_t x_end = static_cast<uint32_t>(
+                            (static_cast<uint64_t>(px + 1) * ctx.nx) / preview_nx);
+                        if (x_end <= x_start) x_end = x_start + 1;
+                        if (x_end > ctx.nx) x_end = ctx.nx;
+
+                        double active_count = 0.0;
+                        double count = 0.0;
+                        for (uint32_t z = z_start; z < z_end; ++z) {
+                            for (uint32_t y = y_start; y < y_end; ++y) {
+                                for (uint32_t x = x_start; x < x_end; ++x) {
+                                    uint64_t index =
+                                        (static_cast<uint64_t>(z) * ctx.ny + y) * ctx.nx + x;
+                                    bool is_active =
+                                        !ctx.has_active_mask || ctx.active_mask_host[index] != 0;
+                                    active_count += is_active ? 1.0 : 0.0;
+                                    count += 1.0;
+                                }
+                            }
+                        }
+
+                        uint64_t preview_index =
+                            (static_cast<uint64_t>(pz) * preview_ny + py) * preview_nx + px;
+                        double scale =
+                            (ctx.has_external_field && count > 0.0) ? (active_count / count) : 0.0;
+                        out_xyz[preview_index * 3 + 0] = ctx.external_field[0] * scale;
+                        out_xyz[preview_index * 3 + 1] = ctx.external_field[1] * scale;
+                        out_xyz[preview_index * 3 + 2] = ctx.external_field[2] * scale;
+                    }
+                }
+            }
+        } else {
+            auto *out_xyz = reinterpret_cast<float *>(snapshot->host_xyz);
+            for (uint32_t pz = 0; pz < preview_nz; ++pz) {
+                uint32_t z_start = z_origin + pz * z_stride;
+                if (z_start >= ctx.nz) z_start = ctx.nz - 1;
+                uint32_t z_end = z_origin + (pz + 1) * z_stride;
+                if (z_end <= z_start) z_end = z_start + 1;
+                if (z_end > ctx.nz) z_end = ctx.nz;
+                for (uint32_t py = 0; py < preview_ny; ++py) {
+                    uint32_t y_start = static_cast<uint32_t>(
+                        (static_cast<uint64_t>(py) * ctx.ny) / preview_ny);
+                    uint32_t y_end = static_cast<uint32_t>(
+                        (static_cast<uint64_t>(py + 1) * ctx.ny) / preview_ny);
+                    if (y_end <= y_start) y_end = y_start + 1;
+                    if (y_end > ctx.ny) y_end = ctx.ny;
+                    for (uint32_t px = 0; px < preview_nx; ++px) {
+                        uint32_t x_start = static_cast<uint32_t>(
+                            (static_cast<uint64_t>(px) * ctx.nx) / preview_nx);
+                        uint32_t x_end = static_cast<uint32_t>(
+                            (static_cast<uint64_t>(px + 1) * ctx.nx) / preview_nx);
+                        if (x_end <= x_start) x_end = x_start + 1;
+                        if (x_end > ctx.nx) x_end = ctx.nx;
+
+                        double active_count = 0.0;
+                        double count = 0.0;
+                        for (uint32_t z = z_start; z < z_end; ++z) {
+                            for (uint32_t y = y_start; y < y_end; ++y) {
+                                for (uint32_t x = x_start; x < x_end; ++x) {
+                                    uint64_t index =
+                                        (static_cast<uint64_t>(z) * ctx.ny + y) * ctx.nx + x;
+                                    bool is_active =
+                                        !ctx.has_active_mask || ctx.active_mask_host[index] != 0;
+                                    active_count += is_active ? 1.0 : 0.0;
+                                    count += 1.0;
+                                }
+                            }
+                        }
+
+                        uint64_t preview_index =
+                            (static_cast<uint64_t>(pz) * preview_ny + py) * preview_nx + px;
+                        double scale =
+                            (ctx.has_external_field && count > 0.0) ? (active_count / count) : 0.0;
+                        out_xyz[preview_index * 3 + 0] =
+                            static_cast<float>(ctx.external_field[0] * scale);
+                        out_xyz[preview_index * 3 + 1] =
+                            static_cast<float>(ctx.external_field[1] * scale);
+                        out_xyz[preview_index * 3 + 2] =
+                            static_cast<float>(ctx.external_field[2] * scale);
+                    }
+                }
+            }
+        }
+        snapshot->needs_wait = false;
+        return snapshot;
+    }
+
+    err = cudaMalloc(&snapshot->device_xyz, snapshot->host_xyz_len_bytes);
+    if (err != cudaSuccess) return fail("cudaMalloc(preview_snapshot.device_xyz)", err);
+
+    constexpr uint32_t threads_per_block = 256;
+    uint32_t blocks = static_cast<uint32_t>(
+        (snapshot->preview_count + threads_per_block - 1) / threads_per_block);
+    if (ctx.precision == FULLMAG_FDM_PRECISION_DOUBLE) {
+        downsample_field_preview_kernel<double, double><<<blocks, threads_per_block>>>(
+            reinterpret_cast<const double *>(field->x),
+            reinterpret_cast<const double *>(field->y),
+            reinterpret_cast<const double *>(field->z),
+            ctx.nx,
+            ctx.ny,
+            ctx.nz,
+            preview_nx,
+            preview_ny,
+            preview_nz,
+            z_origin,
+            z_stride,
+            reinterpret_cast<double *>(snapshot->device_xyz));
+    } else {
+        downsample_field_preview_kernel<float, float><<<blocks, threads_per_block>>>(
+            reinterpret_cast<const float *>(field->x),
+            reinterpret_cast<const float *>(field->y),
+            reinterpret_cast<const float *>(field->z),
+            ctx.nx,
+            ctx.ny,
+            ctx.nz,
+            preview_nx,
+            preview_ny,
+            preview_nz,
+            z_origin,
+            z_stride,
+            reinterpret_cast<float *>(snapshot->device_xyz));
+    }
+
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        return fail("downsample_field_preview_kernel(async)", err);
+    }
+
+    err = cudaEventRecord(ready_event, nullptr);
+    if (err != cudaSuccess) return fail("cudaEventRecord(preview_snapshot.ready_event)", err);
+
+    err = cudaStreamWaitEvent(io_stream, ready_event, 0);
+    if (err != cudaSuccess) return fail("cudaStreamWaitEvent(preview_snapshot.ready_event)", err);
+
+    err = cudaMemcpyAsync(
+        snapshot->host_xyz,
+        snapshot->device_xyz,
+        snapshot->host_xyz_len_bytes,
+        cudaMemcpyDeviceToHost,
+        io_stream);
+    if (err != cudaSuccess) return fail("cudaMemcpyAsync(preview_snapshot.host_xyz)", err);
+
+    err = cudaEventRecord(done_event, io_stream);
+    if (err != cudaSuccess) return fail("cudaEventRecord(preview_snapshot.done_event)", err);
+
+    snapshot->needs_wait = true;
+    return snapshot;
+}
+
+bool context_wait_async_preview_snapshot(
+    AsyncPreviewSnapshot &snapshot,
+    const void **out_data,
+    uint64_t &out_len_bytes,
+    fullmag_fdm_snapshot_desc &out_desc,
+    std::string &error)
+{
+    if (out_data == nullptr) {
+        error = "async preview snapshot output pointer is null";
+        return false;
+    }
+
+    if (snapshot.needs_wait) {
+        cudaError_t err =
+            cudaEventSynchronize(reinterpret_cast<cudaEvent_t>(snapshot.done_event));
+        if (err != cudaSuccess) {
+            error = std::string("cudaEventSynchronize(preview_snapshot.done_event): ")
+                + cudaGetErrorString(err);
+            return false;
+        }
+        snapshot.needs_wait = false;
+    }
+
+    *out_data = snapshot.host_xyz;
+    out_len_bytes = static_cast<uint64_t>(snapshot.host_xyz_len_bytes);
+    out_desc.cell_count = snapshot.preview_count;
+    out_desc.component_count = 3;
+    out_desc.scalar_bytes =
+        snapshot.precision == FULLMAG_FDM_PRECISION_SINGLE ? 4u : 8u;
+    out_desc.scalar_type =
+        snapshot.precision == FULLMAG_FDM_PRECISION_SINGLE
+            ? FULLMAG_FDM_SNAPSHOT_SCALAR_F32
+            : FULLMAG_FDM_SNAPSHOT_SCALAR_F64;
+    return true;
+}
+
+void context_destroy_async_preview_snapshot(AsyncPreviewSnapshot *snapshot) {
+    if (snapshot == nullptr) {
+        return;
+    }
+    destroy_async_preview_resources(*snapshot);
     delete snapshot;
 }
 

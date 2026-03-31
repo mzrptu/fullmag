@@ -9,7 +9,7 @@ use crate::cpu_reference;
 use crate::dispatch::{self, FdmEngine, FemEngine};
 use crate::fem_reference;
 #[cfg(feature = "cuda")]
-use crate::native_fdm::NativeFdmBackend;
+use crate::native_fdm::{NativeFdmBackend, NativeFdmPreviewSnapshot};
 #[cfg(feature = "fem-gpu")]
 use crate::native_fem::{DeviceInfo as FemDeviceInfo, NativeFemBackend};
 use crate::preview::{build_grid_preview_field, normalize_quantity_id, select_observables};
@@ -1213,6 +1213,43 @@ impl CudaInteractiveFdmPreviewRuntime {
         self.backend.snapshot_step_stats(self.original_grid)
     }
 
+    fn begin_cached_preview_prefetch(
+        &self,
+        display_state: &DisplaySelectionState,
+    ) -> Result<Option<Vec<NativeFdmPreviewSnapshot>>, RunError> {
+        let quantities = cached_preview_quantities_for(display_state);
+        if quantities.is_empty() {
+            return Ok(None);
+        }
+        let base_request = display_state.preview_request();
+        let mut snapshots = Vec::with_capacity(quantities.len());
+        let mut seen = HashSet::new();
+        for quantity in quantities.into_iter().map(normalize_quantity_id) {
+            if !seen.insert(quantity) {
+                continue;
+            }
+            let mut request = base_request.clone();
+            request.quantity = quantity.to_string();
+            snapshots.push(
+                self.backend
+                    .begin_live_preview_snapshot(&request, self.original_grid)?,
+            );
+        }
+        Ok(Some(snapshots))
+    }
+
+    fn resolve_cached_preview_prefetch(
+        &self,
+        snapshots: Vec<NativeFdmPreviewSnapshot>,
+    ) -> Result<Vec<LivePreviewField>, RunError> {
+        snapshots
+            .into_iter()
+            .map(|snapshot| {
+                snapshot.into_live_preview_field(self.plan_signature.active_mask.as_deref())
+            })
+            .collect()
+    }
+
     fn execute_with_live_preview(
         &mut self,
         plan: &FdmPlanIR,
@@ -1257,6 +1294,9 @@ impl CudaInteractiveFdmPreviewRuntime {
         let mut current_local_stats = self.backend.snapshot_step_stats(grid)?;
         current_local_stats.step -= base_step;
         current_local_stats.time -= base_time;
+        let initial_display_state = display_selection();
+        let mut pending_cached_preview_snapshots =
+            self.begin_cached_preview_prefetch(&initial_display_state)?;
 
         while self.total_time - base_time < until_seconds {
             let display_state = display_selection();
@@ -1282,12 +1322,17 @@ impl CudaInteractiveFdmPreviewRuntime {
                 None
             };
             let cached_preview_fields = if cached_preview_due {
-                let preview_cfg = display_state.preview_request();
-                let quantities = cached_preview_quantities_for(&display_state);
-                if quantities.is_empty() {
-                    None
-                } else {
-                    Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
+                match pending_cached_preview_snapshots.take() {
+                    Some(snapshots) => Some(self.resolve_cached_preview_prefetch(snapshots)?),
+                    None => {
+                        let preview_cfg = display_state.preview_request();
+                        let quantities = cached_preview_quantities_for(&display_state);
+                        if quantities.is_empty() {
+                            None
+                        } else {
+                            Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
+                        }
+                    }
                 }
             } else {
                 None
@@ -1325,6 +1370,9 @@ impl CudaInteractiveFdmPreviewRuntime {
             if let Some(next) = total_stats.dt_suggested {
                 dt = next;
             }
+            let post_step_display_state = display_selection();
+            pending_cached_preview_snapshots =
+                self.begin_cached_preview_prefetch(&post_step_display_state)?;
 
             let mut local_stats = total_stats.clone();
             local_stats.step -= base_step;
@@ -1349,17 +1397,6 @@ impl CudaInteractiveFdmPreviewRuntime {
             } else {
                 None
             };
-            let cached_preview_fields = if cached_preview_due {
-                let preview_cfg = display_state.preview_request();
-                let quantities = cached_preview_quantities_for(&display_state);
-                if quantities.is_empty() {
-                    None
-                } else {
-                    Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
-                }
-            } else {
-                None
-            };
             let scalar_row_due = local_stats.step <= 1
                 || local_stats.step % field_every_n.max(1) == 0
                 || (preview_due && display_is_global_scalar(&display_state));
@@ -1369,7 +1406,7 @@ impl CudaInteractiveFdmPreviewRuntime {
                 fem_mesh: None,
                 magnetization: None,
                 preview_field,
-                cached_preview_fields,
+                cached_preview_fields: None,
                 scalar_row_due,
                 finished: false,
             });
@@ -1477,6 +1514,9 @@ impl CudaInteractiveFdmPreviewRuntime {
         let mut current_local_stats = self.backend.snapshot_step_stats(grid)?;
         current_local_stats.step -= base_step;
         current_local_stats.time -= base_time;
+        let initial_display_state = display_selection();
+        let mut pending_cached_preview_snapshots =
+            self.begin_cached_preview_prefetch(&initial_display_state)?;
 
         while self.total_time - base_time < until_seconds {
             let display_state = display_selection();
@@ -1502,12 +1542,17 @@ impl CudaInteractiveFdmPreviewRuntime {
                 None
             };
             let cached_preview_fields = if cached_preview_due {
-                let preview_cfg = display_state.preview_request();
-                let quantities = cached_preview_quantities_for(&display_state);
-                if quantities.is_empty() {
-                    None
-                } else {
-                    Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
+                match pending_cached_preview_snapshots.take() {
+                    Some(snapshots) => Some(self.resolve_cached_preview_prefetch(snapshots)?),
+                    None => {
+                        let preview_cfg = display_state.preview_request();
+                        let quantities = cached_preview_quantities_for(&display_state);
+                        if quantities.is_empty() {
+                            None
+                        } else {
+                            Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
+                        }
+                    }
                 }
             } else {
                 None
@@ -1545,6 +1590,9 @@ impl CudaInteractiveFdmPreviewRuntime {
             if let Some(next) = total_stats.dt_suggested {
                 dt = next;
             }
+            let post_step_display_state = display_selection();
+            pending_cached_preview_snapshots =
+                self.begin_cached_preview_prefetch(&post_step_display_state)?;
 
             let mut local_stats = total_stats.clone();
             local_stats.step -= base_step;
@@ -1570,17 +1618,6 @@ impl CudaInteractiveFdmPreviewRuntime {
             } else {
                 None
             };
-            let cached_preview_fields = if cached_preview_due {
-                let preview_cfg = display_state.preview_request();
-                let quantities = cached_preview_quantities_for(&display_state);
-                if quantities.is_empty() {
-                    None
-                } else {
-                    Some(self.snapshot_vector_fields(&quantities, &preview_cfg)?)
-                }
-            } else {
-                None
-            };
             let scalar_row_due = local_stats.step <= 1
                 || local_stats.step % field_every_n.max(1) == 0
                 || (preview_due && display_is_global_scalar(&display_state));
@@ -1590,7 +1627,7 @@ impl CudaInteractiveFdmPreviewRuntime {
                 fem_mesh: None,
                 magnetization: None,
                 preview_field,
-                cached_preview_fields,
+                cached_preview_fields: None,
                 scalar_row_due,
                 finished: false,
             });

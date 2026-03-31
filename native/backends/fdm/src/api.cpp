@@ -772,6 +772,39 @@ fullmag_fdm_field_snapshot *fullmag_fdm_backend_begin_field_snapshot(
 #endif
 }
 
+fullmag_fdm_preview_snapshot *fullmag_fdm_backend_begin_preview_snapshot(
+    fullmag_fdm_backend   *handle,
+    fullmag_fdm_observable observable,
+    uint32_t               preview_nx,
+    uint32_t               preview_ny,
+    uint32_t               preview_nz,
+    uint32_t               z_origin,
+    uint32_t               z_stride)
+{
+#if FULLMAG_HAS_CUDA
+    if (!handle) return nullptr;
+    auto *ctx = reinterpret_cast<Context *>(handle);
+    return reinterpret_cast<fullmag_fdm_preview_snapshot *>(
+        context_begin_async_preview_snapshot(
+            *ctx,
+            observable,
+            preview_nx,
+            preview_ny,
+            preview_nz,
+            z_origin,
+            z_stride));
+#else
+    (void)handle;
+    (void)observable;
+    (void)preview_nx;
+    (void)preview_ny;
+    (void)preview_nz;
+    (void)z_origin;
+    (void)z_stride;
+    return nullptr;
+#endif
+}
+
 int fullmag_fdm_field_snapshot_wait(
     fullmag_fdm_field_snapshot *snapshot,
     const void               **out_data,
@@ -808,12 +841,59 @@ int fullmag_fdm_field_snapshot_wait(
 #endif
 }
 
+int fullmag_fdm_preview_snapshot_wait(
+    fullmag_fdm_preview_snapshot *snapshot,
+    const void                 **out_data,
+    uint64_t                    *out_len_bytes,
+    fullmag_fdm_snapshot_desc   *out_desc)
+{
+#if FULLMAG_HAS_CUDA
+    if (!snapshot || !out_data || !out_len_bytes || !out_desc) {
+        return FULLMAG_FDM_ERR_INVALID;
+    }
+    std::string error;
+    const void *data = nullptr;
+    uint64_t len_bytes = 0;
+    fullmag_fdm_snapshot_desc desc{};
+    if (!context_wait_async_preview_snapshot(
+            *reinterpret_cast<AsyncPreviewSnapshot *>(snapshot),
+            &data,
+            len_bytes,
+            desc,
+            error))
+    {
+        return FULLMAG_FDM_ERR_CUDA;
+    }
+    *out_data = data;
+    *out_len_bytes = len_bytes;
+    *out_desc = desc;
+    return FULLMAG_FDM_OK;
+#else
+    (void)snapshot;
+    (void)out_data;
+    (void)out_len_bytes;
+    (void)out_desc;
+    return FULLMAG_FDM_ERR_CUDA;
+#endif
+}
+
 void fullmag_fdm_field_snapshot_destroy(
     fullmag_fdm_field_snapshot *snapshot)
 {
 #if FULLMAG_HAS_CUDA
     context_destroy_async_field_snapshot(
         reinterpret_cast<AsyncFieldSnapshot *>(snapshot));
+#else
+    (void)snapshot;
+#endif
+}
+
+void fullmag_fdm_preview_snapshot_destroy(
+    fullmag_fdm_preview_snapshot *snapshot)
+{
+#if FULLMAG_HAS_CUDA
+    context_destroy_async_preview_snapshot(
+        reinterpret_cast<AsyncPreviewSnapshot *>(snapshot));
 #else
     (void)snapshot;
 #endif
