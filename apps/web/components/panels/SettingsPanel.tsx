@@ -12,6 +12,7 @@ import AntennaPanel from "./settings/AntennaPanel";
 import MaterialPanel from "./settings/MaterialPanel";
 import MeshPanel from "./settings/MeshPanel";
 import StudyPanel from "./settings/StudyPanel";
+import UniversePanel from "./settings/UniversePanel";
 import ResultsPanel from "./settings/ResultsPanel";
 import SolverTelemetryPanel from "./settings/SolverTelemetryPanel";
 import EnergyPanel from "./settings/EnergyPanel";
@@ -50,6 +51,7 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
       );
     }
     if (nodeId === "study" || nodeId.startsWith("study-")) return <StudyPanel />;
+    if (nodeId === "universe" || nodeId.startsWith("universe-")) return <UniversePanel />;
     if (nodeId === "mesh-size" || nodeId === "mesh-algorithm" || nodeId === "mesh-quality") {
       return (
         <MeshSettingsPanel
@@ -134,6 +136,12 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Entrypoint</span>
               <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">
                 {builderContract.entrypointKind ?? "—"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between py-1">
+              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">API surface</span>
+              <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">
+                {builderContract.scriptApiSurface ? humanizeToken(builderContract.scriptApiSurface) : "—"}
               </span>
             </div>
             <div className="flex items-center justify-between py-1">

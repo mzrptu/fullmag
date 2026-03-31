@@ -38,6 +38,13 @@ export default function RunSidebar() {
     () =>
       buildFullmagModelTree({
         backend: cmd.isFemBackend ? "FEM" : "FDM",
+        showUniverse: Boolean(model.scriptBuilderUniverse || model.worldExtent),
+        universeMode: model.scriptBuilderUniverse?.mode ?? (model.worldExtent ? "derived" : null),
+        universeDeclaredSize: model.scriptBuilderUniverse?.size ?? null,
+        universeEffectiveSize: model.worldExtent,
+        universeCenter: model.scriptBuilderUniverse?.center ?? null,
+        universePadding: model.scriptBuilderUniverse?.padding ?? null,
+        universeRole: cmd.isFemBackend ? "Air box / outer domain" : "Grid / simulation domain",
         geometryKind: model.mesherSourceKind ?? undefined,
         materialName:
           model.material?.name
@@ -74,6 +81,7 @@ export default function RunSidebar() {
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm,
       tp.effectiveDmDt, tp.scalarRows.length, cmd.scriptInitialState, model.scriptBuilderGeometries,
+      model.scriptBuilderUniverse, model.worldExtent,
     ],
   );
 
@@ -122,9 +130,11 @@ export default function RunSidebar() {
       panel.expand();
       setInspectorOpen(true);
     }
+    const isUniverseNode = id === "universe" || id.startsWith("universe-");
+    const isGeometryScopedNode = id === "geometry" || id.startsWith("geo-") || id.startsWith("mat-");
     switch (id) {
       case "geometry": case "geo-body": case "regions": case "reg-domain": case "reg-boundary":
-        if (cmd.isFemBackend) model.openFemMeshWorkspace("mesh");
+        if (cmd.isFemBackend && !model.effectiveFemMesh) model.openFemMeshWorkspace("mesh");
         else vp.setViewMode("3D");
         return;
       case "mesh":
@@ -149,6 +159,11 @@ export default function RunSidebar() {
         if (cmd.isFemBackend && vp.effectiveViewMode === "Mesh") vp.setViewMode("3D");
         return;
       default: {
+        if (isUniverseNode || isGeometryScopedNode) {
+          if (cmd.isFemBackend && !model.effectiveFemMesh) model.openFemMeshWorkspace("mesh");
+          else vp.setViewMode("3D");
+          return;
+        }
         const previewTarget = previewQuantityForTreeNode(id);
         if (previewTarget && vp.quickPreviewTargets.some((t) => t.id === previewTarget && t.available)) {
           vp.requestPreviewQuantity(previewTarget);

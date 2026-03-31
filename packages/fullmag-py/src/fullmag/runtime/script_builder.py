@@ -48,10 +48,6 @@ from fullmag.runtime.loader import LoadedProblem, LoadedStage
 def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
     base_problem = loaded.stages[0].problem if loaded.stages else loaded.problem
     relax_stage = _first_relax_stage(loaded)
-    runtime_metadata = _normalize_mapping(base_problem.runtime_metadata)
-    mesh_workflow = _normalize_mapping(runtime_metadata.get("mesh_workflow"))
-    mesh_options = _normalize_mapping(mesh_workflow.get("mesh_options"))
-    fem = base_problem.discretization.fem if base_problem.discretization is not None else None
 
     return {
         "revision": 1,
@@ -67,19 +63,8 @@ def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
             ),
             "max_relax_steps": str(relax_stage.max_steps if relax_stage is not None else 5000),
         },
-        "mesh": {
-            "algorithm_2d": int(mesh_options.get("algorithm_2d", 6)),
-            "algorithm_3d": int(mesh_options.get("algorithm_3d", 1)),
-            "hmax": _text_number(fem.hmax if isinstance(fem, FEM) else None),
-            "hmin": _text_number(_number_or_none(mesh_options.get("hmin"))),
-            "size_factor": float(mesh_options.get("size_factor", 1.0)),
-            "size_from_curvature": int(mesh_options.get("size_from_curvature", 0)),
-            "smoothing_steps": int(mesh_options.get("smoothing_steps", 1)),
-            "optimize": str(mesh_options.get("optimize", "") or ""),
-            "optimize_iterations": int(mesh_options.get("optimize_iterations", 1)),
-            "compute_quality": bool(mesh_options.get("compute_quality", False)),
-            "per_element_quality": bool(mesh_options.get("per_element_quality", False)),
-        },
+        "mesh": _export_global_mesh_state(base_problem),
+        "universe": _export_universe(base_problem),
         "stages": [_export_stage_draft(stage) for stage in _builder_stage_sequence(loaded)],
         "initial_state": _export_initial_state(base_problem),
         "geometries": [_export_geometry_entry(magnet, base_problem) for magnet in base_problem.magnets],
@@ -96,7 +81,7 @@ def rewrite_loaded_problem_script(
     overrides: dict[str, object] | None = None,
     write: bool = False,
 ) -> dict[str, object]:
-    rendered = render_loaded_problem_as_flat_script(loaded, overrides=overrides)
+    rendered = render_loaded_problem_as_script(loaded, overrides=overrides)
     script_path = loaded.source_path
 
     if write:
@@ -114,7 +99,7 @@ def rewrite_loaded_problem_script(
     }
 
 
-def render_loaded_problem_as_flat_script(
+def render_loaded_problem_as_script(
     loaded: LoadedProblem,
     *,
     overrides: dict[str, object] | None = None,
@@ -135,6 +120,7 @@ def render_loaded_problem_as_flat_script(
     )
 
     base_problem = stages[0].problem if stages else loaded.problem
+    surface = _script_api_surface(base_problem)
     magnet_vars = _magnet_variable_names(base_problem, overrides=overrides)
     lines: list[str] = []
     source_root = loaded.source_path.parent
@@ -143,8 +129,11 @@ def render_loaded_problem_as_flat_script(
     lines.append("")
     lines.append("import fullmag as fm")
     lines.append("")
+    if surface == "study":
+        lines.extend(_render_study_binding(base_problem))
+        lines.append("")
 
-    lines.extend(_render_runtime(base_problem, overrides=overrides))
+    lines.extend(_render_runtime(base_problem, overrides=overrides, surface=surface))
     lines.append("")
     _validate_energy_terms(base_problem)
     lines.extend(
@@ -153,15 +142,20 @@ def render_loaded_problem_as_flat_script(
             magnet_vars,
             source_root=source_root,
             overrides=overrides,
+            surface=surface,
         )
     )
 
-    external_field_lines = _render_external_field(base_problem)
+    external_field_lines = _render_external_field(base_problem, surface=surface)
     if external_field_lines:
         lines.append("")
         lines.extend(external_field_lines)
 
-    current_module_lines = _render_current_modules(base_problem, overrides=overrides)
+    current_module_lines = _render_current_modules(
+        base_problem,
+        overrides=overrides,
+        surface=surface,
+    )
     if current_module_lines:
         lines.append("")
         lines.extend(current_module_lines)
@@ -171,31 +165,44 @@ def render_loaded_problem_as_flat_script(
         magnet_vars,
         source_root=source_root,
         overrides=overrides,
+        surface=surface,
     )
     if mesh_lines:
         lines.append("")
         lines.extend(mesh_lines)
 
     lines.append("")
-    lines.extend(_render_solver(base_problem, overrides=overrides))
+    lines.extend(_render_solver(base_problem, overrides=overrides, surface=surface))
 
-    output_lines = _render_outputs(base_problem, magnet_vars)
+    output_lines = _render_outputs(base_problem, magnet_vars, surface=surface)
     if output_lines:
         lines.append("")
         lines.extend(output_lines)
 
-    excitation_lines = _render_excitation_analysis(base_problem, overrides=overrides)
+    excitation_lines = _render_excitation_analysis(
+        base_problem,
+        overrides=overrides,
+        surface=surface,
+    )
     if excitation_lines:
         lines.append("")
         lines.extend(excitation_lines)
 
-    stage_lines = _render_stages(stages, overrides=overrides)
+    stage_lines = _render_stages(stages, overrides=overrides, surface=surface)
     if stage_lines:
         lines.append("")
         lines.extend(stage_lines)
 
     normalized = "\n".join(lines).rstrip() + "\n"
     return normalized
+
+
+def render_loaded_problem_as_flat_script(
+    loaded: LoadedProblem,
+    *,
+    overrides: dict[str, object] | None = None,
+) -> str:
+    return render_loaded_problem_as_script(loaded, overrides=overrides)
 
 
 def _first_relax_stage(loaded: LoadedProblem) -> Relaxation | None:
@@ -275,37 +282,63 @@ def _render_runtime(
     problem: Problem,
     *,
     overrides: dict[str, object],
+    surface: str,
 ) -> list[str]:
     runtime = problem.runtime
     lines = ["# Engine"]
-    if problem.name != "fullmag_sim":
+    if surface == "flat" and problem.name != "fullmag_sim":
         lines.append(f"fm.name({_py_repr(problem.name)})")
-    lines.append(f"fm.engine({_py_repr(runtime.backend_target.value)})")
+    lines.append(f"{_surface_call(surface, 'engine')}({_py_repr(runtime.backend_target.value)})")
 
     device_spec = _runtime_device_spec(runtime)
     if device_spec == "auto" and runtime.execution_precision.value == "double":
         pass
     elif runtime.execution_precision.value == "double":
         if device_spec == "cpu":
-            lines.append("fm.device(\"cpu\", precision=\"double\")")
+            lines.append(f'{_surface_call(surface, "device")}("cpu", precision="double")')
         else:
-            lines.append(f"fm.device({_py_repr(device_spec)}, precision=\"double\")")
+            lines.append(
+                f'{_surface_call(surface, "device")}({_py_repr(device_spec)}, precision="double")'
+            )
     elif runtime.execution_precision.value == "single":
-        lines.append(f"fm.device({_py_repr(device_spec)}, precision=\"single\")")
+        lines.append(
+            f'{_surface_call(surface, "device")}({_py_repr(device_spec)}, precision="single")'
+        )
     else:
-        lines.append(f"fm.device({_py_repr(device_spec)})")
+        lines.append(f"{_surface_call(surface, 'device')}({_py_repr(device_spec)})")
 
     fdm = problem.discretization.fdm if problem.discretization is not None else None
     if isinstance(fdm, FDM) and fdm.default_cell is not None:
-        lines.append(f"fm.cell({_py_number(fdm.default_cell[0])}, {_py_number(fdm.default_cell[1])}, {_py_number(fdm.default_cell[2])})")
+        lines.append(
+            f"{_surface_call(surface, 'cell')}({_py_number(fdm.default_cell[0])}, {_py_number(fdm.default_cell[1])}, {_py_number(fdm.default_cell[2])})"
+        )
         if fdm.boundary_correction is not None:
-            lines.append(f"fm.boundary_correction({_py_repr(fdm.boundary_correction)})")
+            lines.append(
+                f"{_surface_call(surface, 'boundary_correction')}({_py_repr(fdm.boundary_correction)})"
+            )
 
     runtime_metadata = _normalize_mapping(problem.runtime_metadata)
+    if surface == "study":
+        universe = _resolve_universe(problem, overrides=overrides)
+        if universe is not None:
+            universe_kwargs: list[str] = []
+            mode = universe.get("mode")
+            if isinstance(mode, str) and mode:
+                universe_kwargs.append(f"mode={_py_repr(mode)}")
+            size = _optional_vec3(universe.get("size"))
+            if size is not None:
+                universe_kwargs.append(f"size={_py_tuple3(size)}")
+            center = _optional_vec3(universe.get("center"))
+            if center is not None:
+                universe_kwargs.append(f"center={_py_tuple3(center)}")
+            padding = _optional_vec3(universe.get("padding"))
+            if padding is not None:
+                universe_kwargs.append(f"padding={_py_tuple3(padding)}")
+            lines.append(f"{_surface_call(surface, 'universe')}({', '.join(universe_kwargs)})")
     if runtime_metadata.get("interactive_session_requested") is True:
-        lines.append("fm.interactive(True)")
+        lines.append(f"{_surface_call(surface, 'interactive')}(True)")
     if runtime_metadata.get("wait_for_solve") is True:
-        lines.append("fm.wait_for_solve(True)")
+        lines.append(f"{_surface_call(surface, 'wait_for_solve')}(True)")
     adaptive_mesh = _normalize_mapping(runtime_metadata.get("adaptive_mesh"))
     if adaptive_mesh:
         kwargs: list[str] = []
@@ -331,9 +364,9 @@ def _render_runtime(
             kwargs.append(f"steps_per_pass={int(adaptive_mesh.get('steps_per_pass'))}")
         enabled = bool(adaptive_mesh.get("enabled", True))
         if kwargs:
-            lines.append(f"fm.adaptive_mesh({str(enabled)}, {', '.join(kwargs)})")
+            lines.append(f"{_surface_call(surface, 'adaptive_mesh')}({str(enabled)}, {', '.join(kwargs)})")
         elif enabled is not True:
-            lines.append(f"fm.adaptive_mesh({str(enabled)})")
+            lines.append(f"{_surface_call(surface, 'adaptive_mesh')}({str(enabled)})")
     return lines
 
 
@@ -343,6 +376,7 @@ def _render_geometry_and_materials(
     *,
     source_root: Path,
     overrides: dict[str, object],
+    surface: str,
 ) -> list[str]:
     geometries_override = overrides.get("geometries")
     if isinstance(geometries_override, list):
@@ -351,6 +385,7 @@ def _render_geometry_and_materials(
             magnet_vars=magnet_vars,
             source_root=source_root,
             overrides=overrides,
+            surface=surface,
         )
 
     initial_state_override = _normalize_mapping(overrides.get("initial_state"))
@@ -358,7 +393,7 @@ def _render_geometry_and_materials(
     for magnet in problem.magnets:
         var_name = magnet_vars[magnet.name]
         lines.append(
-            f"{var_name} = fm.geometry({_render_geometry_expr(magnet.geometry, magnet_name=magnet.name, source_root=source_root)}, name={_py_repr(magnet.name)})"
+            f"{var_name} = {_surface_call(surface, 'geometry')}({_render_geometry_expr(magnet.geometry, magnet_name=magnet.name, source_root=source_root)}, name={_py_repr(magnet.name)})"
         )
         lines.append(f"{var_name}.Ms = {_py_number(magnet.material.Ms)}")
         lines.append(f"{var_name}.Aex = {_py_number(magnet.material.A)}")
@@ -404,6 +439,7 @@ def _render_geometries_from_override(
     magnet_vars: dict[str, str],
     source_root: Path,
     overrides: dict[str, object],
+    surface: str,
 ) -> list[str]:
     initial_state_override = _normalize_mapping(overrides.get("initial_state"))
     lines = ["# Geometry & Material"]
@@ -439,7 +475,7 @@ def _render_geometries_from_override(
         if isinstance(t, list) and len(t) == 3 and any(float(v) != 0 for v in t):
             expr = f"{expr}.translate(({_py_number(float(t[0]))}, {_py_number(float(t[1]))}, {_py_number(float(t[2]))}))"
 
-        lines.append(f"{var_name} = fm.geometry({expr}, name={_py_repr(name)})")
+        lines.append(f"{var_name} = {_surface_call(surface, 'geometry')}({expr}, name={_py_repr(name)})")
 
         mat = _normalize_mapping(g.get("material"))
         lines.append(f"{var_name}.Ms = {_py_number(float(str(mat.get('Ms', 800000))))}")
@@ -486,12 +522,12 @@ def _render_geometries_from_override(
     return lines
 
 
-def _render_external_field(problem: Problem) -> list[str]:
+def _render_external_field(problem: Problem, *, surface: str) -> list[str]:
     for term in problem.energy:
         if isinstance(term, Zeeman):
             return [
                 "# External field",
-                f"fm.b_ext({_py_number(term.B[0])}, {_py_number(term.B[1])}, {_py_number(term.B[2])})",
+                f"{_surface_call(surface, 'b_ext')}({_py_number(term.B[0])}, {_py_number(term.B[1])}, {_py_number(term.B[2])})",
             ]
     return []
 
@@ -500,6 +536,7 @@ def _render_current_modules(
     problem: Problem,
     *,
     overrides: dict[str, object],
+    surface: str,
 ) -> list[str]:
     override_modules = overrides.get("current_modules")
     if isinstance(override_modules, list):
@@ -520,10 +557,10 @@ def _render_current_modules(
                 kwargs.append(f"solver={_py_repr(module.solver)}")
             if abs(module.air_box_factor - 12.0) > 1e-12:
                 kwargs.append(f"air_box_factor={_py_number(module.air_box_factor)}")
-            lines.append(f"fm.antenna_field_source({', '.join(kwargs)})")
+            lines.append(f"{_surface_call(surface, 'antenna_field_source')}({', '.join(kwargs)})")
             continue
         if isinstance(module, dict):
-            lines.append(_render_current_module_override(module))
+            lines.append(_render_current_module_override(module, surface=surface))
             continue
         raise ValueError(
             f"canonical flat-script rewrite does not yet support current module {type(module).__name__}"
@@ -535,6 +572,7 @@ def _render_excitation_analysis(
     problem: Problem,
     *,
     overrides: dict[str, object],
+    surface: str,
 ) -> list[str]:
     analysis_override = overrides.get("excitation_analysis")
     analysis = analysis_override if isinstance(analysis_override, dict) else problem.excitation_analysis
@@ -542,7 +580,7 @@ def _render_excitation_analysis(
         return []
     if not isinstance(analysis, SpinWaveExcitationAnalysis):
         if isinstance(analysis, dict):
-            return ["# Excitation analysis", _render_excitation_analysis_override(analysis)]
+            return ["# Excitation analysis", _render_excitation_analysis_override(analysis, surface=surface)]
         raise ValueError(
             "canonical flat-script rewrite does not yet support non-antenna excitation analyses"
         )
@@ -554,7 +592,221 @@ def _render_excitation_analysis(
     ]
     if analysis.k_max_rad_per_m is not None:
         kwargs.append(f"k_max_rad_per_m={_py_number(analysis.k_max_rad_per_m)}")
-    return ["# Excitation analysis", f"fm.spin_wave_excitation({', '.join(kwargs)})"]
+    return ["# Excitation analysis", f"{_surface_call(surface, 'spin_wave_excitation')}({', '.join(kwargs)})"]
+
+
+def _mesh_mode(value: object) -> str:
+    return str(value) if isinstance(value, str) and value in {"inherit", "custom"} else "inherit"
+
+
+def _render_mesh_size_literal(value: object) -> str | None:
+    if isinstance(value, (int, float)):
+        return _py_number(float(value))
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if stripped == "auto":
+            return _py_repr("auto")
+        try:
+            return _py_number(float(stripped))
+        except ValueError:
+            return None
+    return None
+
+
+def _render_mesh_kwargs(mesh_config: dict[str, object], *, source_root: Path) -> list[str]:
+    kwargs: list[str] = []
+
+    rendered_hmax = _render_mesh_size_literal(mesh_config.get("hmax"))
+    if rendered_hmax is not None:
+        kwargs.append(f"hmax={rendered_hmax}")
+
+    hmin_value = _number_or_none(mesh_config.get("hmin"))
+    if hmin_value is not None:
+        kwargs.append(f"hmin={_py_number(hmin_value)}")
+
+    order_value = mesh_config.get("order")
+    if isinstance(order_value, (int, float)):
+        kwargs.append(f"order={int(order_value)}")
+
+    source_value = mesh_config.get("source")
+    if isinstance(source_value, str) and source_value.strip():
+        kwargs.append(f"source={_py_repr(_relativize_path(source_value, source_root))}")
+
+    for key in (
+        "algorithm_2d",
+        "algorithm_3d",
+        "size_factor",
+        "size_from_curvature",
+        "smoothing_steps",
+        "optimize_iterations",
+    ):
+        if mesh_config.get(key) is not None:
+            kwargs.append(f"{key}={_py_literal(mesh_config[key])}")
+
+    if mesh_config.get("optimize") is not None:
+        kwargs.append(f"optimize={_py_repr(str(mesh_config['optimize']))}")
+    if mesh_config.get("compute_quality") is not None:
+        kwargs.append(f"compute_quality={_py_literal(bool(mesh_config['compute_quality']))}")
+    if mesh_config.get("per_element_quality") is not None:
+        kwargs.append(
+            f"per_element_quality={_py_literal(bool(mesh_config['per_element_quality']))}"
+        )
+
+    return kwargs
+
+
+def _render_mesh_size_fields(target_var: str, mesh_config: dict[str, object]) -> list[str]:
+    size_fields = mesh_config.get("size_fields")
+    if not isinstance(size_fields, list):
+        return []
+    lines: list[str] = []
+    for field in size_fields:
+        field_map = _normalize_mapping(field)
+        kind = field_map.get("kind")
+        params = _normalize_mapping(field_map.get("params"))
+        if not isinstance(kind, str) or not params:
+            continue
+        rendered_params = ", ".join(
+            f"{key}={_py_literal(value)}" for key, value in sorted(params.items())
+        )
+        lines.append(f"{target_var}.mesh.size_field({_py_repr(kind)}, {rendered_params})")
+    return lines
+
+
+def _render_mesh_operations(target_var: str, mesh_config: dict[str, object]) -> list[str]:
+    operations = mesh_config.get("operations")
+    if not isinstance(operations, list):
+        return []
+    lines: list[str] = []
+    for raw_operation in operations:
+        operation = _normalize_mapping(raw_operation)
+        kind = operation.get("kind")
+        params = _normalize_mapping(operation.get("params"))
+        if kind == "optimize":
+            method = params.get("method")
+            iterations = int(params.get("iterations", 1)) if isinstance(params.get("iterations"), (int, float)) else 1
+            kwargs: list[str] = []
+            if isinstance(method, str) and method != "default":
+                kwargs.append(f"method={_py_repr(method)}")
+            if iterations != 1:
+                kwargs.append(f"iterations={iterations}")
+            suffix = f"({', '.join(kwargs)})" if kwargs else "()"
+            lines.append(f"{target_var}.mesh.optimize{suffix}")
+        elif kind == "refine":
+            steps = int(params.get("steps", 1)) if isinstance(params.get("steps"), (int, float)) else 1
+            if steps == 1:
+                lines.append(f"{target_var}.mesh.refine()")
+            else:
+                lines.append(f"{target_var}.mesh.refine(steps={steps})")
+        elif kind == "smooth":
+            iterations = int(params.get("iterations", 1)) if isinstance(params.get("iterations"), (int, float)) else 1
+            if iterations == 1:
+                lines.append(f"{target_var}.mesh.smooth()")
+            else:
+                lines.append(f"{target_var}.mesh.smooth(iterations={iterations})")
+    return lines
+
+
+def _study_global_mesh_config(problem: Problem, overrides: dict[str, object]) -> dict[str, object]:
+    runtime_metadata = _normalize_mapping(problem.runtime_metadata)
+    mesh_workflow = _normalize_mapping(runtime_metadata.get("mesh_workflow"))
+    mesh_options = _normalize_mapping(mesh_workflow.get("mesh_options"))
+    default_mesh = _normalize_mapping(mesh_workflow.get("default_mesh"))
+    mesh_override = _normalize_mapping(overrides.get("mesh"))
+    fem = problem.discretization.fem if problem.discretization is not None else None
+
+    config: dict[str, object]
+    if "default_mesh" in mesh_workflow:
+        config = dict(default_mesh)
+        for key, value in mesh_options.items():
+            if value is not None:
+                config[key] = value
+    else:
+        config = dict(mesh_options)
+        fem_info = _normalize_mapping(mesh_workflow.get("fem"))
+        base_hmax = fem_info.get("hmax")
+        if base_hmax is None and isinstance(fem, FEM):
+            base_hmax = fem.hmax
+        if base_hmax is not None:
+            config["hmax"] = base_hmax
+        base_order = fem_info.get("order")
+        if base_order is None and isinstance(fem, FEM):
+            base_order = fem.order
+        if base_order is not None:
+            config["order"] = base_order
+        base_source = fem_info.get("mesh")
+        if base_source is None and isinstance(fem, FEM):
+            base_source = fem.mesh
+        if base_source:
+            config["source"] = base_source
+        if mesh_workflow:
+            config["build_requested"] = bool(mesh_workflow.get("build_requested", True))
+
+    if mesh_override:
+        for key, value in mesh_override.items():
+            if key == "adaptive_mesh":
+                continue
+            config[key] = value
+
+    return config
+
+
+def _study_geometry_mesh_configs(
+    problem: Problem,
+    overrides: dict[str, object],
+) -> list[tuple[str, dict[str, object]]]:
+    geometries_override = overrides.get("geometries")
+    if isinstance(geometries_override, list):
+        items: list[tuple[str, dict[str, object]]] = []
+        for raw_geometry in geometries_override:
+            geometry = _normalize_mapping(raw_geometry)
+            name = geometry.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            items.append((name, _normalize_mapping(geometry.get("mesh"))))
+        return items
+    return [
+        (magnet.name, _normalize_mapping(_export_geometry_mesh_entry(magnet.name, problem)))
+        for magnet in problem.magnets
+    ]
+
+
+def _render_study_mesh_workflow(
+    problem: Problem,
+    magnet_vars: dict[str, str],
+    *,
+    source_root: Path,
+    overrides: dict[str, object],
+) -> list[str]:
+    lines: list[str] = []
+
+    global_mesh = _study_global_mesh_config(problem, overrides)
+    global_kwargs = _render_mesh_kwargs(global_mesh, source_root=source_root)
+    global_build_requested = bool(global_mesh.get("build_requested", False))
+    if global_kwargs:
+        lines.append(f"study.mesh({', '.join(global_kwargs)})")
+    if global_build_requested:
+        lines.append("study.build_mesh()")
+
+    for magnet_name, mesh_config in _study_geometry_mesh_configs(problem, overrides):
+        if _mesh_mode(mesh_config.get("mode")) != "custom":
+            continue
+        target_var = magnet_vars.get(magnet_name)
+        if target_var is None:
+            continue
+        kwargs = _render_mesh_kwargs(mesh_config, source_root=source_root)
+        if kwargs:
+            lines.append(f"{target_var}.mesh({', '.join(kwargs)})")
+        lines.extend(_render_mesh_size_fields(target_var, mesh_config))
+        lines.extend(_render_mesh_operations(target_var, mesh_config))
+        if bool(mesh_config.get("build_requested", False)):
+            lines.append(f"{target_var}.mesh.build()")
+
+    if not lines:
+        return []
+    return ["# Mesh", *lines]
 
 
 def _render_mesh_workflow(
@@ -563,7 +815,16 @@ def _render_mesh_workflow(
     *,
     source_root: Path,
     overrides: dict[str, object],
+    surface: str,
 ) -> list[str]:
+    if surface == "study":
+        return _render_study_mesh_workflow(
+            problem,
+            magnet_vars,
+            source_root=source_root,
+            overrides=overrides,
+        )
+
     runtime_metadata = _normalize_mapping(problem.runtime_metadata)
     mesh_workflow = _normalize_mapping(runtime_metadata.get("mesh_workflow"))
     fem = problem.discretization.fem if problem.discretization is not None else None
@@ -572,108 +833,25 @@ def _render_mesh_workflow(
 
     mesh_override = _normalize_mapping(overrides.get("mesh"))
     target_var = magnet_vars[problem.magnets[0].name]
-    kwargs: list[str] = []
-
-    hmax_value = _override_number(mesh_override, "hmax", fem.hmax if isinstance(fem, FEM) else None)
-    if hmax_value is not None:
-        kwargs.append(f"hmax={_py_number(hmax_value)}")
-    hmin_value = _override_number(mesh_override, "hmin", None)
-    if hmin_value is not None:
-        kwargs.append(f"hmin={_py_number(hmin_value)}")
-    order_value = _override_int(mesh_override, "order", fem.order if isinstance(fem, FEM) else 1)
-    if order_value is not None:
-        kwargs.append(f"order={order_value}")
-    source_value = _override_string(
-        mesh_override,
-        "source",
-        fem.mesh if isinstance(fem, FEM) and fem.mesh else None,
-    )
-    if source_value:
-        kwargs.append(f"source={_py_repr(_relativize_path(source_value, source_root))}")
-
-    for key, source_name in (
-        ("algorithm_2d", "algorithm_2d"),
-        ("algorithm_3d", "algorithm_3d"),
-        ("size_factor", "size_factor"),
-        ("size_from_curvature", "size_from_curvature"),
-        ("smoothing_steps", "smoothing_steps"),
-        ("optimize_iterations", "optimize_iterations"),
-    ):
-        if key in mesh_override and mesh_override[key] is not None:
-            kwargs.append(f"{source_name}={_py_literal(mesh_override[key])}")
-
-    if "optimize" in mesh_override and mesh_override["optimize"] is not None:
-        kwargs.append(f"optimize={_py_repr(str(mesh_override['optimize']))}")
-    if "compute_quality" in mesh_override and mesh_override["compute_quality"] is not None:
-        kwargs.append(f"compute_quality={_py_literal(bool(mesh_override['compute_quality']))}")
-    if "per_element_quality" in mesh_override and mesh_override["per_element_quality"] is not None:
-        kwargs.append(f"per_element_quality={_py_literal(bool(mesh_override['per_element_quality']))}")
-
-    if not mesh_override and mesh_workflow:
-        fem_info = _normalize_mapping(mesh_workflow.get("fem"))
-        if fem_info:
-            if "hmax" not in {entry.split("=", 1)[0] for entry in kwargs} and fem_info.get("hmax") is not None:
-                kwargs.append(f"hmax={_py_number(float(fem_info['hmax']))}")
-            if "order" not in {entry.split("=", 1)[0] for entry in kwargs} and fem_info.get("order") is not None:
-                kwargs.append(f"order={int(fem_info['order'])}")
-            mesh_source = fem_info.get("mesh")
-            if mesh_source:
-                kwargs.append(f"source={_py_repr(_relativize_path(str(mesh_source), source_root))}")
-        mesh_options = _normalize_mapping(mesh_workflow.get("mesh_options"))
-        if mesh_options:
-            for src, dst in (
-                ("algorithm_2d", "algorithm_2d"),
-                ("algorithm_3d", "algorithm_3d"),
-                ("hmin", "hmin"),
-                ("size_factor", "size_factor"),
-                ("size_from_curvature", "size_from_curvature"),
-                ("smoothing_steps", "smoothing_steps"),
-                ("optimize", "optimize"),
-                ("optimize_iterations", "optimize_iterations"),
-                ("compute_quality", "compute_quality"),
-                ("per_element_quality", "per_element_quality"),
-            ):
-                value = mesh_options.get(src)
-                if value is None:
-                    continue
-                if dst in {"optimize", "source"}:
-                    kwargs.append(f"{dst}={_py_repr(str(value))}")
-                else:
-                    kwargs.append(f"{dst}={_py_literal(value)}")
-
-    seen: set[str] = set()
-    deduped_kwargs: list[str] = []
-    for entry in kwargs:
-        name = entry.split("=", 1)[0]
-        if name in seen:
+    fallback_mesh = _study_global_mesh_config(problem, overrides={})
+    merged_mesh = dict(fallback_mesh)
+    for key, value in mesh_override.items():
+        if key == "adaptive_mesh":
             continue
-        seen.add(name)
-        deduped_kwargs.append(entry)
+        merged_mesh[key] = value
 
+    kwargs = _render_mesh_kwargs(merged_mesh, source_root=source_root)
     lines = ["# Mesh"]
-    if deduped_kwargs:
-        lines.append(f"{target_var}.mesh({', '.join(deduped_kwargs)})")
+    if kwargs:
+        lines.append(f"{target_var}.mesh({', '.join(kwargs)})")
     else:
-        lines.append(f"{target_var}.mesh(hmax={_py_number(fem.hmax if isinstance(fem, FEM) else 5e-9)}, order={fem.order if isinstance(fem, FEM) else 1})")
+        lines.append(
+            f"{target_var}.mesh(hmax={_py_number(fem.hmax if isinstance(fem, FEM) else 5e-9)}, order={fem.order if isinstance(fem, FEM) else 1})"
+        )
 
-    if mesh_workflow:
-        mesh_options = _normalize_mapping(mesh_workflow.get("mesh_options"))
-        size_fields = mesh_options.get("size_fields") if mesh_options is not None else None
-        if isinstance(size_fields, list):
-            for field in size_fields:
-                field_map = _normalize_mapping(field)
-                kind = field_map.get("kind")
-                params = _normalize_mapping(field_map.get("params"))
-                if not isinstance(kind, str) or not params:
-                    continue
-                rendered_params = ", ".join(
-                    f"{key}={_py_literal(value)}" for key, value in sorted(params.items())
-                )
-                lines.append(f"{target_var}.mesh.size_field({_py_repr(kind)}, {rendered_params})")
+    lines.extend(_render_mesh_size_fields(target_var, merged_mesh))
 
-    build_requested = True
-    if mesh_workflow:
-        build_requested = bool(mesh_workflow.get("build_requested", True))
+    build_requested = bool(merged_mesh.get("build_requested", True))
     if build_requested:
         lines.append(f"{target_var}.mesh.build()")
     return lines
@@ -683,32 +861,39 @@ def _render_solver(
     problem: Problem,
     *,
     overrides: dict[str, object],
+    surface: str,
 ) -> list[str]:
     solver_override = _normalize_mapping(overrides.get("solver"))
     dynamics = problem.study.dynamics
-    return ["# Solver", _render_solver_call(dynamics, solver_override)]
+    return ["# Solver", _render_solver_call(dynamics, solver_override, surface=surface)]
 
 
-def _render_outputs(problem: Problem, magnet_vars: dict[str, str]) -> list[str]:
+def _render_outputs(problem: Problem, magnet_vars: dict[str, str], *, surface: str) -> list[str]:
     outputs = _study_outputs(problem.study)
     if not outputs:
         return []
     lines = ["# Outputs"]
     for output in outputs:
         if isinstance(output, SaveField):
-            lines.append(f"fm.save({_py_repr(output.field)}, every={_py_number(output.every)})")
+            lines.append(
+                f"{_surface_call(surface, 'save')}({_py_repr(output.field)}, every={_py_number(output.every)})"
+            )
             continue
         if isinstance(output, SaveScalar):
-            lines.append(f"fm.save({_py_repr(output.scalar)}, every={_py_number(output.every)})")
+            lines.append(
+                f"{_surface_call(surface, 'save')}({_py_repr(output.scalar)}, every={_py_number(output.every)})"
+            )
             continue
         if isinstance(output, Snapshot):
             quantity = _snapshot_quantity_string(output)
             if output.layer is not None and output.layer in magnet_vars:
                 lines.append(
-                    f"fm.snapshot({magnet_vars[output.layer]}, {_py_repr(quantity)}, every={_py_number(output.every)})"
+                    f"{_surface_call(surface, 'snapshot')}({magnet_vars[output.layer]}, {_py_repr(quantity)}, every={_py_number(output.every)})"
                 )
             else:
-                lines.append(f"fm.snapshot({_py_repr(quantity)}, every={_py_number(output.every)})")
+                lines.append(
+                    f"{_surface_call(surface, 'snapshot')}({_py_repr(quantity)}, every={_py_number(output.every)})"
+                )
             continue
         if isinstance(output, (SaveSpectrum, SaveMode, SaveDispersion)):
             raise ValueError(
@@ -723,6 +908,7 @@ def _render_stages(
     stages: Sequence[LoadedStage],
     *,
     overrides: dict[str, object],
+    surface: str,
 ) -> list[str]:
     if not stages:
         return []
@@ -733,7 +919,13 @@ def _render_stages(
     for index, stage in enumerate(stages):
         dynamics_signature = stage.problem.study.dynamics.to_ir()
         if previous_dynamics_signature is not None and dynamics_signature != previous_dynamics_signature:
-            lines.append(_render_solver_call(stage.problem.study.dynamics, solver_override))
+            lines.append(
+                _render_solver_call(
+                    stage.problem.study.dynamics,
+                    solver_override,
+                    surface=surface,
+                )
+            )
         previous_dynamics_signature = dynamics_signature
 
         study = stage.problem.study
@@ -780,7 +972,7 @@ def _render_stages(
             ]
             if energy_tolerance is not None:
                 call_parts.append(f"energy_tolerance={_py_number(energy_tolerance)}")
-            lines.append(f"fm.relax({', '.join(call_parts)})")
+            lines.append(f"{_surface_call(surface, 'relax')}({', '.join(call_parts)})")
             continue
 
         until_seconds = _override_number(
@@ -792,7 +984,7 @@ def _render_stages(
             raise ValueError(
                 "canonical rewrite requires DEFAULT_UNTIL for time-evolution scripts"
             )
-        lines.append(f"fm.run({_py_number(until_seconds)})")
+        lines.append(f"{_surface_call(surface, 'run')}({_py_number(until_seconds)})")
     return lines
 
 
@@ -816,7 +1008,12 @@ def _stage_override_for(
     return override
 
 
-def _render_solver_call(dynamics: LLG, solver_override: dict[str, object]) -> str:
+def _render_solver_call(
+    dynamics: LLG,
+    solver_override: dict[str, object],
+    *,
+    surface: str,
+) -> str:
     kwargs: list[str] = []
     integrator = _override_string(solver_override, "integrator", dynamics.integrator)
     if integrator and integrator != "auto":
@@ -834,8 +1031,8 @@ def _render_solver_call(dynamics: LLG, solver_override: dict[str, object]) -> st
         kwargs.append(f"gamma={_py_number(dynamics.gamma)}")
 
     if not kwargs:
-        return "fm.solver()"
-    return f"fm.solver({', '.join(kwargs)})"
+        return f"{_surface_call(surface, 'solver')}()"
+    return f"{_surface_call(surface, 'solver')}({', '.join(kwargs)})"
 
 
 def _render_drive_expr(drive: RfDrive) -> str:
@@ -893,7 +1090,7 @@ def _render_antenna_expr(antenna: object) -> str:
     )
 
 
-def _render_current_module_override(module: dict[str, object]) -> str:
+def _render_current_module_override(module: dict[str, object], *, surface: str) -> str:
     antenna_kind = str(module.get("antenna_kind") or "")
     antenna_params = _normalize_mapping(module.get("antenna_params"))
     drive = _normalize_mapping(module.get("drive"))
@@ -908,7 +1105,7 @@ def _render_current_module_override(module: dict[str, object]) -> str:
     air_box_factor = module.get("air_box_factor")
     if air_box_factor is not None and abs(float(air_box_factor) - 12.0) > 1e-12:
         kwargs.append(f"air_box_factor={_py_number(float(air_box_factor))}")
-    return f"fm.antenna_field_source({', '.join(kwargs)})"
+    return f"{_surface_call(surface, 'antenna_field_source')}({', '.join(kwargs)})"
 
 
 def _render_antenna_override(kind: str, params: dict[str, object]) -> str:
@@ -968,7 +1165,11 @@ def _render_waveform_override(waveform: dict[str, object]) -> str:
     raise ValueError(f"unsupported waveform override kind: {kind}")
 
 
-def _render_excitation_analysis_override(analysis: dict[str, object]) -> str:
+def _render_excitation_analysis_override(
+    analysis: dict[str, object],
+    *,
+    surface: str,
+) -> str:
     axis = analysis.get("propagation_axis")
     propagation_axis = axis if isinstance(axis, list) and len(axis) == 3 else [1.0, 0.0, 0.0]
     kwargs = [
@@ -979,7 +1180,7 @@ def _render_excitation_analysis_override(analysis: dict[str, object]) -> str:
     ]
     if analysis.get("k_max_rad_per_m") is not None:
         kwargs.append(f"k_max_rad_per_m={_py_number(float(analysis['k_max_rad_per_m']))}")
-    return f"fm.spin_wave_excitation({', '.join(kwargs)})"
+    return f"{_surface_call(surface, 'spin_wave_excitation')}({', '.join(kwargs)})"
 
 
 def _render_geometry_expr(geometry: object, *, magnet_name: str, source_root: Path) -> str:
@@ -1118,6 +1319,70 @@ def _export_initial_state(problem: Problem) -> dict[str, object] | None:
     }
 
 
+def _export_global_mesh_state(problem: Problem) -> dict[str, object]:
+    runtime_metadata = _normalize_mapping(problem.runtime_metadata)
+    mesh_workflow = _normalize_mapping(runtime_metadata.get("mesh_workflow"))
+    mesh_options = _normalize_mapping(mesh_workflow.get("mesh_options"))
+    default_mesh = _normalize_mapping(mesh_workflow.get("default_mesh"))
+    fem = problem.discretization.fem if problem.discretization is not None else None
+
+    use_declared_defaults = _script_api_surface(problem) == "study" and "default_mesh" in mesh_workflow
+    declared_hmax = default_mesh.get("hmax") if use_declared_defaults else (
+        fem.hmax if isinstance(fem, FEM) else None
+    )
+
+    return {
+        "algorithm_2d": int(mesh_options.get("algorithm_2d", 6)),
+        "algorithm_3d": int(mesh_options.get("algorithm_3d", 1)),
+        "hmax": _text_mesh_size(declared_hmax),
+        "hmin": _text_number(_number_or_none(mesh_options.get("hmin"))),
+        "size_factor": float(mesh_options.get("size_factor", 1.0)),
+        "size_from_curvature": int(mesh_options.get("size_from_curvature", 0)),
+        "smoothing_steps": int(mesh_options.get("smoothing_steps", 1)),
+        "optimize": str(mesh_options.get("optimize", "") or ""),
+        "optimize_iterations": int(mesh_options.get("optimize_iterations", 1)),
+        "compute_quality": bool(mesh_options.get("compute_quality", False)),
+        "per_element_quality": bool(mesh_options.get("per_element_quality", False)),
+    }
+
+
+def _mesh_workflow_per_geometry_entry(problem: Problem, magnet_name: str) -> dict[str, object]:
+    runtime_metadata = _normalize_mapping(problem.runtime_metadata)
+    mesh_workflow = _normalize_mapping(runtime_metadata.get("mesh_workflow"))
+    raw_entries = mesh_workflow.get("per_geometry")
+    if not isinstance(raw_entries, list):
+        return {}
+    for raw_entry in raw_entries:
+        entry = _normalize_mapping(raw_entry)
+        if entry.get("geometry") == magnet_name:
+            return entry
+    return {}
+
+
+def _export_geometry_mesh_entry(magnet_name: str, problem: Problem) -> dict[str, object] | None:
+    fem = problem.discretization.fem if problem.discretization is not None else None
+    mesh_entry = _mesh_workflow_per_geometry_entry(problem, magnet_name)
+    if mesh_entry:
+        mode = mesh_entry.get("mode")
+        resolved_mode = str(mode) if isinstance(mode, str) and mode in {"inherit", "custom"} else "inherit"
+        return {
+            "mode": resolved_mode,
+            "hmax": _text_mesh_size(mesh_entry.get("hmax")),
+            "order": int(mesh_entry["order"]) if isinstance(mesh_entry.get("order"), (int, float)) else None,
+            "source": str(mesh_entry["source"]) if isinstance(mesh_entry.get("source"), str) else None,
+            "build_requested": bool(mesh_entry.get("build_requested", False)),
+        }
+    if isinstance(fem, FEM):
+        return {
+            "mode": "inherit",
+            "hmax": "",
+            "order": None,
+            "source": None,
+            "build_requested": False,
+        }
+    return None
+
+
 def _export_geometry_entry(magnet: object, problem: Problem) -> dict[str, object]:
     """Serialize one magnet into a geometry entry for the builder draft."""
     geom = magnet.geometry
@@ -1156,14 +1421,7 @@ def _export_geometry_entry(magnet: object, problem: Problem) -> dict[str, object
             }
 
     # --- Per-geometry mesh ---
-    fem = problem.discretization.fem if problem.discretization is not None else None
-    per_mesh: dict[str, object] | None = None
-    if isinstance(fem, FEM):
-        per_mesh = {
-            "hmax": _text_number(fem.hmax),
-            "order": fem.order,
-            "build_requested": True,
-        }
+    per_mesh = _export_geometry_mesh_entry(magnet.name, problem)
 
     return {
         "name": magnet.name,
@@ -1316,6 +1574,66 @@ def _magnet_variable_names(
     return mapping
 
 
+def _script_api_surface(problem: Problem) -> str:
+    runtime_metadata = _normalize_mapping(problem.runtime_metadata)
+    surface = runtime_metadata.get("script_api_surface")
+    return "study" if surface == "study" else "flat"
+
+
+def _render_study_binding(problem: Problem) -> list[str]:
+    if problem.name != "fullmag_sim":
+        return [f"study = fm.study({_py_repr(problem.name)})"]
+    return ["study = fm.study()"]
+
+
+def _surface_call(surface: str, name: str) -> str:
+    root = "study" if surface == "study" else "fm"
+    return f"{root}.{name}"
+
+
+def _resolve_universe(
+    problem: Problem,
+    *,
+    overrides: dict[str, object],
+) -> dict[str, object] | None:
+    override_universe = _normalize_mapping(overrides.get("universe"))
+    if override_universe:
+        return override_universe
+    runtime_metadata = _normalize_mapping(problem.runtime_metadata)
+    universe = _normalize_mapping(runtime_metadata.get("study_universe"))
+    return universe or None
+
+
+def _export_universe(problem: Problem) -> dict[str, object] | None:
+    runtime_metadata = _normalize_mapping(problem.runtime_metadata)
+    universe = _normalize_mapping(runtime_metadata.get("study_universe"))
+    if not universe:
+        return None
+    mode = universe.get("mode")
+    size = _optional_vec3(universe.get("size"))
+    center = _optional_vec3(universe.get("center"))
+    padding = _optional_vec3(universe.get("padding"))
+    return {
+        "mode": str(mode) if isinstance(mode, str) else "auto",
+        "size": list(size) if size is not None else None,
+        "center": list(center) if center is not None else None,
+        "padding": list(padding) if padding is not None else None,
+    }
+
+
+def _optional_vec3(value: object) -> tuple[float, float, float] | None:
+    if isinstance(value, (list, tuple)) and len(value) == 3:
+        try:
+            return (float(value[0]), float(value[1]), float(value[2]))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _py_tuple3(value: tuple[float, float, float]) -> str:
+    return f"({_py_number(value[0])}, {_py_number(value[1])}, {_py_number(value[2])})"
+
+
 def _normalize_mapping(value: object) -> dict[str, object]:
     return dict(value) if isinstance(value, dict) else {}
 
@@ -1359,6 +1677,15 @@ def _number_or_none(value: object) -> float | None:
 
 def _text_number(value: float | None) -> str:
     return "" if value is None else _py_number(value)
+
+
+def _text_mesh_size(value: object) -> str:
+    rendered = _render_mesh_size_literal(value)
+    if rendered is None:
+        return ""
+    if rendered.startswith('"') and rendered.endswith('"'):
+        return rendered[1:-1]
+    return rendered
 
 
 def _py_repr(value: str) -> str:
@@ -1425,6 +1752,7 @@ def _stage_signature(problem: Problem) -> dict[str, object]:
         "mesh_workflow": runtime_metadata.get("mesh_workflow"),
         "interactive": runtime_metadata.get("interactive_session_requested"),
         "wait_for_solve": runtime_metadata.get("wait_for_solve"),
+        "study_universe": runtime_metadata.get("study_universe"),
     }
 
 

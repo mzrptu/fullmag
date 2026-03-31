@@ -175,6 +175,110 @@ class ProblemApiTests(unittest.TestCase):
 
             self.assertIn('flower.m.loadfile("state.json")', rewritten)
 
+    def test_study_builder_sets_surface_and_universe_metadata(self) -> None:
+        fm.reset()
+        study = fm.study("study_builder_metadata")
+        study.engine("fdm")
+        study.cell(5e-9, 5e-9, 5e-9)
+        study.universe(
+            mode="manual",
+            size=(60e-9, 40e-9, 20e-9),
+            center=(5e-9, 0.0, -1e-9),
+            padding=(2e-9, 2e-9, 1e-9),
+        )
+
+        body = study.geometry(fm.Box(size=(20e-9, 10e-9, 5e-9), name="track"), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1.0, 0.0, 0.0)
+
+        problem = flat_world._build_problem()
+        self.assertEqual(problem.name, "study_builder_metadata")
+        self.assertEqual(problem.runtime_metadata["script_api_surface"], "study")
+        self.assertEqual(problem.runtime_metadata["study_universe"]["mode"], "manual")
+        self.assertEqual(
+            problem.runtime_metadata["study_universe"]["size"],
+            [60e-9, 40e-9, 20e-9],
+        )
+        self.assertEqual(
+            problem.runtime_metadata["study_universe"]["center"],
+            [5e-9, 0.0, -1e-9],
+        )
+
+        ir = problem.to_ir()
+        builder = ir["problem_meta"]["runtime_metadata"]["model_builder"]
+        self.assertEqual(builder["script_api_surface"], "study")
+        self.assertIn("universe", builder["editable_scopes"])
+        self.assertEqual(builder["problem"]["universe"]["mode"], "manual")
+        self.assertEqual(
+            builder["problem"]["universe"]["padding"],
+            [2e-9, 2e-9, 1e-9],
+        )
+
+    def test_load_problem_from_study_script_preserves_universe_metadata(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            script_path = tmp_path / "study_script.py"
+            script_path.write_text(
+                textwrap.dedent(
+                    """
+                    import fullmag as fm
+
+                    study = fm.study("captured_study")
+                    study.engine("fdm")
+                    study.cell(5e-9, 5e-9, 5e-9)
+                    study.universe(
+                        mode="auto",
+                        padding=(10e-9, 5e-9, 2e-9),
+                    )
+
+                    body = study.geometry(fm.Box(size=(10e-9, 10e-9, 5e-9), name="track"), name="track")
+                    body.Ms = 800e3
+                    body.Aex = 13e-12
+                    body.alpha = 0.1
+
+                    study.run(1e-12)
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            loaded = fm.load_problem_from_script(script_path, lightweight_assets=True)
+            self.assertEqual(loaded.problem.runtime_metadata["script_api_surface"], "study")
+            self.assertEqual(loaded.problem.runtime_metadata["study_universe"]["mode"], "auto")
+            self.assertEqual(
+                loaded.problem.runtime_metadata["study_universe"]["padding"],
+                [10e-9, 5e-9, 2e-9],
+            )
+
+            draft = export_builder_draft(loaded)
+            self.assertEqual(draft["universe"]["mode"], "auto")
+            self.assertEqual(draft["universe"]["padding"], [10e-9, 5e-9, 2e-9])
+
+            rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+            self.assertIn('study = fm.study("captured_study")', rewritten)
+            self.assertIn('study.universe(mode="auto", center=(0, 0, 0), padding=(1e-08, 5e-09, 2e-09))', rewritten)
+            self.assertIn('study.geometry(fm.Box(1e-08, 1e-08, 5e-09), name="track")', rewritten)
+            self.assertIn('study.run(1e-12)', rewritten)
+
+            overridden = rewrite_loaded_problem_script(
+                loaded,
+                overrides={
+                    "universe": {
+                        "mode": "manual",
+                        "size": [80e-9, 60e-9, 40e-9],
+                        "center": [5e-9, -2e-9, 1e-9],
+                        "padding": [0.0, 0.0, 0.0],
+                    },
+                },
+            )["rendered_source"]
+            self.assertIn(
+                'study.universe(mode="manual", size=(8e-08, 6e-08, 4e-08), center=(5e-09, -2e-09, 1e-09), padding=(0, 0, 0))',
+                overridden,
+            )
+
     def test_legacy_dynamics_and_outputs_are_normalized_to_time_evolution(self) -> None:
         geometry = fm.Box(size=(100e-9, 20e-9, 5e-9), name="track")
         material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
@@ -967,6 +1071,79 @@ class ProblemApiTests(unittest.TestCase):
             path.write_text(textwrap.dedent(script), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Per-geometry FEM mesh settings are not yet supported"):
                 fm.load_problem_from_script(path)
+
+    def test_study_mesh_builder_preserves_global_and_local_fem_mesh_modes(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("mesh_modes")
+        study.engine("fem")
+        study.mesh(hmax=25e-9, order=1)
+
+        a = study.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="a")
+        a.Ms = 800e3
+        a.Aex = 13e-12
+        a.alpha = 0.1
+        a.m = fm.uniform(1, 0, 0)
+
+        b = study.geometry(fm.Box(80e-9, 20e-9, 5e-9), name="b")
+        b.Ms = 800e3
+        b.Aex = 13e-12
+        b.alpha = 0.1
+        b.m = fm.uniform(1, 0, 0)
+        b.mesh(hmax=20e-9, order=2)
+
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_study_mesh_modes.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path)
+
+        draft = export_builder_draft(loaded)
+        self.assertEqual(draft["mesh"]["hmax"], "2.5e-08")
+        mesh_by_name = {entry["name"]: entry["mesh"] for entry in draft["geometries"]}
+        self.assertEqual(mesh_by_name["a"]["mode"], "inherit")
+        self.assertEqual(mesh_by_name["b"]["mode"], "custom")
+        self.assertEqual(mesh_by_name["b"]["hmax"], "2e-08")
+        self.assertEqual(mesh_by_name["b"]["order"], 2)
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn('study.mesh(hmax=2.5e-08, order=1)', rewritten)
+        self.assertNotIn("a.mesh(", rewritten)
+        self.assertIn("b.mesh(hmax=2e-08, order=2)", rewritten)
+
+    def test_study_mesh_builder_does_not_infer_global_mesh_from_local_override(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("custom_only")
+        study.engine("fem")
+
+        a = study.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="a")
+        a.Ms = 800e3
+        a.Aex = 13e-12
+        a.alpha = 0.1
+        a.m = fm.uniform(1, 0, 0)
+        a.mesh(hmax=4e-9, order=1)
+
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_study_custom_mesh_only.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path)
+
+        draft = export_builder_draft(loaded)
+        self.assertEqual(draft["mesh"]["hmax"], "")
+        self.assertEqual(draft["geometries"][0]["mesh"]["mode"], "custom")
+        self.assertEqual(draft["geometries"][0]["mesh"]["hmax"], "4e-09")
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertNotIn("study.mesh(", rewritten)
+        self.assertIn("a.mesh(hmax=4e-09, order=1)", rewritten)
 
     def test_flat_adaptive_mesh_policy_lowers_to_runtime_metadata(self) -> None:
         script = """

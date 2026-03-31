@@ -254,6 +254,13 @@ export interface ScriptBuilderMeshState {
   adaptive_error_tolerance: string;
 }
 
+export interface ScriptBuilderUniverseState {
+  mode: string;
+  size: [number, number, number] | null;
+  center: [number, number, number] | null;
+  padding: [number, number, number] | null;
+}
+
 export interface ScriptBuilderStageState {
   kind: string;
   entrypoint_kind: string;
@@ -292,8 +299,10 @@ export interface ScriptBuilderMagnetizationEntry {
 }
 
 export interface ScriptBuilderPerGeometryMeshEntry {
+  mode: "inherit" | "custom";
   hmax: string;
   order: number | null;
+  source: string | null;
   build_requested: boolean;
 }
 
@@ -335,6 +344,7 @@ export interface ScriptBuilderState {
   revision: number;
   solver: ScriptBuilderSolverState;
   mesh: ScriptBuilderMeshState;
+  universe: ScriptBuilderUniverseState | null;
   stages: ScriptBuilderStageState[];
   initial_state: ScriptBuilderInitialState | null;
   geometries: ScriptBuilderGeometryEntry[];

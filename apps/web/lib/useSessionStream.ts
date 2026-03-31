@@ -30,6 +30,7 @@ export type {
   CommandStatus,
   ScriptBuilderSolverState,
   ScriptBuilderMeshState,
+  ScriptBuilderUniverseState,
   ScriptBuilderStageState,
   ScriptBuilderInitialState,
   ScriptBuilderState,

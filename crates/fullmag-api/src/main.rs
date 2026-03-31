@@ -1487,6 +1487,10 @@ async fn update_current_live_script_builder(
             builder.mesh = mesh;
             changed = true;
         }
+        if let Some(universe) = req.universe {
+            builder.universe = Some(universe);
+            changed = true;
+        }
         if let Some(stages) = req.stages {
             builder.stages = stages;
             changed = true;

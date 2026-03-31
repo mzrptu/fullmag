@@ -474,8 +474,12 @@ def _builder_editable_scopes(
     problem: "Problem",
     *,
     mesh_workflow: dict[str, object] | None,
+    study_universe: dict[str, object] | None,
 ) -> list[str]:
-    scopes = ["runtime", "geometry", "materials", "energies", "study", "outputs"]
+    scopes = ["runtime"]
+    if study_universe is not None:
+        scopes.append("universe")
+    scopes.extend(["geometry", "materials", "energies", "study", "outputs"])
     if problem.current_modules:
         scopes.append("antennas")
     if mesh_workflow is not None or (
@@ -493,17 +497,33 @@ def build_problem_builder_manifest(
     source_root: str | Path | None,
     mesh_workflow: dict[str, object] | None,
 ) -> dict[str, object]:
+    runtime_metadata = problem.runtime_metadata if isinstance(problem.runtime_metadata, dict) else {}
+    study_universe = (
+        runtime_metadata.get("study_universe")
+        if isinstance(runtime_metadata.get("study_universe"), dict)
+        else None
+    )
+    script_api_surface = (
+        runtime_metadata.get("script_api_surface")
+        if isinstance(runtime_metadata.get("script_api_surface"), str)
+        else None
+    )
     materials = problem._collect_materials()
     regions = problem._collect_regions()
     geometries = [
         resolve_geometry_sources(geometry, source_root=source_root)
         for geometry in problem._collect_geometries()
     ]
-    editable_scopes = _builder_editable_scopes(problem, mesh_workflow=mesh_workflow)
+    editable_scopes = _builder_editable_scopes(
+        problem,
+        mesh_workflow=mesh_workflow,
+        study_universe=study_universe,
+    )
     return {
         "schema_version": "model_builder.v1",
         "source_kind": _builder_source_kind(entrypoint_kind),
         "entrypoint_kind": entrypoint_kind,
+        "script_api_surface": script_api_surface,
         "editable_via_ui": True,
         "editable_scopes": editable_scopes,
         "canonical_script_strategy": "canonical_rewrite",
@@ -511,6 +531,7 @@ def build_problem_builder_manifest(
             "name": problem.name,
             "description": problem.description,
             "runtime": runtime.to_runtime_metadata(),
+            "universe": study_universe,
             "geometry": [geometry.to_ir() for geometry in geometries],
             "regions": [region.to_ir() for region in regions],
             "materials": [material.to_ir() for material in materials],

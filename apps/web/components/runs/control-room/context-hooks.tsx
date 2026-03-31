@@ -36,6 +36,7 @@ import type {
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
+  ScriptBuilderUniverseState,
 } from "../../../lib/session/types";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import type { MeshOptionsState, MeshQualityData } from "../../panels/MeshSettingsPanel";
@@ -216,6 +217,7 @@ export interface ModelContextValue {
   solverPlan: SolverPlanSummary | null;
   solverSettings: SolverSettingsState;
   studyStages: ScriptBuilderStageState[];
+  scriptBuilderUniverse: ScriptBuilderUniverseState | null;
   scriptBuilderGeometries: ScriptBuilderGeometryEntry[];
   scriptBuilderCurrentModules: ScriptBuilderCurrentModuleEntry[];
   scriptBuilderExcitationAnalysis: ScriptBuilderExcitationAnalysisEntry | null;
@@ -258,6 +260,7 @@ export interface ModelContextValue {
   /* Actions */
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
   setStudyStages: React.Dispatch<React.SetStateAction<ScriptBuilderStageState[]>>;
+  setScriptBuilderUniverse: React.Dispatch<React.SetStateAction<ScriptBuilderUniverseState | null>>;
   setScriptBuilderGeometries: React.Dispatch<React.SetStateAction<ScriptBuilderGeometryEntry[]>>;
   setScriptBuilderCurrentModules: React.Dispatch<
     React.SetStateAction<ScriptBuilderCurrentModuleEntry[]>

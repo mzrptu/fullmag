@@ -11,18 +11,45 @@ export function asStringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
+export function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+export function asVec3Tuple(value: unknown): [number, number, number] | null {
+  if (!Array.isArray(value) || value.length !== 3) return null;
+  const [x, y, z] = value;
+  if ([x, y, z].some((component) => typeof component !== "number" || !Number.isFinite(component))) {
+    return null;
+  }
+  return [x, y, z];
+}
+
 export interface BuilderContractSummary {
   sourceKind: string | null;
   entrypointKind: string | null;
+  scriptApiSurface: string | null;
   rewriteStrategy: string | null;
   phase: string | null;
   editableScopes: string[];
 }
 
-export function readBuilderContract(metadata: Record<string, unknown> | null): BuilderContractSummary | null {
+export interface BuilderUniverseSummary {
+  mode: string | null;
+  size: [number, number, number] | null;
+  center: [number, number, number] | null;
+  padding: [number, number, number] | null;
+}
+
+export function readBuilderModel(metadata: Record<string, unknown> | null): Record<string, unknown> | null {
   const problemMeta = asRecord(metadata?.problem_meta);
   const runtimeMetadata = asRecord(problemMeta?.runtime_metadata);
-  const builderModel = asRecord(runtimeMetadata?.model_builder);
+  return asRecord(runtimeMetadata?.model_builder);
+}
+
+export function readBuilderContract(metadata: Record<string, unknown> | null): BuilderContractSummary | null {
+  const builderModel = readBuilderModel(metadata);
+  const problemMeta = asRecord(metadata?.problem_meta);
+  const runtimeMetadata = asRecord(problemMeta?.runtime_metadata);
   const scriptSync = asRecord(runtimeMetadata?.script_sync);
   if (!builderModel && !scriptSync) return null;
   return {
@@ -32,12 +59,27 @@ export function readBuilderContract(metadata: Record<string, unknown> | null): B
     entrypointKind:
       (typeof builderModel?.entrypoint_kind === "string" ? builderModel.entrypoint_kind : null)
       ?? (typeof scriptSync?.entrypoint_kind === "string" ? scriptSync.entrypoint_kind : null),
+    scriptApiSurface:
+      (typeof builderModel?.script_api_surface === "string" ? builderModel.script_api_surface : null),
     rewriteStrategy: typeof scriptSync?.rewrite_strategy === "string" ? scriptSync.rewrite_strategy : null,
     phase: typeof scriptSync?.phase === "string" ? scriptSync.phase : null,
     editableScopes:
       asStringList(builderModel?.editable_scopes).length > 0
         ? asStringList(builderModel?.editable_scopes)
         : asStringList(scriptSync?.editable_scopes),
+  };
+}
+
+export function readBuilderUniverse(metadata: Record<string, unknown> | null): BuilderUniverseSummary | null {
+  const builderModel = readBuilderModel(metadata);
+  const problem = asRecord(builderModel?.problem);
+  const universe = asRecord(problem?.universe);
+  if (!universe) return null;
+  return {
+    mode: asString(universe.mode),
+    size: asVec3Tuple(universe.size),
+    center: asVec3Tuple(universe.center),
+    padding: asVec3Tuple(universe.padding),
   };
 }
 

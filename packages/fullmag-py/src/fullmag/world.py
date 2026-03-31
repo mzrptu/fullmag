@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from fullmag._progress import emit_progress
+from fullmag._validation import as_vector3, require_non_empty, require_non_negative, require_positive
 from fullmag.model.antenna import (
     AntennaFieldSource,
     Antenna,
@@ -231,12 +232,20 @@ class _MeshSpecState:
     def is_configured(self) -> bool:
         return (
             self.hmax is not None
+            or self.hmin is not None
             or self.order is not None
             or self.source is not None
+            or self.algorithm_2d is not None
             or self.algorithm_3d is not None
             or self.optimize_method is not None
+            or self.optimize_iterations != 1
+            or self.smoothing_steps != 1
+            or not math.isclose(self.size_factor, 1.0)
+            or self.size_from_curvature != 0
             or self.compute_quality
+            or self.per_element_quality
             or bool(self.size_fields)
+            or bool(self.operations)
         )
 
 
@@ -435,6 +444,45 @@ class GeometryMeshHandle:
 
 
 # ---------------------------------------------------------------------------
+# Study-root builder metadata
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class StudyUniverseConfig:
+    """Study-level world/domain box used by the emerging study builder."""
+
+    mode: str = "auto"
+    size: tuple[float, float, float] | None = None
+    center: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    padding: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"auto", "manual"}:
+            raise ValueError("universe mode must be 'auto' or 'manual'")
+        if self.size is not None:
+            normalized_size = as_vector3(self.size, "size")
+            for index, component in enumerate(normalized_size):
+                require_positive(component, f"size[{index}]")
+            object.__setattr__(self, "size", normalized_size)
+        object.__setattr__(self, "center", as_vector3(self.center, "center"))
+        normalized_padding = as_vector3(self.padding, "padding")
+        for index, component in enumerate(normalized_padding):
+            require_non_negative(component, f"padding[{index}]")
+        object.__setattr__(self, "padding", normalized_padding)
+        if self.mode == "manual" and self.size is None:
+            raise ValueError("manual universe mode requires an explicit size")
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "size": list(self.size) if self.size is not None else None,
+            "center": list(self.center),
+            "padding": list(self.padding),
+        }
+
+
+# ---------------------------------------------------------------------------
 # World state singleton
 # ---------------------------------------------------------------------------
 
@@ -455,6 +503,8 @@ class _WorldState:
     _hmax: float | str | None = None
     _fem_order: int = 1
     _mesh_source: str | None = None
+    _api_surface: str = "flat"
+    _study_universe: StudyUniverseConfig | None = None
 
     # Magnets (ordered)
     _magnets: list[MagnetHandle] = field(default_factory=list)
@@ -574,6 +624,226 @@ def capture_workspace_problem() -> Problem | None:
         return _build_problem()
     finally:
         _state._interactive = previous_interactive
+
+
+def _configure_study_universe(
+    *,
+    mode: str | None = None,
+    size: Sequence[float] | None = None,
+    center: Sequence[float] | None = None,
+    padding: Sequence[float] | None = None,
+) -> StudyUniverseConfig:
+    current = _state._study_universe or StudyUniverseConfig()
+    universe = StudyUniverseConfig(
+        mode=current.mode if mode is None else mode,
+        size=current.size if size is None else as_vector3(size, "size"),
+        center=current.center if center is None else as_vector3(center, "center"),
+        padding=current.padding if padding is None else as_vector3(padding, "padding"),
+    )
+    _state._study_universe = universe
+    return universe
+
+
+class StudyBuilder:
+    """Study-root facade over the current script-local world state."""
+
+    def __init__(self, problem_name: str | None = None) -> None:
+        _state._api_surface = "study"
+        if problem_name is not None:
+            name(problem_name)
+
+    def name(self, problem_name: str) -> "StudyBuilder":
+        name(problem_name)
+        return self
+
+    def engine(self, backend: str) -> "StudyBuilder":
+        engine(backend)
+        return self
+
+    def device(self, spec: str, *, precision: str | None = None) -> "StudyBuilder":
+        device(spec, precision=precision)
+        return self
+
+    def cell(self, dx: float, dy: float, dz: float) -> "StudyBuilder":
+        cell(dx, dy, dz)
+        return self
+
+    def boundary_correction(self, mode: str) -> "StudyBuilder":
+        boundary_correction(mode)
+        return self
+
+    def mesh(
+        self,
+        *,
+        hmax: float | str | None = None,
+        order: int | None = None,
+        source: str | None = None,
+    ) -> "StudyBuilder":
+        mesh(hmax=hmax, order=order, source=source)
+        return self
+
+    def hmax(self, value: float | str) -> "StudyBuilder":
+        hmax(value)
+        return self
+
+    def fem_order(self, order_value: int) -> "StudyBuilder":
+        fem_order(order_value)
+        return self
+
+    def build_mesh(self) -> "StudyBuilder":
+        build_mesh()
+        return self
+
+    def interactive(self, enabled: bool = True) -> "StudyBuilder":
+        interactive(enabled)
+        return self
+
+    def wait_for_solve(self, enabled: bool = True) -> "StudyBuilder":
+        wait_for_solve(enabled)
+        return self
+
+    def adaptive_mesh(
+        self,
+        enabled: bool = True,
+        *,
+        policy: str = "manual",
+        theta: float = 0.3,
+        h_min: float | None = None,
+        h_max: float | None = None,
+        max_passes: int = 5,
+        error_tolerance: float | None = None,
+        chunk_until_seconds: float | None = None,
+        steps_per_pass: int | None = None,
+    ) -> "StudyBuilder":
+        adaptive_mesh(
+            enabled,
+            policy=policy,
+            theta=theta,
+            h_min=h_min,
+            h_max=h_max,
+            max_passes=max_passes,
+            error_tolerance=error_tolerance,
+            chunk_until_seconds=chunk_until_seconds,
+            steps_per_pass=steps_per_pass,
+        )
+        return self
+
+    def universe(
+        self,
+        *,
+        mode: str | None = None,
+        size: Sequence[float] | None = None,
+        center: Sequence[float] | None = None,
+        padding: Sequence[float] | None = None,
+    ) -> "StudyBuilder":
+        _configure_study_universe(mode=mode, size=size, center=center, padding=padding)
+        return self
+
+    def geometry(self, shape: object, name: str = "body") -> MagnetHandle:
+        return geometry(shape, name=name)
+
+    def solver(
+        self,
+        *,
+        dt: float | None = None,
+        max_error: float | None = None,
+        integrator: str | None = None,
+        gamma: float | None = None,
+        g: float | None = None,
+    ) -> "StudyBuilder":
+        solver(dt=dt, max_error=max_error, integrator=integrator, gamma=gamma, g=g)
+        return self
+
+    def b_ext(
+        self,
+        magnitude: float,
+        by: float | None = None,
+        bz: float | None = None,
+        *,
+        theta: float | None = None,
+        phi: float | None = None,
+    ) -> "StudyBuilder":
+        b_ext(magnitude, by, bz, theta=theta, phi=phi)
+        return self
+
+    def save(self, quantity: str, *, every: float) -> "StudyBuilder":
+        save(quantity, every=every)
+        return self
+
+    def snapshot(
+        self,
+        layer_or_quantity: "str | MagnetHandle",
+        quantity: str | None = None,
+        *,
+        every: float,
+    ) -> "StudyBuilder":
+        snapshot(layer_or_quantity, quantity, every=every)
+        return self
+
+    def tableautosave(self, every: float) -> "StudyBuilder":
+        tableautosave(every)
+        return self
+
+    def antenna_field_source(
+        self,
+        *,
+        name: str,
+        antenna: Antenna,
+        drive: RfDrive,
+        solver: str = "mqs_2p5d_az",
+        air_box_factor: float = 12.0,
+    ) -> AntennaFieldSource:
+        return antenna_field_source(
+            name=name,
+            antenna=antenna,
+            drive=drive,
+            solver=solver,
+            air_box_factor=air_box_factor,
+        )
+
+    def spin_wave_excitation(
+        self,
+        *,
+        source: str,
+        method: str = "source_k_profile",
+        propagation_axis: Sequence[float] = (1.0, 0.0, 0.0),
+        k_max_rad_per_m: float | None = None,
+        samples: int = 256,
+    ) -> SpinWaveExcitationAnalysis:
+        return spin_wave_excitation(
+            source=source,
+            method=method,
+            propagation_axis=propagation_axis,
+            k_max_rad_per_m=k_max_rad_per_m,
+            samples=samples,
+        )
+
+    def run(self, until: float) -> Any:
+        return run(until)
+
+    def relax(
+        self,
+        *,
+        tol: float = 1e-6,
+        max_steps: int = 50_000,
+        algorithm: str = "llg_overdamped",
+        energy_tolerance: float | None = None,
+        relax_alpha: float | None = 1.0,
+    ) -> Any:
+        return relax(
+            tol=tol,
+            max_steps=max_steps,
+            algorithm=algorithm,
+            energy_tolerance=energy_tolerance,
+            relax_alpha=relax_alpha,
+        )
+
+
+def study(problem_name: str | None = None) -> StudyBuilder:
+    """Return a study-root facade over the current script-local builder state."""
+    if problem_name is not None:
+        require_non_empty(problem_name, "problem_name")
+    return StudyBuilder(problem_name)
 
 
 # ---------------------------------------------------------------------------
@@ -760,8 +1030,17 @@ def _resolve_flat_fem_hint() -> FEM | None:
     build_requested = any(handle._mesh_spec.build_requested for handle in s._magnets)
     operation_specs = [handle._mesh_spec for handle in s._magnets if handle._mesh_spec.operations]
     default_spec = s._default_mesh_spec
+    study_surface = s._api_surface == "study"
+    default_mesh_declared = (
+        default_spec.is_configured()
+        or bool(default_spec.operations)
+        or bool(default_spec.size_fields)
+    )
 
-    candidate_specs = explicit_specs or ([default_spec] if default_spec.is_configured() else [])
+    if study_surface and default_mesh_declared:
+        candidate_specs = [default_spec]
+    else:
+        candidate_specs = explicit_specs or ([default_spec] if default_spec.is_configured() else [])
     if operation_specs and not candidate_specs:
         candidate_specs = operation_specs
     if build_requested and not candidate_specs:
@@ -771,26 +1050,27 @@ def _resolve_flat_fem_hint() -> FEM | None:
     shared_order = candidate_specs[0].order if candidate_specs and candidate_specs[0].order is not None else s._fem_order
     shared_source = candidate_specs[0].source if candidate_specs else s._mesh_source
 
-    for spec in candidate_specs[1:]:
-        if spec.hmax is not None and shared_hmax is not None:
-            both_numeric = isinstance(spec.hmax, (int, float)) and isinstance(shared_hmax, (int, float))
-            hmax_mismatch = (
-                (both_numeric and not math.isclose(spec.hmax, shared_hmax))
-                or (not both_numeric and spec.hmax != shared_hmax)
-            )
-        else:
-            hmax_mismatch = False
-        if (
-            hmax_mismatch
-        ) or (
-            spec.order is not None and spec.order != shared_order
-        ) or (
-            spec.source is not None and spec.source != shared_source
-        ):
-            raise ValueError(
-                "Per-geometry FEM mesh settings are not yet supported in the flat-script IR. "
-                "Use one shared mesh configuration for all geometries in this script."
-            )
+    if not study_surface:
+        for spec in candidate_specs[1:]:
+            if spec.hmax is not None and shared_hmax is not None:
+                both_numeric = isinstance(spec.hmax, (int, float)) and isinstance(shared_hmax, (int, float))
+                hmax_mismatch = (
+                    (both_numeric and not math.isclose(spec.hmax, shared_hmax))
+                    or (not both_numeric and spec.hmax != shared_hmax)
+                )
+            else:
+                hmax_mismatch = False
+            if (
+                hmax_mismatch
+            ) or (
+                spec.order is not None and spec.order != shared_order
+            ) or (
+                spec.source is not None and spec.source != shared_source
+            ):
+                raise ValueError(
+                    "Per-geometry FEM mesh settings are not yet supported in the flat-script IR. "
+                    "Use one shared mesh configuration for all geometries in this script."
+                )
 
     resolved_hmax = shared_hmax
     if resolved_hmax is None:
@@ -810,6 +1090,50 @@ def _resolve_flat_fem_hint() -> FEM | None:
         resolved_hmax = _estimate_auto_hmax()
 
     return FEM(order=shared_order or 1, hmax=resolved_hmax, mesh=shared_source)
+
+
+def _mesh_spec_declares_override(spec: _MeshSpecState) -> bool:
+    return spec.is_configured() or spec.build_requested
+
+
+def _mesh_spec_to_metadata(spec: _MeshSpecState) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    if spec.hmax is not None:
+        payload["hmax"] = spec.hmax
+    if spec.hmin is not None:
+        payload["hmin"] = spec.hmin
+    if spec.order is not None:
+        payload["order"] = spec.order
+    if spec.source is not None:
+        payload["source"] = spec.source
+    if spec.build_requested:
+        payload["build_requested"] = True
+    if spec.algorithm_2d is not None:
+        payload["algorithm_2d"] = spec.algorithm_2d
+    if spec.algorithm_3d is not None:
+        payload["algorithm_3d"] = spec.algorithm_3d
+    if spec.optimize_method is not None:
+        payload["optimize"] = spec.optimize_method
+    if spec.optimize_iterations != 1:
+        payload["optimize_iterations"] = spec.optimize_iterations
+    if spec.smoothing_steps != 1:
+        payload["smoothing_steps"] = spec.smoothing_steps
+    if not math.isclose(spec.size_factor, 1.0):
+        payload["size_factor"] = spec.size_factor
+    if spec.size_from_curvature != 0:
+        payload["size_from_curvature"] = spec.size_from_curvature
+    if spec.compute_quality:
+        payload["compute_quality"] = True
+    if spec.per_element_quality:
+        payload["per_element_quality"] = True
+    if spec.size_fields:
+        payload["size_fields"] = list(spec.size_fields)
+    if spec.operations:
+        payload["operations"] = [
+            {"kind": operation.kind, "params": dict(operation.params)}
+            for operation in spec.operations
+        ]
+    return payload
 
 
 def _collect_mesh_workflow_metadata() -> dict[str, object] | None:
@@ -836,16 +1160,24 @@ def _collect_mesh_workflow_metadata() -> dict[str, object] | None:
     build_requested = _state._default_mesh_spec.build_requested or any(
         handle._mesh_spec.build_requested for handle in _state._magnets
     )
-    explicit_mesh_api = bool(configured_handles or _state._default_mesh_spec.is_configured() or build_requested or operations)
+    explicit_mesh_api = bool(
+        configured_handles
+        or _state._default_mesh_spec.is_configured()
+        or build_requested
+        or operations
+    )
     if not explicit_mesh_api:
         return None
     fem_hint = _resolve_flat_fem_hint()
 
     # Collect MeshOptions from specs
-    all_specs = configured_handles + [_state._default_mesh_spec] if not configured_handles else configured_handles
-    primary_spec = all_specs[0]._mesh_spec if hasattr(all_specs[0], '_mesh_spec') else all_specs[0]
-    if hasattr(primary_spec, '_mesh_spec'):
-        primary_spec = primary_spec._mesh_spec
+    if _state._api_surface == "study":
+        primary_spec = _state._default_mesh_spec
+    else:
+        all_specs = configured_handles + [_state._default_mesh_spec] if not configured_handles else configured_handles
+        primary_spec = all_specs[0]._mesh_spec if hasattr(all_specs[0], "_mesh_spec") else all_specs[0]
+        if hasattr(primary_spec, "_mesh_spec"):
+            primary_spec = primary_spec._mesh_spec
     mesh_options = {}
     if primary_spec.algorithm_2d is not None:
         mesh_options["algorithm_2d"] = primary_spec.algorithm_2d
@@ -870,12 +1202,23 @@ def _collect_mesh_workflow_metadata() -> dict[str, object] | None:
     if primary_spec.size_fields:
         mesh_options["size_fields"] = list(primary_spec.size_fields)
 
+    per_geometry = []
+    for handle in _state._magnets:
+        entry = {
+            "geometry": handle._name,
+            "mode": "custom" if _mesh_spec_declares_override(handle._mesh_spec) else "inherit",
+        }
+        entry.update(_mesh_spec_to_metadata(handle._mesh_spec))
+        per_geometry.append(entry)
+
     return {
         "explicit_mesh_api": True,
         "build_requested": build_requested,
         "fem": fem_hint.to_ir() if fem_hint is not None else None,
         "operations": operations,
         "mesh_options": mesh_options if mesh_options else None,
+        "default_mesh": _mesh_spec_to_metadata(_state._default_mesh_spec),
+        "per_geometry": per_geometry,
     }
 
 
@@ -1261,6 +1604,9 @@ def _build_problem(
         rt = rt.precision(s._precision)
 
     runtime_metadata: dict[str, Any] = {"interactive_session_requested": s._interactive}
+    runtime_metadata["script_api_surface"] = s._api_surface
+    if s._study_universe is not None:
+        runtime_metadata["study_universe"] = s._study_universe.to_ir()
     if s._wait_for_solve:
         runtime_metadata["wait_for_solve"] = True
     if s._adaptive_mesh is not None:

@@ -13,8 +13,12 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
 
   const activeName = useMemo(() => {
     if (!nodeId || !nodeId.startsWith("geo-")) return null;
-    return nodeId.replace(/^geo-/, "").split("-")[0];
-  }, [nodeId]);
+    const candidate = nodeId.replace(/^geo-/, "");
+    const names = model.scriptBuilderGeometries
+      .map((geometry) => geometry.name)
+      .sort((left, right) => right.length - left.length);
+    return names.find((name) => candidate === name || candidate.startsWith(`${name}-`)) ?? null;
+  }, [nodeId, model.scriptBuilderGeometries]);
 
   const geoIndex = useMemo(() => {
     if (!activeName) return -1;
@@ -32,6 +36,28 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
       return next;
     });
   }, [geoIndex, model.setScriptBuilderGeometries]);
+
+  const updateMesh = useCallback(
+    (
+      updater: (
+        mesh: NonNullable<ScriptBuilderGeometryEntry["mesh"]>,
+      ) => NonNullable<ScriptBuilderGeometryEntry["mesh"]>,
+    ) => {
+      updateGeo((g) => ({
+        ...g,
+        mesh: updater(
+          g.mesh ?? {
+            mode: "inherit",
+            hmax: "",
+            order: null,
+            source: null,
+            build_requested: false,
+          },
+        ),
+      }));
+    },
+    [updateGeo],
+  );
 
   const handleBoxSize = (idx: number, valStr: string) => {
     const val = parseFloat(valStr);
@@ -119,7 +145,7 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
                   geometry_params: { size: [1e-8, 1e-8, 1e-8] },
                   material: { Ms: 800000, Aex: 1.3e-11, alpha: 0.02, Dind: null },
                   magnetization: { kind: "uniform", value: [1, 0, 0], seed: null, source_path: null },
-                  mesh: null
+                  mesh: { mode: "inherit", hmax: "", order: null, source: null, build_requested: false }
                 }
               ]);
             }}
@@ -135,6 +161,18 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
   const t = Array.isArray(p.translation) ? p.translation : [0, 0, 0];
   const r = Array.isArray(p.rotation) ? p.rotation : [0, 0, 0];
   const size = Array.isArray(p.size) ? p.size : [1e-9, 1e-9, 1e-9];
+  const mesh = geo.mesh ?? {
+    mode: "inherit" as const,
+    hmax: "",
+    order: null,
+    source: null,
+    build_requested: false,
+  };
+  const meshHmaxDisplay = mesh.hmax.trim() === "auto"
+    ? "auto"
+    : mesh.hmax.trim().length > 0 && Number.isFinite(Number(mesh.hmax))
+      ? (Number(mesh.hmax) * 1e9).toFixed(1)
+      : "";
 
   return (
     <div className="flex flex-col gap-5">
@@ -194,6 +232,137 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
           <TextField label="Translate Y" defaultValue={(t[1] * 1e9).toFixed(1)} onBlur={(e) => handleTranslation(1, e.target.value)} unit="nm" mono />
           <TextField label="Translate Z" defaultValue={(t[2] * 1e9).toFixed(1)} onBlur={(e) => handleTranslation(2, e.target.value)} unit="nm" mono />
         </div>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <h4 className="text-[0.7rem] font-bold uppercase tracking-widest text-foreground pb-1 border-b border-border/50">
+          FEM Mesh
+        </h4>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant={mesh.mode === "inherit" ? "default" : "outline"}
+            size="sm"
+            onClick={() =>
+              updateMesh(() => ({
+                mode: "inherit",
+                hmax: "",
+                order: null,
+                source: null,
+                build_requested: false,
+              }))
+            }
+          >
+            Use Global Mesh
+          </Button>
+          <Button
+            variant={mesh.mode === "custom" ? "default" : "outline"}
+            size="sm"
+            onClick={() =>
+              updateMesh((current) => ({
+                ...current,
+                mode: "custom",
+              }))
+            }
+          >
+            Customize Mesh
+          </Button>
+        </div>
+
+        <SelectField
+          label="Mesh Mode"
+          value={mesh.mode}
+          onchange={(value) =>
+            updateMesh((current) => ({
+              ...current,
+              mode: value === "custom" ? "custom" : "inherit",
+              ...(value === "custom"
+                ? {}
+                : { hmax: "", order: null, source: null, build_requested: false }),
+            }))
+          }
+          options={[
+            { label: "Inherit Global", value: "inherit" },
+            { label: "Custom Override", value: "custom" },
+          ]}
+        />
+
+        {mesh.mode === "inherit" ? (
+          <div className="rounded-lg border border-border/40 bg-card/30 px-3 py-2 text-xs text-muted-foreground">
+            This object follows the study-level FEM mesh defaults.
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <TextField
+              key={`${geo.name}-mesh-hmax-${mesh.hmax}`}
+              label="hmax (nm or auto)"
+              defaultValue={meshHmaxDisplay}
+              onBlur={(e) => {
+                const raw = e.target.value.trim();
+                if (!raw) {
+                  updateMesh((current) => ({ ...current, hmax: "" }));
+                  return;
+                }
+                if (raw.toLowerCase() === "auto") {
+                  updateMesh((current) => ({ ...current, hmax: "auto" }));
+                  return;
+                }
+                const numeric = Number(raw);
+                if (!Number.isFinite(numeric)) return;
+                updateMesh((current) => ({ ...current, hmax: String(numeric * 1e-9) }));
+              }}
+              mono
+              placeholder="20 or auto"
+            />
+            <TextField
+              key={`${geo.name}-mesh-order-${mesh.order ?? ""}`}
+              label="Order"
+              defaultValue={mesh.order != null ? String(mesh.order) : ""}
+              onBlur={(e) => {
+                const raw = e.target.value.trim();
+                if (!raw) {
+                  updateMesh((current) => ({ ...current, order: null }));
+                  return;
+                }
+                const numeric = Number(raw);
+                if (!Number.isFinite(numeric)) return;
+                updateMesh((current) => ({
+                  ...current,
+                  order: Math.max(1, Math.round(numeric)),
+                }));
+              }}
+              mono
+              placeholder="1"
+            />
+            <TextField
+              key={`${geo.name}-mesh-source-${mesh.source ?? ""}`}
+              label="Source Mesh"
+              defaultValue={mesh.source ?? ""}
+              onBlur={(e) => {
+                const raw = e.target.value.trim();
+                updateMesh((current) => ({ ...current, source: raw.length > 0 ? raw : null }));
+              }}
+              mono
+              placeholder="mesh.msh"
+              className="col-span-2"
+            />
+            <div className="col-span-2">
+              <Button
+                variant={mesh.build_requested ? "default" : "outline"}
+                size="sm"
+                className="w-full"
+                onClick={() =>
+                  updateMesh((current) => ({
+                    ...current,
+                    build_requested: !current.build_requested,
+                  }))
+                }
+              >
+                {mesh.build_requested ? "Build Requested" : "Request Mesh Build"}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="pt-2 border-t border-border/50">

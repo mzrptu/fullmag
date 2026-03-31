@@ -180,6 +180,17 @@ pub(crate) struct ScriptBuilderMeshState {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct ScriptBuilderUniverseState {
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub center: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub padding: Option<[f64; 3]>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct ScriptBuilderStageState {
     pub kind: String,
     pub entrypoint_kind: String,
@@ -235,10 +246,14 @@ pub(crate) struct ScriptBuilderMagnetizationState {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct ScriptBuilderPerGeometryMeshState {
+    #[serde(default = "default_inherit_mesh_mode")]
+    pub mode: String,
     #[serde(default)]
     pub hmax: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     #[serde(default)]
     pub build_requested: bool,
 }
@@ -293,6 +308,8 @@ pub(crate) struct ScriptBuilderState {
     pub revision: u64,
     pub solver: ScriptBuilderSolverState,
     pub mesh: ScriptBuilderMeshState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub universe: Option<ScriptBuilderUniverseState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stages: Vec<ScriptBuilderStageState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -650,6 +667,10 @@ const fn default_true() -> bool {
     true
 }
 
+fn default_inherit_mesh_mode() -> String {
+    "inherit".to_string()
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct SessionAssetImportResponse {
     pub asset_id: String,
@@ -671,6 +692,8 @@ pub(crate) struct ScriptBuilderUpdateRequest {
     pub solver: Option<ScriptBuilderSolverState>,
     #[serde(default)]
     pub mesh: Option<ScriptBuilderMeshState>,
+    #[serde(default)]
+    pub universe: Option<ScriptBuilderUniverseState>,
     #[serde(default)]
     pub stages: Option<Vec<ScriptBuilderStageState>>,
     #[serde(default)]

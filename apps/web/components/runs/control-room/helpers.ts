@@ -11,6 +11,7 @@ import type {
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
+  ScriptBuilderUniverseState,
 } from "../../../lib/session/types";
 import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
@@ -125,6 +126,7 @@ export function meshOptionsFromBuilder(
 export function buildScriptBuilderUpdatePayload(
   solverSettings: SolverSettingsState,
   meshOptions: MeshOptionsState,
+  universe: ScriptBuilderUniverseState | null,
   stages: ScriptBuilderStageState[],
   geometries: ScriptBuilderGeometryEntry[],
   currentModules: ScriptBuilderCurrentModuleEntry[],
@@ -159,6 +161,7 @@ export function buildScriptBuilderUpdatePayload(
       adaptive_max_passes: meshOptions.adaptiveMaxPasses,
       adaptive_error_tolerance: meshOptions.adaptiveErrorTolerance,
     },
+    universe,
     stages,
     geometries,
     current_modules: currentModules,

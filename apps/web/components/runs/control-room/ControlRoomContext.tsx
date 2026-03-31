@@ -32,6 +32,7 @@ import type {
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
+  ScriptBuilderUniverseState,
 } from "../../../lib/session/types";
 import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
@@ -175,6 +176,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const femMeshDataRef = useRef<FemMeshData | null>(null);
   const [solverSettings, setSolverSettings] = useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
   const [studyStages, setStudyStages] = useState<ScriptBuilderStageState[]>([]);
+  const [scriptBuilderUniverse, setScriptBuilderUniverse] = useState<ScriptBuilderUniverseState | null>(null);
   const [scriptBuilderGeometries, setScriptBuilderGeometries] = useState<ScriptBuilderGeometryEntry[]>([]);
   const [scriptBuilderCurrentModules, setScriptBuilderCurrentModules] = useState<ScriptBuilderCurrentModuleEntry[]>([]);
   const [scriptBuilderExcitationAnalysis, setScriptBuilderExcitationAnalysis] =
@@ -301,6 +303,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       buildScriptBuilderUpdatePayload(
         solverSettings,
         meshOptions,
+        scriptBuilderUniverse,
         studyStages,
         scriptBuilderGeometries,
         scriptBuilderCurrentModules,
@@ -309,6 +312,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     [
       meshOptions,
       solverSettings,
+      scriptBuilderUniverse,
       studyStages,
       scriptBuilderGeometries,
       scriptBuilderCurrentModules,
@@ -325,6 +329,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         ? JSON.stringify({
             solver: scriptBuilder.solver,
             mesh: scriptBuilder.mesh,
+            universe: scriptBuilder.universe,
             stages: scriptBuilder.stages,
             geometries: scriptBuilder.geometries,
             current_modules: scriptBuilder.current_modules,
@@ -341,6 +346,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     lastBuilderPushSignatureRef.current = null;
     setSolverSettingsHydrated(false);
     setStudyStages([]);
+    setScriptBuilderUniverse(null);
     setScriptBuilderGeometries([]);
     setScriptBuilderCurrentModules([]);
     setScriptBuilderExcitationAnalysis(null);
@@ -390,6 +396,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       ...prev,
       ...meshOptionsFromBuilder(scriptBuilder.mesh),
     }));
+    setScriptBuilderUniverse(scriptBuilder.universe);
     setScriptBuilderGeometries(scriptBuilder.geometries);
     setScriptBuilderCurrentModules(scriptBuilder.current_modules);
     setScriptBuilderExcitationAnalysis(scriptBuilder.excitation_analysis);
@@ -403,6 +410,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     lastBuilderPushSignatureRef.current = JSON.stringify({
       solver: scriptBuilder.solver,
       mesh: scriptBuilder.mesh,
+      universe: scriptBuilder.universe,
       stages: scriptBuilder.stages,
       geometries: scriptBuilder.geometries,
       current_modules: scriptBuilder.current_modules,
@@ -1602,7 +1610,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   ]);
 
   const modelValue = useMemo<ModelContextValue>(() => ({
-    material, solverPlan, solverSettings, studyStages, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, femMesh,
+    material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
@@ -1619,11 +1627,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
     selectedSidebarNodeId,
-    setSolverSettings, setStudyStages, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
+    setSolverSettings, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
     setSelectedSidebarNodeId, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
-    material, solverPlan, solverSettings, studyStages, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, femMesh,
+    material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
@@ -1633,7 +1641,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     worldExtent, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
     selectedSidebarNodeId,
-    setStudyStages, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
+    setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   ]);
 

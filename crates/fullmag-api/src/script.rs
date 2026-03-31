@@ -116,7 +116,7 @@ pub(crate) fn script_builder_overrides(builder: &ScriptBuilderState) -> Value {
         "mesh": {
             "algorithm_2d": builder.mesh.algorithm_2d,
             "algorithm_3d": builder.mesh.algorithm_3d,
-            "hmax": parse_optional_text_f64(&builder.mesh.hmax),
+            "hmax": parse_optional_text_f64_or_auto(&builder.mesh.hmax),
             "hmin": parse_optional_text_f64(&builder.mesh.hmin),
             "size_factor": builder.mesh.size_factor,
             "size_from_curvature": builder.mesh.size_from_curvature,
@@ -135,6 +135,12 @@ pub(crate) fn script_builder_overrides(builder: &ScriptBuilderState) -> Value {
                 "error_tolerance": parse_optional_text_f64(&builder.mesh.adaptive_error_tolerance),
             }) },
         },
+        "universe": builder.universe.as_ref().map(|universe| serde_json::json!({
+            "mode": universe.mode,
+            "size": universe.size,
+            "center": universe.center,
+            "padding": universe.padding,
+        })).unwrap_or(Value::Null),
         "stages": builder.stages.iter().map(|stage| serde_json::json!({
             "kind": stage.kind,
             "entrypoint_kind": stage.entrypoint_kind,
@@ -170,8 +176,10 @@ pub(crate) fn script_builder_overrides(builder: &ScriptBuilderState) -> Value {
                 "source_path": geo.magnetization.source_path,
             },
             "mesh": geo.mesh.as_ref().map(|m| serde_json::json!({
-                "hmax": parse_optional_text_f64(&m.hmax),
+                "mode": m.mode,
+                "hmax": parse_optional_text_f64_or_auto(&m.hmax),
                 "order": m.order,
+                "source": m.source,
                 "build_requested": m.build_requested,
             })),
         })).collect::<Vec<_>>(),
@@ -204,6 +212,14 @@ pub(crate) fn parse_optional_text_f64(raw: &str) -> Value {
         .parse::<f64>()
         .ok()
         .map_or(Value::Null, Value::from)
+}
+
+pub(crate) fn parse_optional_text_f64_or_auto(raw: &str) -> Value {
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("auto") {
+        return Value::String("auto".to_string());
+    }
+    parse_optional_text_f64(trimmed)
 }
 
 pub(crate) fn parse_optional_text_u64(raw: &str) -> Value {

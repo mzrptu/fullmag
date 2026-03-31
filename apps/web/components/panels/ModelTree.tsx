@@ -200,6 +200,13 @@ export default function ModelTree({
 
 export function buildFullmagModelTree(opts: {
   backend?: string;
+  showUniverse?: boolean;
+  universeMode?: string | null;
+  universeDeclaredSize?: [number, number, number] | null;
+  universeEffectiveSize?: [number, number, number] | null;
+  universeCenter?: [number, number, number] | null;
+  universePadding?: [number, number, number] | null;
+  universeRole?: string | null;
   geometryKind?: string;
   materialName?: string;
   materialMsat?: number | null;
@@ -288,6 +295,20 @@ export function buildFullmagModelTree(opts: {
     : opts.materialName ?? "—";
 
   const tree: TreeNodeData[] = [
+    ...(
+      opts.showUniverse
+        ? [
+            {
+              id: "universe",
+              label: "Universe",
+              icon: "⬚",
+              badge: opts.universeMode ?? "derived",
+              status: "ready" as const,
+              children: _buildUniverseChildren(opts),
+            },
+          ]
+        : []
+    ),
     {
       id: "geometry",
       label: "Geometry",
@@ -403,6 +424,72 @@ function fmtCompact(v: number): string {
   return v.toFixed(0);
 }
 
+function fmtLength(value: number): string {
+  const abs = Math.abs(value);
+  if (!Number.isFinite(value)) return "—";
+  if (abs >= 1e-3) return `${(value * 1e3).toFixed(2)} mm`;
+  if (abs >= 1e-6) return `${(value * 1e6).toFixed(2)} µm`;
+  return `${(value * 1e9).toFixed(1)} nm`;
+}
+
+function fmtVec(value: [number, number, number] | null | undefined): string {
+  if (!value) return "—";
+  return value.map((component) => fmtLength(component)).join(" · ");
+}
+
+function hasNonZeroVec(value: [number, number, number] | null | undefined): boolean {
+  return Boolean(value && value.some((component) => Math.abs(component) > 0));
+}
+
+function _buildUniverseChildren(opts: {
+  universeDeclaredSize?: [number, number, number] | null;
+  universeEffectiveSize?: [number, number, number] | null;
+  universeCenter?: [number, number, number] | null;
+  universePadding?: [number, number, number] | null;
+  universeRole?: string | null;
+}): TreeNodeData[] {
+  const children: TreeNodeData[] = [];
+  const effectiveSize = opts.universeEffectiveSize ?? null;
+  const declaredSize = opts.universeDeclaredSize ?? null;
+
+  if (effectiveSize) {
+    children.push({
+      id: "universe-effective-size",
+      label: `Effective extent: ${fmtVec(effectiveSize)}`,
+      icon: "📏",
+    });
+  }
+  if (declaredSize) {
+    children.push({
+      id: "universe-size",
+      label: `Declared size: ${fmtVec(declaredSize)}`,
+      icon: "◫",
+    });
+  }
+  if (opts.universeCenter) {
+    children.push({
+      id: "universe-center",
+      label: `Center: ${fmtVec(opts.universeCenter)}`,
+      icon: "⌖",
+    });
+  }
+  if (hasNonZeroVec(opts.universePadding)) {
+    children.push({
+      id: "universe-padding",
+      label: `Padding: ${fmtVec(opts.universePadding)}`,
+      icon: "↔",
+    });
+  }
+  if (opts.universeRole) {
+    children.push({
+      id: "universe-role",
+      label: opts.universeRole,
+      icon: "⚙",
+    });
+  }
+  return children;
+}
+
 /* ── Per-geometry node builders ───────────────────────────────────── */
 
 const GEOMETRY_ICONS: Record<string, string> = {
@@ -424,12 +511,30 @@ function _buildGeometryNode(
 
   const meshNode: TreeNodeData = {
     id: `${geoId}-mesh`,
-    label: "Mesh Override",
+    label: "Mesh",
     icon: "◫",
-    status: geo.mesh ? "ready" : "pending",
-    badge: geo.mesh ? (geo.mesh.order ? `P${geo.mesh.order}` : "auto") : undefined,
+    status: geo.mesh?.mode === "custom" ? "ready" : "pending",
+    badge:
+      geo.mesh?.mode === "custom"
+        ? (geo.mesh.order ? `P${geo.mesh.order}` : "custom")
+        : "inherit",
     children: [
-      { id: `${geoId}-mesh-hmax`, label: geo.mesh?.hmax ? `hmax = ${geo.mesh.hmax}` : "hmax (auto)", icon: "📏" }
+      {
+        id: `${geoId}-mesh-mode`,
+        label: geo.mesh?.mode === "custom" ? "Mode: custom override" : "Mode: inherit global",
+        icon: "⇆",
+      },
+      {
+        id: `${geoId}-mesh-hmax`,
+        label:
+          geo.mesh?.mode === "custom" && geo.mesh.hmax
+            ? `hmax = ${geo.mesh.hmax}`
+            : "hmax from study defaults",
+        icon: "📏",
+      },
+      ...(geo.mesh?.mode === "custom" && geo.mesh.source
+        ? [{ id: `${geoId}-mesh-source`, label: geo.mesh.source, icon: "📄" } satisfies TreeNodeData]
+        : []),
     ],
   };
 

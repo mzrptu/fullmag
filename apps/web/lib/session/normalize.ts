@@ -331,6 +331,15 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
       adaptive_max_passes: Number(raw.mesh?.adaptive_max_passes ?? 2),
       adaptive_error_tolerance: String(raw.mesh?.adaptive_error_tolerance ?? "1e-3"),
     },
+    universe:
+      raw.universe && typeof raw.universe === "object"
+        ? {
+            mode: String(raw.universe.mode ?? "auto"),
+            size: normalizeVec3(raw.universe.size),
+            center: normalizeVec3(raw.universe.center),
+            padding: normalizeVec3(raw.universe.padding),
+          }
+        : null,
     stages: Array.isArray(raw.stages)
       ? raw.stages.map((stage: any) => ({
           kind: String(stage?.kind ?? "run"),
@@ -384,8 +393,10 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
             sample_index: geo?.magnetization?.sample_index != null ? Number(geo.magnetization.sample_index) : null,
           },
           mesh: geo?.mesh && typeof geo.mesh === "object" ? {
+            mode: geo.mesh.mode === "custom" ? "custom" : "inherit",
             hmax: String(geo.mesh.hmax ?? ""),
             order: geo.mesh.order != null ? Number(geo.mesh.order) : null,
+            source: typeof geo.mesh.source === "string" ? geo.mesh.source : null,
             build_requested: Boolean(geo.mesh.build_requested),
           } : null,
         }))

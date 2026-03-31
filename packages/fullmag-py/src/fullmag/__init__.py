@@ -79,6 +79,8 @@ from .meshing import (
 from .world import (
     GeometryMeshHandle,
     MagnetHandle,
+    StudyBuilder,
+    StudyUniverseConfig,
     antenna_field_source,
     build_mesh,
     boundary_correction,
@@ -101,6 +103,7 @@ from .world import (
     name as set_name,
     run,
     spin_wave_excitation,
+    study,
     relax,
     reset,
 )
@@ -179,6 +182,8 @@ __all__ = [
     # Flat scripting API
     "GeometryMeshHandle",
     "MagnetHandle",
+    "StudyBuilder",
+    "StudyUniverseConfig",
     "antenna_field_source",
     "build_mesh",
     "boundary_correction",
@@ -198,6 +203,7 @@ __all__ = [
     "save",
     "snapshot",
     "spin_wave_excitation",
+    "study",
     "tableautosave",
     "set_name",
     "run",
