@@ -323,6 +323,13 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
       optimize_iterations: Number(raw.mesh?.optimize_iterations ?? 1),
       compute_quality: Boolean(raw.mesh?.compute_quality),
       per_element_quality: Boolean(raw.mesh?.per_element_quality),
+      adaptive_enabled: Boolean(raw.mesh?.adaptive_enabled),
+      adaptive_policy: String(raw.mesh?.adaptive_policy ?? "auto"),
+      adaptive_theta: Number(raw.mesh?.adaptive_theta ?? 0.3),
+      adaptive_h_min: String(raw.mesh?.adaptive_h_min ?? ""),
+      adaptive_h_max: String(raw.mesh?.adaptive_h_max ?? ""),
+      adaptive_max_passes: Number(raw.mesh?.adaptive_max_passes ?? 2),
+      adaptive_error_tolerance: String(raw.mesh?.adaptive_error_tolerance ?? "1e-3"),
     },
     stages: Array.isArray(raw.stages)
       ? raw.stages.map((stage: any) => ({
@@ -356,6 +363,33 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
                 : null,
           }
         : null,
+    geometries: Array.isArray(raw.geometries)
+      ? raw.geometries.map((geo: any) => ({
+          name: String(geo?.name ?? ""),
+          geometry_kind: String(geo?.geometry_kind ?? ""),
+          geometry_params: (geo?.geometry_params && typeof geo.geometry_params === "object") ? geo.geometry_params : {},
+          material: {
+            Ms: geo?.material?.Ms != null ? Number(geo.material.Ms) : null,
+            Aex: geo?.material?.Aex != null ? Number(geo.material.Aex) : null,
+            alpha: Number(geo?.material?.alpha ?? 0.01),
+            Dind: geo?.material?.Dind != null ? Number(geo.material.Dind) : null,
+          },
+          magnetization: {
+            kind: String(geo?.magnetization?.kind ?? "uniform"),
+            value: Array.isArray(geo?.magnetization?.value) ? geo.magnetization.value.map(Number) : null,
+            seed: geo?.magnetization?.seed != null ? Number(geo.magnetization.seed) : null,
+            source_path: typeof geo?.magnetization?.source_path === "string" ? geo.magnetization.source_path : null,
+            source_format: typeof geo?.magnetization?.source_format === "string" ? geo.magnetization.source_format : null,
+            dataset: typeof geo?.magnetization?.dataset === "string" ? geo.magnetization.dataset : null,
+            sample_index: geo?.magnetization?.sample_index != null ? Number(geo.magnetization.sample_index) : null,
+          },
+          mesh: geo?.mesh && typeof geo.mesh === "object" ? {
+            hmax: String(geo.mesh.hmax ?? ""),
+            order: geo.mesh.order != null ? Number(geo.mesh.order) : null,
+            build_requested: Boolean(geo.mesh.build_requested),
+          } : null,
+        }))
+      : [],
   };
 }
 

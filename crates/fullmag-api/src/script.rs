@@ -125,6 +125,15 @@ pub(crate) fn script_builder_overrides(builder: &ScriptBuilderState) -> Value {
             "optimize_iterations": builder.mesh.optimize_iterations,
             "compute_quality": builder.mesh.compute_quality,
             "per_element_quality": builder.mesh.per_element_quality,
+            "adaptive_mesh": if !builder.mesh.adaptive_enabled { Value::Null } else { serde_json::json!({
+                "enabled": builder.mesh.adaptive_enabled,
+                "policy": builder.mesh.adaptive_policy,
+                "theta": builder.mesh.adaptive_theta,
+                "h_min": parse_optional_text_f64(&builder.mesh.adaptive_h_min),
+                "h_max": parse_optional_text_f64(&builder.mesh.adaptive_h_max),
+                "max_passes": builder.mesh.adaptive_max_passes,
+                "error_tolerance": parse_optional_text_f64(&builder.mesh.adaptive_error_tolerance),
+            }) },
         },
         "stages": builder.stages.iter().map(|stage| serde_json::json!({
             "kind": stage.kind,
@@ -144,6 +153,28 @@ pub(crate) fn script_builder_overrides(builder: &ScriptBuilderState) -> Value {
             "dataset": initial_state.dataset,
             "sample_index": initial_state.sample_index,
         })).unwrap_or(Value::Null),
+        "geometries": builder.geometries.iter().map(|geo| serde_json::json!({
+            "name": geo.name,
+            "geometry_kind": geo.geometry_kind,
+            "geometry_params": geo.geometry_params,
+            "material": {
+                "Ms": geo.material.ms,
+                "Aex": geo.material.aex,
+                "alpha": geo.material.alpha,
+                "Dind": geo.material.dind,
+            },
+            "magnetization": {
+                "kind": geo.magnetization.kind,
+                "value": geo.magnetization.value,
+                "seed": geo.magnetization.seed,
+                "source_path": geo.magnetization.source_path,
+            },
+            "mesh": geo.mesh.as_ref().map(|m| serde_json::json!({
+                "hmax": parse_optional_text_f64(&m.hmax),
+                "order": m.order,
+                "build_requested": m.build_requested,
+            })),
+        })).collect::<Vec<_>>(),
     })
 }
 

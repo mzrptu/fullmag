@@ -8,6 +8,13 @@ import { Switch } from "../ui/switch";
 import { Button } from "../ui/button";
 import { Loader2, ArrowRightLeft } from "lucide-react";
 
+/* ── Size field spec for lasso refinement zones ────────────────────── */
+
+export interface SizeFieldSpec {
+  kind: string;
+  params: Record<string, number | number[] | string>;
+}
+
 /* ── Types ─────────────────────────────────────────────────────────── */
 
 export interface MeshOptionsState {
@@ -17,11 +24,23 @@ export interface MeshOptionsState {
   hmin: string;          // string for controlled input (SI metres)
   sizeFactor: number;
   sizeFromCurvature: number;
+  growthRate: string;    // "" = Gmsh default (1.8), otherwise float [1.1–3.0]
+  narrowRegions: number; // 0 = off, 1+ = min elements across narrow gap
   smoothingSteps: number;
   optimize: string;      // "" = none, "Netgen", "HighOrder", "Laplace2D", etc.
   optimizeIters: number;
   computeQuality: boolean;
   perElementQuality: boolean;
+  refinementZones: SizeFieldSpec[]; // lasso refinement zones
+
+  // Adaptive Mesh (AFEM)
+  adaptiveEnabled: boolean;
+  adaptivePolicy: string;
+  adaptiveTheta: number;
+  adaptiveHMin: string;
+  adaptiveHMax: string;
+  adaptiveMaxPasses: number;
+  adaptiveErrorTolerance: string;
 }
 
 export interface MeshQualityData {
@@ -88,11 +107,21 @@ export const DEFAULT_MESH_OPTIONS: MeshOptionsState = {
   hmin: "",
   sizeFactor: 1.0,
   sizeFromCurvature: 0,
+  growthRate: "",
+  narrowRegions: 0,
   smoothingSteps: 1,
   optimize: "",
   optimizeIters: 1,
   computeQuality: false,
   perElementQuality: false,
+  refinementZones: [],
+  adaptiveEnabled: false,
+  adaptivePolicy: "auto",
+  adaptiveTheta: 0.3,
+  adaptiveHMin: "",
+  adaptiveHMax: "",
+  adaptiveMaxPasses: 2,
+  adaptiveErrorTolerance: "1e-3",
 };
 
 /* ── SICN color ────────────────────────────────────────────────────── */
@@ -377,6 +406,40 @@ export default function MeshSettingsPanel({
               />
             </div>
           </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+              Growth rate
+              <span className="text-[0.55rem] text-muted-foreground/40">(SmoothRatio)</span>
+            </span>
+            <div className="flex-1 max-w-[140px]">
+              <Input
+                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                type="text"
+                placeholder="1.8"
+                value={options.growthRate}
+                onChange={(e) => set({ growthRate: e.target.value })}
+                disabled={disabled}
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+              Narrow regions
+              <span className="text-[0.55rem] text-muted-foreground/40">(0 = off)</span>
+            </span>
+            <div className="flex-1 max-w-[140px]">
+              <Input
+                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                type="number"
+                step="1"
+                min="0"
+                max="10"
+                value={options.narrowRegions}
+                onChange={(e) => set({ narrowRegions: Number(e.target.value) || 0 })}
+                disabled={disabled}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -565,6 +628,133 @@ export default function MeshSettingsPanel({
           )}
         </div>
       )}
+      {/* ── Adaptive Mesh (AFEM) ── */}
+      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
+        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
+          <span className="text-xs font-bold uppercase tracking-widest text-foreground flex items-center gap-1.5 justify-between w-full">
+            <span>Adaptive Mesh (AFEM)</span>
+            <Switch
+              className="data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted/80 h-[18px] w-8"
+              checked={options.adaptiveEnabled}
+              onCheckedChange={(checked) => set({ adaptiveEnabled: checked })}
+              disabled={disabled}
+            />
+          </span>
+        </div>
+        {options.adaptiveEnabled && (
+          <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Policy</span>
+              <div className="flex-1 max-w-[140px]">
+                <Select
+                  value={options.adaptivePolicy}
+                  onValueChange={(val) => set({ adaptivePolicy: val })}
+                  disabled={disabled}
+                >
+                  <SelectTrigger className="h-7 w-full border-border/50 bg-card text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="manual">Manual (remesh now)</SelectItem>
+                    <SelectItem value="auto">Auto (solve loop)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground ml-1">Theta (θ)</span>
+                <Input
+                  className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                  type="number" step="0.05" min="0.01" max="1"
+                  value={options.adaptiveTheta}
+                  onChange={(e) => set({ adaptiveTheta: Number(e.target.value) || 0.3 })}
+                  disabled={disabled}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground ml-1">Max Passes</span>
+                <Input
+                  className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                  type="number" step="1" min="1" max="20"
+                  value={options.adaptiveMaxPasses}
+                  onChange={(e) => set({ adaptiveMaxPasses: Number(e.target.value) || 2 })}
+                  disabled={disabled}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground ml-1">Min. Edge (m)</span>
+                <Input
+                  className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                  placeholder="e.g. 5e-9"
+                  value={options.adaptiveHMin}
+                  onChange={(e) => set({ adaptiveHMin: e.target.value })}
+                  disabled={disabled}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground ml-1">Max. Edge (m)</span>
+                <Input
+                  className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                  placeholder="e.g. 30e-9"
+                  value={options.adaptiveHMax}
+                  onChange={(e) => set({ adaptiveHMax: e.target.value })}
+                  disabled={disabled}
+                />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1 mt-1">
+              <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground ml-1">Error Tolerance</span>
+              <Input
+                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                placeholder="e.g. 1e-3"
+                value={options.adaptiveErrorTolerance}
+                onChange={(e) => set({ adaptiveErrorTolerance: e.target.value })}
+                disabled={disabled}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Refinement Zones (lasso) ── */}
+      {options.refinementZones.length > 0 && (
+        <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
+          <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
+            <span className="text-xs font-bold uppercase tracking-widest text-foreground">
+              Refinement Zones
+              <span className="ml-1.5 text-[0.6rem] font-mono text-muted-foreground">({options.refinementZones.length})</span>
+            </span>
+            <button
+              className="text-[0.65rem] font-semibold uppercase tracking-widest text-destructive/80 hover:text-destructive px-1.5 py-0.5 rounded hover:bg-destructive/10 transition-colors"
+              onClick={() => set({ refinementZones: [] })}
+              disabled={disabled}
+            >
+              Clear all
+            </button>
+          </div>
+          <div className="flex flex-col gap-1">
+            {options.refinementZones.map((zone, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-muted/20 border border-border/20">
+                <span className="text-[0.65rem] font-mono text-muted-foreground">
+                  {zone.kind} #{i + 1} — VIn={typeof zone.params.VIn === "number" ? zone.params.VIn.toExponential(1) : "?"}
+                </span>
+                <button
+                  className="text-[0.6rem] text-destructive/60 hover:text-destructive"
+                  onClick={() => set({ refinementZones: options.refinementZones.filter((_, j) => j !== i) })}
+                  disabled={disabled}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Generate button ── */}
       {onGenerate && (
         <div className="flex flex-col gap-3 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm transition-all duration-300">

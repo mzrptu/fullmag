@@ -170,6 +170,13 @@ pub(crate) struct ScriptBuilderMeshState {
     pub optimize_iterations: i64,
     pub compute_quality: bool,
     pub per_element_quality: bool,
+    pub adaptive_enabled: bool,
+    pub adaptive_policy: String,
+    pub adaptive_theta: f64,
+    pub adaptive_h_min: String,
+    pub adaptive_h_max: String,
+    pub adaptive_max_passes: u32,
+    pub adaptive_error_tolerance: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -198,6 +205,57 @@ pub(crate) struct ScriptBuilderInitialState {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct ScriptBuilderMaterialState {
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "Ms")]
+    pub ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "Aex")]
+    pub aex: Option<f64>,
+    #[serde(default)]
+    pub alpha: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "Dind")]
+    pub dind: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct ScriptBuilderMagnetizationState {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_index: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct ScriptBuilderPerGeometryMeshState {
+    #[serde(default)]
+    pub hmax: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<i64>,
+    #[serde(default)]
+    pub build_requested: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct ScriptBuilderGeometryEntry {
+    pub name: String,
+    pub geometry_kind: String,
+    #[serde(default)]
+    pub geometry_params: serde_json::Value,
+    pub material: ScriptBuilderMaterialState,
+    pub magnetization: ScriptBuilderMagnetizationState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<ScriptBuilderPerGeometryMeshState>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct ScriptBuilderState {
     pub revision: u64,
     pub solver: ScriptBuilderSolverState,
@@ -206,6 +264,8 @@ pub(crate) struct ScriptBuilderState {
     pub stages: Vec<ScriptBuilderStageState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_state: Option<ScriptBuilderInitialState>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geometries: Vec<ScriptBuilderGeometryEntry>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

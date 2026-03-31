@@ -102,9 +102,12 @@ def _mesh_options_from_dict(opts: dict[str, Any]) -> MeshOptions:
         hmin=opts.get("hmin"),
         size_factor=opts.get("size_factor", 1.0),
         size_from_curvature=opts.get("size_from_curvature", 0),
+        growth_rate=opts.get("growth_rate"),
+        narrow_regions=opts.get("narrow_regions", 0),
         smoothing_steps=opts.get("smoothing_steps", 1),
         optimize=opts.get("optimize"),
         optimize_iters=opts.get("optimize_iterations", 1),
+        size_fields=opts.get("size_fields", []),
         compute_quality=opts.get("compute_quality", True),
         per_element_quality=opts.get("per_element_quality", False),
     )

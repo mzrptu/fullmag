@@ -341,7 +341,7 @@ export function ViewportCanvasArea() {
         </div>
       </div>
     );
-  } else if (!ctx.isVectorQuantity && !hasVectorData) {
+  } else if (!ctx.isVectorQuantity && !hasVectorData && !ctx.femMeshData) {
     conditionalContent = (
       <div className="flex flex-col items-center justify-center h-full w-full opacity-60">
         <EmptyState
@@ -391,6 +391,7 @@ export function ViewportCanvasArea() {
         onClipAxisChange={ctx.setMeshClipAxis}
         onClipPosChange={ctx.setMeshClipPos}
         onSelectionChange={ctx.setMeshSelection}
+        onRefine={ctx.handleLassoRefine}
       />
     );
   } else if (ctx.effectiveViewMode === "3D" && ctx.femMeshData) {

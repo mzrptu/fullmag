@@ -165,6 +165,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [meshOptions, setMeshOptions] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
   const [meshQualityData, setMeshQualityData] = useState<MeshQualityData | null>(null);
   const [meshGenerating, setMeshGenerating] = useState(false);
+  const femTopologyKeyRef = useRef<string | null>(null);
+  const femMeshDataRef = useRef<FemMeshData | null>(null);
   const [solverSettings, setSolverSettings] = useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
   const [studyStages, setStudyStages] = useState<ScriptBuilderStageState[]>([]);
   const builderHydratedSessionRef = useRef<string | null>(null);
@@ -696,8 +698,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     finally { setPreviewPostInFlight(false); }
   }, [kindForQuantity, liveApi, requestedDisplaySelection]);
 
+  const meshGenTopologyRef = useRef<string | null>(null);
+
   const handleMeshGenerate = useCallback(async () => {
     setMeshGenerating(true);
+    meshGenTopologyRef.current = femTopologyKeyRef.current;
     try {
       await liveApi.queueCommand({
         kind: "remesh",
@@ -706,14 +711,76 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
           hmax: meshOptions.hmax ? parseFloat(meshOptions.hmax) : null,
           hmin: meshOptions.hmin ? parseFloat(meshOptions.hmin) : null,
           size_factor: meshOptions.sizeFactor, size_from_curvature: meshOptions.sizeFromCurvature,
+          growth_rate: meshOptions.growthRate ? parseFloat(meshOptions.growthRate) : null,
+          narrow_regions: meshOptions.narrowRegions,
           smoothing_steps: meshOptions.smoothingSteps, optimize: meshOptions.optimize || null,
           optimize_iterations: meshOptions.optimizeIters, compute_quality: meshOptions.computeQuality,
           per_element_quality: meshOptions.perElementQuality,
+          size_fields: meshOptions.refinementZones.length > 0 ? meshOptions.refinementZones : undefined,
         },
       });
-    } catch (err) { setCommandErrorMessage(err instanceof Error ? err.message : "Mesh generation failed"); }
-    finally { setMeshGenerating(false); }
+    } catch (err) {
+      setCommandErrorMessage(err instanceof Error ? err.message : "Mesh generation failed");
+      setMeshGenerating(false);
+      meshGenTopologyRef.current = null;
+    }
   }, [meshOptions, liveApi]);
+
+  const handleLassoRefine = useCallback(async (faceIndices: number[], factor: number) => {
+    const currentFemMeshData = femMeshDataRef.current;
+    if (!currentFemMeshData || faceIndices.length === 0) return;
+    const nodes = currentFemMeshData.nodes;
+    const faces = currentFemMeshData.boundaryFaces;
+    let xmin = Infinity, ymin = Infinity, zmin = Infinity;
+    let xmax = -Infinity, ymax = -Infinity, zmax = -Infinity;
+    for (const fi of faceIndices) {
+      for (let v = 0; v < 3; v++) {
+        const ni = faces[fi * 3 + v];
+        const x = nodes[ni * 3], y = nodes[ni * 3 + 1], z = nodes[ni * 3 + 2];
+        if (x < xmin) xmin = x; if (x > xmax) xmax = x;
+        if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+        if (z < zmin) zmin = z; if (z > zmax) zmax = z;
+      }
+    }
+    const currentHmax = meshOptions.hmax ? parseFloat(meshOptions.hmax) : (meshHmax ?? 20e-9);
+    const targetH = currentHmax * factor;
+    const pad = currentHmax * 2;
+    const zone: import("../../panels/MeshSettingsPanel").SizeFieldSpec = {
+      kind: "Box",
+      params: {
+        VIn: targetH, VOut: currentHmax,
+        XMin: xmin - pad, XMax: xmax + pad,
+        YMin: ymin - pad, YMax: ymax + pad,
+        ZMin: zmin - pad, ZMax: zmax + pad,
+      },
+    };
+    const updatedZones = [...meshOptions.refinementZones, zone];
+    setMeshOptions((prev) => ({ ...prev, refinementZones: updatedZones }));
+
+    setMeshGenerating(true);
+    meshGenTopologyRef.current = femTopologyKeyRef.current;
+    try {
+      await liveApi.queueCommand({
+        kind: "remesh",
+        mesh_options: {
+          algorithm_2d: meshOptions.algorithm2d, algorithm_3d: meshOptions.algorithm3d,
+          hmax: meshOptions.hmax ? parseFloat(meshOptions.hmax) : null,
+          hmin: meshOptions.hmin ? parseFloat(meshOptions.hmin) : null,
+          size_factor: meshOptions.sizeFactor, size_from_curvature: meshOptions.sizeFromCurvature,
+          growth_rate: meshOptions.growthRate ? parseFloat(meshOptions.growthRate) : null,
+          narrow_regions: meshOptions.narrowRegions,
+          smoothing_steps: meshOptions.smoothingSteps, optimize: meshOptions.optimize || null,
+          optimize_iterations: meshOptions.optimizeIters, compute_quality: meshOptions.computeQuality,
+          per_element_quality: meshOptions.perElementQuality,
+          size_fields: updatedZones,
+        },
+      });
+    } catch (err) {
+      setCommandErrorMessage(err instanceof Error ? err.message : "Lasso refine failed");
+      setMeshGenerating(false);
+      meshGenTopologyRef.current = null;
+    }
+  }, [meshOptions, liveApi, meshHmax]);
 
   const handleCompute = useCallback(() => {
     void enqueueCommand({ kind: "solve" });
@@ -1183,6 +1250,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     if (!femMeshBase) return null;
     return { ...femMeshBase, fieldData: femFieldData };
   }, [femMeshBase, femFieldData]);
+  femMeshDataRef.current = femMeshData;
 
   const femHasFieldData = Boolean(femMeshData?.fieldData);
   const femMagnetization3DActive = isFemBackend && effectiveViewMode === "3D" && activeQuantityId === "m" && femHasFieldData;
@@ -1204,6 +1272,34 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       firstElement,
     ].join(":");
   }, [effectiveFemMesh, femMesh?.elements.length]);
+
+  // Keep femTopologyKeyRef in sync so handleMeshGenerate can snapshot the current key
+  femTopologyKeyRef.current = femTopologyKey;
+
+  // Clear meshGenerating flag once the topology actually changes after a remesh command,
+  // or when the remesh command completes with an error on the backend.
+  useEffect(() => {
+    if (!meshGenerating) return;
+    if (meshGenTopologyRef.current === null) return;
+    // Topology key changed (or appeared from null) → mesh arrived
+    if (femTopologyKey !== null && femTopologyKey !== meshGenTopologyRef.current) {
+      meshGenTopologyRef.current = null;
+      setMeshGenerating(false);
+    }
+  }, [femTopologyKey, meshGenerating]);
+
+  useEffect(() => {
+    if (!meshGenerating || meshGenTopologyRef.current === null) return;
+    // Backend rejected or completed the remesh with an error → stop spinner
+    if (
+      commandStatus?.command_kind === "remesh" &&
+      (commandStatus.state === "rejected" ||
+        (commandStatus.completion_state != null && commandStatus.completion_state !== "ok"))
+    ) {
+      meshGenTopologyRef.current = null;
+      setMeshGenerating(false);
+    }
+  }, [meshGenerating, commandStatus]);
 
   const femColorField = useMemo<FemColorField>(() => {
     const qId = activeQuantityId;
@@ -1412,7 +1508,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     selectedSidebarNodeId,
     setSolverSettings, setStudyStages, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
-    setSelectedSidebarNodeId, handleMeshGenerate, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    setSelectedSidebarNodeId, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
     material, solverPlan, solverSettings, studyStages, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
@@ -1425,7 +1521,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshWorkspacePreset,
     selectedSidebarNodeId,
     setStudyStages,
-    handleMeshGenerate, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   ]);
 
   if (!state) {

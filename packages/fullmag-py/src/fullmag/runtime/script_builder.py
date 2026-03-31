@@ -75,6 +75,7 @@ def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
         },
         "stages": [_export_stage_draft(stage) for stage in _builder_stage_sequence(loaded)],
         "initial_state": _export_initial_state(base_problem),
+        "geometries": [_export_geometry_entry(magnet, base_problem) for magnet in base_problem.magnets],
     }
 
 
@@ -792,6 +793,92 @@ def _export_initial_state(problem: Problem) -> dict[str, object] | None:
         "dataset": magnet.m0.dataset,
         "sample_index": magnet.m0.sample_index,
     }
+
+
+def _export_geometry_entry(magnet: object, problem: Problem) -> dict[str, object]:
+    """Serialize one magnet into a geometry entry for the builder draft."""
+    geom = magnet.geometry
+    mat = magnet.material
+
+    # --- Geometry kind + params ---
+    geometry_kind, geometry_params = _export_geometry_kind_params(geom)
+
+    # --- Material ---
+    material: dict[str, object] = {
+        "Ms": mat.Ms if mat.Ms is not None else None,
+        "Aex": mat.A if mat.A is not None else None,
+        "alpha": mat.alpha,
+        "Dind": None,
+    }
+    dmi_val = _magnet_dmi(problem, magnet.name)
+    if dmi_val is not None:
+        material["Dind"] = dmi_val
+
+    # --- Magnetization ---
+    magnetization: dict[str, object] = {"kind": "uniform", "value": [1, 0, 0], "seed": None, "source_path": None}
+    if magnet.m0 is not None:
+        if isinstance(magnet.m0, UniformMagnetization):
+            magnetization = {"kind": "uniform", "value": list(magnet.m0.value), "seed": None, "source_path": None}
+        elif isinstance(magnet.m0, RandomMagnetization):
+            magnetization = {"kind": "random", "value": None, "seed": magnet.m0.seed, "source_path": None}
+        elif isinstance(magnet.m0, SampledMagnetization):
+            magnetization = {
+                "kind": "file",
+                "value": None,
+                "seed": None,
+                "source_path": magnet.m0.source_path,
+                "source_format": magnet.m0.source_format,
+                "dataset": magnet.m0.dataset,
+                "sample_index": magnet.m0.sample_index,
+            }
+
+    # --- Per-geometry mesh ---
+    fem = problem.discretization.fem if problem.discretization is not None else None
+    per_mesh: dict[str, object] | None = None
+    if isinstance(fem, FEM):
+        per_mesh = {
+            "hmax": _text_number(fem.hmax),
+            "order": fem.order,
+            "build_requested": True,
+        }
+
+    return {
+        "name": magnet.name,
+        "geometry_kind": geometry_kind,
+        "geometry_params": geometry_params,
+        "material": material,
+        "magnetization": magnetization,
+        "mesh": per_mesh,
+    }
+
+
+def _export_geometry_kind_params(geom: object) -> tuple[str, dict[str, object]]:
+    """Extract kind string and parameter dict from a geometry object."""
+    if isinstance(geom, ImportedGeometry):
+        return "ImportedGeometry", {
+            "source": geom.source,
+            "scale": geom.scale,
+            "volume": geom.volume,
+            "name": geom.name,
+        }
+    if isinstance(geom, Box):
+        return "Box", {"size": list(geom.size)}
+    if isinstance(geom, Cylinder):
+        return "Cylinder", {"radius": geom.radius, "height": geom.height}
+    if isinstance(geom, Ellipsoid):
+        return "Ellipsoid", {"rx": geom.rx, "ry": geom.ry, "rz": geom.rz}
+    if isinstance(geom, Ellipse):
+        return "Ellipse", {"rx": geom.rx, "ry": geom.ry, "height": geom.height}
+    if isinstance(geom, Translate):
+        base_kind, base_params = _export_geometry_kind_params(geom.geometry)
+        return base_kind, {**base_params, "translate": list(geom.offset)}
+    if isinstance(geom, Difference):
+        return "Difference", {"base": str(type(geom.base).__name__), "tool": str(type(geom.tool).__name__)}
+    if isinstance(geom, Union):
+        return "Union", {"a": str(type(geom.a).__name__), "b": str(type(geom.b).__name__)}
+    if isinstance(geom, Intersection):
+        return "Intersection", {"a": str(type(geom.a).__name__), "b": str(type(geom.b).__name__)}
+    return type(geom).__name__, {}
 
 
 def _study_outputs(study: TimeEvolution | Relaxation | Eigenmodes) -> Sequence[object]:

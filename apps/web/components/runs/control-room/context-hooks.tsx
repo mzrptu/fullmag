@@ -256,6 +256,7 @@ export interface ModelContextValue {
   setFemDockTab: React.Dispatch<React.SetStateAction<FemDockTab>>;
   setSelectedSidebarNodeId: React.Dispatch<React.SetStateAction<string | null>>;
   handleMeshGenerate: () => Promise<void>;
+  handleLassoRefine: (faceIndices: number[], factor: number) => Promise<void>;
   openFemMeshWorkspace: (tab?: FemDockTab) => void;
   applyMeshWorkspacePreset: (presetId: MeshWorkspacePresetId) => void;
 }

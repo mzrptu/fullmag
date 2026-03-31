@@ -245,6 +245,13 @@ export interface ScriptBuilderMeshState {
   optimize_iterations: number;
   compute_quality: boolean;
   per_element_quality: boolean;
+  adaptive_enabled: boolean;
+  adaptive_policy: string;
+  adaptive_theta: number;
+  adaptive_h_min: string;
+  adaptive_h_max: string;
+  adaptive_max_passes: number;
+  adaptive_error_tolerance: string;
 }
 
 export interface ScriptBuilderStageState {
@@ -267,12 +274,45 @@ export interface ScriptBuilderInitialState {
   sample_index: number | null;
 }
 
+export interface ScriptBuilderMaterialEntry {
+  Ms: number | null;
+  Aex: number | null;
+  alpha: number;
+  Dind: number | null;
+}
+
+export interface ScriptBuilderMagnetizationEntry {
+  kind: string;                   // "uniform" | "random" | "file"
+  value: number[] | null;         // [mx, my, mz] for uniform
+  seed: number | null;            // for random
+  source_path: string | null;     // for file
+  source_format?: string | null;
+  dataset?: string | null;
+  sample_index?: number | null;
+}
+
+export interface ScriptBuilderPerGeometryMeshEntry {
+  hmax: string;
+  order: number | null;
+  build_requested: boolean;
+}
+
+export interface ScriptBuilderGeometryEntry {
+  name: string;
+  geometry_kind: string;
+  geometry_params: Record<string, unknown>;
+  material: ScriptBuilderMaterialEntry;
+  magnetization: ScriptBuilderMagnetizationEntry;
+  mesh: ScriptBuilderPerGeometryMeshEntry | null;
+}
+
 export interface ScriptBuilderState {
   revision: number;
   solver: ScriptBuilderSolverState;
   mesh: ScriptBuilderMeshState;
   stages: ScriptBuilderStageState[];
   initial_state: ScriptBuilderInitialState | null;
+  geometries: ScriptBuilderGeometryEntry[];
 }
 
 export interface MeshSummaryState {

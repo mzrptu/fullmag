@@ -98,6 +98,8 @@ class MeshOptions:
     hmin: float | None = None
     size_factor: float = 1.0
     size_from_curvature: int = 0
+    growth_rate: float | None = None
+    narrow_regions: int = 0
     smoothing_steps: int = 1
     optimize: str | None = None
     optimize_iters: int = 1
@@ -858,8 +860,23 @@ def _apply_mesh_options(
     if opts.size_from_curvature > 0:
         gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", opts.size_from_curvature)
 
+    if opts.growth_rate is not None:
+        gmsh.option.setNumber("Mesh.SmoothRatio", opts.growth_rate)
+        if opts.growth_rate < 1.5:
+            gmsh.option.setNumber("Mesh.Smoothing", max(opts.smoothing_steps, 5))
+
+    extra_field_ids: list[int] = []
+
+    if opts.narrow_regions > 0:
+        fid = _add_narrow_region_field(gmsh, opts.narrow_regions, hmax, hscale)
+        if fid is not None:
+            extra_field_ids.append(fid)
+
     if opts.size_fields:
-        _configure_mesh_size_fields(gmsh, opts.size_fields, hscale)
+        _configure_mesh_size_fields(gmsh, opts.size_fields, hscale, extra_field_ids)
+    elif extra_field_ids:
+        # No explicit size_fields but we have auto-generated fields (e.g. narrow regions)
+        _configure_mesh_size_fields(gmsh, [], hscale, extra_field_ids)
 
 
 def _apply_post_mesh_options(gmsh: Any, opts: MeshOptions) -> None:
@@ -871,10 +888,48 @@ def _apply_post_mesh_options(gmsh: Any, opts: MeshOptions) -> None:
         gmsh.model.mesh.optimize(method, niter=niter)
 
 
+def _add_narrow_region_field(
+    gmsh: Any,
+    n_resolve: int,
+    hmax: float,
+    hscale: float = 1.0,
+) -> int | None:
+    """Add a size field that refines narrow regions of the geometry.
+
+    Uses a Distance field from all boundary surfaces: the local wall
+    thickness is approximately ``2 × dist_to_nearest_boundary``.
+    The target element size is ``thickness / n_resolve``, clamped to
+    ``[hmax * 0.05, hmax]`` (scaled by *hscale*).
+
+    Returns the Gmsh field ID of a MathEval field, or ``None`` when
+    no surfaces are present.
+    """
+    if n_resolve < 1:
+        return None
+
+    surfaces = gmsh.model.getEntities(2)
+    if not surfaces:
+        return None
+    surf_tags = [t for _, t in surfaces]
+
+    f_dist = gmsh.model.mesh.field.add("Distance")
+    gmsh.model.mesh.field.setNumbers(f_dist, "SurfacesList", surf_tags)
+    gmsh.model.mesh.field.setNumber(f_dist, "Sampling", 20)
+
+    hmin_val = hmax * 0.05 * hscale
+    hmax_val = hmax * hscale
+    # target_h = 2*dist / n_resolve, clamped to [hmin_val, hmax_val]
+    expr = f"Min(Max(2*F{f_dist}/{n_resolve}, {hmin_val}), {hmax_val})"
+    f_math = gmsh.model.mesh.field.add("MathEval")
+    gmsh.model.mesh.field.setString(f_math, "F", expr)
+    return f_math
+
+
 def _configure_mesh_size_fields(
     gmsh: Any,
     fields: list[dict[str, Any]],
     hscale: float = 1.0,
+    extra_field_ids: list[int] | None = None,
 ) -> None:
     """Configure Gmsh mesh size fields from JSON-serializable configs.
 
@@ -908,6 +963,9 @@ def _configure_mesh_size_fields(
                     value = value * hscale
                 gmsh.model.mesh.field.setNumber(fid, key, value)
         field_ids.append(fid)
+
+    if extra_field_ids:
+        field_ids.extend(extra_field_ids)
 
     if field_ids:
         if len(field_ids) > 1:

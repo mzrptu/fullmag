@@ -198,8 +198,6 @@ export default function ModelTree({
   );
 }
 
-/* ── Default model tree for Fullmag ───────────────────────────────── */
-
 export function buildFullmagModelTree(opts: {
   backend?: string;
   geometryKind?: string;
@@ -231,7 +229,16 @@ export function buildFullmagModelTree(opts: {
   onResultsClick?: () => void;
   initialStatePath?: string | null;
   initialStateFormat?: string | null;
+  geometries?: import("@/lib/session/types").ScriptBuilderGeometryEntry[];
 }): TreeNodeData[] {
+  const geos = opts.geometries ?? [];
+
+  /* ── Geometry subtree ─────────────────────────────────────────────── */
+  const geometryChildren: TreeNodeData[] = geos.length > 0
+    ? geos.map((geo) => _buildGeometryNode(geo))
+    : [{ id: "geo-body", label: opts.geometryKind ?? "Body", icon: "◻" }];
+
+  /* ── Physics ─────────────────────────────────────────────────────── */
   const physicsChildren: TreeNodeData[] = [
     { id: "phys-llg", label: "LLG Dynamics", icon: "∂", status: "ready" },
     { 
@@ -262,7 +269,6 @@ export function buildFullmagModelTree(opts: {
     { id: "phys-bc", label: "Boundary Conditions", icon: "▢" },
   ];
 
-  // Add optional physics terms
   if (opts.physicsTerms?.includes("thermal")) {
     physicsChildren.push({ id: "phys-thermal", label: "Thermal Noise", icon: "🌡", status: "pending" });
   }
@@ -270,17 +276,28 @@ export function buildFullmagModelTree(opts: {
     physicsChildren.push({ id: "phys-spin-torque", label: "Spin Torque", icon: "⟳", status: "pending" });
   }
 
+  /* ── Determine geometry-level material summary ────────────────────── */
+  const hasMaterialFromGeos = geos.some((g) => g.material.Ms != null);
+  const materialStatus: NodeStatus = hasMaterialFromGeos
+    ? "ready"
+    : opts.materialMsat != null
+      ? "ready"
+      : "pending";
+  const materialBadge = geos.length > 0
+    ? `${geos.length} ${geos.length === 1 ? "body" : "bodies"}`
+    : opts.materialName ?? "—";
+
   return [
     {
       id: "geometry",
       label: "Geometry",
       icon: "🔷",
-      badge: opts.geometryKind ?? "—",
+      badge: geos.length > 0
+        ? `${geos.length} ${geos.length === 1 ? "body" : "bodies"}`
+        : opts.geometryKind ?? "—",
       status: "ready",
       onClick: opts.onGeometryClick,
-      children: [
-        { id: "geo-body", label: opts.geometryKind ?? "Body", icon: "◻" },
-      ],
+      children: geometryChildren,
     },
     {
       id: "regions",
@@ -297,27 +314,29 @@ export function buildFullmagModelTree(opts: {
       id: "materials",
       label: "Materials",
       icon: "●",
-      badge: opts.materialName ?? "—",
-      status: opts.materialMsat != null ? "ready" : "pending",
+      badge: materialBadge,
+      status: materialStatus,
       onClick: opts.onMaterialClick,
-      children: [
-        { id: "mat-body", label: opts.materialName ?? "Material 1", icon: "●",
-          children: [
-            { id: "mat-ms", label: opts.materialMsat != null ? `Ms = ${fmtCompact(opts.materialMsat)} A/m` : "Ms (saturation)", icon: "𝑀", status: opts.materialMsat != null ? "ready" : "pending" },
-            { id: "mat-aex", label: opts.materialAex != null ? `A = ${opts.materialAex.toExponential(1)} J/m` : "A (exchange)", icon: "𝐴", status: opts.materialAex != null ? "ready" : "pending" },
-            { id: "mat-alpha", label: opts.materialAlpha != null ? `α = ${opts.materialAlpha}` : "α (damping)", icon: "α", status: opts.materialAlpha != null ? "ready" : "pending" },
+      children: geos.length > 0
+        ? geos.map((geo) => _buildMaterialNode(geo))
+        : [
+            { id: "mat-body", label: opts.materialName ?? "Material 1", icon: "●",
+              children: [
+                { id: "mat-ms", label: opts.materialMsat != null ? `Ms = ${fmtCompact(opts.materialMsat)} A/m` : "Ms (saturation)", icon: "𝑀", status: opts.materialMsat != null ? "ready" : "pending" },
+                { id: "mat-aex", label: opts.materialAex != null ? `A = ${opts.materialAex.toExponential(1)} J/m` : "A (exchange)", icon: "𝐴", status: opts.materialAex != null ? "ready" : "pending" },
+                { id: "mat-alpha", label: opts.materialAlpha != null ? `α = ${opts.materialAlpha}` : "α (damping)", icon: "α", status: opts.materialAlpha != null ? "ready" : "pending" },
+              ],
+            },
+            {
+              id: "initial-state",
+              label: "Initial State (m₀)",
+              icon: "📂",
+              status: opts.initialStatePath ? "ready" : "pending",
+              badge: opts.initialStatePath
+                ? (opts.initialStateFormat ?? "file")
+                : "uniform",
+            },
           ],
-        },
-        {
-          id: "initial-state",
-          label: "Initial State (m₀)",
-          icon: "📂",
-          status: opts.initialStatePath ? "ready" : "pending",
-          badge: opts.initialStatePath
-            ? (opts.initialStateFormat ?? "file")
-            : "uniform",
-        },
-      ],
     },
     {
       id: "physics",

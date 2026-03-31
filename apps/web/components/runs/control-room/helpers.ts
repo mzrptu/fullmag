@@ -107,6 +107,13 @@ export function meshOptionsFromBuilder(
     optimizeIters: builder.optimize_iterations,
     computeQuality: builder.compute_quality,
     perElementQuality: builder.per_element_quality,
+    adaptiveEnabled: builder.adaptive_enabled ?? false,
+    adaptivePolicy: builder.adaptive_policy || "auto",
+    adaptiveTheta: builder.adaptive_theta ?? 0.3,
+    adaptiveHMin: builder.adaptive_h_min || "",
+    adaptiveHMax: builder.adaptive_h_max || "",
+    adaptiveMaxPasses: builder.adaptive_max_passes ?? 2,
+    adaptiveErrorTolerance: builder.adaptive_error_tolerance || "1e-3",
   };
 }
 
@@ -136,6 +143,13 @@ export function buildScriptBuilderUpdatePayload(
       optimize_iterations: meshOptions.optimizeIters,
       compute_quality: meshOptions.computeQuality,
       per_element_quality: meshOptions.perElementQuality,
+      adaptive_enabled: meshOptions.adaptiveEnabled,
+      adaptive_policy: meshOptions.adaptivePolicy,
+      adaptive_theta: meshOptions.adaptiveTheta,
+      adaptive_h_min: meshOptions.adaptiveHMin,
+      adaptive_h_max: meshOptions.adaptiveHMax,
+      adaptive_max_passes: meshOptions.adaptiveMaxPasses,
+      adaptive_error_tolerance: meshOptions.adaptiveErrorTolerance,
     },
     stages,
   };

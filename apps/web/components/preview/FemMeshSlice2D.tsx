@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FemMeshData } from "./FemMeshView3D";
 import { DIVERGING_PALETTE, POSITIVE_PALETTE } from "../../lib/colorPalettes";
 
@@ -522,11 +522,26 @@ export default function FemMeshSlice2D({
   sliceCount = 25,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [canvasSize, setCanvasSize] = useState<[number, number]>([0, 0]);
 
   const slice = useMemo(
     () => collectSegments(meshData, plane, component, sliceIndex, sliceCount),
     [meshData, plane, component, sliceIndex, sliceCount],
   );
+
+  // Track container size so the canvas re-draws on resize
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        setCanvasSize([Math.round(width), Math.round(height)]);
+      }
+    });
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -598,11 +613,14 @@ export default function FemMeshSlice2D({
       );
     } else {
       const { min, max } = slice.valueRange;
+      const hasField = !!meshData.fieldData;
 
       // Draw volume polygons
       for (const poly of slice.polygons) {
         if (poly.points.length < 3) continue;
-        ctx.fillStyle = colorForValue(poly.value, min, max, quantityId);
+        ctx.fillStyle = hasField
+          ? colorForValue(poly.value, min, max, quantityId)
+          : "rgba(108, 112, 134, 0.18)";
         ctx.beginPath();
         const first = map(poly.points[0]);
         ctx.moveTo(first[0], first[1]);
@@ -613,9 +631,9 @@ export default function FemMeshSlice2D({
         ctx.closePath();
         ctx.fill();
 
-        // Thin element boundaries
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
-        ctx.lineWidth = 0.5;
+        // Element boundaries — prominent when no field, subtle with field data
+        ctx.strokeStyle = hasField ? "rgba(0, 0, 0, 0.2)" : "rgba(166, 173, 200, 0.55)";
+        ctx.lineWidth = hasField ? 0.5 : 1;
         ctx.stroke();
       }
 
@@ -623,10 +641,14 @@ export default function FemMeshSlice2D({
       for (const segment of slice.segments) {
         const [x1, y1] = map(segment.a);
         const [x2, y2] = map(segment.b);
-        const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
-        gradient.addColorStop(0, colorForValue(segment.va, min, max, quantityId));
-        gradient.addColorStop(1, colorForValue(segment.vb, min, max, quantityId));
-        ctx.strokeStyle = gradient;
+        if (hasField) {
+          const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
+          gradient.addColorStop(0, colorForValue(segment.va, min, max, quantityId));
+          gradient.addColorStop(1, colorForValue(segment.vb, min, max, quantityId));
+          ctx.strokeStyle = gradient;
+        } else {
+          ctx.strokeStyle = "rgba(166, 173, 200, 0.7)";
+        }
         ctx.lineWidth = 2.35;
         ctx.beginPath();
         ctx.moveTo(x1, y1);
@@ -649,12 +671,15 @@ export default function FemMeshSlice2D({
     ctx.font = "600 12px IBM Plex Mono, monospace";
     ctx.textAlign = "right";
     const elementCount = slice.segments.length + slice.polygons.length;
+    const fieldLabel = meshData.fieldData
+      ? `${quantityLabel}.${component}`
+      : "mesh";
     ctx.fillText(
-      `${quantityLabel}.${component} | ${slice.normalLabel}=${slice.planeCoord.toExponential(3)} m | ${elementCount} elements`,
+      `${fieldLabel} | ${slice.normalLabel}=${slice.planeCoord.toExponential(3)} m | ${elementCount} elements`,
       width - 16,
       18,
     );
-  }, [component, plane, quantityId, quantityLabel, slice, sliceCount]);
+  }, [canvasSize, component, meshData.fieldData, plane, quantityId, quantityLabel, slice, sliceCount]);
 
   return (
     <div className="relative h-full min-h-[360px] w-full overflow-hidden rounded-[8px] bg-[#1e1e2e]">

@@ -57,6 +57,7 @@ interface Props {
   onShowArrowsChange?: (value: boolean) => void;
   onShrinkFactorChange?: (value: number) => void;
   onSelectionChange?: (selection: MeshSelectionSnapshot) => void;
+  onRefine?: (faceIndices: number[], factor: number) => void;
 }
 
 const RENDER_OPTIONS: { value: RenderMode; label: string }[] = [
@@ -146,6 +147,7 @@ function FemMeshView3DInner({
   onShowArrowsChange,
   onShrinkFactorChange,
   onSelectionChange,
+  onRefine,
 }: Props) {
   const [internalRenderMode, setInternalRenderMode] = useState<RenderMode>("surface");
   const [field, setField] = useState<FemColorField>(colorField);
@@ -185,11 +187,8 @@ function FemMeshView3DInner({
   useEffect(() => {
     setSelectedFaces([]); setHoveredFace(null); setCtxMenu(null);
     faceARsRef.current = null;
-    // Only auto-fit camera when topology actually changes
-    if (lastFittedTopologyRef.current !== topologySignature) {
-      lastFittedTopologyRef.current = topologySignature;
-      setCameraFitGeneration((g) => g + 1);
-    }
+    // Note: Camera auto-fit is now handled in handleGeometryCenter based on physical bounds, 
+    // not purely on node counts, to prevent camera resets during remeshing operations.
   }, [topologySignature]);
 
   useEffect(() => {
@@ -228,12 +227,18 @@ function FemMeshView3DInner({
     return () => window.removeEventListener("click", dismiss);
   }, [ctxMenu]);
 
-  const lastFittedTopologyRef = useRef<string | null>(null);
+  const lastFittedGeomRef = useRef<string | null>(null);
 
   const handleGeometryCenter = useCallback((c: THREE.Vector3, m: number, s: THREE.Vector3) => {
     setGeomCenter(c); setMaxDim(m); setGeomSize([s.x, s.y, s.z]);
-    // Only auto-fit camera on the very first geometry or when topology changes.
-    // Field data updates (new magnetization vectors) must NOT reset camera.
+    
+    // Create a stable signature based on the bounding box dimensions and center, rounded to 4 decimals.
+    // This ensures that remeshing the EXACT SAME physical geometry does not reset the camera.
+    const sig = `${m.toFixed(4)}_${c.x.toFixed(4)}_${c.y.toFixed(4)}_${c.z.toFixed(4)}`;
+    if (lastFittedGeomRef.current !== sig) {
+      lastFittedGeomRef.current = sig;
+      setCameraFitGeneration((g) => g + 1);
+    }
   }, []);
 
   const setCameraPreset = useCallback((view: "reset" | "front" | "top" | "right") => {
@@ -385,6 +390,19 @@ function FemMeshView3DInner({
         {clipEnabled && <><span className="w-[3px] h-[3px] rounded-full bg-slate-500/50" /><span className="text-amber-500">clip {clipAxis.toUpperCase()} @ {clipPos}%</span></>}
         {selectedFaces.length > 0 && <><span className="w-[3px] h-[3px] rounded-full bg-slate-500/50" /><span className="text-blue-400">{selectedFaces.length} selected</span></>}
       </div>
+
+      {/* ── Lasso refine floating toolbar ── */}
+      {selectedFaces.length > 0 && onRefine && (
+        <div className="absolute bottom-12 left-1/2 -translate-x-1/2 flex items-center gap-2 p-2 rounded-lg bg-slate-900/90 backdrop-blur-md border border-slate-500/30 shadow-xl z-30 pointer-events-auto">
+          <span className="text-[0.65rem] font-mono text-slate-400 px-1">{selectedFaces.length} faces</span>
+          <div className="w-px h-4 bg-slate-500/30" />
+          <button className="text-[0.65rem] font-semibold uppercase tracking-widest text-emerald-400 hover:text-emerald-300 px-2 py-1 rounded hover:bg-emerald-500/10 transition-colors" onClick={() => { onRefine(selectedFaces, 0.5); setSelectedFaces([]); }}>Refine ×2</button>
+          <button className="text-[0.65rem] font-semibold uppercase tracking-widest text-emerald-400 hover:text-emerald-300 px-2 py-1 rounded hover:bg-emerald-500/10 transition-colors" onClick={() => { onRefine(selectedFaces, 0.25); setSelectedFaces([]); }}>Refine ×4</button>
+          <button className="text-[0.65rem] font-semibold uppercase tracking-widest text-amber-400 hover:text-amber-300 px-2 py-1 rounded hover:bg-amber-500/10 transition-colors" onClick={() => { onRefine(selectedFaces, 2.0); setSelectedFaces([]); }}>Coarsen ×2</button>
+          <div className="w-px h-4 bg-slate-500/30" />
+          <button className="text-[0.65rem] font-semibold uppercase tracking-widest text-slate-400 hover:text-slate-200 px-2 py-1 rounded hover:bg-slate-500/10 transition-colors" onClick={() => setSelectedFaces([])}>Clear</button>
+        </div>
+      )}
 
       <ViewCube sceneRef={viewCubeSceneRef} onRotate={handleViewCubeRotate} />
       {showOrientationLegend && <HslSphere sceneRef={viewCubeSceneRef} />}
