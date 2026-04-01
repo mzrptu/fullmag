@@ -3,30 +3,60 @@ use serde_json::Value;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ScriptBuilderSolverState {
+    #[serde(default = "default_solver_integrator")]
     pub integrator: String,
+    #[serde(default = "default_solver_timestep")]
     pub fixed_timestep: String,
+    #[serde(default = "default_solver_relax_algorithm")]
     pub relax_algorithm: String,
+    #[serde(default = "default_solver_torque_tol")]
     pub torque_tolerance: String,
+    #[serde(default = "default_solver_energy_tol")]
     pub energy_tolerance: String,
+    #[serde(default = "default_solver_max_steps")]
     pub max_relax_steps: String,
+}
+
+impl Default for ScriptBuilderSolverState {
+    fn default() -> Self {
+        Self {
+            integrator: default_solver_integrator(),
+            fixed_timestep: default_solver_timestep(),
+            relax_algorithm: default_solver_relax_algorithm(),
+            torque_tolerance: default_solver_torque_tol(),
+            energy_tolerance: default_solver_energy_tol(),
+            max_relax_steps: default_solver_max_steps(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ScriptBuilderMeshState {
+    #[serde(default = "default_mesh_algo_2d")]
     pub algorithm_2d: i64,
+    #[serde(default = "default_mesh_algo_3d")]
     pub algorithm_3d: i64,
+    #[serde(default)]
     pub hmax: String,
+    #[serde(default)]
     pub hmin: String,
+    #[serde(default = "default_mesh_size_factor")]
     pub size_factor: f64,
+    #[serde(default)]
     pub size_from_curvature: i64,
     #[serde(default)]
     pub growth_rate: String,
     #[serde(default)]
     pub narrow_regions: i64,
+    #[serde(default = "default_mesh_smoothing")]
     pub smoothing_steps: i64,
+    #[serde(default)]
     pub optimize: String,
+    #[serde(default = "default_mesh_opt_iters")]
     pub optimize_iterations: i64,
+    #[serde(default)]
     pub compute_quality: bool,
+    #[serde(default)]
     pub per_element_quality: bool,
     #[serde(default)]
     pub adaptive_enabled: bool,
@@ -42,6 +72,33 @@ pub struct ScriptBuilderMeshState {
     pub adaptive_max_passes: u32,
     #[serde(default)]
     pub adaptive_error_tolerance: String,
+}
+
+impl Default for ScriptBuilderMeshState {
+    fn default() -> Self {
+        Self {
+            algorithm_2d: default_mesh_algo_2d(),
+            algorithm_3d: default_mesh_algo_3d(),
+            hmax: String::new(),
+            hmin: String::new(),
+            size_factor: default_mesh_size_factor(),
+            size_from_curvature: 0,
+            growth_rate: String::new(),
+            narrow_regions: 0,
+            smoothing_steps: default_mesh_smoothing(),
+            optimize: String::new(),
+            optimize_iterations: default_mesh_opt_iters(),
+            compute_quality: false,
+            per_element_quality: false,
+            adaptive_enabled: false,
+            adaptive_policy: default_adaptive_mesh_policy(),
+            adaptive_theta: default_adaptive_mesh_theta(),
+            adaptive_h_min: String::new(),
+            adaptive_h_max: String::new(),
+            adaptive_max_passes: default_adaptive_mesh_max_passes(),
+            adaptive_error_tolerance: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -282,4 +339,52 @@ const fn default_adaptive_mesh_theta() -> f64 {
 
 const fn default_adaptive_mesh_max_passes() -> u32 {
     5
+}
+
+// --- ScriptBuilderSolverState defaults ---
+
+fn default_solver_integrator() -> String {
+    "rkf45".to_string()
+}
+
+fn default_solver_timestep() -> String {
+    "1e-13".to_string()
+}
+
+fn default_solver_relax_algorithm() -> String {
+    "llg_overdamped".to_string()
+}
+
+fn default_solver_torque_tol() -> String {
+    "1e-5".to_string()
+}
+
+fn default_solver_energy_tol() -> String {
+    "1e-8".to_string()
+}
+
+fn default_solver_max_steps() -> String {
+    "100000".to_string()
+}
+
+// --- ScriptBuilderMeshState defaults ---
+
+const fn default_mesh_algo_2d() -> i64 {
+    6 // Frontal-Delaunay
+}
+
+const fn default_mesh_algo_3d() -> i64 {
+    1 // Delaunay
+}
+
+const fn default_mesh_size_factor() -> f64 {
+    1.0
+}
+
+const fn default_mesh_smoothing() -> i64 {
+    1
+}
+
+const fn default_mesh_opt_iters() -> i64 {
+    1
 }

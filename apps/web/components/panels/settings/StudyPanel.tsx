@@ -17,7 +17,7 @@ import {
   timestepModeForPlan,
   precessionModeForPlan,
 } from "./helpers";
-import { SidebarSection } from "./primitives";
+import { SidebarSection, InfoRow, StatusBadge } from "./primitives";
 import TextField from "../../ui/TextField";
 import SelectField from "../../ui/SelectField";
 
@@ -136,149 +136,78 @@ export default function StudyPanel() {
   ];
 
   return (
-    <div className="flex flex-col pt-4 px-2">
-      <SidebarSection title="Active Backend Configuration" defaultOpen={true}>
-        <div className="grid grid-cols-3 gap-3">
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">State</span>
-            <span className="font-mono text-xs text-foreground">{ctx.workspaceStatus}</span>
+    <>
+      <SidebarSection title="Backend Configuration" icon="⚙" defaultOpen={true}>
+        <div className="flex flex-col gap-1">
+          <InfoRow label="State" value={ctx.workspaceStatus} />
+          <InfoRow label="Study" value={studyKindForPlan(solverPlan)} />
+          <InfoRow label="Engine" value={ctx.runtimeEngineLabel ?? ctx.sessionFooter.requestedBackend ?? "—"} />
+          <div className="h-px bg-border/40 my-1" />
+          <InfoRow label="Backend" value={humanizeToken(solverPlan?.resolvedBackend ?? solverPlan?.backendKind ?? ctx.sessionFooter.requestedBackend)} />
+          <InfoRow label="Mode" value={humanizeToken(solverPlan?.executionMode ?? ctx.session?.execution_mode)} />
+          <InfoRow label="Precision" value={humanizeToken(solverPlan?.precision ?? ctx.session?.precision)} />
+          <div className="h-px bg-border/40 my-1" />
+          <InfoRow label="Integrator" value={integratorProfile?.label ?? humanizeToken(solverPlan?.integrator)} />
+          <InfoRow label="Δt control" value={timestepModeForPlan(solverPlan)} />
+          <InfoRow label="Precession" value={precessionModeForPlan(solverPlan)} />
+          <div className="h-px bg-border/40 my-1" />
+          <InfoRow label="γ" value={solverPlan?.gyromagneticRatio != null ? `${fmtExp(solverPlan.gyromagneticRatio)} m/(A·s)` : "—"} />
+          <InfoRow label="Exchange BC" value={humanizeToken(solverPlan?.exchangeBoundary)} />
+          <InfoRow label="Workload" value={workloadLabel} />
+          <div className="h-px bg-border/40 my-1" />
+          <InfoRow
+            label="Discretization"
+            value={!solverPlan
+              ? "—"
+              : solverPlan.backendKind === "fem"
+              ? `P${solverPlan.feOrder ?? "?"} · hmax ${solverPlan.hmax != null ? fmtSI(solverPlan.hmax, "m") : "—"}`
+              : `${formatGrid(solverPlan?.gridCells ?? null)} cells · ${formatVector(solverPlan?.cellSize ?? null, "m")}`}
+          />
+          <InfoRow label="External field" value={formatVector(solverPlan?.externalField ?? null, "T")} />
+
+          {(solverPlan?.fixedTimestep != null || solverPlan?.adaptive) && (
+            <>
+              <div className="h-px bg-border/40 my-1" />
+              {solverPlan?.fixedTimestep != null && <InfoRow label="Fixed Δt" value={fmtSI(solverPlan.fixedTimestep, "s")} />}
+              {solverPlan?.adaptive && (
+                <>
+                  <InfoRow label="Adaptive atol" value={solverPlan.adaptive.atol != null ? fmtExp(solverPlan.adaptive.atol) : "—"} />
+                  <InfoRow label="Adaptive dt₀" value={solverPlan.adaptive.dtInitial != null ? fmtSI(solverPlan.adaptive.dtInitial, "s") : "—"} />
+                  <InfoRow label="Adaptive range" value={`${solverPlan.adaptive.dtMin != null ? fmtSI(solverPlan.adaptive.dtMin, "s") : "—"} → ${solverPlan.adaptive.dtMax != null ? fmtSI(solverPlan.adaptive.dtMax, "s") : "—"}`} />
+                </>
+              )}
+            </>
+          )}
+
+          {solverPlan?.relaxation && (
+            <>
+              <div className="h-px bg-border/40 my-1" />
+              <InfoRow label="Relax algorithm" value={relaxationProfile?.label ?? humanizeToken(solverPlan.relaxation.algorithm)} />
+              <InfoRow label="Max steps" value={solverPlan.relaxation.maxSteps != null ? solverPlan.relaxation.maxSteps.toLocaleString() : "—"} />
+              <InfoRow label="Torque tol." value={solverPlan.relaxation.torqueTolerance != null ? fmtExp(solverPlan.relaxation.torqueTolerance) : "—"} />
+              <InfoRow label="Energy tol." value={solverPlan.relaxation.energyTolerance != null ? fmtExp(solverPlan.relaxation.energyTolerance) : "—"} />
+            </>
+          )}
+
+          <div className="flex flex-wrap gap-1.5 mt-3 pt-2 border-t border-border/40">
+            {solverPlan?.exchangeEnabled && <StatusBadge label="Exchange" />}
+            {solverPlan?.demagEnabled && <StatusBadge label="Demag" />}
+            {solverPlan?.externalField?.some((value) => value !== 0) && <StatusBadge label="Zeeman" />}
+            {solverPlan?.adaptive && <StatusBadge label="Adaptive Δt" />}
+            {solverPlan?.relaxation && <StatusBadge label="Relaxation stage" />}
           </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Study</span>
-            <span className="font-mono text-xs text-foreground">{studyKindForPlan(solverPlan)}</span>
-          </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Engine</span>
-            <span className="font-mono text-xs text-foreground">{ctx.runtimeEngineLabel ?? ctx.sessionFooter.requestedBackend ?? "—"}</span>
-          </div>
+
+          {solverPlan?.notes.length ? (
+            <div className="mt-4 flex flex-col gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-md shadow-sm">
+              {solverPlan.notes.map((note) => (
+                <div key={note} className="text-xs text-amber-600/90 font-medium leading-relaxed">{note}</div>
+              ))}
+            </div>
+          ) : null}
         </div>
-
-        <div className="grid grid-cols-3 gap-3 mt-4">
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Backend</span>
-            <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.resolvedBackend ?? solverPlan?.backendKind ?? ctx.sessionFooter.requestedBackend)}</span>
-          </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Mode</span>
-            <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.executionMode ?? ctx.session?.execution_mode)}</span>
-          </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Precision</span>
-            <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.precision ?? ctx.session?.precision)}</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-3 mt-4">
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Integrator</span>
-            <span className="font-mono text-xs text-foreground">{integratorProfile?.label ?? humanizeToken(solverPlan?.integrator)}</span>
-          </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Δt control</span>
-            <span className="font-mono text-xs text-foreground">{timestepModeForPlan(solverPlan)}</span>
-          </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Precession</span>
-            <span className="font-mono text-xs text-foreground">{precessionModeForPlan(solverPlan)}</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-3 mt-4">
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">γ</span>
-            <span className="font-mono text-xs text-foreground">{solverPlan?.gyromagneticRatio != null ? `${fmtExp(solverPlan.gyromagneticRatio)} m/(A·s)` : "—"}</span>
-          </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Exchange BC</span>
-            <span className="font-mono text-xs text-foreground">{humanizeToken(solverPlan?.exchangeBoundary)}</span>
-          </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Workload</span>
-            <span className="font-mono text-xs text-foreground">{workloadLabel}</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 mt-4">
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Discretization</span>
-            <span className="font-mono text-xs text-foreground">
-              {!solverPlan
-                ? "—"
-                : solverPlan.backendKind === "fem"
-                ? `P${solverPlan.feOrder ?? "?"} · hmax ${solverPlan.hmax != null ? fmtSI(solverPlan.hmax, "m") : "—"}`
-                : `${formatGrid(solverPlan?.gridCells ?? null)} cells · ${formatVector(solverPlan?.cellSize ?? null, "m")}`}
-            </span>
-          </div>
-          <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">External field</span>
-            <span className="font-mono text-xs text-foreground">{formatVector(solverPlan?.externalField ?? null, "T")}</span>
-          </div>
-        </div>
-
-        {(solverPlan?.fixedTimestep != null || solverPlan?.adaptive) && (
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Fixed Δt</span>
-              <span className="font-mono text-xs text-foreground">{solverPlan?.fixedTimestep != null ? fmtSI(solverPlan.fixedTimestep, "s") : "—"}</span>
-            </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Adaptive atol</span>
-              <span className="font-mono text-xs text-foreground">{solverPlan?.adaptive?.atol != null ? fmtExp(solverPlan.adaptive.atol) : "—"}</span>
-            </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Adaptive dt₀</span>
-              <span className="font-mono text-xs text-foreground">{solverPlan?.adaptive?.dtInitial != null ? fmtSI(solverPlan.adaptive.dtInitial, "s") : "—"}</span>
-            </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Adaptive range</span>
-              <span className="font-mono text-xs text-foreground">
-                {solverPlan?.adaptive
-                  ? `${solverPlan.adaptive.dtMin != null ? fmtSI(solverPlan.adaptive.dtMin, "s") : "—"} → ${solverPlan.adaptive.dtMax != null ? fmtSI(solverPlan.adaptive.dtMax, "s") : "—"}`
-                  : "—"}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {solverPlan?.relaxation && (
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Relax algorithm</span>
-              <span className="font-mono text-xs text-foreground">{relaxationProfile?.label ?? humanizeToken(solverPlan.relaxation.algorithm)}</span>
-            </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Max steps</span>
-              <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.maxSteps != null ? solverPlan.relaxation.maxSteps.toLocaleString() : "—"}</span>
-            </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Torque tol.</span>
-              <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.torqueTolerance != null ? fmtExp(solverPlan.relaxation.torqueTolerance) : "—"}</span>
-            </div>
-            <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Energy tol.</span>
-              <span className="font-mono text-xs text-foreground">{solverPlan.relaxation.energyTolerance != null ? fmtExp(solverPlan.relaxation.energyTolerance) : "—"}</span>
-            </div>
-          </div>
-        )}
-
-        <div className="flex flex-wrap gap-1.5 mt-5">
-          {solverPlan?.exchangeEnabled && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Exchange</span>}
-          {solverPlan?.demagEnabled && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Demag</span>}
-          {solverPlan?.externalField?.some((value) => value !== 0) && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Zeeman</span>}
-          {solverPlan?.adaptive && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Adaptive Δt</span>}
-          {solverPlan?.relaxation && <span className="text-[0.55rem] font-medium uppercase tracking-wider border border-border/30 bg-card/20 text-muted-foreground px-1.5 py-0.5 rounded-md inline-flex w-fit">Relaxation stage</span>}
-        </div>
-
-        {solverPlan?.notes.length ? (
-          <div className="mt-5 flex flex-col gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-md shadow-sm">
-            {solverPlan.notes.map((note) => (
-              <div key={note} className="text-xs text-amber-600/90 font-medium leading-relaxed">{note}</div>
-            ))}
-          </div>
-        ) : null}
       </SidebarSection>
 
-      <SidebarSection title="Stage Sequence" defaultOpen={true}>
+      <SidebarSection title="Stage Sequence" icon="📋" defaultOpen={true}>
         {ctx.studyStages.length > 0 ? (
           <div className="flex flex-col gap-3">
             {ctx.studyStages.map((stage, index) => (
@@ -289,7 +218,7 @@ export default function StudyPanel() {
                       {stageTitle(stage, index)}
                     </div>
                     <div className="text-sm font-semibold text-foreground">{stageSummary(stage)}</div>
-                    <div className="text-[0.7rem] text-muted-foreground">
+                    <div className="text-[0.7rem] text-muted-foreground mt-0.5">
                       Entrypoint: <span className="font-mono text-foreground/90">{stage.entrypoint_kind || "—"}</span>
                     </div>
                   </div>
@@ -298,14 +227,14 @@ export default function StudyPanel() {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 mt-3">
-                  <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-background/20 p-2.5">
+                <div className="grid grid-cols-2 gap-3 mt-4">
+                  <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-background/20 p-2.5 shadow-inner shadow-black/5">
                     <span className="text-[0.55rem] font-medium uppercase tracking-wider text-muted-foreground">Integrator</span>
                     <span className="font-mono text-xs text-foreground">{humanizeToken(stage.integrator)}</span>
                   </div>
-                  <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-background/20 p-2.5">
+                  <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-background/20 p-2.5 shadow-inner shadow-black/5">
                     <span className="text-[0.55rem] font-medium uppercase tracking-wider text-muted-foreground">Fixed Δt</span>
-                    <span className="font-mono text-xs text-foreground">{stage.fixed_timestep || "adaptive / backend default"}</span>
+                    <span className="font-mono text-xs text-foreground">{stage.fixed_timestep || "adaptive / default"}</span>
                   </div>
                 </div>
 
@@ -317,6 +246,7 @@ export default function StudyPanel() {
                       onchange={(e) => updateStage(index, { until_seconds: e.target.value })}
                       placeholder="1e-12"
                       disabled={stageEditingDisabled}
+                      mono
                       tooltip="Target simulation physical time for this execution stage. Reaching this time completes the stage."
                     />
                   </div>
@@ -344,6 +274,7 @@ export default function StudyPanel() {
                         onchange={(e) => updateStage(index, { max_steps: e.target.value })}
                         placeholder="5000"
                         disabled={stageEditingDisabled}
+                        mono
                         tooltip="Maximum allowed iterations for the relaxation stage before timing out or moving on."
                       />
                     </div>
@@ -354,6 +285,7 @@ export default function StudyPanel() {
                         onchange={(e) => updateStage(index, { torque_tolerance: e.target.value })}
                         placeholder="1e-6"
                         disabled={stageEditingDisabled}
+                        mono
                         tooltip="Stopping criterion based on the maximum normalized torque (dm/dt) across all cells."
                       />
                     </div>
@@ -364,6 +296,7 @@ export default function StudyPanel() {
                         onchange={(e) => updateStage(index, { energy_tolerance: e.target.value })}
                         placeholder="disabled"
                         disabled={stageEditingDisabled}
+                        mono
                         tooltip="Stopping criterion based on the fractional energy change between steps."
                       />
                     </div>
@@ -385,7 +318,49 @@ export default function StudyPanel() {
         )}
       </SidebarSection>
 
-      <SidebarSection title="Performance And Physics" defaultOpen={false}>
+      <SidebarSection title="Runtime Settings" icon="🎛" defaultOpen={true}>
+        <div className="flex flex-col gap-3">
+          <TextField
+            label="Run until [s]"
+            value={ctx.runUntilInput || ""}
+            onchange={(e) => ctx.setRunUntilInput(e.target.value)}
+            disabled={stageEditingDisabled}
+            mono
+            tooltip="Simulation target time for the next interactive run command."
+          />
+          <div className="grid grid-cols-2 gap-3 mt-1">
+            <TextField
+              label="Relax steps"
+              value={ctx.solverSettings.maxRelaxSteps || ""}
+              onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, maxRelaxSteps: e.target.value }))}
+              disabled={stageEditingDisabled}
+              mono
+              tooltip="Maximum iterations for the next interactive relax command."
+            />
+            <TextField
+              label="Torque tol."
+              value={ctx.solverSettings.torqueTolerance || ""}
+              onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, torqueTolerance: e.target.value }))}
+              disabled={stageEditingDisabled}
+              mono
+              tooltip="Torque (dm/dt) convergence threshold for the interactive relax."
+            />
+            <div className="col-span-2">
+              <TextField
+                label="Energy tol."
+                value={ctx.solverSettings.energyTolerance || ""}
+                onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, energyTolerance: e.target.value }))}
+                placeholder="disabled"
+                disabled={stageEditingDisabled}
+                mono
+                tooltip="Fractional energy change convergence threshold."
+              />
+            </div>
+          </div>
+        </div>
+      </SidebarSection>
+
+      <SidebarSection title="Performance" icon="📊" defaultOpen={false}>
         <div className="grid gap-3">
           {insightCards.map((card) => (
             <div key={card.title} className="bg-card/50 border border-border/50 shadow-sm rounded-lg p-3.5 flex flex-col gap-1">
@@ -396,44 +371,6 @@ export default function StudyPanel() {
           ))}
         </div>
       </SidebarSection>
-
-      <SidebarSection title="Next Interactive Command" defaultOpen={true}>
-        <div className="flex flex-col gap-3 p-3 bg-muted/30 border border-border/50 rounded-lg shadow-inner">
-          <TextField
-            label="Run until [s]"
-            value={ctx.runUntilInput || ""}
-            onchange={(e) => ctx.setRunUntilInput(e.target.value)}
-            disabled={stageEditingDisabled}
-            tooltip="Simulation target time for the next interactive run command."
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3 mt-3">
-          <TextField
-            label="Relax steps"
-            value={ctx.solverSettings.maxRelaxSteps || ""}
-            onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, maxRelaxSteps: e.target.value }))}
-            disabled={stageEditingDisabled}
-            tooltip="Maximum iterations for the next interactive relax command."
-          />
-          <TextField
-            label="Torque tol."
-            value={ctx.solverSettings.torqueTolerance || ""}
-            onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, torqueTolerance: e.target.value }))}
-            disabled={stageEditingDisabled}
-            tooltip="Torque (dm/dt) convergence threshold for the interactive relax."
-          />
-          <div className="col-span-2">
-            <TextField
-              label="Energy tol."
-              value={ctx.solverSettings.energyTolerance || ""}
-              onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, energyTolerance: e.target.value }))}
-              placeholder="disabled"
-              disabled={stageEditingDisabled}
-              tooltip="Fractional energy change convergence threshold."
-            />
-          </div>
-        </div>
-      </SidebarSection>
-    </div>
+    </>
   );
 }
