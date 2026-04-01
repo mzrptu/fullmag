@@ -383,6 +383,140 @@ class MeshData:
         }
 
 
+def _add_airbox_geo(
+    gmsh: Any,
+    body_vol_tags: list[int],
+    body_surf_tags: list[int],
+    airbox: AirboxOptions,
+    hmax: float,
+) -> None:
+    """Add an airbox around a GEO-kernel body using pure GEO primitives.
+
+    This is the GEO-kernel equivalent of :func:`_add_airbox_and_fragment`.
+    It is required for STL-imported bodies whose entities live in the GEO
+    kernel and are invisible to OCC boolean operations.
+
+    The airbox volume is defined as the box (or sphere-approximation)
+    bounded externally by six planar faces and internally by the body
+    surface.  The body surface loop is reused as a *hole* in the airbox
+    shell, producing a conforming interface without OCC ``fragment``.
+
+    After return the model has the same physical groups as the OCC path:
+      - volume physical group 1 = magnetic body,
+      - volume physical group 2 = air,
+      - surface physical group ``airbox.boundary_marker`` = Γ_out,
+      - surface physical group 10 = magnetic–air interface.
+    """
+    # 1 — bounding box of magnetic body
+    xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(-1, -1)
+    dx, dy, dz = xmax - xmin, ymax - ymin, zmax - zmin
+    cx, cy, cz = (xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2
+    pf = airbox.padding_factor
+
+    # 2 — compute outer box dimensions
+    explicit_size = airbox.size
+    explicit_center = airbox.center
+    if explicit_size is not None:
+        ox, oy, oz = explicit_size
+        if min(ox, oy, oz) <= 0.0:
+            raise ValueError("airbox.size components must be positive")
+        if explicit_center is not None:
+            cx, cy, cz = explicit_center
+    elif airbox.shape == "sphere":
+        # Approximate sphere with bounding box for the GEO path
+        R = max(dx, dy, dz) / 2 * pf
+        ox = oy = oz = 2.0 * R
+    else:  # bbox
+        ox, oy, oz = dx * pf, dy * pf, dz * pf
+
+    x0, y0, z0 = cx - ox / 2, cy - oy / 2, cz - oz / 2
+    x1, y1, z1 = cx + ox / 2, cy + oy / 2, cz + oz / 2
+    h_outer = hmax * max(airbox.grading_ratio ** 4, 1.0)
+
+    # 3 — build box geometry using GEO points/lines/surfaces
+    p = []
+    for z in [z0, z1]:
+        for y in [y0, y1]:
+            for x in [x0, x1]:
+                p.append(gmsh.model.geo.addPoint(x, y, z, h_outer))
+    # p[0..7]: bottom-face (z0) then top-face (z1), each in order (x0y0, x1y0, x0y1, x1y1)
+
+    # Bottom face edges
+    lb = [
+        gmsh.model.geo.addLine(p[0], p[1]),
+        gmsh.model.geo.addLine(p[1], p[3]),
+        gmsh.model.geo.addLine(p[3], p[2]),
+        gmsh.model.geo.addLine(p[2], p[0]),
+    ]
+    # Top face edges
+    lt = [
+        gmsh.model.geo.addLine(p[4], p[5]),
+        gmsh.model.geo.addLine(p[5], p[7]),
+        gmsh.model.geo.addLine(p[7], p[6]),
+        gmsh.model.geo.addLine(p[6], p[4]),
+    ]
+    # Vertical edges
+    lv = [
+        gmsh.model.geo.addLine(p[0], p[4]),
+        gmsh.model.geo.addLine(p[1], p[5]),
+        gmsh.model.geo.addLine(p[2], p[6]),
+        gmsh.model.geo.addLine(p[3], p[7]),
+    ]
+
+    # 6 planar faces
+    cl_bot = gmsh.model.geo.addCurveLoop([lb[0], lb[1], lb[2], lb[3]])
+    cl_top = gmsh.model.geo.addCurveLoop([lt[0], lt[1], lt[2], lt[3]])
+    cl_front = gmsh.model.geo.addCurveLoop([lb[0], lv[1], -lt[0], -lv[0]])
+    cl_back = gmsh.model.geo.addCurveLoop([lb[2], lv[2], -lt[2], -lv[3]])
+    cl_left = gmsh.model.geo.addCurveLoop([lb[3], lv[0], -lt[3], -lv[2]])
+    cl_right = gmsh.model.geo.addCurveLoop([lb[1], lv[3], -lt[1], -lv[1]])
+
+    s_bot = gmsh.model.geo.addPlaneSurface([cl_bot])
+    s_top = gmsh.model.geo.addPlaneSurface([cl_top])
+    s_front = gmsh.model.geo.addPlaneSurface([cl_front])
+    s_back = gmsh.model.geo.addPlaneSurface([cl_back])
+    s_left = gmsh.model.geo.addPlaneSurface([cl_left])
+    s_right = gmsh.model.geo.addPlaneSurface([cl_right])
+    outer_surf_tags = [s_bot, s_top, s_front, s_back, s_left, s_right]
+
+    # 4 — airbox volume: outer box faces + body surfaces as inner hole
+    air_sl = gmsh.model.geo.addSurfaceLoop(outer_surf_tags + body_surf_tags)
+    air_vol = gmsh.model.geo.addVolume([air_sl])
+    gmsh.model.geo.synchronize()
+
+    # 5 — physical groups (same convention as the OCC path)
+    gmsh.model.addPhysicalGroup(3, body_vol_tags, tag=1)
+    gmsh.model.setPhysicalName(3, 1, "magnetic")
+    gmsh.model.addPhysicalGroup(3, [air_vol], tag=2)
+    gmsh.model.setPhysicalName(3, 2, "air")
+    gmsh.model.addPhysicalGroup(2, outer_surf_tags, tag=airbox.boundary_marker)
+    gmsh.model.setPhysicalName(2, airbox.boundary_marker, "Gamma_out")
+    gmsh.model.addPhysicalGroup(2, body_surf_tags, tag=10)
+    gmsh.model.setPhysicalName(2, 10, "mag_air_interface")
+
+    # 6 — mesh grading: fine at interface, coarse at outer boundary
+    if airbox.grading_ratio > 1.0:
+        if explicit_size is not None:
+            d_outer = max(
+                max(ox - dx, 0.0),
+                max(oy - dy, 0.0),
+                max(oz - dz, 0.0),
+            ) / 2.0
+        else:
+            d_outer = max(dx, dy, dz) * (pf - 1) / 2
+
+        gmsh.model.mesh.field.add("Distance", 1)
+        gmsh.model.mesh.field.setNumbers(1, "SurfacesList", body_surf_tags)
+
+        gmsh.model.mesh.field.add("Threshold", 2)
+        gmsh.model.mesh.field.setNumber(2, "InField", 1)
+        gmsh.model.mesh.field.setNumber(2, "SizeMin", hmax)
+        gmsh.model.mesh.field.setNumber(2, "SizeMax", h_outer)
+        gmsh.model.mesh.field.setNumber(2, "DistMin", 0.0)
+        gmsh.model.mesh.field.setNumber(2, "DistMax", max(d_outer, hmax))
+        gmsh.model.mesh.field.setAsBackgroundMesh(2)
+
+
 def _add_airbox_and_fragment(
     gmsh: Any,
     magnetic_tags: list[tuple[int, int]],
@@ -399,6 +533,12 @@ def _add_airbox_and_fragment(
     A graded ``Threshold`` size field is set so that element size equals
     ``hmax`` at the interface and grows by ``grading_ratio`` toward the outer
     boundary.
+
+    .. note::
+
+       This function requires all *magnetic_tags* to be OCC entities.
+       For GEO-kernel bodies (e.g. STL imports), use :func:`_add_airbox_geo`
+       instead.
     """
     # 1 — bounding box of magnetic body
     xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(-1, -1)
@@ -436,6 +576,14 @@ def _add_airbox_and_fragment(
     # 3 — OCC fragment: conforming interface between magnetic body and airbox
     result, result_map = gmsh.model.occ.fragment(outer_dimtags, magnetic_tags)
     gmsh.model.occ.synchronize()
+
+    if not result_map:
+        raise RuntimeError(
+            "OCC fragment returned an empty result_map — the magnetic body "
+            "entities are likely not in the OCC kernel.  If the geometry was "
+            "built from an STL file via the GEO kernel (classifySurfaces / "
+            "createGeometry / geo.addVolume), use _add_airbox_geo() instead."
+        )
 
     # 4 — identify magnetic vs air volumes via result_map
     #     result_map[0]  → children of outer_dimtags  (air + overlap)
@@ -932,13 +1080,28 @@ def _mesh_cad_file(
         gmsh.finalize()
 
 
-def _build_stl_volume_model(gmsh: object, path: Path) -> None:
-    """Classify an STL surface into a watertight volume model via the GEO kernel.
+def _build_stl_volume_model(
+    gmsh: object,
+    path: Path,
+) -> tuple[list[int], list[int]]:
+    """Classify an STL surface into watertight volume model(s) via the GEO kernel.
 
     Shared by both initial meshing (``_mesh_stl_surface``) and adaptive
     remeshing (``_remesh_imported``).  After return, the Gmsh model contains
-    a volume entity ready for ``generate(3)``.
+    one or more volume entities ready for ``generate(3)``.
+
+    When the STL contains multiple disconnected closed surfaces (e.g. two
+    nanoflower bodies concatenated into a single file), each connected
+    component is turned into a separate GEO volume.
+
+    Returns:
+        A tuple ``(volume_tags, surface_tags)`` of the created GEO entities.
+        *volume_tags* may contain more than one tag for multi-body STLs.
+        These are needed by :func:`_add_airbox_geo` to build the airbox
+        shell around the body.
     """
+    from collections import defaultdict
+
     emit_progress("Gmsh: importing STL surface")
     gmsh.merge(str(path))
     angle = 40.0 * math.pi / 180.0
@@ -954,9 +1117,50 @@ def _build_stl_volume_model(gmsh: object, path: Path) -> None:
     surfaces = gmsh.model.getEntities(2)
     if not surfaces:
         raise ValueError(f"failed to recover closed surfaces from STL: {path}")
-    surface_loop = gmsh.model.geo.addSurfaceLoop([tag for _, tag in surfaces])
-    gmsh.model.geo.addVolume([surface_loop])
+    surface_tags = [tag for _, tag in surfaces]
+
+    # --- detect connected components via shared edges (union-find) ---
+    edge_to_surfs: dict[int, set[int]] = defaultdict(set)
+    for _, stag in surfaces:
+        edges = gmsh.model.getBoundary([(2, stag)], oriented=False)
+        for _, etag in edges:
+            edge_to_surfs[abs(etag)].add(stag)
+
+    parent: dict[int, int] = {t: t for t in surface_tags}
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def _union(a: int, b: int) -> None:
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for _edge_tag, stags in edge_to_surfs.items():
+        tags_list = list(stags)
+        for i in range(1, len(tags_list)):
+            _union(tags_list[0], tags_list[i])
+
+    components: dict[int, list[int]] = defaultdict(list)
+    for t in surface_tags:
+        components[_find(t)].append(t)
+
+    # --- create one volume per connected component ---
+    volume_tags: list[int] = []
+    if len(components) == 1:
+        # Single body — simple path (preserves original behaviour)
+        sl = gmsh.model.geo.addSurfaceLoop(surface_tags)
+        volume_tags.append(gmsh.model.geo.addVolume([sl]))
+    else:
+        for _root, comp_surfs in components.items():
+            sl = gmsh.model.geo.addSurfaceLoop(comp_surfs)
+            volume_tags.append(gmsh.model.geo.addVolume([sl]))
+
     gmsh.model.geo.synchronize()
+    return volume_tags, surface_tags
 
 
 def _mesh_stl_surface(
@@ -973,12 +1177,11 @@ def _mesh_stl_surface(
     gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add(path.stem)
-        _build_stl_volume_model(gmsh, path)
+        body_vols, body_surfs = _build_stl_volume_model(gmsh, path)
         has_airbox = airbox is not None
         if has_airbox:
             emit_progress("Gmsh: adding airbox domain")
-            volumes = gmsh.model.getEntities(dim=3)
-            _add_airbox_and_fragment(gmsh, volumes, airbox, hmax)
+            _add_airbox_geo(gmsh, body_vols, body_surfs, airbox, hmax)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
         _apply_mesh_options(gmsh, hmax, order, opts)
         gmsh.model.mesh.generate(3)
@@ -1582,7 +1785,7 @@ def _remesh_imported(
             gmsh.model.occ.synchronize()
         elif suffix == ".stl":
             emit_progress("AFEM: importing STL surface")
-            _build_stl_volume_model(gmsh, path)
+            _build_stl_volume_model(gmsh, path)  # return values unused here
         else:
             raise ValueError(
                 f"adaptive remeshing from file format {suffix!r} not supported; "

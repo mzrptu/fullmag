@@ -1,6 +1,6 @@
 use fullmag_ir::{
-    BackendTarget, FdmGridAssetIR, IntegratorChoice, OutputIR, ProblemIR,
-    RelaxationAlgorithmIR, RelaxationControlIR,
+    BackendTarget, FdmGridAssetIR, IntegratorChoice, OutputIR, ProblemIR, RelaxationAlgorithmIR,
+    RelaxationControlIR,
 };
 use std::collections::BTreeSet;
 
@@ -12,12 +12,9 @@ pub(crate) fn resolve_auto_backend(problem: &ProblemIR) -> BackendTarget {
             .as_ref()
             .is_some_and(|assets| !assets.fdm_grid_assets.is_empty());
     let has_fem = hints.and_then(|value| value.fem.as_ref()).is_some()
-        || problem
-            .geometry_assets
-            .as_ref()
-            .is_some_and(|assets| {
-                !assets.fem_mesh_assets.is_empty() || assets.fem_domain_mesh_asset.is_some()
-            });
+        || problem.geometry_assets.as_ref().is_some_and(|assets| {
+            !assets.fem_mesh_assets.is_empty() || assets.fem_domain_mesh_asset.is_some()
+        });
 
     match (has_fdm, has_fem) {
         (false, true) => BackendTarget::Fem,

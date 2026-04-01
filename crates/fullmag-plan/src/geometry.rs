@@ -71,7 +71,9 @@ pub(crate) fn ir_to_shape(entry: &GeometryEntryIR) -> GeometryShape {
     }
 }
 
-pub(crate) fn extract_multilayer_geometry(entry: &GeometryEntryIR) -> Result<PlacedGeometry, String> {
+pub(crate) fn extract_multilayer_geometry(
+    entry: &GeometryEntryIR,
+) -> Result<PlacedGeometry, String> {
     match entry {
         GeometryEntryIR::Translate { name, base, by } => {
             let mut placed = extract_multilayer_geometry(base)?;

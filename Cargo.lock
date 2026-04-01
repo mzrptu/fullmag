@@ -401,6 +401,7 @@ dependencies = [
  "async-stream",
  "axum",
  "base64",
+ "fullmag-authoring",
  "fullmag-ir",
  "fullmag-plan",
  "fullmag-runner",
@@ -411,6 +412,14 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "fullmag-authoring"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

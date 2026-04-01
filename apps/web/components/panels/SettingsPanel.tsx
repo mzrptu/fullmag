@@ -89,24 +89,36 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
   };
 
   return (
-    <div className="flex flex-col pb-6">
-      <SidebarSection
-        title="Selection"
-        icon="◈"
-        badge={nodeLabel ?? "Workspace"}
-        autoOpenKey={nodeId}
-      >
-        {ctx.selectedObjectId ? (
-          <div className="grid gap-2 rounded-lg border border-border/40 bg-card/20 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-[0.62rem] font-bold uppercase tracking-widest text-muted-foreground">
-                  Object Actions
-                </div>
-                <div className="truncate font-mono text-xs text-foreground">
-                  {ctx.selectedObjectId}
-                </div>
+    <div className="flex flex-col gap-1 pb-6">
+      {/* ── Object Actions (only when an object is selected) ── */}
+      {ctx.selectedObjectId ? (
+        <section className="rounded-xl border border-border/40 bg-gradient-to-b from-card/50 to-card/20 px-4 py-3 shadow-[0_2px_12px_rgba(0,0,0,0.15)] backdrop-blur-xl mb-1">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted-foreground/70">
+                Inspecting
               </div>
+              <div className="truncate font-mono text-sm font-semibold text-foreground mt-0.5">
+                {ctx.selectedObjectId}
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button
+                size="sm"
+                variant={ctx.objectViewMode === "context" ? "default" : "outline"}
+                type="button"
+                onClick={() => ctx.setObjectViewMode("context")}
+              >
+                Context
+              </Button>
+              <Button
+                size="sm"
+                variant={ctx.objectViewMode === "isolate" ? "default" : "outline"}
+                type="button"
+                onClick={() => ctx.setObjectViewMode("isolate")}
+              >
+                Isolate
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -116,32 +128,17 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
                   ctx.requestFocusObject(ctx.selectedObjectId!);
                 }}
               >
-                Focus In 3D
-              </Button>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                size="sm"
-                variant={ctx.objectViewMode === "context" ? "default" : "outline"}
-                type="button"
-                onClick={() => ctx.setObjectViewMode("context")}
-              >
-                Context View
-              </Button>
-              <Button
-                size="sm"
-                variant={ctx.objectViewMode === "isolate" ? "default" : "outline"}
-                type="button"
-                onClick={() => ctx.setObjectViewMode("isolate")}
-              >
-                Isolate View
+                Focus 3D
               </Button>
             </div>
           </div>
-        ) : null}
-        {renderNodeContent()}
-      </SidebarSection>
+        </section>
+      ) : null}
 
+      {/* ── Node-specific content (each sub-panel manages its own SidebarSections) ── */}
+      {renderNodeContent()}
+
+      {/* ── Global sections ── */}
       {showTelemetrySections && (
         <SidebarSection title="Solver Telemetry" icon="📊" badge={ctx.workspaceStatus}>
           <SolverTelemetryPanel />
@@ -168,7 +165,6 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
           )}
         </div>
       </SidebarSection>
-
 
       {builderContract && (
         <SidebarSection

@@ -168,3 +168,151 @@ export function InfoRow({ label, value, mono = true }: InfoRowProps) {
     </div>
   );
 }
+
+/* ── Property row — label left, value in dark inset-styled box ── */
+
+interface PropertyRowProps {
+  label: string;
+  value: string;
+  icon?: ReactNode;
+  mono?: boolean;
+}
+
+export function PropertyRow({ label, value, icon, mono = false }: PropertyRowProps) {
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80 shrink-0 min-w-[4.5rem]">
+        {label}
+      </span>
+      <div className={cn(
+        "flex-1 flex items-center gap-2 h-8 px-3 rounded-md border border-border/30 bg-background/60 shadow-inner shadow-black/10 text-xs text-foreground min-w-0",
+        mono && "font-mono tracking-tight"
+      )}>
+        {icon && <span className="shrink-0 text-muted-foreground/60">{icon}</span>}
+        <span className="truncate">{value}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Status badge — colored pill for "Running", "Medium", "Tet4" etc. ── */
+
+type BadgeTone = "default" | "success" | "info" | "warn" | "accent";
+
+interface StatusBadgeProps {
+  label: string;
+  tone?: BadgeTone;
+  dot?: boolean;
+}
+
+const badgeToneClasses: Record<BadgeTone, string> = {
+  default: "border-border/40 bg-muted/30 text-muted-foreground",
+  success: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  info: "border-sky-500/30 bg-sky-500/10 text-sky-300",
+  warn: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  accent: "border-primary/30 bg-primary/10 text-primary",
+};
+
+export function StatusBadge({ label, tone = "default", dot }: StatusBadgeProps) {
+  return (
+    <span className={cn(
+      "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-widest whitespace-nowrap",
+      badgeToneClasses[tone]
+    )}>
+      {dot && (
+        <span className={cn(
+          "h-1.5 w-1.5 rounded-full shrink-0",
+          tone === "success" ? "bg-emerald-400" :
+          tone === "info" ? "bg-sky-400" :
+          tone === "warn" ? "bg-amber-400" :
+          tone === "accent" ? "bg-primary" :
+          "bg-muted-foreground/50"
+        )} />
+      )}
+      {label}
+    </span>
+  );
+}
+
+/* ── Toggle row — label + toggle switch ── */
+
+interface ToggleRowProps {
+  label: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+}
+
+export function ToggleRow({ label, checked, onChange, disabled }: ToggleRowProps) {
+  return (
+    <label className={cn(
+      "flex items-center justify-between gap-3 py-1 cursor-pointer select-none group",
+      disabled && "opacity-50 cursor-not-allowed"
+    )}>
+      <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80 group-hover:text-muted-foreground transition-colors">
+        {label}
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={() => !disabled && onChange(!checked)}
+        className={cn(
+          "relative inline-flex h-5 w-9 shrink-0 rounded-full border transition-colors duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          checked
+            ? "border-primary/40 bg-primary/60"
+            : "border-border/50 bg-muted/30"
+        )}
+      >
+        <span
+          className={cn(
+            "pointer-events-none block h-4 w-4 rounded-full bg-foreground shadow-sm transform transition-transform duration-200",
+            checked ? "translate-x-4" : "translate-x-0"
+          )}
+        />
+      </button>
+    </label>
+  );
+}
+
+/* ── Compact input grid — labeled 3-col input group (X / Y / Z, R_x / R_y / R_z, etc.) ── */
+
+interface CompactInputGridProps {
+  label: string;
+  fields: Array<{
+    label: string;
+    value: string;
+    onChange?: (val: string) => void;
+    disabled?: boolean;
+  }>;
+}
+
+export function CompactInputGrid({ label, fields }: CompactInputGridProps) {
+  return (
+    <div className="flex items-start gap-3 py-1">
+      <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80 shrink-0 min-w-[4.5rem] pt-2">
+        {label}
+      </span>
+      <div className="flex-1 grid gap-1.5" style={{ gridTemplateColumns: `repeat(${fields.length}, 1fr)` }}>
+        {fields.map((field) => (
+          <div key={field.label} className="flex flex-col gap-0.5">
+            <span className="text-[0.5rem] font-semibold uppercase tracking-widest text-muted-foreground/60 pl-0.5">
+              {field.label}
+            </span>
+            <input
+              className={cn(
+                "h-7 w-full rounded-md border border-border/30 bg-background/60 px-2 text-xs font-mono text-foreground shadow-inner shadow-black/10 outline-none transition-all",
+                "hover:border-border/50 focus:border-primary/40 focus:ring-1 focus:ring-primary/30",
+                field.disabled && "opacity-50 cursor-not-allowed"
+              )}
+              defaultValue={field.value}
+              disabled={field.disabled}
+              onBlur={(e) => field.onChange?.(e.target.value)}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

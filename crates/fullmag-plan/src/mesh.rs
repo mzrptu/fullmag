@@ -6,9 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use crate::util::{
-    generate_random_unit_vectors, study_universe_metadata, StudyUniverseMetadata,
-};
+use crate::util::{generate_random_unit_vectors, study_universe_metadata, StudyUniverseMetadata};
 
 pub(crate) fn mesh_has_air_elements(mesh: &MeshIR) -> bool {
     mesh.element_markers.iter().any(|&marker| marker == 0)
@@ -78,15 +76,13 @@ fn sorted_face_key(face: [u32; 3]) -> (u32, u32, u32) {
     (nodes[0], nodes[1], nodes[2])
 }
 
-pub(crate) fn load_fem_domain_mesh_asset(
-    asset: &FemDomainMeshAssetIR,
-) -> Result<MeshIR, String> {
+pub(crate) fn load_fem_domain_mesh_asset(asset: &FemDomainMeshAssetIR) -> Result<MeshIR, String> {
     match (&asset.mesh, &asset.mesh_source) {
         (Some(mesh), _) => Ok(mesh.clone()),
         (None, Some(source)) => load_mesh_from_source(source),
-        (None, None) => Err(
-            "fem_domain_mesh_asset requires an inline mesh or mesh_source".to_string(),
-        ),
+        (None, None) => {
+            Err("fem_domain_mesh_asset requires an inline mesh or mesh_source".to_string())
+        }
     }
 }
 
@@ -547,7 +543,10 @@ pub(crate) fn load_mesh_from_source(source: &str) -> Result<MeshIR, String> {
     }
 }
 
-pub(crate) fn compatible_fem_material(a: &fullmag_ir::MaterialIR, b: &fullmag_ir::MaterialIR) -> bool {
+pub(crate) fn compatible_fem_material(
+    a: &fullmag_ir::MaterialIR,
+    b: &fullmag_ir::MaterialIR,
+) -> bool {
     a.saturation_magnetisation == b.saturation_magnetisation
         && a.exchange_stiffness == b.exchange_stiffness
         && a.damping == b.damping

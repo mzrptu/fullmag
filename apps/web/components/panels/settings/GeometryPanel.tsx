@@ -18,7 +18,14 @@ import {
   defaultSceneMaterialId,
   findSceneObjectByNodeId,
 } from "./objectSelection";
-import { SidebarSection, SubSectionHeader } from "./primitives";
+import {
+  SidebarSection,
+  SubSectionHeader,
+  PropertyRow,
+  StatusBadge,
+  ToggleRow,
+  CompactInputGrid,
+} from "./primitives";
 
 function defaultGeometryParams(kind: string, name: string): Record<string, unknown> {
   switch (kind) {
@@ -384,96 +391,27 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
           : null;
 
   return (
-    <div className="flex flex-col px-1.5 pt-3">
-      <SidebarSection title="Object Identity" icon="⚙" defaultOpen={true}>
-        <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-3">
-            <TextField
-              key={`${sceneObject.name}-object-name`}
-              label="Object Name"
-              defaultValue={sceneObject.name}
-              onBlur={(event) => {
-                const requested = event.target.value.trim();
-                if (!requested || requested === sceneObject.name) return;
-                let renamedTo: string | null = null;
-                model.setSceneDocument((prev) => {
-                  if (!prev) return prev;
-                  const nextName = makeUniqueName(requested, prev.objects, objectIndex);
-                  renamedTo = nextName;
-                  const nextObjects = [...prev.objects];
-                  const target = nextObjects[objectIndex];
-                  if (!target) return prev;
-                  const previousName = target.name;
-                  const shouldFollowObjectName =
-                    !target.region_name || target.region_name === target.name;
-                  const nextMaterialRef =
-                    target.material_ref === defaultSceneMaterialId(previousName)
-                      ? defaultSceneMaterialId(nextName)
-                      : target.material_ref;
-                  const nextMagnetizationRef =
-                    target.magnetization_ref === defaultSceneMagnetizationId(previousName)
-                      ? defaultSceneMagnetizationId(nextName)
-                      : target.magnetization_ref;
-                  nextObjects[objectIndex] = {
-                    ...target,
-                    id: nextName,
-                    name: nextName,
-                    material_ref: nextMaterialRef,
-                    magnetization_ref: nextMagnetizationRef,
-                    region_name: shouldFollowObjectName ? null : target.region_name,
-                    geometry: {
-                      ...target.geometry,
-                      geometry_params: {
-                        ...target.geometry.geometry_params,
-                        name: nextName,
-                      },
-                    },
-                  };
-                  return {
-                    ...prev,
-                    objects: nextObjects,
-                    materials: prev.materials.map((entry) =>
-                      entry.id === target.material_ref
-                        ? {
-                            ...entry,
-                            id: nextMaterialRef,
-                            name: `${nextName} material`,
-                          }
-                        : entry,
-                    ),
-                    magnetization_assets: prev.magnetization_assets.map((entry) =>
-                      entry.id === target.magnetization_ref
-                        ? {
-                            ...entry,
-                            id: nextMagnetizationRef,
-                            name: `${nextName} magnetization`,
-                          }
-                        : entry,
-                    ),
-                  };
-                });
-                if (!renamedTo) return;
-                startTransition(() => {
-                  model.setSelectedObjectId(renamedTo);
-                  model.setSelectedSidebarNodeId(`obj-${renamedTo}`);
-                });
-              }}
-              mono
-              tooltip="Stable object identifier used by the tree, overlays and canonical script."
-            />
-            <TextField
-              key={`${sceneObject.name}-region-summary`}
-              label="Effective Region"
-              defaultValue={regionName}
-              disabled
-              mono
-              tooltip="This object currently exposes one editable region in the scene document."
-            />
+    <>
+      {/* ── Card 1: General Properties ── */}
+      <SidebarSection title="General Properties" icon="⚙" defaultOpen={true}>
+        <div className="flex flex-col gap-2">
+          <PropertyRow label="Name" value={sceneObject.name} mono />
+          <PropertyRow label="Type" value={geo.geometry_kind} />
+          <div className="flex items-center justify-between gap-3">
+            <PropertyRow label="Region" value={regionName} mono />
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <ToggleRow
+            label="Visible"
+            checked={sceneObject.visible !== false}
+            onChange={(next) =>
+              updateObject((obj) => ({ ...obj, visible: next }))
+            }
+          />
+          <div className="flex gap-2 pt-1">
             <Button
               variant="outline"
               size="sm"
+              className="flex-1"
               onClick={() => {
                 let duplicateName: string | null = null;
                 model.setSceneDocument((prev) => {
@@ -520,12 +458,12 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
                 });
               }}
             >
-              Duplicate Object
+              Duplicate
             </Button>
             <Button
               variant="destructive"
               size="sm"
-              className="opacity-90 hover:opacity-100"
+              className="flex-1 opacity-90 hover:opacity-100"
               onClick={() => {
                 model.setSceneDocument((prev) => {
                   if (!prev) return prev;
@@ -553,14 +491,62 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
                 });
               }}
             >
-              Delete Object
+              Delete
             </Button>
           </div>
         </div>
       </SidebarSection>
 
+      {/* ── Card 2: Geometry ── */}
       <SidebarSection title="Geometry" icon="📐" defaultOpen={true}>
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-3">
+          {/* Position / Rotation / Scale — mockup-style compact input grids */}
+          <CompactInputGrid
+            label="Position"
+            fields={[
+              { label: "X", value: (translation[0] * 1e9).toFixed(1), onChange: (v) => handleTranslation(0, v) },
+              { label: "Y", value: (translation[1] * 1e9).toFixed(1), onChange: (v) => handleTranslation(1, v) },
+              { label: "Z", value: (translation[2] * 1e9).toFixed(1), onChange: (v) => handleTranslation(2, v) },
+            ]}
+          />
+          <CompactInputGrid
+            label="Rotation"
+            fields={[
+              { label: "R_x", value: "0.00", disabled: true },
+              { label: "R_y", value: "0.00", disabled: true },
+              { label: "R_z", value: "0.00", disabled: true },
+            ]}
+          />
+          {Array.isArray(scale) ? (
+            <CompactInputGrid
+              label="Scale"
+              fields={[
+                { label: "S_x", value: String(scale[0] ?? 1), onChange: (v) => handleScaleComponent(0, v) },
+                { label: "S_y", value: String(scale[1] ?? 1), onChange: (v) => handleScaleComponent(1, v) },
+                { label: "S_z", value: String(scale[2] ?? 1), onChange: (v) => handleScaleComponent(2, v) },
+              ]}
+            />
+          ) : (
+            <CompactInputGrid
+              label="Scale"
+              fields={[
+                { label: "Uniform", value: scale != null ? String(scale) : "1", onChange: (v) => {
+                  const val = Number.parseFloat(v);
+                  if (!Number.isFinite(val)) return;
+                  updateObject((object) => ({
+                    ...object,
+                    geometry: {
+                      ...object.geometry,
+                      geometry_params: { ...object.geometry.geometry_params, scale: val },
+                    },
+                  }));
+                }},
+              ]}
+            />
+          )}
+
+          {/* Dimensions sub-section */}
+          <SubSectionHeader title="Dimensions" icon="📏" />
           <SelectField
             label="Geometry Kind"
             value={geo.geometry_kind}
@@ -586,137 +572,132 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
             ]}
             tooltip="Choose the underlying geometry recipe for this object."
           />
-
-          <div className="flex flex-col gap-3">
-            <SubSectionHeader title="Dimensions" icon="📏" />
-            {geo.geometry_kind === "Box" && (
-              <div className="grid grid-cols-3 gap-3">
-                <TextField key={`${geo.name}-size-x`} label="X Length" defaultValue={(size[0] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(0, e.target.value)} unit="nm" mono />
-                <TextField key={`${geo.name}-size-y`} label="Y Length" defaultValue={(size[1] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(1, e.target.value)} unit="nm" mono />
-                <TextField key={`${geo.name}-size-z`} label="Z Length" defaultValue={(size[2] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(2, e.target.value)} unit="nm" mono />
-              </div>
-            )}
-            {geo.geometry_kind === "Cylinder" && (
-              <div className="grid grid-cols-2 gap-3">
-                <TextField key={`${geo.name}-radius`} label="Radius" defaultValue={p.radius ? (Number(p.radius) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("radius", e.target.value)} unit="nm" mono />
-                <TextField key={`${geo.name}-height`} label="Height" defaultValue={p.height ? (Number(p.height) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("height", e.target.value)} unit="nm" mono />
-              </div>
-            )}
-            {geo.geometry_kind === "Ellipsoid" && (
-              <div className="grid grid-cols-3 gap-3">
-                <TextField key={`${geo.name}-rx`} label="Rx" defaultValue={p.rx ? (Number(p.rx) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("rx", e.target.value)} unit="nm" mono />
-                <TextField key={`${geo.name}-ry`} label="Ry" defaultValue={p.ry ? (Number(p.ry) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("ry", e.target.value)} unit="nm" mono />
-                <TextField key={`${geo.name}-rz`} label="Rz" defaultValue={p.rz ? (Number(p.rz) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("rz", e.target.value)} unit="nm" mono />
-              </div>
-            )}
-            {geo.geometry_kind === "Ellipse" && (
-              <div className="grid grid-cols-3 gap-3">
-                <TextField key={`${geo.name}-ellipse-rx`} label="Rx" defaultValue={p.rx ? (Number(p.rx) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("rx", e.target.value)} unit="nm" mono />
-                <TextField key={`${geo.name}-ellipse-ry`} label="Ry" defaultValue={p.ry ? (Number(p.ry) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("ry", e.target.value)} unit="nm" mono />
-                <TextField key={`${geo.name}-ellipse-height`} label="Height" defaultValue={p.height ? (Number(p.height) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("height", e.target.value)} unit="nm" mono />
-              </div>
-            )}
-            {geo.geometry_kind === "ImportedGeometry" && (
-              <div className="flex flex-col gap-3">
-                <TextField
-                  key={`${geo.name}-source`}
-                  label="Source File"
-                  defaultValue={typeof p.source === "string" ? p.source : ""}
-                  onBlur={(e) =>
-                    updateObject((object) => ({
-                      ...object,
-                      geometry: {
-                        ...object.geometry,
-                        geometry_params: {
-                          ...object.geometry.geometry_params,
-                          source: e.target.value.trim(),
-                        },
-                      },
-                    }))
-                  }
-                  mono
-                  placeholder="mesh.stl"
-                />
-                {Array.isArray(scale) ? (
-                  <div className="grid grid-cols-3 gap-3">
-                    <TextField key={`${geo.name}-scale-x`} label="Scale X" defaultValue={String(scale[0] ?? 1)} onBlur={(e) => handleScaleComponent(0, e.target.value)} mono />
-                    <TextField key={`${geo.name}-scale-y`} label="Scale Y" defaultValue={String(scale[1] ?? 1)} onBlur={(e) => handleScaleComponent(1, e.target.value)} mono />
-                    <TextField key={`${geo.name}-scale-z`} label="Scale Z" defaultValue={String(scale[2] ?? 1)} onBlur={(e) => handleScaleComponent(2, e.target.value)} mono />
-                  </div>
-                ) : (
-                  <TextField
-                    key={`${geo.name}-uniform-scale`}
-                    label="Uniform Scale"
-                    defaultValue={scale != null ? String(scale) : "1"}
-                    onBlur={(e) => {
-                      const value = Number.parseFloat(e.target.value);
-                      if (!Number.isFinite(value)) return;
-                      updateObject((object) => ({
-                        ...object,
-                        geometry: {
-                          ...object.geometry,
-                          geometry_params: {
-                            ...object.geometry.geometry_params,
-                            scale: value,
-                          },
-                        },
-                      }));
-                    }}
-                    mono
-                  />
-                )}
-                <SelectField
-                  label="Imported Volume"
-                  value={typeof p.volume === "string" ? p.volume : "full"}
-                  onchange={(value) =>
-                    updateObject((object) => ({
-                      ...object,
-                      geometry: {
-                        ...object.geometry,
-                        geometry_params: {
-                          ...object.geometry.geometry_params,
-                          volume: value,
-                        },
-                      },
-                    }))
-                  }
-                  options={[
-                    { label: "Full Volume", value: "full" },
-                    { label: "Surface Only", value: "surface" },
-                  ]}
-                />
-              </div>
-            )}
-            {csgSummary && (
-              <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-                {csgSummary}
-              </div>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-3">
-            <SubSectionHeader title="Placement Offset" icon="↔" />
+          {geo.geometry_kind === "Box" && (
             <div className="grid grid-cols-3 gap-3">
-              <TextField key={`${geo.name}-translate-x`} label="Translate X" defaultValue={(translation[0] * 1e9).toFixed(1)} onchange={(e) => handleTranslation(0, e.target.value)} onBlur={(e) => handleTranslation(0, e.target.value)} unit="nm" mono />
-              <TextField key={`${geo.name}-translate-y`} label="Translate Y" defaultValue={(translation[1] * 1e9).toFixed(1)} onchange={(e) => handleTranslation(1, e.target.value)} onBlur={(e) => handleTranslation(1, e.target.value)} unit="nm" mono />
-              <TextField key={`${geo.name}-translate-z`} label="Translate Z" defaultValue={(translation[2] * 1e9).toFixed(1)} onchange={(e) => handleTranslation(2, e.target.value)} onBlur={(e) => handleTranslation(2, e.target.value)} unit="nm" mono />
+              <TextField key={`${geo.name}-size-x`} label="X Length" defaultValue={(size[0] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(0, e.target.value)} unit="nm" mono />
+              <TextField key={`${geo.name}-size-y`} label="Y Length" defaultValue={(size[1] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(1, e.target.value)} unit="nm" mono />
+              <TextField key={`${geo.name}-size-z`} label="Z Length" defaultValue={(size[2] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(2, e.target.value)} unit="nm" mono />
+            </div>
+          )}
+          {geo.geometry_kind === "Cylinder" && (
+            <div className="grid grid-cols-2 gap-3">
+              <TextField key={`${geo.name}-radius`} label="Radius" defaultValue={p.radius ? (Number(p.radius) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("radius", e.target.value)} unit="nm" mono />
+              <TextField key={`${geo.name}-height`} label="Height" defaultValue={p.height ? (Number(p.height) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("height", e.target.value)} unit="nm" mono />
+            </div>
+          )}
+          {geo.geometry_kind === "Ellipsoid" && (
+            <div className="grid grid-cols-3 gap-3">
+              <TextField key={`${geo.name}-rx`} label="Rx" defaultValue={p.rx ? (Number(p.rx) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("rx", e.target.value)} unit="nm" mono />
+              <TextField key={`${geo.name}-ry`} label="Ry" defaultValue={p.ry ? (Number(p.ry) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("ry", e.target.value)} unit="nm" mono />
+              <TextField key={`${geo.name}-rz`} label="Rz" defaultValue={p.rz ? (Number(p.rz) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("rz", e.target.value)} unit="nm" mono />
+            </div>
+          )}
+          {geo.geometry_kind === "Ellipse" && (
+            <div className="grid grid-cols-3 gap-3">
+              <TextField key={`${geo.name}-ellipse-rx`} label="Rx" defaultValue={p.rx ? (Number(p.rx) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("rx", e.target.value)} unit="nm" mono />
+              <TextField key={`${geo.name}-ellipse-ry`} label="Ry" defaultValue={p.ry ? (Number(p.ry) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("ry", e.target.value)} unit="nm" mono />
+              <TextField key={`${geo.name}-ellipse-height`} label="Height" defaultValue={p.height ? (Number(p.height) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("height", e.target.value)} unit="nm" mono />
+            </div>
+          )}
+          {geo.geometry_kind === "ImportedGeometry" && (
+            <div className="flex flex-col gap-3">
+              <TextField
+                key={`${geo.name}-source`}
+                label="Source File"
+                defaultValue={typeof p.source === "string" ? p.source : ""}
+                onBlur={(e) =>
+                  updateObject((object) => ({
+                    ...object,
+                    geometry: {
+                      ...object.geometry,
+                      geometry_params: {
+                        ...object.geometry.geometry_params,
+                        source: e.target.value.trim(),
+                      },
+                    },
+                  }))
+                }
+                mono
+                placeholder="mesh.stl"
+              />
+              <SelectField
+                label="Imported Volume"
+                value={typeof p.volume === "string" ? p.volume : "full"}
+                onchange={(value) =>
+                  updateObject((object) => ({
+                    ...object,
+                    geometry: {
+                      ...object.geometry,
+                      geometry_params: {
+                        ...object.geometry.geometry_params,
+                        volume: value,
+                      },
+                    },
+                  }))
+                }
+                options={[
+                  { label: "Full Volume", value: "full" },
+                  { label: "Surface Only", value: "surface" },
+                ]}
+              />
+            </div>
+          )}
+          {csgSummary && (
+            <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+              {csgSummary}
+            </div>
+          )}
+        </div>
+      </SidebarSection>
+
+      {/* ── Card 3: Physics Settings (compact summary) ── */}
+      <SidebarSection title="Physics Settings" icon="🧲" defaultOpen={true}>
+        <div className="flex flex-col gap-2">
+          <PropertyRow label="Material" value={material?.name ?? "Default"} />
+          <div className="grid grid-cols-3 gap-2">
+            <div className="flex flex-col gap-1 rounded-lg border border-border/25 bg-gradient-to-b from-card/35 to-card/10 px-3 py-2 backdrop-blur-sm">
+              <span className="text-[0.5rem] font-semibold uppercase tracking-widest text-muted-foreground/60">Ms</span>
+              <span className="font-mono text-xs text-foreground">{material?.properties.Ms != null ? fmtSI(material.properties.Ms, "A/m") : "—"}</span>
+            </div>
+            <div className="flex flex-col gap-1 rounded-lg border border-border/25 bg-gradient-to-b from-card/35 to-card/10 px-3 py-2 backdrop-blur-sm">
+              <span className="text-[0.5rem] font-semibold uppercase tracking-widest text-muted-foreground/60">Aex</span>
+              <span className="font-mono text-xs text-foreground">{material?.properties.Aex != null ? fmtSI(material.properties.Aex, "J/m") : "—"}</span>
+            </div>
+            <div className="flex flex-col gap-1 rounded-lg border border-border/25 bg-gradient-to-b from-card/35 to-card/10 px-3 py-2 backdrop-blur-sm">
+              <span className="text-[0.5rem] font-semibold uppercase tracking-widest text-muted-foreground/60">α</span>
+              <span className="font-mono text-xs text-foreground">{material?.properties.alpha?.toPrecision(3) ?? "—"}</span>
             </div>
           </div>
         </div>
       </SidebarSection>
 
-      <SidebarSection title="Spatial Summary" icon="📐" defaultOpen={true}>
-        <div className="grid grid-cols-1 gap-2.5">
-          <div className="flex flex-col gap-1.5 rounded-lg border border-border/25 bg-gradient-to-b from-card/35 to-card/10 px-3 py-2.5 backdrop-blur-sm">
-            <span className="text-[0.6rem] font-semibold uppercase tracking-wider text-muted-foreground/80">Bounds</span>
+      {/* ── Card 4: Mesh Properties ── */}
+      <SidebarSection title="Mesh Properties" icon="🔷" defaultOpen={true}>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80">Resolution</span>
+            <StatusBadge label={sceneObject.mesh_override?.mode === "custom" ? "Custom" : "Inherit"} tone={sceneObject.mesh_override?.mode === "custom" ? "accent" : "default"} />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80">Geometry</span>
+            <StatusBadge label={geo.geometry_kind} tone="info" />
+          </div>
+        </div>
+      </SidebarSection>
+
+      {/* ── Card 5: Spatial Summary ── */}
+      <SidebarSection title="Spatial Summary" icon="📍" defaultOpen={false}>
+        <div className="grid grid-cols-1 gap-2">
+          <div className="flex flex-col gap-1 rounded-lg border border-border/25 bg-gradient-to-b from-card/35 to-card/10 px-3 py-2 backdrop-blur-sm">
+            <span className="text-[0.5rem] font-semibold uppercase tracking-widest text-muted-foreground/60">Bounds</span>
             <span className="font-mono text-xs tracking-tight text-foreground">{formatBounds(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
           </div>
-          <div className="flex flex-col gap-1.5 rounded-lg border border-border/25 bg-gradient-to-b from-card/35 to-card/10 px-3 py-2.5 backdrop-blur-sm">
-            <span className="text-[0.6rem] font-semibold uppercase tracking-wider text-muted-foreground/80">Extent</span>
+          <div className="flex flex-col gap-1 rounded-lg border border-border/25 bg-gradient-to-b from-card/35 to-card/10 px-3 py-2 backdrop-blur-sm">
+            <span className="text-[0.5rem] font-semibold uppercase tracking-widest text-muted-foreground/60">Extent</span>
             <span className="font-mono text-xs tracking-tight text-foreground">{formatExtent(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
           </div>
         </div>
       </SidebarSection>
-    </div>
+    </>
   );
 }
