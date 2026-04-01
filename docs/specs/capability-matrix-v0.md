@@ -23,6 +23,14 @@ Every feature carries one of three statuses:
 - `extended` is reserved for future backend-specific features.
 - `hybrid` is explicit and requires both hybrid mode and hybrid backend.
 
+## Authoring-layer note
+
+- `SceneDocument` `scene.v1` is now the canonical control-room authoring document for geometry,
+  material assignment, magnetization initialization, study defaults, and editor metadata.
+- This does not expand executable capability coverage by itself.
+- Execution legality, planner resolution, requested-vs-resolved backend semantics, and runtime
+  provenance remain governed by the same `ProblemIR` and backend capability rules listed below.
+
 ## Capability matrix
 
 | Feature | FDM | FEM | Hybrid | Tier | Notes |

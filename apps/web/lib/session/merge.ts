@@ -133,6 +133,18 @@ export function mergeSessionState(prev: SessionState | null, next: SessionState)
   }
 
   if (
+    prev.scene_document &&
+    (
+      !next.scene_document ||
+      next.scene_document.revision < prev.scene_document.revision
+    )
+  ) {
+    merged.scene_document = prev.scene_document;
+    merged.script_builder = prev.script_builder;
+    merged.model_builder_graph = prev.model_builder_graph;
+  }
+
+  if (
     prev.script_builder &&
     (
       !next.script_builder ||

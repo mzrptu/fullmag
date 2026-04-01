@@ -3,6 +3,7 @@
 import { resolveApiBase, resolveApiWsBase } from "./apiBase";
 
 type JsonObject = Record<string, unknown>;
+type JsonBody = unknown;
 
 export class ApiHttpError extends Error {
   status: number;
@@ -42,7 +43,7 @@ export function currentLiveApiClient() {
       exportState: `${baseUrl}/v1/live/current/state/export`,
       importState: `${baseUrl}/v1/live/current/state/import`,
       scriptSync: `${baseUrl}/v1/live/current/script/sync`,
-      scriptBuilder: `${baseUrl}/v1/live/current/script/builder`,
+      scene: `${baseUrl}/v1/live/current/scene`,
     },
     fetchBootstrap() {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/bootstrap`, {
@@ -52,57 +53,57 @@ export function currentLiveApiClient() {
     connectWebSocket() {
       return new WebSocket(`${wsBaseUrl}/ws/live/current`);
     },
-    queueCommand(payload: JsonObject) {
+    queueCommand(payload: JsonBody) {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/commands`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
     },
-    updatePreview(path: string, payload: JsonObject = {}) {
+    updatePreview(path: string, payload: JsonBody = {}) {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/preview${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
     },
-    updateDisplaySelection(payload: JsonObject) {
+    updateDisplaySelection(payload: JsonBody) {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/preview/selection`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
     },
-    importAsset(payload: JsonObject) {
+    importAsset(payload: JsonBody) {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/assets/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
     },
-    exportState(payload: JsonObject) {
+    exportState(payload: JsonBody) {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/state/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
     },
-    importState(payload: JsonObject) {
+    importState(payload: JsonBody) {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/state/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
     },
-    syncScript(payload: JsonObject = {}) {
+    syncScript(payload: JsonBody = {}) {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/script/sync`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
     },
-    updateScriptBuilder(payload: JsonObject) {
-      return requestJson<JsonObject>(`${baseUrl}/v1/live/current/script/builder`, {
+    updateSceneDocument(payload: JsonBody) {
+      return requestJson<JsonObject>(`${baseUrl}/v1/live/current/scene`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

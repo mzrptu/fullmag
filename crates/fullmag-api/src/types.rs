@@ -1,5 +1,6 @@
 //! API request/response types and view models.
 
+use fullmag_authoring::{SceneDocument, ScriptBuilderState};
 use fullmag_runner::{
     DisplaySelectionState, FemMeshPayload, LivePreviewField, LivePreviewRequest, RuntimeStatus,
     StepUpdate,
@@ -148,310 +149,6 @@ pub(crate) struct LiveState {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderSolverState {
-    pub integrator: String,
-    pub fixed_timestep: String,
-    pub relax_algorithm: String,
-    pub torque_tolerance: String,
-    pub energy_tolerance: String,
-    pub max_relax_steps: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderMeshState {
-    pub algorithm_2d: i64,
-    pub algorithm_3d: i64,
-    pub hmax: String,
-    pub hmin: String,
-    pub size_factor: f64,
-    pub size_from_curvature: i64,
-    #[serde(default)]
-    pub growth_rate: String,
-    #[serde(default)]
-    pub narrow_regions: i64,
-    pub smoothing_steps: i64,
-    pub optimize: String,
-    pub optimize_iterations: i64,
-    pub compute_quality: bool,
-    pub per_element_quality: bool,
-    #[serde(default)]
-    pub adaptive_enabled: bool,
-    #[serde(default = "default_adaptive_mesh_policy")]
-    pub adaptive_policy: String,
-    #[serde(default = "default_adaptive_mesh_theta")]
-    pub adaptive_theta: f64,
-    #[serde(default)]
-    pub adaptive_h_min: String,
-    #[serde(default)]
-    pub adaptive_h_max: String,
-    #[serde(default = "default_adaptive_mesh_max_passes")]
-    pub adaptive_max_passes: u32,
-    #[serde(default)]
-    pub adaptive_error_tolerance: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderMeshSizeFieldState {
-    pub kind: String,
-    #[serde(default)]
-    pub params: serde_json::Value,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderMeshOperationState {
-    pub kind: String,
-    #[serde(default)]
-    pub params: serde_json::Value,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderUniverseState {
-    pub mode: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size: Option<[f64; 3]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub center: Option<[f64; 3]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub padding: Option<[f64; 3]>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderStageState {
-    pub kind: String,
-    pub entrypoint_kind: String,
-    pub integrator: String,
-    pub fixed_timestep: String,
-    pub until_seconds: String,
-    pub relax_algorithm: String,
-    pub torque_tolerance: String,
-    pub energy_tolerance: String,
-    pub max_steps: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderInitialState {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub magnet_name: Option<String>,
-    pub source_path: String,
-    pub format: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dataset: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sample_index: Option<i64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderMaterialState {
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "Ms")]
-    pub ms: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "Aex")]
-    pub aex: Option<f64>,
-    #[serde(default)]
-    pub alpha: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "Dind")]
-    pub dind: Option<f64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderMagnetizationState {
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<Vec<f64>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_format: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dataset: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sample_index: Option<i64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderPerGeometryMeshState {
-    #[serde(default = "default_inherit_mesh_mode")]
-    pub mode: String,
-    #[serde(default)]
-    pub hmax: String,
-    #[serde(default)]
-    pub hmin: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub order: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub algorithm_2d: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub algorithm_3d: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size_factor: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size_from_curvature: Option<i64>,
-    #[serde(default)]
-    pub growth_rate: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub narrow_regions: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub smoothing_steps: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub optimize: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub optimize_iterations: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compute_quality: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub per_element_quality: Option<bool>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub size_fields: Vec<ScriptBuilderMeshSizeFieldState>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub operations: Vec<ScriptBuilderMeshOperationState>,
-    #[serde(default)]
-    pub build_requested: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderGeometryEntry {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub region_name: Option<String>,
-    pub geometry_kind: String,
-    #[serde(default)]
-    pub geometry_params: serde_json::Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bounds_min: Option<[f64; 3]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bounds_max: Option<[f64; 3]>,
-    pub material: ScriptBuilderMaterialState,
-    pub magnetization: ScriptBuilderMagnetizationState,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mesh: Option<ScriptBuilderPerGeometryMeshState>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderDriveState {
-    pub current_a: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub frequency_hz: Option<f64>,
-    #[serde(default)]
-    pub phase_rad: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub waveform: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderCurrentModuleState {
-    pub kind: String,
-    pub name: String,
-    pub solver: String,
-    pub air_box_factor: f64,
-    pub antenna_kind: String,
-    #[serde(default)]
-    pub antenna_params: serde_json::Value,
-    pub drive: ScriptBuilderDriveState,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderExcitationAnalysisState {
-    pub source: String,
-    pub method: String,
-    pub propagation_axis: [f64; 3],
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub k_max_rad_per_m: Option<f64>,
-    pub samples: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ScriptBuilderState {
-    pub revision: u64,
-    pub solver: ScriptBuilderSolverState,
-    pub mesh: ScriptBuilderMeshState,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub universe: Option<ScriptBuilderUniverseState>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub stages: Vec<ScriptBuilderStageState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub initial_state: Option<ScriptBuilderInitialState>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub geometries: Vec<ScriptBuilderGeometryEntry>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub current_modules: Vec<ScriptBuilderCurrentModuleState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub excitation_analysis: Option<ScriptBuilderExcitationAnalysisState>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ModelBuilderGraphObjectTreeRefs {
-    pub geometry: String,
-    pub material: String,
-    pub region: String,
-    pub mesh: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ModelBuilderGraphObjectState {
-    pub id: String,
-    pub kind: String,
-    pub name: String,
-    pub label: String,
-    pub geometry: ScriptBuilderGeometryEntry,
-    pub tree: ModelBuilderGraphObjectTreeRefs,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ModelBuilderGraphStudyState {
-    pub id: String,
-    pub kind: String,
-    pub label: String,
-    pub solver: ScriptBuilderSolverState,
-    pub mesh_defaults: ScriptBuilderMeshState,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub stages: Vec<ScriptBuilderStageState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub initial_state: Option<ScriptBuilderInitialState>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ModelBuilderGraphUniverseState {
-    pub id: String,
-    pub kind: String,
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<ScriptBuilderUniverseState>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ModelBuilderGraphObjectsState {
-    pub id: String,
-    pub kind: String,
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub items: Vec<ModelBuilderGraphObjectState>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ModelBuilderGraphCurrentModulesState {
-    pub id: String,
-    pub kind: String,
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub modules: Vec<ScriptBuilderCurrentModuleState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub excitation_analysis: Option<ScriptBuilderExcitationAnalysisState>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ModelBuilderGraphState {
-    pub version: String,
-    pub revision: u64,
-    pub study: ModelBuilderGraphStudyState,
-    pub universe: ModelBuilderGraphUniverseState,
-    pub objects: ModelBuilderGraphObjectsState,
-    pub current_modules: ModelBuilderGraphCurrentModulesState,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct EngineLogEntry {
     pub timestamp_unix_ms: u128,
     pub level: String,
@@ -492,9 +189,7 @@ pub(crate) struct SessionStateResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mesh_workspace: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub script_builder: Option<ScriptBuilderState>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_builder_graph: Option<ModelBuilderGraphState>,
+    pub scene_document: Option<SceneDocument>,
     pub scalar_rows: Vec<ScalarRow>,
     pub engine_log: Vec<EngineLogEntry>,
     pub quantities: Vec<QuantityDescriptor>,
@@ -507,6 +202,8 @@ pub(crate) struct SessionStateResponse {
     pub preview_config: CurrentPreviewConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<PreviewState>,
+    #[serde(skip_serializing, default)]
+    pub builder_adapter: Option<ScriptBuilderState>,
 }
 
 #[derive(Debug, Serialize)]
@@ -522,8 +219,7 @@ pub(crate) struct SessionStateEventView<'a> {
     pub live_state: Option<&'a LiveState>,
     pub runtime_status: &'a RuntimeStatusView,
     pub metadata: Option<&'a Value>,
-    pub script_builder: Option<&'a ScriptBuilderState>,
-    pub model_builder_graph: Option<&'a ModelBuilderGraphState>,
+    pub scene_document: Option<&'a SceneDocument>,
     pub scalar_rows: &'a [ScalarRow],
     pub engine_log: &'a [EngineLogEntry],
     pub quantities: &'a [QuantityDescriptor],
@@ -543,8 +239,7 @@ pub(crate) struct SessionStateResponseView<'a> {
     pub live_state: Option<&'a LiveState>,
     pub runtime_status: &'a RuntimeStatusView,
     pub metadata: Option<&'a Value>,
-    pub script_builder: Option<&'a ScriptBuilderState>,
-    pub model_builder_graph: Option<&'a ModelBuilderGraphState>,
+    pub scene_document: Option<&'a SceneDocument>,
     pub scalar_rows: &'a [ScalarRow],
     pub engine_log: &'a [EngineLogEntry],
     pub quantities: &'a [QuantityDescriptor],
@@ -800,22 +495,6 @@ const fn default_true() -> bool {
     true
 }
 
-fn default_inherit_mesh_mode() -> String {
-    "inherit".to_string()
-}
-
-fn default_adaptive_mesh_policy() -> String {
-    "manual".to_string()
-}
-
-const fn default_adaptive_mesh_theta() -> f64 {
-    0.3
-}
-
-const fn default_adaptive_mesh_max_passes() -> u32 {
-    5
-}
-
 #[derive(Debug, Serialize)]
 pub(crate) struct SessionAssetImportResponse {
     pub asset_id: String,
@@ -829,28 +508,6 @@ pub(crate) struct SessionAssetImportResponse {
 pub(crate) struct ScriptSyncRequest {
     #[serde(default)]
     pub overrides: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ScriptBuilderUpdateRequest {
-    #[serde(default)]
-    pub model_builder_graph: Option<ModelBuilderGraphState>,
-    #[serde(default)]
-    pub solver: Option<ScriptBuilderSolverState>,
-    #[serde(default)]
-    pub mesh: Option<ScriptBuilderMeshState>,
-    #[serde(default)]
-    pub universe: Option<ScriptBuilderUniverseState>,
-    #[serde(default)]
-    pub stages: Option<Vec<ScriptBuilderStageState>>,
-    #[serde(default)]
-    pub initial_state: Option<ScriptBuilderInitialState>,
-    #[serde(default)]
-    pub geometries: Option<Vec<ScriptBuilderGeometryEntry>>,
-    #[serde(default)]
-    pub current_modules: Option<Vec<ScriptBuilderCurrentModuleState>>,
-    #[serde(default)]
-    pub excitation_analysis: Option<Option<ScriptBuilderExcitationAnalysisState>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1005,4 +662,145 @@ pub(crate) fn uuid_v4_hex() -> String {
         .as_nanos();
     let pid = std::process::id();
     format!("{:016x}{:08x}", nanos, pid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fullmag_authoring::scene_document_from_script_builder;
+
+    fn sample_builder() -> ScriptBuilderState {
+        ScriptBuilderState {
+            revision: 3,
+            solver: fullmag_authoring::ScriptBuilderSolverState {
+                integrator: "rk45".to_string(),
+                fixed_timestep: String::new(),
+                relax_algorithm: String::new(),
+                torque_tolerance: "1e-6".to_string(),
+                energy_tolerance: String::new(),
+                max_relax_steps: "1000".to_string(),
+            },
+            mesh: fullmag_authoring::ScriptBuilderMeshState {
+                algorithm_2d: 6,
+                algorithm_3d: 1,
+                hmax: String::new(),
+                hmin: String::new(),
+                size_factor: 1.0,
+                size_from_curvature: 0,
+                growth_rate: String::new(),
+                narrow_regions: 0,
+                smoothing_steps: 1,
+                optimize: String::new(),
+                optimize_iterations: 1,
+                compute_quality: false,
+                per_element_quality: false,
+                adaptive_enabled: false,
+                adaptive_policy: "manual".to_string(),
+                adaptive_theta: 0.3,
+                adaptive_h_min: String::new(),
+                adaptive_h_max: String::new(),
+                adaptive_max_passes: 5,
+                adaptive_error_tolerance: String::new(),
+            },
+            universe: None,
+            domain_frame: None,
+            stages: Vec::new(),
+            initial_state: None,
+            geometries: vec![fullmag_authoring::ScriptBuilderGeometryEntry {
+                name: "body".to_string(),
+                region_name: None,
+                geometry_kind: "Box".to_string(),
+                geometry_params: serde_json::json!({ "size": [1.0, 1.0, 1.0] }),
+                bounds_min: None,
+                bounds_max: None,
+                material: fullmag_authoring::ScriptBuilderMaterialState {
+                    ms: Some(800e3),
+                    aex: Some(13e-12),
+                    alpha: 0.02,
+                    dind: None,
+                },
+                magnetization: fullmag_authoring::ScriptBuilderMagnetizationState {
+                    kind: "uniform".to_string(),
+                    value: Some(vec![1.0, 0.0, 0.0]),
+                    seed: None,
+                    source_path: None,
+                    source_format: None,
+                    dataset: None,
+                    sample_index: None,
+                },
+                mesh: None,
+            }],
+            current_modules: Vec::new(),
+            excitation_analysis: None,
+        }
+    }
+
+    #[test]
+    fn session_state_response_view_serializes_scene_document_only() {
+        let builder = sample_builder();
+        let scene_document = scene_document_from_script_builder(&builder);
+        let response = SessionStateResponse {
+            session: SessionManifest {
+                session_id: "s1".to_string(),
+                run_id: "r1".to_string(),
+                status: "idle".to_string(),
+                interactive_session_requested: false,
+                script_path: String::new(),
+                problem_name: "demo".to_string(),
+                requested_backend: "auto".to_string(),
+                execution_mode: "strict".to_string(),
+                precision: "double".to_string(),
+                artifact_dir: String::new(),
+                started_at_unix_ms: 0,
+                finished_at_unix_ms: 0,
+                plan_summary: serde_json::json!({}),
+            },
+            run: None,
+            live_state: None,
+            runtime_status: RuntimeStatusView {
+                kind: RuntimeStatus::Unknown,
+                code: "idle".to_string(),
+                is_busy: false,
+                can_accept_commands: true,
+            },
+            metadata: None,
+            mesh_workspace: None,
+            scene_document: Some(scene_document),
+            scalar_rows: Vec::new(),
+            engine_log: Vec::new(),
+            quantities: Vec::new(),
+            fem_mesh: None,
+            latest_fields: LatestFields::default(),
+            preview_cache: CachedPreviewFields::default(),
+            artifacts: Vec::new(),
+            display_selection: CurrentDisplaySelection::default(),
+            preview_config: CurrentPreviewConfig::default(),
+            preview: None,
+            builder_adapter: Some(builder),
+        };
+
+        let value = serde_json::to_value(SessionStateResponseView {
+            session: &response.session,
+            run: response.run.as_ref(),
+            live_state: response.live_state.as_ref(),
+            runtime_status: &response.runtime_status,
+            metadata: response.metadata.as_ref(),
+            scene_document: response.scene_document.as_ref(),
+            scalar_rows: &response.scalar_rows,
+            engine_log: &response.engine_log,
+            quantities: &response.quantities,
+            fem_mesh: response.fem_mesh.as_ref(),
+            latest_fields: &response.latest_fields,
+            artifacts: &response.artifacts,
+            display_selection: &response.display_selection,
+            preview_config: &response.preview_config,
+            preview: response.preview.as_ref(),
+        })
+        .expect("response should serialize");
+
+        assert!(value.get("scene_document").is_some());
+        assert!(value.get("builder_adapter").is_none());
+        assert!(value.get("script_builder").is_none());
+        assert!(value.get("model_builder_graph").is_none());
+    }
 }

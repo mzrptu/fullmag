@@ -1,0 +1,234 @@
+import type {
+  MagnetizationAsset,
+  SceneDocument,
+  SceneObject,
+  ScriptBuilderGeometryEntry,
+  ScriptBuilderMagnetizationEntry,
+  ScriptBuilderState,
+  Transform3D,
+} from "./types";
+
+function zeroVec3(): [number, number, number] {
+  return [0, 0, 0];
+}
+
+function oneVec3(): [number, number, number] {
+  return [1, 1, 1];
+}
+
+function identityQuat(): [number, number, number, number] {
+  return [0, 0, 0, 1];
+}
+
+function cloneGeometryParams(
+  value: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  return value ? { ...value } : {};
+}
+
+function readTranslation(params: Record<string, unknown>): [number, number, number] {
+  const raw =
+    (Array.isArray(params.translation) ? params.translation : null) ??
+    (Array.isArray(params.translate) ? params.translate : null);
+  if (!raw || raw.length !== 3) {
+    return zeroVec3();
+  }
+  return [Number(raw[0] ?? 0), Number(raw[1] ?? 0), Number(raw[2] ?? 0)];
+}
+
+function stripTranslation(params: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...params };
+  delete next.translation;
+  delete next.translate;
+  return next;
+}
+
+function materialIdForGeometry(name: string): string {
+  return `mat:${name}`;
+}
+
+function magnetizationIdForGeometry(name: string): string {
+  return `mag:${name}`;
+}
+
+function identityTransformWithTranslation(
+  translation: [number, number, number],
+): Transform3D {
+  return {
+    translation,
+    rotation_quat: identityQuat(),
+    scale: oneVec3(),
+    pivot: zeroVec3(),
+  };
+}
+
+function buildMagnetizationAsset(
+  name: string,
+  magnetization: ScriptBuilderMagnetizationEntry,
+): MagnetizationAsset {
+  const inferredKind =
+    magnetization.kind === "file" &&
+    (magnetization.dataset != null || magnetization.sample_index != null)
+      ? "sampled"
+      : magnetization.kind;
+  return {
+    id: magnetizationIdForGeometry(name),
+    name: `${name} magnetization`,
+    kind: inferredKind,
+    value: magnetization.value ?? null,
+    seed: magnetization.seed ?? null,
+    source_path: magnetization.source_path ?? null,
+    source_format: magnetization.source_format ?? null,
+    dataset: magnetization.dataset ?? null,
+    sample_index: magnetization.sample_index ?? null,
+    mapping: {
+      space: "object",
+      projection: "object_local",
+      clamp_mode: "clamp",
+    },
+    texture_transform: {
+      translation: zeroVec3(),
+      rotation_quat: identityQuat(),
+      scale: oneVec3(),
+      pivot: zeroVec3(),
+    },
+  };
+}
+
+export function buildSceneDocumentFromScriptBuilder(
+  builder: ScriptBuilderState,
+): SceneDocument {
+  const objects: SceneObject[] = builder.geometries.map((geometry) => {
+    const geometryParams = cloneGeometryParams(geometry.geometry_params);
+    const translation = readTranslation(geometryParams);
+    return {
+      id: geometry.name,
+      name: geometry.name,
+      geometry: {
+        geometry_kind: geometry.geometry_kind,
+        geometry_params: stripTranslation(geometryParams),
+        bounds_min: geometry.bounds_min ?? null,
+        bounds_max: geometry.bounds_max ?? null,
+      },
+      transform: identityTransformWithTranslation(translation),
+      material_ref: materialIdForGeometry(geometry.name),
+      region_name: geometry.region_name ?? null,
+      magnetization_ref: magnetizationIdForGeometry(geometry.name),
+      mesh_override: geometry.mesh ?? null,
+      visible: true,
+      locked: false,
+      tags: [],
+    };
+  });
+
+  return {
+    version: "scene.v1",
+    revision: builder.revision,
+    scene: {
+      id: "scene",
+      name: "Scene",
+    },
+    universe: builder.universe,
+    objects,
+    materials: builder.geometries.map((geometry) => ({
+      id: materialIdForGeometry(geometry.name),
+      name: `${geometry.name} material`,
+      properties: geometry.material,
+    })),
+    magnetization_assets: builder.geometries.map((geometry) =>
+      buildMagnetizationAsset(geometry.name, geometry.magnetization),
+    ),
+    current_modules: {
+      modules: builder.current_modules,
+      excitation_analysis: builder.excitation_analysis,
+    },
+    study: {
+      solver: builder.solver,
+      mesh_defaults: builder.mesh,
+      stages: builder.stages,
+      initial_state: builder.initial_state,
+    },
+    outputs: { items: [] },
+    editor: {
+      selected_object_id: null,
+      gizmo_mode: null,
+      transform_space: null,
+    },
+  };
+}
+
+function magnetizationForObject(
+  scene: SceneDocument,
+  object: SceneObject,
+): ScriptBuilderMagnetizationEntry {
+  const asset = scene.magnetization_assets.find(
+    (candidate) => candidate.id === object.magnetization_ref,
+  );
+  if (!asset) {
+    return {
+      kind: "uniform",
+      value: [1, 0, 0],
+      seed: null,
+      source_path: null,
+      source_format: null,
+      dataset: null,
+      sample_index: null,
+    };
+  }
+  return {
+    kind: asset.kind,
+    value: asset.value,
+    seed: asset.seed,
+    source_path: asset.source_path,
+    source_format: asset.source_format,
+    dataset: asset.dataset,
+    sample_index: asset.sample_index,
+  };
+}
+
+export function buildScriptBuilderFromSceneDocument(
+  scene: SceneDocument,
+): ScriptBuilderState {
+  return {
+    revision: scene.revision,
+    solver: scene.study.solver,
+    mesh: scene.study.mesh_defaults,
+    universe: scene.universe,
+    domain_frame: null,
+    stages: scene.study.stages,
+    initial_state: scene.study.initial_state,
+    geometries: scene.objects.map((object): ScriptBuilderGeometryEntry => {
+      const material =
+        scene.materials.find((candidate) => candidate.id === object.material_ref)?.properties ?? {
+          Ms: null,
+          Aex: null,
+          alpha: 0.01,
+          Dind: null,
+        };
+      const geometryParams = stripTranslation(
+        cloneGeometryParams(object.geometry.geometry_params),
+      );
+      const translation = object.transform.translation;
+      if (translation.some((value) => Math.abs(value) > Number.EPSILON)) {
+        geometryParams.translation = [...translation];
+      }
+      return {
+        name: object.name || object.id,
+        region_name: object.region_name ?? null,
+        geometry_kind: object.geometry.geometry_kind,
+        geometry_params: geometryParams,
+        bounds_min: object.geometry.bounds_min ?? null,
+        bounds_max: object.geometry.bounds_max ?? null,
+        material,
+        magnetization: magnetizationForObject(scene, object),
+        mesh: object.mesh_override ?? null,
+      };
+    }),
+    current_modules: scene.current_modules.modules,
+    excitation_analysis: scene.current_modules.excitation_analysis,
+  };
+}
+
+export function sceneDocumentSignature(scene: SceneDocument | null): string | null {
+  return scene ? JSON.stringify(scene) : null;
+}

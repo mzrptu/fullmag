@@ -5,64 +5,116 @@ import { useCallback, useMemo } from "react";
 import { useModel } from "../../runs/control-room/ControlRoomContext";
 import { TextField } from "../../ui/TextField";
 import SelectField from "../../ui/SelectField";
-import type { ScriptBuilderGeometryEntry } from "../../../lib/session/types";
-import { findGeometryByNodeId } from "./objectSelection";
+import type { MagnetizationAsset } from "../../../lib/session/types";
+import { findSceneObjectByNodeId } from "./objectSelection";
 import { SidebarSection } from "./primitives";
+
+function fallbackMagnetization(name: string): MagnetizationAsset {
+  return {
+    id: `mag:${name}`,
+    name: `${name} magnetization`,
+    kind: "uniform",
+    value: [0, 0, 1],
+    seed: null,
+    source_path: null,
+    source_format: null,
+    dataset: null,
+    sample_index: null,
+    mapping: {
+      space: "object",
+      projection: "object_local",
+      clamp_mode: "clamp",
+    },
+    texture_transform: {
+      translation: [0, 0, 0],
+      rotation_quat: [0, 0, 0, 1],
+      scale: [1, 1, 1],
+      pivot: [0, 0, 0],
+    },
+  };
+}
 
 export default function RegionPanel({ nodeId }: { nodeId?: string }) {
   const model = useModel();
 
-  const { geometry: geo, index: geoIndex } = useMemo(
-    () => findGeometryByNodeId(nodeId, model.scriptBuilderGeometries),
-    [nodeId, model.scriptBuilderGeometries],
+  const { object: sceneObject, magnetization } = useMemo(
+    () => findSceneObjectByNodeId(nodeId, model.sceneDocument),
+    [model.sceneDocument, nodeId],
   );
 
-  const updateGeo = useCallback((updater: (g: ScriptBuilderGeometryEntry) => ScriptBuilderGeometryEntry) => {
-    if (geoIndex < 0) return;
-    model.setScriptBuilderGeometries((prev) => {
-      const next = [...prev];
-      const target = next[geoIndex];
-      if (target) next[geoIndex] = updater(target);
-      return next;
-    });
-  }, [geoIndex, model.setScriptBuilderGeometries]);
+  const magnetizationAsset =
+    magnetization ?? (sceneObject ? fallbackMagnetization(sceneObject.name) : null);
+
+  const updateObject = useCallback(
+    (updater: (regionName: string | null) => string | null) => {
+      if (!sceneObject) return;
+      model.setSceneDocument((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          objects: prev.objects.map((object) =>
+            object.id === sceneObject.id
+              ? {
+                  ...object,
+                  region_name: updater(object.region_name ?? null),
+                }
+              : object,
+          ),
+        };
+      });
+    },
+    [model, sceneObject],
+  );
+
+  const updateMagnetization = useCallback(
+    (updater: (asset: MagnetizationAsset) => MagnetizationAsset) => {
+      if (!sceneObject) return;
+      model.setSceneDocument((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          magnetization_assets: prev.magnetization_assets.map((entry) =>
+            entry.id === sceneObject.magnetization_ref ? updater(entry) : entry,
+          ),
+        };
+      });
+    },
+    [model, sceneObject],
+  );
 
   const handleMagUniform = (idx: number, valStr: string) => {
     const val = parseFloat(valStr);
-    if (isNaN(val)) return;
-    updateGeo((g) => {
-      const value = Array.isArray(g.magnetization.value) ? [...g.magnetization.value] : [0, 0, 1];
+    if (Number.isNaN(val)) return;
+    updateMagnetization((asset) => {
+      const value = Array.isArray(asset.value) ? [...asset.value] : [0, 0, 1];
       value[idx] = val;
-      return { ...g, magnetization: { ...g.magnetization, value } };
+      return { ...asset, value };
     });
   };
 
   const handleMagStr = (
-    key: keyof ScriptBuilderGeometryEntry["magnetization"],
+    key: keyof Pick<
+      MagnetizationAsset,
+      "source_path" | "source_format" | "dataset"
+    >,
     value: string,
   ) => {
     const trimmed = value.trim();
-    updateGeo((g) => ({
-      ...g,
-      magnetization: {
-        ...g.magnetization,
-        [key]: trimmed.length > 0 ? trimmed : null,
-      },
+    updateMagnetization((asset) => ({
+      ...asset,
+      [key]: trimmed.length > 0 ? trimmed : null,
     }));
   };
 
   const handleMagNum = (key: "sample_index" | "seed", value: string) => {
     const parsed = Number.parseInt(value, 10);
-    updateGeo((g) => ({
-      ...g,
-      magnetization: {
-        ...g.magnetization,
-        [key]: Number.isFinite(parsed) ? parsed : null,
-      },
+    updateMagnetization((asset) => ({
+      ...asset,
+      [key]: Number.isFinite(parsed) ? parsed : null,
     }));
   };
 
-  if (!geo) {
+  if (!sceneObject || !magnetizationAsset) {
     return (
       <div className="flex flex-col gap-0 border-t border-border/20">
         <SidebarSection title="Regions" defaultOpen={true}>
@@ -74,12 +126,12 @@ export default function RegionPanel({ nodeId }: { nodeId?: string }) {
     );
   }
 
-  const regionName = geo.region_name?.trim() || geo.name;
-  const mag = geo.magnetization;
+  const regionName = sceneObject.region_name?.trim() || sceneObject.name;
+  const mag = magnetizationAsset;
   const value = Array.isArray(mag.value) ? mag.value : [0, 0, 1];
 
   return (
-    <div className="flex flex-col pt-4 px-2">
+    <div className="flex flex-col px-2 pt-4">
       <SidebarSection title="Region Identity" defaultOpen={true}>
         <div className="flex flex-col gap-4">
           <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2.5">
@@ -89,22 +141,19 @@ export default function RegionPanel({ nodeId }: { nodeId?: string }) {
             <div className="mt-1 flex items-center justify-between gap-3">
               <span className="font-mono text-xs text-foreground">{regionName}</span>
               <span className="rounded-md border border-border/40 bg-background/40 px-2 py-0.5 text-[0.65rem] font-mono text-muted-foreground">
-                object: {geo.name}
+                object: {sceneObject.name}
               </span>
             </div>
           </div>
 
           <TextField
-            key={`${geo.name}-region-name-${geo.region_name ?? ""}`}
+            key={`${sceneObject.name}-region-name-${sceneObject.region_name ?? ""}`}
             label="Region Name"
-            defaultValue={geo.region_name ?? ""}
-            placeholder={geo.name}
+            defaultValue={sceneObject.region_name ?? ""}
+            placeholder={sceneObject.name}
             onBlur={(event) => {
               const nextName = event.target.value.trim();
-              updateGeo((g) => ({
-                ...g,
-                region_name: nextName.length > 0 ? nextName : null,
-              }));
+              updateObject(() => (nextName.length > 0 ? nextName : null));
             }}
             mono
             tooltip="Leave empty to keep the default region name equal to the object name."
@@ -112,10 +161,10 @@ export default function RegionPanel({ nodeId }: { nodeId?: string }) {
         </div>
       </SidebarSection>
 
-      <SidebarSection title="Magnetic Texture (m₀)" defaultOpen={true}>
+      <SidebarSection title="Magnetic Texture (m0)" defaultOpen={true}>
         <div className="flex flex-col gap-4">
           <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-            The current Study Builder exposes one editable magnetic region per object. This already
+            The current authoring layer exposes one editable magnetic region per object. This already
             gives object-level textures; multi-region subdivision inside one object is the next layer.
           </div>
 
@@ -123,24 +172,22 @@ export default function RegionPanel({ nodeId }: { nodeId?: string }) {
             label="Texture Kind"
             value={mag.kind}
             onchange={(nextKind) =>
-              updateGeo((g) => ({
-                ...g,
-                magnetization: {
-                  ...g.magnetization,
-                  kind: nextKind,
-                  value: nextKind === "uniform" ? (g.magnetization.value ?? [0, 0, 1]) : null,
-                  seed: nextKind === "random" ? (g.magnetization.seed ?? 1) : null,
-                  source_path: nextKind === "file" ? g.magnetization.source_path : null,
-                  source_format: nextKind === "file" ? g.magnetization.source_format ?? null : null,
-                  dataset: nextKind === "file" ? g.magnetization.dataset ?? null : null,
-                  sample_index: nextKind === "file" ? g.magnetization.sample_index ?? null : null,
-                },
+              updateMagnetization((asset) => ({
+                ...asset,
+                kind: nextKind,
+                value: nextKind === "uniform" ? (asset.value ?? [0, 0, 1]) : null,
+                seed: nextKind === "random" ? (asset.seed ?? 1) : null,
+                source_path: nextKind === "file" || nextKind === "sampled" ? asset.source_path : null,
+                source_format: nextKind === "file" || nextKind === "sampled" ? asset.source_format ?? null : null,
+                dataset: nextKind === "sampled" ? asset.dataset ?? null : null,
+                sample_index: nextKind === "sampled" ? asset.sample_index ?? null : null,
               }))
             }
             options={[
               { label: "Uniform (Vector)", value: "uniform" },
               { label: "Random", value: "random" },
               { label: "File Source", value: "file" },
+              { label: "Sampled Dataset", value: "sampled" },
             ]}
             tooltip="Initial magnetization assigned to this region."
           />
@@ -164,7 +211,7 @@ export default function RegionPanel({ nodeId }: { nodeId?: string }) {
             />
           )}
 
-          {mag.kind === "file" && (
+          {(mag.kind === "file" || mag.kind === "sampled") && (
             <div className="flex flex-col gap-3">
               <TextField
                 label="Source File Path"
@@ -175,12 +222,21 @@ export default function RegionPanel({ nodeId }: { nodeId?: string }) {
               />
               <div className="grid grid-cols-2 gap-3">
                 <TextField
+                  label="Source Format"
+                  defaultValue={mag.source_format ?? ""}
+                  onBlur={(e) => handleMagStr("source_format", e.target.value)}
+                  mono
+                  placeholder="ovf"
+                />
+                <TextField
                   label="Dataset"
                   defaultValue={mag.dataset ?? ""}
                   onBlur={(e) => handleMagStr("dataset", e.target.value)}
                   mono
                   placeholder="values"
                 />
+              </div>
+              {mag.kind === "sampled" && (
                 <TextField
                   label="Sample Index"
                   defaultValue={mag.sample_index?.toString() ?? ""}
@@ -188,7 +244,7 @@ export default function RegionPanel({ nodeId }: { nodeId?: string }) {
                   mono
                   placeholder="0"
                 />
-              </div>
+              )}
             </div>
           )}
         </div>

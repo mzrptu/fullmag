@@ -20,6 +20,7 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tower-http = { version = "0.6", features = ["cors", "fs"] }
+fullmag-authoring = { path = "../fullmag-authoring" }
 fullmag-ir = { path = "../fullmag-ir" }
 fullmag-plan = { path = "../fullmag-plan" }
 fullmag-runner = { path = "../fullmag-runner" }

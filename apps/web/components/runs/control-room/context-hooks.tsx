@@ -35,6 +35,7 @@ import type {
 import type {
   DomainFrameState,
   ModelBuilderGraphV2,
+  SceneDocument,
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
@@ -218,6 +219,7 @@ export interface CommandContextValue {
 
 /* ── Model: structural/static model data ── */
 export interface ModelContextValue {
+  sceneDocument: SceneDocument | null;
   modelBuilderGraph: ModelBuilderGraphV2 | null;
   material: MaterialSummary | null;
   solverPlan: SolverPlanSummary | null;
@@ -272,6 +274,7 @@ export interface ModelContextValue {
   objectViewMode: ObjectViewMode;
   /* Actions */
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
+  setSceneDocument: React.Dispatch<React.SetStateAction<SceneDocument | null>>;
   setStudyStages: React.Dispatch<React.SetStateAction<ScriptBuilderStageState[]>>;
   setScriptBuilderUniverse: React.Dispatch<React.SetStateAction<ScriptBuilderUniverseState | null>>;
   setScriptBuilderGeometries: React.Dispatch<React.SetStateAction<ScriptBuilderGeometryEntry[]>>;

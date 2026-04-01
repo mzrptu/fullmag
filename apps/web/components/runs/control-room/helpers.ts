@@ -15,6 +15,7 @@ import type {
   ScriptBuilderUniverseState,
 } from "../../../lib/session/types";
 import { serializeModelBuilderGraphV2 } from "../../../lib/session/modelBuilderGraph";
+import { buildSceneDocumentFromScriptBuilder } from "../../../lib/session/sceneDocument";
 import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import { DEFAULT_MESH_OPTIONS } from "../../panels/MeshSettingsPanel";
@@ -178,15 +179,18 @@ export function buildLegacyScriptBuilderUpdatePayload(
   currentModules: ScriptBuilderCurrentModuleEntry[],
   excitationAnalysis: ScriptBuilderExcitationAnalysisEntry | null,
 ) {
-  return {
+  return buildSceneDocumentFromScriptBuilder({
+    revision: 0,
     solver: solverSettingsToBuilder(solverSettings),
     mesh: meshOptionsToBuilder(meshOptions),
     universe,
+    domain_frame: null,
     stages,
+    initial_state: null,
     geometries,
     current_modules: currentModules,
     excitation_analysis: excitationAnalysis,
-  };
+  });
 }
 
 export function buildScriptBuilderUpdatePayload(
@@ -202,9 +206,11 @@ export function buildScriptBuilderUpdatePayload(
   },
 ) {
   if (modelBuilderGraph) {
-    return {
-      model_builder_graph: modelBuilderGraph,
-    };
+    return buildSceneDocumentFromScriptBuilder({
+      revision: modelBuilderGraph.revision,
+      initial_state: modelBuilderGraph.study.initial_state,
+      ...serializeModelBuilderGraphV2(modelBuilderGraph),
+    });
   }
   return buildLegacyScriptBuilderUpdatePayload(
     fallback.solverSettings,
@@ -229,19 +235,8 @@ export function buildScriptBuilderSignature(
     excitationAnalysis: ScriptBuilderExcitationAnalysisEntry | null;
   },
 ): string {
-  if (modelBuilderGraph) {
-    return JSON.stringify(serializeModelBuilderGraphV2(modelBuilderGraph));
-  }
   return JSON.stringify(
-    buildLegacyScriptBuilderUpdatePayload(
-      fallback.solverSettings,
-      fallback.meshOptions,
-      fallback.universe,
-      fallback.stages,
-      fallback.geometries,
-      fallback.currentModules,
-      fallback.excitationAnalysis,
-    ),
+    buildScriptBuilderUpdatePayload(modelBuilderGraph, fallback),
   );
 }
 

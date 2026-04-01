@@ -10,6 +10,7 @@ use axum::{
     Json, Router,
 };
 use base64::Engine;
+use fullmag_authoring::SceneDocument;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
@@ -157,10 +158,7 @@ async fn main() {
             "/v1/live/current/script/sync",
             post(sync_current_live_script),
         )
-        .route(
-            "/v1/live/current/script/builder",
-            post(update_current_live_script_builder),
-        )
+        .route("/v1/live/current/scene", post(update_current_live_scene))
         .route(
             "/v1/live/current/artifacts",
             get(list_current_live_artifacts),
@@ -450,20 +448,19 @@ async fn publish_current_live_state(
     apply_current_live_publish(&mut next, req)?;
     next.display_selection = display_selection.clone();
     next.preview_config = preview_config.clone();
-    if next.script_builder.is_none() && !next.session.script_path.trim().is_empty() {
-        match load_script_builder_state(
+    if next.scene_document.is_none() && !next.session.script_path.trim().is_empty() {
+        match load_scene_document_state(
             &state.repo_root,
             &state.current_workspace_root,
             Path::new(next.session.script_path.trim()),
         ) {
-            Ok(builder_state) => {
-                next.model_builder_graph =
-                    Some(model_builder_graph_from_script_builder(&builder_state));
-                next.script_builder = Some(builder_state);
+            Ok(scene_document) => {
+                next.builder_adapter = scene_document_builder_projection(&scene_document).ok();
+                next.scene_document = Some(scene_document);
             }
             Err(e) => {
                 eprintln!(
-                    "[fullmag-api] failed to load script builder state for '{}': {:?}",
+                    "[fullmag-api] failed to load scene document for '{}': {:?}",
                     next.session.script_path.trim(),
                     e
                 );
@@ -1380,28 +1377,28 @@ async fn import_magnetization_state_for_current_workspace(
             .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
         snapshot.artifacts = artifacts;
         if req.attach_to_script_builder {
-            if snapshot.script_builder.is_none() && !snapshot.session.script_path.trim().is_empty()
+            if snapshot.scene_document.is_none() && !snapshot.session.script_path.trim().is_empty()
             {
-                let builder_state = load_script_builder_state(
+                let scene_document = load_scene_document_state(
                     &state.repo_root,
                     &state.current_workspace_root,
                     Path::new(snapshot.session.script_path.trim()),
                 )?;
-                snapshot.model_builder_graph =
-                    Some(model_builder_graph_from_script_builder(&builder_state));
-                snapshot.script_builder = Some(builder_state);
+                snapshot.builder_adapter =
+                    scene_document_builder_projection(&scene_document).ok();
+                snapshot.scene_document = Some(scene_document);
             }
-            if let Some(builder) = snapshot.script_builder.as_mut() {
-                builder.initial_state = Some(ScriptBuilderInitialState {
+            if let Some(scene_document) = snapshot.scene_document.as_mut() {
+                scene_document.study.initial_state = Some(ScriptBuilderInitialState {
                     magnet_name: None,
                     source_path: stored_abs_path.display().to_string(),
                     format: loaded.format.clone(),
                     dataset: loaded.dataset.clone(),
                     sample_index: req.sample_index.or(loaded.sample_index),
                 });
-                builder.revision = builder.revision.saturating_add(1);
-                snapshot.model_builder_graph =
-                    Some(model_builder_graph_from_script_builder(builder));
+                scene_document.revision = scene_document.revision.saturating_add(1);
+                snapshot.builder_adapter =
+                    scene_document_builder_projection(scene_document).ok();
             }
         }
         let messages = build_current_live_ws_messages(&state, snapshot)?;
@@ -1431,7 +1428,7 @@ async fn sync_current_live_script(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ScriptSyncRequest>,
 ) -> Result<Json<ScriptSyncResponse>, ApiError> {
-    let (script_path, builder_state) = {
+    let (script_path, scene_document) = {
         let current = state.current_live_state.read().await;
         let snapshot = current
             .as_ref()
@@ -1442,7 +1439,7 @@ async fn sync_current_live_script(
                 "active local live workspace does not expose a script path",
             ));
         }
-        (PathBuf::from(script_path), snapshot.script_builder.clone())
+        (PathBuf::from(script_path), snapshot.scene_document.clone())
     };
 
     if !script_path.is_file() {
@@ -1452,10 +1449,13 @@ async fn sync_current_live_script(
         )));
     }
 
-    let overrides = req
-        .overrides
-        .clone()
-        .or_else(|| builder_state.as_ref().map(script_builder_overrides));
+    let overrides = if let Some(overrides) = req.overrides.clone() {
+        Some(overrides)
+    } else if let Some(scene_document) = scene_document.as_ref() {
+        Some(scene_document_overrides(scene_document)?)
+    } else {
+        None
+    };
     let response = rewrite_script_via_python_helper(
         &state.repo_root,
         &state.current_workspace_root,
@@ -1465,84 +1465,42 @@ async fn sync_current_live_script(
     Ok(Json(response))
 }
 
-async fn update_current_live_script_builder(
+async fn update_current_live_scene(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<ScriptBuilderUpdateRequest>,
-) -> Result<Json<ScriptBuilderState>, ApiError> {
-    let (builder_state, session_state_messages, public_json) = {
+    Json(mut scene_document): Json<SceneDocument>,
+) -> Result<Json<SceneDocument>, ApiError> {
+    let (scene_document, session_state_messages, public_json) = {
         let mut current = state.current_live_state.write().await;
         let snapshot = current
             .as_mut()
             .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
-        if snapshot.script_builder.is_none() && !snapshot.session.script_path.trim().is_empty() {
-            let builder_state = load_script_builder_state(
+        if snapshot.scene_document.is_none() && !snapshot.session.script_path.trim().is_empty() {
+            let current_scene = load_scene_document_state(
                 &state.repo_root,
                 &state.current_workspace_root,
                 Path::new(snapshot.session.script_path.trim()),
             )?;
-            snapshot.model_builder_graph =
-                Some(model_builder_graph_from_script_builder(&builder_state));
-            snapshot.script_builder = Some(builder_state);
+            snapshot.builder_adapter = scene_document_builder_projection(&current_scene).ok();
+            snapshot.scene_document = Some(current_scene);
         }
-        let builder_state = if let Some(mut graph) = req.model_builder_graph {
-            graph.revision = graph.revision.saturating_add(1);
-            let builder_state = script_builder_from_model_builder_graph(&graph);
-            snapshot.model_builder_graph = Some(graph);
-            snapshot.script_builder = Some(builder_state.clone());
-            builder_state
-        } else {
-            let builder = snapshot.script_builder.as_mut().ok_or_else(|| {
-                ApiError::bad_request("script builder is not available for this workspace")
-            })?;
-            let mut changed = false;
-            if let Some(solver) = req.solver {
-                builder.solver = solver;
-                changed = true;
-            }
-            if let Some(mesh) = req.mesh {
-                builder.mesh = mesh;
-                changed = true;
-            }
-            if let Some(universe) = req.universe {
-                builder.universe = Some(universe);
-                changed = true;
-            }
-            if let Some(stages) = req.stages {
-                builder.stages = stages;
-                changed = true;
-            }
-            if let Some(initial_state) = req.initial_state {
-                builder.initial_state = Some(initial_state);
-                changed = true;
-            }
-            if let Some(geometries) = req.geometries {
-                builder.geometries = geometries;
-                changed = true;
-            }
-            if let Some(current_modules) = req.current_modules {
-                builder.current_modules = current_modules;
-                changed = true;
-            }
-            if let Some(excitation_analysis) = req.excitation_analysis {
-                builder.excitation_analysis = excitation_analysis;
-                changed = true;
-            }
-            if changed {
-                builder.revision = builder.revision.saturating_add(1);
-            }
-            let builder_state = builder.clone();
-            snapshot.model_builder_graph =
-                Some(model_builder_graph_from_script_builder(&builder_state));
-            builder_state
-        };
+        let next_revision = snapshot
+            .scene_document
+            .as_ref()
+            .map(|current_scene| current_scene.revision.saturating_add(1))
+            .unwrap_or_else(|| scene_document.revision.saturating_add(1));
+        scene_document.version = "scene.v1".to_string();
+        scene_document.revision = next_revision;
+        let builder_state = scene_document_builder_projection(&scene_document)?;
+        snapshot.builder_adapter = Some(builder_state);
+        snapshot.scene_document = Some(scene_document.clone());
         let session_state_messages = build_current_live_ws_messages(&state, snapshot)?;
         let public_json = serialize_current_live_response(snapshot, true)?;
-        (builder_state, session_state_messages, public_json)
+        (scene_document, session_state_messages, public_json)
     };
 
     *state.current_live_public_snapshot.write().await = Some(public_json);
     send_current_live_ws_messages(&state, session_state_messages);
-    Ok(Json(builder_state))
+    Ok(Json(scene_document))
 }
 
 async fn list_physics_docs(
@@ -1718,8 +1676,7 @@ fn serialize_current_live_session_event(
             live_state: snapshot.live_state.as_ref(),
             runtime_status: &snapshot.runtime_status,
             metadata: snapshot.metadata.as_ref(),
-            script_builder: snapshot.script_builder.as_ref(),
-            model_builder_graph: snapshot.model_builder_graph.as_ref(),
+            scene_document: snapshot.scene_document.as_ref(),
             scalar_rows: &snapshot.scalar_rows,
             engine_log: &snapshot.engine_log,
             quantities: &snapshot.quantities,
@@ -1744,8 +1701,7 @@ fn serialize_current_live_response(
         live_state: snapshot.live_state.as_ref(),
         runtime_status: &snapshot.runtime_status,
         metadata: snapshot.metadata.as_ref(),
-        script_builder: snapshot.script_builder.as_ref(),
-        model_builder_graph: snapshot.model_builder_graph.as_ref(),
+        scene_document: snapshot.scene_document.as_ref(),
         scalar_rows: &snapshot.scalar_rows,
         engine_log: &snapshot.engine_log,
         quantities: &snapshot.quantities,

@@ -81,8 +81,7 @@ pub(crate) fn default_current_live_state(req: &CurrentLivePublishRequest) -> Ses
         runtime_status: build_runtime_status_view(&status),
         metadata: None,
         mesh_workspace: None,
-        script_builder: None,
-        model_builder_graph: None,
+        scene_document: None,
         scalar_rows: Vec::new(),
         engine_log: Vec::new(),
         quantities: Vec::new(),
@@ -93,6 +92,7 @@ pub(crate) fn default_current_live_state(req: &CurrentLivePublishRequest) -> Ses
         display_selection: CurrentDisplaySelection::default(),
         preview_config: CurrentPreviewConfig::default(),
         preview: None,
+        builder_adapter: None,
     }
 }
 

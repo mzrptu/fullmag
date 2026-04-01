@@ -468,6 +468,108 @@ export interface ModelBuilderGraphV2 {
   current_modules: ModelBuilderGraphCurrentModulesNode;
 }
 
+export interface SceneMetadata {
+  id: string;
+  name: string;
+}
+
+export interface Transform3D {
+  translation: [number, number, number];
+  rotation_quat: [number, number, number, number];
+  scale: [number, number, number];
+  pivot: [number, number, number];
+}
+
+export interface TextureTransform3D {
+  translation: [number, number, number];
+  rotation_quat: [number, number, number, number];
+  scale: [number, number, number];
+  pivot: [number, number, number];
+}
+
+export interface MagnetizationMapping {
+  space: string;
+  projection: string;
+  clamp_mode: string;
+}
+
+export interface SceneGeometry {
+  geometry_kind: string;
+  geometry_params: Record<string, unknown>;
+  bounds_min?: [number, number, number] | null;
+  bounds_max?: [number, number, number] | null;
+}
+
+export interface SceneObject {
+  id: string;
+  name: string;
+  geometry: SceneGeometry;
+  transform: Transform3D;
+  material_ref: string;
+  region_name: string | null;
+  magnetization_ref: string | null;
+  mesh_override: ScriptBuilderPerGeometryMeshEntry | null;
+  visible: boolean;
+  locked: boolean;
+  tags: string[];
+}
+
+export interface SceneMaterialAsset {
+  id: string;
+  name: string;
+  properties: ScriptBuilderMaterialEntry;
+}
+
+export interface MagnetizationAsset {
+  id: string;
+  name: string;
+  kind: string;
+  value: number[] | null;
+  seed: number | null;
+  source_path: string | null;
+  source_format: string | null;
+  dataset: string | null;
+  sample_index: number | null;
+  mapping: MagnetizationMapping;
+  texture_transform: TextureTransform3D;
+}
+
+export interface SceneCurrentModulesState {
+  modules: ScriptBuilderCurrentModuleEntry[];
+  excitation_analysis: ScriptBuilderExcitationAnalysisEntry | null;
+}
+
+export interface SceneStudyState {
+  solver: ScriptBuilderSolverState;
+  mesh_defaults: ScriptBuilderMeshState;
+  stages: ScriptBuilderStageState[];
+  initial_state: ScriptBuilderInitialState | null;
+}
+
+export interface SceneOutputsState {
+  items: Record<string, unknown>[];
+}
+
+export interface SceneEditorState {
+  selected_object_id: string | null;
+  gizmo_mode: string | null;
+  transform_space: string | null;
+}
+
+export interface SceneDocument {
+  version: "scene.v1";
+  revision: number;
+  scene: SceneMetadata;
+  universe: ScriptBuilderUniverseState | null;
+  objects: SceneObject[];
+  materials: SceneMaterialAsset[];
+  magnetization_assets: MagnetizationAsset[];
+  current_modules: SceneCurrentModulesState;
+  study: SceneStudyState;
+  outputs: SceneOutputsState;
+  editor: SceneEditorState;
+}
+
 export interface MeshSummaryState {
   mesh_name: string;
   mesh_source: string | null;
@@ -554,6 +656,7 @@ export interface SessionState {
   runtime_status: RuntimeStatusState | null;
   metadata: Record<string, unknown> | null;
   mesh_workspace: MeshWorkspaceState | null;
+  scene_document: SceneDocument | null;
   script_builder: ScriptBuilderState | null;
   model_builder_graph: ModelBuilderGraphV2 | null;
   scalar_rows: ScalarRow[];

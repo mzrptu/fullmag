@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/fullmag-authoring",
   "crates/fullmag-api",
   "crates/fullmag-cli",
   "crates/fullmag-engine",

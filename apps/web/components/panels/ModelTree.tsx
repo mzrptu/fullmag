@@ -4,11 +4,13 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import type {
   ModelBuilderGraphV2,
+  SceneDocument,
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
   ScriptBuilderMagnetizationEntry,
 } from "@/lib/session/types";
+import { buildScriptBuilderFromSceneDocument } from "@/lib/session/sceneDocument";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -317,6 +319,7 @@ export default function ModelTree({
 
 export function buildFullmagModelTree(opts: {
   graph?: ModelBuilderGraphV2 | null;
+  sceneDocument?: SceneDocument | null;
   studyLabel?: string | null;
   backend?: string;
   showUniverse?: boolean;
@@ -360,21 +363,69 @@ export function buildFullmagModelTree(opts: {
   excitationAnalysis?: ScriptBuilderExcitationAnalysisEntry | null;
 }): TreeNodeData[] {
   const graph = opts.graph ?? null;
+  const sceneDocument = opts.sceneDocument ?? null;
+  const sceneBuilder = sceneDocument
+    ? buildScriptBuilderFromSceneDocument(sceneDocument)
+    : null;
   const graphUniverse = graph?.universe.value ?? null;
   const graphObjects =
     graph?.objects.items.map((objectNode) => ({
       id: `obj-${objectNode.id}`,
       name: objectNode.name,
-      label: objectNode.label,
-      geometry: objectNode.geometry,
-      tree: objectNode.tree,
+        label: objectNode.label,
+        geometry: objectNode.geometry,
+        tree: objectNode.tree,
     })) ??
     [];
-  const geos = graphObjects.map((objectNode) => objectNode.geometry).length > 0
-    ? graphObjects.map((objectNode) => objectNode.geometry)
+  const sceneObjects = sceneDocument?.objects ?? [];
+  const sceneTreeObjects =
+    sceneObjects.length > 0
+      ? sceneObjects.map((object, index) => ({
+          id: `obj-${object.name || object.id}`,
+          name: object.name || object.id,
+          label: object.name || object.id,
+          geometry:
+            sceneBuilder?.geometries[index] ?? {
+              name: object.name || object.id,
+              region_name: object.region_name,
+              geometry_kind: object.geometry.geometry_kind,
+              geometry_params: object.geometry.geometry_params,
+              bounds_min: object.geometry.bounds_min ?? null,
+              bounds_max: object.geometry.bounds_max ?? null,
+              material: {
+                Ms: null,
+                Aex: null,
+                alpha: 0.01,
+                Dind: null,
+              },
+              magnetization: {
+                kind: "uniform",
+                value: [0, 0, 1],
+                seed: null,
+                source_path: null,
+                source_format: null,
+                dataset: null,
+                sample_index: null,
+              },
+              mesh: object.mesh_override,
+            },
+          tree: {
+            geometry: `geo-${object.name || object.id}`,
+            material: `mat-${object.name || object.id}`,
+            region: `reg-${object.name || object.id}`,
+            mesh: `geo-${object.name || object.id}-mesh`,
+          },
+        }))
+      : [];
+  const geos = sceneTreeObjects.map((objectNode) => objectNode.geometry).length > 0
+    ? sceneTreeObjects.map((objectNode) => objectNode.geometry)
+    : graphObjects.map((objectNode) => objectNode.geometry).length > 0
+      ? graphObjects.map((objectNode) => objectNode.geometry)
     : opts.geometries ?? [];
-  const objects = graphObjects.length > 0
-    ? graphObjects
+  const objects = sceneTreeObjects.length > 0
+    ? sceneTreeObjects
+    : graphObjects.length > 0
+      ? graphObjects
     : geos.map((geometry) => ({
         id: `obj-${geometry.name}`,
         name: geometry.name,

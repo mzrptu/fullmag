@@ -12,10 +12,15 @@ import type {
   PreviewState,
   RuntimeStatusKind,
   RuntimeStatusState,
+  SceneDocument,
   ScriptBuilderState,
   SessionState,
 } from "./types";
 import { createModelBuilderGraphV2 } from "./modelBuilderGraph";
+import {
+  buildSceneDocumentFromScriptBuilder,
+  buildScriptBuilderFromSceneDocument,
+} from "./sceneDocument";
 
 /* ── Field helpers ── */
 
@@ -507,6 +512,219 @@ function normalizeModelBuilderGraph(raw: any): ModelBuilderGraphV2 | null {
   return createModelBuilderGraphV2(projectedBuilder);
 }
 
+function emptyScriptBuilderState(): ScriptBuilderState {
+  return normalizeScriptBuilder({
+    revision: 0,
+    solver: {},
+    mesh: {},
+    universe: null,
+    stages: [],
+    initial_state: null,
+    geometries: [],
+    current_modules: [],
+    excitation_analysis: null,
+  })!;
+}
+
+function normalizeQuat4(raw: unknown): [number, number, number, number] {
+  if (!Array.isArray(raw) || raw.length !== 4) {
+    return [0, 0, 0, 1];
+  }
+  return [
+    Number(raw[0] ?? 0),
+    Number(raw[1] ?? 0),
+    Number(raw[2] ?? 0),
+    Number(raw[3] ?? 1),
+  ];
+}
+
+function normalizeSceneMeshOverride(raw: any) {
+  return normalizeScriptBuilder({
+    revision: 0,
+    solver: {},
+    mesh: {},
+    universe: null,
+    stages: [],
+    initial_state: null,
+    geometries: [
+      {
+        name: "tmp",
+        geometry_kind: "Box",
+        geometry_params: {},
+        material: {},
+        magnetization: {},
+        mesh: raw ?? null,
+      },
+    ],
+    current_modules: [],
+    excitation_analysis: null,
+  })?.geometries[0]?.mesh ?? null;
+}
+
+function normalizeSceneCurrentModules(raw: any) {
+  const normalized = normalizeScriptBuilder({
+    revision: 0,
+    solver: {},
+    mesh: {},
+    universe: null,
+    stages: [],
+    initial_state: null,
+    geometries: [],
+    current_modules: Array.isArray(raw?.modules) ? raw.modules : [],
+    excitation_analysis: raw?.excitation_analysis ?? null,
+  });
+  return {
+    modules: normalized?.current_modules ?? [],
+    excitation_analysis: normalized?.excitation_analysis ?? null,
+  };
+}
+
+function normalizeSceneStudy(raw: any) {
+  const defaults = emptyScriptBuilderState();
+  const normalized = normalizeScriptBuilder({
+    revision: 0,
+    solver: raw?.solver ?? {},
+    mesh: raw?.mesh_defaults ?? {},
+    universe: null,
+    stages: Array.isArray(raw?.stages) ? raw.stages : [],
+    initial_state: raw?.initial_state ?? null,
+    geometries: [],
+    current_modules: [],
+    excitation_analysis: null,
+  });
+  return {
+    solver: normalized?.solver ?? defaults.solver,
+    mesh_defaults: normalized?.mesh ?? defaults.mesh,
+    stages: normalized?.stages ?? [],
+    initial_state: normalized?.initial_state ?? null,
+  };
+}
+
+function normalizeSceneDocument(raw: any): SceneDocument | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  return {
+    version: "scene.v1",
+    revision: Number(raw.revision ?? 0),
+    scene:
+      raw.scene && typeof raw.scene === "object"
+        ? {
+            id: String(raw.scene.id ?? ""),
+            name: String(raw.scene.name ?? "Scene"),
+          }
+        : {
+            id: "",
+            name: "Scene",
+          },
+    universe:
+      raw.universe && typeof raw.universe === "object"
+        ? {
+            mode: String(raw.universe.mode ?? "auto"),
+            size: normalizeVec3(raw.universe.size),
+            center: normalizeVec3(raw.universe.center),
+            padding: normalizeVec3(raw.universe.padding),
+          }
+        : null,
+    objects: Array.isArray(raw.objects)
+      ? raw.objects.map((object: any) => ({
+          id: String(object?.id ?? ""),
+          name: String(object?.name ?? object?.id ?? ""),
+          geometry: {
+            geometry_kind: String(object?.geometry?.geometry_kind ?? ""),
+            geometry_params:
+              object?.geometry?.geometry_params &&
+              typeof object.geometry.geometry_params === "object"
+                ? object.geometry.geometry_params
+                : {},
+            bounds_min: normalizeVec3(object?.geometry?.bounds_min),
+            bounds_max: normalizeVec3(object?.geometry?.bounds_max),
+          },
+          transform: {
+            translation: normalizeVec3(object?.transform?.translation) ?? [0, 0, 0],
+            rotation_quat: normalizeQuat4(object?.transform?.rotation_quat),
+            scale: normalizeVec3(object?.transform?.scale) ?? [1, 1, 1],
+            pivot: normalizeVec3(object?.transform?.pivot) ?? [0, 0, 0],
+          },
+          material_ref: String(object?.material_ref ?? ""),
+          region_name:
+            typeof object?.region_name === "string" ? object.region_name : null,
+          magnetization_ref:
+            typeof object?.magnetization_ref === "string"
+              ? object.magnetization_ref
+              : null,
+          mesh_override: normalizeSceneMeshOverride(object?.mesh_override ?? null),
+          visible: Boolean(object?.visible ?? true),
+          locked: Boolean(object?.locked),
+          tags: Array.isArray(object?.tags)
+            ? object.tags.filter((tag: unknown): tag is string => typeof tag === "string")
+            : [],
+        }))
+      : [],
+    materials: Array.isArray(raw.materials)
+      ? raw.materials.map((material: any) => ({
+          id: String(material?.id ?? ""),
+          name: String(material?.name ?? ""),
+          properties: {
+            Ms: material?.properties?.Ms != null ? Number(material.properties.Ms) : null,
+            Aex:
+              material?.properties?.Aex != null ? Number(material.properties.Aex) : null,
+            alpha: Number(material?.properties?.alpha ?? 0.01),
+            Dind:
+              material?.properties?.Dind != null ? Number(material.properties.Dind) : null,
+          },
+        }))
+      : [],
+    magnetization_assets: Array.isArray(raw.magnetization_assets)
+      ? raw.magnetization_assets.map((asset: any) => ({
+          id: String(asset?.id ?? ""),
+          name: String(asset?.name ?? ""),
+          kind: String(asset?.kind ?? "uniform"),
+          value: Array.isArray(asset?.value) ? asset.value.map(Number) : null,
+          seed: asset?.seed != null ? Number(asset.seed) : null,
+          source_path: typeof asset?.source_path === "string" ? asset.source_path : null,
+          source_format:
+            typeof asset?.source_format === "string" ? asset.source_format : null,
+          dataset: typeof asset?.dataset === "string" ? asset.dataset : null,
+          sample_index: asset?.sample_index != null ? Number(asset.sample_index) : null,
+          mapping: {
+            space: String(asset?.mapping?.space ?? "object"),
+            projection: String(asset?.mapping?.projection ?? "object_local"),
+            clamp_mode: String(asset?.mapping?.clamp_mode ?? "clamp"),
+          },
+          texture_transform: {
+            translation: normalizeVec3(asset?.texture_transform?.translation) ?? [0, 0, 0],
+            rotation_quat: normalizeQuat4(asset?.texture_transform?.rotation_quat),
+            scale: normalizeVec3(asset?.texture_transform?.scale) ?? [1, 1, 1],
+            pivot: normalizeVec3(asset?.texture_transform?.pivot) ?? [0, 0, 0],
+          },
+        }))
+      : [],
+    current_modules: normalizeSceneCurrentModules(raw.current_modules),
+    study: normalizeSceneStudy(raw.study),
+    outputs: {
+      items: Array.isArray(raw.outputs?.items)
+        ? raw.outputs.items.filter(
+            (item: unknown): item is Record<string, unknown> =>
+              item != null && typeof item === "object" && !Array.isArray(item),
+          )
+        : [],
+    },
+    editor: {
+      selected_object_id:
+        typeof raw.editor?.selected_object_id === "string"
+          ? raw.editor.selected_object_id
+          : null,
+      gizmo_mode:
+        typeof raw.editor?.gizmo_mode === "string" ? raw.editor.gizmo_mode : null,
+      transform_space:
+        typeof raw.editor?.transform_space === "string"
+          ? raw.editor.transform_space
+          : null,
+    },
+  };
+}
+
 function normalizeVec3(raw: unknown): [number, number, number] | null {
   if (!Array.isArray(raw) || raw.length !== 3) {
     return null;
@@ -669,8 +887,17 @@ export function normalizeSessionState(
   const rawPreviewConfig = raw.preview_config ?? null;
   const displaySelection = normalizeDisplaySelection(raw.display_selection);
   const fallbackGrid = latestFields.grid;
-  const scriptBuilder = normalizeScriptBuilder(raw.script_builder);
+  const sceneDocument =
+    normalizeSceneDocument(raw.scene_document) ??
+    (() => {
+      const builder = normalizeScriptBuilder(raw.script_builder);
+      return builder ? buildSceneDocumentFromScriptBuilder(builder) : null;
+    })();
+  const scriptBuilder = sceneDocument
+    ? buildScriptBuilderFromSceneDocument(sceneDocument)
+    : normalizeScriptBuilder(raw.script_builder);
   const modelBuilderGraph =
+    (sceneDocument ? createModelBuilderGraphV2(scriptBuilder ?? undefined) : null) ??
     normalizeModelBuilderGraph(raw.model_builder_graph) ??
     (scriptBuilder ? createModelBuilderGraphV2(scriptBuilder) : null);
 
@@ -708,6 +935,7 @@ export function normalizeSessionState(
     runtime_status: normalizeRuntimeStatus(raw.runtime_status),
     metadata: raw.metadata ?? null,
     mesh_workspace: normalizeMeshWorkspace(raw.mesh_workspace),
+    scene_document: sceneDocument,
     script_builder: scriptBuilder,
     model_builder_graph: modelBuilderGraph,
     scalar_rows: Array.isArray(raw.scalar_rows)

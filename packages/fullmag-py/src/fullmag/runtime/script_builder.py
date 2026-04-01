@@ -499,7 +499,7 @@ def _render_geometries_from_override(
             elif mag_kind == "random":
                 seed = mag.get("seed")
                 lines.append(f"{var_name}.m = fm.random(seed={int(str(seed)) if seed is not None else 1})")
-            elif mag_kind == "file":
+            elif mag_kind in {"file", "sampled"}:
                 src = str(mag.get("source_path", ""))
                 if src:
                     kwargs = []
@@ -1572,7 +1572,7 @@ def _export_geometry_entry(
             magnetization = {"kind": "random", "value": None, "seed": magnet.m0.seed, "source_path": None}
         elif isinstance(magnet.m0, SampledMagnetization):
             magnetization = {
-                "kind": "file",
+                "kind": "sampled",
                 "value": None,
                 "seed": None,
                 "source_path": magnet.m0.source_path,

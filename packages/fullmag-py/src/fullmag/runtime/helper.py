@@ -9,6 +9,11 @@ from typing import Sequence
 from fullmag._progress import emit_progress
 from fullmag.model import BackendTarget, ExecutionMode, ExecutionPrecision
 from fullmag.runtime.loader import load_problem_from_script
+from fullmag.runtime.scene_document import (
+    build_builder_from_scene_document,
+    build_scene_document_from_builder,
+    builder_overrides_from_scene_document,
+)
 from fullmag.runtime.script_builder import export_builder_draft, rewrite_loaded_problem_script
 
 
@@ -83,6 +88,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Load a script and export session-local builder draft state for the control room.",
     )
     export_builder.add_argument("--script", required=True, help="Path to Python script.")
+
+    export_scene = subparsers.add_parser(
+        "export-scene-document",
+        help="Load a script and export the canonical SceneDocument authoring state.",
+    )
+    export_scene.add_argument("--script", required=True, help="Path to Python script.")
+
+    rewrite_scene = subparsers.add_parser(
+        "rewrite-scene-document",
+        help="Render canonical Python from a SceneDocument and optionally write it in place.",
+    )
+    rewrite_scene.add_argument("--script", required=True, help="Path to Python script.")
+    rewrite_scene.add_argument("--scene-json", required=True, help="Path to SceneDocument JSON.")
+    rewrite_scene.add_argument(
+        "--write",
+        action="store_true",
+        help="Write the canonical script back to the original path.",
+    )
 
     read_state = subparsers.add_parser(
         "read-magnetization-state",
@@ -201,6 +224,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         loaded = load_problem_from_script(Path(args.script), lightweight_assets=True)
         print(json.dumps(export_builder_draft(loaded)))
         emit_progress("Builder draft exported")
+        return 0
+
+    if args.command == "export-scene-document":
+        emit_progress(f"Loading Python script {Path(args.script).name}")
+        loaded = load_problem_from_script(Path(args.script), lightweight_assets=True)
+        print(json.dumps(build_scene_document_from_builder(export_builder_draft(loaded))))
+        emit_progress("Scene document exported")
+        return 0
+
+    if args.command == "rewrite-scene-document":
+        emit_progress(f"Loading Python script {Path(args.script).name}")
+        loaded = load_problem_from_script(Path(args.script), lightweight_assets=True)
+        scene_document = json.loads(Path(args.scene_json).read_text(encoding="utf-8"))
+        _ = build_builder_from_scene_document(scene_document)
+        emit_progress("Rendering canonical Python from SceneDocument")
+        print(
+            json.dumps(
+                rewrite_loaded_problem_script(
+                    loaded,
+                    overrides=builder_overrides_from_scene_document(scene_document),
+                    write=bool(args.write),
+                )
+            )
+        )
+        emit_progress("SceneDocument rewrite completed")
         return 0
 
     if args.command == "read-magnetization-state":

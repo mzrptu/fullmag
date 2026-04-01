@@ -30,6 +30,7 @@ import type {
 import type {
   DomainFrameState,
   ModelBuilderGraphV2,
+  SceneDocument,
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
@@ -42,6 +43,7 @@ import {
   selectModelBuilderGeometries,
   selectModelBuilderStages,
   selectModelBuilderUniverse,
+  serializeModelBuilderGraphV2,
   setModelBuilderCurrentModules as applyModelBuilderCurrentModules,
   setModelBuilderExcitationAnalysis as applyModelBuilderExcitationAnalysis,
   setModelBuilderGeometries as applyModelBuilderGeometries,
@@ -50,6 +52,10 @@ import {
   setModelBuilderStages as applyModelBuilderStages,
   setModelBuilderUniverse as applyModelBuilderUniverse,
 } from "../../../lib/session/modelBuilderGraph";
+import {
+  buildSceneDocumentFromScriptBuilder,
+  buildScriptBuilderFromSceneDocument,
+} from "../../../lib/session/sceneDocument";
 import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import { DEFAULT_MESH_OPTIONS } from "../../panels/MeshSettingsPanel";
@@ -206,6 +212,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [solverSettingsState, setSolverSettingsState] =
     useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
   const [modelBuilderGraph, setModelBuilderGraph] = useState<ModelBuilderGraphV2 | null>(null);
+  const [sceneDocumentDraft, setSceneDocumentDraft] = useState<SceneDocument | null>(null);
   const builderHydratedSessionRef = useRef<string | null>(null);
   const builderPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastBuilderPushSignatureRef = useRef<string | null>(null);
@@ -236,6 +243,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const spatialPreview = preview?.kind === "spatial" ? preview : null;
   const globalScalarPreview = preview?.kind === "global_scalar" ? preview : null;
   const femMesh = state?.fem_mesh ?? null;
+  const remoteSceneDocument = state?.scene_document ?? null;
   const scriptBuilder = state?.script_builder ?? null;
   const remoteModelBuilderGraph = state?.model_builder_graph ?? null;
   const scriptInitialState = scriptBuilder?.initial_state ?? null;
@@ -292,16 +300,6 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setFocusObjectRequest(null);
     setObjectViewMode("context");
   }, [workspaceHydrationKey]);
-
-  useEffect(() => {
-    if (!selectedObjectId) {
-      return;
-    }
-    if (scriptBuilderGeometries.some((geometry) => geometry.name === selectedObjectId)) {
-      return;
-    }
-    setSelectedObjectId(null);
-  }, [scriptBuilderGeometries, selectedObjectId]);
 
   const hasSolverTelemetry =
     (liveState?.step ?? 0) > 0 ||
@@ -469,6 +467,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   );
   const localBuilderDraft = useMemo(
     () =>
+      sceneDocumentDraft ??
       buildScriptBuilderUpdatePayload(
         modelBuilderGraph,
         {
@@ -484,6 +483,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     [
       modelBuilderGraph,
       meshOptions,
+      sceneDocumentDraft,
       solverSettings,
       scriptBuilderUniverse,
       studyStages,
@@ -492,20 +492,54 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       scriptBuilderExcitationAnalysis,
     ],
   );
+  const sceneObjects = useMemo(
+    () => localBuilderDraft?.objects ?? remoteSceneDocument?.objects ?? [],
+    [localBuilderDraft, remoteSceneDocument],
+  );
+  const setSceneDocument = useCallback<Dispatch<SetStateAction<SceneDocument | null>>>(
+    (update) => {
+      const baseScene = sceneDocumentDraft ?? localBuilderDraft;
+      const nextScene =
+        typeof update === "function"
+          ? (update as (current: SceneDocument | null) => SceneDocument | null)(baseScene)
+          : update;
+      setSceneDocumentDraft(nextScene);
+      setModelBuilderGraph(
+        nextScene ? buildModelBuilderGraphV2(buildScriptBuilderFromSceneDocument(nextScene)) : null,
+      );
+    },
+    [localBuilderDraft, sceneDocumentDraft],
+  );
+  useEffect(() => {
+    if (!selectedObjectId) {
+      return;
+    }
+    if (
+      sceneObjects.some(
+        (object) => object.id === selectedObjectId || object.name === selectedObjectId,
+      )
+    ) {
+      return;
+    }
+    setSelectedObjectId(null);
+  }, [sceneObjects, selectedObjectId]);
   const localBuilderSignature = useMemo(
     () =>
-      buildScriptBuilderSignature(modelBuilderGraph, {
-        solverSettings,
-        meshOptions,
-        universe: scriptBuilderUniverse,
-        stages: studyStages,
-        geometries: scriptBuilderGeometries,
-        currentModules: scriptBuilderCurrentModules,
-        excitationAnalysis: scriptBuilderExcitationAnalysis,
-      }),
+      sceneDocumentDraft != null
+        ? JSON.stringify(sceneDocumentDraft)
+        : buildScriptBuilderSignature(modelBuilderGraph, {
+            solverSettings,
+            meshOptions,
+            universe: scriptBuilderUniverse,
+            stages: studyStages,
+            geometries: scriptBuilderGeometries,
+            currentModules: scriptBuilderCurrentModules,
+            excitationAnalysis: scriptBuilderExcitationAnalysis,
+          }),
     [
       modelBuilderGraph,
       meshOptions,
+      sceneDocumentDraft,
       solverSettings,
       scriptBuilderUniverse,
       studyStages,
@@ -530,17 +564,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       if (!scriptBuilder) {
         return null;
       }
-      return JSON.stringify({
-        solver: scriptBuilder.solver,
-        mesh: scriptBuilder.mesh,
-        universe: scriptBuilder.universe,
-        stages: scriptBuilder.stages,
-        geometries: scriptBuilder.geometries,
-        current_modules: scriptBuilder.current_modules,
-        excitation_analysis: scriptBuilder.excitation_analysis,
-      });
+      return JSON.stringify(
+        remoteSceneDocument ?? buildSceneDocumentFromScriptBuilder(scriptBuilder),
+      );
     },
     [
+      remoteSceneDocument,
       remoteModelBuilderGraph,
       scriptBuilder,
       meshOptions,
@@ -560,6 +589,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     lastBuilderPushSignatureRef.current = null;
     setSolverSettingsHydrated(false);
     setModelBuilderGraph(null);
+    setSceneDocumentDraft(null);
     if (builderPushTimerRef.current) {
       clearTimeout(builderPushTimerRef.current);
       builderPushTimerRef.current = null;
@@ -608,6 +638,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       ...meshOptionsFromBuilder(incomingGraph.study.mesh_defaults),
     }));
     setModelBuilderGraph(incomingGraph);
+    setSceneDocumentDraft(
+      remoteSceneDocument ??
+        buildSceneDocumentFromScriptBuilder({
+          revision: incomingGraph.revision,
+          initial_state: incomingGraph.study.initial_state,
+          ...serializeModelBuilderGraphV2(incomingGraph),
+        }),
+    );
     const firstRunStage = incomingGraph.study.stages.find(
       (stage) => stage.kind === "run" && stage.until_seconds.trim().length > 0,
     );
@@ -628,11 +666,86 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [
     buildScriptBuilderSignature,
     meshOptions,
+    remoteSceneDocument,
     remoteModelBuilderGraph,
     scriptBuilder,
     solverSettings,
     workspaceHydrationKey,
   ]);
+
+  useEffect(() => {
+    if (!workspaceHydrationKey || !modelBuilderGraph) {
+      return;
+    }
+    const projectedScene = buildSceneDocumentFromScriptBuilder({
+      revision: modelBuilderGraph.revision,
+      initial_state: modelBuilderGraph.study.initial_state,
+      ...serializeModelBuilderGraphV2(modelBuilderGraph),
+    });
+    setSceneDocumentDraft((previousScene) => {
+      if (!previousScene) {
+        return projectedScene;
+      }
+      return {
+        ...projectedScene,
+        scene: previousScene.scene,
+        outputs: previousScene.outputs,
+        editor: previousScene.editor,
+        objects: projectedScene.objects.map((object) => {
+          const existing = previousScene.objects.find(
+            (candidate) => candidate.id === object.id || candidate.name === object.name,
+          );
+          if (!existing) {
+            return object;
+          }
+          return {
+            ...existing,
+            id: object.id,
+            name: object.name,
+            geometry: object.geometry,
+            transform: {
+              ...existing.transform,
+              translation: object.transform.translation,
+            },
+            material_ref: object.material_ref,
+            region_name: object.region_name,
+            magnetization_ref: object.magnetization_ref,
+            mesh_override: object.mesh_override,
+          };
+        }),
+        materials: projectedScene.materials.map((material) => {
+          const existing = previousScene.materials.find(
+            (candidate) => candidate.id === material.id,
+          );
+          return existing
+            ? {
+                ...existing,
+                id: material.id,
+                properties: material.properties,
+              }
+            : material;
+        }),
+        magnetization_assets: projectedScene.magnetization_assets.map((asset) => {
+          const existing = previousScene.magnetization_assets.find(
+            (candidate) => candidate.id === asset.id,
+          );
+          return existing
+            ? {
+                ...existing,
+                id: asset.id,
+                kind: asset.kind,
+                value: asset.value,
+                seed: asset.seed,
+                source_path: asset.source_path,
+                source_format: asset.source_format,
+                dataset: asset.dataset,
+                sample_index: asset.sample_index,
+              }
+            : asset;
+        }),
+      };
+    });
+  }, [modelBuilderGraph, workspaceHydrationKey]);
 
   useEffect(() => {
     if (!workspaceHydrationKey || !scriptBuilder) {
@@ -653,12 +766,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     }
     builderPushTimerRef.current = setTimeout(() => {
       void liveApi
-        .updateScriptBuilder(localBuilderDraft)
+        .updateSceneDocument(localBuilderDraft)
         .then(() => {
           lastBuilderPushSignatureRef.current = localBuilderSignature;
         })
         .catch((builderError) => {
-          console.warn("Failed to persist script builder draft", builderError);
+          console.warn("Failed to persist scene document draft", builderError);
           lastBuilderPushSignatureRef.current = null;
         });
     }, 250);
@@ -1282,33 +1395,31 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const applyGeometryTranslation = useCallback((geometryName: string, dx: number, dy: number, dz: number) => {
-    setScriptBuilderGeometries((prev) =>
-      prev.map((geo) => {
-        if (geo.name !== geometryName) return geo;
-        const params = geo.geometry_params ?? {};
-        const translateRaw = Array.isArray(params.translate)
-          ? params.translate
-          : Array.isArray(params.translation)
-            ? params.translation
-            : [0, 0, 0];
-        const translation = translateRaw && translateRaw.length === 3
-          ? (translateRaw.map((value) => Number(value)) as [number, number, number])
-          : [0, 0, 0];
-        
-        return {
-          ...geo,
-          geometry_params: {
-            ...params,
-            translation: [
-              translation[0] + dx,
-              translation[1] + dy,
-              translation[2] + dz,
-            ],
-          },
-        };
-      })
-    );
-  }, []);
+    setSceneDocument((previousScene) => {
+      const baseScene = previousScene ?? localBuilderDraft;
+      const nextScene: SceneDocument = {
+        ...baseScene,
+        objects: baseScene.objects.map((object) => {
+          if (object.id !== geometryName && object.name !== geometryName) {
+            return object;
+          }
+          const translation = object.transform.translation ?? [0, 0, 0];
+          return {
+            ...object,
+            transform: {
+              ...object.transform,
+              translation: [
+                Number(translation[0] ?? 0) + dx,
+                Number(translation[1] ?? 0) + dy,
+                Number(translation[2] ?? 0) + dz,
+              ],
+            },
+          };
+        }),
+      };
+      return nextScene;
+    });
+  }, [localBuilderDraft, setSceneDocument]);
 
   const applyMeshWorkspacePreset = useCallback((presetId: MeshWorkspacePresetId) => {
     const preset = MESH_WORKSPACE_PRESETS.find((entry) => entry.id === presetId);
@@ -1537,7 +1648,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         clearTimeout(builderPushTimerRef.current);
         builderPushTimerRef.current = null;
       }
-      await liveApi.updateScriptBuilder(localBuilderDraft);
+      await liveApi.updateSceneDocument(localBuilderDraft);
       lastBuilderPushSignatureRef.current = localBuilderSignature;
       const response = await liveApi.syncScript();
       const syncedPath =
@@ -2005,6 +2116,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   ]);
 
   const modelValue = useMemo<ModelContextValue>(() => ({
+    sceneDocument: localBuilderDraft,
     modelBuilderGraph,
     material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
@@ -2029,11 +2141,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     selectedObjectId,
     focusObjectRequest,
     objectViewMode,
-    setSolverSettings, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
+    setSolverSettings, setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
     setSelectedSidebarNodeId, setSelectedObjectId, setObjectViewMode, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
-    modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
+    localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
@@ -2043,7 +2155,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
     selectedSidebarNodeId, selectedObjectId, focusObjectRequest, objectViewMode, requestFocusObject,
-    setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
+    setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   ]);
 

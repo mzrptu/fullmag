@@ -39,10 +39,9 @@ import { TextField } from "../../ui/TextField";
 import SelectField from "../../ui/SelectField";
 import { Button } from "../../ui/button";
 import type {
-  ScriptBuilderGeometryEntry,
   ScriptBuilderPerGeometryMeshEntry,
 } from "../../../lib/session/types";
-import { findGeometryByNodeId } from "./objectSelection";
+import { findSceneObjectByNodeId } from "./objectSelection";
 import { SidebarSection } from "./primitives";
 import { HelpTip } from "../../ui/HelpTip";
 
@@ -156,26 +155,48 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
   const ctx = useControlRoom();
   const model = useModel();
 
-  const { geometry: geo, index: geoIndex } = useMemo(
-    () => findGeometryByNodeId(nodeId, model.scriptBuilderGeometries),
-    [nodeId, model.scriptBuilderGeometries],
+  const { object: sceneObject, index: geoIndex } = useMemo(
+    () => findSceneObjectByNodeId(nodeId, model.sceneDocument),
+    [model.sceneDocument, nodeId],
+  );
+  const geo = useMemo(
+    () =>
+      sceneObject
+        ? {
+            name: sceneObject.name,
+            geometry_kind: sceneObject.geometry.geometry_kind,
+            mesh: sceneObject.mesh_override,
+            bounds_min: sceneObject.geometry.bounds_min ?? null,
+            bounds_max: sceneObject.geometry.bounds_max ?? null,
+          }
+        : null,
+    [sceneObject],
   );
 
   const updateGeo = useCallback(
-    (updater: (geometry: ScriptBuilderGeometryEntry) => ScriptBuilderGeometryEntry) => {
+    (updater: (mesh: ScriptBuilderPerGeometryMeshEntry | null) => ScriptBuilderPerGeometryMeshEntry | null) => {
       if (geoIndex < 0) {
         return;
       }
-      model.setScriptBuilderGeometries((prev) => {
-        const next = [...prev];
-        const target = next[geoIndex];
-        if (target) {
-          next[geoIndex] = updater(target);
+      model.setSceneDocument((prev) => {
+        if (!prev) {
+          return prev;
         }
-        return next;
+        const nextObjects = [...prev.objects];
+        const target = nextObjects[geoIndex];
+        if (target) {
+          nextObjects[geoIndex] = {
+            ...target,
+            mesh_override: updater(target.mesh_override ?? null),
+          };
+        }
+        return {
+          ...prev,
+          objects: nextObjects,
+        };
       });
     },
-    [geoIndex, model.setScriptBuilderGeometries],
+    [geoIndex, model],
   );
 
   const mesh = geo?.mesh ?? createInheritedMeshState();
@@ -306,10 +327,7 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
               variant={mesh.mode === "inherit" ? "default" : "outline"}
               size="sm"
               onClick={() =>
-                updateGeo((current) => ({
-                  ...current,
-                  mesh: createInheritedMeshState(),
-                }))
+                updateGeo(() => createInheritedMeshState())
               }
             >
               Use Global Mesh
@@ -318,18 +336,17 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
               variant={mesh.mode === "custom" ? "default" : "outline"}
               size="sm"
               onClick={() =>
-                updateGeo((current) => ({
-                  ...current,
-                  mesh: buildCustomMeshState(
+                updateGeo((currentMesh) =>
+                  buildCustomMeshState(
                     effectiveOptions,
-                    current.mesh,
+                    currentMesh,
                     {
-                      order: current.mesh?.order ?? model.meshFeOrder ?? null,
-                      source: current.mesh?.source ?? model.meshSource ?? null,
-                      buildRequested: current.mesh?.build_requested ?? false,
+                      order: currentMesh?.order ?? model.meshFeOrder ?? null,
+                      source: currentMesh?.source ?? model.meshSource ?? null,
+                      buildRequested: currentMesh?.build_requested ?? false,
                     },
                   ),
-                }))
+                )
               }
             >
               Customize Mesh
@@ -340,17 +357,15 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
             label="Mesh Mode"
             value={mesh.mode}
             onchange={(value) =>
-              updateGeo((current) => ({
-                ...current,
-                mesh:
+              updateGeo((currentMesh) =>
                   value === "custom"
-                    ? buildCustomMeshState(effectiveOptions, current.mesh, {
-                        order: current.mesh?.order ?? model.meshFeOrder ?? null,
-                        source: current.mesh?.source ?? model.meshSource ?? null,
-                        buildRequested: current.mesh?.build_requested ?? false,
+                    ? buildCustomMeshState(effectiveOptions, currentMesh, {
+                        order: currentMesh?.order ?? model.meshFeOrder ?? null,
+                        source: currentMesh?.source ?? model.meshSource ?? null,
+                        buildRequested: currentMesh?.build_requested ?? false,
                       })
                     : createInheritedMeshState(),
-              }))
+              )
             }
             options={[
               { label: "Inherit Global", value: "inherit" },
@@ -373,18 +388,17 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
               defaultValue={effectiveOrder != null ? String(effectiveOrder) : ""}
               onchange={(e) => {
                 const raw = e.target.value.trim();
-                updateGeo((current) => ({
-                  ...current,
-                  mesh: buildCustomMeshState(
+                updateGeo((currentMesh) =>
+                  buildCustomMeshState(
                     effectiveOptions,
-                    current.mesh,
+                    currentMesh,
                     {
                       order: raw.length > 0 ? Math.max(1, Math.round(Number(raw) || 1)) : null,
-                      source: current.mesh?.source ?? model.meshSource ?? null,
-                      buildRequested: current.mesh?.build_requested ?? false,
+                      source: currentMesh?.source ?? model.meshSource ?? null,
+                      buildRequested: currentMesh?.build_requested ?? false,
                     },
                   ),
-                }));
+                );
               }}
               mono
               disabled={mesh.mode !== "custom"}
@@ -397,18 +411,17 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
               defaultValue={effectiveSource ?? ""}
               onchange={(e) => {
                 const raw = e.target.value.trim();
-                updateGeo((current) => ({
-                  ...current,
-                  mesh: buildCustomMeshState(
+                updateGeo((currentMesh) =>
+                  buildCustomMeshState(
                     effectiveOptions,
-                    current.mesh,
+                    currentMesh,
                     {
-                      order: current.mesh?.order ?? model.meshFeOrder ?? null,
+                      order: currentMesh?.order ?? model.meshFeOrder ?? null,
                       source: raw.length > 0 ? raw : null,
-                      buildRequested: current.mesh?.build_requested ?? false,
+                      buildRequested: currentMesh?.build_requested ?? false,
                     },
                   ),
-                }));
+                );
               }}
               mono
               disabled={mesh.mode !== "custom"}
@@ -420,17 +433,15 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
           <MeshSettingsPanel
             options={effectiveOptions}
             onChange={(nextOptions) =>
-              updateGeo((current) => ({
-                ...current,
-                mesh:
+              updateGeo((currentMesh) =>
                   mesh.mode === "custom"
-                    ? buildCustomMeshState(nextOptions, current.mesh, {
-                        order: current.mesh?.order ?? model.meshFeOrder ?? null,
-                        source: current.mesh?.source ?? model.meshSource ?? null,
-                        buildRequested: current.mesh?.build_requested ?? false,
+                    ? buildCustomMeshState(nextOptions, currentMesh, {
+                        order: currentMesh?.order ?? model.meshFeOrder ?? null,
+                        source: currentMesh?.source ?? model.meshSource ?? null,
+                        buildRequested: currentMesh?.build_requested ?? false,
                       })
-                    : current.mesh ?? createInheritedMeshState(),
-              }))
+                    : currentMesh ?? createInheritedMeshState(),
+              )
             }
             quality={meshQualityData}
             generating={ctx.meshGenerating}

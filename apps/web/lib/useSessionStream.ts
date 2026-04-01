@@ -28,6 +28,7 @@ export type {
   RuntimeStatusKind,
   RuntimeStatusState,
   CommandStatus,
+  SceneDocument,
   ScriptBuilderSolverState,
   ScriptBuilderMeshState,
   ScriptBuilderUniverseState,

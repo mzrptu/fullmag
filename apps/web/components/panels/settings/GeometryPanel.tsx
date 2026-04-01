@@ -7,8 +7,17 @@ import { extractGeometryBoundsFromParams, fmtSI } from "../../runs/control-room/
 import { TextField } from "../../ui/TextField";
 import SelectField from "../../ui/SelectField";
 import { Button } from "../../ui/button";
-import type { ScriptBuilderGeometryEntry } from "../../../lib/session/types";
-import { findGeometryByNodeId } from "./objectSelection";
+import type {
+  MagnetizationAsset,
+  SceneMaterialAsset,
+  SceneObject,
+  ScriptBuilderGeometryEntry,
+} from "../../../lib/session/types";
+import {
+  defaultSceneMagnetizationId,
+  defaultSceneMaterialId,
+  findSceneObjectByNodeId,
+} from "./objectSelection";
 import { SidebarSection, SubSectionHeader } from "./primitives";
 
 function defaultGeometryParams(kind: string, name: string): Record<string, unknown> {
@@ -50,25 +59,11 @@ function defaultGeometryParams(kind: string, name: string): Record<string, unkno
   }
 }
 
-function cloneGeometryEntry(source: ScriptBuilderGeometryEntry, nextName: string): ScriptBuilderGeometryEntry {
-  const nextRegionName =
-    !source.region_name || source.region_name === source.name ? null : `${source.region_name}_${nextName}`;
-  return {
-    ...source,
-    name: nextName,
-    region_name: nextRegionName,
-    geometry_params: {
-      ...source.geometry_params,
-      name: nextName,
-    },
-  };
-}
-
-function makeUniqueName(baseName: string, geometries: ScriptBuilderGeometryEntry[], skipIndex = -1): string {
+function makeUniqueName(baseName: string, objects: SceneObject[], skipIndex = -1): string {
   const normalized = baseName.trim() || "body";
   const existing = new Set(
-    geometries
-      .map((geometry, index) => (index === skipIndex ? null : geometry.name))
+    objects
+      .map((object, index) => (index === skipIndex ? null : object.name))
       .filter((value): value is string => Boolean(value)),
   );
   if (!existing.has(normalized)) {
@@ -81,28 +76,105 @@ function makeUniqueName(baseName: string, geometries: ScriptBuilderGeometryEntry
   return `${normalized}_${counter}`;
 }
 
-function readTranslation(params: Record<string, unknown>): [number, number, number] {
-  const raw = Array.isArray(params.translation)
-    ? params.translation
-    : Array.isArray(params.translate)
-      ? params.translate
-      : [0, 0, 0];
-  return [
-    Number(raw[0]) || 0,
-    Number(raw[1]) || 0,
-    Number(raw[2]) || 0,
-  ];
+function readTranslation(object: SceneObject): [number, number, number] {
+  const raw = object.transform.translation ?? [0, 0, 0];
+  return [Number(raw[0]) || 0, Number(raw[1]) || 0, Number(raw[2]) || 0];
 }
 
-function shiftBounds(
-  bounds: [number, number, number] | null | undefined,
-  delta: [number, number, number],
-): [number, number, number] | null | undefined {
-  if (!bounds || bounds.length !== 3) {
-    return bounds;
+function buildProjectedGeometryEntry(
+  object: SceneObject,
+  material?: SceneMaterialAsset,
+  magnetization?: MagnetizationAsset,
+): ScriptBuilderGeometryEntry {
+  const geometryParams = { ...object.geometry.geometry_params };
+  const translation = readTranslation(object);
+  if (translation.some((component) => Math.abs(component) > Number.EPSILON)) {
+    geometryParams.translation = [...translation];
   }
-  const shifted = bounds.map((component, index) => component + delta[index]) as [number, number, number];
-  return shifted.every((component) => Number.isFinite(component)) ? shifted : bounds;
+  return {
+    name: object.name || object.id,
+    region_name: object.region_name,
+    geometry_kind: object.geometry.geometry_kind,
+    geometry_params: geometryParams,
+    bounds_min: object.geometry.bounds_min ?? null,
+    bounds_max: object.geometry.bounds_max ?? null,
+    material: material?.properties ?? {
+      Ms: null,
+      Aex: null,
+      alpha: 0.01,
+      Dind: null,
+    },
+    magnetization: {
+      kind: magnetization?.kind ?? "uniform",
+      value: magnetization?.value ?? [0, 0, 1],
+      seed: magnetization?.seed ?? null,
+      source_path: magnetization?.source_path ?? null,
+      source_format: magnetization?.source_format ?? null,
+      dataset: magnetization?.dataset ?? null,
+      sample_index: magnetization?.sample_index ?? null,
+    },
+    mesh: object.mesh_override,
+  };
+}
+
+function cloneSceneObject(source: SceneObject, nextName: string): SceneObject {
+  const nextRegionName =
+    !source.region_name || source.region_name === source.name
+      ? null
+      : `${source.region_name}_${nextName}`;
+  return {
+    ...source,
+    id: nextName,
+    name: nextName,
+    material_ref: defaultSceneMaterialId(nextName),
+    magnetization_ref: defaultSceneMagnetizationId(nextName),
+    region_name: nextRegionName,
+    geometry: {
+      ...source.geometry,
+      geometry_params: {
+        ...source.geometry.geometry_params,
+        name: nextName,
+      },
+    },
+  };
+}
+
+function defaultMaterialAsset(name: string): SceneMaterialAsset {
+  return {
+    id: defaultSceneMaterialId(name),
+    name: `${name} material`,
+    properties: {
+      Ms: null,
+      Aex: null,
+      alpha: 0.01,
+      Dind: null,
+    },
+  };
+}
+
+function defaultMagnetizationAsset(name: string): MagnetizationAsset {
+  return {
+    id: defaultSceneMagnetizationId(name),
+    name: `${name} magnetization`,
+    kind: "uniform",
+    value: [0, 0, 1],
+    seed: null,
+    source_path: null,
+    source_format: null,
+    dataset: null,
+    sample_index: null,
+    mapping: {
+      space: "object",
+      projection: "object_local",
+      clamp_mode: "clamp",
+    },
+    texture_transform: {
+      translation: [0, 0, 0],
+      rotation_quat: [0, 0, 0, 1],
+      scale: [1, 1, 1],
+      pivot: [0, 0, 0],
+    },
+  };
 }
 
 function formatBounds(
@@ -163,39 +235,68 @@ function describeGeometryDescriptor(raw: unknown): string {
 export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
   const model = useModel();
 
-  const { geometry: geo, index: geoIndex } = useMemo(
-    () => findGeometryByNodeId(nodeId, model.scriptBuilderGeometries),
-    [nodeId, model.scriptBuilderGeometries],
+  const { object: sceneObject, index: objectIndex, material, magnetization } = useMemo(
+    () => findSceneObjectByNodeId(nodeId, model.sceneDocument),
+    [model.sceneDocument, nodeId],
   );
 
-  const updateGeo = useCallback((updater: (g: ScriptBuilderGeometryEntry) => ScriptBuilderGeometryEntry) => {
-    if (geoIndex < 0) return;
-    model.setScriptBuilderGeometries((prev) => {
-      const next = [...prev];
-      const target = next[geoIndex];
-      if (target) next[geoIndex] = updater(target);
-      return next;
-    });
-  }, [geoIndex, model.setScriptBuilderGeometries]);
+  const geo = useMemo(
+    () =>
+      sceneObject
+        ? buildProjectedGeometryEntry(sceneObject, material, magnetization)
+        : undefined,
+    [magnetization, material, sceneObject],
+  );
+
+  const updateObject = useCallback(
+    (updater: (object: SceneObject) => SceneObject) => {
+      if (objectIndex < 0) return;
+      model.setSceneDocument((prev) => {
+        if (!prev) return prev;
+        const nextObjects = [...prev.objects];
+        const target = nextObjects[objectIndex];
+        if (target) {
+          nextObjects[objectIndex] = updater(target);
+        }
+        return {
+          ...prev,
+          objects: nextObjects,
+        };
+      });
+    },
+    [model, objectIndex],
+  );
 
   const handleBoxSize = (idx: number, valStr: string) => {
     const val = parseFloat(valStr);
     if (isNaN(val)) return;
-    updateGeo((g) => {
-      const size = Array.isArray(g.geometry_params.size)
-        ? [...g.geometry_params.size]
+    updateObject((object) => {
+      const size = Array.isArray(object.geometry.geometry_params.size)
+        ? [...object.geometry.geometry_params.size]
         : [20e-9, 20e-9, 10e-9];
       size[idx] = val * 1e-9;
-      return { ...g, geometry_params: { ...g.geometry_params, size } };
+      return {
+        ...object,
+        geometry: {
+          ...object.geometry,
+          geometry_params: { ...object.geometry.geometry_params, size },
+        },
+      };
     });
   };
 
   const handleParamNum = (key: string, valStr: string) => {
     const val = parseFloat(valStr);
     if (isNaN(val)) return;
-    updateGeo((g) => ({
-      ...g,
-      geometry_params: { ...g.geometry_params, [key]: val * 1e-9 },
+    updateObject((object) => ({
+      ...object,
+      geometry: {
+        ...object.geometry,
+        geometry_params: {
+          ...object.geometry.geometry_params,
+          [key]: val * 1e-9,
+        },
+      },
     }));
   };
 
@@ -203,18 +304,15 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
     const val = parseFloat(valStr);
     if (isNaN(val)) return;
     startTransition(() => {
-      updateGeo((g) => {
-        const currentTranslation = readTranslation(g.geometry_params);
-        const translation = [...currentTranslation] as [number, number, number];
+      updateObject((object) => {
+        const translation = [...readTranslation(object)] as [number, number, number];
         translation[idx] = val * 1e-9;
-        const delta = translation.map(
-          (component, componentIndex) => component - currentTranslation[componentIndex],
-        ) as [number, number, number];
         return {
-          ...g,
-          geometry_params: { ...g.geometry_params, translation },
-          bounds_min: shiftBounds(g.bounds_min, delta),
-          bounds_max: shiftBounds(g.bounds_max, delta),
+          ...object,
+          transform: {
+            ...object.transform,
+            translation,
+          },
         };
       });
     });
@@ -223,28 +321,34 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
   const handleScaleComponent = (idx: number, valStr: string) => {
     const val = parseFloat(valStr);
     if (isNaN(val)) return;
-    updateGeo((g) => {
-      const currentScale = g.geometry_params.scale;
+    updateObject((object) => {
+      const currentScale = object.geometry.geometry_params.scale;
       const scale = Array.isArray(currentScale)
         ? [...currentScale]
         : [Number(currentScale ?? 1), Number(currentScale ?? 1), Number(currentScale ?? 1)];
       scale[idx] = val;
-      return { ...g, geometry_params: { ...g.geometry_params, scale } };
+      return {
+        ...object,
+        geometry: {
+          ...object.geometry,
+          geometry_params: { ...object.geometry.geometry_params, scale },
+        },
+      };
     });
   };
 
-  if (!geo) {
+  if (!geo || !sceneObject) {
     return (
       <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
           <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Geometry</span>
           <span className="font-mono text-xs text-foreground">{model.meshName ?? model.mesherSourceKind ?? "—"}</span>
         </div>
-        <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
           <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Source</span>
           <span className="font-mono text-xs text-foreground">{model.meshSource ?? model.mesherSourceKind ?? "—"}</span>
         </div>
-        <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
           <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Extent</span>
           <span className="font-mono text-xs text-foreground">
             {model.meshExtent
@@ -252,7 +356,7 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
               : "—"}
           </span>
         </div>
-        <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
+        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
           <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Bounds</span>
           <span className="font-mono text-xs text-foreground">
             {model.meshBoundsMin && model.meshBoundsMax
@@ -265,10 +369,10 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
   }
 
   const p = geo.geometry_params;
-  const translation = readTranslation(p);
+  const translation = readTranslation(sceneObject);
   const size = Array.isArray(p.size) ? p.size : [20e-9, 20e-9, 10e-9];
   const scale = p.scale;
-  const regionName = geo.region_name?.trim() || geo.name;
+  const regionName = sceneObject.region_name?.trim() || sceneObject.name;
   const liveBounds = extractGeometryBoundsFromParams(geo);
   const csgSummary =
     geo.geometry_kind === "Difference"
@@ -280,36 +384,73 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
           : null;
 
   return (
-    <div className="flex flex-col pt-3 px-1.5">
+    <div className="flex flex-col px-1.5 pt-3">
       <SidebarSection title="Object Identity" icon="⚙" defaultOpen={true}>
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3">
             <TextField
-              key={`${geo.name}-object-name`}
+              key={`${sceneObject.name}-object-name`}
               label="Object Name"
-              defaultValue={geo.name}
+              defaultValue={sceneObject.name}
               onBlur={(event) => {
                 const requested = event.target.value.trim();
-                if (!requested || requested === geo.name) return;
+                if (!requested || requested === sceneObject.name) return;
                 let renamedTo: string | null = null;
-                model.setScriptBuilderGeometries((prev) => {
-                  const nextName = makeUniqueName(requested, prev, geoIndex);
+                model.setSceneDocument((prev) => {
+                  if (!prev) return prev;
+                  const nextName = makeUniqueName(requested, prev.objects, objectIndex);
                   renamedTo = nextName;
-                  const next = [...prev];
-                  const target = next[geoIndex];
+                  const nextObjects = [...prev.objects];
+                  const target = nextObjects[objectIndex];
                   if (!target) return prev;
+                  const previousName = target.name;
                   const shouldFollowObjectName =
                     !target.region_name || target.region_name === target.name;
-                  next[geoIndex] = {
+                  const nextMaterialRef =
+                    target.material_ref === defaultSceneMaterialId(previousName)
+                      ? defaultSceneMaterialId(nextName)
+                      : target.material_ref;
+                  const nextMagnetizationRef =
+                    target.magnetization_ref === defaultSceneMagnetizationId(previousName)
+                      ? defaultSceneMagnetizationId(nextName)
+                      : target.magnetization_ref;
+                  nextObjects[objectIndex] = {
                     ...target,
+                    id: nextName,
                     name: nextName,
+                    material_ref: nextMaterialRef,
+                    magnetization_ref: nextMagnetizationRef,
                     region_name: shouldFollowObjectName ? null : target.region_name,
-                    geometry_params: {
-                      ...target.geometry_params,
-                      name: nextName,
+                    geometry: {
+                      ...target.geometry,
+                      geometry_params: {
+                        ...target.geometry.geometry_params,
+                        name: nextName,
+                      },
                     },
                   };
-                  return next;
+                  return {
+                    ...prev,
+                    objects: nextObjects,
+                    materials: prev.materials.map((entry) =>
+                      entry.id === target.material_ref
+                        ? {
+                            ...entry,
+                            id: nextMaterialRef,
+                            name: `${nextName} material`,
+                          }
+                        : entry,
+                    ),
+                    magnetization_assets: prev.magnetization_assets.map((entry) =>
+                      entry.id === target.magnetization_ref
+                        ? {
+                            ...entry,
+                            id: nextMagnetizationRef,
+                            name: `${nextName} magnetization`,
+                          }
+                        : entry,
+                    ),
+                  };
                 });
                 if (!renamedTo) return;
                 startTransition(() => {
@@ -321,12 +462,12 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
               tooltip="Stable object identifier used by the tree, overlays and canonical script."
             />
             <TextField
-              key={`${geo.name}-region-summary`}
+              key={`${sceneObject.name}-region-summary`}
               label="Effective Region"
               defaultValue={regionName}
               disabled
               mono
-              tooltip="This object currently exposes one editable region in the builder."
+              tooltip="This object currently exposes one editable region in the scene document."
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -335,14 +476,41 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
               size="sm"
               onClick={() => {
                 let duplicateName: string | null = null;
-                model.setScriptBuilderGeometries((prev) => {
-                  const next = [...prev];
-                  const source = next[geoIndex];
+                model.setSceneDocument((prev) => {
+                  if (!prev) return prev;
+                  const source = prev.objects[objectIndex];
                   if (!source) return prev;
-                  const nextDuplicateName = makeUniqueName(`${source.name}_copy`, next);
+                  const nextDuplicateName = makeUniqueName(`${source.name}_copy`, prev.objects);
                   duplicateName = nextDuplicateName;
-                  next.splice(geoIndex + 1, 0, cloneGeometryEntry(source, nextDuplicateName));
-                  return next;
+                  const sourceMaterial =
+                    prev.materials.find((entry) => entry.id === source.material_ref) ??
+                    defaultMaterialAsset(source.name);
+                  const sourceMagnetization =
+                    prev.magnetization_assets.find(
+                      (entry) => entry.id === source.magnetization_ref,
+                    ) ?? defaultMagnetizationAsset(source.name);
+                  const nextObjects = [...prev.objects];
+                  nextObjects.splice(objectIndex + 1, 0, cloneSceneObject(source, nextDuplicateName));
+                  return {
+                    ...prev,
+                    objects: nextObjects,
+                    materials: [
+                      ...prev.materials,
+                      {
+                        ...sourceMaterial,
+                        id: defaultSceneMaterialId(nextDuplicateName),
+                        name: `${nextDuplicateName} material`,
+                      },
+                    ],
+                    magnetization_assets: [
+                      ...prev.magnetization_assets,
+                      {
+                        ...sourceMagnetization,
+                        id: defaultSceneMagnetizationId(nextDuplicateName),
+                        name: `${nextDuplicateName} magnetization`,
+                      },
+                    ],
+                  };
                 });
                 if (!duplicateName) return;
                 startTransition(() => {
@@ -359,7 +527,30 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
               size="sm"
               className="opacity-90 hover:opacity-100"
               onClick={() => {
-                model.setScriptBuilderGeometries((prev) => prev.filter((_, index) => index !== geoIndex));
+                model.setSceneDocument((prev) => {
+                  if (!prev) return prev;
+                  const target = prev.objects[objectIndex];
+                  if (!target) return prev;
+                  const remainingObjects = prev.objects.filter((_, index) => index !== objectIndex);
+                  const materialStillReferenced = remainingObjects.some(
+                    (object) => object.material_ref === target.material_ref,
+                  );
+                  const magnetizationStillReferenced = remainingObjects.some(
+                    (object) => object.magnetization_ref === target.magnetization_ref,
+                  );
+                  return {
+                    ...prev,
+                    objects: remainingObjects,
+                    materials: materialStillReferenced
+                      ? prev.materials
+                      : prev.materials.filter((entry) => entry.id !== target.material_ref),
+                    magnetization_assets: magnetizationStillReferenced
+                      ? prev.magnetization_assets
+                      : prev.magnetization_assets.filter(
+                          (entry) => entry.id !== target.magnetization_ref,
+                        ),
+                  };
+                });
               }}
             >
               Delete Object
@@ -374,10 +565,13 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
             label="Geometry Kind"
             value={geo.geometry_kind}
             onchange={(nextKind) =>
-              updateGeo((current) => ({
+              updateObject((current) => ({
                 ...current,
-                geometry_kind: nextKind,
-                geometry_params: defaultGeometryParams(nextKind, current.name),
+                geometry: {
+                  ...current.geometry,
+                  geometry_kind: nextKind,
+                  geometry_params: defaultGeometryParams(nextKind, current.name),
+                },
               }))
             }
             options={[
@@ -428,7 +622,18 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
                   key={`${geo.name}-source`}
                   label="Source File"
                   defaultValue={typeof p.source === "string" ? p.source : ""}
-                  onBlur={(e) => updateGeo((g) => ({ ...g, geometry_params: { ...g.geometry_params, source: e.target.value.trim() } }))}
+                  onBlur={(e) =>
+                    updateObject((object) => ({
+                      ...object,
+                      geometry: {
+                        ...object.geometry,
+                        geometry_params: {
+                          ...object.geometry.geometry_params,
+                          source: e.target.value.trim(),
+                        },
+                      },
+                    }))
+                  }
                   mono
                   placeholder="mesh.stl"
                 />
@@ -446,7 +651,16 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
                     onBlur={(e) => {
                       const value = Number.parseFloat(e.target.value);
                       if (!Number.isFinite(value)) return;
-                      updateGeo((g) => ({ ...g, geometry_params: { ...g.geometry_params, scale: value } }));
+                      updateObject((object) => ({
+                        ...object,
+                        geometry: {
+                          ...object.geometry,
+                          geometry_params: {
+                            ...object.geometry.geometry_params,
+                            scale: value,
+                          },
+                        },
+                      }));
                     }}
                     mono
                   />
@@ -454,7 +668,18 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
                 <SelectField
                   label="Imported Volume"
                   value={typeof p.volume === "string" ? p.volume : "full"}
-                  onchange={(value) => updateGeo((g) => ({ ...g, geometry_params: { ...g.geometry_params, volume: value } }))}
+                  onchange={(value) =>
+                    updateObject((object) => ({
+                      ...object,
+                      geometry: {
+                        ...object.geometry,
+                        geometry_params: {
+                          ...object.geometry.geometry_params,
+                          volume: value,
+                        },
+                      },
+                    }))
+                  }
                   options={[
                     { label: "Full Volume", value: "full" },
                     { label: "Surface Only", value: "surface" },
@@ -484,11 +709,11 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
         <div className="grid grid-cols-1 gap-2.5">
           <div className="flex flex-col gap-1.5 rounded-lg border border-border/25 bg-gradient-to-b from-card/35 to-card/10 px-3 py-2.5 backdrop-blur-sm">
             <span className="text-[0.6rem] font-semibold uppercase tracking-wider text-muted-foreground/80">Bounds</span>
-            <span className="font-mono text-xs text-foreground tracking-tight">{formatBounds(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
+            <span className="font-mono text-xs tracking-tight text-foreground">{formatBounds(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
           </div>
           <div className="flex flex-col gap-1.5 rounded-lg border border-border/25 bg-gradient-to-b from-card/35 to-card/10 px-3 py-2.5 backdrop-blur-sm">
             <span className="text-[0.6rem] font-semibold uppercase tracking-wider text-muted-foreground/80">Extent</span>
-            <span className="font-mono text-xs text-foreground tracking-tight">{formatExtent(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
+            <span className="font-mono text-xs tracking-tight text-foreground">{formatExtent(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
           </div>
         </div>
       </SidebarSection>

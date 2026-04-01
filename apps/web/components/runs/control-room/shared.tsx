@@ -7,7 +7,11 @@ import {
   resolveSelectedObjectIdFromModelBuilderGraph,
   resolveSelectedMeshObjectIdFromModelBuilderGraph,
 } from "../../../lib/session/modelBuilderGraph";
-import type { ModelBuilderGraphV2, ScriptBuilderGeometryEntry } from "../../../lib/session/types";
+import type {
+  ModelBuilderGraphV2,
+  SceneDocument,
+  ScriptBuilderGeometryEntry,
+} from "../../../lib/session/types";
 import type { TreeNodeData } from "../../panels/ModelTree";
 
 export type ViewportMode = "3D" | "2D" | "Mesh" | "Analyze";
@@ -469,9 +473,51 @@ export function buildObjectOverlays(
 
 export function resolveSelectedObjectId(
   nodeId: string | null | undefined,
-  source: ModelBuilderGraphV2 | readonly ScriptBuilderGeometryEntry[] | null | undefined,
+  source:
+    | ModelBuilderGraphV2
+    | SceneDocument
+    | readonly ScriptBuilderGeometryEntry[]
+    | null
+    | undefined,
 ): string | null {
   if (!nodeId) {
+    return null;
+  }
+  const sceneDocument =
+    source &&
+    !Array.isArray(source) &&
+    "version" in source &&
+    (source as SceneDocument).version === "scene.v1"
+      ? (source as SceneDocument)
+      : null;
+  if (sceneDocument) {
+    const ordered = [...sceneDocument.objects]
+      .map((object) => object.name || object.id)
+      .sort((left, right) => right.length - left.length);
+    for (const name of ordered) {
+      const objectPrefix = `obj-${name}`;
+      const geoPrefix = `geo-${name}`;
+      const regionPrefix = `reg-${name}`;
+      const matPrefix = `mat-${name}`;
+      const meshPrefix = `${geoPrefix}-mesh`;
+      if (
+        nodeId === objectPrefix ||
+        nodeId.startsWith(`${objectPrefix}-`) ||
+        nodeId === geoPrefix ||
+        nodeId.startsWith(`${geoPrefix}-`) ||
+        nodeId === regionPrefix ||
+        nodeId.startsWith(`${regionPrefix}-`) ||
+        nodeId === matPrefix ||
+        nodeId.startsWith(`${matPrefix}-`) ||
+        nodeId === meshPrefix ||
+        nodeId.startsWith(`${meshPrefix}-`)
+      ) {
+        return name;
+      }
+    }
+    if ((nodeId === "geometry" || nodeId === "objects") && sceneDocument.objects.length === 1) {
+      return sceneDocument.objects[0]?.name ?? sceneDocument.objects[0]?.id ?? null;
+    }
     return null;
   }
   const modelBuilderGraph =
@@ -512,9 +558,33 @@ export function resolveSelectedObjectId(
 
 export function resolveSelectedMeshObjectId(
   nodeId: string | null | undefined,
-  source: ModelBuilderGraphV2 | readonly ScriptBuilderGeometryEntry[] | null | undefined,
+  source:
+    | ModelBuilderGraphV2
+    | SceneDocument
+    | readonly ScriptBuilderGeometryEntry[]
+    | null
+    | undefined,
 ): string | null {
   if (!nodeId) {
+    return null;
+  }
+  const sceneDocument =
+    source &&
+    !Array.isArray(source) &&
+    "version" in source &&
+    (source as SceneDocument).version === "scene.v1"
+      ? (source as SceneDocument)
+      : null;
+  if (sceneDocument) {
+    const ordered = [...sceneDocument.objects]
+      .map((object) => object.name || object.id)
+      .sort((left, right) => right.length - left.length);
+    for (const name of ordered) {
+      const meshPrefix = `geo-${name}-mesh`;
+      if (nodeId === meshPrefix || nodeId.startsWith(`${meshPrefix}-`)) {
+        return name;
+      }
+    }
     return null;
   }
   const modelBuilderGraph =

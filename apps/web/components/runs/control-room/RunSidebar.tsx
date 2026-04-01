@@ -61,6 +61,7 @@ export default function RunSidebar() {
     () =>
       buildFullmagModelTree({
         graph: model.modelBuilderGraph,
+        sceneDocument: model.sceneDocument,
         studyLabel: "Study",
         backend: cmd.isFemBackend ? "FEM" : "FDM",
         universeEffectiveSize: model.worldExtent,
@@ -95,7 +96,7 @@ export default function RunSidebar() {
         scalarRowCount: tp.scalarRows.length,
       }),
     [
-      model.modelBuilderGraph, model.effectiveFemMesh, tp.hasSolverTelemetry, cmd.isFemBackend, model.material,
+      model.modelBuilderGraph, model.sceneDocument, model.effectiveFemMesh, tp.hasSolverTelemetry, cmd.isFemBackend, model.material,
       model.mesherSourceKind, model.meshFeOrder, model.meshName,
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm,
@@ -116,11 +117,14 @@ export default function RunSidebar() {
     }
     if (vp.previewControlsActive) return "res-fields";
     if (cmd.interactiveControlsEnabled) return "study-solver";
-    const firstObjectId = model.modelBuilderGraph?.objects.items[0]?.id;
+    const firstObjectId =
+      model.sceneDocument?.objects[0]?.name ??
+      model.sceneDocument?.objects[0]?.id ??
+      model.modelBuilderGraph?.objects.items[0]?.id;
     if (firstObjectId) return `obj-${firstObjectId}`;
     return "objects";
   }, [vp.effectiveViewMode, model.femDockTab, cmd.interactiveControlsEnabled,
-      cmd.isFemBackend, model.modelBuilderGraph, vp.previewControlsActive]);
+      cmd.isFemBackend, model.modelBuilderGraph, model.sceneDocument, vp.previewControlsActive]);
 
   const activeNodeId = model.selectedSidebarNodeId ?? fallbackNodeId;
   const activeNode = useMemo(
@@ -143,7 +147,7 @@ export default function RunSidebar() {
 
   const selectModelNode = useCallback((id: string) => {
     model.setSelectedSidebarNodeId(id);
-    model.setSelectedObjectId(resolveSelectedObjectId(id, model.modelBuilderGraph));
+    model.setSelectedObjectId(resolveSelectedObjectId(id, model.sceneDocument ?? model.modelBuilderGraph));
   }, [model]);
 
   /* ── Tree click handler ── */
@@ -155,7 +159,10 @@ export default function RunSidebar() {
       panel.expand();
       setInspectorOpen(true);
     }
-    const selectedObjectId = resolveSelectedObjectId(id, model.modelBuilderGraph);
+    const selectedObjectId = resolveSelectedObjectId(
+      id,
+      model.sceneDocument ?? model.modelBuilderGraph,
+    );
     const isUniverseNode = id === "universe" || id.startsWith("universe-");
     const isGeometryScopedNode =
       id === "geometry" ||
@@ -230,7 +237,10 @@ export default function RunSidebar() {
 
   const handleTreeContextAction = useCallback((nodeId: string, action: string) => {
     if (action === "focus") {
-      const objectId = resolveSelectedObjectId(nodeId, model.modelBuilderGraph);
+      const objectId = resolveSelectedObjectId(
+        nodeId,
+        model.sceneDocument ?? model.modelBuilderGraph,
+      );
       if (!objectId) {
         return;
       }
