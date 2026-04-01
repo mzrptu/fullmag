@@ -35,10 +35,8 @@ interface ModelTreeProps {
 
 /* ── Constants for tree geometry ────────────────────────────────────── */
 
-const TREE_INDENT = 18;     /* px per depth level */
-const GUIDE_LEFT_OFFSET = 9; /* center of the guide column (half of TREE_INDENT) */
-const GUIDE_COLOR = "hsl(236.8 16.3% 22.9%)"; /* Surface0 — matches --border */
-const NODE_ROW_HEIGHT = 30;  /* target row height in px */
+const TREE_INDENT = 16;     /* px per depth-level indent column */
+const NODE_HEIGHT = 28;     /* nominal row height in px */
 
 /* ── Tree Node ─────────────────────────────────────────────────────── */
 
@@ -69,64 +67,6 @@ function TreeNode({
     onNodeClick?.(node.id);
   }, [hasChildren, node, onNodeClick]);
 
-  /* Build guide columns for ancestor levels */
-  const guideColumns = parentGuides.map((showLine, idx) => (
-    <span
-      key={`guide-${idx}`}
-      className="shrink-0 relative"
-      style={{
-        width: `${TREE_INDENT}px`,
-        height: "100%",
-      }}
-    >
-      {showLine && (
-        <span
-          className="absolute top-0 bottom-0"
-          style={{
-            left: `${GUIDE_LEFT_OFFSET}px`,
-            width: "1px",
-            background: GUIDE_COLOR,
-          }}
-        />
-      )}
-    </span>
-  ));
-
-  /* This node's own connector: vertical + horizontal branch */
-  const ownConnector = depth > 0 ? (
-    <span
-      className="shrink-0 relative"
-      style={{
-        width: `${TREE_INDENT}px`,
-        height: "100%",
-        minHeight: `${NODE_ROW_HEIGHT}px`,
-      }}
-    >
-      {/* Vertical line — runs from top to center (or full height if not last) */}
-      <span
-        className="absolute"
-        style={{
-          left: `${GUIDE_LEFT_OFFSET}px`,
-          top: 0,
-          height: isLast ? "50%" : "100%",
-          width: "1px",
-          background: GUIDE_COLOR,
-        }}
-      />
-      {/* Horizontal branch — from vertical line center to the right */}
-      <span
-        className="absolute"
-        style={{
-          left: `${GUIDE_LEFT_OFFSET}px`,
-          top: "50%",
-          width: `${TREE_INDENT - GUIDE_LEFT_OFFSET}px`,
-          height: "1px",
-          background: GUIDE_COLOR,
-        }}
-      />
-    </span>
-  ) : null;
-
   /* Guides to pass to children: add current level's continuation */
   const childGuides = depth > 0
     ? [...parentGuides, !isLast]
@@ -134,89 +74,119 @@ function TreeNode({
 
   return (
     <div className="flex flex-col">
-      {/* ── Node row ── */}
+      {/* ── Node row: [guides column] [interactive content] ── */}
       <div
-        className={cn(
-          "flex items-center pr-2 cursor-pointer rounded-md transition-all duration-200 relative overflow-hidden group",
-          isActive
-            ? "bg-primary/12 text-primary font-bold border border-primary/25 shadow-[0_0_16px_rgba(137,180,250,0.08)]"
-            : "hover:bg-card/50 text-foreground/90 hover:text-primary border border-transparent"
-        )}
-        style={{ minHeight: `${NODE_ROW_HEIGHT}px` }}
+        className="flex items-stretch cursor-pointer group"
+        style={{ minHeight: `${NODE_HEIGHT}px` }}
         onClick={handleClick}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(e, node.id, node.label); }}
         role="treeitem"
         aria-expanded={hasChildren ? open : undefined}
       >
-        {/* Active indicator bar */}
-        {isActive && (
-          <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-primary rounded-r-full" />
-        )}
-
-        {/* Guide columns for ancestor lines */}
-        {guideColumns}
-
-        {/* Own connector (branch from parent) */}
-        {ownConnector}
-
-        {/* Expand/collapse chevron */}
-        {hasChildren ? (
-          <span
-            className={cn(
-              "flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground/70 transition-transform duration-150 mr-0.5",
-              open && "rotate-90"
-            )}
+        {/* ─── LEFT: Guide columns (never clipped) ─── */}
+        {parentGuides.map((showLine, idx) => (
+          <div
+            key={`g-${idx}`}
+            className="shrink-0 flex justify-center"
+            style={{ width: `${TREE_INDENT}px` }}
           >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-              <path d="M3 1.5L7 5L3 8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-        ) : (
-          <span className="flex h-4 w-4 shrink-0 mr-0.5" />
-        )}
-
-        {/* Icon */}
-        {node.icon && (
-          <span className={cn(
-            "flex h-4 w-4 shrink-0 items-center justify-center text-xs mr-1.5",
-            isActive ? "opacity-100" : "opacity-60 group-hover:opacity-80"
-          )}>
-            {node.icon}
-          </span>
-        )}
-
-        {/* Label */}
-        <span className={cn(
-          "flex-1 truncate text-[0.8rem]",
-          isActive ? "font-semibold" : "font-medium"
-        )}>
-          {node.label}
-        </span>
-
-        {/* Status dot */}
-        {node.status && (
-          <span
-            className={cn(
-              "h-1.5 w-1.5 shrink-0 rounded-full",
-              node.status === "ready" ? "bg-emerald-500" :
-              node.status === "active" ? "bg-primary animate-pulse" :
-              node.status === "error" ? "bg-destructive" :
-              "bg-muted-foreground/40"
+            {showLine && (
+              <div className="w-px h-full bg-border/50" />
             )}
-          />
+          </div>
+        ))}
+
+        {/* Own branch connector: vertical ↓ + horizontal → */}
+        {depth > 0 && (
+          <div
+            className="shrink-0 relative"
+            style={{ width: `${TREE_INDENT}px` }}
+          >
+            {/* Vertical segment: top → center (last child) or top → bottom */}
+            <div
+              className="absolute left-1/2 top-0 -translate-x-1/2 w-px bg-border/50"
+              style={{ height: isLast ? '50%' : '100%' }}
+            />
+            {/* Horizontal branch: center → right edge */}
+            <div
+              className="absolute top-1/2 -translate-y-1/2 h-px bg-border/50"
+              style={{ left: '50%', right: 0 }}
+            />
+          </div>
         )}
 
-        {/* Badge */}
-        {node.badge && (
-          <span className={cn(
-            "shrink-0 rounded-md px-1.5 py-[1px] text-[0.58rem] font-semibold font-mono ml-1",
+        {/* ─── RIGHT: Interactive content (overflow-clipped) ─── */}
+        <div
+          className={cn(
+            "flex-1 flex items-center gap-0.5 pr-2 rounded-md transition-all duration-150 overflow-hidden relative min-w-0",
             isActive
-              ? "bg-primary/15 text-primary border border-primary/20"
-              : "bg-muted/60 text-muted-foreground border border-border/30"
-          )}>
-            {node.badge}
+              ? "bg-primary/10 text-primary border border-primary/20 shadow-[0_0_12px_rgba(137,180,250,0.06)]"
+              : "hover:bg-card/40 text-foreground/90 hover:text-foreground border border-transparent"
+          )}
+        >
+          {/* Active indicator bar */}
+          {isActive && (
+            <span className="absolute left-0 top-1 bottom-1 w-[2.5px] bg-primary rounded-r-full" />
+          )}
+
+          {/* Expand/collapse chevron */}
+          <span className="flex items-center justify-center shrink-0 ml-0.5" style={{ width: '16px', height: '16px' }}>
+            {hasChildren ? (
+              <svg
+                width="8" height="8" viewBox="0 0 8 8" fill="none"
+                className={cn(
+                  "text-muted-foreground/60 transition-transform duration-150",
+                  open && "rotate-90"
+                )}
+              >
+                <path d="M2 1L6 4L2 7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : null}
           </span>
-        )}
+
+          {/* Icon */}
+          {node.icon && (
+            <span className={cn(
+              "flex h-4 w-4 shrink-0 items-center justify-center text-[0.7rem]",
+              isActive ? "opacity-100" : "opacity-55 group-hover:opacity-75"
+            )}>
+              {node.icon}
+            </span>
+          )}
+
+          {/* Label */}
+          <span className={cn(
+            "flex-1 truncate text-[0.78rem] pl-0.5",
+            isActive ? "font-semibold" : "font-medium"
+          )}>
+            {node.label}
+          </span>
+
+          {/* Status dot */}
+          {node.status && (
+            <span
+              className={cn(
+                "h-1.5 w-1.5 shrink-0 rounded-full ml-1",
+                node.status === "ready" ? "bg-emerald-500/80" :
+                node.status === "active" ? "bg-primary animate-pulse" :
+                node.status === "error" ? "bg-destructive" :
+                "bg-muted-foreground/30"
+              )}
+            />
+          )}
+
+          {/* Badge */}
+          {node.badge && (
+            <span className={cn(
+              "shrink-0 rounded px-1.5 py-[1px] text-[0.55rem] font-semibold font-mono ml-1",
+              isActive
+                ? "bg-primary/12 text-primary border border-primary/15"
+                : "bg-muted/50 text-muted-foreground/70 border border-border/20"
+            )}>
+              {node.badge}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* ── Children ── */}
