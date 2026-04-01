@@ -1,10 +1,122 @@
 use std::f64::consts::PI;
 
-use fullmag_ir::{AntennaIR, CurrentModuleIR, FemPlanIR};
+use fullmag_ir::{AntennaIR, CurrentModuleIR, FemPlanIR, TimeDependenceIR};
 
 use crate::types::RunError;
 
 const FIELD_EPSILON2: f64 = 1e-30;
+
+/// Returns `true` if any antenna drive uses a time-varying waveform.
+pub(crate) fn has_time_varying_antenna(plan: &FemPlanIR) -> bool {
+    plan.current_modules.iter().any(|m| {
+        matches!(
+            m,
+            CurrentModuleIR::AntennaFieldSource {
+                drive,
+                ..
+            } if drive.waveform.is_some()
+        )
+    })
+}
+
+/// Evaluate the time-dependent amplitude multiplier for a single drive at time `t`.
+/// Returns `current_a * f(t)` where `f(t)` depends on the waveform type.
+fn drive_amplitude_at(drive: &fullmag_ir::RfDriveIR, t: f64) -> f64 {
+    let base = drive.current_a;
+    match &drive.waveform {
+        None | Some(TimeDependenceIR::Constant) => base,
+        Some(TimeDependenceIR::Sinusoidal {
+            frequency_hz,
+            phase_rad,
+            offset,
+        }) => base * ((2.0 * PI * frequency_hz * t + phase_rad).sin() + offset),
+        Some(TimeDependenceIR::Pulse { t_on, t_off }) => {
+            if t >= *t_on && t < *t_off {
+                base
+            } else {
+                0.0
+            }
+        }
+        Some(TimeDependenceIR::PiecewiseLinear { points }) => {
+            base * piecewise_linear(points, t)
+        }
+    }
+}
+
+fn piecewise_linear(points: &[[f64; 2]], t: f64) -> f64 {
+    if points.is_empty() {
+        return 0.0;
+    }
+    if t <= points[0][0] {
+        return points[0][1];
+    }
+    if t >= points[points.len() - 1][0] {
+        return points[points.len() - 1][1];
+    }
+    for window in points.windows(2) {
+        let [t0, v0] = window[0];
+        let [t1, v1] = window[1];
+        if t >= t0 && t <= t1 {
+            let frac = (t - t0) / (t1 - t0);
+            return v0 + frac * (v1 - v0);
+        }
+    }
+    0.0
+}
+
+/// Precompute per-unit-current Biot-Savart fields for each antenna module.
+/// Returns one `Vec<[f64;3]>` per module (using `current_a = 1 A`).
+pub(crate) fn compute_per_unit_antenna_fields(
+    plan: &FemPlanIR,
+) -> Result<Vec<Vec<[f64; 3]>>, RunError> {
+    if plan.current_modules.is_empty() {
+        return Ok(vec![]);
+    }
+    let Some(bounds) = magnetic_bounds(plan) else {
+        return Ok(vec![
+            vec![[0.0, 0.0, 0.0]; plan.mesh.nodes.len()];
+            plan.current_modules.len()
+        ]);
+    };
+    let mut result = Vec::with_capacity(plan.current_modules.len());
+    for module in &plan.current_modules {
+        match module {
+            CurrentModuleIR::AntennaFieldSource { antenna, .. } => {
+                let mut field = vec![[0.0, 0.0, 0.0]; plan.mesh.nodes.len()];
+                add_antenna_field(&mut field, &plan.mesh.nodes, bounds, antenna, 1.0);
+                result.push(field);
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// Compute the combined per-node antenna field at time `t` by superimposing
+/// all antenna contributions scaled by their time-dependent amplitudes.
+pub(crate) fn combined_antenna_field_at_time(
+    plan: &FemPlanIR,
+    per_unit_fields: &[Vec<[f64; 3]>],
+    t: f64,
+) -> Vec<[f64; 3]> {
+    let n = plan.mesh.nodes.len();
+    let mut total = vec![[0.0, 0.0, 0.0]; n];
+    for (module, per_unit) in plan.current_modules.iter().zip(per_unit_fields.iter()) {
+        match module {
+            CurrentModuleIR::AntennaFieldSource { drive, .. } => {
+                let amp = drive_amplitude_at(drive, t);
+                if amp == 0.0 {
+                    continue;
+                }
+                for (node, field) in total.iter_mut().enumerate() {
+                    field[0] += per_unit[node][0] * amp;
+                    field[1] += per_unit[node][1] * amp;
+                    field[2] += per_unit[node][2] * amp;
+                }
+            }
+        }
+    }
+    total
+}
 
 pub(crate) fn compute_antenna_field(plan: &FemPlanIR) -> Result<Vec<[f64; 3]>, RunError> {
     if plan.current_modules.is_empty() {
@@ -19,7 +131,13 @@ pub(crate) fn compute_antenna_field(plan: &FemPlanIR) -> Result<Vec<[f64; 3]>, R
     for module in &plan.current_modules {
         match module {
             CurrentModuleIR::AntennaFieldSource { antenna, drive, .. } => {
-                add_antenna_field(&mut total, &plan.mesh.nodes, bounds, antenna, drive.current_a);
+                add_antenna_field(
+                    &mut total,
+                    &plan.mesh.nodes,
+                    bounds,
+                    antenna,
+                    drive.current_a,
+                );
             }
         }
     }
@@ -157,7 +275,12 @@ fn magnetic_bounds(plan: &FemPlanIR) -> Option<([f64; 3], [f64; 3])> {
     let mut max = [f64::NEG_INFINITY; 3];
     let mut found = false;
 
-    for (element, marker) in plan.mesh.elements.iter().zip(plan.mesh.element_markers.iter()) {
+    for (element, marker) in plan
+        .mesh
+        .elements
+        .iter()
+        .zip(plan.mesh.element_markers.iter())
+    {
         if *marker == 0 {
             continue;
         }

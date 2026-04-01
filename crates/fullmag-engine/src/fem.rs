@@ -801,7 +801,9 @@ impl FemLlgProblem {
         } else {
             0.0
         };
-        let external_energy_joules = if self.terms.external_field.is_some() {
+        let external_energy_joules = if self.terms.external_field.is_some()
+            || self.terms.per_node_field.is_some()
+        {
             self.external_energy_from_fields(magnetization, &external_field)
         } else {
             0.0
@@ -990,10 +992,11 @@ impl FemLlgProblem {
                         exchange: false,
                         demag: true,
                         external_field: None,
-                    magnetoelastic: None,
+                        per_node_field: None,
+                        magnetoelastic: None,
                     },
                     Some(rasterized.active_mask.clone()),
-                )?;
+                )?;;
                 let ws = fdm_problem.create_workspace();
                 *slot = Some((grid_desc.grid, grid_desc.cell_size, fdm_problem, ws));
             }
@@ -1098,9 +1101,17 @@ impl FemLlgProblem {
         self.topology
             .magnetic_node_volumes
             .iter()
-            .map(|volume| {
+            .enumerate()
+            .map(|(i, volume)| {
                 if *volume > 0.0 {
-                    external
+                    let h_ant = self
+                        .terms
+                        .per_node_field
+                        .as_ref()
+                        .and_then(|f| f.get(i))
+                        .copied()
+                        .unwrap_or([0.0, 0.0, 0.0]);
+                    add(external, h_ant)
                 } else {
                     [0.0, 0.0, 0.0]
                 }
@@ -1656,7 +1667,8 @@ mod tests {
                 exchange: true,
                 demag: false,
                 external_field: None,
-                    magnetoelastic: None,
+                per_node_field: None,
+                magnetoelastic: None,
             },
         )
     }
@@ -1708,7 +1720,8 @@ mod tests {
                 exchange: true,
                 demag,
                 external_field: None,
-                    magnetoelastic: None,
+                per_node_field: None,
+                magnetoelastic: None,
             },
         )
     }
@@ -1760,7 +1773,8 @@ mod tests {
                 exchange: true,
                 demag,
                 external_field: None,
-                    magnetoelastic: None,
+                per_node_field: None,
+                magnetoelastic: None,
             },
             Some([10e-9, 10e-9, 10e-9]),
         )
@@ -1895,7 +1909,8 @@ mod tests {
                 exchange: false,
                 demag: true,
                 external_field: None,
-                    magnetoelastic: None,
+                per_node_field: None,
+                magnetoelastic: None,
             },
         );
         let fdm_state = fdm_problem

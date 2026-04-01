@@ -1534,7 +1534,7 @@ bool compute_effective_fields_for_magnetization(
     double demag = 0.0;
     if (ctx.enable_demag) {
         ScopedPhaseTimer timer(timings != nullptr ? &timings->demag_wall_time_ns : nullptr);
-        if (ctx.demag_realization == 1 /* POISSON_AIRBOX */ && ctx.poisson_ready) {
+        if ((ctx.demag_realization == 1 || ctx.demag_realization == 2) && ctx.poisson_ready) {
             if (!context_compute_demag_poisson(ctx, m_xyz, h_demag_xyz, demag, allow_interrupt, error)) {
                 return false;
             }
@@ -1602,7 +1602,7 @@ void fill_demag_solver_stats(
     const Context &ctx,
     fullmag_fem_step_stats &stats)
 {
-    if (ctx.enable_demag && ctx.demag_realization == 1 /* POISSON_AIRBOX */) {
+    if (ctx.enable_demag && (ctx.demag_realization == 1 || ctx.demag_realization == 2)) {
         stats.demag_linear_iterations = static_cast<uint32_t>(std::max(ctx.poisson_last_iterations, 0));
         stats.demag_linear_residual = ctx.poisson_last_residual;
     } else {
@@ -2010,6 +2010,19 @@ bool recover_demag_field(
             mdoth * ctx.mfem_lumped_mass[i];
     }
 
+    // Robin BC correction: E_bdr = (μ₀/2) · β · ∫_Γ u² dS
+    // This additional term accounts for the potential energy stored at the
+    // open boundary when using the Robin approximation.
+    if (ctx.demag_realization == 2 /* AIRBOX_ROBIN */ &&
+        ctx.robin_effective_beta > 0.0 &&
+        ctx.mfem_boundary_mass != nullptr) {
+        auto *bdr_mass =
+            static_cast<mfem::BilinearForm *>(ctx.mfem_boundary_mass);
+        mfem::Vector Bu(gf_u.Size());
+        bdr_mass->SpMat().Mult(gf_u, Bu);
+        demag_energy += 0.5 * kMu0 * ctx.robin_effective_beta * (gf_u * Bu);
+    }
+
     return true;
 }
 
@@ -2269,30 +2282,6 @@ bool context_initialize_poisson(Context &ctx, std::string &error) {
         poisson_bilinear->Assemble();
         poisson_bilinear->Finalize();
 
-        // Identify essential DOFs: Dirichlet u=0 on outer boundary
-        // The boundary marker value corresponds to the air-box outer surface
-        ctx.poisson_ess_tdof_list.clear();
-        if (ctx.poisson_boundary_marker > 0) {
-            // Build attribute list from mesh boundary attributes
-            mfem::Array<int> bdr_attr_is_ess(mesh->bdr_attributes.Max());
-            bdr_attr_is_ess = 0;
-            // Mark the outer boundary marker as essential
-            if (ctx.poisson_boundary_marker <= mesh->bdr_attributes.Max()) {
-                bdr_attr_is_ess[ctx.poisson_boundary_marker - 1] = 1;
-            }
-            mfem::Array<int> ess_tdof;
-            potential_fes->GetEssentialTrueDofs(bdr_attr_is_ess, ess_tdof);
-            ctx.poisson_ess_tdof_list.assign(
-                ess_tdof.GetData(),
-                ess_tdof.GetData() + ess_tdof.Size());
-        }
-
-        // If no essential DOFs were found (e.g., no outer boundary marker),
-        // pin the first DOF to remove the constant null space
-        if (ctx.poisson_ess_tdof_list.empty()) {
-            ctx.poisson_ess_tdof_list.push_back(0);
-        }
-
         // Potential GridFunction (warm-start: zeros initially)
         auto *gf_potential = new mfem::GridFunction(potential_fes);
         gf_potential->UseDevice(true);
@@ -2302,15 +2291,69 @@ bool context_initialize_poisson(Context &ctx, std::string &error) {
         ctx.mfem_potential_fes = potential_fes;
         ctx.mfem_poisson_bilinear = poisson_bilinear;
         ctx.mfem_gf_potential = gf_potential;
-        ctx.poisson_ready = true;
 
-        // S09: Pre-compute the BC-eliminated Poisson operator once.
-        // This avoids the per-step SparseMatrix copy in solve_poisson.
-        {
+        if (ctx.demag_realization == 2 /* AIRBOX_ROBIN */) {
+            // ── Robin BC path: A = K + β·B, no essential DOFs ──
+            // Compute β = c / R*
+            double c = ctx.robin_beta_factor;
+            if (ctx.robin_beta_mode == 1) { c = 1.0; }       // legacy
+            else if (ctx.robin_beta_mode == 2) { c = 2.0; }  // dipole
+            // else ctx.robin_beta_mode == 3: use user-specified c
+
+            // Auto-compute R* from mesh bounding box
+            mfem::Vector bb_min, bb_max;
+            mesh->GetBoundingBox(bb_min, bb_max);
+            double max_extent = 0.0;
+            for (int d = 0; d < mesh->Dimension(); ++d) {
+                max_extent = std::max(max_extent, bb_max(d) - bb_min(d));
+            }
+            double R_star = max_extent / 2.0;
+            if (R_star <= 0.0) { R_star = 1.0; } // safety
+            ctx.robin_effective_beta = c / R_star;
+
+            // Build boundary mass matrix B on Γ_out
+            auto *bdr_mass = new mfem::BilinearForm(potential_fes);
+            mfem::Array<int> bdr_marker(mesh->bdr_attributes.Max());
+            bdr_marker = 0;
+            if (ctx.poisson_boundary_marker >= 1 &&
+                ctx.poisson_boundary_marker <= mesh->bdr_attributes.Max()) {
+                bdr_marker[ctx.poisson_boundary_marker - 1] = 1;
+            }
+            bdr_mass->AddBoundaryIntegrator(
+                new mfem::MassIntegrator(), bdr_marker);
+            bdr_mass->Assemble();
+            bdr_mass->Finalize();
+            ctx.mfem_boundary_mass = bdr_mass;
+
+            // Form A = K + β·B (no essential DOFs for Robin)
+            auto *A_robin = new mfem::SparseMatrix(poisson_bilinear->SpMat());
+            A_robin->Add(ctx.robin_effective_beta, bdr_mass->SpMat());
+            ctx.mfem_poisson_bc_op = A_robin;
+            ctx.poisson_ess_tdof_list.clear();
+        } else {
+            // ── Dirichlet BC path (default): u = 0 on Γ_out ──
+            ctx.poisson_ess_tdof_list.clear();
+            if (ctx.poisson_boundary_marker > 0) {
+                mfem::Array<int> bdr_attr_is_ess(mesh->bdr_attributes.Max());
+                bdr_attr_is_ess = 0;
+                if (ctx.poisson_boundary_marker <= mesh->bdr_attributes.Max()) {
+                    bdr_attr_is_ess[ctx.poisson_boundary_marker - 1] = 1;
+                }
+                mfem::Array<int> ess_tdof;
+                potential_fes->GetEssentialTrueDofs(bdr_attr_is_ess, ess_tdof);
+                ctx.poisson_ess_tdof_list.assign(
+                    ess_tdof.GetData(),
+                    ess_tdof.GetData() + ess_tdof.Size());
+            }
+
+            if (ctx.poisson_ess_tdof_list.empty()) {
+                ctx.poisson_ess_tdof_list.push_back(0);
+            }
+
+            // S09: Pre-compute the BC-eliminated Poisson operator
             mfem::Array<int> ess_tdof(
                 ctx.poisson_ess_tdof_list.data(),
                 static_cast<int>(ctx.poisson_ess_tdof_list.size()));
-
             auto *A_bc = new mfem::SparseMatrix(poisson_bilinear->SpMat());
             for (int i = 0; i < ess_tdof.Size(); ++i) {
                 A_bc->EliminateRowCol(ess_tdof[i]);
@@ -2318,6 +2361,7 @@ bool context_initialize_poisson(Context &ctx, std::string &error) {
             ctx.mfem_poisson_bc_op = A_bc;
         }
 
+        ctx.poisson_ready = true;
         return true;
     } catch (const std::exception &ex) {
         error = std::string("Poisson demag initialization failed: ") + ex.what();
@@ -2344,6 +2388,9 @@ void context_destroy_poisson(Context &ctx) {
     // S09: BC-eliminated matrix is a separate allocation — delete first.
     delete static_cast<mfem::SparseMatrix *>(ctx.mfem_poisson_bc_op);
     ctx.mfem_poisson_bc_op = nullptr;
+    // Robin boundary mass form (separate allocation)
+    delete static_cast<mfem::BilinearForm *>(ctx.mfem_boundary_mass);
+    ctx.mfem_boundary_mass = nullptr;
     // Poisson bilinear form owns the SparseMatrix — don't double-free
     delete static_cast<mfem::GridFunction *>(ctx.mfem_gf_potential);
     delete static_cast<mfem::BilinearForm *>(ctx.mfem_poisson_bilinear);

@@ -19,25 +19,33 @@ study.universe(
 )
 
 # ── Geometry & Material ─────────────────────────────────────
-flower = study.geometry(
-    fm.ImportedGeometry(
-        source="nanoflower.stl",
-        units="nm",
-        name="nanoflower",
-        volume="full",
-    ),
-    name="nanoflower",
-)
+# ── Geometry & Material ─────────────────────────────────────
+FLOWER_SPAN_X = 329.98683166503906e-9
+FLOWER_GAP_X = 5e-9
+FLOWER_PITCH_X = FLOWER_SPAN_X + FLOWER_GAP_X
+FLOWER_OFFSET_X = 0.5 * FLOWER_PITCH_X
 
-flower.Ms = 752e3       # saturation magnetisation [A/m]
-flower.Aex = 15.5e-12   # exchange stiffness [J/m]
-flower.alpha = 0.1      # Gilbert damping
-flower.m = fm.uniform(0.1,0.0001,0.99)
-# flower.m.loadfile() # Removed to prevent error, uses uniform state from line 27
-# ── External field ──────────────────────────────────────────
-# Cartesian:  study.b_ext(0, 0, 0.1)          # 0.1 T along z
-# Spherical:  study.b_ext(0.1, theta=0, phi=0) # same, via angles (degrees)
-flower.mesh(hmax=20e-9, order=1).build() 
+def add_nanoflower(name: str, offset_x: float, seed: int):
+    flower = fm.geometry(
+        fm.ImportedGeometry(
+            source="nanoflower.stl",
+            units="nm",
+            name=name,
+        ).translate((offset_x, 0.0, 0.0)),
+        name=name,
+    )
+    flower.Ms = 752e3       # saturation magnetisation [A/m]
+    flower.Aex = 15.5e-12   # exchange stiffness [J/m]
+    flower.alpha = 0.1      # Gilbert damping
+    flower.m = fm.random(seed=seed)
+    flower.mesh(hmax=2.5e-9, order=1).build()
+    return flower
+
+
+flower_left = add_nanoflower("nanoflower_left", -FLOWER_OFFSET_X, seed=1)
+flower_right = add_nanoflower("nanoflower_right", FLOWER_OFFSET_X, seed=2)
+
+
 
 study.b_ext(0.1, theta=0, phi=0)  # 0.1 T along +z
 # ── Solver ──────────────────────────────────────────────────

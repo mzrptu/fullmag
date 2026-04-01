@@ -223,8 +223,18 @@ fn current_mesh_workspace(
     mesh_history: &[serde_json::Value],
 ) -> Option<serde_json::Value> {
     let (mesh, mesh_source, fe_order, hmax) = match &plan.backend_plan {
-        BackendPlanIR::Fem(fem) => (&fem.mesh, fem.mesh_source.as_deref(), fem.fe_order, fem.hmax),
-        BackendPlanIR::FemEigen(fem) => (&fem.mesh, fem.mesh_source.as_deref(), fem.fe_order, fem.hmax),
+        BackendPlanIR::Fem(fem) => (
+            &fem.mesh,
+            fem.mesh_source.as_deref(),
+            fem.fe_order,
+            fem.hmax,
+        ),
+        BackendPlanIR::FemEigen(fem) => (
+            &fem.mesh,
+            fem.mesh_source.as_deref(),
+            fem.fe_order,
+            fem.hmax,
+        ),
         _ => return None,
     };
     Some(current_fem_mesh_workspace(
@@ -302,14 +312,15 @@ fn apply_current_fem_overrides(
     }
 
     if let Some(hmax) = hmax_override {
-        let hints = problem
-            .backend_policy
-            .discretization_hints
-            .get_or_insert(DiscretizationHintsIR {
-                fdm: None,
-                fem: None,
-                hybrid: None,
-            });
+        let hints =
+            problem
+                .backend_policy
+                .discretization_hints
+                .get_or_insert(DiscretizationHintsIR {
+                    fdm: None,
+                    fem: None,
+                    hybrid: None,
+                });
         match hints.fem.as_mut() {
             Some(fem) => fem.hmax = hmax,
             None => {
@@ -324,10 +335,10 @@ fn apply_current_fem_overrides(
 
     match adaptive_runtime_state {
         Some(state) => {
-            problem.problem_meta.runtime_metadata.insert(
-                "adaptive_mesh_runtime_state".to_string(),
-                state.clone(),
-            );
+            problem
+                .problem_meta
+                .runtime_metadata
+                .insert("adaptive_mesh_runtime_state".to_string(), state.clone());
         }
         None => {
             problem
@@ -340,8 +351,7 @@ fn apply_current_fem_overrides(
 
 fn renormalize_magnetization(values: &mut [[f64; 3]]) {
     for value in values {
-        let norm =
-            (value[0] * value[0] + value[1] * value[1] + value[2] * value[2]).sqrt();
+        let norm = (value[0] * value[0] + value[1] * value[1] + value[2] * value[2]).sqrt();
         if norm > 0.0 {
             value[0] /= norm;
             value[1] /= norm;
@@ -419,7 +429,11 @@ fn maybe_execute_adaptive_relaxation_followup_passes(
     let mut afem_history = fullmag_engine::fem_afem_loop::AfemHistory::new();
     let mut remesh_pass_count = 0u32;
     let mut local_step_offset = stage_result.steps.last().map(|step| step.step).unwrap_or(0);
-    let mut local_time_offset = stage_result.steps.last().map(|step| step.time).unwrap_or(0.0);
+    let mut local_time_offset = stage_result
+        .steps
+        .last()
+        .map(|step| step.time)
+        .unwrap_or(0.0);
     let mut mutated = false;
 
     while remesh_pass_count < settings.max_passes {
@@ -468,7 +482,9 @@ fn maybe_execute_adaptive_relaxation_followup_passes(
                 / afem_step.size_field.h_target.len() as f64
         };
         let convergence_status = match afem_step.stop_reason {
-            fullmag_engine::fem_afem_loop::StopReason::Continue if afem_step.marking.n_marked > 0 => {
+            fullmag_engine::fem_afem_loop::StopReason::Continue
+                if afem_step.marking.n_marked > 0 =>
+            {
                 "remesh_requested"
             }
             fullmag_engine::fem_afem_loop::StopReason::Continue => "stable",
@@ -627,6 +643,7 @@ fn maybe_execute_adaptive_relaxation_followup_passes(
             nodes: new_mesh.nodes.clone(),
             elements: new_mesh.elements.clone(),
             boundary_faces: new_mesh.boundary_faces.clone(),
+            object_segments: Vec::new(),
         };
         live_workspace.update(|state| {
             state.metadata = Some(current_live_metadata(&stage.ir, execution_plan, "running"));
@@ -653,10 +670,8 @@ fn maybe_execute_adaptive_relaxation_followup_passes(
             ),
         );
 
-        let pass_output_dir = current_stage_artifact_dir.join(format!(
-            "adaptive_pass_{:02}",
-            remesh_pass_count
-        ));
+        let pass_output_dir =
+            current_stage_artifact_dir.join(format!("adaptive_pass_{:02}", remesh_pass_count));
         fs::create_dir_all(&pass_output_dir)?;
         let pass_result = fullmag_runner::run_problem_with_callback(
             &stage.ir,
@@ -700,7 +715,8 @@ fn maybe_execute_adaptive_relaxation_followup_passes(
         )
         .map_err(|error| anyhow!(error.message))?;
 
-        let pass_steps = offset_step_stats(&pass_result.steps, local_step_offset, local_time_offset);
+        let pass_steps =
+            offset_step_stats(&pass_result.steps, local_step_offset, local_time_offset);
         if let Some(last) = pass_steps.last() {
             local_step_offset = last.step;
             local_time_offset = last.time;
@@ -1338,6 +1354,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                         nodes: new_mesh.nodes.clone(),
                                         elements: new_mesh.elements.clone(),
                                         boundary_faces: new_mesh.boundary_faces.clone(),
+                                        object_segments: Vec::new(),
                                     };
                                     live_workspace.update(|state| {
                                         state.live_state.latest_step.fem_mesh = Some(mesh_payload);
@@ -1347,7 +1364,11 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                             fe_order,
                                             current_hmax,
                                             "waiting_for_compute",
-                                            stages[0].ir.problem_meta.runtime_metadata.get("adaptive_mesh"),
+                                            stages[0]
+                                                .ir
+                                                .problem_meta
+                                                .runtime_metadata
+                                                .get("adaptive_mesh"),
                                             current_adaptive_runtime_state.as_ref(),
                                             current_mesh_quality.as_ref(),
                                             &current_mesh_history,
@@ -1516,7 +1537,10 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         );
                         live_workspace.push_log(
                             "info",
-                            format!("Meshing in progress — hmax={:.3e}, order=P{}", hmax, plan.fe_order),
+                            format!(
+                                "Meshing in progress — hmax={:.3e}, order=P{}",
+                                hmax, plan.fe_order
+                            ),
                         );
                         let mesh_start = std::time::Instant::now();
                         match invoke_remesh_full(geom, hmax, plan.fe_order, &opts) {
@@ -1535,7 +1559,9 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                 );
                                 eprintln!(
                                     "[fullmag] ✓ remesh complete — {} nodes, {} elements ({:.1}s)",
-                                    node_count, elem_count, elapsed.as_secs_f64()
+                                    node_count,
+                                    elem_count,
+                                    elapsed.as_secs_f64()
                                 );
                                 if node_count > 50_000 {
                                     live_workspace.push_log(
@@ -1583,6 +1609,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                     nodes: new_mesh.nodes.clone(),
                                     elements: new_mesh.elements.clone(),
                                     boundary_faces: new_mesh.boundary_faces.clone(),
+                                    object_segments: Vec::new(),
                                 };
 
                                 live_workspace.update(|state| {
@@ -1602,7 +1629,11 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             }
                             Err(e) => {
                                 let elapsed = mesh_start.elapsed();
-                                eprintln!("[fullmag] ✗ remesh FAILED after {:.1}s: {}", elapsed.as_secs_f64(), e);
+                                eprintln!(
+                                    "[fullmag] ✗ remesh FAILED after {:.1}s: {}",
+                                    elapsed.as_secs_f64(),
+                                    e
+                                );
                                 live_workspace.push_log("error", format!("Remesh failed: {}", e));
                             }
                         }
@@ -1613,10 +1644,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             "no FEM plan available (wrong backend?)"
                         };
                         eprintln!("[fullmag] ✗ cannot remesh — {}", reason);
-                        live_workspace.push_log(
-                            "warn",
-                            format!("Cannot remesh — {}", reason),
-                        );
+                        live_workspace.push_log("warn", format!("Cannot remesh — {}", reason));
                     }
                 }
                 "stop" => {
@@ -1965,16 +1993,8 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 BackendPlanIR::Fem(_) | BackendPlanIR::FemEigen(_) => [0, 0, 0],
             };
             let fem_mesh = match &execution_plan.backend_plan {
-                BackendPlanIR::Fem(fem) => Some(fullmag_runner::FemMeshPayload {
-                    nodes: fem.mesh.nodes.clone(),
-                    elements: fem.mesh.elements.clone(),
-                    boundary_faces: fem.mesh.boundary_faces.clone(),
-                }),
-                BackendPlanIR::FemEigen(fem) => Some(fullmag_runner::FemMeshPayload {
-                    nodes: fem.mesh.nodes.clone(),
-                    elements: fem.mesh.elements.clone(),
-                    boundary_faces: fem.mesh.boundary_faces.clone(),
-                }),
+                BackendPlanIR::Fem(fem) => Some(fullmag_runner::FemMeshPayload::from(fem)),
+                BackendPlanIR::FemEigen(fem) => Some(fullmag_runner::FemMeshPayload::from(fem)),
                 BackendPlanIR::Fdm(_) | BackendPlanIR::FdmMultilayer(_) => None,
             };
             for (index, stats) in stage_result.steps.iter().enumerate() {
@@ -2742,16 +2762,8 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     BackendPlanIR::Fem(_) | BackendPlanIR::FemEigen(_) => [0, 0, 0],
                 };
                 let fem_mesh = match &execution_plan.backend_plan {
-                    BackendPlanIR::Fem(fem) => Some(fullmag_runner::FemMeshPayload {
-                        nodes: fem.mesh.nodes.clone(),
-                        elements: fem.mesh.elements.clone(),
-                        boundary_faces: fem.mesh.boundary_faces.clone(),
-                    }),
-                    BackendPlanIR::FemEigen(fem) => Some(fullmag_runner::FemMeshPayload {
-                        nodes: fem.mesh.nodes.clone(),
-                        elements: fem.mesh.elements.clone(),
-                        boundary_faces: fem.mesh.boundary_faces.clone(),
-                    }),
+                    BackendPlanIR::Fem(fem) => Some(fullmag_runner::FemMeshPayload::from(fem)),
+                    BackendPlanIR::FemEigen(fem) => Some(fullmag_runner::FemMeshPayload::from(fem)),
                     BackendPlanIR::Fdm(_) | BackendPlanIR::FdmMultilayer(_) => None,
                 };
                 for stats in &stage_result.steps {
@@ -3030,6 +3042,7 @@ mod tests {
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
             },
+            object_segments: Vec::new(),
             fe_order: 1,
             hmax: 1.0,
             initial_magnetization: vec![[0.0, 0.0, 1.0]; 4],
@@ -3090,6 +3103,7 @@ mod tests {
             oersted_time_dep_offset: 0.0,
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
+            magnetoelastic: None,
         })
     }
 

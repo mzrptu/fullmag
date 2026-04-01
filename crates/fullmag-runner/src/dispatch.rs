@@ -912,11 +912,8 @@ fn execute_native_fem(
                 let action = (live.on_step)(StepUpdate {
                     stats: current_stats.clone(),
                     grid: live.grid,
-                    fem_mesh: (current_stats.step == 0).then_some(crate::types::FemMeshPayload {
-                        nodes: plan.mesh.nodes.clone(),
-                        elements: plan.mesh.elements.clone(),
-                        boundary_faces: plan.mesh.boundary_faces.clone(),
-                    }),
+                    fem_mesh: (current_stats.step == 0)
+                        .then_some(crate::types::FemMeshPayload::from(plan)),
                     magnetization: None,
                     preview_field,
                     cached_preview_fields: None,
@@ -969,11 +966,7 @@ fn execute_native_fem(
             let action = (live.on_step)(StepUpdate {
                 stats: stats.clone(),
                 grid: live.grid,
-                fem_mesh: Some(crate::types::FemMeshPayload {
-                    nodes: plan.mesh.nodes.clone(),
-                    elements: plan.mesh.elements.clone(),
-                    boundary_faces: plan.mesh.boundary_faces.clone(),
-                }),
+                fem_mesh: Some(crate::types::FemMeshPayload::from(plan)),
                 magnetization,
                 preview_field,
                 cached_preview_fields: None,

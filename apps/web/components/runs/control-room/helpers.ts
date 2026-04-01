@@ -11,8 +11,10 @@ import type {
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
+  ModelBuilderGraphV2,
   ScriptBuilderUniverseState,
 } from "../../../lib/session/types";
+import { serializeModelBuilderGraphV2 } from "../../../lib/session/modelBuilderGraph";
 import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import { DEFAULT_MESH_OPTIONS } from "../../panels/MeshSettingsPanel";
@@ -97,6 +99,19 @@ export function solverSettingsFromBuilder(
   };
 }
 
+export function solverSettingsToBuilder(
+  settings: SolverSettingsState,
+): ScriptBuilderState["solver"] {
+  return {
+    integrator: settings.integrator || "",
+    fixed_timestep: settings.fixedTimestep,
+    relax_algorithm: settings.relaxAlgorithm || "",
+    torque_tolerance: settings.torqueTolerance,
+    energy_tolerance: settings.energyTolerance,
+    max_relax_steps: settings.maxRelaxSteps,
+  };
+}
+
 export function meshOptionsFromBuilder(
   builder: ScriptBuilderState["mesh"],
 ): MeshOptionsState {
@@ -108,6 +123,8 @@ export function meshOptionsFromBuilder(
     hmin: builder.hmin,
     sizeFactor: builder.size_factor,
     sizeFromCurvature: builder.size_from_curvature,
+    growthRate: builder.growth_rate,
+    narrowRegions: builder.narrow_regions,
     smoothingSteps: builder.smoothing_steps,
     optimize: builder.optimize,
     optimizeIters: builder.optimize_iterations,
@@ -123,7 +140,36 @@ export function meshOptionsFromBuilder(
   };
 }
 
-export function buildScriptBuilderUpdatePayload(
+export function meshOptionsToBuilder(
+  options: MeshOptionsState,
+  current?: ScriptBuilderState["mesh"] | null,
+): ScriptBuilderState["mesh"] {
+  return {
+    ...current,
+    algorithm_2d: options.algorithm2d,
+    algorithm_3d: options.algorithm3d,
+    hmax: options.hmax,
+    hmin: options.hmin,
+    size_factor: options.sizeFactor,
+    size_from_curvature: options.sizeFromCurvature,
+    growth_rate: options.growthRate,
+    narrow_regions: options.narrowRegions,
+    smoothing_steps: options.smoothingSteps,
+    optimize: options.optimize,
+    optimize_iterations: options.optimizeIters,
+    compute_quality: options.computeQuality,
+    per_element_quality: options.perElementQuality,
+    adaptive_enabled: options.adaptiveEnabled,
+    adaptive_policy: options.adaptivePolicy,
+    adaptive_theta: options.adaptiveTheta,
+    adaptive_h_min: options.adaptiveHMin,
+    adaptive_h_max: options.adaptiveHMax,
+    adaptive_max_passes: options.adaptiveMaxPasses,
+    adaptive_error_tolerance: options.adaptiveErrorTolerance,
+  };
+}
+
+export function buildLegacyScriptBuilderUpdatePayload(
   solverSettings: SolverSettingsState,
   meshOptions: MeshOptionsState,
   universe: ScriptBuilderUniverseState | null,
@@ -133,40 +179,70 @@ export function buildScriptBuilderUpdatePayload(
   excitationAnalysis: ScriptBuilderExcitationAnalysisEntry | null,
 ) {
   return {
-    solver: {
-      integrator: solverSettings.integrator || "",
-      fixed_timestep: solverSettings.fixedTimestep,
-      relax_algorithm: solverSettings.relaxAlgorithm || "",
-      torque_tolerance: solverSettings.torqueTolerance,
-      energy_tolerance: solverSettings.energyTolerance,
-      max_relax_steps: solverSettings.maxRelaxSteps,
-    },
-    mesh: {
-      algorithm_2d: meshOptions.algorithm2d,
-      algorithm_3d: meshOptions.algorithm3d,
-      hmax: meshOptions.hmax,
-      hmin: meshOptions.hmin,
-      size_factor: meshOptions.sizeFactor,
-      size_from_curvature: meshOptions.sizeFromCurvature,
-      smoothing_steps: meshOptions.smoothingSteps,
-      optimize: meshOptions.optimize,
-      optimize_iterations: meshOptions.optimizeIters,
-      compute_quality: meshOptions.computeQuality,
-      per_element_quality: meshOptions.perElementQuality,
-      adaptive_enabled: meshOptions.adaptiveEnabled,
-      adaptive_policy: meshOptions.adaptivePolicy,
-      adaptive_theta: meshOptions.adaptiveTheta,
-      adaptive_h_min: meshOptions.adaptiveHMin,
-      adaptive_h_max: meshOptions.adaptiveHMax,
-      adaptive_max_passes: meshOptions.adaptiveMaxPasses,
-      adaptive_error_tolerance: meshOptions.adaptiveErrorTolerance,
-    },
+    solver: solverSettingsToBuilder(solverSettings),
+    mesh: meshOptionsToBuilder(meshOptions),
     universe,
     stages,
     geometries,
     current_modules: currentModules,
     excitation_analysis: excitationAnalysis,
   };
+}
+
+export function buildScriptBuilderUpdatePayload(
+  modelBuilderGraph: ModelBuilderGraphV2 | null,
+  fallback: {
+    solverSettings: SolverSettingsState;
+    meshOptions: MeshOptionsState;
+    universe: ScriptBuilderUniverseState | null;
+    stages: ScriptBuilderStageState[];
+    geometries: ScriptBuilderGeometryEntry[];
+    currentModules: ScriptBuilderCurrentModuleEntry[];
+    excitationAnalysis: ScriptBuilderExcitationAnalysisEntry | null;
+  },
+) {
+  if (modelBuilderGraph) {
+    return {
+      model_builder_graph: modelBuilderGraph,
+    };
+  }
+  return buildLegacyScriptBuilderUpdatePayload(
+    fallback.solverSettings,
+    fallback.meshOptions,
+    fallback.universe,
+    fallback.stages,
+    fallback.geometries,
+    fallback.currentModules,
+    fallback.excitationAnalysis,
+  );
+}
+
+export function buildScriptBuilderSignature(
+  modelBuilderGraph: ModelBuilderGraphV2 | null,
+  fallback: {
+    solverSettings: SolverSettingsState;
+    meshOptions: MeshOptionsState;
+    universe: ScriptBuilderUniverseState | null;
+    stages: ScriptBuilderStageState[];
+    geometries: ScriptBuilderGeometryEntry[];
+    currentModules: ScriptBuilderCurrentModuleEntry[];
+    excitationAnalysis: ScriptBuilderExcitationAnalysisEntry | null;
+  },
+): string {
+  if (modelBuilderGraph) {
+    return JSON.stringify(serializeModelBuilderGraphV2(modelBuilderGraph));
+  }
+  return JSON.stringify(
+    buildLegacyScriptBuilderUpdatePayload(
+      fallback.solverSettings,
+      fallback.meshOptions,
+      fallback.universe,
+      fallback.stages,
+      fallback.geometries,
+      fallback.currentModules,
+      fallback.excitationAnalysis,
+    ),
+  );
 }
 
 /* ── File I/O helpers ── */

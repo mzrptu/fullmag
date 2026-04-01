@@ -33,6 +33,7 @@ import type {
   SessionManifest,
 } from "../../../lib/useSessionStream";
 import type {
+  ModelBuilderGraphV2,
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
@@ -49,7 +50,10 @@ import type {
 } from "../../preview/FemMeshView3D";
 import type {
   AntennaOverlay,
+  BuilderObjectOverlay,
   FemDockTab,
+  FocusObjectRequest,
+  ObjectViewMode,
   SlicePlane,
   VectorComponent,
   ViewportMode,
@@ -213,6 +217,7 @@ export interface CommandContextValue {
 
 /* ── Model: structural/static model data ── */
 export interface ModelContextValue {
+  modelBuilderGraph: ModelBuilderGraphV2 | null;
   material: MaterialSummary | null;
   solverPlan: SolverPlanSummary | null;
   solverSettings: SolverSettingsState;
@@ -222,6 +227,7 @@ export interface ModelContextValue {
   scriptBuilderCurrentModules: ScriptBuilderCurrentModuleEntry[];
   scriptBuilderExcitationAnalysis: ScriptBuilderExcitationAnalysisEntry | null;
   antennaOverlays: AntennaOverlay[];
+  objectOverlays: BuilderObjectOverlay[];
   femMesh: FemLiveMesh | null;
   meshRenderMode: RenderMode;
   meshOpacity: number;
@@ -251,12 +257,16 @@ export interface ModelContextValue {
   meshBoundsMax: [number, number, number] | null;
   meshFeOrder: number | null;
   worldExtent: [number, number, number] | null;
+  worldCenter: [number, number, number] | null;
   meshHmax: number | null;
   mesherBackend: string | null;
   mesherSourceKind: string | null;
   mesherCurrentSettings: Record<string, unknown> | null;
   meshWorkspacePreset: MeshWorkspacePresetId;
   selectedSidebarNodeId: string | null;
+  selectedObjectId: string | null;
+  focusObjectRequest: FocusObjectRequest | null;
+  objectViewMode: ObjectViewMode;
   /* Actions */
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
   setStudyStages: React.Dispatch<React.SetStateAction<ScriptBuilderStageState[]>>;
@@ -278,10 +288,15 @@ export interface ModelContextValue {
   setMeshOptions: React.Dispatch<React.SetStateAction<MeshOptionsState>>;
   setFemDockTab: React.Dispatch<React.SetStateAction<FemDockTab>>;
   setSelectedSidebarNodeId: React.Dispatch<React.SetStateAction<string | null>>;
+  setSelectedObjectId: React.Dispatch<React.SetStateAction<string | null>>;
+  setObjectViewMode: React.Dispatch<React.SetStateAction<ObjectViewMode>>;
+  requestFocusObject: (objectId: string) => void;
   handleMeshGenerate: () => Promise<void>;
   handleLassoRefine: (faceIndices: number[], factor: number) => Promise<void>;
   openFemMeshWorkspace: (tab?: FemDockTab) => void;
   applyMeshWorkspacePreset: (presetId: MeshWorkspacePresetId) => void;
+  applyAntennaTranslation: (moduleName: string, dx: number, dy: number, dz: number) => void;
+  applyGeometryTranslation: (geometryName: string, dx: number, dy: number, dz: number) => void;
 }
 
 /* ── Legacy combined type (for facade) ── */

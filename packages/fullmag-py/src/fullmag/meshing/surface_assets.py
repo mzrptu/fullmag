@@ -5,6 +5,8 @@ from pathlib import Path
 import shutil
 from typing import Any
 
+import numpy as np
+
 from fullmag.model.geometry import (
     Box,
     Cylinder,
@@ -39,8 +41,58 @@ class SurfaceAsset:
     bounds_max: tuple[float, float, float] | None
 
 
-def load_surface_asset(source: str | Path) -> SurfaceAsset:
+def _resolve_surface_asset_path(
+    source: str | Path,
+    *,
+    source_root: str | Path | None = None,
+) -> Path:
     path = Path(source)
+    if not path.is_absolute() and source_root is not None:
+        path = Path(source_root) / path
+    return path.resolve()
+
+
+def _load_stl_triangles(path: Path) -> np.ndarray:
+    data = path.read_bytes()
+    if len(data) >= 84:
+        triangle_count = int.from_bytes(data[80:84], byteorder="little", signed=False)
+        expected_size = 84 + triangle_count * 50
+        if expected_size == len(data):
+            return _load_binary_stl_triangles(data, triangle_count)
+    return _load_ascii_stl_triangles(data.decode("utf-8", errors="ignore"))
+
+
+def _load_binary_stl_triangles(data: bytes, triangle_count: int) -> np.ndarray:
+    triangles = np.empty((triangle_count, 3, 3), dtype=np.float64)
+    offset = 84
+    for index in range(triangle_count):
+        record = data[offset : offset + 50]
+        floats = np.frombuffer(record, dtype="<f4", count=12)
+        triangles[index] = floats[3:].reshape(3, 3)
+        offset += 50
+    return triangles
+
+
+def _load_ascii_stl_triangles(text: str) -> np.ndarray:
+    vertices: list[tuple[float, float, float]] = []
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        parts = stripped.split()
+        if len(parts) == 4 and parts[0].lower() == "vertex":
+            vertices.append((float(parts[1]), float(parts[2]), float(parts[3])))
+    if not vertices or len(vertices) % 3 != 0:
+        raise ValueError("could not parse STL triangles from imported geometry")
+    return np.asarray(vertices, dtype=np.float64).reshape(-1, 3, 3)
+
+
+def load_surface_asset(
+    source: str | Path,
+    *,
+    source_root: str | Path | None = None,
+) -> SurfaceAsset:
+    path = _resolve_surface_asset_path(source, source_root=source_root)
     fmt = path.suffix.lower().lstrip(".")
     if fmt not in {"stl", "step", "stp", "iges", "igs"}:
         raise ValueError(f"unsupported geometry asset format: {path.suffix}")
@@ -54,7 +106,20 @@ def load_surface_asset(source: str | Path) -> SurfaceAsset:
             bounds_max=None,
         )
 
-    trimesh = _import_trimesh()
+    try:
+        trimesh = _import_trimesh()
+    except ImportError:
+        triangles = _load_stl_triangles(path)
+        mins = triangles.min(axis=(0, 1))
+        maxs = triangles.max(axis=(0, 1))
+        return SurfaceAsset(
+            path=path,
+            format=fmt,
+            watertight=None,
+            bounds_min=tuple(float(value) for value in mins),
+            bounds_max=tuple(float(value) for value in maxs),
+        )
+
     mesh = trimesh.load_mesh(path, force="mesh")
     bounds = mesh.bounds
     return SurfaceAsset(

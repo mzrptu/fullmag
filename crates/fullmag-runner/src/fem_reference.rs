@@ -12,7 +12,9 @@ use fullmag_engine::{
 };
 use fullmag_ir::{ExecutionPrecision, FemPlanIR, IntegratorChoice, OutputIR};
 
-use crate::antenna_fields::compute_antenna_field;
+use crate::antenna_fields::{
+    combined_antenna_field_at_time, compute_per_unit_antenna_fields, has_time_varying_antenna,
+};
 use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
 use crate::interactive_runtime::{display_is_global_scalar, display_refresh_due};
 use crate::preview::{
@@ -48,7 +50,11 @@ pub(crate) fn snapshot_preview(
     request: &LivePreviewRequest,
 ) -> Result<crate::LivePreviewField, RunError> {
     let (problem, state) = build_problem_and_state(plan)?;
-    let antenna_field = compute_antenna_field(plan)?;
+    let antenna_field = problem
+        .terms
+        .per_node_field
+        .clone()
+        .unwrap_or_else(|| vec![[0.0, 0.0, 0.0]; state.magnetization().len()]);
     let observables = observe_state(&problem, &state, &antenna_field)?;
     Ok(build_mesh_preview_field(
         request,
@@ -62,7 +68,11 @@ pub(crate) fn snapshot_vector_fields(
     request: &LivePreviewRequest,
 ) -> Result<Vec<crate::LivePreviewField>, RunError> {
     let (problem, state) = build_problem_and_state(plan)?;
-    let antenna_field = compute_antenna_field(plan)?;
+    let antenna_field = problem
+        .terms
+        .per_node_field
+        .clone()
+        .unwrap_or_else(|| vec![[0.0, 0.0, 0.0]; state.magnetization().len()]);
     let observables = observe_state(&problem, &state, &antenna_field)?;
     let mut cached = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -118,6 +128,12 @@ pub(crate) fn build_problem_and_state(
             headroom: adaptive.safety,
         });
     }
+    let per_unit_fields = compute_per_unit_antenna_fields(plan)?;
+    let initial_antenna_field = if per_unit_fields.is_empty() {
+        None
+    } else {
+        Some(combined_antenna_field_at_time(plan, &per_unit_fields, 0.0))
+    };
     let problem = FemLlgProblem::with_terms_and_demag_transfer_grid(
         topology,
         material,
@@ -126,6 +142,7 @@ pub(crate) fn build_problem_and_state(
             exchange: plan.enable_exchange,
             demag: plan.enable_demag,
             external_field: plan.external_field,
+            per_node_field: initial_antenna_field,
             magnetoelastic: None,
         },
         Some([plan.hmax, plan.hmax, plan.hmax]),
@@ -173,8 +190,21 @@ fn execute_reference_fem_impl(
         });
     }
 
-    let (problem, mut state) = build_problem_and_state(plan)?;
-    let antenna_field = compute_antenna_field(plan)?;
+    let (mut problem, mut state) = build_problem_and_state(plan)?;
+    // Precompute per-unit-current Biot-Savart fields for time-varying updates.
+    let per_unit_antenna_fields = if has_time_varying_antenna(plan) {
+        compute_per_unit_antenna_fields(plan)?
+    } else {
+        vec![]
+    };
+    let has_time_varying = !per_unit_antenna_fields.is_empty();
+    // For the observation parameter we use the field already baked into the problem.
+    let antenna_field_at = |p: &FemLlgProblem, n: usize| -> Vec<[f64; 3]> {
+        p.terms
+            .per_node_field
+            .clone()
+            .unwrap_or_else(|| vec![[0.0, 0.0, 0.0]; n])
+    };
     let initial_magnetization = state.magnetization().to_vec();
 
     let mut dt = plan
@@ -194,10 +224,11 @@ fn execute_reference_fem_impl(
     let default_scalar_trace = scalar_schedules.is_empty();
 
     if default_scalar_trace {
+        let ant = antenna_field_at(&problem, state.magnetization().len());
         record_scalar_snapshot(
             &problem,
             &state,
-            &antenna_field,
+            &ant,
             0,
             0.0,
             0,
@@ -205,10 +236,11 @@ fn execute_reference_fem_impl(
             &mut artifacts,
         )?;
     } else {
+        let ant = antenna_field_at(&problem, state.magnetization().len());
         record_due_outputs(
             &problem,
             &state,
-            &antenna_field,
+            &ant,
             0,
             0.0,
             0,
@@ -219,11 +251,16 @@ fn execute_reference_fem_impl(
         )?;
     }
 
-    let mut previous_total_energy =
-        Some(observe_state(&problem, &state, &antenna_field)?.total_energy);
+    let mut previous_total_energy = {
+        let ant = antenna_field_at(&problem, state.magnetization().len());
+        Some(observe_state(&problem, &state, &ant)?.total_energy)
+    };
     let mut last_preview_revision: Option<u64> = None;
     let mut cancelled = false;
-    let mut current_observables = observe_state(&problem, &state, &antenna_field)?;
+    let mut current_observables = {
+        let ant = antenna_field_at(&problem, state.magnetization().len());
+        observe_state(&problem, &state, &ant)?
+    };
     let mut current_stats =
         make_step_stats(step_count, state.time_seconds, 0.0, 0, &current_observables);
 
@@ -248,11 +285,8 @@ fn execute_reference_fem_impl(
                 let action = (live.on_step)(StepUpdate {
                     stats: current_stats.clone(),
                     grid: live.grid,
-                    fem_mesh: (current_stats.step == 0).then_some(crate::types::FemMeshPayload {
-                        nodes: plan.mesh.nodes.clone(),
-                        elements: plan.mesh.elements.clone(),
-                        boundary_faces: plan.mesh.boundary_faces.clone(),
-                    }),
+                    fem_mesh: (current_stats.step == 0)
+                        .then_some(crate::types::FemMeshPayload::from(plan)),
                     magnetization: None,
                     preview_field,
                     cached_preview_fields: None,
@@ -270,6 +304,14 @@ fn execute_reference_fem_impl(
         }
 
         let dt_step = dt.min(until_seconds - state.time_seconds);
+        // Update antenna field for time-varying drives (e.g. sinusoidal RF).
+        if has_time_varying {
+            problem.terms.per_node_field = Some(combined_antenna_field_at_time(
+                plan,
+                &per_unit_antenna_fields,
+                state.time_seconds,
+            ));
+        }
         let wall_start = Instant::now();
         let report = problem.step(&mut state, dt_step).map_err(|e| RunError {
             message: format!("FEM step {}: {}", step_count, e),
@@ -296,10 +338,11 @@ fn execute_reference_fem_impl(
         current_stats = latest_stats.clone();
 
         if !default_scalar_trace || !field_schedules.is_empty() {
+            let ant = antenna_field_at(&problem, state.magnetization().len());
             record_due_outputs(
                 &problem,
                 &state,
-                &antenna_field,
+                &ant,
                 step_count,
                 dt_step,
                 wall_elapsed,
@@ -311,7 +354,8 @@ fn execute_reference_fem_impl(
         }
 
         if let Some(live) = live.as_mut() {
-            let observables = observe_state(&problem, &state, &antenna_field)?;
+            let ant = antenna_field_at(&problem, state.magnetization().len());
+            let observables = observe_state(&problem, &state, &ant)?;
             current_observables = observables.clone();
             let emit_every = live.field_every_n.max(1);
             let display_selection = live.display_selection.map(|get| get());
@@ -354,11 +398,7 @@ fn execute_reference_fem_impl(
                 stats: update_stats,
                 grid: live.grid,
                 fem_mesh: if step_count <= 1 {
-                    Some(crate::types::FemMeshPayload {
-                        nodes: plan.mesh.nodes.clone(),
-                        elements: plan.mesh.elements.clone(),
-                        boundary_faces: plan.mesh.boundary_faces.clone(),
-                    })
+                    Some(crate::types::FemMeshPayload::from(plan))
                 } else {
                     None
                 },
@@ -402,10 +442,11 @@ fn execute_reference_fem_impl(
         }
     }
 
+    let final_ant = antenna_field_at(&problem, state.magnetization().len());
     record_final_outputs(
         &problem,
         &state,
-        &antenna_field,
+        &final_ant,
         step_count,
         dt,
         default_scalar_trace,
@@ -668,6 +709,7 @@ mod tests {
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
             },
+            object_segments: Vec::new(),
             fe_order: 1,
             hmax: 1.0,
             initial_magnetization: vec![[1.0, 0.0, 0.0]; 4],
@@ -728,6 +770,7 @@ mod tests {
             oersted_time_dep_offset: 0.0,
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
+            magnetoelastic: None,
         }
     }
 
@@ -772,6 +815,7 @@ mod tests {
                 ],
                 boundary_markers: vec![1; 12],
             },
+            object_segments: Vec::new(),
             fe_order: 1,
             hmax: 10e-9,
             initial_magnetization: vec![[0.0, 0.0, 1.0]; 8],
@@ -832,6 +876,7 @@ mod tests {
             oersted_time_dep_offset: 0.0,
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
+            magnetoelastic: None,
         }
     }
 

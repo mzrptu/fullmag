@@ -274,6 +274,9 @@ pub struct EffectiveFieldTerms {
     pub exchange: bool,
     pub demag: bool,
     pub external_field: Option<Vector3>,
+    /// Per-node inhomogeneous external field (e.g. antenna Biot-Savart).
+    /// When set, this is added on top of `external_field` for each node.
+    pub per_node_field: Option<Vec<Vector3>>,
     /// Optional magnetoelastic prescribed-strain configuration.
     pub magnetoelastic: Option<MagnetoelasticTermConfig>,
 }
@@ -291,6 +294,7 @@ impl Default for EffectiveFieldTerms {
             exchange: true,
             demag: true,
             external_field: None,
+            per_node_field: None,
             magnetoelastic: None,
         }
     }
@@ -2848,6 +2852,7 @@ pub fn run_reference_exchange_demo(steps: usize, dt: f64) -> Result<ReferenceDem
             exchange: true,
             demag: false,
             external_field: None,
+            per_node_field: None,
             magnetoelastic: None,
         },
     );
@@ -3037,6 +3042,7 @@ mod tests {
                 exchange: true,
                 demag: false,
                 external_field: None,
+                per_node_field: None,
                 magnetoelastic: None,
             },
         )
@@ -3053,6 +3059,7 @@ mod tests {
                 exchange: false,
                 demag: false,
                 external_field: Some(field),
+                per_node_field: None,
                 magnetoelastic: None,
             },
         )
@@ -3077,6 +3084,7 @@ mod tests {
                 exchange: false,
                 demag: true,
                 external_field: None,
+                per_node_field: None,
                 magnetoelastic: None,
             },
         )
@@ -3093,6 +3101,7 @@ mod tests {
                 exchange: true,
                 demag: false,
                 external_field: None,
+                per_node_field: None,
                 magnetoelastic: None,
             },
             Some(mask),
@@ -3111,6 +3120,7 @@ mod tests {
                 exchange: false,
                 demag: true,
                 external_field: Some([0.0, 0.0, 1.0]),
+                per_node_field: None,
                 magnetoelastic: None,
             },
             Some(mask),
@@ -3356,6 +3366,7 @@ mod tests {
                 exchange: true,
                 demag: true,
                 external_field: None,
+                per_node_field: None,
                 magnetoelastic: None,
             },
         );

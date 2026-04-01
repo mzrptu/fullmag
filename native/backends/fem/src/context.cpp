@@ -241,6 +241,8 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
 #if FULLMAG_HAS_MFEM_STACK
     ctx.demag_realization = static_cast<int>(plan.demag_realization);
     ctx.poisson_boundary_marker = plan.poisson_boundary_marker;
+    ctx.robin_beta_mode = plan.robin_beta_mode;
+    ctx.robin_beta_factor = plan.robin_beta_factor;
 #endif
     ctx.step_count = 0;
     ctx.current_time = 0.0;
@@ -272,7 +274,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
         plan.initial_magnetization_xyz + static_cast<size_t>(plan.initial_magnetization_len));
 
     // Only copy Newell kernel spectra for transfer-grid demag (not poisson_airbox).
-    if (static_cast<int>(plan.demag_realization) != 1 /* POISSON_AIRBOX */) {
+    if (static_cast<int>(plan.demag_realization) == 0 /* TRANSFER_GRID */) {
         copy_optional_span(
             plan.demag_kernel_xx_spectrum,
             static_cast<size_t>(plan.demag_kernel_spectrum_len),
@@ -429,7 +431,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
         return false;
     }
     // Initialize Poisson demag solver if requested
-    if (ctx.enable_demag && ctx.demag_realization == 1 /* POISSON_AIRBOX */) {
+    if (ctx.enable_demag && (ctx.demag_realization == 1 || ctx.demag_realization == 2)) {
         if (!context_initialize_poisson(ctx, error)) {
             return false;
         }

@@ -1140,11 +1140,24 @@ pub struct FdmMaterialIR {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemObjectSegmentIR {
+    pub object_id: String,
+    pub node_start: u32,
+    pub node_count: u32,
+    pub element_start: u32,
+    pub element_count: u32,
+    pub boundary_face_start: u32,
+    pub boundary_face_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FemPlanIR {
     pub mesh_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mesh_source: Option<String>,
     pub mesh: MeshIR,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub object_segments: Vec<FemObjectSegmentIR>,
     pub fe_order: u32,
     pub hmax: f64,
     pub initial_magnetization: Vec<[f64; 3]>,
@@ -1248,6 +1261,8 @@ pub struct FemEigenPlanIR {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mesh_source: Option<String>,
     pub mesh: MeshIR,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub object_segments: Vec<FemObjectSegmentIR>,
     pub fe_order: u32,
     pub hmax: f64,
     pub equilibrium_magnetization: Vec<[f64; 3]>,
@@ -1276,6 +1291,18 @@ pub struct AirBoxConfigIR {
     pub factor: f64,
     pub grading: f64,
     pub boundary_marker: u32,
+    /// Boundary condition kind: `"dirichlet"` or `"robin"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bc_kind: Option<String>,
+    /// Robin beta mode: `"legacy"` (c=1), `"dipole"` (c=2), `"user"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub robin_beta_mode: Option<String>,
+    /// User-specified c in β = c/R*.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub robin_beta_factor: Option<f64>,
+    /// Airbox shape: `"bbox"` or `"sphere"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

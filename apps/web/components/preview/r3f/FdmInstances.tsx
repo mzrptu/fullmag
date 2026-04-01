@@ -26,6 +26,7 @@ interface FdmInstancesProps {
     topoComponent: TopoComponent;
     topoMultiplier: number;
   };
+  sceneOpacityMultiplier?: number;
   onVisibleCount?: (count: number) => void;
 }
 
@@ -152,6 +153,7 @@ function FdmInstances({
   geometryMode,
   activeMask,
   settings,
+  sceneOpacityMultiplier = 1,
   onVisibleCount,
 }: FdmInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
@@ -172,21 +174,31 @@ function FdmInstances({
       return cfg.useLighting
         ? new THREE.MeshPhongMaterial({
             transparent: true,
-            opacity: settings.voxelOpacity,
-            depthWrite: false,
+            opacity: settings.voxelOpacity * sceneOpacityMultiplier,
+            depthWrite: sceneOpacityMultiplier >= 0.999,
             shininess: 24,
             specular: new THREE.Color(0x24334c),
           })
         : new THREE.MeshBasicMaterial({
             transparent: true,
-            opacity: settings.voxelOpacity,
-            depthWrite: false,
+            opacity: settings.voxelOpacity * sceneOpacityMultiplier,
+            depthWrite: sceneOpacityMultiplier >= 0.999,
           });
     }
     return cfg.useLighting
-      ? new THREE.MeshPhongMaterial({ shininess: 60, specular: new THREE.Color(0x444444) })
-      : new THREE.MeshBasicMaterial();
-  }, [mode, settings.quality, settings.voxelOpacity]);
+      ? new THREE.MeshPhongMaterial({
+          shininess: 60,
+          specular: new THREE.Color(0x444444),
+          transparent: sceneOpacityMultiplier < 0.999,
+          opacity: sceneOpacityMultiplier,
+          depthWrite: sceneOpacityMultiplier >= 0.999,
+        })
+      : new THREE.MeshBasicMaterial({
+          transparent: sceneOpacityMultiplier < 0.999,
+          opacity: sceneOpacityMultiplier,
+          depthWrite: sceneOpacityMultiplier >= 0.999,
+        });
+  }, [mode, settings.quality, settings.voxelOpacity, sceneOpacityMultiplier]);
 
   /* ── Initialize instanceColor on mount ────────────────────────── */
   useEffect(() => {
@@ -260,7 +272,9 @@ function FdmInstances({
       mesh.instanceMatrix.needsUpdate = true;
       instanceColor.needsUpdate = true;
       if (!Array.isArray(mesh.material)) {
-        (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity = 0.85;
+        (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity = 0.85 * sceneOpacityMultiplier;
+        (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).transparent = sceneOpacityMultiplier < 0.999;
+        (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite = sceneOpacityMultiplier >= 0.999;
         mesh.material.needsUpdate = true;
       }
       return;
@@ -385,10 +399,22 @@ function FdmInstances({
     instanceColor.needsUpdate = true;
 
     if (isVoxel && !Array.isArray(mesh.material)) {
-      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity = settings.voxelOpacity;
+      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity =
+        settings.voxelOpacity * sceneOpacityMultiplier;
+      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).transparent = true;
+      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite =
+        sceneOpacityMultiplier >= 0.999;
+      mesh.material.needsUpdate = true;
+    } else if (!isVoxel && !Array.isArray(mesh.material)) {
+      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity =
+        sceneOpacityMultiplier;
+      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).transparent =
+        sceneOpacityMultiplier < 0.999;
+      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite =
+        sceneOpacityMultiplier >= 0.999;
       mesh.material.needsUpdate = true;
     }
-  }, [vectors, grid, settings, geometryMode, activeMask, mode, count, nx, ny, nz, onVisibleCount]);
+  }, [vectors, grid, settings, geometryMode, activeMask, mode, count, nx, ny, nz, onVisibleCount, sceneOpacityMultiplier]);
 
   if (count === 0) {
     if (typeof window !== "undefined") {

@@ -3,6 +3,11 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import type { FemLiveMesh } from "../../../lib/useSessionStream";
+import {
+  resolveSelectedObjectIdFromModelBuilderGraph,
+  resolveSelectedMeshObjectIdFromModelBuilderGraph,
+} from "../../../lib/session/modelBuilderGraph";
+import type { ModelBuilderGraphV2, ScriptBuilderGeometryEntry } from "../../../lib/session/types";
 import type { TreeNodeData } from "../../panels/ModelTree";
 
 export type ViewportMode = "3D" | "2D" | "Mesh" | "Analyze";
@@ -27,6 +32,20 @@ export interface AntennaOverlay {
   solver: string;
   conductors: AntennaOverlayConductor[];
 }
+
+export interface BuilderObjectOverlay {
+  id: string;
+  label: string;
+  boundsMin: [number, number, number];
+  boundsMax: [number, number, number];
+}
+
+export interface FocusObjectRequest {
+  objectId: string;
+  revision: number;
+}
+
+export type ObjectViewMode = "context" | "isolate";
 
 export interface MeshFaceDetail {
   faceIndex: number;
@@ -225,6 +244,234 @@ export function resolveAntennaNodeName(
   for (const name of orderedNames) {
     const prefix = `ant-${name}`;
     if (nodeId === prefix || nodeId.startsWith(`${prefix}-`)) {
+      return name;
+    }
+  }
+  return null;
+}
+
+function isFiniteVec3(value: [number, number, number] | null | undefined): value is [number, number, number] {
+  return Boolean(
+    value &&
+      value.length === 3 &&
+      value.every((component) => typeof component === "number" && Number.isFinite(component)),
+  );
+}
+
+function normalizeBounds(
+  boundsMin: [number, number, number] | null,
+  boundsMax: [number, number, number] | null,
+): { boundsMin: [number, number, number]; boundsMax: [number, number, number] } | null {
+  if (!isFiniteVec3(boundsMin) || !isFiniteVec3(boundsMax)) {
+    return null;
+  }
+  const normalizedMin = boundsMin.map((component, index) =>
+    Math.min(component, boundsMax[index]),
+  ) as [number, number, number];
+  const normalizedMax = boundsMin.map((component, index) =>
+    Math.max(component, boundsMax[index]),
+  ) as [number, number, number];
+  if (normalizedMax.some((component, index) => component - normalizedMin[index] <= 0)) {
+    return null;
+  }
+  return { boundsMin: normalizedMin, boundsMax: normalizedMax };
+}
+
+export function combineBounds(
+  entries: readonly {
+    boundsMin: [number, number, number];
+    boundsMax: [number, number, number];
+  }[],
+): { boundsMin: [number, number, number]; boundsMax: [number, number, number] } | null {
+  if (entries.length === 0) {
+    return null;
+  }
+  const first = normalizeBounds(entries[0]?.boundsMin ?? null, entries[0]?.boundsMax ?? null);
+  if (!first) {
+    return null;
+  }
+  let nextMin = [...first.boundsMin] as [number, number, number];
+  let nextMax = [...first.boundsMax] as [number, number, number];
+  for (const entry of entries.slice(1)) {
+    const normalized = normalizeBounds(entry.boundsMin, entry.boundsMax);
+    if (!normalized) {
+      continue;
+    }
+    nextMin = nextMin.map((component, index) =>
+      Math.min(component, normalized.boundsMin[index]),
+    ) as [number, number, number];
+    nextMax = nextMax.map((component, index) =>
+      Math.max(component, normalized.boundsMax[index]),
+    ) as [number, number, number];
+  }
+  return { boundsMin: nextMin, boundsMax: nextMax };
+}
+
+export function boundsExtent(
+  boundsMin: [number, number, number],
+  boundsMax: [number, number, number],
+): [number, number, number] {
+  return boundsMin.map((component, index) => boundsMax[index] - component) as [
+    number,
+    number,
+    number,
+  ];
+}
+
+export function boundsCenter(
+  boundsMin: [number, number, number],
+  boundsMax: [number, number, number],
+): [number, number, number] {
+  return boundsMin.map((component, index) => 0.5 * (component + boundsMax[index])) as [
+    number,
+    number,
+    number,
+  ];
+}
+
+export function extractGeometryBoundsFromParams(
+  geometry: ScriptBuilderGeometryEntry,
+): { boundsMin: [number, number, number]; boundsMax: [number, number, number] } | null {
+  const params = geometry.geometry_params ?? {};
+  const translateRaw = Array.isArray(params.translate)
+    ? params.translate
+    : Array.isArray(params.translation)
+      ? params.translation
+      : null;
+  const translation = translateRaw && translateRaw.length === 3
+    ? (translateRaw.map((value) => Number(value)) as [number, number, number])
+    : null;
+  let boundsMin: [number, number, number] | null = null;
+  let boundsMax: [number, number, number] | null = null;
+  if (geometry.geometry_kind === "Box" && Array.isArray(params.size) && params.size.length === 3) {
+    const [sx, sy, sz] = params.size.map((value) => Number(value)) as [number, number, number];
+    if ([sx, sy, sz].every((value) => Number.isFinite(value) && value > 0)) {
+      boundsMin = [-0.5 * sx, -0.5 * sy, -0.5 * sz];
+      boundsMax = [0.5 * sx, 0.5 * sy, 0.5 * sz];
+    }
+  } else if (geometry.geometry_kind === "Cylinder") {
+    const radius = Number(params.radius);
+    const height = Number(params.height);
+    if (Number.isFinite(radius) && radius > 0 && Number.isFinite(height) && height > 0) {
+      boundsMin = [-radius, -radius, -0.5 * height];
+      boundsMax = [radius, radius, 0.5 * height];
+    }
+  } else if (geometry.geometry_kind === "Ellipsoid") {
+    const rx = Number(params.rx);
+    const ry = Number(params.ry);
+    const rz = Number(params.rz);
+    if ([rx, ry, rz].every((value) => Number.isFinite(value) && value > 0)) {
+      boundsMin = [-rx, -ry, -rz];
+      boundsMax = [rx, ry, rz];
+    }
+  } else if (geometry.geometry_kind === "Ellipse") {
+    const rx = Number(params.rx);
+    const ry = Number(params.ry);
+    const height = Number(params.height);
+    if ([rx, ry, height].every((value) => Number.isFinite(value) && value > 0)) {
+      boundsMin = [-rx, -ry, -0.5 * height];
+      boundsMax = [rx, ry, 0.5 * height];
+    }
+  }
+
+  if (!boundsMin || !boundsMax) {
+    const declaredMin = geometry.bounds_min ?? null;
+    const declaredMax = geometry.bounds_max ?? null;
+    const normalizedDeclared = normalizeBounds(declaredMin, declaredMax);
+    if (!normalizedDeclared) {
+      return null;
+    }
+    boundsMin = normalizedDeclared.boundsMin;
+    boundsMax = normalizedDeclared.boundsMax;
+  }
+
+  if (translation && translation.every((value) => Number.isFinite(value))) {
+    boundsMin = boundsMin.map((component, index) => component + translation[index]) as [number, number, number];
+    boundsMax = boundsMax.map((component, index) => component + translation[index]) as [number, number, number];
+  }
+
+  return { boundsMin, boundsMax };
+}
+
+export function buildObjectOverlays(
+  geometries: readonly ScriptBuilderGeometryEntry[],
+): BuilderObjectOverlay[] {
+  return geometries.flatMap((geometry) => {
+    const bounds = extractGeometryBoundsFromParams(geometry);
+    if (!bounds) {
+      return [];
+    }
+    return [{
+      id: geometry.name,
+      label: geometry.name,
+      boundsMin: bounds.boundsMin,
+      boundsMax: bounds.boundsMax,
+    }];
+  });
+}
+
+export function resolveSelectedObjectId(
+  nodeId: string | null | undefined,
+  source: ModelBuilderGraphV2 | readonly ScriptBuilderGeometryEntry[] | null | undefined,
+): string | null {
+  if (!nodeId) {
+    return null;
+  }
+  const modelBuilderGraph =
+    source && !Array.isArray(source) ? (source as ModelBuilderGraphV2) : null;
+  if (modelBuilderGraph) {
+    return resolveSelectedObjectIdFromModelBuilderGraph(modelBuilderGraph, nodeId);
+  }
+  const geometries = Array.isArray(source) ? source : [];
+  const ordered = [...geometries]
+    .map((geometry) => geometry.name)
+    .sort((left, right) => right.length - left.length);
+  for (const name of ordered) {
+    const objectPrefix = `obj-${name}`;
+    const geoPrefix = `geo-${name}`;
+    const regionPrefix = `reg-${name}`;
+    const matPrefix = `mat-${name}`;
+    const meshPrefix = `${geoPrefix}-mesh`;
+    if (
+      nodeId === objectPrefix ||
+      nodeId.startsWith(`${objectPrefix}-`) ||
+      nodeId === geoPrefix ||
+      nodeId.startsWith(`${geoPrefix}-`) ||
+      nodeId === regionPrefix ||
+      nodeId.startsWith(`${regionPrefix}-`) ||
+      nodeId === matPrefix ||
+      nodeId.startsWith(`${matPrefix}-`) ||
+      nodeId === meshPrefix ||
+      nodeId.startsWith(`${meshPrefix}-`)
+    ) {
+      return name;
+    }
+  }
+  if ((nodeId === "geometry" || nodeId === "objects") && geometries.length === 1) {
+    return geometries[0]?.name ?? null;
+  }
+  return null;
+}
+
+export function resolveSelectedMeshObjectId(
+  nodeId: string | null | undefined,
+  source: ModelBuilderGraphV2 | readonly ScriptBuilderGeometryEntry[] | null | undefined,
+): string | null {
+  if (!nodeId) {
+    return null;
+  }
+  const modelBuilderGraph =
+    source && !Array.isArray(source) ? (source as ModelBuilderGraphV2) : null;
+  if (modelBuilderGraph) {
+    return resolveSelectedMeshObjectIdFromModelBuilderGraph(modelBuilderGraph, nodeId);
+  }
+  const geometries = Array.isArray(source) ? source : [];
+  const ordered = [...geometries]
+    .map((geometry) => geometry.name)
+    .sort((left, right) => right.length - left.length);
+  for (const name of ordered) {
+    const meshPrefix = `geo-${name}-mesh`;
+    if (nodeId === meshPrefix || nodeId.startsWith(`${meshPrefix}-`)) {
       return name;
     }
   }

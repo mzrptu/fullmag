@@ -30,19 +30,24 @@ export function buildSparkSeries(
   return samples;
 }
 
+import { HelpTip } from "../../ui/HelpTip";
+
 interface MetricFieldProps {
   label: string;
   value: string;
   sparkData?: number[];
   sparkColor?: string;
-  title?: string;
+  tooltip?: React.ReactNode;
   valueTone?: "success";
 }
 
-export function MetricField({ label, value, sparkData, sparkColor, title, valueTone }: MetricFieldProps) {
+export function MetricField({ label, value, sparkData, sparkColor, tooltip, valueTone }: MetricFieldProps) {
   return (
     <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
-      <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground" title={title}>{label}</span>
+      <span className="flex items-center gap-2 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
+        <span className="flex-1">{label}</span>
+        {tooltip && <HelpTip>{tooltip}</HelpTip>}
+      </span>
       <span className={cn("font-mono text-xs text-foreground", valueTone === "success" ? "text-emerald-400" : undefined)}>
         {value}
       </span>

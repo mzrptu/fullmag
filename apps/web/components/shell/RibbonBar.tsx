@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   FileText, Play, Pause, Square, Box, Columns2, Grid3X3,
@@ -82,12 +82,18 @@ interface RibbonBarProps {
   selectedAntennaName?: string | null;
   onAddAntenna?: (kind: "MicrostripAntenna" | "CPWAntenna") => void;
   onSelectModelNode?: (nodeId: string) => void;
+  meshGenerating?: boolean;
+  onGenerateMesh?: () => void;
+  selectedObjectId?: string | null;
+  onRequestObjectFocus?: (objectId: string) => void;
 }
 
 /* ── Tab inference from tree node ── */
 function inferTab(nodeId: string | null | undefined): RibbonTab {
   if (!nodeId) return "Home";
   if (nodeId.startsWith("mesh") || nodeId === "mesh") return "Mesh";
+  // Per-object mesh nodes (e.g. "geo-nanoflower-mesh") → Mesh tab
+  if (nodeId.startsWith("geo-") && nodeId.endsWith("-mesh")) return "Mesh";
   if (nodeId.startsWith("study") || nodeId === "study") return "Study";
   if (nodeId.startsWith("res-") || nodeId === "results" ||
       nodeId.startsWith("phys-") || nodeId === "physics") return "Results";
@@ -145,7 +151,15 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
     {
       id: "additions", title: "Additions",
       actions: [
-        { id: "geometry", icon: <Shapes size={20} />, label: "Geometry", tooltip: "Define geometry", disabled: true, iconColor: "text-emerald-400" },
+        { 
+          id: "geometry", icon: <Shapes size={20} />, label: "Objects", tooltip: "Add new geometric objects", iconColor: "text-emerald-400",
+          menuItems: [
+            { id: "add-box", label: "Add Box", icon: <Box size={14} />, description: "Rectangular cuboid", action: () => alert("Not implemented yet") },
+            { id: "add-cylinder", label: "Add Cylinder", icon: <Box size={14} />, description: "Standard cylinder", action: () => alert("Not implemented yet") },
+            { separator: true, id: "sep-geo", label: "" },
+            { id: "import-stl", label: "Import STL...", icon: <FileText size={14} />, description: "Load external mesh", action: () => alert("Not implemented yet") },
+          ]
+        },
         { id: "material", icon: <FlaskConical size={20} />, label: "Material", tooltip: "Material properties", disabled: true, iconColor: "text-amber-400" },
         {
           id: "antenna",
@@ -177,7 +191,7 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
     {
       id: "mesh-gen", title: "Generate",
       actions: [
-        { id: "generate", icon: <RefreshCw size={20} />, label: "Generate", tooltip: "Re-generate mesh", accent: true, disabled: !p.isFemBackend },
+        { id: "generate", icon: <RefreshCw size={20} className={cn(p.meshGenerating && "animate-spin")} />, label: p.meshGenerating ? "Working..." : "Generate", tooltip: "Re-generate mesh", accent: true, disabled: !p.isFemBackend || p.meshGenerating, action: p.onGenerateMesh },
         { id: "import", icon: <FileText size={20} />, label: "Import", tooltip: "Import mesh file", disabled: true, iconColor: "text-sky-400" },
       ],
     },
@@ -282,20 +296,21 @@ function buildViewGroup(p: RibbonBarProps): RibbonGroup {
       { id: "2d", icon: <Columns2 size={20} />, label: "2D", tooltip: "2D view", shortcut: "2", active: p.viewMode === "2D", action: () => p.onViewChange?.("2D"), iconColor: "text-sky-400" },
       { id: "mesh-view", icon: <Grid3X3 size={20} />, label: "Mesh", tooltip: "Mesh view", shortcut: "3", active: p.viewMode === "Mesh", action: () => p.onViewChange?.("Mesh"), iconColor: "text-fuchsia-400" },
       { id: "sidebar", icon: <PanelRight size={20} />, label: "Panel", tooltip: "Toggle sidebar", shortcut: "Ctrl+B", active: p.sidebarVisible, action: p.onSidebarToggle, iconColor: "text-slate-400" },
-      { id: "eye", icon: <Eye size={20} />, label: "Focus", tooltip: "Focus mode", disabled: true, iconColor: "text-teal-400" },
+      { id: "eye", icon: <Eye size={20} />, label: "Focus", tooltip: p.selectedObjectId ? "Focus camera on selected object" : "Select an object to focus", disabled: !p.selectedObjectId, iconColor: "text-teal-400", action: () => { if (p.selectedObjectId) p.onRequestObjectFocus?.(p.selectedObjectId); } },
     ],
   };
 }
 
-function RibbonActionTrigger({
-  action,
-  previewPending,
-}: {
-  action: RibbonAction;
-  previewPending?: boolean;
-}) {
+const RibbonActionTrigger = React.forwardRef<
+  HTMLButtonElement,
+  {
+    action: RibbonAction;
+    previewPending?: boolean;
+  } & React.ButtonHTMLAttributes<HTMLButtonElement>
+>(({ action, previewPending, ...props }, ref) => {
   return (
     <button
+      ref={ref}
       className={cn(
         "flex min-h-[56px] min-w-[60px] flex-col items-center justify-center gap-1.5 rounded-md border p-1 transition-all",
         action.active
@@ -307,7 +322,11 @@ function RibbonActionTrigger({
         action.disabled && "pointer-events-none cursor-not-allowed opacity-40",
       )}
       disabled={action.disabled}
-      onClick={action.action}
+      onClick={(e) => {
+        if (action.action) action.action();
+        if (props.onClick) props.onClick(e);
+      }}
+      {...props}
     >
       <span
         className={cn(
@@ -335,7 +354,8 @@ function RibbonActionTrigger({
       </span>
     </button>
   );
-}
+});
+RibbonActionTrigger.displayName = "RibbonActionTrigger";
 
 const TABS: RibbonTab[] = ["Home", "Mesh", "Study", "Results"];
 
@@ -343,9 +363,16 @@ const TABS: RibbonTab[] = ["Home", "Mesh", "Study", "Results"];
 
 export default function RibbonBar(props: RibbonBarProps) {
   const inferredTab = inferTab(props.selectedNodeId);
+  const [manualTab, setManualTab] = useState<RibbonTab | null>(null);
+
+  useEffect(() => {
+    setManualTab(null);
+  }, [props.selectedNodeId]);
+
+  const activeTab = manualTab ?? inferredTab;
 
   const groups = useMemo(() => {
-    switch (inferredTab) {
+    switch (activeTab) {
       case "Mesh": return buildMeshGroups(props);
       case "Study": return buildStudyGroups(props);
       case "Results": return buildResultsGroups(props);
@@ -353,7 +380,7 @@ export default function RibbonBar(props: RibbonBarProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    inferredTab,
+    activeTab,
     props.viewMode,
     props.isFemBackend,
     props.solverRunning,
@@ -377,13 +404,21 @@ export default function RibbonBar(props: RibbonBarProps) {
           {TABS.map((tab) => (
             <button
               key={tab}
+              onClick={() => {
+                setManualTab(tab);
+                if (props.onSelectModelNode) {
+                  if (tab === "Home") props.onSelectModelNode("universe");
+                  else if (tab === "Mesh") props.onSelectModelNode("mesh");
+                  else if (tab === "Study") props.onSelectModelNode("study");
+                  else if (tab === "Results") props.onSelectModelNode("results");
+                }
+              }}
               className={cn(
-                "px-5 py-2 min-w-[80px] text-[0.82rem] font-medium transition-colors rounded-t-lg border-b-2 font-sans",
-                tab === inferredTab 
+                "px-5 py-2 min-w-[80px] text-[0.82rem] font-medium transition-colors rounded-t-lg border-b-2 font-sans cursor-pointer hover:bg-muted/30",
+                tab === activeTab 
                   ? "border-primary bg-primary/10 text-primary" 
-                  : "border-transparent text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
               )}
-              disabled={tab !== inferredTab}
             >
               {tab}
             </button>

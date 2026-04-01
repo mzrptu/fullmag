@@ -2,6 +2,7 @@
 
 from .asset_pipeline import realize_fdm_grid_asset, realize_fem_mesh_asset
 from .gmsh_bridge import (
+    AirboxOptions,
     MeshData,
     MeshOptions,
     MeshQualityReport,
@@ -19,6 +20,7 @@ from .surface_assets import SurfaceAsset, export_geometry_to_stl, load_surface_a
 from .voxelization import VoxelMaskData, voxelize_geometry
 
 __all__ = [
+    "AirboxOptions",
     "MeshData",
     "MeshOptions",
     "MeshQualityReport",
@@ -39,3 +41,4 @@ __all__ = [
     "validate_mesh",
     "voxelize_geometry",
 ]
+

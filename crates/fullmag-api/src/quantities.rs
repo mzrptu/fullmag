@@ -70,7 +70,10 @@ pub(crate) fn build_quantities(
         .collect()
 }
 
-pub(crate) fn run_manifest_scalar_value(run: Option<&RunManifest>, metric_key: &str) -> Option<f64> {
+pub(crate) fn run_manifest_scalar_value(
+    run: Option<&RunManifest>,
+    metric_key: &str,
+) -> Option<f64> {
     match metric_key {
         "e_ex" => run.and_then(|manifest| manifest.final_e_ex),
         "e_demag" => run.and_then(|manifest| manifest.final_e_demag),
@@ -88,4 +91,3 @@ pub(crate) fn extract_fem_mesh_from_metadata(metadata: &Value) -> Option<FemMesh
     let mesh = fem.get("mesh")?;
     serde_json::from_value(mesh.clone()).ok()
 }
-

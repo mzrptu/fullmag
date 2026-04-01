@@ -223,6 +223,7 @@ fn build_contexts_and_states(
                 exchange: plan.enable_exchange,
                 demag: false,
                 external_field: plan.external_field,
+                per_node_field: None,
                 magnetoelastic: None,
             },
             layer.native_active_mask.clone(),

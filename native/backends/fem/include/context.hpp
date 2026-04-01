@@ -247,9 +247,15 @@ struct Context {
     void *mfem_cached_hypre_pcg = nullptr;  // mfem::HyprePCG*
     bool poisson_solver_setup = false;
 
-    // Demag realization: 0 = transfer_grid (legacy), 1 = poisson_airbox
+    // Demag realization: 0 = transfer_grid, 1 = airbox_dirichlet, 2 = airbox_robin
     int demag_realization = 0;
     int poisson_boundary_marker = 99;
+
+    // ── Robin boundary condition ──
+    int    robin_beta_mode = 0;          // 0=dirichlet, 1=legacy(c=1), 2=dipole(c=2), 3=user
+    double robin_beta_factor = 1.0;      // c in β = c/R*
+    double robin_effective_beta = 0.0;   // computed β value
+    void  *mfem_boundary_mass = nullptr; // mfem::BilinearForm* for ∫_Γ φᵢφⱼ dS
 #endif
 
     // ── S12: CUDA stream management ──

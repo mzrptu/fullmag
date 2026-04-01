@@ -92,6 +92,13 @@
     --status-failed: 0 84.2% 60.2%; /* Red */
     --status-idle: 215.4 16.3% 46.9%; /* Slate 500 */
     --status-warn: 47.9 95.8% 53.1%; /* Yellow */
+
+    /* Chart / Sparkline Colors */
+    --chart-sky: #0ea5e9;
+    --chart-amber: #f59e0b;
+    --chart-emerald: #10b981;
+    --chart-violet: #8b5cf6;
+    --chart-blue: #3b82f6;
     
     /* Z-indexes */
     --z-base: 0;
@@ -246,7 +253,7 @@ input, select, textarea {
   width: 32px;
   height: 32px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--accent), #8b5cf6);
+  background: linear-gradient(135deg, var(--accent), var(--chart-violet));
   display: flex;
   align-items: center;
   justify-content: center;

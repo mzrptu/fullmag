@@ -57,4 +57,13 @@ export interface FemMeshPayload {
   nodes: [number, number, number][];
   elements: [number, number, number, number][];
   boundary_faces: [number, number, number][];
+  object_segments?: {
+    object_id: string;
+    node_start: number;
+    node_count: number;
+    element_start: number;
+    element_count: number;
+    boundary_face_start: number;
+    boundary_face_count: number;
+  }[];
 }

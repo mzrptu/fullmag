@@ -355,6 +355,9 @@ class MeshScaffoldTests(unittest.TestCase):
                         dtype=np.float64,
                     )
 
+                def fill(self) -> "_FakeVoxelGrid":
+                    return self
+
             class _FakeMesh:
                 def copy(self) -> "_FakeMesh":
                     return self

@@ -1,9 +1,9 @@
 //! Session state management: publish, refresh, default state.
 
-use crate::types::*;
-use crate::error::ApiError;
 use crate::artifacts::collect_artifacts;
+use crate::error::ApiError;
 use crate::quantities::{build_quantities, extract_fem_mesh_from_metadata};
+use crate::types::*;
 use fullmag_runner::{LivePreviewField, RuntimeStatus};
 use std::path::{Path, PathBuf};
 
@@ -82,6 +82,7 @@ pub(crate) fn default_current_live_state(req: &CurrentLivePublishRequest) -> Ses
         metadata: None,
         mesh_workspace: None,
         script_builder: None,
+        model_builder_graph: None,
         scalar_rows: Vec::new(),
         engine_log: Vec::new(),
         quantities: Vec::new(),
@@ -213,7 +214,9 @@ pub(crate) fn current_artifact_dir(current: &SessionStateResponse) -> Option<Pat
     from_run.or(from_session)
 }
 
-pub(crate) fn read_artifacts_from_dir(artifact_dir: Option<&Path>) -> Result<Vec<ArtifactEntry>, ApiError> {
+pub(crate) fn read_artifacts_from_dir(
+    artifact_dir: Option<&Path>,
+) -> Result<Vec<ArtifactEntry>, ApiError> {
     let Some(artifact_dir) = artifact_dir else {
         return Ok(Vec::new());
     };
@@ -236,7 +239,10 @@ pub(crate) fn merge_latest_fields(current: &mut LatestFields, incoming: LatestFi
     current.extend(incoming);
 }
 
-pub(crate) fn merge_cached_preview_fields(current: &mut CachedPreviewFields, incoming: Vec<LivePreviewField>) {
+pub(crate) fn merge_cached_preview_fields(
+    current: &mut CachedPreviewFields,
+    incoming: Vec<LivePreviewField>,
+) {
     for field in incoming {
         current.insert(field);
     }

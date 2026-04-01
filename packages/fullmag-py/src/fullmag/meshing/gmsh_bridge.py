@@ -109,6 +109,24 @@ class MeshOptions:
 
 
 @dataclass(frozen=True, slots=True)
+class AirboxOptions:
+    """Configuration for automatic airbox (open-boundary domain) generation.
+
+    Attributes:
+        padding_factor: Domain scale relative to magnetic body bbox
+                        (e.g. 3.0 means air domain is 3× the body in each axis).
+        shape: Outer shell geometry: ``"bbox"`` or ``"sphere"``.
+        grading_ratio: Element growth ratio from interface toward outer boundary.
+        boundary_marker: Gmsh physical group tag for the outer boundary Γ_out.
+    """
+
+    padding_factor: float = 3.0
+    shape: str = "bbox"
+    grading_ratio: float = 1.4
+    boundary_marker: int = 99
+
+
+@dataclass(frozen=True, slots=True)
 class SizeFieldData:
     """Nodal target element sizes for adaptive remeshing.
 
@@ -131,6 +149,25 @@ class SizeFieldData:
             raise ValueError("h_values must have shape (N,)")
         if np.any(h <= 0):
             raise ValueError("h_values must be strictly positive")
+
+
+def _peel_translate_chain(
+    geometry: Geometry,
+) -> tuple[tuple[float, float, float], Geometry]:
+    """Collapse a chain of ``Translate`` wrappers into an accumulated offset.
+
+    Returns ``(accumulated_offset, inner_geometry)`` where *inner_geometry* is
+    the first non-``Translate`` node in the chain.
+    """
+    dx, dy, dz = 0.0, 0.0, 0.0
+    g: Geometry = geometry
+    while isinstance(g, Translate):
+        ox, oy, oz = g.offset
+        dx += ox
+        dy += oy
+        dz += oz
+        g = g.geometry
+    return (dx, dy, dz), g
 
 
 def _import_gmsh() -> Any:
@@ -344,11 +381,114 @@ class MeshData:
         }
 
 
+def _add_airbox_and_fragment(
+    gmsh: Any,
+    magnetic_tags: list[tuple[int, int]],
+    airbox: AirboxOptions,
+    hmax: float,
+) -> None:
+    """Add an airbox around the magnetic body and fragment for a conforming mesh.
+
+    After this call the Gmsh model has physical groups:
+      - volume tag 1 = magnetic, volume tag 2 = air,
+      - surface tag ``airbox.boundary_marker`` = Γ_out,
+      - surface tag 10 = magnetic–air interface.
+
+    A graded ``Threshold`` size field is set so that element size equals
+    ``hmax`` at the interface and grows by ``grading_ratio`` toward the outer
+    boundary.
+    """
+    # 1 — bounding box of magnetic body
+    xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(-1, -1)
+    dx, dy, dz = xmax - xmin, ymax - ymin, zmax - zmin
+    cx, cy, cz = (xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2
+    pf = airbox.padding_factor
+
+    # 2 — outer shell geometry
+    if airbox.shape == "sphere":
+        R = max(dx, dy, dz) / 2 * pf
+        outer_tag = gmsh.model.occ.addSphere(cx, cy, cz, R)
+    else:  # bbox
+        ox, oy, oz = dx * pf, dy * pf, dz * pf
+        outer_tag = gmsh.model.occ.addBox(
+            cx - ox / 2, cy - oy / 2, cz - oz / 2, ox, oy, oz,
+        )
+    outer_dimtags = [(3, outer_tag)]
+
+    # 3 — OCC fragment: conforming interface between magnetic body and airbox
+    result, result_map = gmsh.model.occ.fragment(outer_dimtags, magnetic_tags)
+    gmsh.model.occ.synchronize()
+
+    # 4 — identify magnetic vs air volumes via result_map
+    #     result_map[0]  → children of outer_dimtags  (air + overlap)
+    #     result_map[1:] → children of magnetic_tags  (the magnetic region)
+    magnetic_vol_tags: list[int] = []
+    for parent_idx in range(1, len(result_map)):
+        for dim, tag in result_map[parent_idx]:
+            if dim == 3 and tag not in magnetic_vol_tags:
+                magnetic_vol_tags.append(tag)
+    air_vol_tags: list[int] = []
+    for dim, tag in result_map[0]:
+        if dim == 3 and tag not in magnetic_vol_tags:
+            air_vol_tags.append(tag)
+
+    if not magnetic_vol_tags:
+        raise RuntimeError(
+            "airbox fragment produced no magnetic volumes — check geometry"
+        )
+    if not air_vol_tags:
+        raise RuntimeError(
+            "airbox fragment produced no air volumes — padding_factor too small?"
+        )
+
+    # 5 — physical groups → element_markers
+    gmsh.model.addPhysicalGroup(3, magnetic_vol_tags, tag=1)
+    gmsh.model.setPhysicalName(3, 1, "magnetic")
+    gmsh.model.addPhysicalGroup(3, air_vol_tags, tag=2)
+    gmsh.model.setPhysicalName(3, 2, "air")
+
+    # 6 — boundary tags
+    #     outer surfaces of air that are NOT the mag–air interface → Γ_out
+    air_boundary = gmsh.model.getBoundary(
+        [(3, t) for t in air_vol_tags], oriented=False,
+    )
+    mag_boundary = gmsh.model.getBoundary(
+        [(3, t) for t in magnetic_vol_tags], oriented=False,
+    )
+    interface_tags = {abs(tag) for _, tag in mag_boundary}
+    gamma_out = sorted({abs(tag) for _, tag in air_boundary} - interface_tags)
+    interface_list = sorted(interface_tags)
+
+    if gamma_out:
+        gmsh.model.addPhysicalGroup(2, gamma_out, tag=airbox.boundary_marker)
+        gmsh.model.setPhysicalName(2, airbox.boundary_marker, "Gamma_out")
+    if interface_list:
+        gmsh.model.addPhysicalGroup(2, interface_list, tag=10)
+        gmsh.model.setPhysicalName(2, 10, "mag_air_interface")
+
+    # 7 — mesh grading: fine at interface, coarse at outer boundary
+    if airbox.grading_ratio > 1.0:
+        h_outer = hmax * airbox.grading_ratio ** 4
+        d_outer = max(dx, dy, dz) * (pf - 1) / 2
+
+        gmsh.model.mesh.field.add("Distance", 1)
+        gmsh.model.mesh.field.setNumbers(1, "SurfacesList", interface_list)
+
+        gmsh.model.mesh.field.add("Threshold", 2)
+        gmsh.model.mesh.field.setNumber(2, "InField", 1)
+        gmsh.model.mesh.field.setNumber(2, "SizeMin", hmax)
+        gmsh.model.mesh.field.setNumber(2, "SizeMax", h_outer)
+        gmsh.model.mesh.field.setNumber(2, "DistMin", 0.0)
+        gmsh.model.mesh.field.setNumber(2, "DistMax", max(d_outer, hmax))
+        gmsh.model.mesh.field.setAsBackgroundMesh(2)
+
+
 def generate_mesh(
     geometry: Geometry,
     hmax: float,
     order: int = 1,
     air_padding: float = 0.0,
+    airbox: AirboxOptions | None = None,
     options: MeshOptions | None = None,
 ) -> MeshData:
     """Generate a tetrahedral mesh for the given geometry.
@@ -357,29 +497,62 @@ def generate_mesh(
         geometry: Fullmag geometry descriptor.
         hmax: Maximum element size (SI metres).
         order: Finite-element order (1 = linear, 2 = quadratic).
-        air_padding: Reserved for future air-box meshing.
+        air_padding: Scalar padding factor (legacy). Use *airbox* instead.
+        airbox: Structured airbox configuration. When given, takes precedence
+                over *air_padding*.
         options: Advanced Gmsh options (algorithms, quality, size fields).
     """
+    resolved_airbox = airbox or (
+        AirboxOptions(padding_factor=air_padding) if air_padding > 0 else None
+    )
     opts = options or MeshOptions()
     if isinstance(geometry, Box):
-        return generate_box_mesh(geometry.size, hmax=hmax, order=order, air_padding=air_padding, options=opts)
+        return generate_box_mesh(geometry.size, hmax=hmax, order=order, airbox=resolved_airbox, options=opts)
     if isinstance(geometry, Cylinder):
         return generate_cylinder_mesh(
             geometry.radius,
             geometry.height,
             hmax=hmax,
             order=order,
-            air_padding=air_padding,
+            airbox=resolved_airbox,
             options=opts,
         )
     if isinstance(geometry, (Difference, Union, Intersection, Translate, Ellipsoid, Ellipse)):
-        return _generate_csg_mesh(geometry, hmax=hmax, order=order, options=opts)
+        # A chain of Translate wrapping an ImportedGeometry cannot go through
+        # the OCC CSG pipeline (OCC cannot ingest STL/NPZ sources). Detect this
+        # pattern, mesh the imported file directly, and apply the accumulated
+        # translation to the resulting mesh nodes instead.
+        if isinstance(geometry, Translate):
+            offset, inner = _peel_translate_chain(geometry)
+            if isinstance(inner, ImportedGeometry):
+                mesh = generate_mesh_from_file(
+                    inner.source,
+                    hmax=hmax,
+                    order=order,
+                    airbox=resolved_airbox,
+                    scale=inner.scale,
+                    options=opts,
+                )
+                ox, oy, oz = offset
+                if ox != 0.0 or oy != 0.0 or oz != 0.0:
+                    shift = np.array([ox, oy, oz], dtype=np.float64)
+                    mesh = MeshData(
+                        nodes=mesh.nodes + shift,
+                        elements=mesh.elements,
+                        element_markers=mesh.element_markers,
+                        boundary_faces=mesh.boundary_faces,
+                        boundary_markers=mesh.boundary_markers,
+                        quality=mesh.quality,
+                    )
+                return mesh
+        return _generate_csg_mesh(geometry, hmax=hmax, order=order, airbox=resolved_airbox, options=opts)
     if isinstance(geometry, ImportedGeometry):
         return generate_mesh_from_file(
             geometry.source,
             hmax=hmax,
             order=order,
             air_padding=air_padding,
+            airbox=resolved_airbox,
             scale=geometry.scale,
             options=opts,
         )
@@ -391,8 +564,10 @@ def generate_box_mesh(
     hmax: float,
     order: int = 1,
     air_padding: float = 0.0,
+    airbox: AirboxOptions | None = None,
     options: MeshOptions | None = None,
 ) -> MeshData:
+    resolved = airbox or (AirboxOptions(padding_factor=air_padding) if air_padding > 0 else None)
     opts = options or MeshOptions()
     emit_progress("Gmsh: generating box geometry")
     gmsh = _import_gmsh()
@@ -403,15 +578,18 @@ def generate_box_mesh(
         sx, sy, sz = size
         gmsh.model.occ.addBox(-sx / 2.0, -sy / 2.0, -sz / 2.0, sx, sy, sz)
         gmsh.model.occ.synchronize()
-        if air_padding > 0.0:
-            # Air-box meshing remains planner policy; for now keep the magnetic body mesh-only.
-            pass
+        has_airbox = resolved is not None
+        if has_airbox:
+            emit_progress("Gmsh: adding airbox domain")
+            _add_airbox_and_fragment(
+                gmsh, [(3, 1)], resolved, hmax,
+            )
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
         _apply_mesh_options(gmsh, hmax, order, opts)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _extract_mesh_data(gmsh, quality=quality)
+        mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -426,8 +604,10 @@ def generate_cylinder_mesh(
     hmax: float,
     order: int = 1,
     air_padding: float = 0.0,
+    airbox: AirboxOptions | None = None,
     options: MeshOptions | None = None,
 ) -> MeshData:
+    resolved = airbox or (AirboxOptions(padding_factor=air_padding) if air_padding > 0 else None)
     opts = options or MeshOptions()
     emit_progress("Gmsh: generating cylinder geometry")
     gmsh = _import_gmsh()
@@ -437,14 +617,18 @@ def generate_cylinder_mesh(
         gmsh.model.add("fullmag_cylinder")
         gmsh.model.occ.addCylinder(0.0, 0.0, -height / 2.0, 0.0, 0.0, height, radius)
         gmsh.model.occ.synchronize()
-        if air_padding > 0.0:
-            pass
+        has_airbox = resolved is not None
+        if has_airbox:
+            emit_progress("Gmsh: adding airbox domain")
+            _add_airbox_and_fragment(
+                gmsh, [(3, 1)], resolved, hmax,
+            )
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
         _apply_mesh_options(gmsh, hmax, order, opts)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _extract_mesh_data(gmsh, quality=quality)
+        mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -502,6 +686,7 @@ def _generate_csg_mesh(
     geometry: Geometry,
     hmax: float,
     order: int = 1,
+    airbox: AirboxOptions | None = None,
     options: MeshOptions | None = None,
 ) -> MeshData:
     """Mesh any geometry type via the generic OCC pipeline.
@@ -516,14 +701,20 @@ def _generate_csg_mesh(
     gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add("fullmag_csg")
-        _add_geometry_to_occ(gmsh, geometry, scale=SCALE)
+        mag_tags = _add_geometry_to_occ(gmsh, geometry, scale=SCALE)
         gmsh.model.occ.synchronize()
+        has_airbox = airbox is not None
+        if has_airbox:
+            emit_progress("Gmsh: adding airbox domain")
+            _add_airbox_and_fragment(
+                gmsh, mag_tags, airbox, hmax * SCALE,
+            )
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
         _apply_mesh_options(gmsh, hmax * SCALE, order, opts, hscale=SCALE)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _extract_mesh_data(gmsh, quality=quality)
+        mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -605,6 +796,29 @@ def _add_geometry_to_occ(
         ox, oy, oz = [d * scale for d in geometry.offset]
         gmsh.model.occ.translate(inner_tags, ox, oy, oz)
         return inner_tags
+    if isinstance(geometry, ImportedGeometry):
+        # Only CAD formats (STEP/IGES/BREP) can be loaded into the OCC kernel
+        # via importShapes. STL and mesh files must go through the GEO pipeline
+        # (see generate_mesh for the Translate-over-ImportedGeometry path).
+        source = Path(geometry.source)
+        suffix = source.suffix.lower()
+        if suffix not in {".step", ".stp", ".iges", ".igs", ".brep"}:
+            raise TypeError(
+                f"ImportedGeometry source '{source.name}' cannot be used inside a CSG "
+                f"boolean operation — only STEP, IGES, and BREP files are supported in "
+                f"the OCC kernel. For STL sources, wrap the geometry only in Translate "
+                f"(not boolean ops) and call geometry.mesh().build() directly."
+            )
+        tags = gmsh.model.occ.importShapes(str(source))
+        # Apply the effective scale (unit-adjusted) via OCC dilate
+        raw_scale = geometry.scale
+        if isinstance(raw_scale, (int, float)):
+            sx = sy = sz = float(raw_scale) * scale
+        else:
+            sx, sy, sz = (float(c) * scale for c in raw_scale)
+        if sx != 1.0 or sy != 1.0 or sz != 1.0:
+            gmsh.model.occ.dilate(tags, 0.0, 0.0, 0.0, sx, sy, sz)
+        return list(tags)
     raise TypeError(
         f"unsupported geometry type for OCC meshing: {type(geometry)!r}"
     )
@@ -615,9 +829,11 @@ def generate_mesh_from_file(
     hmax: float,
     order: int = 1,
     air_padding: float = 0.0,
+    airbox: AirboxOptions | None = None,
     scale: float | tuple[float, float, float] = 1.0,
     options: MeshOptions | None = None,
 ) -> MeshData:
+    resolved = airbox or (AirboxOptions(padding_factor=air_padding) if air_padding > 0 else None)
     opts = options or MeshOptions()
     path = Path(source)
     suffix = path.suffix.lower()
@@ -635,7 +851,7 @@ def generate_mesh_from_file(
             path,
             hmax=source_hmax,
             order=order,
-            air_padding=air_padding,
+            airbox=resolved,
             scale_xyz=scale_xyz,
             options=opts,
         )
@@ -645,7 +861,7 @@ def generate_mesh_from_file(
             path,
             hmax=source_hmax,
             order=order,
-            air_padding=air_padding,
+            airbox=resolved,
             scale_xyz=scale_xyz,
             options=opts,
         )
@@ -656,8 +872,8 @@ def _mesh_cad_file(
     path: Path,
     hmax: float,
     order: int,
-    air_padding: float,
-    scale_xyz: NDArray[np.float64],
+    airbox: AirboxOptions | None = None,
+    scale_xyz: NDArray[np.float64] = np.ones(3),
     options: MeshOptions | None = None,
 ) -> MeshData:
     opts = options or MeshOptions()
@@ -669,14 +885,20 @@ def _mesh_cad_file(
         emit_progress("Gmsh: importing CAD shapes")
         gmsh.model.occ.importShapes(str(path))
         gmsh.model.occ.synchronize()
-        if air_padding > 0.0:
-            pass
+        has_airbox = airbox is not None
+        if has_airbox:
+            emit_progress("Gmsh: adding airbox domain")
+            volumes = gmsh.model.getEntities(dim=3)
+            _add_airbox_and_fragment(gmsh, volumes, airbox, hmax)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
         _apply_mesh_options(gmsh, hmax, order, opts)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _scale_mesh_nodes(_extract_mesh_data(gmsh, quality=quality), scale_xyz)
+        mesh = _scale_mesh_nodes(
+            _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox),
+            scale_xyz,
+        )
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -716,8 +938,8 @@ def _mesh_stl_surface(
     path: Path,
     hmax: float,
     order: int,
-    air_padding: float,
-    scale_xyz: NDArray[np.float64],
+    airbox: AirboxOptions | None = None,
+    scale_xyz: NDArray[np.float64] = np.ones(3),
     options: MeshOptions | None = None,
 ) -> MeshData:
     opts = options or MeshOptions()
@@ -727,14 +949,20 @@ def _mesh_stl_surface(
     try:
         gmsh.model.add(path.stem)
         _build_stl_volume_model(gmsh, path)
-        if air_padding > 0.0:
-            pass
+        has_airbox = airbox is not None
+        if has_airbox:
+            emit_progress("Gmsh: adding airbox domain")
+            volumes = gmsh.model.getEntities(dim=3)
+            _add_airbox_and_fragment(gmsh, volumes, airbox, hmax)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
         _apply_mesh_options(gmsh, hmax, order, opts)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _scale_mesh_nodes(_extract_mesh_data(gmsh, quality=quality), scale_xyz)
+        mesh = _scale_mesh_nodes(
+            _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox),
+            scale_xyz,
+        )
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -800,7 +1028,11 @@ def _first_cell_block(mesh: Any, allowed: set[str], allow_empty: bool = False) -
     raise ValueError(f"mesh does not contain required cell types: {sorted(allowed)}")
 
 
-def _extract_mesh_data(gmsh: Any, quality: MeshQualityReport | None = None) -> MeshData:
+def _extract_mesh_data(
+    gmsh: Any,
+    quality: MeshQualityReport | None = None,
+    has_physical_groups: bool = False,
+) -> MeshData:
     node_tags, coords, _ = gmsh.model.mesh.getNodes()
     if len(node_tags) == 0:
         raise ValueError("gmsh produced an empty node set")
@@ -808,18 +1040,72 @@ def _extract_mesh_data(gmsh: Any, quality: MeshQualityReport | None = None) -> M
     node_index = {int(tag): idx for idx, tag in enumerate(node_tags)}
     nodes = np.asarray(coords, dtype=np.float64).reshape(-1, 3)
 
-    element_blocks = gmsh.model.mesh.getElements(dim=3)
-    elements = _extract_gmsh_connectivity(
-        gmsh, element_blocks, node_index, nodes_per_element=4
-    )
+    if has_physical_groups:
+        # ── Region-aware extraction via physical groups ──
+        elements_list: list[list[int]] = []
+        markers_list: list[int] = []
+        for _dim, phys_tag in gmsh.model.getPhysicalGroups(dim=3):
+            entities = gmsh.model.getEntitiesForPhysicalGroup(3, phys_tag)
+            for entity in entities:
+                elem_types, _elem_tags, node_ids = gmsh.model.mesh.getElements(3, entity)
+                for etype, nids in zip(elem_types, node_ids):
+                    _, _, _, num_nodes, _, npn = gmsh.model.mesh.getElementProperties(int(etype))
+                    if npn < 4:
+                        continue
+                    flat = [node_index[int(t)] for t in nids]
+                    for start in range(0, len(flat), num_nodes):
+                        elements_list.append(flat[start : start + 4])
+                        markers_list.append(phys_tag)
 
-    boundary_blocks = gmsh.model.mesh.getElements(dim=2)
-    boundary_faces = _extract_gmsh_connectivity(
-        gmsh, boundary_blocks, node_index, nodes_per_element=3
-    )
+        bfaces_list: list[list[int]] = []
+        bmarkers_list: list[int] = []
+        for _dim, phys_tag in gmsh.model.getPhysicalGroups(dim=2):
+            entities = gmsh.model.getEntitiesForPhysicalGroup(2, phys_tag)
+            for entity in entities:
+                elem_types, _elem_tags, node_ids = gmsh.model.mesh.getElements(2, entity)
+                for etype, nids in zip(elem_types, node_ids):
+                    _, _, _, num_nodes, _, npn = gmsh.model.mesh.getElementProperties(int(etype))
+                    if npn < 3:
+                        continue
+                    flat = [node_index[int(t)] for t in nids]
+                    for start in range(0, len(flat), num_nodes):
+                        bfaces_list.append(flat[start : start + 3])
+                        bmarkers_list.append(phys_tag)
 
-    element_markers = np.ones(elements.shape[0], dtype=np.int32)
-    boundary_markers = np.ones(boundary_faces.shape[0], dtype=np.int32)
+        elements = (
+            np.asarray(elements_list, dtype=np.int32)
+            if elements_list
+            else np.zeros((0, 4), dtype=np.int32)
+        )
+        element_markers = (
+            np.asarray(markers_list, dtype=np.int32)
+            if markers_list
+            else np.zeros(0, dtype=np.int32)
+        )
+        boundary_faces = (
+            np.asarray(bfaces_list, dtype=np.int32)
+            if bfaces_list
+            else np.zeros((0, 3), dtype=np.int32)
+        )
+        boundary_markers = (
+            np.asarray(bmarkers_list, dtype=np.int32)
+            if bmarkers_list
+            else np.zeros(0, dtype=np.int32)
+        )
+    else:
+        # ── Legacy single-region path ──
+        element_blocks = gmsh.model.mesh.getElements(dim=3)
+        elements = _extract_gmsh_connectivity(
+            gmsh, element_blocks, node_index, nodes_per_element=4
+        )
+
+        boundary_blocks = gmsh.model.mesh.getElements(dim=2)
+        boundary_faces = _extract_gmsh_connectivity(
+            gmsh, boundary_blocks, node_index, nodes_per_element=3
+        )
+
+        element_markers = np.ones(elements.shape[0], dtype=np.int32)
+        boundary_markers = np.ones(boundary_faces.shape[0], dtype=np.int32)
 
     return MeshData(
         nodes=nodes,

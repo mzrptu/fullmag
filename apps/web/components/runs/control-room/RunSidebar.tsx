@@ -11,8 +11,14 @@ import {
 import ModelTree, { buildFullmagModelTree } from "../../panels/ModelTree";
 import SettingsPanel from "../../panels/SettingsPanel";
 import { useCommand, useModel, useTransport, useViewport } from "./ControlRoomContext";
-import { findTreeNodeById, previewQuantityForTreeNode, resolveAntennaNodeName } from "./shared";
+import {
+  findTreeNodeById,
+  previewQuantityForTreeNode,
+  resolveAntennaNodeName,
+  resolveSelectedObjectId,
+} from "./shared";
 import { meshWorkspaceNodeToDockTab, meshWorkspaceNodeToPreset } from "./meshWorkspace";
+import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
@@ -37,12 +43,11 @@ export default function RunSidebar() {
   const modelTreeNodes = useMemo(
     () =>
       buildFullmagModelTree({
+        graph: model.modelBuilderGraph,
+        studyLabel: "Study",
         backend: cmd.isFemBackend ? "FEM" : "FDM",
-        showUniverse: Boolean(model.scriptBuilderUniverse || model.worldExtent),
-        universeMode: model.scriptBuilderUniverse?.mode ?? (model.worldExtent ? "derived" : null),
-        universeDeclaredSize: model.scriptBuilderUniverse?.size ?? null,
         universeEffectiveSize: model.worldExtent,
-        universeCenter: model.scriptBuilderUniverse?.center ?? null,
+        universeCenter: model.worldCenter,
         universePadding: model.scriptBuilderUniverse?.padding ?? null,
         universeRole: cmd.isFemBackend ? "Air box / outer domain" : "Grid / simulation domain",
         geometryKind: model.mesherSourceKind ?? undefined,
@@ -65,23 +70,19 @@ export default function RunSidebar() {
         demagEnabled: model.material?.demagEnabled,
         zeemanField: model.material?.zeemanField,
         convergenceStatus:
-          tp.hasSolverTelemetry && tp.effectiveDmDt > 0 && tp.effectiveDmDt < (Number(model.solverSettings.torqueTolerance) || 1e-5)
+          tp.hasSolverTelemetry && tp.effectiveDmDt > 0 && tp.effectiveDmDt < (Number(model.solverSettings.torqueTolerance) || DEFAULT_CONVERGENCE_THRESHOLD)
             ? "ready"
             : tp.hasSolverTelemetry
               ? "active"
               : undefined,
         scalarRowCount: tp.scalarRows.length,
-        initialStatePath: cmd.scriptInitialState?.source_path ?? null,
-        initialStateFormat: cmd.scriptInitialState?.format ?? null,
-        geometries: model.scriptBuilderGeometries,
       }),
     [
-      model.effectiveFemMesh, tp.hasSolverTelemetry, cmd.isFemBackend, model.material,
+      model.modelBuilderGraph, model.effectiveFemMesh, tp.hasSolverTelemetry, cmd.isFemBackend, model.material,
       model.mesherSourceKind, model.meshFeOrder, model.meshName,
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm,
-      tp.effectiveDmDt, tp.scalarRows.length, cmd.scriptInitialState, model.scriptBuilderGeometries,
-      model.scriptBuilderUniverse, model.worldExtent,
+      tp.effectiveDmDt, tp.scalarRows.length, model.worldCenter, model.worldExtent, model.scriptBuilderUniverse?.padding,
     ],
   );
 
@@ -97,10 +98,11 @@ export default function RunSidebar() {
     }
     if (vp.previewControlsActive) return "res-fields";
     if (cmd.interactiveControlsEnabled) return "study-solver";
-    if (model.material) return "materials";
-    return "geometry";
+    const firstObjectId = model.modelBuilderGraph?.objects.items[0]?.id;
+    if (firstObjectId) return `obj-${firstObjectId}`;
+    return "objects";
   }, [vp.effectiveViewMode, model.femDockTab, cmd.interactiveControlsEnabled,
-      cmd.isFemBackend, model.material, vp.previewControlsActive]);
+      cmd.isFemBackend, model.modelBuilderGraph, vp.previewControlsActive]);
 
   const activeNodeId = model.selectedSidebarNodeId ?? fallbackNodeId;
   const activeNode = useMemo(
@@ -121,19 +123,33 @@ export default function RunSidebar() {
       ? "Antenna / RF Source"
       : activeAntennaName ?? "Workspace");
 
+  const selectModelNode = useCallback((id: string) => {
+    model.setSelectedSidebarNodeId(id);
+    model.setSelectedObjectId(resolveSelectedObjectId(id, model.modelBuilderGraph));
+  }, [model]);
+
   /* ── Tree click handler ── */
   const handleTreeClick = useCallback((id: string) => {
-    model.setSelectedSidebarNodeId(id);
+    selectModelNode(id);
     // Ensure inspector is visible when a node is clicked
     const panel = inspectorPanelRef.current;
     if (panel?.isCollapsed()) {
       panel.expand();
       setInspectorOpen(true);
     }
+    const selectedObjectId = resolveSelectedObjectId(id, model.modelBuilderGraph);
     const isUniverseNode = id === "universe" || id.startsWith("universe-");
-    const isGeometryScopedNode = id === "geometry" || id.startsWith("geo-") || id.startsWith("mat-");
+    const isGeometryScopedNode =
+      id === "geometry" ||
+      id === "objects" ||
+      id.startsWith("obj-") ||
+      id.startsWith("geo-") ||
+      id.startsWith("reg-") ||
+      id.startsWith("mat-") ||
+      selectedObjectId != null;
     switch (id) {
-      case "geometry": case "geo-body": case "regions": case "reg-domain": case "reg-boundary":
+      case "geometry":
+      case "objects":
         if (cmd.isFemBackend && !model.effectiveFemMesh) model.openFemMeshWorkspace("mesh");
         else vp.setViewMode("3D");
         return;
@@ -158,7 +174,29 @@ export default function RunSidebar() {
       case "results": case "res-fields":
         if (cmd.isFemBackend && vp.effectiveViewMode === "Mesh") vp.setViewMode("3D");
         return;
+      case "antennas":
+        // Show the inspector with AntennaPanel
+        return;
       default: {
+        const isAntennaNode = id.startsWith("ant-");
+        if (isAntennaNode) {
+          // Try to preview antenna field when clicking on a specific antenna
+          if (vp.quickPreviewTargets.some((t) => t.id === "H_ant" && t.available)) {
+            vp.requestPreviewQuantity("H_ant");
+          }
+          vp.setViewMode("3D");
+          return;
+        }
+        // Per-object mesh nodes (e.g. "geo-nanoflower-mesh") → open mesh workspace
+        const isObjectMeshNode = id.startsWith("geo-") && id.endsWith("-mesh");
+        if (isObjectMeshNode) {
+          if (cmd.isFemBackend) {
+            model.openFemMeshWorkspace("mesh");
+          } else {
+            vp.setViewMode("Mesh");
+          }
+          return;
+        }
         if (isUniverseNode || isGeometryScopedNode) {
           if (cmd.isFemBackend && !model.effectiveFemMesh) model.openFemMeshWorkspace("mesh");
           else vp.setViewMode("3D");
@@ -170,7 +208,25 @@ export default function RunSidebar() {
         }
       }
     }
-  }, [cmd.isFemBackend, model, vp, inspectorPanelRef]);
+  }, [cmd.isFemBackend, model, vp, inspectorPanelRef, selectModelNode]);
+
+  const handleTreeContextAction = useCallback((nodeId: string, action: string) => {
+    if (action === "focus") {
+      const objectId = resolveSelectedObjectId(nodeId, model.modelBuilderGraph);
+      if (!objectId) {
+        return;
+      }
+      selectModelNode(nodeId);
+      if (cmd.isFemBackend && !model.effectiveFemMesh) {
+        model.requestFocusObject(objectId);
+        model.openFemMeshWorkspace("mesh");
+        return;
+      }
+      vp.setViewMode("3D");
+      model.requestFocusObject(objectId);
+      return;
+    }
+  }, [cmd.isFemBackend, model, selectModelNode, vp]);
 
   const handleTreeToggle = useCallback(() => {
     const panel = treePanelRef.current;
@@ -236,7 +292,12 @@ export default function RunSidebar() {
               <div className="flex-1 min-h-0 min-w-0 pr-1 overflow-hidden isolate relative">
                 <ScrollArea className="h-full w-full">
                   <div className="p-2 select-none">
-                    <ModelTree nodes={modelTreeNodes} activeId={activeNodeId} onNodeClick={handleTreeClick} />
+                    <ModelTree
+                      nodes={modelTreeNodes}
+                      activeId={activeNodeId}
+                      onNodeClick={handleTreeClick}
+                      onContextAction={handleTreeContextAction}
+                    />
                   </div>
                 </ScrollArea>
               </div>

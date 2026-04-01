@@ -60,8 +60,9 @@ typedef enum {
 } fullmag_fem_preconditioner;
 
 typedef enum {
-    FULLMAG_FEM_DEMAG_TRANSFER_GRID = 0,
-    FULLMAG_FEM_DEMAG_POISSON_AIRBOX = 1,
+    FULLMAG_FEM_DEMAG_TRANSFER_GRID    = 0,
+    FULLMAG_FEM_DEMAG_AIRBOX_DIRICHLET = 1,
+    FULLMAG_FEM_DEMAG_AIRBOX_ROBIN     = 2,
 } fullmag_fem_demag_realization;
 
 typedef int (*fullmag_fem_interrupt_poll_fn)(void *user_data);
@@ -108,6 +109,8 @@ typedef struct {
     double air_box_factor;
     fullmag_fem_demag_realization demag_realization;
     int poisson_boundary_marker;
+    int robin_beta_mode;        /* 0=off(Dirichlet), 1=legacy(c=1), 2=dipole(c=2), 3=user */
+    double robin_beta_factor;   /* user c in β = c/R* */
     const double *demag_kernel_xx_spectrum;
     const double *demag_kernel_yy_spectrum;
     const double *demag_kernel_zz_spectrum;

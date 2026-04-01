@@ -1,7 +1,7 @@
 //! Asset import/export: STL, MSH, mesh JSON, bounds computation.
 
-use crate::types::*;
 use crate::error::ApiError;
+use crate::types::*;
 use serde_json::Value;
 use std::path::Path;
 
@@ -97,7 +97,10 @@ pub(crate) fn summarize_mesh_json_asset(
     })
 }
 
-pub(crate) fn summarize_msh_asset(file_name: &str, bytes: &[u8]) -> Result<ImportedAssetSummary, ApiError> {
+pub(crate) fn summarize_msh_asset(
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<ImportedAssetSummary, ApiError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|error| ApiError::bad_request(format!("invalid text MSH payload: {}", error)))?;
     let lines = text.lines().collect::<Vec<_>>();
@@ -142,7 +145,10 @@ pub(crate) fn summarize_msh_asset(file_name: &str, bytes: &[u8]) -> Result<Impor
     })
 }
 
-pub(crate) fn summarize_stl_asset(file_name: &str, bytes: &[u8]) -> Result<ImportedAssetSummary, ApiError> {
+pub(crate) fn summarize_stl_asset(
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<ImportedAssetSummary, ApiError> {
     let summary = if let Some(binary) = summarize_binary_stl_asset(file_name, bytes)? {
         binary
     } else {
@@ -263,4 +269,3 @@ pub(crate) fn bounds_from_points(points: &[[f64; 3]]) -> Option<BoundsSummary> {
         size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
     })
 }
-

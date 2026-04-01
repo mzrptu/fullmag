@@ -179,6 +179,7 @@ struct GpuInteractiveFemPreviewRuntime {
     provenance: ExecutionProvenance,
     total_steps: u64,
     total_time: f64,
+    antenna_field: Vec<[f64; 3]>,
 }
 
 impl InteractiveFdmPreviewRuntime {
@@ -395,11 +396,7 @@ impl InteractiveFemPreviewRuntime {
     }
 
     fn from_fem_plan(plan: &FemPlanIR, engine: FemEngine) -> Result<Self, RunError> {
-        let mesh = crate::types::FemMeshPayload {
-            nodes: plan.mesh.nodes.clone(),
-            elements: plan.mesh.elements.clone(),
-            boundary_faces: plan.mesh.boundary_faces.clone(),
-        };
+        let mesh = crate::types::FemMeshPayload::from(plan);
         let inner = match engine {
             FemEngine::CpuReference => {
                 if plan.precision != fullmag_ir::ExecutionPrecision::Double {
@@ -426,6 +423,7 @@ impl InteractiveFemPreviewRuntime {
                 {
                     let backend = NativeFemBackend::create(plan)?;
                     let device_info = backend.device_info()?;
+                    let antenna_field = crate::antenna_fields::compute_antenna_field(plan)?;
                     InteractiveFemPreviewRuntimeInner::Gpu(GpuInteractiveFemPreviewRuntime {
                         backend,
                         mesh,
@@ -434,6 +432,7 @@ impl InteractiveFemPreviewRuntime {
                         provenance: fem_gpu_execution_provenance(plan, &device_info),
                         total_steps: 0,
                         total_time: 0.0,
+                        antenna_field,
                     })
                 }
                 #[cfg(not(feature = "fem-gpu"))]
@@ -2380,6 +2379,12 @@ impl GpuInteractiveFemPreviewRuntime {
         &mut self,
         request: &LivePreviewRequest,
     ) -> Result<LivePreviewField, RunError> {
+        if crate::preview::normalize_quantity_id(&request.quantity) == "H_ant" {
+            return Ok(crate::preview::build_mesh_preview_field(
+                request,
+                &self.antenna_field,
+            ));
+        }
         self.backend
             .copy_live_preview_field(request, self.node_count)
     }
@@ -2401,10 +2406,17 @@ impl GpuInteractiveFemPreviewRuntime {
             }
             let mut preview_request = request.clone();
             preview_request.quantity = quantity.to_string();
-            cached.push(
-                self.backend
-                    .copy_live_preview_field(&preview_request, self.node_count)?,
-            );
+            if quantity == "H_ant" {
+                cached.push(crate::preview::build_mesh_preview_field(
+                    &preview_request,
+                    &self.antenna_field,
+                ));
+            } else {
+                cached.push(
+                    self.backend
+                        .copy_live_preview_field(&preview_request, self.node_count)?,
+                );
+            }
         }
 
         Ok(cached)
@@ -2476,10 +2488,7 @@ impl GpuInteractiveFemPreviewRuntime {
             );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
-                Some(
-                    self.backend
-                        .copy_live_preview_field(&preview_cfg, self.node_count)?,
-                )
+                Some(self.snapshot_preview(&preview_cfg)?)
             } else {
                 None
             };
@@ -2553,10 +2562,7 @@ impl GpuInteractiveFemPreviewRuntime {
             );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
-                Some(
-                    self.backend
-                        .copy_live_preview_field(&preview_cfg, self.node_count)?,
-                )
+                Some(self.snapshot_preview(&preview_cfg)?)
             } else {
                 None
             };
@@ -2707,10 +2713,7 @@ impl GpuInteractiveFemPreviewRuntime {
             );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
-                Some(
-                    self.backend
-                        .copy_live_preview_field(&preview_cfg, self.node_count)?,
-                )
+                Some(self.snapshot_preview(&preview_cfg)?)
             } else {
                 None
             };
@@ -2765,10 +2768,7 @@ impl GpuInteractiveFemPreviewRuntime {
             );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
-                Some(
-                    self.backend
-                        .copy_live_preview_field(&preview_cfg, self.node_count)?,
-                )
+                Some(self.snapshot_preview(&preview_cfg)?)
             } else {
                 None
             };
@@ -3401,14 +3401,15 @@ fn fem_gpu_execution_provenance(
         },
         demag_operator_kind: if plan.enable_demag {
             Some(match plan.demag_realization.as_deref() {
-                Some("poisson_airbox") => "fem_poisson_airbox".to_string(),
+                Some("poisson_airbox" | "airbox_dirichlet") => "fem_airbox_dirichlet".to_string(),
+                Some("airbox_robin") => "fem_airbox_robin".to_string(),
                 _ => "fem_transfer_grid_tensor_fft_newell".to_string(),
             })
         } else {
             None
         },
         fft_backend: if plan.enable_demag
-            && plan.demag_realization.as_deref() != Some("poisson_airbox")
+            && !matches!(plan.demag_realization.as_deref(), Some("poisson_airbox" | "airbox_dirichlet" | "airbox_robin"))
         {
             Some("cuFFT".to_string())
         } else {

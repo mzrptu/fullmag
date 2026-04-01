@@ -10,10 +10,11 @@ use fullmag_ir::{
     BackendPlanIR, BackendTarget, CommonPlanMeta, DiscretizationHintsIR, EnergyTermIR,
     ExchangeBoundaryCondition, ExecutionMode, ExecutionPlanIR, ExecutionPrecision, FdmGridAssetIR,
     FdmHintsIR, FdmLayerPlanIR, FdmMaterialIR, FdmMultilayerPlanIR, FdmMultilayerSummaryIR,
-    FdmPlanIR, FemEigenPlanIR, FemMagnetoelasticPlanIR, FemPlanIR, GeometryEntryIR,
-    GridDimensions, InitialMagnetizationIR, IntegratorChoice, MagnetostrictionLawIR,
-    MechanicalLoadIR, MeshIR, OutputIR, OutputPlanIR, ProblemIR, ProvenancePlanIR,
-    RelaxationAlgorithmIR, RelaxationControlIR, TimeDependenceIR, IR_VERSION,
+    FdmPlanIR, FemEigenPlanIR, FemMagnetoelasticPlanIR, FemObjectSegmentIR, FemPlanIR,
+    GeometryEntryIR, GridDimensions, InitialMagnetizationIR, IntegratorChoice,
+    MagnetostrictionLawIR, MechanicalLoadIR, MeshIR, OutputIR, OutputPlanIR, ProblemIR,
+    ProvenancePlanIR, RelaxationAlgorithmIR,
+    RelaxationControlIR, TimeDependenceIR, IR_VERSION,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -1785,7 +1786,7 @@ fn plan_fem(
     }
 
     let material = selected_material.expect("validation should have caught missing FEM material");
-    let mesh = merge_fem_meshes(&mesh_parts).map_err(|message| PlanError {
+    let (mesh, object_segments) = merge_fem_meshes(&mesh_parts).map_err(|message| PlanError {
         reasons: vec![message],
     })?;
     let initial_magnetization = merged_initial_magnetization;
@@ -1822,6 +1823,7 @@ fn plan_fem(
             None
         },
         mesh,
+        object_segments,
         fe_order: fem_hints.order,
         hmax: fem_hints.hmax,
         initial_magnetization,
@@ -2218,7 +2220,7 @@ fn plan_fem_eigen(
 
     let material =
         selected_material.expect("validation should have caught missing FEM eigen material");
-    let mesh = merge_fem_meshes(&mesh_parts).map_err(|message| PlanError {
+    let (mesh, object_segments) = merge_fem_meshes(&mesh_parts).map_err(|message| PlanError {
         reasons: vec![message],
     })?;
     let mesh_name = mesh.mesh_name.clone();
@@ -2250,6 +2252,7 @@ fn plan_fem_eigen(
             None
         },
         mesh,
+        object_segments,
         fe_order: fem_hints.order,
         hmax: fem_hints.hmax,
         equilibrium_magnetization: merged_equilibrium,
@@ -2378,7 +2381,10 @@ fn validate_executable_outputs(
                 } else if name == "H_ext" && !enable_zeeman {
                     errors.push("field output 'H_ext' requires Zeeman(...)".to_string());
                 } else if name == "H_ant" && !enable_antenna_field {
-                    errors.push("field output 'H_ant' requires at least one antenna current module".to_string());
+                    errors.push(
+                        "field output 'H_ant' requires at least one antenna current module"
+                            .to_string(),
+                    );
                 }
                 if !seen.insert(format!("field:{name}")) {
                     errors.push(format!(
@@ -2611,12 +2617,22 @@ fn merged_fem_element_markers(mesh: &MeshIR) -> Result<Vec<u32>, String> {
     ))
 }
 
-fn merge_fem_meshes(meshes: &[(String, MeshIR)]) -> Result<MeshIR, String> {
+fn merge_fem_meshes(meshes: &[(String, MeshIR)]) -> Result<(MeshIR, Vec<FemObjectSegmentIR>), String> {
     if meshes.is_empty() {
         return Err("cannot merge zero FEM meshes".to_string());
     }
     if meshes.len() == 1 {
-        return Ok(meshes[0].1.clone());
+        let mesh = meshes[0].1.clone();
+        let segment = FemObjectSegmentIR {
+            object_id: meshes[0].0.clone(),
+            node_start: 0,
+            node_count: mesh.nodes.len() as u32,
+            element_start: 0,
+            element_count: mesh.elements.len() as u32,
+            boundary_face_start: 0,
+            boundary_face_count: mesh.boundary_faces.len() as u32,
+        };
+        return Ok((mesh, vec![segment]));
     }
 
     let merged_name = meshes
@@ -2630,9 +2646,13 @@ fn merge_fem_meshes(meshes: &[(String, MeshIR)]) -> Result<MeshIR, String> {
     let mut element_markers = Vec::new();
     let mut boundary_faces = Vec::new();
     let mut boundary_markers = Vec::new();
+    let mut object_segments = Vec::with_capacity(meshes.len());
 
     let mut node_offset = 0u32;
-    for (_, mesh) in meshes {
+    for (object_id, mesh) in meshes {
+        let node_start = node_offset;
+        let element_start = elements.len() as u32;
+        let boundary_face_start = boundary_faces.len() as u32;
         let remapped_markers = merged_fem_element_markers(mesh)?;
         nodes.extend(mesh.nodes.iter().copied());
         elements.extend(mesh.elements.iter().map(|element| {
@@ -2652,6 +2672,15 @@ fn merge_fem_meshes(meshes: &[(String, MeshIR)]) -> Result<MeshIR, String> {
             ]
         }));
         boundary_markers.extend(mesh.boundary_markers.iter().copied());
+        object_segments.push(FemObjectSegmentIR {
+            object_id: object_id.clone(),
+            node_start,
+            node_count: mesh.nodes.len() as u32,
+            element_start,
+            element_count: mesh.elements.len() as u32,
+            boundary_face_start,
+            boundary_face_count: mesh.boundary_faces.len() as u32,
+        });
         node_offset += mesh.nodes.len() as u32;
     }
 
@@ -2669,7 +2698,7 @@ fn merge_fem_meshes(meshes: &[(String, MeshIR)]) -> Result<MeshIR, String> {
             errors.join("; ")
         )
     })?;
-    Ok(merged)
+    Ok((merged, object_segments))
 }
 
 #[cfg(test)]
@@ -2974,6 +3003,21 @@ mod tests {
                 assert_eq!(fem.mesh.nodes.len(), 8);
                 assert_eq!(fem.mesh.elements.len(), 2);
                 assert_eq!(fem.initial_magnetization.len(), 8);
+                assert_eq!(fem.object_segments.len(), 2);
+                assert_eq!(fem.object_segments[0].object_id, "free");
+                assert_eq!(fem.object_segments[0].node_start, 0);
+                assert_eq!(fem.object_segments[0].node_count, 4);
+                assert_eq!(fem.object_segments[0].element_start, 0);
+                assert_eq!(fem.object_segments[0].element_count, 1);
+                assert_eq!(fem.object_segments[0].boundary_face_start, 0);
+                assert_eq!(fem.object_segments[0].boundary_face_count, 1);
+                assert_eq!(fem.object_segments[1].object_id, "ref");
+                assert_eq!(fem.object_segments[1].node_start, 4);
+                assert_eq!(fem.object_segments[1].node_count, 4);
+                assert_eq!(fem.object_segments[1].element_start, 1);
+                assert_eq!(fem.object_segments[1].element_count, 1);
+                assert_eq!(fem.object_segments[1].boundary_face_start, 1);
+                assert_eq!(fem.object_segments[1].boundary_face_count, 1);
                 assert!(fem.enable_exchange);
                 assert!(fem.enable_demag);
             }

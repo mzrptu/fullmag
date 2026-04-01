@@ -1,5 +1,7 @@
 "use client";
 
+import { useMemo, useCallback } from "react";
+
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { cn } from "@/lib/utils";
@@ -13,8 +15,15 @@ import AnalyzeViewport from "./AnalyzeViewport";
 
 import { Slider } from "../../ui/slider";
 import { Switch } from "../../ui/switch";
-import { fmtExp, fmtPreviewMaxPoints, fmtSI, resolveAntennaNodeName } from "./shared";
+import {
+  fmtExp,
+  fmtPreviewMaxPoints,
+  fmtSI,
+  resolveAntennaNodeName,
+  resolveSelectedMeshObjectId,
+} from "./shared";
 import { useControlRoom } from "./ControlRoomContext";
+import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
 
 export function ViewportBar() {
   const ctx = useControlRoom();
@@ -304,9 +313,22 @@ export function ViewportCanvasArea() {
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
   const globalScalarPreview = ctx.preview?.kind === "global_scalar" ? ctx.preview : null;
   const hasVectorData = Boolean(ctx.selectedVectors && ctx.selectedVectors.length > 0);
+
+  const handleRequestObjectSelect = useCallback(
+    (objectId: string) => {
+      ctx.setSelectedObjectId(objectId);
+      ctx.setSelectedSidebarNodeId(`obj-${objectId}`);
+    },
+    [ctx],
+  );
+
   const selectedAntennaName = resolveAntennaNodeName(
     ctx.selectedSidebarNodeId,
     ctx.scriptBuilderCurrentModules.map((module) => module.name),
+  );
+  const selectedMeshObjectId = resolveSelectedMeshObjectId(
+    ctx.selectedSidebarNodeId,
+    ctx.modelBuilderGraph,
   );
   const antennaPreviewBadgeVisible =
     ctx.antennaOverlays.length > 0 &&
@@ -401,6 +423,14 @@ export function ViewportCanvasArea() {
         onRefine={ctx.handleLassoRefine}
         antennaOverlays={ctx.antennaOverlays}
         selectedAntennaId={selectedAntennaName}
+        objectOverlays={ctx.objectOverlays}
+        focusObjectRequest={ctx.focusObjectRequest}
+        objectViewMode={ctx.objectViewMode}
+        onAntennaTranslate={ctx.applyAntennaTranslation}
+        onGeometryTranslate={ctx.applyGeometryTranslation}
+        onRequestObjectSelect={handleRequestObjectSelect}
+        worldExtent={ctx.worldExtent}
+        worldCenter={ctx.worldCenter}
       />
     );
   } else if (ctx.effectiveViewMode === "3D" && ctx.femMeshData) {
@@ -426,6 +456,15 @@ export function ViewportCanvasArea() {
         onSelectionChange={ctx.setMeshSelection}
         antennaOverlays={ctx.antennaOverlays}
         selectedAntennaId={selectedAntennaName}
+        objectOverlays={ctx.objectOverlays}
+        selectedObjectId={ctx.selectedObjectId}
+        focusObjectRequest={ctx.focusObjectRequest}
+        objectViewMode={ctx.objectViewMode}
+        onAntennaTranslate={ctx.applyAntennaTranslation}
+        onGeometryTranslate={ctx.applyGeometryTranslation}
+        onRequestObjectSelect={handleRequestObjectSelect}
+        worldExtent={ctx.worldExtent}
+        worldCenter={ctx.worldCenter}
       />
     );
   } else if (ctx.effectiveViewMode === "2D" && ctx.femMeshData) {
@@ -474,7 +513,7 @@ export function ViewportCanvasArea() {
         <span>Step {ctx.effectiveStep.toLocaleString()}</span>
         <span>{fmtSI(ctx.effectiveTime, "s")}</span>
         {ctx.effectiveDmDt > 0 && (
-          <span className={cn(ctx.effectiveDmDt < (Number(ctx.solverSettings.torqueTolerance) || 1e-5) ? "text-emerald-400" : "text-amber-400")}>
+          <span className={cn(ctx.effectiveDmDt < (Number(ctx.solverSettings.torqueTolerance) || DEFAULT_CONVERGENCE_THRESHOLD) ? "text-emerald-400" : "text-amber-400")}>
             dm/dt {fmtExp(ctx.effectiveDmDt)}
           </span>
         )}
@@ -482,6 +521,46 @@ export function ViewportCanvasArea() {
       {antennaPreviewBadgeVisible ? (
         <div className="viewportOverlay absolute right-3 top-3 z-10 rounded-full border border-cyan-400/25 bg-background/70 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-cyan-200 shadow-md backdrop-blur-md">
           physics 2.5D · preview extruded
+        </div>
+      ) : null}
+      {ctx.selectedObjectId ? (
+        <div className="viewportOverlay absolute right-3 top-14 z-10 flex items-center gap-2">
+          <button
+            type="button"
+            className="pointer-events-auto rounded-full border border-amber-300/25 bg-background/75 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-amber-100 shadow-md backdrop-blur-md transition-colors hover:bg-amber-400/15"
+            onClick={() => {
+              ctx.setViewMode("3D");
+              ctx.requestFocusObject(ctx.selectedObjectId!);
+            }}
+          >
+            Focus {ctx.selectedObjectId}
+          </button>
+          <div className="pointer-events-auto flex overflow-hidden rounded-full border border-border/40 bg-background/75 shadow-md backdrop-blur-md">
+            <button
+              type="button"
+              className={cn(
+                "px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] transition-colors",
+                ctx.objectViewMode === "context"
+                  ? "bg-primary/20 text-primary"
+                  : "text-muted-foreground hover:bg-muted/50",
+              )}
+              onClick={() => ctx.setObjectViewMode("context")}
+            >
+              Context
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] transition-colors",
+                ctx.objectViewMode === "isolate"
+                  ? "bg-primary/20 text-primary"
+                  : "text-muted-foreground hover:bg-muted/50",
+              )}
+              onClick={() => ctx.setObjectViewMode("isolate")}
+            >
+              Isolate
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -501,6 +580,14 @@ export function ViewportCanvasArea() {
           geometryMode={isFdmMeshActive}
           activeMask={ctx.activeMask}
           worldExtent={ctx.worldExtent}
+          objectOverlays={ctx.objectOverlays}
+          selectedObjectId={ctx.selectedObjectId}
+          universeCenter={ctx.worldCenter}
+          focusObjectRequest={ctx.focusObjectRequest}
+          objectViewMode={ctx.objectViewMode}
+          onAntennaTranslate={ctx.applyAntennaTranslation}
+          onGeometryTranslate={ctx.applyGeometryTranslation}
+          onRequestObjectSelect={handleRequestObjectSelect}
         />
       </div>
 

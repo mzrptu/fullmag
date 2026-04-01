@@ -9,6 +9,7 @@ import ScalarPlot from "../plots/ScalarPlot";
 import ScalarTable from "./ScalarTable";
 import { buildLogEntries } from "./engine/buildLogEntries";
 import { CHART_PRESETS } from "./engine/chartPresets";
+import { DEFAULT_CONVERGENCE_THRESHOLD } from "./SolverSettingsPanel";
 
 /* ── Types ─────────────────────────────────────────────────── */
 
@@ -59,7 +60,7 @@ export default function EngineConsole({
   presentationMode = "current",
   convergenceThreshold: convergenceThresholdProp,
 }: EngineConsoleProps) {
-  const convergenceThreshold = convergenceThresholdProp ?? 1e-5;
+  const convergenceThreshold = convergenceThresholdProp ?? DEFAULT_CONVERGENCE_THRESHOLD;
   const [activeTab, setActiveTab] = useState<ConsoleTab>("live");
   const [chartPreset, setChartPreset] = useState<ChartPreset>("energy");
   /* Note: we keep state manually for backwards compat; Radix Tabs controlled via value/onValueChange */
@@ -107,11 +108,13 @@ export default function EngineConsole({
 
   // Convergence metric: normalize max_dm_dt to a 0-100 progress bar
   // max_dm_dt < convergenceThreshold is "converged", > 1e2 is "diverged"
+  const LOG_FLOOR = -12;          // log10(1e-12) — fully converged end
+  const LOG_DECADES = 7;          // display spans 7 decades (from LOG_FLOOR to LOG_FLOOR + 7)
   const dmDtLog = liveState?.max_dm_dt
     ? Math.log10(Math.max(liveState.max_dm_dt, 1e-12))
     : 0;
-  const convergencePct = Math.max(0, Math.min(100, ((7 + dmDtLog) / 7) * 100)); // -12→0%, -5→100%
-  // Actually: lower dm/dt = more converged, so invert
+  const convergencePct = Math.max(0, Math.min(100, ((LOG_DECADES + dmDtLog) / LOG_DECADES) * 100));
+  // Lower dm/dt = more converged, so invert
   const convergenceDisplay = Math.max(0, Math.min(100, 100 - convergencePct));
   const memoryEstimate = Math.min(100, (artifacts.length / 20) * 100);
   const convergenceTone =

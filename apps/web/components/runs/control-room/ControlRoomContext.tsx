@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ReactNode } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { currentLiveApiClient } from "../../../lib/liveApiClient";
 import { useCurrentLiveStream } from "../../../lib/useSessionStream";
 import type {
@@ -25,15 +25,30 @@ import type {
   RuntimeStatusState,
   ScalarRow,
   ScriptBuilderStageState,
-  ScriptBuilderState,
   SessionManifest,
 } from "../../../lib/useSessionStream";
 import type {
+  ModelBuilderGraphV2,
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
   ScriptBuilderUniverseState,
 } from "../../../lib/session/types";
+import {
+  buildModelBuilderGraphV2,
+  selectModelBuilderCurrentModules,
+  selectModelBuilderExcitationAnalysis,
+  selectModelBuilderGeometries,
+  selectModelBuilderStages,
+  selectModelBuilderUniverse,
+  setModelBuilderCurrentModules as applyModelBuilderCurrentModules,
+  setModelBuilderExcitationAnalysis as applyModelBuilderExcitationAnalysis,
+  setModelBuilderGeometries as applyModelBuilderGeometries,
+  setModelBuilderMeshDefaults as applyModelBuilderMeshDefaults,
+  setModelBuilderSolver as applyModelBuilderSolver,
+  setModelBuilderStages as applyModelBuilderStages,
+  setModelBuilderUniverse as applyModelBuilderUniverse,
+} from "../../../lib/session/modelBuilderGraph";
 import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import { DEFAULT_MESH_OPTIONS } from "../../panels/MeshSettingsPanel";
@@ -47,7 +62,10 @@ import type {
 } from "../../preview/FemMeshView3D";
 import {
   type AntennaOverlay,
+  type BuilderObjectOverlay,
   type FemDockTab,
+  type FocusObjectRequest,
+  type ObjectViewMode,
   type SlicePlane,
   type VectorComponent,
   type ViewportMode,
@@ -57,6 +75,10 @@ import {
   PREVIEW_MAX_POINTS_DEFAULT,
   PREVIEW_MAX_POINTS_PRESETS,
   asVec3,
+  boundsCenter,
+  boundsExtent,
+  buildObjectOverlays,
+  combineBounds,
   computeMeshFaceDetail,
   fmtDuration,
   fmtSI,
@@ -65,14 +87,17 @@ import {
   parseStageExecutionMessage,
 } from "./shared";
 import {
+  buildScriptBuilderSignature,
   buildScriptBuilderUpdatePayload,
   commandKindLabel,
   downloadBase64File,
   extractSolverPlan,
   fileToBase64,
   meshOptionsFromBuilder,
+  meshOptionsToBuilder,
   sameDisplaySelection,
   solverSettingsFromBuilder,
+  solverSettingsToBuilder,
 } from "./helpers";
 import {
   MESH_WORKSPACE_PRESETS,
@@ -159,6 +184,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [meshShowArrows, setMeshShowArrows] = useState(true);
   const [runUntilInput, setRunUntilInput] = useState("1e-12");
   const [selectedSidebarNodeId, setSelectedSidebarNodeId] = useState<string | null>(null);
+  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [focusObjectRequest, setFocusObjectRequest] = useState<FocusObjectRequest | null>(null);
+  const [objectViewMode, setObjectViewMode] = useState<ObjectViewMode>("context");
   const [commandPostInFlight, setCommandPostInFlight] = useState(false);
   const [commandErrorMessage, setCommandErrorMessage] = useState<string | null>(null);
   const [scriptSyncBusy, setScriptSyncBusy] = useState(false);
@@ -169,18 +197,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
   const [optimisticDisplaySelection, setOptimisticDisplaySelection] =
     useState<DisplaySelection | null>(null);
-  const [meshOptions, setMeshOptions] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
+  const [meshOptionsState, setMeshOptionsState] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
   const [meshQualityData, setMeshQualityData] = useState<MeshQualityData | null>(null);
   const [meshGenerating, setMeshGenerating] = useState(false);
   const femTopologyKeyRef = useRef<string | null>(null);
   const femMeshDataRef = useRef<FemMeshData | null>(null);
-  const [solverSettings, setSolverSettings] = useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
-  const [studyStages, setStudyStages] = useState<ScriptBuilderStageState[]>([]);
-  const [scriptBuilderUniverse, setScriptBuilderUniverse] = useState<ScriptBuilderUniverseState | null>(null);
-  const [scriptBuilderGeometries, setScriptBuilderGeometries] = useState<ScriptBuilderGeometryEntry[]>([]);
-  const [scriptBuilderCurrentModules, setScriptBuilderCurrentModules] = useState<ScriptBuilderCurrentModuleEntry[]>([]);
-  const [scriptBuilderExcitationAnalysis, setScriptBuilderExcitationAnalysis] =
-    useState<ScriptBuilderExcitationAnalysisEntry | null>(null);
+  const [solverSettingsState, setSolverSettingsState] =
+    useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
+  const [modelBuilderGraph, setModelBuilderGraph] = useState<ModelBuilderGraphV2 | null>(null);
   const builderHydratedSessionRef = useRef<string | null>(null);
   const builderPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastBuilderPushSignatureRef = useRef<string | null>(null);
@@ -203,7 +227,28 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const globalScalarPreview = preview?.kind === "global_scalar" ? preview : null;
   const femMesh = state?.fem_mesh ?? null;
   const scriptBuilder = state?.script_builder ?? null;
+  const remoteModelBuilderGraph = state?.model_builder_graph ?? null;
   const scriptInitialState = scriptBuilder?.initial_state ?? null;
+  const studyStages = useMemo(
+    () => selectModelBuilderStages(modelBuilderGraph),
+    [modelBuilderGraph],
+  );
+  const scriptBuilderUniverse = useMemo(
+    () => selectModelBuilderUniverse(modelBuilderGraph),
+    [modelBuilderGraph],
+  );
+  const scriptBuilderGeometries = useMemo(
+    () => selectModelBuilderGeometries(modelBuilderGraph),
+    [modelBuilderGraph],
+  );
+  const scriptBuilderCurrentModules = useMemo(
+    () => selectModelBuilderCurrentModules(modelBuilderGraph),
+    [modelBuilderGraph],
+  );
+  const scriptBuilderExcitationAnalysis = useMemo(
+    () => selectModelBuilderExcitationAnalysis(modelBuilderGraph),
+    [modelBuilderGraph],
+  );
   const runtimeStatus = state?.runtime_status ?? null;
   const commandStatus = state?.command_status ?? null;
   const scalarRows = state?.scalar_rows ?? EMPTY_SCALAR_ROWS;
@@ -215,6 +260,39 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const latestEngineMessage = engineLog.length > 0 ? engineLog[engineLog.length - 1]?.message ?? null : null;
   const workspaceStatus =
     runtimeStatus?.code ?? liveState?.status ?? session?.status ?? run?.status ?? "idle";
+  const modelBuilderDefaults = useMemo(
+    () => ({
+      revision:
+        remoteModelBuilderGraph?.revision ?? scriptBuilder?.revision ?? 0,
+      solver: solverSettingsToBuilder(solverSettingsState),
+      mesh: meshOptionsToBuilder(meshOptionsState),
+      initialState: scriptInitialState,
+    }),
+    [
+      meshOptionsState,
+      remoteModelBuilderGraph?.revision,
+      scriptBuilder?.revision,
+      scriptInitialState,
+      solverSettingsState,
+    ],
+  );
+
+  useEffect(() => {
+    setSelectedSidebarNodeId(null);
+    setSelectedObjectId(null);
+    setFocusObjectRequest(null);
+    setObjectViewMode("context");
+  }, [workspaceHydrationKey]);
+
+  useEffect(() => {
+    if (!selectedObjectId) {
+      return;
+    }
+    if (scriptBuilderGeometries.some((geometry) => geometry.name === selectedObjectId)) {
+      return;
+    }
+    setSelectedObjectId(null);
+  }, [scriptBuilderGeometries, selectedObjectId]);
 
   const hasSolverTelemetry =
     (liveState?.step ?? 0) > 0 ||
@@ -298,18 +376,104 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         return "vector_field";
     }
   }, [quantityDescriptorById]);
+  const solverSettings = solverSettingsState;
+  const meshOptions = meshOptionsState;
+  const setSolverSettings = useCallback<Dispatch<SetStateAction<SolverSettingsState>>>(
+    (update) => {
+      setSolverSettingsState((prev) => {
+        const next = typeof update === "function" ? update(prev) : update;
+        setModelBuilderGraph((currentGraph) =>
+          applyModelBuilderSolver(
+            currentGraph,
+            solverSettingsToBuilder(next),
+            modelBuilderDefaults,
+          ),
+        );
+        return next;
+      });
+    },
+    [modelBuilderDefaults],
+  );
+  const setMeshOptions = useCallback<Dispatch<SetStateAction<MeshOptionsState>>>(
+    (update) => {
+      setMeshOptionsState((prev) => {
+        const next = typeof update === "function" ? update(prev) : update;
+        setModelBuilderGraph((currentGraph) =>
+          applyModelBuilderMeshDefaults(
+            currentGraph,
+            meshOptionsToBuilder(next, currentGraph?.study.mesh_defaults),
+            modelBuilderDefaults,
+          ),
+        );
+        return next;
+      });
+    },
+    [modelBuilderDefaults],
+  );
+  const setStudyStages = useCallback<Dispatch<SetStateAction<ScriptBuilderStageState[]>>>(
+    (update) => {
+      setModelBuilderGraph((currentGraph) =>
+        applyModelBuilderStages(currentGraph, update, modelBuilderDefaults),
+      );
+    },
+    [modelBuilderDefaults],
+  );
+  const setScriptBuilderUniverse = useCallback<
+    Dispatch<SetStateAction<ScriptBuilderUniverseState | null>>
+  >(
+    (update) => {
+      setModelBuilderGraph((currentGraph) =>
+        applyModelBuilderUniverse(currentGraph, update, modelBuilderDefaults),
+      );
+    },
+    [modelBuilderDefaults],
+  );
+  const setScriptBuilderGeometries = useCallback<
+    Dispatch<SetStateAction<ScriptBuilderGeometryEntry[]>>
+  >(
+    (update) => {
+      setModelBuilderGraph((currentGraph) =>
+        applyModelBuilderGeometries(currentGraph, update, modelBuilderDefaults),
+      );
+    },
+    [modelBuilderDefaults],
+  );
+  const setScriptBuilderCurrentModules = useCallback<
+    Dispatch<SetStateAction<ScriptBuilderCurrentModuleEntry[]>>
+  >(
+    (update) => {
+      setModelBuilderGraph((currentGraph) =>
+        applyModelBuilderCurrentModules(currentGraph, update, modelBuilderDefaults),
+      );
+    },
+    [modelBuilderDefaults],
+  );
+  const setScriptBuilderExcitationAnalysis = useCallback<
+    Dispatch<SetStateAction<ScriptBuilderExcitationAnalysisEntry | null>>
+  >(
+    (update) => {
+      setModelBuilderGraph((currentGraph) =>
+        applyModelBuilderExcitationAnalysis(currentGraph, update, modelBuilderDefaults),
+      );
+    },
+    [modelBuilderDefaults],
+  );
   const localBuilderDraft = useMemo(
     () =>
       buildScriptBuilderUpdatePayload(
-        solverSettings,
-        meshOptions,
-        scriptBuilderUniverse,
-        studyStages,
-        scriptBuilderGeometries,
-        scriptBuilderCurrentModules,
-        scriptBuilderExcitationAnalysis,
+        modelBuilderGraph,
+        {
+          solverSettings,
+          meshOptions,
+          universe: scriptBuilderUniverse,
+          stages: studyStages,
+          geometries: scriptBuilderGeometries,
+          currentModules: scriptBuilderCurrentModules,
+          excitationAnalysis: scriptBuilderExcitationAnalysis,
+        },
       ),
     [
+      modelBuilderGraph,
       meshOptions,
       solverSettings,
       scriptBuilderUniverse,
@@ -320,23 +484,64 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     ],
   );
   const localBuilderSignature = useMemo(
-    () => JSON.stringify(localBuilderDraft),
-    [localBuilderDraft],
+    () =>
+      buildScriptBuilderSignature(modelBuilderGraph, {
+        solverSettings,
+        meshOptions,
+        universe: scriptBuilderUniverse,
+        stages: studyStages,
+        geometries: scriptBuilderGeometries,
+        currentModules: scriptBuilderCurrentModules,
+        excitationAnalysis: scriptBuilderExcitationAnalysis,
+      }),
+    [
+      modelBuilderGraph,
+      meshOptions,
+      solverSettings,
+      scriptBuilderUniverse,
+      studyStages,
+      scriptBuilderGeometries,
+      scriptBuilderCurrentModules,
+      scriptBuilderExcitationAnalysis,
+    ],
   );
   const remoteBuilderSignature = useMemo(
-    () =>
-      scriptBuilder
-        ? JSON.stringify({
-            solver: scriptBuilder.solver,
-            mesh: scriptBuilder.mesh,
-            universe: scriptBuilder.universe,
-            stages: scriptBuilder.stages,
-            geometries: scriptBuilder.geometries,
-            current_modules: scriptBuilder.current_modules,
-            excitation_analysis: scriptBuilder.excitation_analysis,
-          })
-        : null,
-    [scriptBuilder],
+    () => {
+      if (remoteModelBuilderGraph) {
+        return buildScriptBuilderSignature(remoteModelBuilderGraph, {
+          solverSettings,
+          meshOptions,
+          universe: scriptBuilderUniverse,
+          stages: studyStages,
+          geometries: scriptBuilderGeometries,
+          currentModules: scriptBuilderCurrentModules,
+          excitationAnalysis: scriptBuilderExcitationAnalysis,
+        });
+      }
+      if (!scriptBuilder) {
+        return null;
+      }
+      return JSON.stringify({
+        solver: scriptBuilder.solver,
+        mesh: scriptBuilder.mesh,
+        universe: scriptBuilder.universe,
+        stages: scriptBuilder.stages,
+        geometries: scriptBuilder.geometries,
+        current_modules: scriptBuilder.current_modules,
+        excitation_analysis: scriptBuilder.excitation_analysis,
+      });
+    },
+    [
+      remoteModelBuilderGraph,
+      scriptBuilder,
+      meshOptions,
+      solverSettings,
+      scriptBuilderUniverse,
+      studyStages,
+      scriptBuilderGeometries,
+      scriptBuilderCurrentModules,
+      scriptBuilderExcitationAnalysis,
+    ],
   );
 
   /* Hydrate solver-settings panel from the actual backend plan on first load. */
@@ -345,11 +550,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     builderHydratedSessionRef.current = null;
     lastBuilderPushSignatureRef.current = null;
     setSolverSettingsHydrated(false);
-    setStudyStages([]);
-    setScriptBuilderUniverse(null);
-    setScriptBuilderGeometries([]);
-    setScriptBuilderCurrentModules([]);
-    setScriptBuilderExcitationAnalysis(null);
+    setModelBuilderGraph(null);
     if (builderPushTimerRef.current) {
       clearTimeout(builderPushTimerRef.current);
       builderPushTimerRef.current = null;
@@ -357,8 +558,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [workspaceHydrationKey]);
 
   useEffect(() => {
-    if (solverSettingsHydrated || !solverPlan || scriptBuilder) return;
-    setSolverSettings((prev) => ({
+    if (solverSettingsHydrated || !solverPlan || scriptBuilder || remoteModelBuilderGraph) return;
+    setSolverSettingsState((prev) => ({
       ...prev,
       integrator: solverPlan.integrator ?? prev.integrator,
       fixedTimestep:
@@ -378,46 +579,51 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
           : prev.maxRelaxSteps,
     }));
     setSolverSettingsHydrated(true);
-  }, [scriptBuilder, solverPlan, solverSettingsHydrated]);
+  }, [remoteModelBuilderGraph, scriptBuilder, solverPlan, solverSettingsHydrated]);
 
   useEffect(() => {
-    if (!workspaceHydrationKey || !scriptBuilder) {
+    const incomingGraph =
+      remoteModelBuilderGraph ?? (scriptBuilder ? buildModelBuilderGraphV2(scriptBuilder) : null);
+    if (!workspaceHydrationKey || !incomingGraph) {
       return;
     }
     if (builderHydratedSessionRef.current === workspaceHydrationKey) {
       return;
     }
-    setSolverSettings((prev) => ({
+    setSolverSettingsState((prev) => ({
       ...prev,
-      ...solverSettingsFromBuilder(scriptBuilder.solver),
+      ...solverSettingsFromBuilder(incomingGraph.study.solver),
     }));
-    setStudyStages(scriptBuilder.stages);
-    setMeshOptions((prev) => ({
+    setMeshOptionsState((prev) => ({
       ...prev,
-      ...meshOptionsFromBuilder(scriptBuilder.mesh),
+      ...meshOptionsFromBuilder(incomingGraph.study.mesh_defaults),
     }));
-    setScriptBuilderUniverse(scriptBuilder.universe);
-    setScriptBuilderGeometries(scriptBuilder.geometries);
-    setScriptBuilderCurrentModules(scriptBuilder.current_modules);
-    setScriptBuilderExcitationAnalysis(scriptBuilder.excitation_analysis);
-    const firstRunStage = scriptBuilder.stages.find(
+    setModelBuilderGraph(incomingGraph);
+    const firstRunStage = incomingGraph.study.stages.find(
       (stage) => stage.kind === "run" && stage.until_seconds.trim().length > 0,
     );
     if (firstRunStage) {
       setRunUntilInput(firstRunStage.until_seconds);
     }
     builderHydratedSessionRef.current = workspaceHydrationKey;
-    lastBuilderPushSignatureRef.current = JSON.stringify({
-      solver: scriptBuilder.solver,
-      mesh: scriptBuilder.mesh,
-      universe: scriptBuilder.universe,
-      stages: scriptBuilder.stages,
-      geometries: scriptBuilder.geometries,
-      current_modules: scriptBuilder.current_modules,
-      excitation_analysis: scriptBuilder.excitation_analysis,
+    lastBuilderPushSignatureRef.current = buildScriptBuilderSignature(incomingGraph, {
+      solverSettings,
+      meshOptions,
+      universe: incomingGraph.universe.value,
+      stages: incomingGraph.study.stages,
+      geometries: incomingGraph.objects.items.map((objectNode) => objectNode.geometry),
+      currentModules: incomingGraph.current_modules.modules,
+      excitationAnalysis: incomingGraph.current_modules.excitation_analysis,
     });
     setSolverSettingsHydrated(true);
-  }, [scriptBuilder, workspaceHydrationKey]);
+  }, [
+    buildScriptBuilderSignature,
+    meshOptions,
+    remoteModelBuilderGraph,
+    scriptBuilder,
+    solverSettings,
+    workspaceHydrationKey,
+  ]);
 
   useEffect(() => {
     if (!workspaceHydrationKey || !scriptBuilder) {
@@ -516,11 +722,48 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const meshFeOrder = typeof femArtifactLayout?.fe_order === "number" ? femArtifactLayout.fe_order : null;
   const meshHmax = typeof femArtifactLayout?.hmax === "number" ? femArtifactLayout.hmax : null;
   const meshSummary = meshWorkspace?.mesh_summary ?? null;
+  const objectOverlays = useMemo<BuilderObjectOverlay[]>(
+    () => buildObjectOverlays(scriptBuilderGeometries),
+    [scriptBuilderGeometries],
+  );
+  const builderObjectBounds = useMemo(
+    () => combineBounds(objectOverlays),
+    [objectOverlays],
+  );
+  const builderObjectExtent = useMemo<[number, number, number] | null>(
+    () =>
+      builderObjectBounds
+        ? boundsExtent(builderObjectBounds.boundsMin, builderObjectBounds.boundsMax)
+        : null,
+    [builderObjectBounds],
+  );
+  const builderObjectCenter = useMemo<[number, number, number] | null>(
+    () =>
+      builderObjectBounds
+        ? boundsCenter(builderObjectBounds.boundsMin, builderObjectBounds.boundsMax)
+        : null,
+    [builderObjectBounds],
+  );
 
   /* Unified world extent (metres) for both FDM and FEM */
   const worldExtent = useMemo<[number, number, number] | null>(() => {
-    // FEM: use meshExtent directly
-    if (meshExtent) return meshExtent;
+    if (isFemBackend) {
+      if (scriptBuilderUniverse?.mode === "manual" && scriptBuilderUniverse.size) {
+        return scriptBuilderUniverse.size;
+      }
+      if (builderObjectExtent) {
+        const padding = scriptBuilderUniverse?.padding ?? [0, 0, 0];
+        return builderObjectExtent.map((component, index) =>
+          component + 2 * padding[index]
+        ) as [number, number, number];
+      }
+      if (scriptBuilderUniverse?.size) {
+        return scriptBuilderUniverse.size;
+      }
+      if (meshExtent) {
+        return meshExtent;
+      }
+    }
     // FDM: compute from grid_cells × cell_size
     const gridCells = asVec3(artifactLayout?.grid_cells);
     const cellSize = asVec3(artifactLayout?.cell_size);
@@ -532,7 +775,22 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       ];
     }
     return null;
-  }, [meshExtent, artifactLayout]);
+  }, [artifactLayout, builderObjectExtent, isFemBackend, meshExtent, scriptBuilderUniverse]);
+  const worldCenter = useMemo<[number, number, number] | null>(() => {
+    if (isFemBackend) {
+      if (scriptBuilderUniverse?.center) {
+        return scriptBuilderUniverse.center;
+      }
+      if (builderObjectCenter) {
+        return builderObjectCenter;
+      }
+      if (meshBoundsMin && meshBoundsMax) {
+        return boundsCenter(meshBoundsMin, meshBoundsMax);
+      }
+      return null;
+    }
+    return scriptBuilderUniverse?.center ?? null;
+  }, [builderObjectCenter, isFemBackend, meshBoundsMax, meshBoundsMin, scriptBuilderUniverse]);
   const antennaOverlays = useMemo<AntennaOverlay[]>(() => {
     if (!meshBoundsMin || !meshBoundsMax || scriptBuilderCurrentModules.length === 0) {
       return [];
@@ -913,6 +1171,63 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       setFemDockTab(tab);
     });
     setMeshRenderMode((c) => (c === "surface" ? "surface+edges" : c));
+  }, []);
+
+  const requestFocusObject = useCallback((objectId: string) => {
+    if (!objectId) {
+      return;
+    }
+    setFocusObjectRequest((previous) => ({
+      objectId,
+      revision: previous && previous.objectId === objectId ? previous.revision + 1 : 1,
+    }));
+  }, []);
+
+  const applyAntennaTranslation = useCallback((moduleName: string, dx: number, dy: number, dz: number) => {
+    setScriptBuilderCurrentModules((prev) =>
+      prev.map((mod) => {
+        if (mod.name !== moduleName) return mod;
+        const p = mod.antenna_params ?? {};
+        return {
+          ...mod,
+          antenna_params: {
+            ...p,
+            center_x: (Number(p.center_x) || 0) + dx,
+            center_y: (Number(p.center_y) || 0) + dy,
+            height_above_magnet: (Number(p.height_above_magnet) || 0) + dz,
+          },
+        };
+      })
+    );
+  }, []);
+
+  const applyGeometryTranslation = useCallback((geometryName: string, dx: number, dy: number, dz: number) => {
+    setScriptBuilderGeometries((prev) =>
+      prev.map((geo) => {
+        if (geo.name !== geometryName) return geo;
+        const params = geo.geometry_params ?? {};
+        const translateRaw = Array.isArray(params.translate)
+          ? params.translate
+          : Array.isArray(params.translation)
+            ? params.translation
+            : [0, 0, 0];
+        const translation = translateRaw && translateRaw.length === 3
+          ? (translateRaw.map((value) => Number(value)) as [number, number, number])
+          : [0, 0, 0];
+        
+        return {
+          ...geo,
+          geometry_params: {
+            ...params,
+            translation: [
+              translation[0] + dx,
+              translation[1] + dy,
+              translation[2] + dz,
+            ],
+          },
+        };
+      })
+    );
   }, []);
 
   const applyMeshWorkspacePreset = useCallback((presetId: MeshWorkspacePresetId) => {
@@ -1610,7 +1925,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   ]);
 
   const modelValue = useMemo<ModelContextValue>(() => ({
-    material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, femMesh,
+    modelBuilderGraph,
+    material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
@@ -1622,25 +1938,29 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshBoundsMin: meshSummary?.bounds_min ?? meshBoundsMin,
     meshBoundsMax: meshSummary?.bounds_max ?? meshBoundsMax,
     meshFeOrder: meshSummary?.order ?? meshFeOrder,
-    worldExtent: meshSummary?.world_extent ?? worldExtent,
+    worldExtent,
+    worldCenter,
     meshHmax: Number.isFinite(meshSummary?.hmax ?? NaN) ? (meshSummary?.hmax ?? null) : meshHmax,
     mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
     selectedSidebarNodeId,
+    selectedObjectId,
+    focusObjectRequest,
+    objectViewMode,
     setSolverSettings, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
-    setSelectedSidebarNodeId, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    setSelectedSidebarNodeId, setSelectedObjectId, setObjectViewMode, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
-    material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, femMesh,
+    modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
     femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
     meshFaceDetail, meshQualitySummary, meshWorkspace,
     meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder,
-    worldExtent, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
+    worldExtent, worldCenter, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
-    selectedSidebarNodeId,
+    selectedSidebarNodeId, selectedObjectId, focusObjectRequest, objectViewMode, requestFocusObject,
     setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   ]);

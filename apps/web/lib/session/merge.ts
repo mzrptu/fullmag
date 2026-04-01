@@ -142,6 +142,16 @@ export function mergeSessionState(prev: SessionState | null, next: SessionState)
     merged.script_builder = prev.script_builder;
   }
 
+  if (
+    prev.model_builder_graph &&
+    (
+      !next.model_builder_graph ||
+      next.model_builder_graph.revision < prev.model_builder_graph.revision
+    )
+  ) {
+    merged.model_builder_graph = prev.model_builder_graph;
+  }
+
   if (nextScalarStep < prevScalarStep) {
     merged.scalar_rows = prev.scalar_rows;
   } else if (next.scalar_rows.length === prev.scalar_rows.length && nextScalarStep === prevScalarStep) {

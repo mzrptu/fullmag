@@ -253,10 +253,69 @@ pub struct LiveVectorFieldSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FemMeshObjectSegment {
+    pub object_id: String,
+    pub node_start: u32,
+    pub node_count: u32,
+    pub element_start: u32,
+    pub element_count: u32,
+    pub boundary_face_start: u32,
+    pub boundary_face_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FemMeshPayload {
     pub nodes: Vec<[f64; 3]>,
     pub elements: Vec<[u32; 4]>,
     pub boundary_faces: Vec<[u32; 3]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub object_segments: Vec<FemMeshObjectSegment>,
+}
+
+impl From<&fullmag_ir::FemPlanIR> for FemMeshPayload {
+    fn from(plan: &fullmag_ir::FemPlanIR) -> Self {
+        Self {
+            nodes: plan.mesh.nodes.clone(),
+            elements: plan.mesh.elements.clone(),
+            boundary_faces: plan.mesh.boundary_faces.clone(),
+            object_segments: plan
+                .object_segments
+                .iter()
+                .map(|segment| FemMeshObjectSegment {
+                    object_id: segment.object_id.clone(),
+                    node_start: segment.node_start,
+                    node_count: segment.node_count,
+                    element_start: segment.element_start,
+                    element_count: segment.element_count,
+                    boundary_face_start: segment.boundary_face_start,
+                    boundary_face_count: segment.boundary_face_count,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<&fullmag_ir::FemEigenPlanIR> for FemMeshPayload {
+    fn from(plan: &fullmag_ir::FemEigenPlanIR) -> Self {
+        Self {
+            nodes: plan.mesh.nodes.clone(),
+            elements: plan.mesh.elements.clone(),
+            boundary_faces: plan.mesh.boundary_faces.clone(),
+            object_segments: plan
+                .object_segments
+                .iter()
+                .map(|segment| FemMeshObjectSegment {
+                    object_id: segment.object_id.clone(),
+                    node_start: segment.node_start,
+                    node_count: segment.node_count,
+                    element_start: segment.element_start,
+                    element_count: segment.element_count,
+                    boundary_face_start: segment.boundary_face_start,
+                    boundary_face_count: segment.boundary_face_count,
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug)]

@@ -6,10 +6,12 @@ import type {
   ScriptBuilderExcitationAnalysisEntry,
 } from "../../../lib/session/types";
 import { useModel } from "../../runs/control-room/ControlRoomContext";
+import { useViewport } from "../../runs/control-room/context-hooks";
 import { fmtSI, resolveAntennaNodeName } from "../../runs/control-room/shared";
 import { TextField } from "../../ui/TextField";
 import SelectField from "../../ui/SelectField";
 import { Button } from "../../ui/button";
+import { SidebarSection } from "./primitives";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_SOLVER = "mqs_2p5d_az";
@@ -106,6 +108,7 @@ function ensureUniqueName(
 
 export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
   const model = useModel();
+  const vp = useViewport();
   const modules = model.scriptBuilderCurrentModules;
   const antennaNames = useMemo(() => modules.map((module) => module.name), [modules]);
   const activeName = useMemo(
@@ -273,6 +276,13 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
     [model],
   );
 
+  const computeAntennaField = useCallback(() => {
+    vp.requestPreviewQuantity("H_ant");
+    if (vp.previewControlsActive) {
+      void vp.updatePreview("/refresh", {});
+    }
+  }, [vp]);
+
   const analysis = model.scriptBuilderExcitationAnalysis;
   const moduleParams = activeModule?.antenna_params ?? {};
   const physicsBadges = [
@@ -282,93 +292,94 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
   ];
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap gap-1.5">
-        {physicsBadges.map((badge) => (
-          <span
-            key={badge}
-            className="inline-flex w-fit rounded-md border border-border/40 bg-card/40 px-2 py-1 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-muted-foreground"
-          >
-            {badge}
-          </span>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
-            RF Sources
-          </span>
-          <span className="font-mono text-xs text-foreground">
-            {modules.length > 0 ? modules.length : "none"}
-          </span>
-        </div>
-        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
-            Mesh Top
-          </span>
-          <span className="font-mono text-xs text-foreground">
-            {model.meshBoundsMax?.[2] != null ? fmtSI(model.meshBoundsMax[2], "m") : "waiting"}
-          </span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <Button type="button" variant="outline" size="sm" onClick={() => addModule("MicrostripAntenna")}>
-          + Add Microstrip
-        </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => addModule("CPWAntenna")}>
-          + Add CPW
-        </Button>
-      </div>
-
-      {modules.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border/50 bg-card/20 p-4 text-[0.72rem] leading-relaxed text-muted-foreground">
-          Dodaj microstrip albo CPW, a potem ustaw szerokość, wysokość nad falowodem i położenie
-          w scenie. Nakładki 2D/3D pojawią się automatycznie po załadowaniu siatki FEM.
-        </div>
-      ) : (
-        <div className="grid gap-2">
-          {modules.map((module) => (
-            <button
-              key={module.name}
-              type="button"
-              className={cn(
-                "flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors",
-                activeModule?.name === module.name
-                  ? "border-primary/40 bg-primary/10"
-                  : "border-border/40 bg-card/25 hover:bg-card/40",
-              )}
-              onClick={() => selectModule(module.name)}
-            >
-              <span className="text-lg leading-none text-muted-foreground">
-                {module.antenna_kind === "CPWAntenna" ? "≋" : "▭"}
+    <div className="flex flex-col gap-0 border-t border-border/20">
+      <SidebarSection title="Environment Overview" defaultOpen={true}>
+        <div className="flex flex-col gap-5">
+          <div className="flex flex-wrap gap-1.5">
+            {physicsBadges.map((badge) => (
+              <span
+                key={badge}
+                className="inline-flex w-fit rounded-md border border-border/40 bg-card/40 px-2 py-1 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-muted-foreground"
+              >
+                {badge}
               </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium text-foreground">
-                  {module.name}
-                </span>
-                <span className="block truncate font-mono text-[0.68rem] text-muted-foreground">
-                  {antennaKindLabel(module.antenna_kind)} · {(module.drive.current_a * 1e3).toFixed(2)} mA
-                </span>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
+                RF Sources
               </span>
-            </button>
-          ))}
+              <span className="font-mono text-xs text-foreground">
+                {modules.length > 0 ? modules.length : "none"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
+                Mesh Top
+              </span>
+              <span className="font-mono text-xs text-foreground">
+                {model.meshBoundsMax?.[2] != null ? fmtSI(model.meshBoundsMax[2], "m") : "waiting"}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Button type="button" variant="outline" size="sm" onClick={() => addModule("MicrostripAntenna")}>
+              + Add Microstrip
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => addModule("CPWAntenna")}>
+              + Add CPW
+            </Button>
+          </div>
+
+          {modules.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border/50 bg-card/20 p-4 text-[0.72rem] leading-relaxed text-muted-foreground">
+              Add a Microstrip or CPW antenna to configure RF synthesis. 3D previews will appear automatically after meshing.
+            </div>
+          ) : (
+            <div className="grid gap-2">
+              {modules.map((module) => (
+                <button
+                  key={module.name}
+                  type="button"
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors",
+                    activeModule?.name === module.name
+                      ? "border-primary/40 bg-primary/10"
+                      : "border-border/40 bg-card/25 hover:bg-card/40",
+                  )}
+                  onClick={() => selectModule(module.name)}
+                >
+                  <span className="text-lg leading-none text-muted-foreground">
+                    {module.antenna_kind === "CPWAntenna" ? "≋" : "▭"}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-foreground">
+                      {module.name}
+                    </span>
+                    <span className="block truncate font-mono text-[0.68rem] text-muted-foreground">
+                      {antennaKindLabel(module.antenna_kind)} · {(module.drive.current_a * 1e3).toFixed(2)} mA
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </SidebarSection>
 
       {activeModule ? (
-        <div key={`${activeModule.name}:${activeModule.antenna_kind}`} className="flex flex-col gap-5">
-          <div className="flex flex-col gap-3">
-            <h4 className="border-b border-border/50 pb-1 text-[0.7rem] font-bold uppercase tracking-widest text-foreground">
-              Source
-            </h4>
+        <div key={`${activeModule.name}:${activeModule.antenna_kind}`}>
+          <SidebarSection title="Source Definition" defaultOpen={true}>
             <div className="grid grid-cols-2 gap-3">
               <TextField
                 label="Name"
                 defaultValue={activeModule.name}
                 onBlur={(event) => renameActiveModule(event.target.value)}
                 mono
+                tooltip="Unique identifier for this RF source."
               />
               <SelectField
                 label="Type"
@@ -378,6 +389,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                   { label: "Microstrip", value: "MicrostripAntenna" },
                   { label: "CPW", value: "CPWAntenna" },
                 ]}
+                tooltip="Antenna topology. Microstrip is a single signal line, CPW includes parallel ground planes."
               />
               <SelectField
                 label="Solver"
@@ -388,6 +400,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                 options={[
                   { label: "2.5D MQS (az)", value: DEFAULT_SOLVER },
                 ]}
+                tooltip="Numerical model used to compute the generated Oersted field limit."
               />
               <TextField
                 label="Air Box Factor"
@@ -400,14 +413,12 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                   updateActiveModule((module) => ({ ...module, air_box_factor: parsed }));
                 }}
                 mono
+                tooltip="Multiplier for the solver's computational domain extending outwards."
               />
             </div>
-          </div>
+          </SidebarSection>
 
-          <div className="flex flex-col gap-3">
-            <h4 className="border-b border-border/50 pb-1 text-[0.7rem] font-bold uppercase tracking-widest text-foreground">
-              Conductor Geometry
-            </h4>
+          <SidebarSection title="Conductor Geometry" defaultOpen={true}>
             {activeModule.antenna_kind === "CPWAntenna" ? (
               <div className="grid grid-cols-2 gap-3">
                 <TextField
@@ -416,6 +427,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                   onBlur={(event) => updateParam("signal_width", event.target.value, 1e-6)}
                   unit="µm"
                   mono
+                  tooltip="Width of the central signal trace."
                 />
                 <TextField
                   label="Gap"
@@ -423,6 +435,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                   onBlur={(event) => updateParam("gap", event.target.value, 1e-6)}
                   unit="µm"
                   mono
+                  tooltip="Clearance gap between the signal trace and ground planes."
                 />
                 <TextField
                   label="Ground Width"
@@ -430,6 +443,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                   onBlur={(event) => updateParam("ground_width", event.target.value, 1e-6)}
                   unit="µm"
                   mono
+                  tooltip="Width of the flanking ground planes."
                 />
                 <TextField
                   label="Thickness"
@@ -437,6 +451,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                   onBlur={(event) => updateParam("thickness", event.target.value, 1e-9)}
                   unit="nm"
                   mono
+                  tooltip="Vertical thickness of the deposited metal layer."
                 />
               </div>
             ) : (
@@ -447,6 +462,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                   onBlur={(event) => updateParam("width", event.target.value, 1e-6)}
                   unit="µm"
                   mono
+                  tooltip="Width of the microstrip trace."
                 />
                 <TextField
                   label="Thickness"
@@ -454,15 +470,13 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                   onBlur={(event) => updateParam("thickness", event.target.value, 1e-9)}
                   unit="nm"
                   mono
+                  tooltip="Vertical thickness of the deposited metal layer."
                 />
               </div>
             )}
-          </div>
+          </SidebarSection>
 
-          <div className="flex flex-col gap-3">
-            <h4 className="border-b border-border/50 pb-1 text-[0.7rem] font-bold uppercase tracking-widest text-foreground">
-              Placement
-            </h4>
+          <SidebarSection title="Placement" defaultOpen={true}>
             <div className="grid grid-cols-2 gap-3">
               <TextField
                 label="Height Above Magnet"
@@ -470,6 +484,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                 onBlur={(event) => updateParam("height_above_magnet", event.target.value, 1e-9)}
                 unit="nm"
                 mono
+                tooltip="Vertical Z-distance from the magnetic layer."
               />
               <TextField
                 label="Preview Length"
@@ -477,6 +492,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                 onBlur={(event) => updateParam("preview_length", event.target.value, 1e-6)}
                 unit="µm"
                 mono
+                tooltip="Length of the conductive element rendered in the 3D viewport (for visualization only)."
               />
               <TextField
                 label="Center X"
@@ -484,6 +500,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                 onBlur={(event) => updateParam("center_x", event.target.value, 1e-9)}
                 unit="nm"
                 mono
+                tooltip="Horizontal X-offset from the simulation origin."
               />
               <TextField
                 label="Center Y"
@@ -491,26 +508,25 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                 onBlur={(event) => updateParam("center_y", event.target.value, 1e-9)}
                 unit="nm"
                 mono
+                tooltip="Horizontal Y-offset from the simulation origin."
               />
             </div>
-            <div className="rounded-lg border border-border/30 bg-card/20 p-3 text-[0.68rem] leading-relaxed text-muted-foreground">
-              Pozycja jest liczona względem środka sceny magnetycznej. Widok 3D pokazuje ekstruzję
-              wizualizacyjną po osi <span className="font-mono text-foreground">y</span>, zgodnie z
-              założeniem solvera 2.5D.
+            <div className="mt-3 rounded-lg border border-border/30 bg-card/20 p-3 text-[0.68rem] leading-relaxed text-muted-foreground">
+              Position is calculated relative to the center of the magnetic scene. The 3D view shows an 
+              extrusion along the <span className="font-mono text-foreground">y</span> axis, per the 
+              2.5D solver's assumption.
             </div>
-          </div>
+          </SidebarSection>
 
-          <div className="flex flex-col gap-3">
-            <h4 className="border-b border-border/50 pb-1 text-[0.7rem] font-bold uppercase tracking-widest text-foreground">
-              RF Drive
-            </h4>
+          <SidebarSection title="RF Drive" defaultOpen={true}>
             <div className="grid grid-cols-3 gap-3">
               <TextField
-                label="Current"
+                label="Current (peak)"
                 defaultValue={(activeModule.drive.current_a * 1e3).toFixed(3)}
                 onBlur={(event) => updateDrive("current_a", event.target.value, 1e-3)}
                 unit="mA"
                 mono
+                tooltip="Amplitude of the alternating current flowing through the signal line."
               />
               <TextField
                 label="Frequency"
@@ -523,6 +539,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                 unit="GHz"
                 mono
                 placeholder="DC"
+                tooltip="Operating frequency. Leave empty for continuous DC drive."
               />
               <TextField
                 label="Phase"
@@ -530,16 +547,34 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                 onBlur={(event) => updateDrive("phase_rad", event.target.value)}
                 unit="rad"
                 mono
+                tooltip="Initial phase shift of the excitation signal."
               />
             </div>
-          </div>
+            <div className="mt-3">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="w-full"
+                onClick={computeAntennaField}
+                disabled={!vp.previewControlsActive}
+                title={
+                  vp.previewControlsActive
+                    ? "Compute Biot-Savart field and show H_ant in viewport"
+                    : "Open a workspace to compute the antenna field"
+                }
+              >
+                {vp.previewBusy ? "Computing…" : "Compute Antenna Field (H_ant)"}
+              </Button>
+            </div>
+          </SidebarSection>
 
-          <div className="border-t border-border/50 pt-2">
+          <div className="px-3 pb-3">
             <Button
               type="button"
               variant="destructive"
               size="sm"
-              className="w-full"
+              className="w-full opacity-80 hover:opacity-100"
               onClick={deleteActiveModule}
             >
               Delete RF Source
@@ -548,10 +583,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
         </div>
       ) : null}
 
-      <div className="flex flex-col gap-3">
-        <h4 className="border-b border-border/50 pb-1 text-[0.7rem] font-bold uppercase tracking-widest text-foreground">
-          Excitation Analysis
-        </h4>
+      <SidebarSection title="Excitation Analysis" defaultOpen={true}>
         {!analysis ? (
           <div className="grid gap-3">
             <div className="rounded-lg border border-dashed border-border/50 bg-card/20 p-3 text-[0.68rem] leading-relaxed text-muted-foreground">
@@ -569,10 +601,10 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
             </Button>
           </div>
         ) : (
-          <div key={analysis.source} className="grid gap-3">
+          <div key={analysis.source} className="grid gap-4">
             <div className="grid grid-cols-2 gap-3">
               <SelectField
-                label="Source"
+                label="Source Module"
                 value={analysis.source}
                 onchange={(value) =>
                   updateExcitationAnalysis((current) => ({ ...current, source: value }))
@@ -581,6 +613,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                   label: module.name,
                   value: module.name,
                 }))}
+                tooltip="Select which active RF source drives this analysis."
               />
               <SelectField
                 label="Method"
@@ -593,6 +626,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                   { label: "Mode overlap", value: "mode_overlap" },
                   { label: "Driven response", value: "driven_response" },
                 ]}
+                tooltip="Analysis pipeline to execute (k-space footprint, overlap integral, or full driven sweep)."
               />
             </div>
             <div className="grid grid-cols-3 gap-3">
@@ -613,12 +647,13 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                     });
                   }}
                   mono
+                  tooltip={`Propagation unit vector component ${axisIndex === 0 ? "x" : axisIndex === 1 ? "y" : "z"}.`}
                 />
               ))}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <TextField
-                label="k max"
+                label="Sweep k max"
                 defaultValue={analysis.k_max_rad_per_m ?? ""}
                 onBlur={(event) => {
                   const trimmed = event.target.value.trim();
@@ -630,6 +665,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                 unit="rad/m"
                 mono
                 placeholder="auto"
+                tooltip="Maximum wavenumber to resolve in the dispersion integral (leave empty for auto from mesh limit)."
               />
               <TextField
                 label="Samples"
@@ -645,6 +681,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
                   }));
                 }}
                 mono
+                tooltip="Number of discrete points in the generated analysis spectra."
               />
             </div>
             <Button
@@ -657,7 +694,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
             </Button>
           </div>
         )}
-      </div>
+      </SidebarSection>
     </div>
   );
 }

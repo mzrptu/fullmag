@@ -3,13 +3,19 @@
 import { useDeferredValue, useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
-import { TrackballControls } from "@react-three/drei";
+import { TrackballControls, PivotControls } from "@react-three/drei";
 import { cn } from "@/lib/utils";
 import ViewCube from "./ViewCube";
 import HslSphere from "./HslSphere";
 import FdmInstances from "./r3f/FdmInstances";
 import FdmLighting from "./r3f/FdmLighting";
 import SceneAxes3D from "./r3f/SceneAxes3D";
+import type {
+  AntennaOverlay,
+  BuilderObjectOverlay,
+  FocusObjectRequest,
+  ObjectViewMode,
+} from "../runs/control-room/shared";
 
 // ─── Types ──────────────────────────────────────────────────────────
 interface Props {
@@ -20,6 +26,16 @@ interface Props {
   activeMask?: boolean[] | null;
   /** Physical extent [x, y, z] in metres — enables in-scene axis labels */
   worldExtent?: [number, number, number] | null;
+  objectOverlays?: BuilderObjectOverlay[];
+  selectedObjectId?: string | null;
+  antennaOverlays?: AntennaOverlay[];
+  selectedAntennaId?: string | null;
+  onAntennaTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
+  universeCenter?: [number, number, number] | null;
+  focusObjectRequest?: FocusObjectRequest | null;
+  objectViewMode?: ObjectViewMode;
+  onRequestObjectSelect?: (id: string) => void;
+  onGeometryTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
 }
 
 export type QualityLevel = "low" | "high" | "ultra";
@@ -139,6 +155,312 @@ function SceneConfig({ toneMapping }: { toneMapping: boolean }) {
   return null;
 }
 
+function antennaOverlayColors(role: AntennaOverlay["conductors"][number]["role"], selected: boolean) {
+  if (role === "ground") {
+    return selected
+      ? { fill: "#67e8f9", wire: "#a5f3fc" }
+      : { fill: "#0ea5e9", wire: "#67e8f9" };
+  }
+  return selected
+    ? { fill: "#fb923c", wire: "#fdba74" }
+    : { fill: "#f97316", wire: "#fb923c" };
+}
+
+function objectOverlayColors(selected: boolean, dimmed: boolean) {
+  if (selected) {
+    return { fill: "#facc15", wire: "#fff7ae", fillOpacity: 0.24, wireOpacity: 1 };
+  }
+  if (dimmed) {
+    return { fill: "#64748b", wire: "#94a3b8", fillOpacity: 0.04, wireOpacity: 0.3 };
+  }
+  return { fill: "#60a5fa", wire: "#bfdbfe", fillOpacity: 0.08, wireOpacity: 0.56 };
+}
+
+function expandOverlayBounds(
+  overlay: BuilderObjectOverlay,
+  selected: boolean,
+): BuilderObjectOverlay {
+  if (!selected) {
+    return overlay;
+  }
+  const extent = [
+    overlay.boundsMax[0] - overlay.boundsMin[0],
+    overlay.boundsMax[1] - overlay.boundsMin[1],
+    overlay.boundsMax[2] - overlay.boundsMin[2],
+  ] as const;
+  const pad = Math.max(Math.max(...extent) * 0.05, 1e-12);
+  return {
+    ...overlay,
+    boundsMin: [
+      overlay.boundsMin[0] - pad,
+      overlay.boundsMin[1] - pad,
+      overlay.boundsMin[2] - pad,
+    ],
+    boundsMax: [
+      overlay.boundsMax[0] + pad,
+      overlay.boundsMax[1] + pad,
+      overlay.boundsMax[2] + pad,
+    ],
+  };
+}
+
+function mapOverlayToFdmSceneBox(
+  overlay: BuilderObjectOverlay,
+  grid: [number, number, number],
+  worldExtent: [number, number, number],
+  universeCenter?: [number, number, number] | null,
+): { sceneMin: [number, number, number]; sceneMax: [number, number, number] } | null {
+  const [nx, ny, nz] = grid;
+  const domainCenter = universeCenter ?? [0, 0, 0];
+  const domainMin = [
+    domainCenter[0] - worldExtent[0] * 0.5,
+    domainCenter[1] - worldExtent[1] * 0.5,
+    domainCenter[2] - worldExtent[2] * 0.5,
+  ] as const;
+  const cell = [
+    worldExtent[0] / Math.max(nx, 1),
+    worldExtent[1] / Math.max(ny, 1),
+    worldExtent[2] / Math.max(nz, 1),
+  ] as const;
+  const toSceneX = (value: number) => (value - domainMin[0]) / cell[0] - 0.5;
+  const toSceneY = (value: number) => (value - domainMin[2]) / cell[2] - 0.5;
+  const toSceneZ = (value: number) => (value - domainMin[1]) / cell[1] - 0.5;
+  const sceneMin: [number, number, number] = [
+    toSceneX(overlay.boundsMin[0]),
+    toSceneY(overlay.boundsMin[2]),
+    toSceneZ(overlay.boundsMin[1]),
+  ];
+  const sceneMax: [number, number, number] = [
+    toSceneX(overlay.boundsMax[0]),
+    toSceneY(overlay.boundsMax[2]),
+    toSceneZ(overlay.boundsMax[1]),
+  ];
+  if (
+    [...sceneMin, ...sceneMax].some((value) => !Number.isFinite(value)) ||
+    sceneMax[0] <= sceneMin[0] ||
+    sceneMax[1] <= sceneMin[1] ||
+    sceneMax[2] <= sceneMin[2]
+  ) {
+    return null;
+  }
+  return { sceneMin, sceneMax };
+}
+
+function FdmObjectOverlayMeshes({
+  overlays,
+  selectedObjectId,
+  objectViewMode,
+  grid,
+  worldExtent,
+  universeCenter,
+  onRequestObjectSelect,
+  onGeometryTranslate,
+}: {
+  overlays: BuilderObjectOverlay[];
+  selectedObjectId?: string | null;
+  objectViewMode: ObjectViewMode;
+  grid: [number, number, number];
+  worldExtent: [number, number, number];
+  universeCenter?: [number, number, number] | null;
+  onRequestObjectSelect?: (id: string) => void;
+  onGeometryTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
+}) {
+  const hasSelected = Boolean(selectedObjectId);
+  const groupRef = useRef<THREE.Group>(null);
+  
+  const cellX = worldExtent[0] / Math.max(grid[0], 1);
+  const cellY = worldExtent[1] / Math.max(grid[1], 1);
+  const cellZ = worldExtent[2] / Math.max(grid[2], 1);
+
+  return (
+    <group>
+      {overlays.map((overlay) => {
+        const selected = selectedObjectId === overlay.id;
+        const dimmed = hasSelected && !selected;
+        if (objectViewMode === "isolate" && hasSelected && !selected) {
+          return null;
+        }
+        const displayOverlay = expandOverlayBounds(overlay, selected);
+        const mapped = mapOverlayToFdmSceneBox(displayOverlay, grid, worldExtent, universeCenter);
+        if (!mapped) {
+          return null;
+        }
+        const { sceneMin, sceneMax } = mapped;
+        const size = [
+          Math.max(sceneMax[0] - sceneMin[0], 0),
+          Math.max(sceneMax[1] - sceneMin[1], 0),
+          Math.max(sceneMax[2] - sceneMin[2], 0),
+        ] as const;
+        if (size.some((value) => !Number.isFinite(value) || value <= 0)) {
+          return null;
+        }
+        const center = [
+          0.5 * (sceneMin[0] + sceneMax[0]),
+          0.5 * (sceneMin[1] + sceneMax[1]),
+          0.5 * (sceneMin[2] + sceneMax[2]),
+        ] as const;
+        const colors = objectOverlayColors(selected, dimmed);
+        const meshes = (
+          <group>
+            <mesh
+              position={center}
+              renderOrder={4}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRequestObjectSelect?.(overlay.id);
+              }}
+            >
+              <boxGeometry args={size} />
+              <meshStandardMaterial
+                color={colors.fill}
+                emissive={colors.fill}
+                emissiveIntensity={selected ? 0.24 : 0.08}
+                transparent
+                opacity={colors.fillOpacity}
+                depthWrite={false}
+              />
+            </mesh>
+            <mesh position={center} renderOrder={5}>
+              <boxGeometry args={size} />
+              <meshBasicMaterial
+                color={colors.wire}
+                wireframe
+                transparent
+                opacity={colors.wireOpacity}
+                depthWrite={false}
+              />
+            </mesh>
+          </group>
+        );
+
+        if (selected && onGeometryTranslate) {
+          return (
+            <PivotControls
+              key={overlay.id}
+              depthTest={false}
+              lineWidth={2}
+              axisColors={["#f87171", "#4ade80", "#60a5fa"]}
+              scale={100}
+              fixed={true}
+              onDragEnd={() => {
+                if (groupRef.current) {
+                  const p = groupRef.current.position;
+                  const physicalDx = p.x * cellX;
+                  const physicalDz = p.y * cellZ; 
+                  const physicalDy = p.z * cellY; 
+                  onGeometryTranslate(overlay.id, physicalDx, physicalDy, physicalDz);
+                  groupRef.current.position.set(0, 0, 0);
+                }
+              }}
+            >
+              <group ref={groupRef}>{meshes}</group>
+            </PivotControls>
+          );
+        }
+
+        return <group key={overlay.id}>{meshes}</group>;
+      })}
+    </group>
+  );
+}
+
+function FdmAntennaOverlayMeshes({
+  overlays,
+  selectedAntennaId,
+  grid,
+  worldExtent,
+  universeCenter,
+  onAntennaTranslate,
+}: {
+  overlays: AntennaOverlay[];
+  selectedAntennaId?: string | null;
+  grid: [number, number, number];
+  worldExtent: [number, number, number];
+  universeCenter?: [number, number, number] | null;
+  onAntennaTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const cellX = worldExtent[0] / Math.max(grid[0], 1);
+  const cellY = worldExtent[1] / Math.max(grid[1], 1);
+  const cellZ = worldExtent[2] / Math.max(grid[2], 1);
+
+  return (
+    <group>
+      {overlays.map((overlay) => {
+        const selected = selectedAntennaId === overlay.id;
+        const conductors = overlay.conductors.map((conductor) => {
+          const mapped = mapOverlayToFdmSceneBox(conductor as any, grid, worldExtent, universeCenter);
+          if (!mapped) return null;
+          const { sceneMin, sceneMax } = mapped;
+          const size = [
+            Math.max(sceneMax[0] - sceneMin[0], 0),
+            Math.max(sceneMax[1] - sceneMin[1], 0),
+            Math.max(sceneMax[2] - sceneMin[2], 0),
+          ] as const;
+          if (size.some((v) => !Number.isFinite(v) || v <= 0)) return null;
+          const center = [
+            0.5 * (sceneMin[0] + sceneMax[0]),
+            0.5 * (sceneMin[1] + sceneMax[1]),
+            0.5 * (sceneMin[2] + sceneMax[2]),
+          ] as const;
+          const colors = antennaOverlayColors(conductor.role, selected);
+          return (
+            <group key={conductor.id}>
+              <mesh position={center} renderOrder={4}>
+                <boxGeometry args={size} />
+                <meshStandardMaterial
+                  color={colors.fill}
+                  emissive={colors.fill}
+                  emissiveIntensity={selected ? 0.35 : 0.18}
+                  transparent
+                  opacity={selected ? 0.28 : 0.12}
+                  depthWrite={false}
+                />
+              </mesh>
+              <mesh position={center} renderOrder={5}>
+                <boxGeometry args={size} />
+                <meshBasicMaterial
+                  color={colors.wire}
+                  wireframe
+                  transparent
+                  opacity={selected ? 0.95 : 0.65}
+                  depthWrite={false}
+                />
+              </mesh>
+            </group>
+          );
+        });
+
+        if (selected && onAntennaTranslate) {
+          return (
+            <PivotControls
+              key={overlay.id}
+              depthTest={false}
+              lineWidth={2}
+              axisColors={["#f87171", "#4ade80", "#60a5fa"]}
+              scale={100}
+              fixed={true}
+              onDragEnd={() => {
+                if (groupRef.current) {
+                  const p = groupRef.current.position;
+                  const physicalDx = p.x * cellX;
+                  const physicalDz = p.y * cellZ; 
+                  const physicalDy = p.z * cellY; 
+                  onAntennaTranslate(overlay.id, physicalDx, physicalDy, physicalDz);
+                  groupRef.current.position.set(0, 0, 0);
+                }
+              }}
+            >
+              <group ref={groupRef}>{conductors}</group>
+            </PivotControls>
+          );
+        }
+        return <group key={overlay.id}>{conductors}</group>;
+      })}
+    </group>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════════
@@ -149,6 +471,16 @@ function MagnetizationView3DInner({
   geometryMode = false,
   activeMask = null,
   worldExtent = null,
+  objectOverlays = [],
+  selectedObjectId = null,
+  antennaOverlays = [],
+  selectedAntennaId = null,
+  onAntennaTranslate,
+  universeCenter = null,
+  focusObjectRequest = null,
+  objectViewMode = "context",
+  onRequestObjectSelect,
+  onGeometryTranslate,
 }: Props) {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [expanded, setExpanded] = useState(false);
@@ -208,6 +540,52 @@ function MagnetizationView3DInner({
     [snapCamera],
   );
 
+  const focusObject = useCallback((objectId: string) => {
+    if (!worldExtent) {
+      return;
+    }
+    const overlay = objectOverlays.find((candidate) => candidate.id === objectId);
+    const bridge = viewCubeSceneRef.current;
+    if (!overlay || !bridge?.camera || !bridge?.controls) {
+      return;
+    }
+    const mapped = mapOverlayToFdmSceneBox(overlay, grid, worldExtent, universeCenter);
+    if (!mapped) {
+      return;
+    }
+    const { camera, controls } = bridge;
+    const target = new THREE.Vector3(
+      0.5 * (mapped.sceneMin[0] + mapped.sceneMax[0]),
+      0.5 * (mapped.sceneMin[1] + mapped.sceneMax[1]),
+      0.5 * (mapped.sceneMin[2] + mapped.sceneMax[2]),
+    );
+    const size = new THREE.Vector3(
+      mapped.sceneMax[0] - mapped.sceneMin[0],
+      mapped.sceneMax[1] - mapped.sceneMin[1],
+      mapped.sceneMax[2] - mapped.sceneMin[2],
+    );
+    const radius = Math.max(size.length() * 0.5, 1.5);
+    const perspectiveCamera = camera as THREE.PerspectiveCamera;
+    const fov = THREE.MathUtils.degToRad(perspectiveCamera.fov || 50);
+    const distance = Math.max(radius / Math.tan(fov * 0.5), radius * 2.2);
+    const direction = camera.position.clone().sub(controls.target).normalize();
+    if (direction.lengthSq() < 1e-9) {
+      direction.set(...DEFAULT_CAMERA_DIRECTION).normalize();
+    }
+    camera.position.copy(target).add(direction.multiplyScalar(distance));
+    controls.target.copy(target);
+    camera.lookAt(target);
+    camera.updateProjectionMatrix();
+    controls.update();
+  }, [grid, objectOverlays, universeCenter, worldExtent]);
+
+  useEffect(() => {
+    if (!focusObjectRequest) {
+      return;
+    }
+    focusObject(focusObjectRequest.objectId);
+  }, [focusObject, focusObjectRequest]);
+
   const cameraPresets = useMemo(() => [
     { label: "Top",   fn: () => snapCamera([0, 1, 0], [0, 0, -1]) },
     { label: "Front", fn: () => snapCamera([0, 0, 1]) },
@@ -237,6 +615,10 @@ function MagnetizationView3DInner({
         axesWorldExtent[2] > 0 ? ny / axesWorldExtent[2] : 1,
       ]
     : [1, 1, 1];
+  const sceneOpacityMultiplier =
+    objectViewMode === "isolate" && selectedObjectId
+      ? 0.22
+      : 1;
 
   return (
     <div className="relative flex flex-col h-full">
@@ -436,8 +818,33 @@ function MagnetizationView3DInner({
           geometryMode={geometryMode}
           activeMask={activeMask}
           settings={deferredSettings}
+          sceneOpacityMultiplier={sceneOpacityMultiplier}
           onVisibleCount={setVisibleCount}
         />
+
+        {worldExtent && objectOverlays.length > 0 ? (
+          <FdmObjectOverlayMeshes
+            overlays={objectOverlays}
+            selectedObjectId={selectedObjectId}
+            objectViewMode={objectViewMode}
+            grid={grid}
+            worldExtent={worldExtent}
+            universeCenter={universeCenter}
+            onRequestObjectSelect={onRequestObjectSelect}
+            onGeometryTranslate={onGeometryTranslate}
+          />
+        ) : null}
+
+        {worldExtent && antennaOverlays.length > 0 && objectViewMode !== "isolate" ? (
+          <FdmAntennaOverlayMeshes
+            overlays={antennaOverlays}
+            selectedAntennaId={selectedAntennaId}
+            grid={grid}
+            worldExtent={worldExtent}
+            universeCenter={universeCenter}
+            onAntennaTranslate={onAntennaTranslate}
+          />
+        ) : null}
 
         {axesWorldExtent && axesWorldExtent[0] > 0 && axesWorldExtent[1] > 0 && axesWorldExtent[2] > 0 && (
           <SceneAxes3D

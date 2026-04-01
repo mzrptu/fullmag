@@ -1444,6 +1444,7 @@ mod tests {
                 exchange: plan.enable_exchange,
                 demag: plan.enable_demag,
                 external_field: plan.external_field,
+                per_node_field: None,
                 magnetoelastic: None,
             },
             plan.active_mask.clone(),

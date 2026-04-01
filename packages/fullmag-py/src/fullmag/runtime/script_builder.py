@@ -42,12 +42,18 @@ from fullmag.model.outputs import (
 )
 from fullmag.model.problem import Problem
 from fullmag.model.study import Eigenmodes, Relaxation, TimeEvolution
+from fullmag.meshing.surface_assets import load_surface_asset
 from fullmag.runtime.loader import LoadedProblem, LoadedStage
 
 
+def _builder_base_problem(loaded: LoadedProblem) -> Problem:
+    return loaded.problem
+
+
 def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
-    base_problem = loaded.stages[0].problem if loaded.stages else loaded.problem
+    base_problem = _builder_base_problem(loaded)
     relax_stage = _first_relax_stage(loaded)
+    source_root = loaded.source_path.parent
 
     return {
         "revision": 1,
@@ -67,7 +73,10 @@ def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
         "universe": _export_universe(base_problem),
         "stages": [_export_stage_draft(stage) for stage in _builder_stage_sequence(loaded)],
         "initial_state": _export_initial_state(base_problem),
-        "geometries": [_export_geometry_entry(magnet, base_problem) for magnet in base_problem.magnets],
+        "geometries": [
+            _export_geometry_entry(magnet, base_problem, source_root=source_root)
+            for magnet in base_problem.magnets
+        ],
         "current_modules": [
             _export_current_module_entry(module) for module in base_problem.current_modules
         ],
@@ -119,7 +128,7 @@ def render_loaded_problem_as_script(
         )
     )
 
-    base_problem = stages[0].problem if stages else loaded.problem
+    base_problem = _builder_base_problem(loaded)
     surface = _script_api_surface(base_problem)
     magnet_vars = _magnet_variable_names(base_problem, overrides=overrides)
     lines: list[str] = []
@@ -395,6 +404,8 @@ def _render_geometry_and_materials(
         lines.append(
             f"{var_name} = {_surface_call(surface, 'geometry')}({_render_geometry_expr(magnet.geometry, magnet_name=magnet.name, source_root=source_root)}, name={_py_repr(magnet.name)})"
         )
+        if magnet.region is not None and magnet.region.name != magnet.name:
+            lines.append(f"{var_name}.region_name = {_py_repr(magnet.region.name)}")
         lines.append(f"{var_name}.Ms = {_py_number(magnet.material.Ms)}")
         lines.append(f"{var_name}.Aex = {_py_number(magnet.material.A)}")
         lines.append(f"{var_name}.alpha = {_py_number(magnet.material.alpha)}")
@@ -450,32 +461,17 @@ def _render_geometries_from_override(
 
         kind = str(g.get("geometry_kind", "Box"))
         params = _normalize_mapping(g.get("geometry_params"))
-
-        args = []
-        if kind == "Box":
-            size = params.get("size")
-            if isinstance(size, list) and len(size) == 3:
-                args = [f"{_py_number(float(size[0]))}", f"{_py_number(float(size[1]))}", f"{_py_number(float(size[2]))}"]
-            elif isinstance(size, (int, float)):
-                args = [f"{_py_number(float(size))}"] * 3
-            else:
-                args = ["1e-9", "1e-9", "1e-9"]
-            expr = f"fm.Box({', '.join(args)}, name={_py_repr(name)})"
-        elif kind == "Cylinder":
-            expr = f"fm.Cylinder(radius={_py_number(float(str(params.get('radius', 1e-9))))}, height={_py_number(float(str(params.get('height', 1e-9))))}, name={_py_repr(name)})"
-        elif kind == "Ellipsoid":
-            expr = f"fm.Ellipsoid({_py_number(float(str(params.get('rx', 1e-9))))}, {_py_number(float(str(params.get('ry', 1e-9))))}, {_py_number(float(str(params.get('rz', 1e-9))))}, name={_py_repr(name)})"
-        elif kind == "ImportedGeometry":
-            source = str(params.get("source", ""))
-            expr = f"fm.ImportedGeometry(source={_py_repr(_relativize_path(source, source_root))}, name={_py_repr(name)})"
-        else:
-            expr = f"fm.Box(1e-9, 1e-9, 1e-9, name={_py_repr(name)})"
-
-        t = params.get("translation")
-        if isinstance(t, list) and len(t) == 3 and any(float(v) != 0 for v in t):
-            expr = f"{expr}.translate(({_py_number(float(t[0]))}, {_py_number(float(t[1]))}, {_py_number(float(t[2]))}))"
+        expr = _render_geometry_expr_from_override(
+            kind,
+            params,
+            name=name,
+            source_root=source_root,
+        )
 
         lines.append(f"{var_name} = {_surface_call(surface, 'geometry')}({expr}, name={_py_repr(name)})")
+        region_name = g.get("region_name")
+        if isinstance(region_name, str) and region_name and region_name != name:
+            lines.append(f"{var_name}.region_name = {_py_repr(region_name)}")
 
         mat = _normalize_mapping(g.get("material"))
         lines.append(f"{var_name}.Ms = {_py_number(float(str(mat.get('Ms', 800000))))}")
@@ -501,19 +497,18 @@ def _render_geometries_from_override(
                     lines.append(f"{var_name}.m = fm.uniform({_py_number(float(val[0]))}, {_py_number(float(val[1]))}, {_py_number(float(val[2]))})")
             elif mag_kind == "random":
                 seed = mag.get("seed")
-                if seed is not None:
-                    lines.append(f"{var_name}.m = fm.random(seed={int(str(seed))})")
-                else:
-                    lines.append(f"{var_name}.m = fm.random()")
-            elif mag_kind == "vortex":
-                lines.append(f"{var_name}.m = fm.vortex(core_radius=10e-9)")
+                lines.append(f"{var_name}.m = fm.random(seed={int(str(seed)) if seed is not None else 1})")
             elif mag_kind == "file":
                 src = str(mag.get("source_path", ""))
                 if src:
                     kwargs = []
+                    if mag.get("source_format") and mag.get("source_format") != "json":
+                        kwargs.append(f"format={_py_repr(mag.get('source_format'))}")
                     if mag.get("dataset"): kwargs.append(f"dataset={_py_repr(mag.get('dataset'))}")
-                    if mag.get("sample_index"): kwargs.append(f"sample={int(str(mag.get('sample_index')))}")
-                    lines.append(f"{var_name}.m = fm.sampled({_py_repr(_relativize_path(src, source_root))}{', ' + ', '.join(kwargs) if kwargs else ''})")
+                    if mag.get("sample_index") not in {None, -1, ""}:
+                        kwargs.append(f"sample={int(str(mag.get('sample_index')))}")
+                    suffix = f", {', '.join(kwargs)}" if kwargs else ""
+                    lines.append(f"{var_name}.m.loadfile({_py_repr(_relativize_path(src, source_root))}{suffix})")
         
         lines.append("")
 
@@ -644,6 +639,14 @@ def _render_mesh_kwargs(mesh_config: dict[str, object], *, source_root: Path) ->
     ):
         if mesh_config.get(key) is not None:
             kwargs.append(f"{key}={_py_literal(mesh_config[key])}")
+
+    growth_rate_value = _number_or_none(mesh_config.get("growth_rate"))
+    if growth_rate_value is not None:
+        kwargs.append(f"growth_rate={_py_number(growth_rate_value)}")
+
+    narrow_regions_value = mesh_config.get("narrow_regions")
+    if isinstance(narrow_regions_value, (int, float)):
+        kwargs.append(f"narrow_regions={int(narrow_regions_value)}")
 
     if mesh_config.get("optimize") is not None:
         kwargs.append(f"optimize={_py_repr(str(mesh_config['optimize']))}")
@@ -831,30 +834,49 @@ def _render_mesh_workflow(
     if not isinstance(fem, FEM) and not mesh_workflow:
         return []
 
-    mesh_override = _normalize_mapping(overrides.get("mesh"))
-    target_var = magnet_vars[problem.magnets[0].name]
-    fallback_mesh = _study_global_mesh_config(problem, overrides={})
-    merged_mesh = dict(fallback_mesh)
-    for key, value in mesh_override.items():
-        if key == "adaptive_mesh":
-            continue
-        merged_mesh[key] = value
+    geometry_mesh_configs = _study_geometry_mesh_configs(problem, overrides)
+    custom_geometry_mesh_configs = [
+        (magnet_name, mesh_config)
+        for magnet_name, mesh_config in geometry_mesh_configs
+        if _mesh_mode(mesh_config.get("mode")) == "custom"
+    ]
+    lines: list[str] = []
 
-    kwargs = _render_mesh_kwargs(merged_mesh, source_root=source_root)
-    lines = ["# Mesh"]
-    if kwargs:
-        lines.append(f"{target_var}.mesh({', '.join(kwargs)})")
+    if custom_geometry_mesh_configs:
+        geometry_build_requested = False
+        for magnet_name, mesh_config in custom_geometry_mesh_configs:
+            target_var = magnet_vars.get(magnet_name)
+            if target_var is None:
+                continue
+            kwargs = _render_mesh_kwargs(mesh_config, source_root=source_root)
+            if kwargs:
+                lines.append(f"{target_var}.mesh({', '.join(kwargs)})")
+            lines.extend(_render_mesh_size_fields(target_var, mesh_config))
+            lines.extend(_render_mesh_operations(target_var, mesh_config))
+            build_requested = bool(mesh_config.get("build_requested", False))
+            geometry_build_requested = geometry_build_requested or build_requested
+            if build_requested:
+                lines.append(f"{target_var}.mesh.build()")
+
+        global_mesh = _study_global_mesh_config(problem, overrides)
+        if bool(global_mesh.get("build_requested", True)) and not geometry_build_requested:
+            lines.append(f"{_surface_call(surface, 'build_mesh')}()")
     else:
-        lines.append(
-            f"{target_var}.mesh(hmax={_py_number(fem.hmax if isinstance(fem, FEM) else 5e-9)}, order={fem.order if isinstance(fem, FEM) else 1})"
-        )
+        global_mesh = _study_global_mesh_config(problem, overrides)
+        kwargs = _render_mesh_kwargs(global_mesh, source_root=source_root)
+        if kwargs:
+            lines.append(f"{_surface_call(surface, 'mesh')}({', '.join(kwargs)})")
+        elif isinstance(fem, FEM):
+            lines.append(
+                f"{_surface_call(surface, 'mesh')}(hmax={_py_number(fem.hmax)}, order={fem.order})"
+            )
 
-    lines.extend(_render_mesh_size_fields(target_var, merged_mesh))
+        if bool(global_mesh.get("build_requested", True)):
+            lines.append(f"{_surface_call(surface, 'build_mesh')}()")
 
-    build_requested = bool(merged_mesh.get("build_requested", True))
-    if build_requested:
-        lines.append(f"{target_var}.mesh.build()")
-    return lines
+    if not lines:
+        return []
+    return ["# Mesh", *lines]
 
 
 def _render_solver(
@@ -1183,6 +1205,108 @@ def _render_excitation_analysis_override(
     return f"{_surface_call(surface, 'spin_wave_excitation')}({', '.join(kwargs)})"
 
 
+def _render_geometry_expr_from_override(
+    kind: str,
+    params: dict[str, object],
+    *,
+    name: str,
+    source_root: Path,
+) -> str:
+    if kind == "Box":
+        size = params.get("size")
+        if isinstance(size, list) and len(size) == 3:
+            args = [
+                _py_number(float(size[0])),
+                _py_number(float(size[1])),
+                _py_number(float(size[2])),
+            ]
+        elif isinstance(size, (int, float)):
+            args = [_py_number(float(size))] * 3
+        else:
+            args = ["1e-9", "1e-9", "1e-9"]
+        expr = f"fm.Box({', '.join(args)}, name={_py_repr(name)})"
+    elif kind == "Cylinder":
+        expr = (
+            f"fm.Cylinder(radius={_py_number(float(str(params.get('radius', 1e-9))))}, "
+            f"height={_py_number(float(str(params.get('height', 1e-9))))}, "
+            f"name={_py_repr(name)})"
+        )
+    elif kind == "Ellipsoid":
+        expr = (
+            f"fm.Ellipsoid({_py_number(float(str(params.get('rx', 1e-9))))}, "
+            f"{_py_number(float(str(params.get('ry', 1e-9))))}, "
+            f"{_py_number(float(str(params.get('rz', 1e-9))))}, "
+            f"name={_py_repr(name)})"
+        )
+    elif kind == "Ellipse":
+        expr = (
+            f"fm.Ellipse({_py_number(float(str(params.get('rx', 1e-9))))}, "
+            f"{_py_number(float(str(params.get('ry', 1e-9))))}, "
+            f"{_py_number(float(str(params.get('height', 1e-9))))}, "
+            f"name={_py_repr(name)})"
+        )
+    elif kind == "ImportedGeometry":
+        source = str(params.get("source", ""))
+        kwargs = [
+            f"source={_py_repr(_relativize_path(source, source_root))}",
+            f"name={_py_repr(name)}",
+        ]
+        scale = params.get("scale")
+        if isinstance(scale, list) and len(scale) == 3:
+            kwargs.append(f"scale={_py_tuple3(tuple(float(value) for value in scale))}")
+        elif isinstance(scale, (int, float)) and float(scale) != 1.0:
+            kwargs.append(f"scale={_py_number(float(scale))}")
+        volume = params.get("volume")
+        if isinstance(volume, str) and volume and volume != "full":
+            kwargs.append(f"volume={_py_repr(volume)}")
+        expr = f"fm.ImportedGeometry({', '.join(kwargs)})"
+    elif kind == "Translate":
+        base = _normalize_mapping(params.get("base"))
+        base_kind = str(base.get("geometry_kind", "Box"))
+        base_params = _normalize_mapping(base.get("geometry_params"))
+        expr = _render_geometry_expr_from_override(
+            base_kind,
+            base_params,
+            name=name,
+            source_root=source_root,
+        )
+    elif kind in {"Difference", "Union", "Intersection"}:
+        if kind == "Difference":
+            left_raw = _normalize_mapping(params.get("base"))
+            right_raw = _normalize_mapping(params.get("tool"))
+            operator = "-"
+        else:
+            left_raw = _normalize_mapping(params.get("a"))
+            right_raw = _normalize_mapping(params.get("b"))
+            operator = "+" if kind == "Union" else "&"
+        left_expr = _render_geometry_expr_from_override(
+            str(left_raw.get("geometry_kind", "Box")),
+            _normalize_mapping(left_raw.get("geometry_params")),
+            name=f"{name}_{'lhs' if kind != 'Difference' else 'base'}",
+            source_root=source_root,
+        )
+        right_expr = _render_geometry_expr_from_override(
+            str(right_raw.get("geometry_kind", "Box")),
+            _normalize_mapping(right_raw.get("geometry_params")),
+            name=f"{name}_{'rhs' if kind != 'Difference' else 'tool'}",
+            source_root=source_root,
+        )
+        expr = f"({left_expr} {operator} {right_expr})"
+    else:
+        expr = f"fm.Box(1e-9, 1e-9, 1e-9, name={_py_repr(name)})"
+
+    translation = params.get("translation")
+    if not isinstance(translation, list):
+        translation = params.get("translate")
+    if isinstance(translation, list) and len(translation) == 3 and any(float(value) != 0 for value in translation):
+        expr = (
+            f"{expr}.translate(({_py_number(float(translation[0]))}, "
+            f"{_py_number(float(translation[1]))}, "
+            f"{_py_number(float(translation[2]))}))"
+        )
+    return expr
+
+
 def _render_geometry_expr(geometry: object, *, magnet_name: str, source_root: Path) -> str:
     if isinstance(geometry, ImportedGeometry):
         kwargs = [f"source={_py_repr(_relativize_path(geometry.source, source_root))}"]
@@ -1338,6 +1462,8 @@ def _export_global_mesh_state(problem: Problem) -> dict[str, object]:
         "hmin": _text_number(_number_or_none(mesh_options.get("hmin"))),
         "size_factor": float(mesh_options.get("size_factor", 1.0)),
         "size_from_curvature": int(mesh_options.get("size_from_curvature", 0)),
+        "growth_rate": _text_number(_number_or_none(mesh_options.get("growth_rate"))),
+        "narrow_regions": int(mesh_options.get("narrow_regions", 0)),
         "smoothing_steps": int(mesh_options.get("smoothing_steps", 1)),
         "optimize": str(mesh_options.get("optimize", "") or ""),
         "optimize_iterations": int(mesh_options.get("optimize_iterations", 1)),
@@ -1368,28 +1494,62 @@ def _export_geometry_mesh_entry(magnet_name: str, problem: Problem) -> dict[str,
         return {
             "mode": resolved_mode,
             "hmax": _text_mesh_size(mesh_entry.get("hmax")),
+            "hmin": _text_number(_number_or_none(mesh_entry.get("hmin"))),
             "order": int(mesh_entry["order"]) if isinstance(mesh_entry.get("order"), (int, float)) else None,
             "source": str(mesh_entry["source"]) if isinstance(mesh_entry.get("source"), str) else None,
+            "algorithm_2d": int(mesh_entry["algorithm_2d"]) if isinstance(mesh_entry.get("algorithm_2d"), (int, float)) else None,
+            "algorithm_3d": int(mesh_entry["algorithm_3d"]) if isinstance(mesh_entry.get("algorithm_3d"), (int, float)) else None,
+            "size_factor": float(mesh_entry["size_factor"]) if isinstance(mesh_entry.get("size_factor"), (int, float)) else None,
+            "size_from_curvature": int(mesh_entry["size_from_curvature"]) if isinstance(mesh_entry.get("size_from_curvature"), (int, float)) else None,
+            "growth_rate": _text_number(_number_or_none(mesh_entry.get("growth_rate"))),
+            "narrow_regions": int(mesh_entry["narrow_regions"]) if isinstance(mesh_entry.get("narrow_regions"), (int, float)) else None,
+            "smoothing_steps": int(mesh_entry["smoothing_steps"]) if isinstance(mesh_entry.get("smoothing_steps"), (int, float)) else None,
+            "optimize": str(mesh_entry["optimize"]) if isinstance(mesh_entry.get("optimize"), str) else None,
+            "optimize_iterations": int(mesh_entry["optimize_iterations"]) if isinstance(mesh_entry.get("optimize_iterations"), (int, float)) else None,
+            "compute_quality": bool(mesh_entry["compute_quality"]) if isinstance(mesh_entry.get("compute_quality"), bool) else None,
+            "per_element_quality": bool(mesh_entry["per_element_quality"]) if isinstance(mesh_entry.get("per_element_quality"), bool) else None,
+            "size_fields": list(mesh_entry.get("size_fields")) if isinstance(mesh_entry.get("size_fields"), list) else [],
+            "operations": list(mesh_entry.get("operations")) if isinstance(mesh_entry.get("operations"), list) else [],
             "build_requested": bool(mesh_entry.get("build_requested", False)),
         }
     if isinstance(fem, FEM):
         return {
             "mode": "inherit",
             "hmax": "",
+            "hmin": "",
             "order": None,
             "source": None,
+            "algorithm_2d": None,
+            "algorithm_3d": None,
+            "size_factor": None,
+            "size_from_curvature": None,
+            "growth_rate": "",
+            "narrow_regions": None,
+            "smoothing_steps": None,
+            "optimize": None,
+            "optimize_iterations": None,
+            "compute_quality": None,
+            "per_element_quality": None,
+            "size_fields": [],
+            "operations": [],
             "build_requested": False,
         }
     return None
 
 
-def _export_geometry_entry(magnet: object, problem: Problem) -> dict[str, object]:
+def _export_geometry_entry(
+    magnet: object,
+    problem: Problem,
+    *,
+    source_root: Path,
+) -> dict[str, object]:
     """Serialize one magnet into a geometry entry for the builder draft."""
     geom = magnet.geometry
     mat = magnet.material
 
     # --- Geometry kind + params ---
     geometry_kind, geometry_params = _export_geometry_kind_params(geom)
+    bounds_min, bounds_max = _geometry_bounds(geom, source_root=source_root)
 
     # --- Material ---
     material: dict[str, object] = {
@@ -1425,8 +1585,11 @@ def _export_geometry_entry(magnet: object, problem: Problem) -> dict[str, object
 
     return {
         "name": magnet.name,
+        "region_name": magnet.region_name,
         "geometry_kind": geometry_kind,
         "geometry_params": geometry_params,
+        "bounds_min": list(bounds_min) if bounds_min is not None else None,
+        "bounds_max": list(bounds_max) if bounds_max is not None else None,
         "material": material,
         "magnetization": magnetization,
         "mesh": per_mesh,
@@ -1487,31 +1650,168 @@ def _export_excitation_analysis(problem: Problem) -> dict[str, object] | None:
 
 def _export_geometry_kind_params(geom: object) -> tuple[str, dict[str, object]]:
     """Extract kind string and parameter dict from a geometry object."""
+    descriptor = _export_geometry_descriptor(geom, flatten_translation=True)
+    return str(descriptor["geometry_kind"]), _normalize_mapping(descriptor["geometry_params"])
+
+
+def _export_geometry_descriptor(
+    geom: object,
+    *,
+    flatten_translation: bool,
+) -> dict[str, object]:
     if isinstance(geom, ImportedGeometry):
-        return "ImportedGeometry", {
-            "source": geom.source,
-            "scale": geom.scale,
-            "volume": geom.volume,
-            "name": geom.name,
+        return {
+            "geometry_kind": "ImportedGeometry",
+            "geometry_params": {
+                "source": geom.source,
+                "scale": geom.scale,
+                "volume": geom.volume,
+                "name": geom.name,
+            },
         }
     if isinstance(geom, Box):
-        return "Box", {"size": list(geom.size)}
+        return {"geometry_kind": "Box", "geometry_params": {"size": list(geom.size)}}
     if isinstance(geom, Cylinder):
-        return "Cylinder", {"radius": geom.radius, "height": geom.height}
+        return {
+            "geometry_kind": "Cylinder",
+            "geometry_params": {"radius": geom.radius, "height": geom.height},
+        }
     if isinstance(geom, Ellipsoid):
-        return "Ellipsoid", {"rx": geom.rx, "ry": geom.ry, "rz": geom.rz}
+        return {
+            "geometry_kind": "Ellipsoid",
+            "geometry_params": {"rx": geom.rx, "ry": geom.ry, "rz": geom.rz},
+        }
     if isinstance(geom, Ellipse):
-        return "Ellipse", {"rx": geom.rx, "ry": geom.ry, "height": geom.height}
+        return {
+            "geometry_kind": "Ellipse",
+            "geometry_params": {"rx": geom.rx, "ry": geom.ry, "height": geom.height},
+        }
     if isinstance(geom, Translate):
-        base_kind, base_params = _export_geometry_kind_params(geom.geometry)
-        return base_kind, {**base_params, "translate": list(geom.offset)}
+        if flatten_translation:
+            base = _export_geometry_descriptor(geom.geometry, flatten_translation=True)
+            return {
+                "geometry_kind": str(base["geometry_kind"]),
+                "geometry_params": {
+                    **_normalize_mapping(base["geometry_params"]),
+                    "translation": list(geom.offset),
+                },
+            }
+        return {
+            "geometry_kind": "Translate",
+            "geometry_params": {
+                "base": _export_geometry_descriptor(geom.geometry, flatten_translation=False),
+                "translation": list(geom.offset),
+            },
+        }
     if isinstance(geom, Difference):
-        return "Difference", {"base": str(type(geom.base).__name__), "tool": str(type(geom.tool).__name__)}
+        return {
+            "geometry_kind": "Difference",
+            "geometry_params": {
+                "base": _export_geometry_descriptor(geom.base, flatten_translation=False),
+                "tool": _export_geometry_descriptor(geom.tool, flatten_translation=False),
+            },
+        }
     if isinstance(geom, Union):
-        return "Union", {"a": str(type(geom.a).__name__), "b": str(type(geom.b).__name__)}
+        return {
+            "geometry_kind": "Union",
+            "geometry_params": {
+                "a": _export_geometry_descriptor(geom.a, flatten_translation=False),
+                "b": _export_geometry_descriptor(geom.b, flatten_translation=False),
+            },
+        }
     if isinstance(geom, Intersection):
-        return "Intersection", {"a": str(type(geom.a).__name__), "b": str(type(geom.b).__name__)}
-    return type(geom).__name__, {}
+        return {
+            "geometry_kind": "Intersection",
+            "geometry_params": {
+                "a": _export_geometry_descriptor(geom.a, flatten_translation=False),
+                "b": _export_geometry_descriptor(geom.b, flatten_translation=False),
+            },
+        }
+    return {"geometry_kind": type(geom).__name__, "geometry_params": {}}
+
+
+def _geometry_bounds(
+    geom: object,
+    *,
+    source_root: Path | None = None,
+) -> tuple[tuple[float, float, float] | None, tuple[float, float, float] | None]:
+    if isinstance(geom, ImportedGeometry):
+        try:
+            asset = load_surface_asset(geom.source, source_root=source_root)
+        except Exception:
+            return None, None
+        if asset.bounds_min is None or asset.bounds_max is None:
+            return None, None
+        if isinstance(geom.scale, (int, float)):
+            scale = (float(geom.scale), float(geom.scale), float(geom.scale))
+        else:
+            scale = tuple(float(component) for component in geom.scale)
+        bounds_min = tuple(asset.bounds_min[i] * scale[i] for i in range(3))
+        bounds_max = tuple(asset.bounds_max[i] * scale[i] for i in range(3))
+        return _normalize_bounds_pair(bounds_min, bounds_max)
+    if isinstance(geom, Box):
+        sx, sy, sz = geom.size
+        return (-0.5 * sx, -0.5 * sy, -0.5 * sz), (0.5 * sx, 0.5 * sy, 0.5 * sz)
+    if isinstance(geom, Cylinder):
+        r = geom.radius
+        half_h = 0.5 * geom.height
+        return (-r, -r, -half_h), (r, r, half_h)
+    if isinstance(geom, Ellipsoid):
+        return (-geom.rx, -geom.ry, -geom.rz), (geom.rx, geom.ry, geom.rz)
+    if isinstance(geom, Ellipse):
+        half_h = 0.5 * geom.height
+        return (-geom.rx, -geom.ry, -half_h), (geom.rx, geom.ry, half_h)
+    if isinstance(geom, Translate):
+        bounds_min, bounds_max = _geometry_bounds(geom.geometry, source_root=source_root)
+        if bounds_min is None or bounds_max is None:
+            return None, None
+        return (
+            tuple(bounds_min[i] + geom.offset[i] for i in range(3)),
+            tuple(bounds_max[i] + geom.offset[i] for i in range(3)),
+        )
+    if isinstance(geom, Union):
+        a_min, a_max = _geometry_bounds(geom.a, source_root=source_root)
+        b_min, b_max = _geometry_bounds(geom.b, source_root=source_root)
+        return _combine_bounds_union((a_min, a_max), (b_min, b_max))
+    if isinstance(geom, Intersection):
+        a_min, a_max = _geometry_bounds(geom.a, source_root=source_root)
+        b_min, b_max = _geometry_bounds(geom.b, source_root=source_root)
+        if a_min is None or a_max is None or b_min is None or b_max is None:
+            return None, None
+        return _normalize_bounds_pair(
+            tuple(max(a_min[i], b_min[i]) for i in range(3)),
+            tuple(min(a_max[i], b_max[i]) for i in range(3)),
+        )
+    if isinstance(geom, Difference):
+        return _geometry_bounds(geom.base, source_root=source_root)
+    return None, None
+
+
+def _combine_bounds_union(
+    left: tuple[tuple[float, float, float] | None, tuple[float, float, float] | None],
+    right: tuple[tuple[float, float, float] | None, tuple[float, float, float] | None],
+) -> tuple[tuple[float, float, float] | None, tuple[float, float, float] | None]:
+    left_min, left_max = left
+    right_min, right_max = right
+    if left_min is None or left_max is None:
+        return right
+    if right_min is None or right_max is None:
+        return left
+    return (
+        tuple(min(left_min[i], right_min[i]) for i in range(3)),
+        tuple(max(left_max[i], right_max[i]) for i in range(3)),
+    )
+
+
+def _normalize_bounds_pair(
+    bounds_min: tuple[float, float, float],
+    bounds_max: tuple[float, float, float],
+) -> tuple[tuple[float, float, float] | None, tuple[float, float, float] | None]:
+    normalized_min = tuple(min(bounds_min[i], bounds_max[i]) for i in range(3))
+    normalized_max = tuple(max(bounds_min[i], bounds_max[i]) for i in range(3))
+    if any(normalized_max[i] - normalized_min[i] <= 0 for i in range(3)):
+        return None, None
+    return normalized_min, normalized_max
 
 
 def _study_outputs(study: TimeEvolution | Relaxation | Eigenmodes) -> Sequence[object]:
@@ -1672,6 +1972,14 @@ def _override_int(overrides: dict[str, object], key: str, fallback: int | None) 
 def _number_or_none(value: object) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return float(stripped)
+        except ValueError:
+            return None
     return None
 
 

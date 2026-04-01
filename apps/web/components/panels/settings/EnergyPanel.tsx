@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
 import { fmtExpOrDash } from "../../runs/control-room/shared";
-import { MetricField, buildSparkSeries } from "./primitives";
+import { MetricField, buildSparkSeries, SidebarSection } from "./primitives";
 
 export default function EnergyPanel() {
   const ctx = useControlRoom();
@@ -38,33 +38,35 @@ export default function EnergyPanel() {
   ]);
 
   return (
-    <>
-      <div className="grid grid-cols-2 gap-3">
-        <MetricField
-          label="E_exchange"
-          value={fmtExpOrDash(ctx.effectiveEEx, ctx.hasSolverTelemetry)}
-          sparkData={sparkSeries.eEx}
-          sparkColor="#0ea5e9"
-        />
-        <MetricField
-          label="E_demag"
-          value={fmtExpOrDash(ctx.effectiveEDemag, ctx.hasSolverTelemetry)}
-          sparkData={sparkSeries.eDemag}
-          sparkColor="#f59e0b"
-        />
-        <MetricField
-          label="E_ext"
-          value={fmtExpOrDash(ctx.effectiveEExt, ctx.hasSolverTelemetry)}
-          sparkData={sparkSeries.eExt}
-          sparkColor="#10b981"
-        />
-        <MetricField
-          label="E_total"
-          value={fmtExpOrDash(ctx.effectiveETotal, ctx.hasSolverTelemetry)}
-          sparkData={sparkSeries.eTotal}
-          sparkColor="#8b5cf6"
-        />
-      </div>
-    </>
+    <div className="flex flex-col gap-0 border-t border-border/20">
+      <SidebarSection title="Energy Components" defaultOpen={true}>
+        <div className="grid grid-cols-2 gap-3">
+          <MetricField
+            label="E_exchange"
+            value={fmtExpOrDash(ctx.effectiveEEx, ctx.hasSolverTelemetry)}
+            sparkData={sparkSeries.eEx}
+            sparkColor="var(--chart-sky)"
+          />
+          <MetricField
+            label="E_demag"
+            value={fmtExpOrDash(ctx.effectiveEDemag, ctx.hasSolverTelemetry)}
+            sparkData={sparkSeries.eDemag}
+            sparkColor="var(--chart-amber)"
+          />
+          <MetricField
+            label="E_ext"
+            value={fmtExpOrDash(ctx.effectiveEExt, ctx.hasSolverTelemetry)}
+            sparkData={sparkSeries.eExt}
+            sparkColor="var(--chart-emerald)"
+          />
+          <MetricField
+            label="E_total"
+            value={fmtExpOrDash(ctx.effectiveETotal, ctx.hasSolverTelemetry)}
+            sparkData={sparkSeries.eTotal}
+            sparkColor="var(--chart-violet)"
+          />
+        </div>
+      </SidebarSection>
+    </div>
   );
 }

@@ -6,6 +6,7 @@ import type {
   DisplayKind,
   LatestFields,
   LiveState,
+  ModelBuilderGraphV2,
   MeshWorkspaceState,
   PreviewConfig,
   PreviewState,
@@ -14,6 +15,7 @@ import type {
   ScriptBuilderState,
   SessionState,
 } from "./types";
+import { createModelBuilderGraphV2 } from "./modelBuilderGraph";
 
 /* ── Field helpers ── */
 
@@ -318,6 +320,8 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
       hmin: String(raw.mesh?.hmin ?? ""),
       size_factor: Number(raw.mesh?.size_factor ?? 1),
       size_from_curvature: Number(raw.mesh?.size_from_curvature ?? 0),
+      growth_rate: String(raw.mesh?.growth_rate ?? ""),
+      narrow_regions: Number(raw.mesh?.narrow_regions ?? 0),
       smoothing_steps: Number(raw.mesh?.smoothing_steps ?? 1),
       optimize: String(raw.mesh?.optimize ?? ""),
       optimize_iterations: Number(raw.mesh?.optimize_iterations ?? 1),
@@ -375,8 +379,14 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
     geometries: Array.isArray(raw.geometries)
       ? raw.geometries.map((geo: any) => ({
           name: String(geo?.name ?? ""),
+          region_name:
+            typeof geo?.region_name === "string" && geo.region_name.trim().length > 0
+              ? geo.region_name
+              : null,
           geometry_kind: String(geo?.geometry_kind ?? ""),
           geometry_params: (geo?.geometry_params && typeof geo.geometry_params === "object") ? geo.geometry_params : {},
+          bounds_min: normalizeVec3(geo?.bounds_min),
+          bounds_max: normalizeVec3(geo?.bounds_max),
           material: {
             Ms: geo?.material?.Ms != null ? Number(geo.material.Ms) : null,
             Aex: geo?.material?.Aex != null ? Number(geo.material.Aex) : null,
@@ -395,8 +405,38 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
           mesh: geo?.mesh && typeof geo.mesh === "object" ? {
             mode: geo.mesh.mode === "custom" ? "custom" : "inherit",
             hmax: String(geo.mesh.hmax ?? ""),
+            hmin: String(geo.mesh.hmin ?? ""),
             order: geo.mesh.order != null ? Number(geo.mesh.order) : null,
             source: typeof geo.mesh.source === "string" ? geo.mesh.source : null,
+            algorithm_2d: geo.mesh.algorithm_2d != null ? Number(geo.mesh.algorithm_2d) : null,
+            algorithm_3d: geo.mesh.algorithm_3d != null ? Number(geo.mesh.algorithm_3d) : null,
+            size_factor: geo.mesh.size_factor != null ? Number(geo.mesh.size_factor) : null,
+            size_from_curvature: geo.mesh.size_from_curvature != null ? Number(geo.mesh.size_from_curvature) : null,
+            growth_rate: String(geo.mesh.growth_rate ?? ""),
+            narrow_regions: geo.mesh.narrow_regions != null ? Number(geo.mesh.narrow_regions) : null,
+            smoothing_steps: geo.mesh.smoothing_steps != null ? Number(geo.mesh.smoothing_steps) : null,
+            optimize: typeof geo.mesh.optimize === "string" ? geo.mesh.optimize : null,
+            optimize_iterations: geo.mesh.optimize_iterations != null ? Number(geo.mesh.optimize_iterations) : null,
+            compute_quality: typeof geo.mesh.compute_quality === "boolean" ? geo.mesh.compute_quality : null,
+            per_element_quality: typeof geo.mesh.per_element_quality === "boolean" ? geo.mesh.per_element_quality : null,
+            size_fields: Array.isArray(geo.mesh.size_fields)
+              ? geo.mesh.size_fields.map((field: any) => ({
+                  kind: String(field?.kind ?? ""),
+                  params:
+                    field?.params && typeof field.params === "object"
+                      ? field.params
+                      : {},
+                }))
+              : [],
+            operations: Array.isArray(geo.mesh.operations)
+              ? geo.mesh.operations.map((operation: any) => ({
+                  kind: String(operation?.kind ?? ""),
+                  params:
+                    operation?.params && typeof operation.params === "object"
+                      ? operation.params
+                      : {},
+                }))
+              : [],
             build_requested: Boolean(geo.mesh.build_requested),
           } : null,
         }))
@@ -441,6 +481,29 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
           }
         : null,
   };
+}
+
+function normalizeModelBuilderGraph(raw: any): ModelBuilderGraphV2 | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const projectedBuilder = normalizeScriptBuilder({
+    revision: raw.revision,
+    solver: raw.study?.solver,
+    mesh: raw.study?.mesh_defaults,
+    universe: raw.universe?.value,
+    stages: raw.study?.stages,
+    initial_state: raw.study?.initial_state,
+    geometries: Array.isArray(raw.objects?.items)
+      ? raw.objects.items.map((item: any) => item?.geometry ?? null).filter(Boolean)
+      : [],
+    current_modules: raw.current_modules?.modules,
+    excitation_analysis: raw.current_modules?.excitation_analysis,
+  });
+  if (!projectedBuilder) {
+    return null;
+  }
+  return createModelBuilderGraphV2(projectedBuilder);
 }
 
 function normalizeVec3(raw: unknown): [number, number, number] | null {
@@ -567,6 +630,10 @@ export function normalizeSessionState(
   const rawPreviewConfig = raw.preview_config ?? null;
   const displaySelection = normalizeDisplaySelection(raw.display_selection);
   const fallbackGrid = latestFields.grid;
+  const scriptBuilder = normalizeScriptBuilder(raw.script_builder);
+  const modelBuilderGraph =
+    normalizeModelBuilderGraph(raw.model_builder_graph) ??
+    (scriptBuilder ? createModelBuilderGraphV2(scriptBuilder) : null);
 
   const liveState: LiveState | null = rawLive
     ? {
@@ -602,7 +669,8 @@ export function normalizeSessionState(
     runtime_status: normalizeRuntimeStatus(raw.runtime_status),
     metadata: raw.metadata ?? null,
     mesh_workspace: normalizeMeshWorkspace(raw.mesh_workspace),
-    script_builder: normalizeScriptBuilder(raw.script_builder),
+    script_builder: scriptBuilder,
+    model_builder_graph: modelBuilderGraph,
     scalar_rows: Array.isArray(raw.scalar_rows)
       ? raw.scalar_rows.map((row: any) => ({
           step: Number(row?.step ?? 0),

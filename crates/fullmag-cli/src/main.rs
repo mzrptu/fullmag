@@ -436,6 +436,7 @@ mod tests {
             mesh_name: mesh.mesh_name.clone(),
             mesh_source: None,
             mesh: mesh.clone(),
+            object_segments: Vec::new(),
             fe_order: 1,
             hmax: 1.0,
             initial_magnetization: vec![[0.0, 1.0, 0.0]; 4],
@@ -496,6 +497,7 @@ mod tests {
             oersted_time_dep_offset: 0.0,
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
+            magnetoelastic: None,
         });
 
         let update = initial_step_update(&plan);

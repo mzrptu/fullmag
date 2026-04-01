@@ -10,6 +10,7 @@ import RunSidebar from "./control-room/RunSidebar";
 import { ViewportBar, ViewportCanvasArea } from "./control-room/ViewportPanels";
 import FullmagLogo from "../brand/FullmagLogo";
 import type { ScriptBuilderCurrentModuleEntry } from "../../lib/session/types";
+import { DEFAULT_CONVERGENCE_THRESHOLD } from "../panels/SolverSettingsPanel";
 import {
   ControlRoomProvider,
   useControlRoom,
@@ -18,6 +19,7 @@ import {
   PANEL_SIZES,
   fmtDuration,
   resolveAntennaNodeName,
+  resolveSelectedObjectId,
   fmtSIOrDash,
   fmtStepValue,
 } from "./control-room/shared";
@@ -98,6 +100,7 @@ function ControlRoomShell() {
 
   const handleSelectModelNode = (nodeId: string) => {
     ctx.setSelectedSidebarNodeId(nodeId);
+    ctx.setSelectedObjectId(resolveSelectedObjectId(nodeId, ctx.modelBuilderGraph));
     if (ctx.sidebarCollapsed) {
       ctx.setSidebarCollapsed(false);
     }
@@ -113,6 +116,7 @@ function ControlRoomShell() {
       ctx.setSidebarCollapsed(false);
     }
     ctx.setSelectedSidebarNodeId(`ant-${nextModule.name}`);
+    ctx.setSelectedObjectId(null);
     maybePreviewAntennaField();
   };
 
@@ -224,6 +228,10 @@ function ControlRoomShell() {
         selectedAntennaName={selectedAntennaName}
         onAddAntenna={handleAddAntenna}
         onSelectModelNode={handleSelectModelNode}
+        meshGenerating={ctx.meshGenerating}
+        onGenerateMesh={ctx.handleMeshGenerate}
+        selectedObjectId={ctx.selectedObjectId}
+        onRequestObjectFocus={ctx.requestFocusObject}
       />
       <PanelGroup
         orientation="horizontal"
@@ -291,7 +299,7 @@ function ControlRoomShell() {
                   connection={ctx.connection}
                   error={ctx.error}
                   presentationMode="current"
-                  convergenceThreshold={Number(ctx.solverSettings.torqueTolerance) || 1e-5}
+                  convergenceThreshold={Number(ctx.solverSettings.torqueTolerance) || DEFAULT_CONVERGENCE_THRESHOLD}
                 />
               </div>
             </Panel>

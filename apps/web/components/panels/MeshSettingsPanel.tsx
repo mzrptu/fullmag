@@ -69,6 +69,7 @@ interface MeshSettingsPanelProps {
   onGenerate?: () => void;
   nodeCount?: number;
   waitMode?: boolean;
+  showAdaptiveSection?: boolean;
 }
 
 /* ── Algorithm options ─────────────────────────────────────────────── */
@@ -249,6 +250,7 @@ export default function MeshSettingsPanel({
   onGenerate,
   nodeCount,
   waitMode,
+  showAdaptiveSection = true,
 }: MeshSettingsPanelProps) {
   const sicnCanvasRef = useRef<HTMLCanvasElement>(null);
   const gammaCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -629,6 +631,7 @@ export default function MeshSettingsPanel({
         </div>
       )}
       {/* ── Adaptive Mesh (AFEM) ── */}
+      {showAdaptiveSection && (
       <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
         <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
           <span className="text-xs font-bold uppercase tracking-widest text-foreground flex items-center gap-1.5 justify-between w-full">
@@ -719,6 +722,7 @@ export default function MeshSettingsPanel({
           </div>
         )}
       </div>
+      )}
 
       {/* ── Refinement Zones (lasso) ── */}
       {options.refinementZones.length > 0 && (

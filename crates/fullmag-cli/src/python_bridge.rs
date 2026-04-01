@@ -359,14 +359,13 @@ pub(crate) fn invoke_remesh_full(
         );
     }
     let stdout_text = String::from_utf8_lossy(&output.stdout);
-    let mesh: RemeshCliResponse = serde_json::from_slice(&output.stdout)
-        .with_context(|| {
-            format!(
-                "failed to parse remesh output ({} bytes):\n{}",
-                output.stdout.len(),
-                &stdout_text[..stdout_text.len().min(2000)]
-            )
-        })?;
+    let mesh: RemeshCliResponse = serde_json::from_slice(&output.stdout).with_context(|| {
+        format!(
+            "failed to parse remesh output ({} bytes):\n{}",
+            output.stdout.len(),
+            &stdout_text[..stdout_text.len().min(2000)]
+        )
+    })?;
     Ok(mesh)
 }
 

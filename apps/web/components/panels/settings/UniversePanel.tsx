@@ -7,7 +7,7 @@ import type { ScriptBuilderUniverseState } from "../../../lib/session/types";
 import { fmtSI } from "../../runs/control-room/shared";
 import SelectField from "../../ui/SelectField";
 import { TextField } from "../../ui/TextField";
-import { MetricField } from "./primitives";
+import { MetricField, SidebarSection } from "./primitives";
 import {
   humanizeToken,
   readBuilderContract,
@@ -43,12 +43,14 @@ export default function UniversePanel() {
 
   const declaredSize = builderUniverse?.size ?? null;
   const effectiveExtent = ctx.worldExtent ?? declaredSize;
-  const center = builderUniverse?.center ?? null;
+  const center = builderUniverse?.center ?? ctx.worldCenter ?? null;
   const padding = builderUniverse?.padding ?? null;
   const mode = builderUniverse?.mode ?? (effectiveExtent ? "derived" : null);
   const role = ctx.isFemBackend ? "FEM outer domain / air box source" : "FDM world box / grid domain";
   const sourceSummary = builderUniverse
     ? "Explicit `study.universe(...)` captured by the builder manifest."
+    : ctx.isFemBackend && ctx.objectOverlays.length > 0
+      ? `No explicit universe in the script yet; deriving the FEM domain from ${ctx.objectOverlays.length} object bounds.`
     : effectiveExtent
       ? "No explicit universe in the script yet; using current mesh/grid extent as the effective domain."
       : "Universe metadata is not available for this workspace yet.";
@@ -82,139 +84,142 @@ export default function UniversePanel() {
     value == null || !Number.isFinite(value) ? "" : (value * 1e9).toFixed(1);
 
   return (
-    <div className="flex flex-col gap-4">
-      {editable && builderUniverse && (
-        <div className="flex flex-col gap-4 rounded-lg border border-border/30 bg-card/20 p-3">
-          <SelectField
-            label="Universe Mode"
-            value={builderUniverse.mode}
-            onchange={(value) => updateUniverse((current) => ({ ...current, mode: value }))}
-            options={[
-              { value: "auto", label: "Auto-fit" },
-              { value: "manual", label: "Manual" },
-            ]}
+    <div className="flex flex-col gap-0">
+      <SidebarSection title="Domain Extent" defaultOpen={true}>
+        {editable && builderUniverse ? (
+          <div className="flex flex-col gap-4">
+            <SelectField
+              label="Universe Mode"
+              value={builderUniverse.mode}
+              onchange={(value) => updateUniverse((current) => ({ ...current, mode: value }))}
+              options={[
+                { value: "auto", label: "Auto-fit" },
+                { value: "manual", label: "Manual" },
+              ]}
+              tooltip="Determines how the simulation bounds are established. Auto-fit tightly envelops all defined geometry objects. Manual requires explicit size definitions."
+            />
+
+            <div className="grid grid-cols-3 gap-3">
+              <TextField
+                key={`size-x-${builderUniverse.size?.[0] ?? "na"}`}
+                label="Size X"
+                defaultValue={formatNm(builderUniverse.size?.[0])}
+                onBlur={(event) => updateVecComponent("size", 0, event.target.value)}
+                unit="nm"
+                mono
+                disabled={builderUniverse.mode !== "manual"}
+                tooltip="Explicit bounds of the universe along the X axis."
+              />
+              <TextField
+                key={`size-y-${builderUniverse.size?.[1] ?? "na"}`}
+                label="Size Y"
+                defaultValue={formatNm(builderUniverse.size?.[1])}
+                onBlur={(event) => updateVecComponent("size", 1, event.target.value)}
+                unit="nm"
+                mono
+                disabled={builderUniverse.mode !== "manual"}
+                tooltip="Explicit bounds of the universe along the Y axis."
+              />
+              <TextField
+                key={`size-z-${builderUniverse.size?.[2] ?? "na"}`}
+                label="Size Z"
+                defaultValue={formatNm(builderUniverse.size?.[2])}
+                onBlur={(event) => updateVecComponent("size", 2, event.target.value)}
+                unit="nm"
+                mono
+                disabled={builderUniverse.mode !== "manual"}
+                tooltip="Explicit bounds of the universe along the Z axis."
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <TextField
+                key={`center-x-${builderUniverse.center?.[0] ?? "na"}`}
+                label="Center X"
+                defaultValue={formatNm(builderUniverse.center?.[0])}
+                onBlur={(event) => updateVecComponent("center", 0, event.target.value)}
+                unit="nm"
+                mono
+                tooltip="Optional origin offset for the universe center across the X axis."
+              />
+              <TextField
+                key={`center-y-${builderUniverse.center?.[1] ?? "na"}`}
+                label="Center Y"
+                defaultValue={formatNm(builderUniverse.center?.[1])}
+                onBlur={(event) => updateVecComponent("center", 1, event.target.value)}
+                unit="nm"
+                mono
+                tooltip="Optional origin offset for the universe center across the Y axis."
+              />
+              <TextField
+                key={`center-z-${builderUniverse.center?.[2] ?? "na"}`}
+                label="Center Z"
+                defaultValue={formatNm(builderUniverse.center?.[2])}
+                onBlur={(event) => updateVecComponent("center", 2, event.target.value)}
+                unit="nm"
+                mono
+                tooltip="Optional origin offset for the universe center across the Z axis."
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <TextField
+                key={`padding-x-${builderUniverse.padding?.[0] ?? "na"}`}
+                label="Padding X"
+                defaultValue={formatNm(builderUniverse.padding?.[0])}
+                onBlur={(event) => updateVecComponent("padding", 0, event.target.value)}
+                unit="nm"
+                mono
+                tooltip="Extra margin added along the X axis when auto-fitting the universe."
+              />
+              <TextField
+                key={`padding-y-${builderUniverse.padding?.[1] ?? "na"}`}
+                label="Padding Y"
+                defaultValue={formatNm(builderUniverse.padding?.[1])}
+                onBlur={(event) => updateVecComponent("padding", 1, event.target.value)}
+                unit="nm"
+                mono
+                tooltip="Extra margin added along the Y axis when auto-fitting the universe."
+              />
+              <TextField
+                key={`padding-z-${builderUniverse.padding?.[2] ?? "na"}`}
+                label="Padding Z"
+                defaultValue={formatNm(builderUniverse.padding?.[2])}
+                onBlur={(event) => updateVecComponent("padding", 2, event.target.value)}
+                unit="nm"
+                mono
+                tooltip="Extra margin added along the Z axis when auto-fitting the universe."
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+            {sourceSummary}
+          </div>
+        )}
+      </SidebarSection>
+
+      <SidebarSection title="Live Introspection" defaultOpen={true}>
+        <div className="grid grid-cols-2 gap-3">
+          <MetricField label="Mode" value={mode ? humanizeToken(mode) : "—"} tooltip="Current universe derivation mode." />
+          <MetricField label="Role" value={role} tooltip="The physical significance of the universe box in the active backend." />
+          <MetricField label="Declared Size" value={formatVector(declaredSize, "m")} tooltip="Size explicitly declared in the builder." />
+          <MetricField label="Effective Extent" value={formatVector(effectiveExtent, "m")} tooltip="Actual size utilized by the simulation engine." />
+          <MetricField label="Center" value={formatVector(center, "m")} tooltip="Absolute origin of the universe bounding box." />
+          <MetricField
+            label="Padding"
+            value={hasNonZeroVector(padding) ? formatVector(padding, "m") : "—"}
+            tooltip="Calculated padding added around physical objects."
           />
-
-          <div className="grid grid-cols-3 gap-3">
-            <TextField
-              key={`size-x-${builderUniverse.size?.[0] ?? "na"}`}
-              label="Size X"
-              defaultValue={formatNm(builderUniverse.size?.[0])}
-              onBlur={(event) => updateVecComponent("size", 0, event.target.value)}
-              unit="nm"
-              mono
-              disabled={builderUniverse.mode !== "manual"}
-            />
-            <TextField
-              key={`size-y-${builderUniverse.size?.[1] ?? "na"}`}
-              label="Size Y"
-              defaultValue={formatNm(builderUniverse.size?.[1])}
-              onBlur={(event) => updateVecComponent("size", 1, event.target.value)}
-              unit="nm"
-              mono
-              disabled={builderUniverse.mode !== "manual"}
-            />
-            <TextField
-              key={`size-z-${builderUniverse.size?.[2] ?? "na"}`}
-              label="Size Z"
-              defaultValue={formatNm(builderUniverse.size?.[2])}
-              onBlur={(event) => updateVecComponent("size", 2, event.target.value)}
-              unit="nm"
-              mono
-              disabled={builderUniverse.mode !== "manual"}
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <TextField
-              key={`center-x-${builderUniverse.center?.[0] ?? "na"}`}
-              label="Center X"
-              defaultValue={formatNm(builderUniverse.center?.[0])}
-              onBlur={(event) => updateVecComponent("center", 0, event.target.value)}
-              unit="nm"
-              mono
-            />
-            <TextField
-              key={`center-y-${builderUniverse.center?.[1] ?? "na"}`}
-              label="Center Y"
-              defaultValue={formatNm(builderUniverse.center?.[1])}
-              onBlur={(event) => updateVecComponent("center", 1, event.target.value)}
-              unit="nm"
-              mono
-            />
-            <TextField
-              key={`center-z-${builderUniverse.center?.[2] ?? "na"}`}
-              label="Center Z"
-              defaultValue={formatNm(builderUniverse.center?.[2])}
-              onBlur={(event) => updateVecComponent("center", 2, event.target.value)}
-              unit="nm"
-              mono
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <TextField
-              key={`padding-x-${builderUniverse.padding?.[0] ?? "na"}`}
-              label="Padding X"
-              defaultValue={formatNm(builderUniverse.padding?.[0])}
-              onBlur={(event) => updateVecComponent("padding", 0, event.target.value)}
-              unit="nm"
-              mono
-            />
-            <TextField
-              key={`padding-y-${builderUniverse.padding?.[1] ?? "na"}`}
-              label="Padding Y"
-              defaultValue={formatNm(builderUniverse.padding?.[1])}
-              onBlur={(event) => updateVecComponent("padding", 1, event.target.value)}
-              unit="nm"
-              mono
-            />
-            <TextField
-              key={`padding-z-${builderUniverse.padding?.[2] ?? "na"}`}
-              label="Padding Z"
-              defaultValue={formatNm(builderUniverse.padding?.[2])}
-              onBlur={(event) => updateVecComponent("padding", 2, event.target.value)}
-              unit="nm"
-              mono
-            />
-          </div>
         </div>
-      )}
+      </SidebarSection>
 
-      <div className="grid grid-cols-2 gap-3">
-        <MetricField label="Mode" value={mode ? humanizeToken(mode) : "—"} />
-        <MetricField label="Role" value={role} />
-        <MetricField label="Declared Size" value={formatVector(declaredSize, "m")} />
-        <MetricField label="Effective Extent" value={formatVector(effectiveExtent, "m")} />
-        <MetricField label="Center" value={formatVector(center, "m")} />
-        <MetricField
-          label="Padding"
-          value={hasNonZeroVector(padding) ? formatVector(padding, "m") : "—"}
-        />
-      </div>
-
-      <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
-        {sourceSummary}
-      </div>
-
-      <div className="grid gap-2 rounded-lg border border-border/30 bg-card/20 p-3">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
-            Builder Surface
-          </span>
-          <span className="font-mono text-xs text-foreground">
-            {humanizeToken(builderContract?.scriptApiSurface)}
-          </span>
+      <SidebarSection title="Metadata" defaultOpen={false}>
+        <div className="grid grid-cols-2 gap-3">
+          <MetricField label="Builder Surface" value={humanizeToken(builderContract?.scriptApiSurface)} />
+          <MetricField label="Editable Scope" value={editable ? "Universe" : "Read-only"} />
         </div>
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">
-            Editable Scope
-          </span>
-          <span className="font-mono text-xs text-foreground">
-            {editable ? "Universe" : "Read-only"}
-          </span>
-        </div>
-      </div>
+      </SidebarSection>
     </div>
   );
 }

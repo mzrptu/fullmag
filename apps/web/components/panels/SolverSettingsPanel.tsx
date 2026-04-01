@@ -32,6 +32,10 @@ export const DEFAULT_SOLVER_SETTINGS: SolverSettingsState = {
   relaxAlpha: "1.0",
 };
 
+/** Canonical numeric fallback for convergence comparisons across the UI. */
+export const DEFAULT_CONVERGENCE_THRESHOLD =
+  Number(DEFAULT_SOLVER_SETTINGS.torqueTolerance) || 1e-6;
+
 export interface IntegratorSettingsPanelProps {
   settings: SolverSettingsState;
   onChange: (next: SolverSettingsState) => void;

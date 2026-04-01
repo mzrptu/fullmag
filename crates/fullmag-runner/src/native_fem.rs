@@ -122,7 +122,7 @@ impl NativeFemBackend {
             gyromagnetic_ratio: plan.gyromagnetic_ratio,
         };
         let demag_kernel_spectra =
-            if plan.enable_demag && plan.demag_realization.as_deref() != Some("poisson_airbox") {
+            if plan.enable_demag && !matches!(plan.demag_realization.as_deref(), Some("airbox_dirichlet" | "airbox_robin" | "poisson_airbox")) {
                 let (bbox_min, bbox_max) = mesh_bbox(&plan.mesh.nodes).ok_or_else(|| RunError {
                     message: "FEM GPU demag requires a non-empty mesh bounding box".to_string(),
                 })?;
@@ -199,8 +199,11 @@ impl NativeFemBackend {
             },
             air_box_factor: plan.air_box_config.as_ref().map_or(0.0, |c| c.factor),
             demag_realization: match plan.demag_realization.as_deref() {
-                Some("poisson_airbox") => {
-                    ffi::fullmag_fem_demag_realization::FULLMAG_FEM_DEMAG_POISSON_AIRBOX
+                Some("poisson_airbox" | "airbox_dirichlet") => {
+                    ffi::fullmag_fem_demag_realization::FULLMAG_FEM_DEMAG_AIRBOX_DIRICHLET
+                }
+                Some("airbox_robin") => {
+                    ffi::fullmag_fem_demag_realization::FULLMAG_FEM_DEMAG_AIRBOX_ROBIN
                 }
                 _ => ffi::fullmag_fem_demag_realization::FULLMAG_FEM_DEMAG_TRANSFER_GRID,
             },
@@ -208,6 +211,22 @@ impl NativeFemBackend {
                 .air_box_config
                 .as_ref()
                 .map_or(99, |c| c.boundary_marker as i32),
+            robin_beta_mode: plan.air_box_config.as_ref().map_or(0, |c| {
+                match c.bc_kind.as_deref() {
+                    Some("robin") => match c.robin_beta_mode.as_deref() {
+                        Some("legacy") => 1,
+                        Some("dipole") | None => 2,
+                        Some("user") => 3,
+                        _ => 2,
+                    },
+                    _ => 0,
+                }
+            }),
+            robin_beta_factor: plan
+                .air_box_config
+                .as_ref()
+                .and_then(|c| c.robin_beta_factor)
+                .unwrap_or(2.0),
             demag_kernel_xx_spectrum: demag_kernel_spectra
                 .as_ref()
                 .map_or(std::ptr::null(), |kernels| kernels.n_xx.as_ptr()),
@@ -365,8 +384,17 @@ impl NativeFemBackend {
             has_magnetoelastic: if plan.magnetoelastic.is_some() { 1 } else { 0 },
             mel_b1: plan.magnetoelastic.as_ref().map_or(0.0, |m| m.b1),
             mel_b2: plan.magnetoelastic.as_ref().map_or(0.0, |m| m.b2),
-            mel_uniform_strain: if plan.magnetoelastic.as_ref().and_then(|m| m.prescribed_strain).is_some() { 1 } else { 0 },
-            mel_strain_voigt: std::ptr::null(),  // will be set below
+            mel_uniform_strain: if plan
+                .magnetoelastic
+                .as_ref()
+                .and_then(|m| m.prescribed_strain)
+                .is_some()
+            {
+                1
+            } else {
+                0
+            },
+            mel_strain_voigt: std::ptr::null(), // will be set below
             mel_strain_len: 0,
         };
 
@@ -792,6 +820,7 @@ mod tests {
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
             },
+            object_segments: Vec::new(),
             fe_order: 1,
             hmax: 0.4,
             initial_magnetization: vec![[1.0, 0.0, 0.0]; 4],
@@ -852,6 +881,7 @@ mod tests {
             oersted_time_dep_offset: 0.0,
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
+            magnetoelastic: None,
         }
     }
 
@@ -880,6 +910,7 @@ mod tests {
                 ],
                 boundary_markers: vec![1; 6],
             },
+            object_segments: Vec::new(),
             fe_order: 1,
             hmax: 1.0,
             initial_magnetization: vec![
@@ -933,6 +964,7 @@ mod tests {
             oersted_time_dep_offset: 0.0,
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
+            magnetoelastic: None,
         }
     }
 
@@ -995,6 +1027,7 @@ mod tests {
                 exchange: plan.enable_exchange,
                 demag: plan.enable_demag,
                 external_field: plan.external_field,
+                per_node_field: None,
                 magnetoelastic: None,
             },
         );

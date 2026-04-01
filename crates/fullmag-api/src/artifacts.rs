@@ -1,8 +1,8 @@
 //! Artifact directory, file reading, and collection utilities.
 
-use crate::types::*;
 use crate::error::ApiError;
 use crate::session::current_artifact_dir;
+use crate::types::*;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -86,7 +86,9 @@ pub(crate) fn sanitize_artifact_relative_path(raw: &str) -> Result<PathBuf, ApiE
     Ok(sanitized)
 }
 
-pub(crate) async fn require_current_live_artifact_dir(state: &Arc<AppState>) -> Result<PathBuf, ApiError> {
+pub(crate) async fn require_current_live_artifact_dir(
+    state: &Arc<AppState>,
+) -> Result<PathBuf, ApiError> {
     let current = state.current_live_state.read().await;
     let snapshot = current
         .as_ref()
@@ -95,7 +97,10 @@ pub(crate) async fn require_current_live_artifact_dir(state: &Arc<AppState>) -> 
         .ok_or_else(|| ApiError::not_found("no artifact directory for the active workspace"))
 }
 
-pub(crate) fn try_resolve_artifact_path(artifact_dir: &Path, raw: &str) -> Result<Option<PathBuf>, ApiError> {
+pub(crate) fn try_resolve_artifact_path(
+    artifact_dir: &Path,
+    raw: &str,
+) -> Result<Option<PathBuf>, ApiError> {
     let relative = sanitize_artifact_relative_path(raw)?;
     let artifact_path = artifact_dir.join(relative);
     if artifact_path.exists() && artifact_path.is_file() {
@@ -123,7 +128,9 @@ pub(crate) fn read_json_artifact_value(artifact_dir: &Path, raw: &str) -> Result
     })
 }
 
-pub(crate) fn parse_eigen_dispersion_csv(content: &str) -> Result<Vec<EigenDispersionRow>, ApiError> {
+pub(crate) fn parse_eigen_dispersion_csv(
+    content: &str,
+) -> Result<Vec<EigenDispersionRow>, ApiError> {
     let mut rows = Vec::new();
     for (line_number, line) in content.lines().enumerate() {
         if line_number == 0 {
@@ -174,4 +181,3 @@ pub(crate) fn parse_eigen_dispersion_csv(content: &str) -> Result<Vec<EigenDispe
     }
     Ok(rows)
 }
-

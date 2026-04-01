@@ -7,8 +7,8 @@
 //! - `cpu_reference` — CPU reference execution path (calibration baseline)
 //! - `dispatch`      — engine selection (CPU now, CUDA in Phase 2)
 
-pub mod artifact_pipeline;
 mod antenna_fields;
+pub mod artifact_pipeline;
 mod artifacts;
 mod cpu_reference;
 mod dispatch;
@@ -289,16 +289,8 @@ pub fn run_problem_with_callback(
         stats: final_stats,
         grid: final_grid,
         fem_mesh: match &plan.backend_plan {
-            BackendPlanIR::Fem(fem) => Some(FemMeshPayload {
-                nodes: fem.mesh.nodes.clone(),
-                elements: fem.mesh.elements.clone(),
-                boundary_faces: fem.mesh.boundary_faces.clone(),
-            }),
-            BackendPlanIR::FemEigen(eigen) => Some(FemMeshPayload {
-                nodes: eigen.mesh.nodes.clone(),
-                elements: eigen.mesh.elements.clone(),
-                boundary_faces: eigen.mesh.boundary_faces.clone(),
-            }),
+            BackendPlanIR::Fem(fem) => Some(FemMeshPayload::from(fem)),
+            BackendPlanIR::FemEigen(eigen) => Some(FemMeshPayload::from(eigen)),
             BackendPlanIR::Fdm(_) | BackendPlanIR::FdmMultilayer(_) => None,
         },
         magnetization: match &plan.backend_plan {
@@ -469,16 +461,8 @@ pub fn run_problem_with_live_preview_interruptible(
         stats: final_stats,
         grid: final_grid,
         fem_mesh: match &plan.backend_plan {
-            BackendPlanIR::Fem(fem) => Some(FemMeshPayload {
-                nodes: fem.mesh.nodes.clone(),
-                elements: fem.mesh.elements.clone(),
-                boundary_faces: fem.mesh.boundary_faces.clone(),
-            }),
-            BackendPlanIR::FemEigen(eigen) => Some(FemMeshPayload {
-                nodes: eigen.mesh.nodes.clone(),
-                elements: eigen.mesh.elements.clone(),
-                boundary_faces: eigen.mesh.boundary_faces.clone(),
-            }),
+            BackendPlanIR::Fem(fem) => Some(FemMeshPayload::from(fem)),
+            BackendPlanIR::FemEigen(eigen) => Some(FemMeshPayload::from(eigen)),
             BackendPlanIR::Fdm(_) | BackendPlanIR::FdmMultilayer(_) => None,
         },
         magnetization: None,
@@ -720,11 +704,7 @@ pub fn run_problem_with_interactive_fem_runtime_live_preview_interruptible(
     on_step(StepUpdate {
         stats: final_stats,
         grid: [0, 0, 0],
-        fem_mesh: Some(FemMeshPayload {
-            nodes: fem.mesh.nodes.clone(),
-            elements: fem.mesh.elements.clone(),
-            boundary_faces: fem.mesh.boundary_faces.clone(),
-        }),
+        fem_mesh: Some(FemMeshPayload::from(fem)),
         magnetization: Some(
             executed
                 .result

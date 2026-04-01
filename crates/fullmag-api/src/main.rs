@@ -25,8 +25,7 @@ use tracing::info;
 
 use fullmag_runner::quantities::{quantity_spec, QuantityKind};
 use fullmag_runner::{
-    CommandAckEvent, DisplaySelection, LivePreviewField,
-    RuntimeEventEnvelope, StepUpdate,
+    CommandAckEvent, DisplaySelection, LivePreviewField, RuntimeEventEnvelope, StepUpdate,
 };
 
 mod artifacts;
@@ -458,6 +457,8 @@ async fn publish_current_live_state(
             Path::new(next.session.script_path.trim()),
         ) {
             Ok(builder_state) => {
+                next.model_builder_graph =
+                    Some(model_builder_graph_from_script_builder(&builder_state));
                 next.script_builder = Some(builder_state);
             }
             Err(e) => {
@@ -1381,11 +1382,14 @@ async fn import_magnetization_state_for_current_workspace(
         if req.attach_to_script_builder {
             if snapshot.script_builder.is_none() && !snapshot.session.script_path.trim().is_empty()
             {
-                snapshot.script_builder = Some(load_script_builder_state(
+                let builder_state = load_script_builder_state(
                     &state.repo_root,
                     &state.current_workspace_root,
                     Path::new(snapshot.session.script_path.trim()),
-                )?);
+                )?;
+                snapshot.model_builder_graph =
+                    Some(model_builder_graph_from_script_builder(&builder_state));
+                snapshot.script_builder = Some(builder_state);
             }
             if let Some(builder) = snapshot.script_builder.as_mut() {
                 builder.initial_state = Some(ScriptBuilderInitialState {
@@ -1396,6 +1400,8 @@ async fn import_magnetization_state_for_current_workspace(
                     sample_index: req.sample_index.or(loaded.sample_index),
                 });
                 builder.revision = builder.revision.saturating_add(1);
+                snapshot.model_builder_graph =
+                    Some(model_builder_graph_from_script_builder(builder));
             }
         }
         let messages = build_current_live_ws_messages(&state, snapshot)?;
@@ -1469,52 +1475,66 @@ async fn update_current_live_script_builder(
             .as_mut()
             .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
         if snapshot.script_builder.is_none() && !snapshot.session.script_path.trim().is_empty() {
-            snapshot.script_builder = Some(load_script_builder_state(
+            let builder_state = load_script_builder_state(
                 &state.repo_root,
                 &state.current_workspace_root,
                 Path::new(snapshot.session.script_path.trim()),
-            )?);
+            )?;
+            snapshot.model_builder_graph =
+                Some(model_builder_graph_from_script_builder(&builder_state));
+            snapshot.script_builder = Some(builder_state);
         }
-        let builder = snapshot.script_builder.as_mut().ok_or_else(|| {
-            ApiError::bad_request("script builder is not available for this workspace")
-        })?;
-        let mut changed = false;
-        if let Some(solver) = req.solver {
-            builder.solver = solver;
-            changed = true;
-        }
-        if let Some(mesh) = req.mesh {
-            builder.mesh = mesh;
-            changed = true;
-        }
-        if let Some(universe) = req.universe {
-            builder.universe = Some(universe);
-            changed = true;
-        }
-        if let Some(stages) = req.stages {
-            builder.stages = stages;
-            changed = true;
-        }
-        if let Some(initial_state) = req.initial_state {
-            builder.initial_state = Some(initial_state);
-            changed = true;
-        }
-        if let Some(geometries) = req.geometries {
-            builder.geometries = geometries;
-            changed = true;
-        }
-        if let Some(current_modules) = req.current_modules {
-            builder.current_modules = current_modules;
-            changed = true;
-        }
-        if let Some(excitation_analysis) = req.excitation_analysis {
-            builder.excitation_analysis = excitation_analysis;
-            changed = true;
-        }
-        if changed {
-            builder.revision = builder.revision.saturating_add(1);
-        }
-        let builder_state = builder.clone();
+        let builder_state = if let Some(mut graph) = req.model_builder_graph {
+            graph.revision = graph.revision.saturating_add(1);
+            let builder_state = script_builder_from_model_builder_graph(&graph);
+            snapshot.model_builder_graph = Some(graph);
+            snapshot.script_builder = Some(builder_state.clone());
+            builder_state
+        } else {
+            let builder = snapshot.script_builder.as_mut().ok_or_else(|| {
+                ApiError::bad_request("script builder is not available for this workspace")
+            })?;
+            let mut changed = false;
+            if let Some(solver) = req.solver {
+                builder.solver = solver;
+                changed = true;
+            }
+            if let Some(mesh) = req.mesh {
+                builder.mesh = mesh;
+                changed = true;
+            }
+            if let Some(universe) = req.universe {
+                builder.universe = Some(universe);
+                changed = true;
+            }
+            if let Some(stages) = req.stages {
+                builder.stages = stages;
+                changed = true;
+            }
+            if let Some(initial_state) = req.initial_state {
+                builder.initial_state = Some(initial_state);
+                changed = true;
+            }
+            if let Some(geometries) = req.geometries {
+                builder.geometries = geometries;
+                changed = true;
+            }
+            if let Some(current_modules) = req.current_modules {
+                builder.current_modules = current_modules;
+                changed = true;
+            }
+            if let Some(excitation_analysis) = req.excitation_analysis {
+                builder.excitation_analysis = excitation_analysis;
+                changed = true;
+            }
+            if changed {
+                builder.revision = builder.revision.saturating_add(1);
+            }
+            let builder_state = builder.clone();
+            snapshot.model_builder_graph =
+                Some(model_builder_graph_from_script_builder(&builder_state));
+            builder_state
+        };
         let session_state_messages = build_current_live_ws_messages(&state, snapshot)?;
         let public_json = serialize_current_live_response(snapshot, true)?;
         (builder_state, session_state_messages, public_json)
@@ -1699,6 +1719,7 @@ fn serialize_current_live_session_event(
             runtime_status: &snapshot.runtime_status,
             metadata: snapshot.metadata.as_ref(),
             script_builder: snapshot.script_builder.as_ref(),
+            model_builder_graph: snapshot.model_builder_graph.as_ref(),
             scalar_rows: &snapshot.scalar_rows,
             engine_log: &snapshot.engine_log,
             quantities: &snapshot.quantities,
@@ -1724,6 +1745,7 @@ fn serialize_current_live_response(
         runtime_status: &snapshot.runtime_status,
         metadata: snapshot.metadata.as_ref(),
         script_builder: snapshot.script_builder.as_ref(),
+        model_builder_graph: snapshot.model_builder_graph.as_ref(),
         scalar_rows: &snapshot.scalar_rows,
         engine_log: &snapshot.engine_log,
         quantities: &snapshot.quantities,

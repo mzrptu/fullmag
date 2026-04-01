@@ -59,6 +59,17 @@ export interface FemLiveMesh {
   nodes: [number, number, number][];
   elements: [number, number, number, number][];
   boundary_faces: [number, number, number][];
+  object_segments?: FemLiveMeshObjectSegment[];
+}
+
+export interface FemLiveMeshObjectSegment {
+  object_id: string;
+  node_start: number;
+  node_count: number;
+  element_start: number;
+  element_count: number;
+  boundary_face_start: number;
+  boundary_face_count: number;
 }
 
 export interface ScalarRow {
@@ -240,6 +251,8 @@ export interface ScriptBuilderMeshState {
   hmin: string;
   size_factor: number;
   size_from_curvature: number;
+  growth_rate: string;
+  narrow_regions: number;
   smoothing_steps: number;
   optimize: string;
   optimize_iterations: number;
@@ -252,6 +265,16 @@ export interface ScriptBuilderMeshState {
   adaptive_h_max: string;
   adaptive_max_passes: number;
   adaptive_error_tolerance: string;
+}
+
+export interface ScriptBuilderMeshSizeFieldEntry {
+  kind: string;
+  params: Record<string, unknown>;
+}
+
+export interface ScriptBuilderMeshOperationEntry {
+  kind: string;
+  params: Record<string, unknown>;
 }
 
 export interface ScriptBuilderUniverseState {
@@ -301,15 +324,32 @@ export interface ScriptBuilderMagnetizationEntry {
 export interface ScriptBuilderPerGeometryMeshEntry {
   mode: "inherit" | "custom";
   hmax: string;
+  hmin: string;
   order: number | null;
   source: string | null;
+  algorithm_2d: number | null;
+  algorithm_3d: number | null;
+  size_factor: number | null;
+  size_from_curvature: number | null;
+  growth_rate: string;
+  narrow_regions: number | null;
+  smoothing_steps: number | null;
+  optimize: string | null;
+  optimize_iterations: number | null;
+  compute_quality: boolean | null;
+  per_element_quality: boolean | null;
+  size_fields: ScriptBuilderMeshSizeFieldEntry[];
+  operations: ScriptBuilderMeshOperationEntry[];
   build_requested: boolean;
 }
 
 export interface ScriptBuilderGeometryEntry {
   name: string;
+  region_name?: string | null;
   geometry_kind: string;
   geometry_params: Record<string, unknown>;
+  bounds_min?: [number, number, number] | null;
+  bounds_max?: [number, number, number] | null;
   material: ScriptBuilderMaterialEntry;
   magnetization: ScriptBuilderMagnetizationEntry;
   mesh: ScriptBuilderPerGeometryMeshEntry | null;
@@ -350,6 +390,63 @@ export interface ScriptBuilderState {
   geometries: ScriptBuilderGeometryEntry[];
   current_modules: ScriptBuilderCurrentModuleEntry[];
   excitation_analysis: ScriptBuilderExcitationAnalysisEntry | null;
+}
+
+export interface ModelBuilderGraphObjectTreeRefs {
+  geometry: string;
+  material: string;
+  region: string;
+  mesh: string;
+}
+
+export interface ModelBuilderGraphObjectNode {
+  id: string;
+  kind: "ferromagnet";
+  name: string;
+  label: string;
+  geometry: ScriptBuilderGeometryEntry;
+  tree: ModelBuilderGraphObjectTreeRefs;
+}
+
+export interface ModelBuilderGraphStudyNode {
+  id: "study";
+  kind: "study";
+  label: string;
+  solver: ScriptBuilderSolverState;
+  mesh_defaults: ScriptBuilderMeshState;
+  stages: ScriptBuilderStageState[];
+  initial_state: ScriptBuilderInitialState | null;
+}
+
+export interface ModelBuilderGraphUniverseNode {
+  id: "universe";
+  kind: "universe";
+  label: string;
+  value: ScriptBuilderUniverseState | null;
+}
+
+export interface ModelBuilderGraphObjectsNode {
+  id: "objects";
+  kind: "objects";
+  label: string;
+  items: ModelBuilderGraphObjectNode[];
+}
+
+export interface ModelBuilderGraphCurrentModulesNode {
+  id: "current_modules";
+  kind: "current_modules";
+  label: string;
+  modules: ScriptBuilderCurrentModuleEntry[];
+  excitation_analysis: ScriptBuilderExcitationAnalysisEntry | null;
+}
+
+export interface ModelBuilderGraphV2 {
+  version: "model_builder.v2";
+  revision: number;
+  study: ModelBuilderGraphStudyNode;
+  universe: ModelBuilderGraphUniverseNode;
+  objects: ModelBuilderGraphObjectsNode;
+  current_modules: ModelBuilderGraphCurrentModulesNode;
 }
 
 export interface MeshSummaryState {
@@ -434,6 +531,7 @@ export interface SessionState {
   metadata: Record<string, unknown> | null;
   mesh_workspace: MeshWorkspaceState | null;
   script_builder: ScriptBuilderState | null;
+  model_builder_graph: ModelBuilderGraphV2 | null;
   scalar_rows: ScalarRow[];
   engine_log: EngineLogEntry[];
   quantities: QuantityDescriptor[];

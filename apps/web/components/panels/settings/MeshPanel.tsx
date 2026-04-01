@@ -33,6 +33,8 @@ import {
 import type { RenderMode } from "../../preview/FemMeshView3D";
 import { Button } from "../../ui/button";
 
+import { SidebarSection } from "./primitives";
+
 function getPhaseStyle(status: "idle" | "active" | "done" | "warning") {
   switch (status) {
     case "done":
@@ -131,29 +133,30 @@ export default function MeshPanel() {
   const viewportModes: ViewportMode[] = ["Mesh", "3D", "2D"];
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Backend</span>
-          <span className="font-mono text-xs text-foreground">{mesherBackend ?? "—"}</span>
+    <div className="flex flex-col gap-0 border-t border-border/20">
+      <SidebarSection title="Environment Overview" defaultOpen={true}>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Backend</span>
+            <span className="font-mono text-xs text-foreground">{mesherBackend ?? "—"}</span>
+          </div>
+          <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Source</span>
+            <span className="font-mono text-xs text-foreground">{mesherSourceKind ?? meshSource ?? "—"}</span>
+          </div>
+          <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Workspace</span>
+            <span className="font-mono text-xs text-foreground">{presetLabel}</span>
+          </div>
+          <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
+            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Status</span>
+            <span className="font-mono text-xs text-foreground">{workspaceStatus.replaceAll("_", " ")}</span>
+          </div>
         </div>
-        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Source</span>
-          <span className="font-mono text-xs text-foreground">{mesherSourceKind ?? meshSource ?? "—"}</span>
-        </div>
-        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Workspace</span>
-          <span className="font-mono text-xs text-foreground">{presetLabel}</span>
-        </div>
-        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Status</span>
-          <span className="font-mono text-xs text-foreground">{workspaceStatus.replaceAll("_", " ")}</span>
-        </div>
-      </div>
+      </SidebarSection>
 
-      <div className="grid gap-2.5 rounded-md border border-border/40 bg-card/40 p-3 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Mesh Workspace Presets</span>
+      <SidebarSection title="Mesh Workspace Presets" defaultOpen={true}>
+        <div className="mb-2 flex items-center justify-end">
           <span className="text-[0.65rem] font-mono text-muted-foreground/70">{meshName ?? "mesh"}</span>
         </div>
         <div className="grid grid-cols-2 gap-2">
@@ -187,11 +190,10 @@ export default function MeshPanel() {
             );
           })}
         </div>
-      </div>
+      </SidebarSection>
 
-      <div className="grid gap-2.5 rounded-md border border-border/40 bg-card/40 p-3 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Inspect & Render</span>
+      <SidebarSection title="Inspect & Render" defaultOpen={true}>
+        <div className="mb-2 flex items-center justify-end">
           <span className="text-[0.65rem] font-mono text-muted-foreground/70">{meshRenderMode}</span>
         </div>
         <div className="flex flex-wrap gap-1">
@@ -290,11 +292,10 @@ export default function MeshPanel() {
             </div>
           </div>
         </div>
-      </div>
+      </SidebarSection>
 
-      <div className="grid gap-2.5 rounded-md border border-border/40 bg-card/40 p-3 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Topology & Solver Readiness</span>
+      <SidebarSection title="Topology & Solver Readiness" defaultOpen={true}>
+        <div className="mb-2 flex items-center justify-end">
           <span className="text-[0.65rem] font-mono text-muted-foreground/70">
             {effectiveFemMesh?.elements.length ? "volume mesh" : "surface preview"}
           </span>
@@ -355,7 +356,7 @@ export default function MeshPanel() {
           </div>
         </div>
         {(boundsSummary || meshExtent || worldExtent) && (
-          <div className="grid gap-1.5 rounded-lg border border-border/30 bg-background/50 p-2.5 text-xs text-foreground">
+          <div className="mt-3 grid gap-1.5 rounded-lg border border-border/30 bg-background/50 p-2.5 text-xs text-foreground">
             <div className="grid grid-cols-[96px_1fr] gap-2">
               <span className="text-[0.65rem] font-bold uppercase text-muted-foreground">Extent</span>
               <span className="font-mono">
@@ -382,11 +383,10 @@ export default function MeshPanel() {
             </div>
           </div>
         )}
-      </div>
+      </SidebarSection>
 
-      <div className="grid gap-2.5 rounded-md border border-border/40 bg-card/40 p-3 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Quality Snapshot</span>
+      <SidebarSection title="Quality Snapshot" defaultOpen={true}>
+        <div className="mb-2 flex items-center justify-end">
           <span className="text-[0.65rem] font-mono text-muted-foreground/70">
             {meshQualityData ? "full metrics" : structuredQualitySummary ? "solver metrics" : meshQualitySummary ? "surface estimate" : "pending"}
           </span>
@@ -453,11 +453,10 @@ export default function MeshPanel() {
             Quality metrics are not loaded yet. Use the `Optimize` preset or enable `Extract quality metrics` before remeshing.
           </div>
         )}
-      </div>
+      </SidebarSection>
 
-      <div className="grid gap-2.5 rounded-md border border-border/40 bg-card/40 p-3 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Pipeline Feedback</span>
+      <SidebarSection title="Pipeline Feedback" defaultOpen={false}>
+        <div className="mb-2 flex items-center justify-end">
           <span className="text-[0.65rem] font-mono text-muted-foreground/70">
             {meshWorkspace?.mesh_history?.length ?? 0} history · {meshHighlights.length} logs
           </span>
@@ -482,7 +481,7 @@ export default function MeshPanel() {
             );
           })}
         </div>
-        <div className="grid gap-1 rounded-lg border border-border/30 bg-background/50 p-2.5">
+        <div className="mt-2 grid gap-1 rounded-lg border border-border/30 bg-background/50 p-2.5">
           <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Recent Mesh Log</span>
           {meshHighlights.length > 0 ? (
             <div className="grid gap-1">
@@ -497,12 +496,11 @@ export default function MeshPanel() {
             <div className="text-[0.74rem] text-muted-foreground">Mesh-specific backend events will appear here as soon as the pipeline emits them.</div>
           )}
         </div>
-      </div>
+      </SidebarSection>
 
       {meshWorkspace?.mesh_history?.length ? (
-        <div className="grid gap-2.5 rounded-md border border-border/40 bg-card/40 p-3 shadow-sm">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Compare / History</span>
+        <SidebarSection title="Compare / History" defaultOpen={false}>
+          <div className="mb-2 flex items-center justify-end">
             <span className="text-[0.65rem] font-mono text-muted-foreground/70">
               {meshWorkspace.mesh_history.length} snapshot{meshWorkspace.mesh_history.length === 1 ? "" : "s"}
             </span>
@@ -525,13 +523,12 @@ export default function MeshPanel() {
               </div>
             ))}
           </div>
-        </div>
+        </SidebarSection>
       ) : null}
 
       {(meshCapabilities || meshAdaptivity) ? (
-        <div className="grid gap-2.5 rounded-md border border-border/40 bg-card/40 p-3 shadow-sm">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Adaptivity & Capabilities</span>
+        <SidebarSection title="Adaptivity & Capabilities" defaultOpen={false}>
+          <div className="mb-2 flex items-center justify-end">
             <span className="text-[0.65rem] font-mono text-muted-foreground/70">
               {meshAdaptivity?.enabled ? meshAdaptivity.policy : "manual mesh"}
             </span>
@@ -589,7 +586,7 @@ export default function MeshPanel() {
             </div>
           ) : null}
           {meshCapabilities ? (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="mt-2 flex flex-wrap gap-1.5">
               {[
                 ["volume", meshCapabilities.has_volume_mesh],
                 ["quality arrays", meshCapabilities.has_quality_arrays],
@@ -613,13 +610,12 @@ export default function MeshPanel() {
               ))}
             </div>
           ) : null}
-        </div>
+        </SidebarSection>
       ) : null}
 
       {meshFaceDetail && (
-        <div className="grid gap-2.5 rounded-md border border-border/40 bg-card/40 p-3 shadow-sm">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Selection</span>
+        <SidebarSection title="Selection" defaultOpen={true}>
+          <div className="mb-2 flex items-center justify-end">
             <span className="text-[0.65rem] font-mono text-muted-foreground/70">
               {meshSelection.selectedFaceIndices.length} face{meshSelection.selectedFaceIndices.length === 1 ? "" : "s"}
             </span>
@@ -632,10 +628,12 @@ export default function MeshPanel() {
             <div className="grid grid-cols-[92px_1fr] gap-2"><span className="text-[0.65rem] font-bold uppercase text-muted-foreground">Aspect Ratio</span><span className="font-mono">{meshFaceDetail.aspectRatio.toFixed(2)}</span></div>
             <div className="grid grid-cols-[92px_1fr] gap-2"><span className="text-[0.65rem] font-bold uppercase text-muted-foreground">Centroid</span><span className="font-mono truncate" title={meshFaceDetail.centroid.map((value) => fmtExp(value)).join(", ")}>{meshFaceDetail.centroid.map((value) => fmtExp(value)).join(", ")}</span></div>
           </div>
-          <Button size="sm" variant="outline" onClick={() => setMeshSelection({ selectedFaceIndices: [], primaryFaceIndex: null })}>
-            Clear selection
-          </Button>
-        </div>
+          <div className="mt-3">
+            <Button size="sm" variant="outline" className="w-full" onClick={() => setMeshSelection({ selectedFaceIndices: [], primaryFaceIndex: null })}>
+              Clear selection
+            </Button>
+          </div>
+        </SidebarSection>
       )}
     </div>
   );

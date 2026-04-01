@@ -11,6 +11,8 @@ import GeometryPanel from "./settings/GeometryPanel";
 import AntennaPanel from "./settings/AntennaPanel";
 import MaterialPanel from "./settings/MaterialPanel";
 import MeshPanel from "./settings/MeshPanel";
+import ObjectMeshPanel from "./settings/ObjectMeshPanel";
+import RegionPanel from "./settings/RegionPanel";
 import StudyPanel from "./settings/StudyPanel";
 import UniversePanel from "./settings/UniversePanel";
 import ResultsPanel from "./settings/ResultsPanel";
@@ -32,6 +34,7 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
     Boolean(builderContract?.rewriteStrategy === "canonical_rewrite" && ctx.sessionFooter.scriptPath);
 
   const renderNodeContent = () => {
+    if (nodeId === "study-root") return <StudyPanel />;
     if (nodeId === "study-integrator") {
       return (
         <IntegratorSettingsPanel
@@ -73,6 +76,14 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
       return <ResultsPanel />;
     }
     if (nodeId === "initial-state") return <StateIoPanel />;
+    if (nodeId === "objects") return <GeometryPanel />;
+    if (nodeId.startsWith("geo-") && nodeId.includes("-mesh")) {
+      return <ObjectMeshPanel nodeId={nodeId} />;
+    }
+    if (nodeId.startsWith("reg-")) return <RegionPanel nodeId={nodeId} />;
+    if (nodeId.startsWith("obj-")) {
+      return <GeometryPanel nodeId={ctx.selectedObjectId ? `geo-${ctx.selectedObjectId}` : undefined} />;
+    }
     if (nodeId === "materials" || nodeId.startsWith("mat-")) return <MaterialPanel nodeId={nodeId} />;
     return <GeometryPanel nodeId={nodeId} />;
   };
@@ -84,6 +95,49 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
         badge={nodeLabel ?? "Workspace"}
         autoOpenKey={nodeId}
       >
+        {ctx.selectedObjectId ? (
+          <div className="grid gap-2 rounded-lg border border-border/40 bg-card/20 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[0.62rem] font-bold uppercase tracking-widest text-muted-foreground">
+                  Object Actions
+                </div>
+                <div className="truncate font-mono text-xs text-foreground">
+                  {ctx.selectedObjectId}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() => {
+                  ctx.setViewMode("3D");
+                  ctx.requestFocusObject(ctx.selectedObjectId!);
+                }}
+              >
+                Focus In 3D
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                size="sm"
+                variant={ctx.objectViewMode === "context" ? "default" : "outline"}
+                type="button"
+                onClick={() => ctx.setObjectViewMode("context")}
+              >
+                Context View
+              </Button>
+              <Button
+                size="sm"
+                variant={ctx.objectViewMode === "isolate" ? "default" : "outline"}
+                type="button"
+                onClick={() => ctx.setObjectViewMode("isolate")}
+              >
+                Isolate View
+              </Button>
+            </div>
+          </div>
+        ) : null}
         {renderNodeContent()}
       </SidebarSection>
 

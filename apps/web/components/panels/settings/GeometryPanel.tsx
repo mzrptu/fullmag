@@ -1,31 +1,172 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { startTransition, useCallback, useMemo } from "react";
+
 import { useModel } from "../../runs/control-room/ControlRoomContext";
-import { fmtSI } from "../../runs/control-room/shared";
+import { extractGeometryBoundsFromParams, fmtSI } from "../../runs/control-room/shared";
 import { TextField } from "../../ui/TextField";
 import SelectField from "../../ui/SelectField";
 import { Button } from "../../ui/button";
 import type { ScriptBuilderGeometryEntry } from "../../../lib/session/types";
+import { findGeometryByNodeId } from "./objectSelection";
+import { SidebarSection } from "./primitives";
+
+function defaultGeometryParams(kind: string, name: string): Record<string, unknown> {
+  switch (kind) {
+    case "Cylinder":
+      return { radius: 10e-9, height: 20e-9, name };
+    case "Ellipsoid":
+      return { rx: 10e-9, ry: 10e-9, rz: 20e-9, name };
+    case "Ellipse":
+      return { rx: 10e-9, ry: 10e-9, height: 5e-9, name };
+    case "ImportedGeometry":
+      return { source: "", scale: 1.0, volume: "full", name };
+    case "Difference":
+      return {
+        base: {
+          geometry_kind: "Box",
+          geometry_params: { size: [20e-9, 20e-9, 10e-9], name: `${name}_base` },
+        },
+        tool: {
+          geometry_kind: "Cylinder",
+          geometry_params: { radius: 5e-9, height: 10e-9, name: `${name}_tool` },
+        },
+      };
+    case "Union":
+    case "Intersection":
+      return {
+        a: {
+          geometry_kind: "Box",
+          geometry_params: { size: [20e-9, 20e-9, 10e-9], name: `${name}_a` },
+        },
+        b: {
+          geometry_kind: "Cylinder",
+          geometry_params: { radius: 5e-9, height: 10e-9, name: `${name}_b` },
+        },
+      };
+    case "Box":
+    default:
+      return { size: [20e-9, 20e-9, 10e-9], name };
+  }
+}
+
+function cloneGeometryEntry(source: ScriptBuilderGeometryEntry, nextName: string): ScriptBuilderGeometryEntry {
+  const nextRegionName =
+    !source.region_name || source.region_name === source.name ? null : `${source.region_name}_${nextName}`;
+  return {
+    ...source,
+    name: nextName,
+    region_name: nextRegionName,
+    geometry_params: {
+      ...source.geometry_params,
+      name: nextName,
+    },
+  };
+}
+
+function makeUniqueName(baseName: string, geometries: ScriptBuilderGeometryEntry[], skipIndex = -1): string {
+  const normalized = baseName.trim() || "body";
+  const existing = new Set(
+    geometries
+      .map((geometry, index) => (index === skipIndex ? null : geometry.name))
+      .filter((value): value is string => Boolean(value)),
+  );
+  if (!existing.has(normalized)) {
+    return normalized;
+  }
+  let counter = 2;
+  while (existing.has(`${normalized}_${counter}`)) {
+    counter += 1;
+  }
+  return `${normalized}_${counter}`;
+}
+
+function readTranslation(params: Record<string, unknown>): [number, number, number] {
+  const raw = Array.isArray(params.translation)
+    ? params.translation
+    : Array.isArray(params.translate)
+      ? params.translate
+      : [0, 0, 0];
+  return [
+    Number(raw[0]) || 0,
+    Number(raw[1]) || 0,
+    Number(raw[2]) || 0,
+  ];
+}
+
+function shiftBounds(
+  bounds: [number, number, number] | null | undefined,
+  delta: [number, number, number],
+): [number, number, number] | null | undefined {
+  if (!bounds || bounds.length !== 3) {
+    return bounds;
+  }
+  const shifted = bounds.map((component, index) => component + delta[index]) as [number, number, number];
+  return shifted.every((component) => Number.isFinite(component)) ? shifted : bounds;
+}
+
+function formatBounds(
+  min: [number, number, number] | null | undefined,
+  max: [number, number, number] | null | undefined,
+): string {
+  if (!min || !max) return "—";
+  return `x ${fmtSI(min[0], "m")} → ${fmtSI(max[0], "m")} | y ${fmtSI(min[1], "m")} → ${fmtSI(max[1], "m")} | z ${fmtSI(min[2], "m")} → ${fmtSI(max[2], "m")}`;
+}
+
+function formatExtent(
+  min: [number, number, number] | null | undefined,
+  max: [number, number, number] | null | undefined,
+): string {
+  if (!min || !max) return "—";
+  return [
+    fmtSI(max[0] - min[0], "m"),
+    fmtSI(max[1] - min[1], "m"),
+    fmtSI(max[2] - min[2], "m"),
+  ].join(" · ");
+}
+
+function describeGeometryDescriptor(raw: unknown): string {
+  if (!raw || typeof raw !== "object") return "unknown";
+  const entry = raw as { geometry_kind?: unknown; geometry_params?: unknown };
+  const kind = typeof entry.geometry_kind === "string" ? entry.geometry_kind : "unknown";
+  const params =
+    entry.geometry_params && typeof entry.geometry_params === "object"
+      ? (entry.geometry_params as Record<string, unknown>)
+      : {};
+  if (kind === "Box" && Array.isArray(params.size)) {
+    return `Box ${params.size.map((value) => `${(Number(value) * 1e9).toFixed(1)}nm`).join(" × ")}`;
+  }
+  if (kind === "Cylinder") {
+    return `Cylinder r=${((Number(params.radius ?? 0)) * 1e9).toFixed(1)}nm h=${((Number(params.height ?? 0)) * 1e9).toFixed(1)}nm`;
+  }
+  if (kind === "Ellipsoid") {
+    return `Ellipsoid ${["rx", "ry", "rz"].map((key) => `${key}=${((Number(params[key] ?? 0)) * 1e9).toFixed(1)}nm`).join(" ")}`;
+  }
+  if (kind === "ImportedGeometry") {
+    return `Imported ${(String(params.source ?? "") || "mesh").split("/").pop()}`;
+  }
+  if (kind === "Translate") {
+    return `Translate ${describeGeometryDescriptor(params.base)} by ${Array.isArray(params.translation) ? params.translation.map((value) => `${(Number(value) * 1e9).toFixed(1)}nm`).join(", ") : "?"}`;
+  }
+  if (kind === "Difference") {
+    return `Difference(${describeGeometryDescriptor(params.base)} - ${describeGeometryDescriptor(params.tool)})`;
+  }
+  if (kind === "Union") {
+    return `Union(${describeGeometryDescriptor(params.a)} + ${describeGeometryDescriptor(params.b)})`;
+  }
+  if (kind === "Intersection") {
+    return `Intersection(${describeGeometryDescriptor(params.a)} & ${describeGeometryDescriptor(params.b)})`;
+  }
+  return kind;
+}
 
 export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
   const model = useModel();
 
-  const activeName = useMemo(() => {
-    if (!nodeId || !nodeId.startsWith("geo-")) return null;
-    const candidate = nodeId.replace(/^geo-/, "");
-    const names = model.scriptBuilderGeometries
-      .map((geometry) => geometry.name)
-      .sort((left, right) => right.length - left.length);
-    return names.find((name) => candidate === name || candidate.startsWith(`${name}-`)) ?? null;
-  }, [nodeId, model.scriptBuilderGeometries]);
-
-  const geoIndex = useMemo(() => {
-    if (!activeName) return -1;
-    return model.scriptBuilderGeometries.findIndex((g) => g.name === activeName);
-  }, [activeName, model.scriptBuilderGeometries]);
-
-  const geo = geoIndex >= 0 ? model.scriptBuilderGeometries[geoIndex] : undefined;
+  const { geometry: geo, index: geoIndex } = useMemo(
+    () => findGeometryByNodeId(nodeId, model.scriptBuilderGeometries),
+    [nodeId, model.scriptBuilderGeometries],
+  );
 
   const updateGeo = useCallback((updater: (g: ScriptBuilderGeometryEntry) => ScriptBuilderGeometryEntry) => {
     if (geoIndex < 0) return;
@@ -37,35 +178,13 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
     });
   }, [geoIndex, model.setScriptBuilderGeometries]);
 
-  const updateMesh = useCallback(
-    (
-      updater: (
-        mesh: NonNullable<ScriptBuilderGeometryEntry["mesh"]>,
-      ) => NonNullable<ScriptBuilderGeometryEntry["mesh"]>,
-    ) => {
-      updateGeo((g) => ({
-        ...g,
-        mesh: updater(
-          g.mesh ?? {
-            mode: "inherit",
-            hmax: "",
-            order: null,
-            source: null,
-            build_requested: false,
-          },
-        ),
-      }));
-    },
-    [updateGeo],
-  );
-
   const handleBoxSize = (idx: number, valStr: string) => {
     const val = parseFloat(valStr);
     if (isNaN(val)) return;
     updateGeo((g) => {
-      const size = Array.isArray(g.geometry_params.size) 
-        ? [...g.geometry_params.size] 
-        : [1e-9, 1e-9, 1e-9];
+      const size = Array.isArray(g.geometry_params.size)
+        ? [...g.geometry_params.size]
+        : [20e-9, 20e-9, 10e-9];
       size[idx] = val * 1e-9;
       return { ...g, geometry_params: { ...g.geometry_params, size } };
     });
@@ -76,31 +195,41 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
     if (isNaN(val)) return;
     updateGeo((g) => ({
       ...g,
-      geometry_params: { ...g.geometry_params, [key]: val * 1e-9 }
+      geometry_params: { ...g.geometry_params, [key]: val * 1e-9 },
     }));
   };
 
   const handleTranslation = (idx: number, valStr: string) => {
     const val = parseFloat(valStr);
     if (isNaN(val)) return;
-    updateGeo((g) => {
-      const translation = Array.isArray(g.geometry_params.translation) 
-        ? [...g.geometry_params.translation] 
-        : [0, 0, 0];
-      translation[idx] = val * 1e-9;
-      return { ...g, geometry_params: { ...g.geometry_params, translation } };
+    startTransition(() => {
+      updateGeo((g) => {
+        const currentTranslation = readTranslation(g.geometry_params);
+        const translation = [...currentTranslation] as [number, number, number];
+        translation[idx] = val * 1e-9;
+        const delta = translation.map(
+          (component, componentIndex) => component - currentTranslation[componentIndex],
+        ) as [number, number, number];
+        return {
+          ...g,
+          geometry_params: { ...g.geometry_params, translation },
+          bounds_min: shiftBounds(g.bounds_min, delta),
+          bounds_max: shiftBounds(g.bounds_max, delta),
+        };
+      });
     });
   };
 
-  const handleRotation = (idx: number, valStr: string) => {
+  const handleScaleComponent = (idx: number, valStr: string) => {
     const val = parseFloat(valStr);
     if (isNaN(val)) return;
     updateGeo((g) => {
-      const rotation = Array.isArray(g.geometry_params.rotation) 
-        ? [...g.geometry_params.rotation] 
-        : [0, 0, 0];
-      rotation[idx] = val;
-      return { ...g, geometry_params: { ...g.geometry_params, rotation } };
+      const currentScale = g.geometry_params.scale;
+      const scale = Array.isArray(currentScale)
+        ? [...currentScale]
+        : [Number(currentScale ?? 1), Number(currentScale ?? 1), Number(currentScale ?? 1)];
+      scale[idx] = val;
+      return { ...g, geometry_params: { ...g.geometry_params, scale } };
     });
   };
 
@@ -131,252 +260,242 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
               : "—"}
           </span>
         </div>
-        <div className="col-span-2 mt-2">
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="w-full"
-            onClick={() => {
-              model.setScriptBuilderGeometries(prev => [
-                ...prev,
-                {
-                  name: `body_${prev.length + 1}`,
-                  geometry_kind: "Box",
-                  geometry_params: { size: [1e-8, 1e-8, 1e-8] },
-                  material: { Ms: 800000, Aex: 1.3e-11, alpha: 0.02, Dind: null },
-                  magnetization: { kind: "uniform", value: [1, 0, 0], seed: null, source_path: null },
-                  mesh: { mode: "inherit", hmax: "", order: null, source: null, build_requested: false }
-                }
-              ]);
-            }}
-          >
-            + Add Geometry Body
-          </Button>
-        </div>
       </div>
     );
   }
 
   const p = geo.geometry_params;
-  const t = Array.isArray(p.translation) ? p.translation : [0, 0, 0];
-  const r = Array.isArray(p.rotation) ? p.rotation : [0, 0, 0];
-  const size = Array.isArray(p.size) ? p.size : [1e-9, 1e-9, 1e-9];
-  const mesh = geo.mesh ?? {
-    mode: "inherit" as const,
-    hmax: "",
-    order: null,
-    source: null,
-    build_requested: false,
-  };
-  const meshHmaxDisplay = mesh.hmax.trim() === "auto"
-    ? "auto"
-    : mesh.hmax.trim().length > 0 && Number.isFinite(Number(mesh.hmax))
-      ? (Number(mesh.hmax) * 1e9).toFixed(1)
-      : "";
+  const translation = readTranslation(p);
+  const size = Array.isArray(p.size) ? p.size : [20e-9, 20e-9, 10e-9];
+  const scale = p.scale;
+  const regionName = geo.region_name?.trim() || geo.name;
+  const liveBounds = extractGeometryBoundsFromParams(geo);
+  const csgSummary =
+    geo.geometry_kind === "Difference"
+      ? `base: ${describeGeometryDescriptor(p.base)} | tool: ${describeGeometryDescriptor(p.tool)}`
+      : geo.geometry_kind === "Union"
+        ? `a: ${describeGeometryDescriptor(p.a)} | b: ${describeGeometryDescriptor(p.b)}`
+        : geo.geometry_kind === "Intersection"
+          ? `a: ${describeGeometryDescriptor(p.a)} | b: ${describeGeometryDescriptor(p.b)}`
+          : null;
 
   return (
-    <div className="flex flex-col gap-5">
-      <SelectField
-        label="Geometry Kind"
-        value={geo.geometry_kind}
-        onchange={(val) => updateGeo((g) => ({ ...g, geometry_kind: val }))}
-        options={[
-          { label: "Box", value: "Box" },
-          { label: "Cylinder", value: "Cylinder" },
-          { label: "Ellipsoid", value: "Ellipsoid" },
-          { label: "Imported Mesh", value: "ImportedGeometry" },
-        ]}
-      />
-
-      <div className="flex flex-col gap-3">
-        <h4 className="text-[0.7rem] font-bold uppercase tracking-widest text-foreground pb-1 border-b border-border/50">
-          Dimensions
-        </h4>
-        {geo.geometry_kind === "Box" && (
-          <div className="grid grid-cols-3 gap-3">
-            <TextField label="X Length" defaultValue={(size[0] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(0, e.target.value)} unit="nm" mono />
-            <TextField label="Y Length" defaultValue={(size[1] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(1, e.target.value)} unit="nm" mono />
-            <TextField label="Z Length" defaultValue={(size[2] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(2, e.target.value)} unit="nm" mono />
-          </div>
-        )}
-        {geo.geometry_kind === "Cylinder" && (
+    <div className="flex flex-col gap-0 border-t border-border/20">
+      <SidebarSection title="Object Identity" defaultOpen={true}>
+        <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3">
-            <TextField label="Radius" defaultValue={p.radius ? (Number(p.radius) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("radius", e.target.value)} unit="nm" mono />
-            <TextField label="Height" defaultValue={p.height ? (Number(p.height) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("height", e.target.value)} unit="nm" mono />
+            <TextField
+              key={`${geo.name}-object-name`}
+              label="Object Name"
+              defaultValue={geo.name}
+              onBlur={(event) => {
+                const requested = event.target.value.trim();
+                if (!requested || requested === geo.name) return;
+                let renamedTo: string | null = null;
+                model.setScriptBuilderGeometries((prev) => {
+                  const nextName = makeUniqueName(requested, prev, geoIndex);
+                  renamedTo = nextName;
+                  const next = [...prev];
+                  const target = next[geoIndex];
+                  if (!target) return prev;
+                  const shouldFollowObjectName =
+                    !target.region_name || target.region_name === target.name;
+                  next[geoIndex] = {
+                    ...target,
+                    name: nextName,
+                    region_name: shouldFollowObjectName ? null : target.region_name,
+                    geometry_params: {
+                      ...target.geometry_params,
+                      name: nextName,
+                    },
+                  };
+                  return next;
+                });
+                if (!renamedTo) return;
+                startTransition(() => {
+                  model.setSelectedObjectId(renamedTo);
+                  model.setSelectedSidebarNodeId(`obj-${renamedTo}`);
+                });
+              }}
+              mono
+              tooltip="Stable object identifier used by the tree, overlays and canonical script."
+            />
+            <TextField
+              key={`${geo.name}-region-summary`}
+              label="Effective Region"
+              defaultValue={regionName}
+              disabled
+              mono
+              tooltip="This object currently exposes one editable region in the builder."
+            />
           </div>
-        )}
-        {geo.geometry_kind === "Ellipsoid" && (
-          <div className="grid grid-cols-3 gap-3">
-            <TextField label="Rx" defaultValue={p.rx ? (Number(p.rx) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("rx", e.target.value)} unit="nm" mono />
-            <TextField label="Ry" defaultValue={p.ry ? (Number(p.ry) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("ry", e.target.value)} unit="nm" mono />
-            <TextField label="Rz" defaultValue={p.rz ? (Number(p.rz) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("rz", e.target.value)} unit="nm" mono />
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                let duplicateName: string | null = null;
+                model.setScriptBuilderGeometries((prev) => {
+                  const next = [...prev];
+                  const source = next[geoIndex];
+                  if (!source) return prev;
+                  const nextDuplicateName = makeUniqueName(`${source.name}_copy`, next);
+                  duplicateName = nextDuplicateName;
+                  next.splice(geoIndex + 1, 0, cloneGeometryEntry(source, nextDuplicateName));
+                  return next;
+                });
+                if (!duplicateName) return;
+                startTransition(() => {
+                  model.setSelectedObjectId(duplicateName);
+                  model.setSelectedSidebarNodeId(`obj-${duplicateName}`);
+                  model.setObjectViewMode("context");
+                });
+              }}
+            >
+              Duplicate Object
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="opacity-90 hover:opacity-100"
+              onClick={() => {
+                model.setScriptBuilderGeometries((prev) => prev.filter((_, index) => index !== geoIndex));
+              }}
+            >
+              Delete Object
+            </Button>
           </div>
-        )}
-        {geo.geometry_kind === "ImportedGeometry" && (
-          <TextField 
-            label="Source File" 
-            defaultValue={typeof p.source === "string" ? p.source : ""} 
-            onBlur={(e) => updateGeo(g => ({ ...g, geometry_params: { ...g.geometry_params, source: e.target.value } }))} 
-            mono 
-            placeholder="mesh.msh"
-          />
-        )}
-      </div>
-
-      <div className="flex flex-col gap-3">
-        <h4 className="text-[0.7rem] font-bold uppercase tracking-widest text-foreground pb-1 border-b border-border/50">
-          Placement Offset
-        </h4>
-        <div className="grid grid-cols-3 gap-3">
-          <TextField label="Translate X" defaultValue={(t[0] * 1e9).toFixed(1)} onBlur={(e) => handleTranslation(0, e.target.value)} unit="nm" mono />
-          <TextField label="Translate Y" defaultValue={(t[1] * 1e9).toFixed(1)} onBlur={(e) => handleTranslation(1, e.target.value)} unit="nm" mono />
-          <TextField label="Translate Z" defaultValue={(t[2] * 1e9).toFixed(1)} onBlur={(e) => handleTranslation(2, e.target.value)} unit="nm" mono />
         </div>
-      </div>
+      </SidebarSection>
 
-      <div className="flex flex-col gap-3">
-        <h4 className="text-[0.7rem] font-bold uppercase tracking-widest text-foreground pb-1 border-b border-border/50">
-          FEM Mesh
-        </h4>
-
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            variant={mesh.mode === "inherit" ? "default" : "outline"}
-            size="sm"
-            onClick={() =>
-              updateMesh(() => ({
-                mode: "inherit",
-                hmax: "",
-                order: null,
-                source: null,
-                build_requested: false,
-              }))
-            }
-          >
-            Use Global Mesh
-          </Button>
-          <Button
-            variant={mesh.mode === "custom" ? "default" : "outline"}
-            size="sm"
-            onClick={() =>
-              updateMesh((current) => ({
+      <SidebarSection title="Geometry Definition" defaultOpen={true}>
+        <div className="flex flex-col gap-5">
+          <SelectField
+            label="Geometry Kind"
+            value={geo.geometry_kind}
+            onchange={(nextKind) =>
+              updateGeo((current) => ({
                 ...current,
-                mode: "custom",
+                geometry_kind: nextKind,
+                geometry_params: defaultGeometryParams(nextKind, current.name),
               }))
             }
-          >
-            Customize Mesh
-          </Button>
-        </div>
+            options={[
+              { label: "Box", value: "Box" },
+              { label: "Cylinder", value: "Cylinder" },
+              { label: "Ellipsoid", value: "Ellipsoid" },
+              { label: "Ellipse", value: "Ellipse" },
+              { label: "Imported Mesh", value: "ImportedGeometry" },
+              { label: "Difference (CSG)", value: "Difference" },
+              { label: "Union (CSG)", value: "Union" },
+              { label: "Intersection (CSG)", value: "Intersection" },
+            ]}
+            tooltip="Choose the underlying geometry recipe for this object."
+          />
 
-        <SelectField
-          label="Mesh Mode"
-          value={mesh.mode}
-          onchange={(value) =>
-            updateMesh((current) => ({
-              ...current,
-              mode: value === "custom" ? "custom" : "inherit",
-              ...(value === "custom"
-                ? {}
-                : { hmax: "", order: null, source: null, build_requested: false }),
-            }))
-          }
-          options={[
-            { label: "Inherit Global", value: "inherit" },
-            { label: "Custom Override", value: "custom" },
-          ]}
-        />
-
-        {mesh.mode === "inherit" ? (
-          <div className="rounded-lg border border-border/40 bg-card/30 px-3 py-2 text-xs text-muted-foreground">
-            This object follows the study-level FEM mesh defaults.
+          <div className="flex flex-col gap-3">
+            <h4 className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground pb-1 border-b border-border/20">
+              Dimensions
+            </h4>
+            {geo.geometry_kind === "Box" && (
+              <div className="grid grid-cols-3 gap-3">
+                <TextField key={`${geo.name}-size-x`} label="X Length" defaultValue={(size[0] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(0, e.target.value)} unit="nm" mono />
+                <TextField key={`${geo.name}-size-y`} label="Y Length" defaultValue={(size[1] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(1, e.target.value)} unit="nm" mono />
+                <TextField key={`${geo.name}-size-z`} label="Z Length" defaultValue={(size[2] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(2, e.target.value)} unit="nm" mono />
+              </div>
+            )}
+            {geo.geometry_kind === "Cylinder" && (
+              <div className="grid grid-cols-2 gap-3">
+                <TextField key={`${geo.name}-radius`} label="Radius" defaultValue={p.radius ? (Number(p.radius) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("radius", e.target.value)} unit="nm" mono />
+                <TextField key={`${geo.name}-height`} label="Height" defaultValue={p.height ? (Number(p.height) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("height", e.target.value)} unit="nm" mono />
+              </div>
+            )}
+            {geo.geometry_kind === "Ellipsoid" && (
+              <div className="grid grid-cols-3 gap-3">
+                <TextField key={`${geo.name}-rx`} label="Rx" defaultValue={p.rx ? (Number(p.rx) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("rx", e.target.value)} unit="nm" mono />
+                <TextField key={`${geo.name}-ry`} label="Ry" defaultValue={p.ry ? (Number(p.ry) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("ry", e.target.value)} unit="nm" mono />
+                <TextField key={`${geo.name}-rz`} label="Rz" defaultValue={p.rz ? (Number(p.rz) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("rz", e.target.value)} unit="nm" mono />
+              </div>
+            )}
+            {geo.geometry_kind === "Ellipse" && (
+              <div className="grid grid-cols-3 gap-3">
+                <TextField key={`${geo.name}-ellipse-rx`} label="Rx" defaultValue={p.rx ? (Number(p.rx) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("rx", e.target.value)} unit="nm" mono />
+                <TextField key={`${geo.name}-ellipse-ry`} label="Ry" defaultValue={p.ry ? (Number(p.ry) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("ry", e.target.value)} unit="nm" mono />
+                <TextField key={`${geo.name}-ellipse-height`} label="Height" defaultValue={p.height ? (Number(p.height) * 1e9).toFixed(1) : ""} onBlur={(e) => handleParamNum("height", e.target.value)} unit="nm" mono />
+              </div>
+            )}
+            {geo.geometry_kind === "ImportedGeometry" && (
+              <div className="flex flex-col gap-3">
+                <TextField
+                  key={`${geo.name}-source`}
+                  label="Source File"
+                  defaultValue={typeof p.source === "string" ? p.source : ""}
+                  onBlur={(e) => updateGeo((g) => ({ ...g, geometry_params: { ...g.geometry_params, source: e.target.value.trim() } }))}
+                  mono
+                  placeholder="mesh.stl"
+                />
+                {Array.isArray(scale) ? (
+                  <div className="grid grid-cols-3 gap-3">
+                    <TextField key={`${geo.name}-scale-x`} label="Scale X" defaultValue={String(scale[0] ?? 1)} onBlur={(e) => handleScaleComponent(0, e.target.value)} mono />
+                    <TextField key={`${geo.name}-scale-y`} label="Scale Y" defaultValue={String(scale[1] ?? 1)} onBlur={(e) => handleScaleComponent(1, e.target.value)} mono />
+                    <TextField key={`${geo.name}-scale-z`} label="Scale Z" defaultValue={String(scale[2] ?? 1)} onBlur={(e) => handleScaleComponent(2, e.target.value)} mono />
+                  </div>
+                ) : (
+                  <TextField
+                    key={`${geo.name}-uniform-scale`}
+                    label="Uniform Scale"
+                    defaultValue={scale != null ? String(scale) : "1"}
+                    onBlur={(e) => {
+                      const value = Number.parseFloat(e.target.value);
+                      if (!Number.isFinite(value)) return;
+                      updateGeo((g) => ({ ...g, geometry_params: { ...g.geometry_params, scale: value } }));
+                    }}
+                    mono
+                  />
+                )}
+                <SelectField
+                  label="Imported Volume"
+                  value={typeof p.volume === "string" ? p.volume : "full"}
+                  onchange={(value) => updateGeo((g) => ({ ...g, geometry_params: { ...g.geometry_params, volume: value } }))}
+                  options={[
+                    { label: "Full Volume", value: "full" },
+                    { label: "Surface Only", value: "surface" },
+                  ]}
+                />
+              </div>
+            )}
+            {csgSummary && (
+              <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+                {csgSummary}
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-3">
-            <TextField
-              key={`${geo.name}-mesh-hmax-${mesh.hmax}`}
-              label="hmax (nm or auto)"
-              defaultValue={meshHmaxDisplay}
-              onBlur={(e) => {
-                const raw = e.target.value.trim();
-                if (!raw) {
-                  updateMesh((current) => ({ ...current, hmax: "" }));
-                  return;
-                }
-                if (raw.toLowerCase() === "auto") {
-                  updateMesh((current) => ({ ...current, hmax: "auto" }));
-                  return;
-                }
-                const numeric = Number(raw);
-                if (!Number.isFinite(numeric)) return;
-                updateMesh((current) => ({ ...current, hmax: String(numeric * 1e-9) }));
-              }}
-              mono
-              placeholder="20 or auto"
-            />
-            <TextField
-              key={`${geo.name}-mesh-order-${mesh.order ?? ""}`}
-              label="Order"
-              defaultValue={mesh.order != null ? String(mesh.order) : ""}
-              onBlur={(e) => {
-                const raw = e.target.value.trim();
-                if (!raw) {
-                  updateMesh((current) => ({ ...current, order: null }));
-                  return;
-                }
-                const numeric = Number(raw);
-                if (!Number.isFinite(numeric)) return;
-                updateMesh((current) => ({
-                  ...current,
-                  order: Math.max(1, Math.round(numeric)),
-                }));
-              }}
-              mono
-              placeholder="1"
-            />
-            <TextField
-              key={`${geo.name}-mesh-source-${mesh.source ?? ""}`}
-              label="Source Mesh"
-              defaultValue={mesh.source ?? ""}
-              onBlur={(e) => {
-                const raw = e.target.value.trim();
-                updateMesh((current) => ({ ...current, source: raw.length > 0 ? raw : null }));
-              }}
-              mono
-              placeholder="mesh.msh"
-              className="col-span-2"
-            />
-            <div className="col-span-2">
-              <Button
-                variant={mesh.build_requested ? "default" : "outline"}
-                size="sm"
-                className="w-full"
-                onClick={() =>
-                  updateMesh((current) => ({
-                    ...current,
-                    build_requested: !current.build_requested,
-                  }))
-                }
-              >
-                {mesh.build_requested ? "Build Requested" : "Request Mesh Build"}
-              </Button>
+
+          <div className="flex flex-col gap-3">
+            <h4 className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground pb-1 border-b border-border/20">
+              Placement Offset
+            </h4>
+            <div className="grid grid-cols-3 gap-3">
+              <TextField key={`${geo.name}-translate-x`} label="Translate X" defaultValue={(translation[0] * 1e9).toFixed(1)} onchange={(e) => handleTranslation(0, e.target.value)} onBlur={(e) => handleTranslation(0, e.target.value)} unit="nm" mono />
+              <TextField key={`${geo.name}-translate-y`} label="Translate Y" defaultValue={(translation[1] * 1e9).toFixed(1)} onchange={(e) => handleTranslation(1, e.target.value)} onBlur={(e) => handleTranslation(1, e.target.value)} unit="nm" mono />
+              <TextField key={`${geo.name}-translate-z`} label="Translate Z" defaultValue={(translation[2] * 1e9).toFixed(1)} onchange={(e) => handleTranslation(2, e.target.value)} onBlur={(e) => handleTranslation(2, e.target.value)} unit="nm" mono />
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      </SidebarSection>
 
-      <div className="pt-2 border-t border-border/50">
-        <Button
-          variant="destructive"
-          size="sm"
-          className="w-full"
-          onClick={() => {
-            model.setScriptBuilderGeometries(prev => prev.filter((_, i) => i !== geoIndex));
-          }}
-        >
-          Delete Geometry
-        </Button>
-      </div>
+      <SidebarSection title="Spatial Summary" defaultOpen={true}>
+        <div className="grid grid-cols-1 gap-3">
+          <div className="flex flex-col gap-1 rounded-lg border border-border/40 bg-card/20 px-3 py-2.5">
+            <span className="text-[0.62rem] font-bold uppercase tracking-widest text-muted-foreground">Bounds</span>
+            <span className="font-mono text-xs text-foreground">{formatBounds(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
+          </div>
+          <div className="flex flex-col gap-1 rounded-lg border border-border/40 bg-card/20 px-3 py-2.5">
+            <span className="text-[0.62rem] font-bold uppercase tracking-widest text-muted-foreground">Extent</span>
+            <span className="font-mono text-xs text-foreground">{formatExtent(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
+          </div>
+        </div>
+      </SidebarSection>
     </div>
   );
 }

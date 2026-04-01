@@ -130,6 +130,7 @@ def resolve_geometry_sources(
         return Translate(
             geometry=resolve_geometry_sources(geometry.geometry, source_root=source_root),
             offset=geometry.offset,
+            name=geometry.name,
         )
     return geometry
 
@@ -139,6 +140,7 @@ def build_geometry_assets_for_request(
     requested_backend: "BackendTarget",
     geometries: Sequence[object],
     discretization: DiscretizationHints | None,
+    study_universe: dict[str, object] | None = None,
     asset_cache: dict[str, dict[str, Any] | None] | None = None,
 ) -> dict[str, Any] | None:
     if discretization is None:
@@ -149,6 +151,7 @@ def build_geometry_assets_for_request(
             "requested_backend": requested_backend.value,
             "geometries": [geometry.to_ir() for geometry in geometries],
             "discretization": discretization.to_ir(),
+            "study_universe": study_universe,
         },
         sort_keys=True,
     )
@@ -166,8 +169,13 @@ def build_geometry_assets_for_request(
         from fullmag.meshing import realize_fdm_grid_asset
 
         for geometry in geometries:
-            if isinstance(geometry, (Cylinder, ImportedGeometry)):
-                asset = realize_fdm_grid_asset(geometry, discretization.fdm)
+            should_realize = isinstance(geometry, (Cylinder, ImportedGeometry)) or study_universe is not None
+            if should_realize:
+                asset = realize_fdm_grid_asset(
+                    geometry,
+                    discretization.fdm,
+                    study_universe=study_universe,
+                )
                 assets["fdm_grid_assets"].append(asset.to_ir(geometry.geometry_name))
 
     should_build_fem_assets = (
@@ -650,6 +658,11 @@ class Problem:
         mesh_workflow = runtime_metadata.get("mesh_workflow")
         if not isinstance(mesh_workflow, dict):
             mesh_workflow = None
+        study_universe = (
+            runtime_metadata.get("study_universe")
+            if isinstance(runtime_metadata.get("study_universe"), dict)
+            else None
+        )
         builder_manifest = build_problem_builder_manifest(
             self,
             runtime=runtime,
@@ -668,6 +681,7 @@ class Problem:
                 requested_backend=runtime.backend_target,
                 geometries=geometries,
                 discretization=discretization,
+                study_universe=study_universe,
                 asset_cache=effective_asset_cache,
             )
 

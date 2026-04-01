@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import struct
 import textwrap
 import unittest
 from pathlib import Path
@@ -22,6 +23,38 @@ from fullmag.meshing.gmsh_bridge import MeshData
 
 
 class ProblemApiTests(unittest.TestCase):
+    def _write_binary_cube_stl(self, path: Path) -> None:
+        vertices = np.asarray(
+            [
+                [-1.0, -1.0, -1.0],
+                [1.0, -1.0, -1.0],
+                [1.0, 1.0, -1.0],
+                [-1.0, 1.0, -1.0],
+                [-1.0, -1.0, 1.0],
+                [1.0, -1.0, 1.0],
+                [1.0, 1.0, 1.0],
+                [-1.0, 1.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        faces = [
+            (0, 1, 2), (0, 2, 3),
+            (4, 6, 5), (4, 7, 6),
+            (0, 4, 5), (0, 5, 1),
+            (1, 5, 6), (1, 6, 2),
+            (2, 6, 7), (2, 7, 3),
+            (3, 7, 4), (3, 4, 0),
+        ]
+        with path.open("wb") as handle:
+            header = b"fullmag cube".ljust(80, b"\0")
+            handle.write(header)
+            handle.write(struct.pack("<I", len(faces)))
+            for i0, i1, i2 in faces:
+                handle.write(struct.pack("<3f", 0.0, 0.0, 0.0))
+                for index in (i0, i1, i2):
+                    handle.write(struct.pack("<3f", *vertices[index]))
+                handle.write(struct.pack("<H", 0))
+
     def _build_problem(self) -> fm.Problem:
         geometry = fm.Box(size=(200e-9, 20e-9, 5e-9), name="track")
         material = fm.Material(
@@ -278,6 +311,62 @@ class ProblemApiTests(unittest.TestCase):
                 'study.universe(mode="manual", size=(8e-08, 6e-08, 4e-08), center=(5e-09, -2e-09, 1e-09), padding=(0, 0, 0))',
                 overridden,
             )
+
+    def test_manual_study_universe_expands_box_fdm_grid_asset_domain(self) -> None:
+        fm.reset()
+        study = fm.study("manual_universe_grid")
+        study.engine("fdm")
+        study.cell(10e-9, 10e-9, 10e-9)
+        study.universe(
+            mode="manual",
+            size=(80e-9, 60e-9, 40e-9),
+            center=(5e-9, -15e-9, 10e-9),
+        )
+
+        body = study.geometry(
+            fm.Box(size=(20e-9, 20e-9, 20e-9), name="track").translate((15e-9, -5e-9, 10e-9)),
+            name="track",
+        )
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1.0, 0.0, 0.0)
+
+        problem = flat_world._build_problem()
+        ir = problem.to_ir(requested_backend=fm.BackendTarget.FDM)
+        asset = ir["geometry_assets"]["fdm_grid_assets"][0]
+
+        self.assertEqual(asset["geometry_name"], "track_geom")
+        self.assertEqual(asset["cells"], [8, 6, 4])
+        for actual, expected in zip(asset["origin"], [-50e-9, -40e-9, -20e-9], strict=True):
+            self.assertAlmostEqual(actual, expected)
+        self.assertEqual(sum(asset["active_mask"]), 8)
+
+    def test_auto_study_universe_padding_expands_box_fdm_grid_asset_domain(self) -> None:
+        fm.reset()
+        study = fm.study("auto_universe_padding")
+        study.engine("fdm")
+        study.cell(10e-9, 10e-9, 10e-9)
+        study.universe(
+            mode="auto",
+            padding=(10e-9, 10e-9, 10e-9),
+        )
+
+        body = study.geometry(fm.Box(size=(20e-9, 30e-9, 40e-9), name="track"), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1.0, 0.0, 0.0)
+
+        problem = flat_world._build_problem()
+        ir = problem.to_ir(requested_backend=fm.BackendTarget.FDM)
+        asset = ir["geometry_assets"]["fdm_grid_assets"][0]
+
+        self.assertEqual(asset["geometry_name"], "track_geom")
+        self.assertEqual(asset["cells"], [4, 5, 6])
+        for actual, expected in zip(asset["origin"], [-20e-9, -25e-9, -30e-9], strict=True):
+            self.assertAlmostEqual(actual, expected)
+        self.assertEqual(sum(asset["active_mask"]), 24)
 
     def test_legacy_dynamics_and_outputs_are_normalized_to_time_evolution(self) -> None:
         geometry = fm.Box(size=(100e-9, 20e-9, 5e-9), name="track")
@@ -837,6 +926,114 @@ class ProblemApiTests(unittest.TestCase):
 
         self.assertIn('volume="surface"', rewritten)
 
+    def test_script_builder_preserves_custom_region_name(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("region_name")
+        study.engine("fdm")
+        study.cell(5e-9, 5e-9, 5e-9)
+
+        body = study.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="body")
+        body.region_name = "core"
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_region_name.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path)
+
+        self.assertEqual(loaded.problem.magnets[0].region_name, "core")
+        draft = export_builder_draft(loaded)
+        self.assertEqual(draft["geometries"][0]["region_name"], "core")
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn('body.region_name = "core"', rewritten)
+
+    def test_builder_draft_exports_structured_csg_geometry(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("csg_geometry")
+        study.engine("fem")
+
+        body = study.geometry(
+            fm.Box(100e-9, 40e-9, 20e-9, name="host")
+            - fm.Cylinder(radius=10e-9, height=20e-9, name="hole").translate((15e-9, 0, 0)),
+            name="body",
+        )
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_csg_geometry.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+
+        draft = export_builder_draft(loaded)
+        geometry = draft["geometries"][0]
+        self.assertEqual(geometry["geometry_kind"], "Difference")
+        self.assertEqual(geometry["geometry_params"]["base"]["geometry_kind"], "Box")
+        self.assertEqual(geometry["geometry_params"]["tool"]["geometry_kind"], "Translate")
+        self.assertEqual(
+            geometry["geometry_params"]["tool"]["geometry_params"]["base"]["geometry_kind"],
+            "Cylinder",
+        )
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn("fm.Box(1e-07, 4e-08, 2e-08, name=\"host\")", rewritten)
+        self.assertIn(".translate((1.5e-08, 0, 0))", rewritten)
+        self.assertIn(" - ", rewritten)
+
+    def test_script_builder_rewrites_file_texture_override_with_loadfile(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("file_texture")
+        study.engine("fdm")
+        study.cell(5e-9, 5e-9, 5e-9)
+
+        body = study.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="body")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_file_texture.py"
+            texture_path = Path(tmp_dir) / "m0.ovf"
+            texture_path.write_text("# dummy", encoding="utf-8")
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+
+            draft = export_builder_draft(loaded)
+            draft["geometries"][0]["magnetization"] = {
+                "kind": "file",
+                "value": None,
+                "seed": None,
+                "source_path": str(texture_path),
+                "source_format": "ovf",
+                "dataset": None,
+                "sample_index": None,
+            }
+            rewritten = rewrite_loaded_problem_script(loaded, overrides=draft)["rendered_source"]
+
+        self.assertIn('body.m.loadfile("m0.ovf", format="ovf")', rewritten)
+
     def test_builder_draft_exports_flat_stage_sequence(self) -> None:
         script = """
         import fullmag as fm
@@ -865,6 +1062,34 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(draft["stages"][0]["torque_tolerance"], "1e-05")
         self.assertEqual(draft["stages"][1]["kind"], "run")
         self.assertEqual(draft["stages"][1]["until_seconds"], "4e-12")
+
+    def test_builder_draft_uses_final_flat_problem_materials_for_stage_sequences(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fdm")
+        fm.cell(5e-9, 5e-9, 5e-9)
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        fm.solver(dt=1e-13)
+        fm.relax(max_steps=25)
+        fm.run(4e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_builder_stage_materials.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+
+        draft = export_builder_draft(loaded)
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+
+        self.assertEqual(draft["geometries"][0]["material"]["alpha"], 0.1)
+        self.assertIn("track.alpha = 0.1", rewritten)
+        self.assertNotIn("track.alpha = 1.0", rewritten)
 
     def test_script_rewrite_applies_stage_overrides(self) -> None:
         script = """
@@ -1072,6 +1297,40 @@ class ProblemApiTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Per-geometry FEM mesh settings are not yet supported"):
                 fm.load_problem_from_script(path)
 
+    def test_flat_mesh_rewrite_preserves_multi_body_mesh_calls(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fem")
+        left = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="left")
+        left.Ms = 800e3
+        left.Aex = 13e-12
+        left.alpha = 0.1
+        left.m = fm.uniform(1, 0, 0)
+        left.mesh(hmax=4e-9, order=1).build()
+
+        right = fm.geometry(fm.Box(80e-9, 20e-9, 5e-9).translate((120e-9, 0, 0)), name="right")
+        right.Ms = 800e3
+        right.Aex = 13e-12
+        right.alpha = 0.1
+        right.m = fm.uniform(1, 0, 0)
+        right.mesh(hmax=4e-9, order=1).build()
+
+        fm.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_flat_multibody_mesh.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with patch("fullmag.world.build_geometry_assets_for_request", return_value=None):
+                loaded = fm.load_problem_from_script(path)
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn("left.mesh(hmax=4e-09, order=1)", rewritten)
+        self.assertIn("left.mesh.build()", rewritten)
+        self.assertIn("right.mesh(hmax=4e-09, order=1)", rewritten)
+        self.assertIn("right.mesh.build()", rewritten)
+
     def test_study_mesh_builder_preserves_global_and_local_fem_mesh_modes(self) -> None:
         script = """
         import fullmag as fm
@@ -1144,6 +1403,154 @@ class ProblemApiTests(unittest.TestCase):
         rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
         self.assertNotIn("study.mesh(", rewritten)
         self.assertIn("a.mesh(hmax=4e-09, order=1)", rewritten)
+
+    def test_study_mesh_builder_exports_full_per_object_mesh_details(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("object_mesh_details")
+        study.engine("fem")
+        study.mesh(hmax=25e-9, growth_rate=1.8, narrow_regions=2)
+
+        body = study.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="body")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        body.mesh(
+            hmax=20e-9,
+            hmin=5e-9,
+            order=2,
+            algorithm_2d=5,
+            algorithm_3d=10,
+            size_factor=0.75,
+            size_from_curvature=24,
+            growth_rate=1.4,
+            narrow_regions=3,
+            smoothing_steps=4,
+            optimize="Netgen",
+            optimize_iterations=3,
+            compute_quality=True,
+            per_element_quality=True,
+        ).size_field("Ball", VIn=1e-9, Radius=20e-9).smooth(iterations=2)
+        body.mesh.build()
+
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_study_object_mesh_details.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with patch("fullmag.world.build_geometry_assets_for_request", return_value=None):
+                loaded = fm.load_problem_from_script(path)
+
+        draft = export_builder_draft(loaded)
+        self.assertEqual(draft["mesh"]["growth_rate"], "1.8")
+        self.assertEqual(draft["mesh"]["narrow_regions"], 2)
+        mesh_entry = draft["geometries"][0]["mesh"]
+        self.assertEqual(mesh_entry["mode"], "custom")
+        self.assertEqual(mesh_entry["hmax"], "2e-08")
+        self.assertEqual(mesh_entry["hmin"], "5e-09")
+        self.assertEqual(mesh_entry["order"], 2)
+        self.assertEqual(mesh_entry["algorithm_2d"], 5)
+        self.assertEqual(mesh_entry["algorithm_3d"], 10)
+        self.assertEqual(mesh_entry["size_factor"], 0.75)
+        self.assertEqual(mesh_entry["size_from_curvature"], 24)
+        self.assertEqual(mesh_entry["growth_rate"], "1.4")
+        self.assertEqual(mesh_entry["narrow_regions"], 3)
+        self.assertEqual(mesh_entry["smoothing_steps"], 4)
+        self.assertEqual(mesh_entry["optimize"], "Netgen")
+        self.assertEqual(mesh_entry["optimize_iterations"], 3)
+        self.assertTrue(mesh_entry["compute_quality"])
+        self.assertTrue(mesh_entry["per_element_quality"])
+        self.assertEqual(mesh_entry["size_fields"][0]["kind"], "Ball")
+        self.assertEqual(mesh_entry["operations"][0]["kind"], "smooth")
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn("study.mesh(hmax=2.5e-08, growth_rate=1.8, narrow_regions=2)", rewritten)
+        self.assertIn("body.mesh(hmax=2e-08, hmin=5e-09, order=2", rewritten)
+        self.assertIn("algorithm_2d=5", rewritten)
+        self.assertIn("algorithm_3d=10", rewritten)
+        self.assertIn("size_factor=0.75", rewritten)
+        self.assertIn("size_from_curvature=24", rewritten)
+        self.assertIn("smoothing_steps=4", rewritten)
+        self.assertIn("optimize_iterations=3", rewritten)
+        self.assertIn("growth_rate=1.4", rewritten)
+        self.assertIn("narrow_regions=3", rewritten)
+        self.assertIn('optimize="Netgen"', rewritten)
+        self.assertIn("compute_quality=True", rewritten)
+        self.assertIn("per_element_quality=True", rewritten)
+        self.assertIn('body.mesh.size_field("Ball"', rewritten)
+        self.assertIn("body.mesh.smooth(iterations=2)", rewritten)
+        self.assertIn("body.mesh.build()", rewritten)
+
+    def test_builder_draft_exports_geometry_bounds_for_translated_box(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("bounds_box")
+        study.engine("fdm")
+        study.cell(5e-9, 5e-9, 5e-9)
+
+        body = study.geometry(
+            fm.Box(size=(10e-9, 20e-9, 30e-9), name="box").translate((5e-9, -2e-9, 1e-9)),
+            name="box",
+        )
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_builder_bounds_box.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path)
+
+        draft = export_builder_draft(loaded)
+        geometry = draft["geometries"][0]
+        self.assertEqual(geometry["geometry_params"]["translation"], [5e-09, -2e-09, 1e-09])
+        for actual, expected in zip(geometry["bounds_min"], [0.0, -12e-9, -14e-9], strict=True):
+            self.assertAlmostEqual(actual, expected)
+        for actual, expected in zip(geometry["bounds_max"], [10e-9, 8e-9, 16e-9], strict=True):
+            self.assertAlmostEqual(actual, expected)
+
+    def test_builder_draft_exports_relative_imported_geometry_bounds_without_trimesh(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fem")
+        body = fm.geometry(
+            fm.ImportedGeometry(source="cube.stl", name="cube").translate((2.0, 3.0, 4.0)),
+            name="cube",
+        )
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        fm.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            self._write_binary_cube_stl(tmp_path / "cube.stl")
+            path = tmp_path / "script_builder_bounds_imported.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with patch(
+                "fullmag.meshing.surface_assets._import_trimesh",
+                side_effect=ImportError("missing trimesh"),
+            ):
+                loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+                draft = export_builder_draft(loaded)
+
+        geometry = draft["geometries"][0]
+        self.assertEqual(geometry["geometry_params"]["source"], "cube.stl")
+        for actual, expected in zip(geometry["bounds_min"], [1.0, 2.0, 3.0], strict=True):
+            self.assertAlmostEqual(actual, expected)
+        for actual, expected in zip(geometry["bounds_max"], [3.0, 4.0, 5.0], strict=True):
+            self.assertAlmostEqual(actual, expected)
 
     def test_flat_adaptive_mesh_policy_lowers_to_runtime_metadata(self) -> None:
         script = """

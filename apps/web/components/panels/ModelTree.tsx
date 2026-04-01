@@ -2,6 +2,13 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import type {
+  ModelBuilderGraphV2,
+  ScriptBuilderCurrentModuleEntry,
+  ScriptBuilderExcitationAnalysisEntry,
+  ScriptBuilderGeometryEntry,
+  ScriptBuilderMagnetizationEntry,
+} from "@/lib/session/types";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -13,6 +20,7 @@ export interface TreeNodeData {
   icon?: string;
   badge?: string;
   status?: NodeStatus;
+  defaultOpen?: boolean;
   children?: TreeNodeData[];
   onClick?: () => void;
 }
@@ -40,7 +48,7 @@ function TreeNode({
   onNodeClick?: (id: string) => void;
   onContextMenu?: (e: React.MouseEvent, nodeId: string, label: string) => void;
 }) {
-  const [open, setOpen] = useState(depth < 2);
+  const [open, setOpen] = useState(node.defaultOpen ?? depth < 2);
   const hasChildren = node.children && node.children.length > 0;
 
   const handleClick = useCallback(() => {
@@ -188,6 +196,7 @@ export default function ModelTree({
             {ctxMenu.label}
           </div>
           <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("select")}>Select</button>
+          <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("focus")}>Focus in 3D</button>
           <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("copy-name")}>Copy Name</button>
           <div className="h-px bg-border/50 my-1 mx-1" />
           <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("expand-all")}>Expand All</button>
@@ -199,6 +208,8 @@ export default function ModelTree({
 }
 
 export function buildFullmagModelTree(opts: {
+  graph?: ModelBuilderGraphV2 | null;
+  studyLabel?: string | null;
   backend?: string;
   showUniverse?: boolean;
   universeMode?: string | null;
@@ -236,14 +247,52 @@ export function buildFullmagModelTree(opts: {
   onResultsClick?: () => void;
   initialStatePath?: string | null;
   initialStateFormat?: string | null;
-  geometries?: import("@/lib/session/types").ScriptBuilderGeometryEntry[];
+  geometries?: ScriptBuilderGeometryEntry[];
+  currentModules?: ScriptBuilderCurrentModuleEntry[];
+  excitationAnalysis?: ScriptBuilderExcitationAnalysisEntry | null;
 }): TreeNodeData[] {
-  const geos = opts.geometries ?? [];
-
-  /* ── Geometry subtree ─────────────────────────────────────────────── */
-  const geometryChildren: TreeNodeData[] = geos.length > 0
-    ? geos.map((geo) => _buildGeometryNode(geo))
-    : [{ id: "geo-body", label: opts.geometryKind ?? "Body", icon: "◻" }];
+  const graph = opts.graph ?? null;
+  const graphUniverse = graph?.universe.value ?? null;
+  const graphObjects =
+    graph?.objects.items.map((objectNode) => ({
+      id: `obj-${objectNode.id}`,
+      name: objectNode.name,
+      label: objectNode.label,
+      geometry: objectNode.geometry,
+      tree: objectNode.tree,
+    })) ??
+    [];
+  const geos = graphObjects.map((objectNode) => objectNode.geometry).length > 0
+    ? graphObjects.map((objectNode) => objectNode.geometry)
+    : opts.geometries ?? [];
+  const objects = graphObjects.length > 0
+    ? graphObjects
+    : geos.map((geometry) => ({
+        id: `obj-${geometry.name}`,
+        name: geometry.name,
+        label: geometry.name,
+        geometry,
+        tree: {
+          geometry: `geo-${geometry.name}`,
+          material: `mat-${geometry.name}`,
+          region: `reg-${geometry.name}`,
+          mesh: `geo-${geometry.name}-mesh`,
+        },
+      }));
+  const modules = graph?.current_modules.modules ?? opts.currentModules ?? [];
+  const excitationAnalysis =
+    graph?.current_modules.excitation_analysis ?? opts.excitationAnalysis ?? null;
+  const initialState = graph?.study.initial_state ?? null;
+  const showUniverse = Boolean(
+    graphUniverse ||
+      opts.showUniverse ||
+      opts.universeDeclaredSize ||
+      opts.universeEffectiveSize,
+  );
+  const universeMode = graphUniverse?.mode ?? opts.universeMode ?? null;
+  const universeDeclaredSize = graphUniverse?.size ?? opts.universeDeclaredSize ?? null;
+  const universeCenter = graphUniverse?.center ?? opts.universeCenter ?? null;
+  const universePadding = graphUniverse?.padding ?? opts.universePadding ?? null;
 
   /* ── Physics ─────────────────────────────────────────────────────── */
   const physicsChildren: TreeNodeData[] = [
@@ -283,100 +332,94 @@ export function buildFullmagModelTree(opts: {
     physicsChildren.push({ id: "phys-spin-torque", label: "Spin Torque", icon: "⟳", status: "pending" });
   }
 
-  /* ── Determine geometry-level material summary ────────────────────── */
-  const hasMaterialFromGeos = geos.some((g) => g.material.Ms != null);
-  const materialStatus: NodeStatus = hasMaterialFromGeos
-    ? "ready"
-    : opts.materialMsat != null
-      ? "ready"
-      : "pending";
-  const materialBadge = geos.length > 0
-    ? `${geos.length} ${geos.length === 1 ? "body" : "bodies"}`
-    : opts.materialName ?? "—";
+  const objectsChildren: TreeNodeData[] =
+    objects.length > 0
+      ? objects.map((objectNode) => _buildObjectNode(objectNode))
+      : [
+          {
+            id: "objects-empty",
+            label: "No objects yet",
+            icon: "◻",
+            status: "pending",
+          },
+        ];
 
-  const tree: TreeNodeData[] = [
-    ...(
-      opts.showUniverse
-        ? [
-            {
-              id: "universe",
-              label: "Universe",
-              icon: "⬚",
-              badge: opts.universeMode ?? "derived",
-              status: "ready" as const,
-              children: _buildUniverseChildren(opts),
-            },
-          ]
-        : []
-    ),
-    {
-      id: "geometry",
-      label: "Geometry",
-      icon: "🔷",
-      badge: geos.length > 0
-        ? `${geos.length} ${geos.length === 1 ? "body" : "bodies"}`
-        : opts.geometryKind ?? "—",
-      status: "ready",
-      onClick: opts.onGeometryClick,
-      children: geometryChildren,
-    },
-    {
-      id: "regions",
-      label: "Regions / Selections",
-      icon: "▦",
-      status: "ready",
-      onClick: opts.onRegionsClick,
-      children: [
-        { id: "reg-domain", label: "Domain 1", icon: "■" },
-        { id: "reg-boundary", label: "Boundary", icon: "▢" },
-      ],
-    },
-  ];
+  const studyChildren: TreeNodeData[] = [];
 
-  if (geos.length === 0) {
-    tree.push({
-      id: "materials",
-      label: "Materials",
-      icon: "●",
-      badge: materialBadge,
-      status: materialStatus,
-      onClick: opts.onMaterialClick,
-      children: [
-        { id: "mat-body", label: opts.materialName ?? "Material 1", icon: "●",
-          children: [
-            { id: "mat-ms", label: opts.materialMsat != null ? `Ms = ${fmtCompact(opts.materialMsat)} A/m` : "Ms (saturation)", icon: "𝑀", status: opts.materialMsat != null ? "ready" : "pending" },
-            { id: "mat-aex", label: opts.materialAex != null ? `A = ${opts.materialAex.toExponential(1)} J/m` : "A (exchange)", icon: "𝐴", status: opts.materialAex != null ? "ready" : "pending" },
-            { id: "mat-alpha", label: opts.materialAlpha != null ? `α = ${opts.materialAlpha}` : "α (damping)", icon: "α", status: opts.materialAlpha != null ? "ready" : "pending" },
-          ],
-        },
-        {
-          id: "initial-state",
-          label: "Initial State (m₀)",
-          icon: "📂",
-          status: opts.initialStatePath ? "ready" : "pending",
-          badge: opts.initialStatePath
-            ? (opts.initialStateFormat ?? "file")
-            : "uniform",
-        },
-      ],
+  if (showUniverse) {
+    studyChildren.push({
+      id: "universe",
+      label: "Universe",
+      icon: "⬚",
+      badge: universeMode ?? "derived",
+      status: "ready",
+      defaultOpen: true,
+      children: _buildUniverseChildren({
+        universeDeclaredSize,
+        universeEffectiveSize: opts.universeEffectiveSize,
+        universeCenter,
+        universePadding,
+        universeRole: opts.universeRole,
+      }),
     });
   }
 
-  tree.push(
+  studyChildren.push({
+    id: "objects",
+    label: "Objects",
+    icon: "📦",
+    badge: `${objects.length}`,
+    status: objects.length > 0 ? "ready" : "pending",
+    defaultOpen: true,
+    onClick: opts.onGeometryClick,
+    children: objectsChildren,
+  });
+
+  if (modules.length > 0 || excitationAnalysis) {
+    const antennaChildren: TreeNodeData[] = modules.map((module) => ({
+      id: `ant-${module.name}`,
+      label: module.name,
+      icon: module.antenna_kind === "CPWAntenna" ? "≋" : "▭",
+      badge: `${module.antenna_kind === "CPWAntenna" ? "CPW" : "µstrip"} · ${(module.drive.current_a * 1e3).toFixed(1)} mA`,
+      status: "ready" as const,
+    }));
+    if (excitationAnalysis) {
+      antennaChildren.push({
+        id: "ant-excitation",
+        label: "Excitation Analysis",
+        icon: "📡",
+        badge: excitationAnalysis.method,
+        status: "ready",
+      });
+    }
+    studyChildren.push({
+      id: "antennas",
+      label: "Antennas / RF",
+      icon: "📻",
+      badge: `${modules.length} source${modules.length !== 1 ? "s" : ""}`,
+      status: modules.length > 0 ? "ready" : "pending",
+      defaultOpen: false,
+      children: antennaChildren,
+    });
+  }
+
+  studyChildren.push(
     {
       id: "physics",
       label: "Physics",
       icon: "⚛",
       status: "ready",
+      defaultOpen: false,
       onClick: opts.onPhysicsClick,
       children: physicsChildren,
     },
     {
       id: "mesh",
-      label: "Mesh",
+      label: "Mesh Defaults",
       icon: "◫",
       badge: opts.meshElements ? `${opts.meshElements.toLocaleString()} el` : opts.meshNodes ? `${opts.meshNodes.toLocaleString()} nodes` : "—",
       status: opts.meshStatus ?? "pending",
+      defaultOpen: false,
       onClick: opts.onMeshClick,
       children: [
         { id: "mesh-view", label: "Inspect View", icon: "👁" },
@@ -392,6 +435,7 @@ export function buildFullmagModelTree(opts: {
       icon: "▶",
       badge: opts.backend ?? "—",
       status: opts.solverStatus ?? "pending",
+      defaultOpen: false,
       onClick: opts.onSolverClick,
       children: [
         { id: "study-solver", label: opts.solverIntegrator ? `Integrator: ${opts.solverIntegrator.toUpperCase()}` : "Solver Configuration", icon: "🔧" },
@@ -401,10 +445,11 @@ export function buildFullmagModelTree(opts: {
     },
     {
       id: "results",
-      label: "Results",
+      label: "Outputs",
       icon: "📈",
       status: opts.scalarRowCount && opts.scalarRowCount > 0 ? "ready" : "pending",
       badge: opts.scalarRowCount ? `${opts.scalarRowCount} pts` : undefined,
+      defaultOpen: false,
       onClick: opts.onResultsClick,
       children: [
         { id: "res-fields", label: "Field Data", icon: "🗂" },
@@ -415,7 +460,17 @@ export function buildFullmagModelTree(opts: {
     },
   );
 
-  return tree;
+  return [
+    {
+      id: "study-root",
+      label: opts.studyLabel ?? "Study",
+      icon: "◈",
+      badge: opts.backend ?? undefined,
+      status: "ready",
+      defaultOpen: true,
+      children: studyChildren,
+    },
+  ];
 }
 
 function fmtCompact(v: number): string {
@@ -504,7 +559,7 @@ const GEOMETRY_ICONS: Record<string, string> = {
 };
 
 function _buildGeometryNode(
-  geo: import("@/lib/session/types").ScriptBuilderGeometryEntry,
+  geo: ScriptBuilderGeometryEntry,
 ): TreeNodeData {
   const geoId = `geo-${geo.name}`;
   const icon = GEOMETRY_ICONS[geo.geometry_kind] ?? "◻";
@@ -557,55 +612,200 @@ function _buildGeometryNode(
   };
 }
 
+function _buildObjectNode(objectNode: {
+  id: string;
+  name: string;
+  label: string;
+  geometry: ScriptBuilderGeometryEntry;
+  tree: {
+    geometry: string;
+    material: string;
+    region: string;
+    mesh: string;
+  };
+}): TreeNodeData {
+  const geo = objectNode.geometry;
+  const geometryId = objectNode.tree.geometry;
+  const materialId = objectNode.tree.material;
+  const regionId = objectNode.tree.region;
+  const meshId = objectNode.tree.mesh;
+
+  const geometryChildren = _buildGeometryParamChildren(geometryId, geo);
+  const meshNode: TreeNodeData = {
+    id: meshId,
+    label: "Mesh",
+    icon: "◫",
+    status: geo.mesh?.mode === "custom" ? "ready" : "pending",
+    badge:
+      geo.mesh?.mode === "custom"
+        ? (geo.mesh.order ? `P${geo.mesh.order}` : "custom")
+        : "inherit",
+    children: [
+      {
+        id: `${meshId}-mode`,
+        label: geo.mesh?.mode === "custom" ? "Mode: custom override" : "Mode: inherit global",
+        icon: "⇆",
+      },
+      {
+        id: `${meshId}-hmax`,
+        label:
+          geo.mesh?.mode === "custom" && geo.mesh.hmax
+            ? `hmax = ${geo.mesh.hmax}`
+            : "hmax from study defaults",
+        icon: "📏",
+      },
+      ...(geo.mesh?.mode === "custom" && geo.mesh.source
+        ? [{ id: `${meshId}-source`, label: geo.mesh.source, icon: "📄" } satisfies TreeNodeData]
+        : []),
+    ],
+  };
+
+  return {
+    id: objectNode.id,
+    label: objectNode.label,
+    icon: GEOMETRY_ICONS[geo.geometry_kind] ?? "📦",
+    badge: geo.geometry_kind,
+    status: "ready",
+    defaultOpen: true,
+    children: [
+      {
+        id: geometryId,
+        label: "Geometry",
+        icon: "🔷",
+        status: "ready",
+        children: geometryChildren,
+      },
+      _buildRegionNode(geo, regionId),
+      _buildMaterialNode(geo, materialId),
+      meshNode,
+    ],
+  };
+}
+
 function _buildGeometryParamChildren(
   parentId: string,
-  geo: import("@/lib/session/types").ScriptBuilderGeometryEntry,
+  geo: ScriptBuilderGeometryEntry,
 ): TreeNodeData[] {
   const params = geo.geometry_params;
   const children: TreeNodeData[] = [];
 
+  children.push({
+    id: `${parentId}-kind`,
+    label: geo.geometry_kind,
+    icon: GEOMETRY_ICONS[geo.geometry_kind] ?? "⚙",
+  });
+
   if (geo.geometry_kind === "Box" && Array.isArray(params.size)) {
     const [dx, dy, dz] = (params.size as number[]).map((v) => (v * 1e9).toFixed(1));
-    children.push({ id: `${parentId}-size`, label: `${dx} × ${dy} × ${dz} nm`, icon: "📏" });
+    children.push({ id: `${parentId}-size`, label: `Size: ${dx} × ${dy} × ${dz} nm`, icon: "📏" });
   } else if (geo.geometry_kind === "Cylinder") {
     const r = params.radius != null ? `r=${((params.radius as number) * 1e9).toFixed(1)}` : "";
     const h = params.height != null ? `h=${((params.height as number) * 1e9).toFixed(1)}` : "";
-    children.push({ id: `${parentId}-dim`, label: `${r} ${h} nm`, icon: "📏" });
+    children.push({ id: `${parentId}-dim`, label: `Dimensions: ${r} ${h} nm`, icon: "📏" });
   } else if (geo.geometry_kind === "Ellipsoid") {
     const rx = params.rx != null ? ((params.rx as number) * 1e9).toFixed(1) : "?";
     const ry = params.ry != null ? ((params.ry as number) * 1e9).toFixed(1) : "?";
     const rz = params.rz != null ? ((params.rz as number) * 1e9).toFixed(1) : "?";
-    children.push({ id: `${parentId}-dim`, label: `${rx} × ${ry} × ${rz} nm`, icon: "📏" });
+    children.push({ id: `${parentId}-dim`, label: `Dimensions: ${rx} × ${ry} × ${rz} nm`, icon: "📏" });
+  } else if (geo.geometry_kind === "Ellipse") {
+    const rx = params.rx != null ? ((params.rx as number) * 1e9).toFixed(1) : "?";
+    const ry = params.ry != null ? ((params.ry as number) * 1e9).toFixed(1) : "?";
+    const height = params.height != null ? ((params.height as number) * 1e9).toFixed(1) : "?";
+    children.push({ id: `${parentId}-dim`, label: `Dimensions: ${rx} × ${ry} × ${height} nm`, icon: "📏" });
   } else if (geo.geometry_kind === "ImportedGeometry" && typeof params.source === "string") {
     const basename = (params.source as string).split("/").pop() ?? params.source;
-    children.push({ id: `${parentId}-source`, label: basename as string, icon: "📄" });
+    children.push({ id: `${parentId}-source`, label: `Source: ${basename as string}`, icon: "📄" });
+    if (params.volume === "surface") {
+      children.push({ id: `${parentId}-volume`, label: "Volume: surface", icon: "◌" });
+    }
+  } else if (geo.geometry_kind === "Difference") {
+    children.push({ id: `${parentId}-csg`, label: "CSG difference", icon: "✂" });
+  } else if (geo.geometry_kind === "Union") {
+    children.push({ id: `${parentId}-csg`, label: "CSG union", icon: "∪" });
+  } else if (geo.geometry_kind === "Intersection") {
+    children.push({ id: `${parentId}-csg`, label: "CSG intersection", icon: "∩" });
+  }
+
+  const translation = Array.isArray(params.translation)
+    ? params.translation
+    : Array.isArray(params.translate)
+      ? params.translate
+      : null;
+  if (translation && translation.some((value) => Math.abs(Number(value)) > 0)) {
+    children.push({
+      id: `${parentId}-translation`,
+      label: `Translate: ${translation.map((value) => `${(Number(value) * 1e9).toFixed(1)} nm`).join(" · ")}`,
+      icon: "↔",
+    });
+  }
+
+  if (geo.bounds_min && geo.bounds_max) {
+    children.push({
+      id: `${parentId}-bounds`,
+      label: `Bounds: ${fmtVec([
+        geo.bounds_max[0] - geo.bounds_min[0],
+        geo.bounds_max[1] - geo.bounds_min[1],
+        geo.bounds_max[2] - geo.bounds_min[2],
+      ])}`,
+      icon: "⌗",
+    });
   }
 
   return children;
 }
 
-function _buildMaterialNode(
-  geo: import("@/lib/session/types").ScriptBuilderGeometryEntry,
+function _buildRegionNode(
+  geo: ScriptBuilderGeometryEntry,
+  regionId: string,
 ): TreeNodeData {
-  const matId = `mat-${geo.name}`;
+  const regionName = geo.region_name?.trim() || geo.name;
+  return {
+    id: regionId,
+    label: "Regions",
+    icon: "▣",
+    status: "ready",
+    children: [
+      {
+        id: `${regionId}-item`,
+        label: regionName,
+        icon: "◫",
+        badge: geo.magnetization.kind,
+        status: "ready",
+        children: [
+          {
+            id: `${regionId}-texture`,
+            label: `m₀: ${_magnetizationLabel(geo.magnetization)}`,
+            icon: "🧭",
+            status: "ready",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function _buildMaterialNode(
+  geo: ScriptBuilderGeometryEntry,
+  materialId = `mat-${geo.name}`,
+): TreeNodeData {
   const mat = geo.material;
   const mag = geo.magnetization;
 
   const matChildren: TreeNodeData[] = [
     {
-      id: `${matId}-ms`,
+      id: `${materialId}-ms`,
       label: mat.Ms != null ? `Ms = ${fmtCompact(mat.Ms)} A/m` : "Ms (saturation)",
       icon: "𝑀",
       status: mat.Ms != null ? "ready" : "pending",
     },
     {
-      id: `${matId}-aex`,
+      id: `${materialId}-aex`,
       label: mat.Aex != null ? `A = ${mat.Aex.toExponential(1)} J/m` : "A (exchange)",
       icon: "𝐴",
       status: mat.Aex != null ? "ready" : "pending",
     },
     {
-      id: `${matId}-alpha`,
+      id: `${materialId}-alpha`,
       label: `α = ${mat.alpha}`,
       icon: "α",
       status: "ready",
@@ -614,7 +814,7 @@ function _buildMaterialNode(
 
   if (mat.Dind != null) {
     matChildren.push({
-      id: `${matId}-dind`,
+      id: `${materialId}-dind`,
       label: `Dind = ${mat.Dind.toExponential(1)} J/m²`,
       icon: "𝐷",
       status: "ready",
@@ -624,7 +824,7 @@ function _buildMaterialNode(
   // Magnetization node
   const magLabel = _magnetizationLabel(mag);
   matChildren.push({
-    id: `${matId}-m0`,
+    id: `${materialId}-m0`,
     label: `m₀: ${magLabel}`,
     icon: "🧭",
     status: "ready",
@@ -632,7 +832,7 @@ function _buildMaterialNode(
   });
 
   return {
-    id: matId,
+    id: materialId,
     label: "Material & State",
     icon: "●",
     status: mat.Ms != null ? "ready" : "pending",
@@ -641,7 +841,7 @@ function _buildMaterialNode(
 }
 
 function _magnetizationLabel(
-  mag: import("@/lib/session/types").ScriptBuilderMagnetizationEntry,
+  mag: ScriptBuilderMagnetizationEntry,
 ): string {
   if (mag.kind === "uniform" && mag.value) {
     return `(${mag.value.map((v) => v.toFixed(2)).join(", ")})`;

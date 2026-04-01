@@ -17,6 +17,9 @@ import {
   timestepModeForPlan,
   precessionModeForPlan,
 } from "./helpers";
+import { SidebarSection } from "./primitives";
+import TextField from "../../ui/TextField";
+import SelectField from "../../ui/SelectField";
 
 const EDITABLE_STAGE_STATES = new Set(["relax", "run"]);
 
@@ -133,9 +136,8 @@ export default function StudyPanel() {
   ];
 
   return (
-    <>
-      <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
-        <div className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground mb-4">Active Backend Configuration</div>
+    <div className="flex flex-col gap-0 border-t border-border/20">
+      <SidebarSection title="Active Backend Configuration" defaultOpen={true}>
         <div className="grid grid-cols-3 gap-3">
           <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">
             <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">State</span>
@@ -274,10 +276,9 @@ export default function StudyPanel() {
             ))}
           </div>
         ) : null}
-      </div>
+      </SidebarSection>
 
-      <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
-        <div className="text-[0.6rem] font-black uppercase tracking-[0.2em] text-muted-foreground mb-4">Stage Sequence</div>
+      <SidebarSection title="Stage Sequence" defaultOpen={true}>
         {ctx.studyStages.length > 0 ? (
           <div className="flex flex-col gap-3">
             {ctx.studyStages.map((stage, index) => (
@@ -310,66 +311,62 @@ export default function StudyPanel() {
 
                 {stage.kind === "run" && (
                   <div className="mt-3">
-                    <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
-                      Run until [s]
-                      <input
-                        className="flex h-8 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
-                        value={stage.until_seconds}
-                        onChange={(e) => updateStage(index, { until_seconds: e.target.value })}
-                        placeholder="1e-12"
-                        disabled={stageEditingDisabled}
-                      />
-                    </label>
+                    <TextField
+                      label="Run until [s]"
+                      value={stage.until_seconds || ""}
+                      onchange={(e) => updateStage(index, { until_seconds: e.target.value })}
+                      placeholder="1e-12"
+                      disabled={stageEditingDisabled}
+                      tooltip="Target simulation physical time for this execution stage. Reaching this time completes the stage."
+                    />
                   </div>
                 )}
 
                 {stage.kind === "relax" && (
                   <div className="grid grid-cols-2 gap-3 mt-3">
-                    <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground col-span-2">
-                      Relax algorithm
-                      <select
-                        className="flex h-8 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
+                    <div className="col-span-2">
+                      <SelectField
+                        label="Relax algorithm"
                         value={stage.relax_algorithm || "llg_overdamped"}
-                        onChange={(e) => updateStage(index, { relax_algorithm: e.target.value })}
+                        onchange={(val) => updateStage(index, { relax_algorithm: val })}
                         disabled={stageEditingDisabled}
-                      >
-                        {Object.entries(RELAXATION_PROFILES).map(([value, profile]) => (
-                          <option key={value} value={value}>
-                            {profile.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
-                      Max steps
-                      <input
-                        className="flex h-8 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
-                        value={stage.max_steps}
-                        onChange={(e) => updateStage(index, { max_steps: e.target.value })}
+                        options={Object.entries(RELAXATION_PROFILES).map(([value, profile]) => ({
+                          value,
+                          label: profile.label,
+                        }))}
+                        tooltip="Algorithm used to minimize the system energy. Overdamped LLG or steepest descent are common for finding the ground state."
+                      />
+                    </div>
+                    <div>
+                      <TextField
+                        label="Max steps"
+                        value={stage.max_steps || ""}
+                        onchange={(e) => updateStage(index, { max_steps: e.target.value })}
                         placeholder="5000"
                         disabled={stageEditingDisabled}
+                        tooltip="Maximum allowed iterations for the relaxation stage before timing out or moving on."
                       />
-                    </label>
-                    <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
-                      Torque tol.
-                      <input
-                        className="flex h-8 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
-                        value={stage.torque_tolerance}
-                        onChange={(e) => updateStage(index, { torque_tolerance: e.target.value })}
+                    </div>
+                    <div>
+                      <TextField
+                        label="Torque tol."
+                        value={stage.torque_tolerance || ""}
+                        onchange={(e) => updateStage(index, { torque_tolerance: e.target.value })}
                         placeholder="1e-6"
                         disabled={stageEditingDisabled}
+                        tooltip="Stopping criterion based on the maximum normalized torque (dm/dt) across all cells."
                       />
-                    </label>
-                    <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground col-span-2">
-                      Energy tol.
-                      <input
-                        className="flex h-8 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
-                        value={stage.energy_tolerance}
-                        onChange={(e) => updateStage(index, { energy_tolerance: e.target.value })}
+                    </div>
+                    <div className="col-span-2">
+                      <TextField
+                        label="Energy tol."
+                        value={stage.energy_tolerance || ""}
+                        onchange={(e) => updateStage(index, { energy_tolerance: e.target.value })}
                         placeholder="disabled"
                         disabled={stageEditingDisabled}
+                        tooltip="Stopping criterion based on the fractional energy change between steps."
                       />
-                    </label>
+                    </div>
                   </div>
                 )}
 
@@ -386,55 +383,57 @@ export default function StudyPanel() {
             No scripted stage sequence is attached to this workspace yet. Flat scripts that call `fm.relax(...)`, `fm.run(...)`, or a sequence of both will appear here automatically.
           </div>
         )}
-      </div>
+      </SidebarSection>
 
-      <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
-        <div className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground mb-4">Performance And Physics</div>
+      <SidebarSection title="Performance And Physics" defaultOpen={false}>
         <div className="grid gap-3">
           {insightCards.map((card) => (
-            <div key={card.title} className="bg-card/50 border border-border/50 shadow-sm rounded-lg p-3.5 flex flex-col gap-1 inline-flex">
+            <div key={card.title} className="bg-card/50 border border-border/50 shadow-sm rounded-lg p-3.5 flex flex-col gap-1">
               <div className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground/70">{card.title}</div>
               <div className="font-bold text-[0.8rem] text-foreground mt-0.5 tracking-tight">{card.subtitle}</div>
               <div className="text-xs text-muted-foreground leading-relaxed mt-1.5">{card.body}</div>
             </div>
           ))}
         </div>
-      </div>
+      </SidebarSection>
 
-      <div className="flex flex-col py-4 border-b border-border/40 last:border-0">
-        <div className="text-[0.6rem] font-black uppercase tracking-[0.2em] text-muted-foreground mb-4">Next Interactive Command</div>
+      <SidebarSection title="Next Interactive Command" defaultOpen={true}>
         <div className="flex flex-col gap-3 p-3 bg-muted/30 border border-border/50 rounded-lg shadow-inner">
-          <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
-            Run until [s]
-            <input
-              className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50"
-              value={ctx.runUntilInput}
-              onChange={(e) => ctx.setRunUntilInput(e.target.value)}
-              disabled={stageEditingDisabled}
-            />
-          </label>
+          <TextField
+            label="Run until [s]"
+            value={ctx.runUntilInput || ""}
+            onchange={(e) => ctx.setRunUntilInput(e.target.value)}
+            disabled={stageEditingDisabled}
+            tooltip="Simulation target time for the next interactive run command."
+          />
         </div>
         <div className="grid grid-cols-2 gap-3 mt-3">
-          <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
-            Relax steps
-            <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.maxRelaxSteps}
-              onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, maxRelaxSteps: e.target.value }))}
-              disabled={stageEditingDisabled} />
-          </label>
-          <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">
-            Torque tol.
-            <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.torqueTolerance}
-              onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, torqueTolerance: e.target.value }))}
-              disabled={stageEditingDisabled} />
-          </label>
-          <label className="flex flex-col gap-1.5 text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground col-span-2">
-            Energy tol.
-            <input className="flex h-7 w-full rounded-md border border-border/60 bg-background/50 px-2.5 py-1 text-xs text-foreground font-mono focus:border-primary focus:outline-none transition-colors shadow-sm disabled:opacity-50" value={ctx.solverSettings.energyTolerance}
-              onChange={(e) => ctx.setSolverSettings((c) => ({ ...c, energyTolerance: e.target.value }))}
-              placeholder="disabled" disabled={stageEditingDisabled} />
-          </label>
+          <TextField
+            label="Relax steps"
+            value={ctx.solverSettings.maxRelaxSteps || ""}
+            onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, maxRelaxSteps: e.target.value }))}
+            disabled={stageEditingDisabled}
+            tooltip="Maximum iterations for the next interactive relax command."
+          />
+          <TextField
+            label="Torque tol."
+            value={ctx.solverSettings.torqueTolerance || ""}
+            onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, torqueTolerance: e.target.value }))}
+            disabled={stageEditingDisabled}
+            tooltip="Torque (dm/dt) convergence threshold for the interactive relax."
+          />
+          <div className="col-span-2">
+            <TextField
+              label="Energy tol."
+              value={ctx.solverSettings.energyTolerance || ""}
+              onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, energyTolerance: e.target.value }))}
+              placeholder="disabled"
+              disabled={stageEditingDisabled}
+              tooltip="Fractional energy change convergence threshold."
+            />
+          </div>
         </div>
-      </div>
-    </>
+      </SidebarSection>
+    </div>
   );
 }

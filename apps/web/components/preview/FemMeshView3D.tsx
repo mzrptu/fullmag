@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
-import { TrackballControls } from "@react-three/drei";
+import { TrackballControls, PivotControls } from "@react-three/drei";
 import HslSphere from "./HslSphere";
 import ViewCube from "./ViewCube";
 import { cn } from "@/lib/utils";
@@ -12,7 +12,13 @@ import { FemArrows } from "./r3f/FemArrows";
 import { FemHighlightView } from "./r3f/FemHighlightView";
 import SceneAxes3D from "./r3f/SceneAxes3D";
 import { computeFaceAspectRatios } from "./r3f/colorUtils";
-import type { AntennaOverlay } from "../runs/control-room/shared";
+import type { FemLiveMeshObjectSegment } from "../../lib/session/types";
+import type {
+  AntennaOverlay,
+  BuilderObjectOverlay,
+  FocusObjectRequest,
+  ObjectViewMode,
+} from "../runs/control-room/shared";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -61,6 +67,17 @@ interface Props {
   onRefine?: (faceIndices: number[], factor: number) => void;
   antennaOverlays?: AntennaOverlay[];
   selectedAntennaId?: string | null;
+  objectOverlays?: BuilderObjectOverlay[];
+  selectedObjectId?: string | null;
+  selectedMeshObjectId?: string | null;
+  objectSegments?: FemLiveMeshObjectSegment[];
+  focusObjectRequest?: FocusObjectRequest | null;
+  objectViewMode?: ObjectViewMode;
+  worldExtent?: [number, number, number] | null;
+  worldCenter?: [number, number, number] | null;
+  onAntennaTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
+  onRequestObjectSelect?: (id: string) => void;
+  onGeometryTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
 }
 
 const RENDER_OPTIONS: { value: RenderMode; label: string }[] = [
@@ -141,16 +158,20 @@ function AntennaOverlayMeshes({
   overlays,
   geomCenter,
   selectedAntennaId,
+  onAntennaTranslate,
 }: {
   overlays: AntennaOverlay[];
   geomCenter: THREE.Vector3;
   selectedAntennaId?: string | null;
+  onAntennaTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
 }) {
+  const groupRef = useRef<THREE.Group>(null);
+  
   return (
     <group>
       {overlays.map((overlay) => {
         const selected = selectedAntennaId === overlay.id;
-        return overlay.conductors.map((conductor) => {
+        const conductors = overlay.conductors.map((conductor) => {
           const size = [
             conductor.boundsMax[0] - conductor.boundsMin[0],
             conductor.boundsMax[1] - conductor.boundsMin[1],
@@ -191,8 +212,338 @@ function AntennaOverlayMeshes({
             </group>
           );
         });
+
+        if (selected && onAntennaTranslate) {
+          return (
+            <PivotControls
+              key={overlay.id}
+              depthTest={false}
+              lineWidth={2}
+              axisColors={["#f87171", "#4ade80", "#60a5fa"]}
+              scale={75}
+              fixed={true}
+              onDragEnd={() => {
+                if (groupRef.current) {
+                  const p = groupRef.current.position;
+                  onAntennaTranslate(overlay.id, p.x, p.y, p.z);
+                  groupRef.current.position.set(0, 0, 0);
+                }
+              }}
+            >
+              <group ref={groupRef}>{conductors}</group>
+            </PivotControls>
+          );
+        }
+        return <group key={overlay.id}>{conductors}</group>;
       })}
     </group>
+  );
+}
+
+function objectOverlayColors(selected: boolean, dimmed: boolean) {
+  if (selected) {
+    return { fill: "#facc15", wire: "#fff7ae", fillOpacity: 0.28, wireOpacity: 1 };
+  }
+  if (dimmed) {
+    return { fill: "#64748b", wire: "#94a3b8", fillOpacity: 0.06, wireOpacity: 0.34 };
+  }
+  return { fill: "#60a5fa", wire: "#bfdbfe", fillOpacity: 0.12, wireOpacity: 0.64 };
+}
+
+function expandOverlayBounds(
+  overlay: BuilderObjectOverlay,
+  selected: boolean,
+): BuilderObjectOverlay {
+  if (!selected) {
+    return overlay;
+  }
+  const extent = [
+    overlay.boundsMax[0] - overlay.boundsMin[0],
+    overlay.boundsMax[1] - overlay.boundsMin[1],
+    overlay.boundsMax[2] - overlay.boundsMin[2],
+  ] as const;
+  const pad = Math.max(Math.max(...extent) * 0.05, 1e-12);
+  return {
+    ...overlay,
+    boundsMin: [
+      overlay.boundsMin[0] - pad,
+      overlay.boundsMin[1] - pad,
+      overlay.boundsMin[2] - pad,
+    ],
+    boundsMax: [
+      overlay.boundsMax[0] + pad,
+      overlay.boundsMax[1] + pad,
+      overlay.boundsMax[2] + pad,
+    ],
+  };
+}
+
+function ObjectOverlayMeshes({
+  overlays,
+  geomCenter,
+  selectedObjectId,
+  objectViewMode,
+  onRequestObjectSelect,
+  onGeometryTranslate,
+}: {
+  overlays: BuilderObjectOverlay[];
+  geomCenter: THREE.Vector3;
+  selectedObjectId?: string | null;
+  objectViewMode: ObjectViewMode;
+  onRequestObjectSelect?: (id: string) => void;
+  onGeometryTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
+}) {
+  const hasSelected = Boolean(selectedObjectId);
+  const groupRef = useRef<THREE.Group>(null);
+
+  return (
+    <group>
+      {overlays.map((overlay) => {
+        const selected = selectedObjectId === overlay.id;
+        const dimmed = hasSelected && !selected;
+        if (objectViewMode === "isolate" && hasSelected && !selected) {
+          return null;
+        }
+        const displayOverlay = expandOverlayBounds(overlay, selected);
+        const size = [
+          displayOverlay.boundsMax[0] - displayOverlay.boundsMin[0],
+          displayOverlay.boundsMax[1] - displayOverlay.boundsMin[1],
+          displayOverlay.boundsMax[2] - displayOverlay.boundsMin[2],
+        ] as const;
+        if (size.some((value) => value <= 0)) {
+          return null;
+        }
+        const center = [
+          0.5 * (displayOverlay.boundsMin[0] + displayOverlay.boundsMax[0]) - geomCenter.x,
+          0.5 * (displayOverlay.boundsMin[1] + displayOverlay.boundsMax[1]) - geomCenter.y,
+          0.5 * (displayOverlay.boundsMin[2] + displayOverlay.boundsMax[2]) - geomCenter.z,
+        ] as const;
+        const colors = objectOverlayColors(selected, dimmed);
+        
+        const meshes = (
+          <group>
+            <mesh
+              position={center}
+              renderOrder={6}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRequestObjectSelect?.(overlay.id);
+              }}
+            >
+              <boxGeometry args={size} />
+              <meshStandardMaterial
+                color={colors.fill}
+                emissive={colors.fill}
+                emissiveIntensity={selected ? 0.3 : 0.12}
+                transparent
+                opacity={colors.fillOpacity}
+                depthWrite={false}
+              />
+            </mesh>
+            <mesh position={center} renderOrder={7}>
+              <boxGeometry args={size} />
+              <meshBasicMaterial
+                color={colors.wire}
+                wireframe
+                transparent
+                opacity={colors.wireOpacity}
+                depthWrite={false}
+              />
+            </mesh>
+          </group>
+        );
+
+        if (selected && onGeometryTranslate) {
+          return (
+            <PivotControls
+              key={overlay.id}
+              depthTest={false}
+              lineWidth={2}
+              axisColors={["#f87171", "#4ade80", "#60a5fa"]}
+              scale={75}
+              fixed={true}
+              onDragEnd={() => {
+                if (groupRef.current) {
+                  const p = groupRef.current.position;
+                  onGeometryTranslate(overlay.id, p.x, p.y, p.z);
+                  groupRef.current.position.set(0, 0, 0);
+                }
+              }}
+            >
+              <group ref={groupRef}>{meshes}</group>
+            </PivotControls>
+          );
+        }
+
+        return <group key={overlay.id}>{meshes}</group>;
+      })}
+    </group>
+  );
+}
+
+function buildGeometryFromBoundaryFaceIndices(
+  meshData: FemMeshData,
+  geomCenter: THREE.Vector3,
+  faceIndices: number[],
+): THREE.BufferGeometry | null {
+  if (faceIndices.length === 0) {
+    return null;
+  }
+  const positions = new Float32Array(meshData.nodes.length);
+  for (let i = 0; i < meshData.nNodes; i += 1) {
+    positions[i * 3] = meshData.nodes[i * 3] - geomCenter.x;
+    positions[i * 3 + 1] = meshData.nodes[i * 3 + 1] - geomCenter.y;
+    positions[i * 3 + 2] = meshData.nodes[i * 3 + 2] - geomCenter.z;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setIndex(faceIndices);
+  return geometry;
+}
+
+function buildGeometryFromBoundaryFaceRange(
+  meshData: FemMeshData,
+  geomCenter: THREE.Vector3,
+  faceStart: number,
+  faceCount: number,
+): THREE.BufferGeometry | null {
+  if (faceStart < 0 || faceCount <= 0) {
+    return null;
+  }
+  const faceIndices: number[] = [];
+  const maxFaceCount = Math.floor(meshData.boundaryFaces.length / 3);
+  const clampedEnd = Math.min(faceStart + faceCount, maxFaceCount);
+  for (let faceIndex = faceStart; faceIndex < clampedEnd; faceIndex += 1) {
+    const base = faceIndex * 3;
+    const ia = meshData.boundaryFaces[base];
+    const ib = meshData.boundaryFaces[base + 1];
+    const ic = meshData.boundaryFaces[base + 2];
+    if (
+      ia == null || ib == null || ic == null ||
+      ia < 0 || ib < 0 || ic < 0
+    ) {
+      continue;
+    }
+    faceIndices.push(ia, ib, ic);
+  }
+  return buildGeometryFromBoundaryFaceIndices(meshData, geomCenter, faceIndices);
+}
+
+function buildSelectedObjectBoundaryGeometry(
+  meshData: FemMeshData,
+  overlay: BuilderObjectOverlay | null,
+  geomCenter: THREE.Vector3,
+  segment: FemLiveMeshObjectSegment | null,
+): THREE.BufferGeometry | null {
+  if (segment) {
+    return buildGeometryFromBoundaryFaceRange(
+      meshData,
+      geomCenter,
+      segment.boundary_face_start,
+      segment.boundary_face_count,
+    );
+  }
+  if (!overlay) {
+    return null;
+  }
+  const extent = [
+    overlay.boundsMax[0] - overlay.boundsMin[0],
+    overlay.boundsMax[1] - overlay.boundsMin[1],
+    overlay.boundsMax[2] - overlay.boundsMin[2],
+  ] as const;
+  if (extent.some((value) => !Number.isFinite(value) || value <= 0)) {
+    return null;
+  }
+  const tolerance = Math.max(Math.max(...extent) * 0.02, 1e-12);
+  const min = [
+    overlay.boundsMin[0] - tolerance,
+    overlay.boundsMin[1] - tolerance,
+    overlay.boundsMin[2] - tolerance,
+  ] as const;
+  const max = [
+    overlay.boundsMax[0] + tolerance,
+    overlay.boundsMax[1] + tolerance,
+    overlay.boundsMax[2] + tolerance,
+  ] as const;
+  const faceIndices: number[] = [];
+  for (let i = 0; i < meshData.boundaryFaces.length; i += 3) {
+    const ia = meshData.boundaryFaces[i];
+    const ib = meshData.boundaryFaces[i + 1];
+    const ic = meshData.boundaryFaces[i + 2];
+    if (
+      ia == null || ib == null || ic == null ||
+      ia < 0 || ib < 0 || ic < 0
+    ) {
+      continue;
+    }
+    const aBase = ia * 3;
+    const bBase = ib * 3;
+    const cBase = ic * 3;
+    const ax = meshData.nodes[aBase];
+    const ay = meshData.nodes[aBase + 1];
+    const az = meshData.nodes[aBase + 2];
+    const bx = meshData.nodes[bBase];
+    const by = meshData.nodes[bBase + 1];
+    const bz = meshData.nodes[bBase + 2];
+    const cx = meshData.nodes[cBase];
+    const cy = meshData.nodes[cBase + 1];
+    const cz = meshData.nodes[cBase + 2];
+    if (
+      [ax, ay, az, bx, by, bz, cx, cy, cz].some((value) => value == null || !Number.isFinite(value))
+    ) {
+      continue;
+    }
+    const centroid = [
+      (ax + bx + cx) / 3,
+      (ay + by + cy) / 3,
+      (az + bz + cz) / 3,
+    ] as const;
+    const inside =
+      centroid[0] >= min[0] && centroid[0] <= max[0] &&
+      centroid[1] >= min[1] && centroid[1] <= max[1] &&
+      centroid[2] >= min[2] && centroid[2] <= max[2];
+    if (inside) {
+      faceIndices.push(ia, ib, ic);
+    }
+  }
+  if (faceIndices.length === 0) {
+    return null;
+  }
+  return buildGeometryFromBoundaryFaceIndices(meshData, geomCenter, faceIndices);
+}
+
+function SelectedObjectMeshOverlay({
+  meshData,
+  overlay,
+  geomCenter,
+  segment,
+}: {
+  meshData: FemMeshData;
+  overlay: BuilderObjectOverlay | null;
+  geomCenter: THREE.Vector3;
+  segment: FemLiveMeshObjectSegment | null;
+}) {
+  const geometry = useMemo(
+    () => buildSelectedObjectBoundaryGeometry(meshData, overlay, geomCenter, segment),
+    [geomCenter, meshData, overlay, segment],
+  );
+
+  useEffect(() => () => geometry?.dispose(), [geometry]);
+
+  if (!geometry) {
+    return null;
+  }
+
+  return (
+    <mesh geometry={geometry} renderOrder={11}>
+      <meshBasicMaterial
+        color="#fde68a"
+        wireframe
+        transparent
+        opacity={1}
+        depthWrite={false}
+      />
+    </mesh>
   );
 }
 
@@ -223,6 +574,17 @@ function FemMeshView3DInner({
   onRefine,
   antennaOverlays = [],
   selectedAntennaId,
+  objectOverlays = [],
+  selectedObjectId,
+  selectedMeshObjectId = null,
+  objectSegments = [],
+  focusObjectRequest = null,
+  objectViewMode = "context",
+  worldExtent = null,
+  worldCenter = null,
+  onAntennaTranslate,
+  onRequestObjectSelect,
+  onGeometryTranslate,
 }: Props) {
   const [internalRenderMode, setInternalRenderMode] = useState<RenderMode>("surface");
   const [field, setField] = useState<FemColorField>(colorField);
@@ -257,6 +619,9 @@ function FemMeshView3DInner({
   const clipPos = controlledClipPos ?? internalClipPos;
   const showArrows = controlledShowArrows ?? internalShowArrows;
   const shrinkFactor = controlledShrinkFactor ?? internalShrinkFactor;
+  const isolateSelectedObject = objectViewMode === "isolate" && Boolean(selectedObjectId);
+  const effectiveOpacity = isolateSelectedObject ? Math.max(opacity * 0.18, 8) : opacity;
+  const effectiveShowArrows = isolateSelectedObject ? false : showArrows;
 
   useEffect(() => { setField(colorField); }, [colorField]);
   useEffect(() => {
@@ -303,6 +668,32 @@ function FemMeshView3DInner({
   }, [ctxMenu]);
 
   const lastFittedGeomRef = useRef<string | null>(null);
+  const axesWorldExtent = useMemo<[number, number, number]>(() => {
+    if (
+      worldExtent &&
+      worldExtent.every((component) => Number.isFinite(component) && component > 0)
+    ) {
+      return worldExtent;
+    }
+    return geomSize;
+  }, [geomSize, worldExtent]);
+  const axesCenter = useMemo<[number, number, number]>(() => {
+    if (
+      worldCenter &&
+      worldCenter.every((component) => Number.isFinite(component))
+    ) {
+      return [
+        worldCenter[0] - geomCenter.x,
+        worldCenter[1] - geomCenter.y,
+        worldCenter[2] - geomCenter.z,
+      ];
+    }
+    return [0, 0, 0];
+  }, [geomCenter.x, geomCenter.y, geomCenter.z, worldCenter]);
+  const sceneMaxDim = useMemo(
+    () => Math.max(maxDim, axesWorldExtent[0], axesWorldExtent[1], axesWorldExtent[2]),
+    [axesWorldExtent, maxDim],
+  );
 
   const handleGeometryCenter = useCallback((c: THREE.Vector3, m: number, s: THREE.Vector3) => {
     setGeomCenter(c); setMaxDim(m); setGeomSize([s.x, s.y, s.z]);
@@ -320,7 +711,7 @@ function FemMeshView3DInner({
     const bridge = viewCubeSceneRef.current;
     if (!bridge?.camera || !bridge?.controls) return;
     const cam = bridge.camera, ctl = bridge.controls;
-    const d = maxDim * 2;
+    const d = sceneMaxDim * 2;
     switch (view) {
       case "reset": cam.position.set(d * 0.75, d * 0.6, d * 0.75); cam.up.set(0, 1, 0); break;
       case "front": cam.position.set(0, 0, d); cam.up.set(0, 1, 0); break;
@@ -330,7 +721,52 @@ function FemMeshView3DInner({
     cam.lookAt(0, 0, 0);
     ctl.target.set(0, 0, 0);
     ctl.update();
-  }, [maxDim]);
+  }, [sceneMaxDim]);
+
+  const focusObject = useCallback((objectId: string) => {
+    const overlay = objectOverlays.find((candidate) => candidate.id === objectId);
+    const bridge = viewCubeSceneRef.current;
+    if (!overlay || !bridge?.camera || !bridge?.controls) {
+      return;
+    }
+    const { camera, controls } = bridge;
+    const target = new THREE.Vector3(
+      0.5 * (overlay.boundsMin[0] + overlay.boundsMax[0]) - geomCenter.x,
+      0.5 * (overlay.boundsMin[1] + overlay.boundsMax[1]) - geomCenter.y,
+      0.5 * (overlay.boundsMin[2] + overlay.boundsMax[2]) - geomCenter.z,
+    );
+    const size = new THREE.Vector3(
+      overlay.boundsMax[0] - overlay.boundsMin[0],
+      overlay.boundsMax[1] - overlay.boundsMin[1],
+      overlay.boundsMax[2] - overlay.boundsMin[2],
+    );
+    if (
+      !Number.isFinite(size.x) || !Number.isFinite(size.y) || !Number.isFinite(size.z) ||
+      size.x <= 0 || size.y <= 0 || size.z <= 0
+    ) {
+      return;
+    }
+    const radius = Math.max(size.length() * 0.5, sceneMaxDim * 0.05, 1e-9);
+    const perspectiveCamera = camera as THREE.PerspectiveCamera;
+    const fov = THREE.MathUtils.degToRad(perspectiveCamera.fov || 45);
+    const distance = Math.max(radius / Math.tan(fov * 0.5), radius * 2.2);
+    const direction = camera.position.clone().sub(controls.target).normalize();
+    if (direction.lengthSq() < 1e-9) {
+      direction.set(0.75, 0.6, 0.75).normalize();
+    }
+    camera.position.copy(target).add(direction.multiplyScalar(distance));
+    controls.target.copy(target);
+    camera.lookAt(target);
+    camera.updateProjectionMatrix();
+    controls.update();
+  }, [geomCenter, objectOverlays, sceneMaxDim]);
+
+  useEffect(() => {
+    if (!focusObjectRequest) {
+      return;
+    }
+    focusObject(focusObjectRequest.objectId);
+  }, [focusObject, focusObjectRequest]);
 
   const handleViewCubeRotate = useCallback((quat: THREE.Quaternion) => {
     const bridge = viewCubeSceneRef.current;
@@ -363,6 +799,20 @@ function FemMeshView3DInner({
     const ar = faceARsRef.current ? faceARsRef.current[idx] : 0;
     return { faceIdx: idx, ar, sicn: qualityPerFace?.[idx] };
   }, [hoveredFace, qualityPerFace]);
+  const selectedMeshOverlay = useMemo(
+    () =>
+      selectedMeshObjectId
+        ? objectOverlays.find((candidate) => candidate.id === selectedMeshObjectId) ?? null
+        : null,
+    [objectOverlays, selectedMeshObjectId],
+  );
+  const selectedMeshSegment = useMemo(
+    () =>
+      selectedMeshObjectId
+        ? objectSegments.find((candidate) => candidate.object_id === selectedMeshObjectId) ?? null
+        : null,
+    [objectSegments, selectedMeshObjectId],
+  );
 
   return (
     <div className="relative flex flex-1 w-[100%] h-[100%] min-w-0 min-h-0 bg-background overflow-hidden rounded-md fem-canvas-container">
@@ -377,26 +827,45 @@ function FemMeshView3DInner({
         <directionalLight position={[1, 2, 3]} intensity={0.9} />
         <directionalLight position={[-1, -1, -2]} intensity={0.3} color={0x6688cc} />
         
-        <CameraAutoFit maxDim={maxDim} generation={cameraFitGeneration} />
-        
-        <FemClipPlanes enabled={clipEnabled} axis={clipAxis} posPercentage={clipPos} maxDim={maxDim} />
+        <CameraAutoFit maxDim={sceneMaxDim} generation={cameraFitGeneration} />
+
+        <FemClipPlanes enabled={clipEnabled} axis={clipAxis} posPercentage={clipPos} maxDim={sceneMaxDim} />
         
         <FemGeometry
-          meshData={meshData} field={field} renderMode={renderMode} opacity={opacity} qualityPerFace={qualityPerFace}
+          meshData={meshData} field={field} renderMode={renderMode} opacity={effectiveOpacity} qualityPerFace={qualityPerFace}
           shrinkFactor={shrinkFactor} clipEnabled={clipEnabled} clipAxis={clipAxis} clipPos={clipPos}
           onGeometryCenter={handleGeometryCenter}
           onFaceClick={handleFaceClick} onFaceHover={handleFaceHover} onFaceUnhover={handleFaceUnhover} onFaceContextMenu={handleFaceContextMenu}
         />
-        <FemArrows meshData={meshData} field={field} arrowDensity={arrowDensity} center={geomCenter} maxDim={maxDim} visible={showArrows} />
+        <FemArrows meshData={meshData} field={field} arrowDensity={arrowDensity} center={geomCenter} maxDim={maxDim} visible={effectiveShowArrows} />
         <FemHighlightView meshData={meshData} selectedFaces={selectedFaces} center={geomCenter} />
-        {antennaOverlays.length > 0 ? (
+        {antennaOverlays.length > 0 && !isolateSelectedObject ? (
           <AntennaOverlayMeshes
             overlays={antennaOverlays}
             geomCenter={geomCenter}
             selectedAntennaId={selectedAntennaId}
+            onAntennaTranslate={onAntennaTranslate}
           />
         ) : null}
-        <SceneAxes3D worldExtent={geomSize} center={[0, 0, 0]} sceneScale={[1, 1, 1]} />
+        {objectOverlays.length > 0 ? (
+          <ObjectOverlayMeshes
+            overlays={objectOverlays}
+            geomCenter={geomCenter}
+            selectedObjectId={selectedObjectId}
+            objectViewMode={objectViewMode}
+            onRequestObjectSelect={onRequestObjectSelect}
+            onGeometryTranslate={onGeometryTranslate}
+          />
+        ) : null}
+        {selectedMeshOverlay || selectedMeshSegment ? (
+          <SelectedObjectMeshOverlay
+            meshData={meshData}
+            overlay={selectedMeshOverlay}
+            geomCenter={geomCenter}
+            segment={selectedMeshSegment}
+          />
+        ) : null}
+        <SceneAxes3D worldExtent={axesWorldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
         
         <SyncedControls controlsRefObject={controlsRef} viewCubeBridgeRef={viewCubeSceneRef} />
       </Canvas>

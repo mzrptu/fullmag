@@ -10,6 +10,8 @@ import {
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 
+import { HelpTip } from "@/components/ui/HelpTip"
+
 export interface SelectOption {
   value: string;
   label: string;
@@ -23,6 +25,8 @@ export interface SelectFieldProps {
   options: SelectOption[];
   onchange?: (value: string) => void;
   className?: string;
+  tooltip?: React.ReactNode;
+  disabled?: boolean;
 }
 
 export default function SelectField({
@@ -31,13 +35,16 @@ export default function SelectField({
   options,
   onchange,
   className,
+  tooltip,
+  disabled,
 }: SelectFieldProps) {
   return (
     <div className={cn("flex flex-col gap-1.5 min-w-0", className)}>
-      <label className="text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-[0.06em]">
-        {label}
+      <label className="flex items-center gap-2 text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-[0.06em]">
+        <span className="flex-1">{label}</span>
+        {tooltip && <HelpTip>{tooltip}</HelpTip>}
       </label>
-      <Select value={String(value)} onValueChange={onchange}>
+      <Select value={String(value)} onValueChange={onchange} disabled={disabled}>
         <SelectTrigger>
           <SelectValue placeholder="Select an option" />
         </SelectTrigger>

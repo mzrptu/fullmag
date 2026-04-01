@@ -74,8 +74,9 @@ pub enum fullmag_fem_preconditioner {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum fullmag_fem_demag_realization {
-    FULLMAG_FEM_DEMAG_TRANSFER_GRID = 0,
-    FULLMAG_FEM_DEMAG_POISSON_AIRBOX = 1,
+    FULLMAG_FEM_DEMAG_TRANSFER_GRID    = 0,
+    FULLMAG_FEM_DEMAG_AIRBOX_DIRICHLET = 1,
+    FULLMAG_FEM_DEMAG_AIRBOX_ROBIN     = 2,
 }
 
 pub type fullmag_fem_interrupt_poll_fn = Option<unsafe extern "C" fn(*mut c_void) -> i32>;
@@ -128,6 +129,8 @@ pub struct fullmag_fem_plan_desc {
     pub air_box_factor: f64,
     pub demag_realization: fullmag_fem_demag_realization,
     pub poisson_boundary_marker: i32,
+    pub robin_beta_mode: i32,
+    pub robin_beta_factor: f64,
     pub demag_kernel_xx_spectrum: *const f64,
     pub demag_kernel_yy_spectrum: *const f64,
     pub demag_kernel_zz_spectrum: *const f64,

@@ -2,8 +2,8 @@
 
 use crate::types::*;
 use fullmag_runner::quantities::quantity_spec;
-use fullmag_runner::LivePreviewField;
 use fullmag_runner::quantities::QuantityKind;
+use fullmag_runner::LivePreviewField;
 use serde_json::Value;
 
 pub(crate) fn live_step_metric_value(step: &StepUpdateView, metric_key: &str) -> Option<f64> {
@@ -370,4 +370,3 @@ pub(crate) fn sampled_grid_scalar_2d(
     }
     out
 }
-
