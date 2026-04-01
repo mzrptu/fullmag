@@ -95,7 +95,7 @@ run-nanoflower-static:
 run-nanoflower-interactive:
     just ensure-python
     FULLMAG_SKIP_MANAGED_FEM_GPU_EXPORT=1 just build fullmag-dev
-    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag --dev -i examples/nanoflower_study_fem.py
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag --dev -i examples/nanoflower_fem.py
 
 run-pylayer-interactive:
     just ensure-python
@@ -105,7 +105,7 @@ run-pylayer-interactive:
 run-nanoflower-headless:
     just ensure-python
     FULLMAG_SKIP_MANAGED_FEM_GPU_EXPORT=1 just build fullmag
-    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag examples/nanoflower_study_fem.py --headless --json
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag examples/nanoflower_fem.py --headless --json
 
 fem-gpu-headless script:
     docker compose --profile fem-gpu run --rm fem-gpu bash -lc '\

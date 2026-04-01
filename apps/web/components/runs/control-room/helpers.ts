@@ -181,6 +181,7 @@ export function buildLegacyScriptBuilderUpdatePayload(
 ) {
   return buildSceneDocumentFromScriptBuilder({
     revision: 0,
+    backend: null,
     solver: solverSettingsToBuilder(solverSettings),
     mesh: meshOptionsToBuilder(meshOptions),
     universe,

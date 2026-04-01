@@ -10,6 +10,7 @@ import MagnetizationView3D from "../../preview/MagnetizationView3D";
 import FemMeshView3D from "../../preview/FemMeshView3D";
 import FemMeshSlice2D from "../../preview/FemMeshSlice2D";
 import PreviewScalarField2D from "../../preview/PreviewScalarField2D";
+import BoundsPreview3D from "../../preview/BoundsPreview3D";
 import EmptyState from "../../ui/EmptyState";
 import AnalyzeViewport from "./AnalyzeViewport";
 
@@ -416,6 +417,11 @@ export function ViewportCanvasArea() {
   // Use classic FDM mesh view ONLY if no unstructured mesh data is available
   const isFdmMeshActive = ctx.effectiveViewMode === "Mesh" && !ctx.isFemBackend && !ctx.femMeshData;
   const showFdm3D = isFdm3DActive || isFdmMeshActive;
+  const showFemBoundsPreview =
+    ctx.isFemBackend &&
+    !ctx.femMeshData &&
+    (ctx.effectiveViewMode === "3D" || ctx.effectiveViewMode === "Mesh") &&
+    ctx.objectOverlays.length > 0;
 
   /* ── Determine what goes into the conditional slot ── */
   let conditionalContent: React.ReactNode = null;
@@ -497,6 +503,8 @@ export function ViewportCanvasArea() {
         antennaOverlays={ctx.antennaOverlays}
         selectedAntennaId={selectedAntennaName}
         objectOverlays={ctx.objectOverlays}
+        selectedMeshObjectId={selectedMeshObjectId}
+        objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
         focusObjectRequest={ctx.focusObjectRequest}
         objectViewMode={ctx.objectViewMode}
         onAntennaTranslate={ctx.applyAntennaTranslation}
@@ -531,6 +539,8 @@ export function ViewportCanvasArea() {
         selectedAntennaId={selectedAntennaName}
         objectOverlays={ctx.objectOverlays}
         selectedObjectId={ctx.selectedObjectId}
+        selectedMeshObjectId={selectedMeshObjectId}
+        objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
         focusObjectRequest={ctx.focusObjectRequest}
         objectViewMode={ctx.objectViewMode}
         onAntennaTranslate={ctx.applyAntennaTranslation}
@@ -568,6 +578,19 @@ export function ViewportCanvasArea() {
     );
   } else if (ctx.effectiveViewMode === "Analyze") {
     conditionalContent = <AnalyzeViewport />;
+  } else if (showFemBoundsPreview) {
+    conditionalContent = (
+      <BoundsPreview3D
+        objectOverlays={ctx.objectOverlays}
+        selectedObjectId={ctx.selectedObjectId}
+        focusObjectRequest={ctx.focusObjectRequest}
+        objectViewMode={ctx.objectViewMode}
+        worldExtent={ctx.worldExtent}
+        worldCenter={ctx.worldCenter}
+        onRequestObjectSelect={handleRequestObjectSelect}
+        onGeometryTranslate={ctx.applyGeometryTranslation}
+      />
+    );
   } else if (!showFdm3D) {
     conditionalContent = (
       <div className="flex flex-col items-center justify-center h-full w-full opacity-60">

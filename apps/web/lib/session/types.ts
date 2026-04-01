@@ -400,6 +400,7 @@ export interface ScriptBuilderExcitationAnalysisEntry {
 
 export interface ScriptBuilderState {
   revision: number;
+  backend: string | null;
   solver: ScriptBuilderSolverState;
   mesh: ScriptBuilderMeshState;
   universe: ScriptBuilderUniverseState | null;
@@ -431,6 +432,7 @@ export interface ModelBuilderGraphStudyNode {
   id: "study";
   kind: "study";
   label: string;
+  backend: string | null;
   solver: ScriptBuilderSolverState;
   mesh_defaults: ScriptBuilderMeshState;
   stages: ScriptBuilderStageState[];
@@ -540,6 +542,7 @@ export interface SceneCurrentModulesState {
 }
 
 export interface SceneStudyState {
+  backend: string | null;
   solver: ScriptBuilderSolverState;
   mesh_defaults: ScriptBuilderMeshState;
   stages: ScriptBuilderStageState[];

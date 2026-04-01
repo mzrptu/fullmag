@@ -310,6 +310,10 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
   }
   return {
     revision: Number(raw.revision ?? 0),
+    backend:
+      typeof raw.backend === "string" && raw.backend.trim().length > 0
+        ? raw.backend
+        : null,
     solver: {
       integrator: String(raw.solver?.integrator ?? ""),
       fixed_timestep: String(raw.solver?.fixed_timestep ?? ""),
@@ -495,6 +499,7 @@ function normalizeModelBuilderGraph(raw: any): ModelBuilderGraphV2 | null {
   }
   const projectedBuilder = normalizeScriptBuilder({
     revision: raw.revision,
+    backend: raw.study?.backend,
     solver: raw.study?.solver,
     mesh: raw.study?.mesh_defaults,
     universe: raw.universe?.value,
@@ -515,6 +520,7 @@ function normalizeModelBuilderGraph(raw: any): ModelBuilderGraphV2 | null {
 function emptyScriptBuilderState(): ScriptBuilderState {
   return normalizeScriptBuilder({
     revision: 0,
+    backend: null,
     solver: {},
     mesh: {},
     universe: null,
@@ -541,6 +547,7 @@ function normalizeQuat4(raw: unknown): [number, number, number, number] {
 function normalizeSceneMeshOverride(raw: any) {
   return normalizeScriptBuilder({
     revision: 0,
+    backend: null,
     solver: {},
     mesh: {},
     universe: null,
@@ -564,6 +571,7 @@ function normalizeSceneMeshOverride(raw: any) {
 function normalizeSceneCurrentModules(raw: any) {
   const normalized = normalizeScriptBuilder({
     revision: 0,
+    backend: null,
     solver: {},
     mesh: {},
     universe: null,
@@ -583,6 +591,7 @@ function normalizeSceneStudy(raw: any) {
   const defaults = emptyScriptBuilderState();
   const normalized = normalizeScriptBuilder({
     revision: 0,
+    backend: raw?.backend ?? null,
     solver: raw?.solver ?? {},
     mesh: raw?.mesh_defaults ?? {},
     universe: null,
@@ -593,6 +602,7 @@ function normalizeSceneStudy(raw: any) {
     excitation_analysis: null,
   });
   return {
+    backend: normalized?.backend ?? null,
     solver: normalized?.solver ?? defaults.solver,
     mesh_defaults: normalized?.mesh ?? defaults.mesh,
     stages: normalized?.stages ?? [],

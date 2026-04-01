@@ -97,6 +97,7 @@ export function createModelBuilderGraphV2(
       id: "study",
       kind: "study",
       label: "Study",
+      backend: builder?.backend ?? null,
       solver: builder?.solver ?? EMPTY_SOLVER,
       mesh_defaults: builder?.mesh ?? EMPTY_MESH,
       stages: builder?.stages ?? [],
@@ -150,6 +151,7 @@ export function serializeModelBuilderGraphV2(graph: ModelBuilderGraphV2): Omit<
   "revision" | "initial_state"
 > {
   return {
+    backend: graph.study.backend,
     solver: graph.study.solver,
     mesh: graph.study.mesh_defaults,
     universe: graph.universe.value,

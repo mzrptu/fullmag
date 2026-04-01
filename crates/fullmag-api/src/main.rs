@@ -10,7 +10,7 @@ use axum::{
     Json, Router,
 };
 use base64::Engine;
-use fullmag_authoring::SceneDocument;
+use fullmag_authoring::{SceneDocument, ScriptBuilderInitialState};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};

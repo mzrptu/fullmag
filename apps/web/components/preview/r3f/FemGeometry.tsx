@@ -10,6 +10,7 @@ interface FemGeometryProps {
   field: FemColorField;
   renderMode: RenderMode;
   opacity: number;
+  displayBoundaryFaceIndices?: number[] | null;
   qualityPerFace?: number[] | null;
   shrinkFactor?: number;
   clipEnabled?: boolean;
@@ -126,6 +127,7 @@ export function FemGeometry({
   field,
   renderMode,
   opacity,
+  displayBoundaryFaceIndices,
   qualityPerFace,
   shrinkFactor,
   clipEnabled,
@@ -138,20 +140,64 @@ export function FemGeometry({
   onFaceContextMenu,
 }: FemGeometryProps) {
   const { invalidate } = useThree();
+  const displayBoundaryFaceSignature = useMemo(() => {
+    if (!displayBoundaryFaceIndices || displayBoundaryFaceIndices.length === 0) {
+      return "all";
+    }
+    return [
+      displayBoundaryFaceIndices.length,
+      displayBoundaryFaceIndices[0] ?? 0,
+      displayBoundaryFaceIndices[displayBoundaryFaceIndices.length - 1] ?? 0,
+    ].join(":");
+  }, [displayBoundaryFaceIndices]);
 
   // ── Topology memo: only rebuilds when mesh structure changes ─────
-  const topologySignature = `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}:${shrinkFactor ?? 1}:${clipEnabled ? `${clipAxis}${clipPos}` : "noclip"}`;
+  const topologySignature = `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}:${displayBoundaryFaceSignature}:${shrinkFactor ?? 1}:${clipEnabled ? `${clipAxis}${clipPos}` : "noclip"}`;
 
-  const { geometry, edgesGeometry, tetraEdgesGeometry, center, maxDim, geoSize, vertexMap } = useMemo(() => {
+  const {
+    geometry,
+    edgesGeometry,
+    tetraEdgesGeometry,
+    center,
+    maxDim,
+    geoSize,
+    vertexMap,
+    displayedToOriginalFace,
+  } = useMemo(() => {
     const { nodes, elements, boundaryFaces, nNodes } = meshData;
     const positions = new Float32Array(nNodes * 3);
     for (let i = 0; i < nNodes * 3; i++) positions[i] = nodes[i];
 
-    // Compute unclipped bounding box for stable centering
+    const preferredFaceIndices = Array.isArray(displayBoundaryFaceIndices) && displayBoundaryFaceIndices.length > 0
+      ? displayBoundaryFaceIndices
+      : null;
+
+    // Compute unclipped bounding box for stable centering. When the mesh includes
+    // a shared air-domain shell, prefer the visible magnetic-object surfaces so
+    // the camera does not zoom out to the whole outer box by default.
     let minX = Infinity, minY = Infinity, minZ = Infinity;
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    for (let i = 0; i < nNodes * 3; i += 3) {
-      const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+    const bboxNodeIndices = preferredFaceIndices
+      ? (() => {
+          const unique = new Set<number>();
+          const maxFaces = Math.floor(boundaryFaces.length / 3);
+          for (const faceIndex of preferredFaceIndices) {
+            if (!Number.isInteger(faceIndex) || faceIndex < 0 || faceIndex >= maxFaces) {
+              continue;
+            }
+            const base = faceIndex * 3;
+            unique.add(boundaryFaces[base]);
+            unique.add(boundaryFaces[base + 1]);
+            unique.add(boundaryFaces[base + 2]);
+          }
+          return unique.size > 0 ? Array.from(unique) : null;
+        })()
+      : null;
+    const bboxOffsets = bboxNodeIndices
+      ? bboxNodeIndices.map((nodeIndex) => nodeIndex * 3)
+      : Array.from({ length: nNodes }, (_, index) => index * 3);
+    for (const offset of bboxOffsets) {
+      const x = positions[offset], y = positions[offset + 1], z = positions[offset + 2];
       if (x < minX) minX = x; if (x > maxX) maxX = x;
       if (y < minY) minY = y; if (y > maxY) maxY = y;
       if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
@@ -172,6 +218,7 @@ export function FemGeometry({
     let finalIndices: Uint32Array | null = null;
     let finalPositions: Float32Array = positions;
     let vMap: Int32Array | null = null;
+    let faceIndexMap: Int32Array | null = null;
     const tetraEdgePairs: number[] = [];
 
     const getAxisIdx = () => clipAxis === "y" ? 1 : clipAxis === "z" ? 2 : 0;
@@ -245,9 +292,20 @@ export function FemGeometry({
         finalIndices[idx++] = face[2];
       }
     } else {
-      const nFaces = boundaryFaces.length / 3;
-      finalIndices = new Uint32Array(nFaces * 3);
-      for (let i = 0; i < nFaces * 3; i++) finalIndices[i] = boundaryFaces[i];
+      const sourceFaceIndices = preferredFaceIndices
+        ?? Array.from({ length: boundaryFaces.length / 3 }, (_, faceIndex) => faceIndex);
+      finalIndices = new Uint32Array(sourceFaceIndices.length * 3);
+      faceIndexMap = new Int32Array(sourceFaceIndices.length);
+      let offset = 0;
+      for (let displayFaceIndex = 0; displayFaceIndex < sourceFaceIndices.length; displayFaceIndex += 1) {
+        const originalFaceIndex = sourceFaceIndices[displayFaceIndex];
+        const base = originalFaceIndex * 3;
+        finalIndices[offset] = boundaryFaces[base];
+        finalIndices[offset + 1] = boundaryFaces[base + 1];
+        finalIndices[offset + 2] = boundaryFaces[base + 2];
+        faceIndexMap[displayFaceIndex] = originalFaceIndex;
+        offset += 3;
+      }
     }
 
     const geom = new THREE.BufferGeometry();
@@ -301,8 +359,18 @@ export function FemGeometry({
       maxDim: ms,
       geoSize: size,
       vertexMap: vMap,
+      displayedToOriginalFace: faceIndexMap,
     };
-  }, [topologySignature, clipAxis, clipEnabled, clipPos, shrinkFactor, invalidate]);
+  }, [
+    topologySignature,
+    clipAxis,
+    clipEnabled,
+    clipPos,
+    displayBoundaryFaceIndices,
+    invalidate,
+    meshData,
+    shrinkFactor,
+  ]);
 
   // ── Color update ──────────────────────────────────────────────────
   useEffect(() => {
@@ -371,16 +439,61 @@ export function FemGeometry({
 
   const isTransparent = opacity < 100;
   const opacityVal = opacity / 100;
+  const remapFaceIndex = useCallback((faceIndex: number | null | undefined) => {
+    if (faceIndex == null) {
+      return faceIndex ?? null;
+    }
+    if (!displayedToOriginalFace) {
+      return faceIndex;
+    }
+    if (faceIndex < 0 || faceIndex >= displayedToOriginalFace.length) {
+      return null;
+    }
+    return displayedToOriginalFace[faceIndex] ?? null;
+  }, [displayedToOriginalFace]);
+  const handleMappedFaceClick = useCallback((e: any) => {
+    if (!onFaceClick) {
+      return;
+    }
+    const mapped = remapFaceIndex(e?.faceIndex);
+    if (mapped == null) {
+      return;
+    }
+    e.faceIndex = mapped;
+    onFaceClick(e);
+  }, [onFaceClick, remapFaceIndex]);
+  const handleMappedFaceHover = useCallback((e: any) => {
+    if (!onFaceHover) {
+      return;
+    }
+    const mapped = remapFaceIndex(e?.faceIndex);
+    if (mapped == null) {
+      return;
+    }
+    e.faceIndex = mapped;
+    onFaceHover(e);
+  }, [onFaceHover, remapFaceIndex]);
+  const handleMappedFaceContextMenu = useCallback((e: any) => {
+    if (!onFaceContextMenu) {
+      return;
+    }
+    const mapped = remapFaceIndex(e?.faceIndex);
+    if (mapped == null) {
+      return;
+    }
+    e.faceIndex = mapped;
+    onFaceContextMenu(e);
+  }, [onFaceContextMenu, remapFaceIndex]);
 
   return (
     <group>
       {showSurface && (
         <mesh 
           geometry={geometry}
-          onClick={onFaceClick}
-          onPointerOver={onFaceHover}
+          onClick={handleMappedFaceClick}
+          onPointerOver={handleMappedFaceHover}
           onPointerOut={onFaceUnhover}
-          onContextMenu={onFaceContextMenu}
+          onContextMenu={handleMappedFaceContextMenu}
         >
           <meshPhongMaterial
             vertexColors

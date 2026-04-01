@@ -188,6 +188,8 @@ pub struct SceneCurrentModulesState {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct SceneStudyState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
     #[serde(default = "default_solver")]
     pub solver: ScriptBuilderSolverState,
     #[serde(default = "default_mesh")]

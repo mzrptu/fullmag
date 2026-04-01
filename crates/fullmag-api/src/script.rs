@@ -4,7 +4,7 @@ use crate::error::ApiError;
 use crate::types::*;
 use fullmag_authoring::{
     scene_document_from_script_builder, scene_document_problem_projection,
-    scene_document_to_script_builder, SceneDocument,
+    scene_document_to_script_builder, SceneDocument, ScriptBuilderState,
 };
 use crate::ReadMagnetizationStateHelperResponse;
 use serde_json::Value;

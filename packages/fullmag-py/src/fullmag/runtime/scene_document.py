@@ -110,6 +110,7 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
             "excitation_analysis": builder.get("excitation_analysis"),
         },
         "study": {
+            "backend": builder.get("backend"),
             "solver": builder.get("solver") or {},
             "mesh_defaults": builder.get("mesh") or {},
             "stages": builder.get("stages") or [],
@@ -183,6 +184,7 @@ def build_builder_from_scene_document(scene: dict[str, Any]) -> dict[str, Any]:
     current_modules = dict(scene.get("current_modules") or {})
     return {
         "revision": int(scene.get("revision", 0)),
+        "backend": study.get("backend"),
         "solver": study.get("solver") or {},
         "mesh": study.get("mesh_defaults") or {},
         "universe": scene.get("universe"),

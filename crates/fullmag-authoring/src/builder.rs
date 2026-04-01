@@ -307,6 +307,8 @@ pub struct ScriptBuilderExcitationAnalysisState {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ScriptBuilderState {
     pub revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
     pub solver: ScriptBuilderSolverState,
     pub mesh: ScriptBuilderMeshState,
     #[serde(default, skip_serializing_if = "Option::is_none")]

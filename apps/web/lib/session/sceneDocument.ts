@@ -143,6 +143,7 @@ export function buildSceneDocumentFromScriptBuilder(
       excitation_analysis: builder.excitation_analysis,
     },
     study: {
+      backend: builder.backend,
       solver: builder.solver,
       mesh_defaults: builder.mesh,
       stages: builder.stages,
@@ -191,6 +192,7 @@ export function buildScriptBuilderFromSceneDocument(
 ): ScriptBuilderState {
   return {
     revision: scene.revision,
+    backend: scene.study.backend,
     solver: scene.study.solver,
     mesh: scene.study.mesh_defaults,
     universe: scene.universe,

@@ -51,6 +51,7 @@ pub fn scene_document_from_script_builder(builder: &ScriptBuilderState) -> Scene
             excitation_analysis: builder.excitation_analysis.clone(),
         },
         study: SceneStudyState {
+            backend: builder.backend.clone(),
             solver: builder.solver.clone(),
             mesh_defaults: builder.mesh.clone(),
             stages: builder.stages.clone(),
@@ -128,6 +129,7 @@ pub fn scene_document_to_script_builder(
 
     Ok(ScriptBuilderState {
         revision: scene.revision,
+        backend: scene.study.backend.clone(),
         solver: scene.study.solver.clone(),
         mesh: scene.study.mesh_defaults.clone(),
         universe: scene.universe.clone(),
@@ -474,6 +476,7 @@ mod tests {
     fn sample_builder() -> ScriptBuilderState {
         ScriptBuilderState {
             revision: 7,
+            backend: Some("fem".to_string()),
             solver: ScriptBuilderSolverState {
                 integrator: "rk45".to_string(),
                 fixed_timestep: "1e-15".to_string(),
@@ -609,6 +612,7 @@ mod tests {
         let round_trip = scene_document_to_script_builder(&scene).expect("scene should validate");
 
         assert_eq!(round_trip.revision, builder.revision);
+        assert_eq!(round_trip.backend, builder.backend);
         assert_eq!(round_trip.solver, builder.solver);
         assert_eq!(round_trip.mesh, builder.mesh);
         assert_eq!(round_trip.initial_state, builder.initial_state);

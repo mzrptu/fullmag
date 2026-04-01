@@ -57,6 +57,7 @@ def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
 
     return {
         "revision": 1,
+        "backend": base_problem.runtime.backend_target.value,
         "solver": {
             "integrator": base_problem.study.dynamics.integrator,
             "fixed_timestep": _text_number(base_problem.study.dynamics.fixed_timestep),

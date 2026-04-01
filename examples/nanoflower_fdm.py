@@ -6,7 +6,7 @@ Study-root scripting API — compatible with the emerging model builder.
 
 import fullmag as fm
 
-study = fm.study("nanoflower_fdm")
+study = fm.study("nanoflower")
 
 # ── Engine ──────────────────────────────────────────────────
 study.engine("fem")
@@ -14,7 +14,7 @@ study.device("cuda:0", precision="double")
 study.interactive(True)
 study.universe(
     mode="manual",
-    size=(800e-9, 800e-9, 800e-9),
+    size=(400e-9, 400e-9, 20e-9),
     center=(0.0, 0.0, 0.0),
 )
 
@@ -42,8 +42,8 @@ def add_nanoflower(name: str, offset_x: float, seed: int):
     return flower
 
 
-flower_left = add_nanoflower("nanoflower_left", -FLOWER_OFFSET_X, seed=1)
-flower_right = add_nanoflower("nanoflower_right", FLOWER_OFFSET_X, seed=2)
+flower_left = add_nanoflower("nanoflower_left", 0, seed=1)
+# flower_right = add_nanoflower("nanoflower_right", FLOWER_OFFSET_X, seed=2)
 
 
 

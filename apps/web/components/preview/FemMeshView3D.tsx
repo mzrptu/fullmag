@@ -81,6 +81,34 @@ interface Props {
   onGeometryTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
 }
 
+function collectSegmentBoundaryFaceIndices(
+  objectSegments: readonly FemLiveMeshObjectSegment[],
+  maxFaceCount: number,
+  objectViewMode: ObjectViewMode,
+  selectedObjectId?: string | null,
+): number[] | null {
+  const relevantSegments =
+    objectViewMode === "isolate" && selectedObjectId
+      ? objectSegments.filter((segment) => segment.object_id === selectedObjectId)
+      : objectSegments;
+  if (relevantSegments.length === 0) {
+    return null;
+  }
+  const faceIndices: number[] = [];
+  for (const segment of relevantSegments) {
+    const start = Math.max(0, Math.trunc(segment.boundary_face_start));
+    const count = Math.max(0, Math.trunc(segment.boundary_face_count));
+    const end = Math.min(start + count, maxFaceCount);
+    for (let faceIndex = start; faceIndex < end; faceIndex += 1) {
+      faceIndices.push(faceIndex);
+    }
+  }
+  if (faceIndices.length === 0 || faceIndices.length >= maxFaceCount) {
+    return null;
+  }
+  return faceIndices;
+}
+
 const RENDER_OPTIONS: { value: RenderMode; label: string }[] = [
   { value: "surface", label: "Surface" },
   { value: "surface+edges", label: "S+E" },
@@ -607,6 +635,16 @@ function FemMeshView3DInner({
   const viewCubeSceneRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const faceARsRef = useRef<Float32Array | null>(null);
+  const displayBoundaryFaceIndices = useMemo(
+    () =>
+      collectSegmentBoundaryFaceIndices(
+        objectSegments,
+        Math.floor(meshData.boundaryFaces.length / 3),
+        objectViewMode,
+        selectedObjectId,
+      ),
+    [meshData.boundaryFaces.length, objectSegments, objectViewMode, selectedObjectId],
+  );
   
   const topologySignature = topologyKey ?? `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}`;
 
@@ -796,7 +834,7 @@ function FemMeshView3DInner({
         <FemClipPlanes enabled={clipEnabled} axis={clipAxis} posPercentage={clipPos} geomSize={geomSize} />
         
         <FemGeometry
-          meshData={meshData} field={field} renderMode={renderMode} opacity={effectiveOpacity} qualityPerFace={qualityPerFace}
+          meshData={meshData} field={field} renderMode={renderMode} opacity={effectiveOpacity} displayBoundaryFaceIndices={displayBoundaryFaceIndices} qualityPerFace={qualityPerFace}
           shrinkFactor={shrinkFactor} clipEnabled={clipEnabled} clipAxis={clipAxis} clipPos={clipPos}
           onGeometryCenter={handleGeometryCenter}
           onFaceClick={handleFaceClick} onFaceHover={handleFaceHover} onFaceUnhover={handleFaceUnhover} onFaceContextMenu={handleFaceContextMenu}

@@ -310,9 +310,19 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   /* Detect FEM */
   const planSummary = session?.plan_summary as Record<string, unknown> | undefined;
+  const scriptBackendHint =
+    (typeof scriptBuilder?.backend === "string" ? scriptBuilder.backend : null) ??
+    (typeof remoteSceneDocument?.study?.backend === "string"
+      ? remoteSceneDocument.study.backend
+      : null) ??
+    modelBuilderGraph?.study.backend ??
+    null;
   const resolvedBackend =
     (typeof planSummary?.resolved_backend === "string" ? planSummary.resolved_backend : null) ??
-    (typeof session?.requested_backend === "string" ? session.requested_backend : null);
+    ((typeof session?.requested_backend === "string" && session.requested_backend !== "auto")
+      ? session.requested_backend
+      : null) ??
+    scriptBackendHint;
   const isFemBackend =
     resolvedBackend === "fem" || femMesh != null || spatialPreview?.spatial_kind === "mesh";
 
