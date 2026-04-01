@@ -30,7 +30,7 @@ export default function StateIoPanel() {
   };
 
   return (
-    <div className="flex flex-col gap-0 border-t border-border/20">
+    <div className="flex flex-col pt-4 px-2">
       <SidebarSection title="Export State" defaultOpen={true}>
         <div className="grid gap-2">
           <SelectField

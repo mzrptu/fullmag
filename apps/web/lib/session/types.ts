@@ -284,6 +284,24 @@ export interface ScriptBuilderUniverseState {
   padding: [number, number, number] | null;
 }
 
+export interface DomainFrameDeclaredUniverseState {
+  mode: string;
+  size: [number, number, number] | null;
+  center: [number, number, number] | null;
+  padding: [number, number, number] | null;
+}
+
+export interface DomainFrameState {
+  declared_universe: DomainFrameDeclaredUniverseState | null;
+  object_bounds_min: [number, number, number] | null;
+  object_bounds_max: [number, number, number] | null;
+  mesh_bounds_min: [number, number, number] | null;
+  mesh_bounds_max: [number, number, number] | null;
+  effective_extent: [number, number, number] | null;
+  effective_center: [number, number, number] | null;
+  effective_source: string | null;
+}
+
 export interface ScriptBuilderStageState {
   kind: string;
   entrypoint_kind: string;
@@ -385,6 +403,7 @@ export interface ScriptBuilderState {
   solver: ScriptBuilderSolverState;
   mesh: ScriptBuilderMeshState;
   universe: ScriptBuilderUniverseState | null;
+  domain_frame: DomainFrameState | null;
   stages: ScriptBuilderStageState[];
   initial_state: ScriptBuilderInitialState | null;
   geometries: ScriptBuilderGeometryEntry[];
@@ -461,7 +480,12 @@ export interface MeshSummaryState {
   boundary_face_count: number;
   bounds_min: [number, number, number] | null;
   bounds_max: [number, number, number] | null;
+  mesh_extent: [number, number, number] | null;
   world_extent: [number, number, number] | null;
+  world_center: [number, number, number] | null;
+  world_extent_source: string | null;
+  domain_frame: DomainFrameState | null;
+  domain_mesh_mode: string | null;
   generation_id: string;
 }
 

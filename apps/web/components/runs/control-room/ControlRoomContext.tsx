@@ -28,6 +28,7 @@ import type {
   SessionManifest,
 } from "../../../lib/useSessionStream";
 import type {
+  DomainFrameState,
   ModelBuilderGraphV2,
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
@@ -215,8 +216,17 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   /* ── Derived from SSE state ── */
   const session = state?.session ?? null;
+  const metadata = (state?.metadata as Record<string, unknown> | null) ?? null;
+  const problemMeta =
+    metadata?.problem_meta && typeof metadata.problem_meta === "object"
+      ? (metadata.problem_meta as Record<string, unknown>)
+      : null;
+  const sourceHash =
+    typeof metadata?.source_hash === "string"
+      ? metadata.source_hash
+      : (typeof problemMeta?.source_hash === "string" ? problemMeta.source_hash : null);
   const workspaceHydrationKey = session
-    ? `${session.started_at_unix_ms}:${session.run_id}:${session.script_path}`
+    ? `${session.started_at_unix_ms}:${session.run_id}:${session.script_path}:${sourceHash ?? "no-source-hash"}`
     : null;
   const run = state?.run ?? null;
   const liveState = state?.live_state ?? null;
@@ -255,7 +265,6 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const engineLog = state?.engine_log ?? EMPTY_ENGINE_LOG;
   const quantities = state?.quantities ?? [];
   const artifactsArr = state?.artifacts ?? [];
-  const metadata = (state?.metadata as Record<string, unknown> | null) ?? null;
   const meshWorkspace = (state?.mesh_workspace as MeshWorkspaceState | null) ?? null;
   const latestEngineMessage = engineLog.length > 0 ? engineLog[engineLog.length - 1]?.message ?? null : null;
   const workspaceStatus =
@@ -716,15 +725,29 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const femArtifactLayout = artifactLayout?.backend === "fem" ? artifactLayout : undefined;
   const meshBoundsMin = asVec3(femArtifactLayout?.bounds_min) ?? asVec3(artifactLayout?.bounds_min);
   const meshBoundsMax = asVec3(femArtifactLayout?.bounds_max) ?? asVec3(artifactLayout?.bounds_max);
-  const meshExtent = asVec3(femArtifactLayout?.world_extent) ?? asVec3(artifactLayout?.world_extent);
+  const meshExtent =
+    asVec3(femArtifactLayout?.mesh_extent)
+    ?? asVec3(artifactLayout?.mesh_extent)
+    ?? asVec3(femArtifactLayout?.world_extent)
+    ?? asVec3(artifactLayout?.world_extent);
+  const layoutWorldExtent =
+    asVec3(femArtifactLayout?.world_extent) ?? asVec3(artifactLayout?.world_extent);
+  const layoutWorldCenter =
+    asVec3(femArtifactLayout?.world_center) ?? asVec3(artifactLayout?.world_center);
+  const layoutWorldExtentSource =
+    typeof femArtifactLayout?.world_extent_source === "string"
+      ? femArtifactLayout.world_extent_source
+      : (typeof artifactLayout?.world_extent_source === "string"
+          ? artifactLayout.world_extent_source
+          : null);
   const meshName = typeof femArtifactLayout?.mesh_name === "string" ? femArtifactLayout.mesh_name : null;
   const meshSource = typeof femArtifactLayout?.mesh_source === "string" ? femArtifactLayout.mesh_source : null;
   const meshFeOrder = typeof femArtifactLayout?.fe_order === "number" ? femArtifactLayout.fe_order : null;
   const meshHmax = typeof femArtifactLayout?.hmax === "number" ? femArtifactLayout.hmax : null;
   const meshSummary = meshWorkspace?.mesh_summary ?? null;
   const objectOverlays = useMemo<BuilderObjectOverlay[]>(
-    () => buildObjectOverlays(scriptBuilderGeometries),
-    [scriptBuilderGeometries],
+    () => buildObjectOverlays(scriptBuilderGeometries, femMesh),
+    [femMesh, scriptBuilderGeometries],
   );
   const builderObjectBounds = useMemo(
     () => combineBounds(objectOverlays),
@@ -744,25 +767,85 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         : null,
     [builderObjectBounds],
   );
+  const domainFrame = useMemo<DomainFrameState | null>(() => {
+    if (!isFemBackend) {
+      return null;
+    }
+    const builderDomainFrame = scriptBuilder?.domain_frame ?? null;
+    const meshDomainFrame = meshSummary?.domain_frame ?? null;
+    if (meshDomainFrame) {
+      return meshDomainFrame;
+    }
+    if (builderDomainFrame) {
+      return builderDomainFrame;
+    }
+    if (
+      !scriptBuilderUniverse
+      && !builderObjectBounds
+      && !layoutWorldExtent
+      && !meshBoundsMin
+      && !meshBoundsMax
+    ) {
+      return null;
+    }
+    return {
+      declared_universe: scriptBuilderUniverse
+        ? {
+            mode: scriptBuilderUniverse.mode,
+            size: scriptBuilderUniverse.size,
+            center: scriptBuilderUniverse.center,
+            padding: scriptBuilderUniverse.padding,
+          }
+        : null,
+      object_bounds_min: builderObjectBounds?.boundsMin ?? null,
+      object_bounds_max: builderObjectBounds?.boundsMax ?? null,
+      mesh_bounds_min: meshBoundsMin ?? null,
+      mesh_bounds_max: meshBoundsMax ?? null,
+      effective_extent:
+        scriptBuilderUniverse?.mode === "manual" && scriptBuilderUniverse.size
+          ? scriptBuilderUniverse.size
+          : scriptBuilderUniverse?.mode === "auto" && builderObjectExtent
+            ? builderObjectExtent.map((component, index) =>
+                component + 2 * (scriptBuilderUniverse.padding?.[index] ?? 0)
+              ) as [number, number, number]
+            : layoutWorldExtent ?? builderObjectExtent ?? null,
+      effective_center:
+        scriptBuilderUniverse?.center
+        ?? builderObjectCenter
+        ?? layoutWorldCenter
+        ?? (meshBoundsMin && meshBoundsMax ? boundsCenter(meshBoundsMin, meshBoundsMax) : null),
+      effective_source:
+        scriptBuilderUniverse?.mode === "manual" && scriptBuilderUniverse.size
+          ? "declared_universe_manual"
+          : scriptBuilderUniverse?.mode === "auto" && builderObjectExtent
+            ? (
+                (scriptBuilderUniverse.padding ?? [0, 0, 0]).some(
+                  (component) => Math.abs(component) > 0,
+                )
+                  ? "declared_universe_auto_padding"
+                  : "object_union_bounds"
+              )
+            : layoutWorldExtentSource ?? (builderObjectExtent ? "object_union_bounds" : null),
+    };
+  }, [
+    builderObjectBounds,
+    builderObjectCenter,
+    builderObjectExtent,
+    isFemBackend,
+    layoutWorldCenter,
+    layoutWorldExtent,
+    layoutWorldExtentSource,
+    meshBoundsMax,
+    meshBoundsMin,
+    meshSummary?.domain_frame,
+    scriptBuilder?.domain_frame,
+    scriptBuilderUniverse,
+  ]);
 
   /* Unified world extent (metres) for both FDM and FEM */
   const worldExtent = useMemo<[number, number, number] | null>(() => {
     if (isFemBackend) {
-      if (scriptBuilderUniverse?.mode === "manual" && scriptBuilderUniverse.size) {
-        return scriptBuilderUniverse.size;
-      }
-      if (builderObjectExtent) {
-        const padding = scriptBuilderUniverse?.padding ?? [0, 0, 0];
-        return builderObjectExtent.map((component, index) =>
-          component + 2 * padding[index]
-        ) as [number, number, number];
-      }
-      if (scriptBuilderUniverse?.size) {
-        return scriptBuilderUniverse.size;
-      }
-      if (meshExtent) {
-        return meshExtent;
-      }
+      return domainFrame?.effective_extent ?? null;
     }
     // FDM: compute from grid_cells × cell_size
     const gridCells = asVec3(artifactLayout?.grid_cells);
@@ -775,22 +858,19 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       ];
     }
     return null;
-  }, [artifactLayout, builderObjectExtent, isFemBackend, meshExtent, scriptBuilderUniverse]);
+  }, [artifactLayout, domainFrame, isFemBackend]);
   const worldCenter = useMemo<[number, number, number] | null>(() => {
     if (isFemBackend) {
-      if (scriptBuilderUniverse?.center) {
-        return scriptBuilderUniverse.center;
-      }
-      if (builderObjectCenter) {
-        return builderObjectCenter;
-      }
-      if (meshBoundsMin && meshBoundsMax) {
-        return boundsCenter(meshBoundsMin, meshBoundsMax);
-      }
-      return null;
+      return domainFrame?.effective_center ?? null;
     }
     return scriptBuilderUniverse?.center ?? null;
-  }, [builderObjectCenter, isFemBackend, meshBoundsMax, meshBoundsMin, scriptBuilderUniverse]);
+  }, [domainFrame, isFemBackend, scriptBuilderUniverse]);
+  const worldExtentSource = useMemo<string | null>(() => {
+    if (!isFemBackend) {
+      return "fdm_grid";
+    }
+    return domainFrame?.effective_source ?? null;
+  }, [domainFrame, isFemBackend]);
   const antennaOverlays = useMemo<AntennaOverlay[]>(() => {
     if (!meshBoundsMin || !meshBoundsMax || scriptBuilderCurrentModules.length === 0) {
       return [];
@@ -1934,12 +2014,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshFaceDetail, meshQualitySummary, meshWorkspace,
     meshName: meshSummary?.mesh_name ?? meshName,
     meshSource: meshSummary?.mesh_source ?? meshSource,
-    meshExtent: meshSummary?.world_extent ?? meshExtent,
+    meshExtent: meshSummary?.mesh_extent ?? meshExtent,
     meshBoundsMin: meshSummary?.bounds_min ?? meshBoundsMin,
     meshBoundsMax: meshSummary?.bounds_max ?? meshBoundsMax,
     meshFeOrder: meshSummary?.order ?? meshFeOrder,
+    domainFrame: meshSummary?.domain_frame ?? domainFrame,
     worldExtent,
     worldCenter,
+    worldExtentSource: meshSummary?.world_extent_source ?? worldExtentSource,
     meshHmax: Number.isFinite(meshSummary?.hmax ?? NaN) ? (meshSummary?.hmax ?? null) : meshHmax,
     mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
@@ -1958,7 +2040,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
     meshFaceDetail, meshQualitySummary, meshWorkspace,
     meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder,
-    worldExtent, worldCenter, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
+    domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
     selectedSidebarNodeId, selectedObjectId, focusObjectRequest, objectViewMode, requestFocusObject,
     setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,

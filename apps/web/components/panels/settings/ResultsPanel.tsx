@@ -9,7 +9,7 @@ import SelectField from "../../ui/SelectField";
 export default function ResultsPanel() {
   const ctx = useControlRoom();
   return (
-    <div className="flex flex-col gap-0 border-t border-border/20">
+    <div className="flex flex-col pt-4 px-2">
       <SidebarSection title="Active Preview State" defaultOpen={true}>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">

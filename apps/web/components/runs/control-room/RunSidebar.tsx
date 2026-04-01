@@ -38,6 +38,23 @@ export default function RunSidebar() {
   const inspectorPanelRef = usePanelRef();
   const [treeOpen, setTreeOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const universeRole = useMemo(() => {
+    if (!cmd.isFemBackend) {
+      return "Grid / simulation domain";
+    }
+    switch (model.worldExtentSource) {
+      case "declared_universe_manual":
+        return "Declared universe / workspace framing";
+      case "declared_universe_auto_padding":
+        return "Auto-fit universe from bounds + padding";
+      case "object_union_bounds":
+        return "Object union bounds / preview framing";
+      case "mesh_bounds":
+        return "Mesh bounds fallback / preview framing";
+      default:
+        return "Workspace framing";
+    }
+  }, [cmd.isFemBackend, model.worldExtentSource]);
 
   /* ── Build model tree nodes ── */
   const modelTreeNodes = useMemo(
@@ -49,7 +66,7 @@ export default function RunSidebar() {
         universeEffectiveSize: model.worldExtent,
         universeCenter: model.worldCenter,
         universePadding: model.scriptBuilderUniverse?.padding ?? null,
-        universeRole: cmd.isFemBackend ? "Air box / outer domain" : "Grid / simulation domain",
+        universeRole,
         geometryKind: model.mesherSourceKind ?? undefined,
         materialName:
           model.material?.name
@@ -83,6 +100,7 @@ export default function RunSidebar() {
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm,
       tp.effectiveDmDt, tp.scalarRows.length, model.worldCenter, model.worldExtent, model.scriptBuilderUniverse?.padding,
+      universeRole,
     ],
   );
 
@@ -261,7 +279,7 @@ export default function RunSidebar() {
   }, []);
 
   return (
-    <div className="flex w-full h-full border-l border-white/5 bg-gradient-to-br from-card/60 to-background/40 backdrop-blur-2xl shadow-[-8px_0_32px_rgba(0,0,0,0.4)] z-30">
+    <div className="flex w-full h-full border-l border-border/20 bg-gradient-to-b from-card/70 via-background/50 to-background/30 backdrop-blur-2xl shadow-[-8px_0_32px_rgba(0,0,0,0.4)] z-30">
       <PanelGroup
         orientation="horizontal"
         className="flex w-full h-full"
@@ -277,16 +295,19 @@ export default function RunSidebar() {
           panelRef={treePanelRef}
           onResize={handleTreeResize}
         >
-          <section className="flex flex-col h-full bg-transparent border-r border-border/20">
+          <section className="flex flex-col h-full bg-transparent border-r border-border/15">
             <button
               type="button"
-              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-white/5 border-l-[3px] border-l-primary z-10 shrink-0 relative"
+              className="flex items-center w-full px-3.5 py-2.5 text-left transition-all hover:bg-muted/20 border-b border-border/20 z-10 shrink-0 relative group"
               onClick={handleTreeToggle}
               aria-expanded={treeOpen}
             >
-              <span className={cn("text-primary/70 mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", treeOpen && "rotate-90")}>▸</span>
-              <span className="text-[0.65rem] font-medium uppercase tracking-wider text-foreground">Model</span>
-              <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-primary-foreground bg-primary/80 px-1.5 py-0.5 rounded-sm">{cmd.isFemBackend ? "FEM" : "FDM"}</span>
+              <span className={cn("text-primary/60 mr-2 transition-transform duration-200 flex items-center justify-center w-4 h-4 text-[10px]", treeOpen && "rotate-90")}>▸</span>
+              <span className="text-[0.72rem] font-semibold tracking-wide text-foreground/90 group-hover:text-foreground transition-colors">Model Tree View</span>
+              <span className="ml-auto flex items-center gap-2">
+                <span className="text-[0.58rem] font-mono font-bold tracking-tight text-primary-foreground bg-primary/80 px-1.5 py-0.5 rounded-sm shadow-sm">{cmd.isFemBackend ? "FEM" : "FDM"}</span>
+                <span className="text-muted-foreground/50 text-sm group-hover:text-muted-foreground transition-colors">⋮</span>
+              </span>
             </button>
             {treeOpen && (
               <div className="flex-1 min-h-0 min-w-0 pr-1 overflow-hidden isolate relative">
@@ -306,7 +327,7 @@ export default function RunSidebar() {
         </Panel>
 
         {/* ── Resize handle (vertical divider) ── */}
-        <PanelResizeHandle className="flex shrink-0 items-center justify-center bg-transparent w-1.5 cursor-col-resize relative z-10 hover:bg-primary/20 transition-colors after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:h-8 after:my-auto after:bg-border/60 hover:after:bg-primary" />
+        <PanelResizeHandle className="flex shrink-0 items-center justify-center bg-transparent w-1.5 cursor-col-resize relative z-10 hover:bg-primary/15 transition-colors after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:h-8 after:my-auto after:bg-border/40 hover:after:bg-primary/60" />
 
         {/* ── Column 2: Inspector / SettingsPanel ── */}
         <Panel
@@ -321,22 +342,22 @@ export default function RunSidebar() {
           <section className="flex flex-col h-full bg-transparent">
             <button
               type="button"
-              className="flex items-center w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50 border-b border-white/5 border-l-[3px] border-l-emerald-500 z-10 shrink-0 relative"
+              className="flex items-center w-full px-3.5 py-2.5 text-left transition-all hover:bg-muted/20 border-b border-border/20 z-10 shrink-0 relative group"
               onClick={handleInspectorToggle}
               aria-expanded={inspectorOpen}
             >
-              <span className={cn("text-emerald-500/70 mr-2 font-black transition-transform duration-150 flex items-center justify-center w-4 h-4 text-[10px]", inspectorOpen && "rotate-90")}>▸</span>
-              <span className="text-[0.65rem] font-medium uppercase tracking-wider text-foreground">
+              <span className={cn("text-primary/60 mr-2 transition-transform duration-200 flex items-center justify-center w-4 h-4 text-[10px]", inspectorOpen && "rotate-90")}>▸</span>
+              <span className="text-[0.72rem] font-semibold tracking-wide text-foreground/90 group-hover:text-foreground transition-colors">
                 Inspector
               </span>
-              <span className="ml-auto text-[0.6rem] font-mono tracking-tight text-muted-foreground bg-emerald-500/10 px-1.5 py-0.5 rounded-sm border border-emerald-500/20">
+              <span className="ml-auto text-[0.58rem] font-mono tracking-tight text-muted-foreground bg-card/60 px-2 py-0.5 rounded-md border border-border/30 shadow-sm max-w-[140px] truncate">
                 {activeNodeLabel}
               </span>
             </button>
             {inspectorOpen && (
               <div className="flex-1 min-h-0 min-w-0 overflow-hidden isolate relative">
                 <ScrollArea className="h-full w-full">
-                  <div className="p-0 select-none">
+                  <div className="p-1 select-none">
                     <SettingsPanel nodeId={activeNodeId} nodeLabel={activeNodeLabel} />
                   </div>
                 </ScrollArea>
@@ -348,3 +369,4 @@ export default function RunSidebar() {
     </div>
   );
 }
+

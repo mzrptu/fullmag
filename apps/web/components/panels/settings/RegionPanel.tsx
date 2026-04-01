@@ -79,7 +79,7 @@ export default function RegionPanel({ nodeId }: { nodeId?: string }) {
   const value = Array.isArray(mag.value) ? mag.value : [0, 0, 1];
 
   return (
-    <div className="flex flex-col gap-0 border-t border-border/20">
+    <div className="flex flex-col pt-4 px-2">
       <SidebarSection title="Region Identity" defaultOpen={true}>
         <div className="flex flex-col gap-4">
           <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2.5">

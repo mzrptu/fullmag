@@ -38,7 +38,7 @@ export default function EnergyPanel() {
   ]);
 
   return (
-    <div className="flex flex-col gap-0 border-t border-border/20">
+    <div className="flex flex-col pt-4 px-2">
       <SidebarSection title="Energy Components" defaultOpen={true}>
         <div className="grid grid-cols-2 gap-3">
           <MetricField

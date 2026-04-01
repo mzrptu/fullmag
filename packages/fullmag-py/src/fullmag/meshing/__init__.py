@@ -1,6 +1,10 @@
 """Geometry asset, meshing, and voxelization helpers for backend lowering."""
 
-from .asset_pipeline import realize_fdm_grid_asset, realize_fem_mesh_asset
+from .asset_pipeline import (
+    realize_fdm_grid_asset,
+    realize_fem_domain_mesh_asset,
+    realize_fem_mesh_asset,
+)
 from .gmsh_bridge import (
     AirboxOptions,
     MeshData,
@@ -36,9 +40,9 @@ __all__ = [
     "generate_mesh_from_file",
     "load_surface_asset",
     "realize_fdm_grid_asset",
+    "realize_fem_domain_mesh_asset",
     "realize_fem_mesh_asset",
     "remesh_with_size_field",
     "validate_mesh",
     "voxelize_geometry",
 ]
-

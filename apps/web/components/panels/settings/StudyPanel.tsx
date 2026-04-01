@@ -136,7 +136,7 @@ export default function StudyPanel() {
   ];
 
   return (
-    <div className="flex flex-col gap-0 border-t border-border/20">
+    <div className="flex flex-col pt-4 px-2">
       <SidebarSection title="Active Backend Configuration" defaultOpen={true}>
         <div className="grid grid-cols-3 gap-3">
           <div className="flex flex-col gap-1 p-2.5 bg-card/30 border border-border/30 rounded-lg">

@@ -33,6 +33,7 @@ import type {
   SessionManifest,
 } from "../../../lib/useSessionStream";
 import type {
+  DomainFrameState,
   ModelBuilderGraphV2,
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
@@ -256,8 +257,10 @@ export interface ModelContextValue {
   meshBoundsMin: [number, number, number] | null;
   meshBoundsMax: [number, number, number] | null;
   meshFeOrder: number | null;
+  domainFrame: DomainFrameState | null;
   worldExtent: [number, number, number] | null;
   worldCenter: [number, number, number] | null;
+  worldExtentSource: string | null;
   meshHmax: number | null;
   mesherBackend: string | null;
   mesherSourceKind: string | null;

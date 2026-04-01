@@ -9,7 +9,7 @@ import SelectField from "../../ui/SelectField";
 import { Button } from "../../ui/button";
 import type { ScriptBuilderGeometryEntry } from "../../../lib/session/types";
 import { findGeometryByNodeId } from "./objectSelection";
-import { SidebarSection } from "./primitives";
+import { SidebarSection, SubSectionHeader } from "./primitives";
 
 function defaultGeometryParams(kind: string, name: string): Record<string, unknown> {
   switch (kind) {
@@ -280,8 +280,8 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
           : null;
 
   return (
-    <div className="flex flex-col gap-0 border-t border-border/20">
-      <SidebarSection title="Object Identity" defaultOpen={true}>
+    <div className="flex flex-col pt-3 px-1.5">
+      <SidebarSection title="Object Identity" icon="⚙" defaultOpen={true}>
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3">
             <TextField
@@ -368,7 +368,7 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
         </div>
       </SidebarSection>
 
-      <SidebarSection title="Geometry Definition" defaultOpen={true}>
+      <SidebarSection title="Geometry" icon="📐" defaultOpen={true}>
         <div className="flex flex-col gap-5">
           <SelectField
             label="Geometry Kind"
@@ -394,9 +394,7 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
           />
 
           <div className="flex flex-col gap-3">
-            <h4 className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground pb-1 border-b border-border/20">
-              Dimensions
-            </h4>
+            <SubSectionHeader title="Dimensions" icon="📏" />
             {geo.geometry_kind === "Box" && (
               <div className="grid grid-cols-3 gap-3">
                 <TextField key={`${geo.name}-size-x`} label="X Length" defaultValue={(size[0] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(0, e.target.value)} unit="nm" mono />
@@ -472,9 +470,7 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
           </div>
 
           <div className="flex flex-col gap-3">
-            <h4 className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground pb-1 border-b border-border/20">
-              Placement Offset
-            </h4>
+            <SubSectionHeader title="Placement Offset" icon="↔" />
             <div className="grid grid-cols-3 gap-3">
               <TextField key={`${geo.name}-translate-x`} label="Translate X" defaultValue={(translation[0] * 1e9).toFixed(1)} onchange={(e) => handleTranslation(0, e.target.value)} onBlur={(e) => handleTranslation(0, e.target.value)} unit="nm" mono />
               <TextField key={`${geo.name}-translate-y`} label="Translate Y" defaultValue={(translation[1] * 1e9).toFixed(1)} onchange={(e) => handleTranslation(1, e.target.value)} onBlur={(e) => handleTranslation(1, e.target.value)} unit="nm" mono />
@@ -484,15 +480,15 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
         </div>
       </SidebarSection>
 
-      <SidebarSection title="Spatial Summary" defaultOpen={true}>
-        <div className="grid grid-cols-1 gap-3">
-          <div className="flex flex-col gap-1 rounded-lg border border-border/40 bg-card/20 px-3 py-2.5">
-            <span className="text-[0.62rem] font-bold uppercase tracking-widest text-muted-foreground">Bounds</span>
-            <span className="font-mono text-xs text-foreground">{formatBounds(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
+      <SidebarSection title="Spatial Summary" icon="📐" defaultOpen={true}>
+        <div className="grid grid-cols-1 gap-2.5">
+          <div className="flex flex-col gap-1.5 rounded-lg border border-border/25 bg-gradient-to-b from-card/35 to-card/10 px-3 py-2.5 backdrop-blur-sm">
+            <span className="text-[0.6rem] font-semibold uppercase tracking-wider text-muted-foreground/80">Bounds</span>
+            <span className="font-mono text-xs text-foreground tracking-tight">{formatBounds(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
           </div>
-          <div className="flex flex-col gap-1 rounded-lg border border-border/40 bg-card/20 px-3 py-2.5">
-            <span className="text-[0.62rem] font-bold uppercase tracking-widest text-muted-foreground">Extent</span>
-            <span className="font-mono text-xs text-foreground">{formatExtent(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
+          <div className="flex flex-col gap-1.5 rounded-lg border border-border/25 bg-gradient-to-b from-card/35 to-card/10 px-3 py-2.5 backdrop-blur-sm">
+            <span className="text-[0.6rem] font-semibold uppercase tracking-wider text-muted-foreground/80">Extent</span>
+            <span className="font-mono text-xs text-foreground tracking-tight">{formatExtent(liveBounds?.boundsMin, liveBounds?.boundsMax)}</span>
           </div>
         </div>
       </SidebarSection>

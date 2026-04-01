@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { FemGeometry } from "./r3f/FemGeometry";
 import { FemArrows } from "./r3f/FemArrows";
 import { FemHighlightView } from "./r3f/FemHighlightView";
+import { rotateCameraAroundTarget, setCameraPresetAroundTarget, focusCameraOnBounds, fitCameraToBounds } from "./camera/cameraHelpers";
 import SceneAxes3D from "./r3f/SceneAxes3D";
 import { computeFaceAspectRatios } from "./r3f/colorUtils";
 import type { FemLiveMeshObjectSegment } from "../../lib/session/types";
@@ -100,7 +101,7 @@ const COLOR_OPTIONS: { value: FemColorField; label: string }[] = [
 
 /* ── Global R3F Logic Components ───────────────────────────────────── */
 
-function FemClipPlanes({ enabled, axis, posPercentage, maxDim }: { enabled: boolean; axis: ClipAxis; posPercentage: number; maxDim: number }) {
+function FemClipPlanes({ enabled, axis, posPercentage, geomSize }: { enabled: boolean; axis: ClipAxis; posPercentage: number; geomSize: [number, number, number] }) {
   const { gl } = useThree();
   useEffect(() => {
     gl.localClippingEnabled = enabled;
@@ -108,10 +109,11 @@ function FemClipPlanes({ enabled, axis, posPercentage, maxDim }: { enabled: bool
       gl.clippingPlanes = [];
       return;
     }
-    const pos = ((posPercentage / 100) - 0.5) * maxDim;
+    const axisSize = axis === "x" ? geomSize[0] : axis === "y" ? geomSize[1] : geomSize[2];
+    const pos = ((posPercentage / 100) - 0.5) * axisSize;
     const normal = new THREE.Vector3(axis === "x" ? -1 : 0, axis === "y" ? -1 : 0, axis === "z" ? -1 : 0);
     gl.clippingPlanes = [new THREE.Plane(normal, pos)];
-  }, [gl, enabled, axis, posPercentage, maxDim]);
+  }, [gl, enabled, axis, posPercentage, geomSize]);
   return null;
 }
 
@@ -120,12 +122,7 @@ function CameraAutoFit({ maxDim, generation }: { maxDim: number; generation: num
   const { camera, invalidate } = useThree();
   useEffect(() => {
     if (maxDim <= 0 || generation === 0) return;
-    const d = maxDim * 2;
-    (camera as THREE.PerspectiveCamera).near = maxDim * 0.001;
-    (camera as THREE.PerspectiveCamera).far = maxDim * 200;
-    camera.position.set(d * 0.75, d * 0.6, d * 0.75);
-    camera.lookAt(0, 0, 0);
-    camera.updateProjectionMatrix();
+    fitCameraToBounds(camera, maxDim);
     invalidate();
   }, [camera, invalidate, maxDim, generation]);
   return null;
@@ -608,6 +605,7 @@ function FemMeshView3DInner({
 
   const controlsRef = useRef<any>(null);
   const viewCubeSceneRef = useRef<any>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const faceARsRef = useRef<Float32Array | null>(null);
   
   const topologySignature = topologyKey ?? `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}`;
@@ -710,55 +708,25 @@ function FemMeshView3DInner({
   const setCameraPreset = useCallback((view: "reset" | "front" | "top" | "right") => {
     const bridge = viewCubeSceneRef.current;
     if (!bridge?.camera || !bridge?.controls) return;
-    const cam = bridge.camera, ctl = bridge.controls;
-    const d = sceneMaxDim * 2;
-    switch (view) {
-      case "reset": cam.position.set(d * 0.75, d * 0.6, d * 0.75); cam.up.set(0, 1, 0); break;
-      case "front": cam.position.set(0, 0, d); cam.up.set(0, 1, 0); break;
-      case "top": cam.position.set(0, d, 0); cam.up.set(0, 0, -1); break;
-      case "right": cam.position.set(d, 0, 0); cam.up.set(0, 1, 0); break;
-    }
-    cam.lookAt(0, 0, 0);
-    ctl.target.set(0, 0, 0);
-    ctl.update();
+    setCameraPresetAroundTarget(bridge.camera, bridge.controls, view, sceneMaxDim * 2);
   }, [sceneMaxDim]);
 
   const focusObject = useCallback((objectId: string) => {
     const overlay = objectOverlays.find((candidate) => candidate.id === objectId);
     const bridge = viewCubeSceneRef.current;
-    if (!overlay || !bridge?.camera || !bridge?.controls) {
-      return;
-    }
-    const { camera, controls } = bridge;
-    const target = new THREE.Vector3(
-      0.5 * (overlay.boundsMin[0] + overlay.boundsMax[0]) - geomCenter.x,
-      0.5 * (overlay.boundsMin[1] + overlay.boundsMax[1]) - geomCenter.y,
-      0.5 * (overlay.boundsMin[2] + overlay.boundsMax[2]) - geomCenter.z,
-    );
-    const size = new THREE.Vector3(
-      overlay.boundsMax[0] - overlay.boundsMin[0],
-      overlay.boundsMax[1] - overlay.boundsMin[1],
-      overlay.boundsMax[2] - overlay.boundsMin[2],
-    );
-    if (
-      !Number.isFinite(size.x) || !Number.isFinite(size.y) || !Number.isFinite(size.z) ||
-      size.x <= 0 || size.y <= 0 || size.z <= 0
-    ) {
-      return;
-    }
-    const radius = Math.max(size.length() * 0.5, sceneMaxDim * 0.05, 1e-9);
-    const perspectiveCamera = camera as THREE.PerspectiveCamera;
-    const fov = THREE.MathUtils.degToRad(perspectiveCamera.fov || 45);
-    const distance = Math.max(radius / Math.tan(fov * 0.5), radius * 2.2);
-    const direction = camera.position.clone().sub(controls.target).normalize();
-    if (direction.lengthSq() < 1e-9) {
-      direction.set(0.75, 0.6, 0.75).normalize();
-    }
-    camera.position.copy(target).add(direction.multiplyScalar(distance));
-    controls.target.copy(target);
-    camera.lookAt(target);
-    camera.updateProjectionMatrix();
-    controls.update();
+    if (!overlay || !bridge?.camera || !bridge?.controls) return;
+    focusCameraOnBounds(bridge.camera, bridge.controls, {
+      min: [
+        overlay.boundsMin[0] - geomCenter.x,
+        overlay.boundsMin[1] - geomCenter.y,
+        overlay.boundsMin[2] - geomCenter.z,
+      ],
+      max: [
+        overlay.boundsMax[0] - geomCenter.x,
+        overlay.boundsMax[1] - geomCenter.y,
+        overlay.boundsMax[2] - geomCenter.z,
+      ],
+    }, { fallbackMinRadius: sceneMaxDim * 0.05 });
   }, [geomCenter, objectOverlays, sceneMaxDim]);
 
   useEffect(() => {
@@ -771,16 +739,11 @@ function FemMeshView3DInner({
   const handleViewCubeRotate = useCallback((quat: THREE.Quaternion) => {
     const bridge = viewCubeSceneRef.current;
     if (!bridge?.camera || !bridge?.controls) return;
-    const cam = bridge.camera, ctl = bridge.controls;
-    const dist = cam.position.length();
-    cam.position.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(quat).multiplyScalar(dist));
-    cam.lookAt(0, 0, 0);
-    cam.up.set(0, 1, 0).applyQuaternion(quat);
-    ctl.target.set(0, 0, 0);
+    rotateCameraAroundTarget(bridge.camera, bridge.controls, quat);
   }, []);
 
   const takeScreenshot = useCallback(() => {
-    const canvas = document.querySelector(".fem-canvas-container canvas") as HTMLCanvasElement;
+    const canvas = canvasRef.current;
     if (!canvas) return;
     const a = document.createElement("a");
     a.href = canvas.toDataURL("image/png");
@@ -821,6 +784,7 @@ function FemMeshView3DInner({
         gl={{ antialias: true, preserveDrawingBuffer: true, localClippingEnabled: true }}
         onPointerMissed={() => setSelectedFaces([])}
         onContextMenu={(e) => e.preventDefault()}
+        onCreated={({ gl }) => { canvasRef.current = gl.domElement; }}
       >
         <color attach="background" args={[0x1e1e2e]} /> {/* Catppuccin Mocha Base */}
         <ambientLight intensity={0.4} />
@@ -829,7 +793,7 @@ function FemMeshView3DInner({
         
         <CameraAutoFit maxDim={sceneMaxDim} generation={cameraFitGeneration} />
 
-        <FemClipPlanes enabled={clipEnabled} axis={clipAxis} posPercentage={clipPos} maxDim={sceneMaxDim} />
+        <FemClipPlanes enabled={clipEnabled} axis={clipAxis} posPercentage={clipPos} geomSize={geomSize} />
         
         <FemGeometry
           meshData={meshData} field={field} renderMode={renderMode} opacity={effectiveOpacity} qualityPerFace={qualityPerFace}

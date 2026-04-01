@@ -1,5 +1,8 @@
 use anyhow::{anyhow, Result};
-use fullmag_ir::{BackendPlanIR, ExecutionPlanIR, ExecutionPlanSummary};
+use fullmag_ir::{
+    BackendPlanIR, DeclaredUniverseIR, DomainFrameIR, ExecutionPlanIR, ExecutionPlanSummary,
+    ProblemIR,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::types::{EngineLogEntry, ResolvedScriptStage};
@@ -45,6 +48,29 @@ pub(crate) fn fem_mesh_bbox(mesh: &fullmag_ir::MeshIR) -> Option<([f64; 3], [f64
         }
     }
     Some((min, max))
+}
+
+pub(crate) fn fem_domain_frame(
+    problem: &ProblemIR,
+    mesh_bounds: Option<([f64; 3], [f64; 3])>,
+) -> Option<DomainFrameIR> {
+    let base_frame = problem
+        .problem_meta
+        .runtime_metadata
+        .get("domain_frame")
+        .and_then(|value| serde_json::from_value::<DomainFrameIR>(value.clone()).ok())
+        .or_else(|| {
+            problem
+                .problem_meta
+                .runtime_metadata
+                .get("study_universe")
+                .and_then(DeclaredUniverseIR::from_study_universe_value)
+                .map(|declared_universe| DomainFrameIR {
+                    declared_universe: Some(declared_universe),
+                    ..DomainFrameIR::default()
+                })
+        })?;
+    base_frame.with_mesh_bounds(mesh_bounds).finalized()
 }
 
 pub(crate) fn log_execution_plan(
@@ -174,7 +200,7 @@ pub(crate) fn execution_plan_log_lines(
             ));
             if let Some((min, max)) = fem_mesh_bbox(&fem.mesh) {
                 let extent = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
-                lines.push(format!("World extent: {}", format_extent(extent)));
+                lines.push(format!("Mesh extent: {}", format_extent(extent)));
             }
             lines.push(format!("FE order: {}", fem.fe_order));
             lines.push(format!("hmax: {}", format_length_m(fem.hmax)));
@@ -190,7 +216,7 @@ pub(crate) fn execution_plan_log_lines(
             ));
             if let Some((min, max)) = fem_mesh_bbox(&fem.mesh) {
                 let extent = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
-                lines.push(format!("World extent: {}", format_extent(extent)));
+                lines.push(format!("Mesh extent: {}", format_extent(extent)));
             }
             lines.push(format!("FE order: {}", fem.fe_order));
             lines.push(format!("hmax: {}", format_length_m(fem.hmax)));
@@ -200,7 +226,10 @@ pub(crate) fn execution_plan_log_lines(
     lines
 }
 
-pub(crate) fn current_artifact_layout(plan: &ExecutionPlanIR) -> serde_json::Value {
+pub(crate) fn current_artifact_layout(
+    problem: &ProblemIR,
+    plan: &ExecutionPlanIR,
+) -> serde_json::Value {
     match &plan.backend_plan {
         BackendPlanIR::Fdm(fdm) => {
             let total_cells = fdm.grid.cells[0] as usize
@@ -261,7 +290,8 @@ pub(crate) fn current_artifact_layout(plan: &ExecutionPlanIR) -> serde_json::Val
             "planner_summary": multilayer.planner_summary,
         }),
         BackendPlanIR::Fem(fem) => {
-            let (bounds_min, bounds_max, extent) = fem_mesh_bbox(&fem.mesh)
+            let mesh_bounds = fem_mesh_bbox(&fem.mesh);
+            let (bounds_min, bounds_max, mesh_extent) = mesh_bounds
                 .map(|(min, max)| {
                     (
                         Some(min),
@@ -270,6 +300,20 @@ pub(crate) fn current_artifact_layout(plan: &ExecutionPlanIR) -> serde_json::Val
                     )
                 })
                 .unwrap_or((None, None, None));
+            let domain_frame = fem
+                .domain_frame
+                .clone()
+                .or_else(|| fem_domain_frame(problem, mesh_bounds))
+                .and_then(DomainFrameIR::finalized);
+            let world_extent = domain_frame
+                .as_ref()
+                .and_then(|frame| frame.effective_extent);
+            let world_center = domain_frame
+                .as_ref()
+                .and_then(|frame| frame.effective_center);
+            let world_extent_source = domain_frame
+                .as_ref()
+                .and_then(|frame| frame.effective_source.clone());
             serde_json::json!({
                 "backend": "fem",
                 "mesh_name": fem.mesh.mesh_name,
@@ -281,11 +325,17 @@ pub(crate) fn current_artifact_layout(plan: &ExecutionPlanIR) -> serde_json::Val
                 "boundary_face_count": fem.mesh.boundary_faces.len(),
                 "bounds_min": bounds_min,
                 "bounds_max": bounds_max,
-                "world_extent": extent,
+                "mesh_extent": mesh_extent,
+                "world_extent": world_extent,
+                "world_center": world_center,
+                "world_extent_source": world_extent_source,
+                "domain_frame": domain_frame,
+                "domain_mesh_mode": fem.domain_mesh_mode,
             })
         }
         BackendPlanIR::FemEigen(fem) => {
-            let (bounds_min, bounds_max, extent) = fem_mesh_bbox(&fem.mesh)
+            let mesh_bounds = fem_mesh_bbox(&fem.mesh);
+            let (bounds_min, bounds_max, mesh_extent) = mesh_bounds
                 .map(|(min, max)| {
                     (
                         Some(min),
@@ -294,6 +344,20 @@ pub(crate) fn current_artifact_layout(plan: &ExecutionPlanIR) -> serde_json::Val
                     )
                 })
                 .unwrap_or((None, None, None));
+            let domain_frame = fem
+                .domain_frame
+                .clone()
+                .or_else(|| fem_domain_frame(problem, mesh_bounds))
+                .and_then(DomainFrameIR::finalized);
+            let world_extent = domain_frame
+                .as_ref()
+                .and_then(|frame| frame.effective_extent);
+            let world_center = domain_frame
+                .as_ref()
+                .and_then(|frame| frame.effective_center);
+            let world_extent_source = domain_frame
+                .as_ref()
+                .and_then(|frame| frame.effective_source.clone());
             serde_json::json!({
                 "backend": "fem_eigen",
                 "mesh_name": fem.mesh.mesh_name,
@@ -305,7 +369,12 @@ pub(crate) fn current_artifact_layout(plan: &ExecutionPlanIR) -> serde_json::Val
                 "boundary_face_count": fem.mesh.boundary_faces.len(),
                 "bounds_min": bounds_min,
                 "bounds_max": bounds_max,
-                "world_extent": extent,
+                "mesh_extent": mesh_extent,
+                "world_extent": world_extent,
+                "world_center": world_center,
+                "world_extent_source": world_extent_source,
+                "domain_frame": domain_frame,
+                "domain_mesh_mode": fem.domain_mesh_mode,
                 "mode_count": fem.count,
             })
         }

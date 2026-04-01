@@ -1119,6 +1119,7 @@ mod tests {
                 active_mask: vec![true, true, true, true, false, false, false, false],
             }],
             fem_mesh_assets: vec![],
+            fem_domain_mesh_asset: None,
         });
         problem.energy_terms = vec![
             fullmag_ir::EnergyTermIR::Exchange,

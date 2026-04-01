@@ -54,7 +54,7 @@ fn current_live_metadata(
         "problem_meta": &problem.problem_meta,
         "execution_plan": plan,
         "runtime_engine": runtime_engine,
-        "artifact_layout": current_artifact_layout(plan),
+        "artifact_layout": current_artifact_layout(problem, plan),
         "meshing_capabilities": current_meshing_capabilities(plan),
         "live_preview": {
             "mode": "active_source",
@@ -67,6 +67,7 @@ fn current_live_metadata(
 }
 
 fn current_fem_mesh_workspace(
+    problem: &ProblemIR,
     mesh: &fullmag_ir::MeshIR,
     mesh_source: Option<&str>,
     fe_order: u32,
@@ -77,7 +78,8 @@ fn current_fem_mesh_workspace(
     quality_summary: Option<&crate::python_bridge::RemeshQualitySummary>,
     mesh_history: &[serde_json::Value],
 ) -> serde_json::Value {
-    let (bounds_min, bounds_max, extent) = fem_mesh_bbox(mesh)
+    let mesh_bounds = fem_mesh_bbox(mesh);
+    let (bounds_min, bounds_max, mesh_extent) = mesh_bounds
         .map(|(min, max)| {
             (
                 Some(min),
@@ -86,6 +88,21 @@ fn current_fem_mesh_workspace(
             )
         })
         .unwrap_or((None, None, None));
+    let domain_frame = fem_domain_frame(problem, mesh_bounds);
+    let world_extent = domain_frame
+        .as_ref()
+        .and_then(|frame| frame.effective_extent);
+    let world_center = domain_frame
+        .as_ref()
+        .and_then(|frame| frame.effective_center);
+    let world_extent_source = domain_frame
+        .as_ref()
+        .and_then(|frame| frame.effective_source.clone());
+    let domain_mesh_mode = if mesh.element_markers.iter().any(|marker| *marker == 0) {
+        "shared_domain_mesh_with_air"
+    } else {
+        "merged_magnetic_mesh"
+    };
 
     let source_kind = match mesh_source {
         Some(source) if source.ends_with(".stl") => "stl_surface",
@@ -172,7 +189,12 @@ fn current_fem_mesh_workspace(
             "boundary_face_count": mesh.boundary_faces.len(),
             "bounds_min": bounds_min,
             "bounds_max": bounds_max,
-            "world_extent": extent,
+            "mesh_extent": mesh_extent,
+            "world_extent": world_extent,
+            "world_center": world_center,
+            "world_extent_source": world_extent_source,
+            "domain_frame": domain_frame,
+            "domain_mesh_mode": domain_mesh_mode,
             "generation_id": format!("{}:{}:{}", mesh.mesh_name, mesh.nodes.len(), mesh.elements.len()),
         },
         "mesh_quality_summary": quality_summary.map(|quality| serde_json::json!({
@@ -192,7 +214,7 @@ fn current_fem_mesh_workspace(
             {"id": "optimize", "label": "Optimize", "status": "idle", "detail": "Optimization policy depends on remesh request".to_string()},
             {"id": "quality", "label": "Quality", "status": if quality_summary.is_some() { "done" } else { "idle" }, "detail": quality_summary.map(|quality| format!("SICN p5 {:.3}, gamma min {:.3}", quality.sicn_p5, quality.gamma_min)).unwrap_or_else(|| "Quality metrics not extracted yet".to_string())},
             {"id": "validation", "label": "Validation", "status": if mesh.elements.is_empty() { "warning" } else { "done" }, "detail": if mesh.elements.is_empty() { "Mesh has no tetrahedra".to_string() } else { "Mesh validated and ready for FEM plan lowering".to_string() }},
-            {"id": "solver_readiness", "label": "Solver Readiness", "status": readiness_status, "detail": format!("Estimated dense RAM {:.1} GB / {:.1} GB available · status {}", ram_estimate_gb, available_ram_gb, status)},
+            {"id": "readiness", "label": "Solver Readiness", "status": readiness_status, "detail": format!("Estimated dense RAM {:.1} GB / {:.1} GB available · status {}", ram_estimate_gb, available_ram_gb, status)},
         ],
         "mesh_capabilities": {
             "has_volume_mesh": true,
@@ -238,6 +260,7 @@ fn current_mesh_workspace(
         _ => return None,
     };
     Some(current_fem_mesh_workspace(
+        problem,
         mesh,
         mesh_source,
         fe_order,
@@ -1359,6 +1382,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                     live_workspace.update(|state| {
                                         state.live_state.latest_step.fem_mesh = Some(mesh_payload);
                                         state.mesh_workspace = Some(current_fem_mesh_workspace(
+                                            &stages[0].ir,
                                             &new_mesh,
                                             fem_plan.mesh_source.as_deref(),
                                             fe_order,
@@ -1611,10 +1635,13 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                     boundary_faces: new_mesh.boundary_faces.clone(),
                                     object_segments: Vec::new(),
                                 };
+                                let mesh_workspace_problem =
+                                    &stages.last().expect("stages should not be empty").ir;
 
                                 live_workspace.update(|state| {
                                     state.live_state.latest_step.fem_mesh = Some(mesh_payload);
                                     state.mesh_workspace = Some(current_fem_mesh_workspace(
+                                        mesh_workspace_problem,
                                         &new_mesh,
                                         plan.mesh_source.as_deref(),
                                         plan.fe_order,
@@ -3043,6 +3070,8 @@ mod tests {
                 boundary_markers: vec![1],
             },
             object_segments: Vec::new(),
+            domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+            domain_frame: None,
             fe_order: 1,
             hmax: 1.0,
             initial_magnetization: vec![[0.0, 0.0, 1.0]; 4],

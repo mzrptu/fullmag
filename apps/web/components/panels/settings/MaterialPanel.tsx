@@ -86,7 +86,7 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
   const v = Array.isArray(mag.value) ? mag.value : [0, 0, 1];
 
   return (
-    <div className="flex flex-col gap-0 border-t border-border/20">
+    <div className="flex flex-col pt-4 px-2">
       <SidebarSection title="Material Constants" defaultOpen={true}>
         <div className="grid grid-cols-2 gap-3">
           <TextField 

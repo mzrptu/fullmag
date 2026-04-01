@@ -15,6 +15,7 @@ from fullmag._validation import ensure_unique_names, require_non_empty
 from fullmag.model.antenna import AntennaFieldSource, SpinWaveExcitationAnalysis
 from fullmag.model.discretization import DiscretizationHints, FEM
 from fullmag.model.dynamics import LLG
+from fullmag.model.domain_frame import build_domain_frame
 from fullmag.model.energy import BulkDMI, Demag, Exchange, InterfacialDMI, Magnetoelastic, Zeeman
 from fullmag.model.mechanics import (
     ElasticBody,
@@ -71,11 +72,17 @@ def _geometry_cache_fingerprint(geometry: object) -> dict[str, object]:
     return fingerprint
 
 
-def _fem_mesh_cache_key(geometry: object, hints: FEM) -> str:
+def _fem_mesh_cache_key(
+    geometry: object,
+    hints: FEM,
+    *,
+    study_universe: dict[str, object] | None = None,
+) -> str:
     payload = {
         "version": _FEM_MESH_CACHE_VERSION,
         "geometry": _geometry_cache_fingerprint(geometry),
         "fem": hints.to_ir(),
+        "study_universe": study_universe,
     }
     return sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -159,7 +166,7 @@ def build_geometry_assets_for_request(
         cached = asset_cache[asset_cache_key]
         return copy.deepcopy(cached)
 
-    assets: dict[str, list[dict[str, object]]] = {
+    assets: dict[str, Any] = {
         "fdm_grid_assets": [],
         "fem_mesh_assets": [],
     }
@@ -190,7 +197,7 @@ def build_geometry_assets_for_request(
     if should_build_fem_assets and discretization.fem is not None:
         from fullmag._core import validate_mesh_ir
         from fullmag.model.geometry import ImportedGeometry
-        from fullmag.meshing import realize_fem_mesh_asset
+        from fullmag.meshing import realize_fem_domain_mesh_asset, realize_fem_mesh_asset
         from fullmag.meshing.gmsh_bridge import MeshData
 
         fem_mesh_cache_dir = _fem_mesh_cache_dir()
@@ -215,7 +222,11 @@ def build_geometry_assets_for_request(
                     }
                 )
             else:
-                mesh_cache_key = _fem_mesh_cache_key(geometry, discretization.fem)
+                mesh_cache_key = _fem_mesh_cache_key(
+                    geometry,
+                    discretization.fem,
+                    study_universe=study_universe,
+                )
                 cache_path = (
                     fem_mesh_cache_dir.joinpath(f"{mesh_cache_key}.npz")
                     if fem_mesh_cache_dir is not None
@@ -231,7 +242,11 @@ def build_geometry_assets_for_request(
                     emit_progress(
                         f"Preparing FEM mesh asset for '{geometry.geometry_name}'"
                     )
-                    mesh = realize_fem_mesh_asset(geometry, discretization.fem)
+                    mesh = realize_fem_mesh_asset(
+                        geometry,
+                        discretization.fem,
+                        study_universe=study_universe,
+                    )
                     if cache_path is not None and not imported_surface_only:
                         mesh.save(cache_path)
                         emit_progress(
@@ -263,7 +278,30 @@ def build_geometry_assets_for_request(
                     }
                 )
 
-    if not assets["fdm_grid_assets"] and not assets["fem_mesh_assets"]:
+        if study_universe is not None:
+            emit_progress("Preparing shared FEM domain mesh asset")
+            domain_mesh, region_markers = realize_fem_domain_mesh_asset(
+                list(geometries),
+                discretization.fem,
+                study_universe=study_universe,
+            )
+            domain_mesh_ir = domain_mesh.to_ir("study_domain")
+            is_valid = validate_mesh_ir(domain_mesh_ir)
+            if is_valid is False:
+                raise ValueError(
+                    "generated shared FEM domain mesh asset failed Rust validation"
+                )
+            assets["fem_domain_mesh_asset"] = {
+                "mesh_source": None,
+                "mesh": domain_mesh_ir,
+                "region_markers": region_markers,
+            }
+
+    if (
+        not assets["fdm_grid_assets"]
+        and not assets["fem_mesh_assets"]
+        and assets.get("fem_domain_mesh_asset") is None
+    ):
         result = None
     else:
         result = assets
@@ -522,6 +560,11 @@ def build_problem_builder_manifest(
         resolve_geometry_sources(geometry, source_root=source_root)
         for geometry in problem._collect_geometries()
     ]
+    domain_frame = build_domain_frame(
+        geometries=list(geometries),
+        source_root=source_root,
+        study_universe=study_universe,
+    )
     editable_scopes = _builder_editable_scopes(
         problem,
         mesh_workflow=mesh_workflow,
@@ -540,6 +583,7 @@ def build_problem_builder_manifest(
             "description": problem.description,
             "runtime": runtime.to_runtime_metadata(),
             "universe": study_universe,
+            "domain_frame": domain_frame,
             "geometry": [geometry.to_ir() for geometry in geometries],
             "regions": [region.to_ir() for region in regions],
             "materials": [material.to_ir() for material in materials],
@@ -663,6 +707,13 @@ class Problem:
             if isinstance(runtime_metadata.get("study_universe"), dict)
             else None
         )
+        domain_frame = build_domain_frame(
+            geometries=list(geometries),
+            source_root=source_root,
+            study_universe=study_universe,
+        )
+        if domain_frame is not None:
+            runtime_metadata["domain_frame"] = domain_frame
         builder_manifest = build_problem_builder_manifest(
             self,
             runtime=runtime,

@@ -124,6 +124,8 @@ class AirboxOptions:
     shape: str = "bbox"
     grading_ratio: float = 1.4
     boundary_marker: int = 99
+    size: tuple[float, float, float] | None = None
+    center: tuple[float, float, float] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -405,9 +407,25 @@ def _add_airbox_and_fragment(
     pf = airbox.padding_factor
 
     # 2 — outer shell geometry
-    if airbox.shape == "sphere":
+    explicit_size = airbox.size
+    explicit_center = airbox.center
+    if explicit_size is not None:
+        ox, oy, oz = explicit_size
+        if min(ox, oy, oz) <= 0.0:
+            raise ValueError("airbox.size components must be positive")
+        if explicit_center is not None:
+            cx, cy, cz = explicit_center
+        if airbox.shape == "sphere":
+            radius = max(ox, oy, oz) / 2.0
+            outer_tag = gmsh.model.occ.addSphere(cx, cy, cz, radius)
+        else:  # bbox
+            outer_tag = gmsh.model.occ.addBox(
+                cx - ox / 2, cy - oy / 2, cz - oz / 2, ox, oy, oz,
+            )
+    elif airbox.shape == "sphere":
         R = max(dx, dy, dz) / 2 * pf
         outer_tag = gmsh.model.occ.addSphere(cx, cy, cz, R)
+        ox = oy = oz = 2.0 * R
     else:  # bbox
         ox, oy, oz = dx * pf, dy * pf, dz * pf
         outer_tag = gmsh.model.occ.addBox(
@@ -469,7 +487,14 @@ def _add_airbox_and_fragment(
     # 7 — mesh grading: fine at interface, coarse at outer boundary
     if airbox.grading_ratio > 1.0:
         h_outer = hmax * airbox.grading_ratio ** 4
-        d_outer = max(dx, dy, dz) * (pf - 1) / 2
+        if explicit_size is not None:
+            d_outer = max(
+                max(ox - dx, 0.0),
+                max(oy - dy, 0.0),
+                max(oz - dz, 0.0),
+            ) / 2.0
+        else:
+            d_outer = max(dx, dy, dz) * (pf - 1) / 2
 
         gmsh.model.mesh.field.add("Distance", 1)
         gmsh.model.mesh.field.setNumbers(1, "SurfacesList", interface_list)

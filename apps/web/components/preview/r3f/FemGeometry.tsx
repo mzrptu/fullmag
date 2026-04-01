@@ -175,7 +175,8 @@ export function FemGeometry({
     const tetraEdgePairs: number[] = [];
 
     const getAxisIdx = () => clipAxis === "y" ? 1 : clipAxis === "z" ? 2 : 0;
-    const posReal = ((clipPos ?? 50) / 100 - 0.5) * ms;
+    const clipAxisSize = clipAxis === "y" ? size.y : clipAxis === "z" ? size.z : size.x;
+    const posReal = ((clipPos ?? 50) / 100 - 0.5) * clipAxisSize;
 
     if (doShrink) {
       const keptTets: number[] = [];
@@ -183,10 +184,7 @@ export function FemGeometry({
       for (let i = 0; i < elements.length; i += 4) {
         if (clipEnabled) {
           const cx = (positions[elements[i]*3+axisIdx] + positions[elements[i+1]*3+axisIdx] + positions[elements[i+2]*3+axisIdx] + positions[elements[i+3]*3+axisIdx]) / 4;
-          if (clipAxis === "x" ? cx > posReal : cx > posReal) {
-            // Wait, clip is normal = -1 means it clips when x > posReal.
-            if ((clipAxis === "x" && cx > posReal) || (clipAxis === "y" && cx > posReal) || (clipAxis === "z" && cx > posReal)) continue;
-          }
+          if (cx > posReal) continue;
         }
         keptTets.push(elements[i], elements[i+1], elements[i+2], elements[i+3]);
       }
@@ -386,7 +384,7 @@ export function FemGeometry({
         >
           <meshPhongMaterial
             vertexColors
-            side={THREE.DoubleSide}
+            side={isTransparent ? THREE.DoubleSide : THREE.FrontSide}
             flatShading={false}
             shininess={40}
             transparent={isTransparent}

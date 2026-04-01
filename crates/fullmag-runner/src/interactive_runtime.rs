@@ -3409,8 +3409,10 @@ fn fem_gpu_execution_provenance(
             None
         },
         fft_backend: if plan.enable_demag
-            && !matches!(plan.demag_realization.as_deref(), Some("poisson_airbox" | "airbox_dirichlet" | "airbox_robin"))
-        {
+            && !matches!(
+                plan.demag_realization.as_deref(),
+                Some("poisson_airbox" | "airbox_dirichlet" | "airbox_robin")
+            ) {
             Some("cuFFT".to_string())
         } else {
             None

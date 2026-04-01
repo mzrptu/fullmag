@@ -74,9 +74,9 @@ pub enum fullmag_fem_preconditioner {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum fullmag_fem_demag_realization {
-    FULLMAG_FEM_DEMAG_TRANSFER_GRID    = 0,
+    FULLMAG_FEM_DEMAG_TRANSFER_GRID = 0,
     FULLMAG_FEM_DEMAG_AIRBOX_DIRICHLET = 1,
-    FULLMAG_FEM_DEMAG_AIRBOX_ROBIN     = 2,
+    FULLMAG_FEM_DEMAG_AIRBOX_ROBIN = 2,
 }
 
 pub type fullmag_fem_interrupt_poll_fn = Option<unsafe extern "C" fn(*mut c_void) -> i32>;

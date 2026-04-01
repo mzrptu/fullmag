@@ -46,7 +46,7 @@ export function FemHighlightView({ meshData, selectedFaces, center }: FemHighlig
   if (!geometry) return null;
 
   return (
-    <mesh geometry={geometry}>
+    <mesh geometry={geometry} renderOrder={20}>
       <meshPhongMaterial
         color={0x63b3ed}
         emissive={0x3182ce}

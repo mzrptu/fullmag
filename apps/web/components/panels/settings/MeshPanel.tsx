@@ -133,23 +133,23 @@ export default function MeshPanel() {
   const viewportModes: ViewportMode[] = ["Mesh", "3D", "2D"];
 
   return (
-    <div className="flex flex-col gap-0 border-t border-border/20">
+    <div className="flex flex-col pt-4 px-2">
       <SidebarSection title="Environment Overview" defaultOpen={true}>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Backend</span>
+            <span className="text-[0.65rem] font-medium tracking-wide text-muted-foreground">Backend</span>
             <span className="font-mono text-xs text-foreground">{mesherBackend ?? "—"}</span>
           </div>
           <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Source</span>
+            <span className="text-[0.65rem] font-medium tracking-wide text-muted-foreground">Source</span>
             <span className="font-mono text-xs text-foreground">{mesherSourceKind ?? meshSource ?? "—"}</span>
           </div>
           <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Workspace</span>
+            <span className="text-[0.65rem] font-medium tracking-wide text-muted-foreground">Workspace</span>
             <span className="font-mono text-xs text-foreground">{presetLabel}</span>
           </div>
           <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Status</span>
+            <span className="text-[0.65rem] font-medium tracking-wide text-muted-foreground">Status</span>
             <span className="font-mono text-xs text-foreground">{workspaceStatus.replaceAll("_", " ")}</span>
           </div>
         </div>
@@ -181,7 +181,7 @@ export default function MeshPanel() {
               >
                 <div className="flex items-center gap-1.5">
                   <Icon size={14} className={cn(active ? "text-primary" : "text-muted-foreground")} />
-                  <span className={cn("text-[0.68rem] font-bold uppercase tracking-[0.16em]", active ? "text-primary" : "text-foreground")}>
+                  <span className={cn("text-[0.7rem] font-semibold tracking-wide", active ? "text-primary" : "text-foreground")}>
                     {preset.shortLabel}
                   </span>
                 </div>
@@ -201,7 +201,7 @@ export default function MeshPanel() {
             <button
               key={mode}
               type="button"
-              className="appearance-none rounded-md border border-border/40 bg-background/50 px-2 py-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+              className="appearance-none rounded-md border border-border/40 bg-background/50 px-2.5 py-1.5 text-xs font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
               data-active={effectiveViewMode === mode}
               onClick={() => handleViewModeChange(mode)}
             >
@@ -214,7 +214,7 @@ export default function MeshPanel() {
             <button
               key={option.value}
               type="button"
-              className="appearance-none rounded-md border border-border/40 bg-background/50 px-2 py-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+              className="appearance-none rounded-md border border-border/40 bg-background/50 px-2.5 py-1.5 text-xs font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
               data-active={meshRenderMode === option.value}
               onClick={() => setMeshRenderMode(option.value as RenderMode)}
             >
@@ -225,10 +225,10 @@ export default function MeshPanel() {
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="grid gap-2 rounded-lg border border-border/30 bg-background/50 p-2.5">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Clip Plane</span>
+              <span className="text-[0.7rem] font-semibold tracking-wide text-muted-foreground">Clip Plane</span>
               <button
                 type="button"
-                className="rounded-md border border-border/40 bg-background/70 px-2 py-1 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+                className="rounded-md border border-border/40 bg-background/70 px-2.5 py-1 text-[0.7rem] font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
                 data-active={meshClipEnabled}
                 onClick={() => setMeshClipEnabled((current) => !current)}
               >
@@ -240,7 +240,7 @@ export default function MeshPanel() {
                 <button
                   key={axis}
                   type="button"
-                  className="appearance-none rounded-md border border-border/40 bg-background/70 px-2 py-1 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+                  className="appearance-none rounded-md border border-border/40 bg-background/70 px-2.5 py-1 text-[0.7rem] font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
                   data-active={meshClipAxis === axis}
                   disabled={!meshClipEnabled}
                   onClick={() => setMeshClipAxis(axis)}
@@ -265,10 +265,10 @@ export default function MeshPanel() {
 
           <div className="grid gap-2 rounded-lg border border-border/30 bg-background/50 p-2.5">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Display Controls</span>
+              <span className="text-[0.7rem] font-semibold tracking-wide text-muted-foreground">Display</span>
               <button
                 type="button"
-                className="flex items-center gap-1.5 rounded-md border border-border/40 bg-background/70 px-2 py-1 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+                className="flex items-center gap-1.5 rounded-md border border-border/40 bg-background/70 px-2.5 py-1 text-[0.7rem] font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
                 data-active={meshShowArrows}
                 onClick={() => setMeshShowArrows((current) => !current)}
               >
@@ -472,7 +472,7 @@ export default function MeshPanel() {
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5">
                     {render.icon}
-                    <span className="text-[0.65rem] font-bold uppercase tracking-[0.16em]">{phase.label}</span>
+                    <span className="text-[0.7rem] font-semibold tracking-wide">{phase.label}</span>
                   </div>
                   <span className="text-[0.62rem] font-mono tracking-widest opacity-70 uppercase">{phase.status}</span>
                 </div>

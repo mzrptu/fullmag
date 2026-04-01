@@ -5,6 +5,8 @@ import { FemMeshData, FemColorField } from "../FemMeshView3D";
 import { divergingColor, magnitudeColor } from "./colorUtils";
 import { applyMagnetizationHsl } from "../magnetizationColor";
 
+export type ArrowLengthMode = "constant" | "magnitude" | "sqrt" | "log";
+
 interface FemArrowsProps {
   meshData: FemMeshData;
   field: FemColorField;
@@ -12,6 +14,7 @@ interface FemArrowsProps {
   center: THREE.Vector3;
   maxDim: number;
   visible: boolean;
+  lengthMode?: ArrowLengthMode;
 }
 
 /* ── Arrow template geometry — only depends on maxDim ───────────────── */
@@ -180,7 +183,7 @@ function sampleBoundaryNodes(
   return result;
 }
 
-export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visible }: FemArrowsProps) {
+export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visible, lengthMode = "magnitude" }: FemArrowsProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const { invalidate } = useThree();
 
@@ -234,7 +237,17 @@ export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visib
         scalesList[i * 3] = 0; scalesList[i * 3 + 1] = 0; scalesList[i * 3 + 2] = 0;
         _dummyQ.identity();
       } else {
-        scalesList[i * 3] = 1; scalesList[i * 3 + 1] = 1; scalesList[i * 3 + 2] = 1;
+        // Compute length scale based on mode
+        let s = 1;
+        if (lengthMode === "magnitude") {
+          s = 0.2 + 0.8 * (len / scaleMag);
+        } else if (lengthMode === "sqrt") {
+          s = 0.2 + 0.8 * Math.sqrt(len / scaleMag);
+        } else if (lengthMode === "log") {
+          s = 0.2 + 0.8 * Math.log1p(len / scaleMag * 9) / Math.log(10);
+        }
+        // constant: s stays 1
+        scalesList[i * 3] = s; scalesList[i * 3 + 1] = s; scalesList[i * 3 + 2] = s;
         _dir.set(vx, vy, vz).normalize();
         _dummyQ.setFromUnitVectors(_defaultUp, _dir);
       }
@@ -259,7 +272,7 @@ export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visib
     }
 
     return { count: resultCount, instancePositions: positions, quaternions: quaternionsList, scales: scalesList, colors: colorsList };
-  }, [meshData, field, arrowDensity, center, visible]);
+  }, [meshData, field, arrowDensity, center, visible, lengthMode]);
 
   // Apply instance matrices
   useEffect(() => {

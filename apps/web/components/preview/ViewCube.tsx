@@ -21,10 +21,8 @@ type SceneHandle = {
 
 interface ViewCubeProps {
   sceneRef?: React.MutableRefObject<SceneHandle | null>;
-  grid?: [number, number, number];
   onRotate?: (quaternion: THREE.Quaternion) => void;
-  defaultDirection?: [number, number, number];
-  defaultUp?: [number, number, number];
+  onReset?: () => void;
 }
 
 type FaceZone = {
@@ -66,10 +64,8 @@ const faces: { cssTransform: string; zones: FaceZone[][] }[] = [
 
 export default function ViewCube({
   sceneRef,
-  grid,
   onRotate,
-  defaultDirection = [0, 0, 1],
-  defaultUp = [0, 1, 0],
+  onReset,
 }: ViewCubeProps) {
   const rafRef = useRef<number | null>(null);
   const dragRef = useRef({ dragging: false, startX: 0, startY: 0, hasDragged: false });
@@ -127,56 +123,27 @@ export default function ViewCube({
   const handleZoneClick = useCallback(
     (dir: [number, number, number]) => {
       if (dragRef.current.hasDragged) return;
-      if (onRotate) {
-        const targetDirection = new THREE.Vector3(dir[0], dir[1], dir[2]).normalize();
-        const quaternion = new THREE.Quaternion().setFromUnitVectors(
-          new THREE.Vector3(0, 0, 1),
-          targetDirection,
-        );
-        onRotate(quaternion);
-        return;
-      }
-      if (!sceneRef?.current || !grid) return;
-      const scene = sceneRef.current;
-      const { camera, controls } = scene;
-      const [nx, ny, nz] = grid;
-      const cx = nx / 2, cy = nz / 2, cz = ny / 2;
-      const dist = Math.max(nx, ny, nz) * 1.5;
-      camera.position.set(
-        cx + dir[0] * dist,
-        cy + dir[1] * dist,
-        cz + dir[2] * dist,
+      if (!onRotate) return;
+      const targetDirection = new THREE.Vector3(dir[0], dir[1], dir[2]).normalize();
+      const quaternion = new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, 0, 1),
+        targetDirection,
       );
-      camera.up.set(0, 1, 0);
-      camera.lookAt(cx, cy, cz);
-      controls.target.set(cx, cy, cz);
-      controls.update();
+      onRotate(quaternion);
     },
-    [sceneRef, grid, onRotate],
+    [onRotate],
   );
 
   // ─── Reset camera ────────────────────────────────────────────────
   const resetCamera = useCallback(() => {
-    if (onRotate) {
-      onRotate(new THREE.Quaternion());
+    if (onReset) {
+      onReset();
       return;
     }
-    const scene = sceneRef?.current;
-    if (!scene || !grid) return;
-    const { camera, controls } = scene;
-    const [nx, ny, nz] = grid;
-    const cx = nx / 2, cy = nz / 2, cz = ny / 2;
-    const dist = Math.max(nx, ny, nz) * 1.5;
-    camera.position.set(
-      cx + defaultDirection[0] * dist,
-      cy + defaultDirection[1] * dist,
-      cz + defaultDirection[2] * dist,
-    );
-    camera.up.set(defaultUp[0], defaultUp[1], defaultUp[2]);
-    camera.lookAt(cx, cy, cz);
-    controls.target.set(cx, cy, cz);
-    controls.update();
-  }, [sceneRef, grid, onRotate, defaultDirection, defaultUp]);
+    if (onRotate) {
+      onRotate(new THREE.Quaternion());
+    }
+  }, [onRotate, onReset]);
 
   // ─── Drag orbit ──────────────────────────────────────────────────
   const onPointerDown = useCallback((e: React.PointerEvent) => {

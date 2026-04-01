@@ -801,13 +801,12 @@ impl FemLlgProblem {
         } else {
             0.0
         };
-        let external_energy_joules = if self.terms.external_field.is_some()
-            || self.terms.per_node_field.is_some()
-        {
-            self.external_energy_from_fields(magnetization, &external_field)
-        } else {
-            0.0
-        };
+        let external_energy_joules =
+            if self.terms.external_field.is_some() || self.terms.per_node_field.is_some() {
+                self.external_energy_from_fields(magnetization, &external_field)
+            } else {
+                0.0
+            };
         let total_energy_joules =
             exchange_energy_joules + demag_energy_joules + external_energy_joules;
 
@@ -996,7 +995,7 @@ impl FemLlgProblem {
                         magnetoelastic: None,
                     },
                     Some(rasterized.active_mask.clone()),
-                )?;;
+                )?;
                 let ws = fdm_problem.create_workspace();
                 *slot = Some((grid_desc.grid, grid_desc.cell_size, fdm_problem, ws));
             }
@@ -1395,10 +1394,10 @@ fn inverse_transpose_3x3(columns: [[f64; 3]; 3], det: f64) -> [[f64; 3]; 3] {
 }
 
 fn magnetic_element_mask_from_markers(markers: &[u32]) -> Vec<bool> {
-    let has_marker_one = markers.iter().any(|&marker| marker == 1);
-    let has_non_one = markers.iter().any(|&marker| marker != 1);
-    if has_marker_one && has_non_one {
-        markers.iter().map(|&marker| marker == 1).collect()
+    let has_air = markers.iter().any(|&marker| marker == 0);
+    let has_magnetic = markers.iter().any(|&marker| marker != 0);
+    if has_air && has_magnetic {
+        markers.iter().map(|&marker| marker != 0).collect()
     } else {
         vec![true; markers.len()]
     }

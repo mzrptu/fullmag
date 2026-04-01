@@ -170,33 +170,39 @@ function FdmInstances({
   /* ── Material (memoized per mode + quality + opacity) ─────────── */
   const material = useMemo(() => {
     const cfg = QUALITY_CONFIGS[settings.quality];
+    const effectiveOpacity = settings.voxelOpacity * sceneOpacityMultiplier;
+    const isTransparent = effectiveOpacity < 0.999;
     if (mode === "voxel") {
       return cfg.useLighting
         ? new THREE.MeshPhongMaterial({
-            transparent: true,
-            opacity: settings.voxelOpacity * sceneOpacityMultiplier,
-            depthWrite: sceneOpacityMultiplier >= 0.999,
+            side: THREE.FrontSide,
+            transparent: isTransparent,
+            opacity: effectiveOpacity,
+            depthWrite: true,
             shininess: 24,
             specular: new THREE.Color(0x24334c),
           })
         : new THREE.MeshBasicMaterial({
-            transparent: true,
-            opacity: settings.voxelOpacity * sceneOpacityMultiplier,
-            depthWrite: sceneOpacityMultiplier >= 0.999,
+            side: THREE.FrontSide,
+            transparent: isTransparent,
+            opacity: effectiveOpacity,
+            depthWrite: true,
           });
     }
     return cfg.useLighting
       ? new THREE.MeshPhongMaterial({
+          side: THREE.FrontSide,
           shininess: 60,
           specular: new THREE.Color(0x444444),
           transparent: sceneOpacityMultiplier < 0.999,
           opacity: sceneOpacityMultiplier,
-          depthWrite: sceneOpacityMultiplier >= 0.999,
+          depthWrite: true,
         })
       : new THREE.MeshBasicMaterial({
+          side: THREE.FrontSide,
           transparent: sceneOpacityMultiplier < 0.999,
           opacity: sceneOpacityMultiplier,
-          depthWrite: sceneOpacityMultiplier >= 0.999,
+          depthWrite: true,
         });
   }, [mode, settings.quality, settings.voxelOpacity, sceneOpacityMultiplier]);
 
@@ -273,8 +279,8 @@ function FdmInstances({
       instanceColor.needsUpdate = true;
       if (!Array.isArray(mesh.material)) {
         (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity = 0.85 * sceneOpacityMultiplier;
-        (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).transparent = sceneOpacityMultiplier < 0.999;
-        (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite = sceneOpacityMultiplier >= 0.999;
+        (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).transparent = (0.85 * sceneOpacityMultiplier) < 0.999;
+        (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite = true;
         mesh.material.needsUpdate = true;
       }
       return;
@@ -296,13 +302,11 @@ function FdmInstances({
     const depthScale = nz > 1 ? baseScale : Math.max(0.22, baseScale * 0.42);
 
     let maxMagnitude = 0;
-    if (isVoxel) {
-      for (let i = 0; i < vectors!.length; i += 3) {
-        const mx = vectors![i];
-        const my = vectors![i + 1];
-        const mz = vectors![i + 2];
-        maxMagnitude = Math.max(maxMagnitude, Math.sqrt(mx * mx + my * my + mz * mz));
-      }
+    for (let i = 0; i < vectors!.length; i += 3) {
+      const mx = vectors![i];
+      const my = vectors![i + 1];
+      const mz = vectors![i + 2];
+      maxMagnitude = Math.max(maxMagnitude, Math.sqrt(mx * mx + my * my + mz * mz));
     }
     const normMag = Math.max(maxMagnitude, 1e-30);
 
@@ -371,7 +375,9 @@ function FdmInstances({
             } else {
               visible++;
               _tempPos.set(ix, iz, iy);
-              _tempScale.set(1, 1, 1);
+              const mag = Math.sqrt(mx * mx + my * my + mz * mz);
+              const s = 0.2 + 0.8 * Math.sqrt(Math.min(1, mag / normMag));
+              _tempScale.set(s, s, s);
               _tempVec.set(mx, mz, my);
               if (_tempVec.lengthSq() > 1e-30) {
                 _tempVec.normalize();
@@ -399,19 +405,17 @@ function FdmInstances({
     instanceColor.needsUpdate = true;
 
     if (isVoxel && !Array.isArray(mesh.material)) {
-      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity =
-        settings.voxelOpacity * sceneOpacityMultiplier;
-      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).transparent = true;
-      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite =
-        sceneOpacityMultiplier >= 0.999;
+      const effectiveOpacity = settings.voxelOpacity * sceneOpacityMultiplier;
+      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity = effectiveOpacity;
+      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).transparent = effectiveOpacity < 0.999;
+      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite = true;
       mesh.material.needsUpdate = true;
     } else if (!isVoxel && !Array.isArray(mesh.material)) {
       (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity =
         sceneOpacityMultiplier;
       (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).transparent =
         sceneOpacityMultiplier < 0.999;
-      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite =
-        sceneOpacityMultiplier >= 0.999;
+      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite = true;
       mesh.material.needsUpdate = true;
     }
   }, [vectors, grid, settings, geometryMode, activeMask, mode, count, nx, ny, nz, onVisibleCount, sceneOpacityMultiplier]);

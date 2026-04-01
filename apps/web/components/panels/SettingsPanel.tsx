@@ -5,7 +5,7 @@ import { useControlRoom } from "../runs/control-room/ControlRoomContext";
 import { Button } from "../ui/button";
 import MeshSettingsPanel from "./MeshSettingsPanel";
 import { IntegratorSettingsPanel, RelaxationSettingsPanel } from "./SolverSettingsPanel";
-import { SidebarSection } from "./settings/primitives";
+import { SidebarSection, InfoRow } from "./settings/primitives";
 import { humanizeToken, readBuilderContract } from "./settings/helpers";
 import GeometryPanel from "./settings/GeometryPanel";
 import AntennaPanel from "./settings/AntennaPanel";
@@ -92,6 +92,7 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
     <div className="flex flex-col pb-6">
       <SidebarSection
         title="Selection"
+        icon="◈"
         badge={nodeLabel ?? "Workspace"}
         autoOpenKey={nodeId}
       >
@@ -142,38 +143,28 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
       </SidebarSection>
 
       {showTelemetrySections && (
-        <SidebarSection title="Solver Telemetry" badge={ctx.workspaceStatus}>
+        <SidebarSection title="Solver Telemetry" icon="📊" badge={ctx.workspaceStatus}>
           <SolverTelemetryPanel />
         </SidebarSection>
       )}
 
       {showTelemetrySections && (
-        <SidebarSection title="Energy">
+        <SidebarSection title="Energy" icon="⚡">
           <EnergyPanel />
         </SidebarSection>
       )}
 
       <SidebarSection
         title="Session"
+        icon="🔗"
         badge={ctx.sessionFooter.requestedBackend ?? null}
         defaultOpen={false}
       >
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between py-1">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Backend</span>
-            <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">{ctx.sessionFooter.requestedBackend ?? "—"}</span>
-          </div>
-          <div className="flex items-center justify-between py-1">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Runtime</span>
-            <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">{ctx.runtimeEngineLabel ?? "—"}</span>
-          </div>
+        <div className="grid gap-1">
+          <InfoRow label="Backend" value={ctx.sessionFooter.requestedBackend ?? "—"} />
+          <InfoRow label="Runtime" value={ctx.runtimeEngineLabel ?? "—"} />
           {ctx.sessionFooter.scriptPath && (
-            <div className="flex items-center justify-between py-1">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Script</span>
-              <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right" title={ctx.sessionFooter.scriptPath}>
-                {ctx.sessionFooter.scriptPath.split("/").pop()}
-              </span>
-            </div>
+            <InfoRow label="Script" value={ctx.sessionFooter.scriptPath.split("/").pop() ?? "—"} />
           )}
         </div>
       </SidebarSection>
@@ -182,34 +173,15 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
       {builderContract && (
         <SidebarSection
           title="Script Builder"
+          icon="📝"
           badge={builderContract.sourceKind ? humanizeToken(builderContract.sourceKind) : null}
           defaultOpen={false}
         >
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between py-1">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Entrypoint</span>
-              <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">
-                {builderContract.entrypointKind ?? "—"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between py-1">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">API surface</span>
-              <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">
-                {builderContract.scriptApiSurface ? humanizeToken(builderContract.scriptApiSurface) : "—"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between py-1">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Sync strategy</span>
-              <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">
-                {builderContract.rewriteStrategy ?? "—"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between py-1">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Phase</span>
-              <span className="font-mono text-xs text-muted-foreground truncate ml-4 text-right">
-                {builderContract.phase ? humanizeToken(builderContract.phase) : "—"}
-              </span>
-            </div>
+          <div className="grid gap-1">
+            <InfoRow label="Entrypoint" value={builderContract.entrypointKind ?? "—"} />
+            <InfoRow label="API surface" value={builderContract.scriptApiSurface ? humanizeToken(builderContract.scriptApiSurface) : "—"} />
+            <InfoRow label="Sync strategy" value={builderContract.rewriteStrategy ?? "—"} />
+            <InfoRow label="Phase" value={builderContract.phase ? humanizeToken(builderContract.phase) : "—"} />
             <div className="grid gap-1 pt-1">
               <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Editable scopes</span>
               <div className="flex flex-wrap gap-1.5">

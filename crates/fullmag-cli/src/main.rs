@@ -437,6 +437,8 @@ mod tests {
             mesh_source: None,
             mesh: mesh.clone(),
             object_segments: Vec::new(),
+            domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+            domain_frame: None,
             fe_order: 1,
             hmax: 1.0,
             initial_magnetization: vec![[0.0, 1.0, 0.0]; 4],

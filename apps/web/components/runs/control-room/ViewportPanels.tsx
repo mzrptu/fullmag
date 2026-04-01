@@ -25,11 +25,48 @@ import {
 import { useControlRoom } from "./ControlRoomContext";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
 
+function domainFrameSourceLabel(source: string | null): string {
+  switch (source) {
+    case "declared_universe_manual":
+      return "Declared Universe";
+    case "declared_universe_auto_padding":
+      return "Auto-Padded Domain";
+    case "object_union_bounds":
+      return "Object Union Bounds";
+    case "mesh_bounds":
+      return "Mesh Bounds Fallback";
+    default:
+      return "Workspace Frame";
+  }
+}
+
+function visibleVolumeLabel(
+  isFemBackend: boolean,
+  clipEnabled: boolean,
+  clipAxis: "x" | "y" | "z",
+  clipPos: number,
+): string {
+  if (!isFemBackend) {
+    return "Full Domain";
+  }
+  if (!clipEnabled) {
+    return "Full Effective Domain";
+  }
+  return `Clipped ${clipAxis.toUpperCase()} @${Math.round(clipPos)}%`;
+}
+
 export function ViewportBar() {
   const ctx = useControlRoom();
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
   const selectedDisplayIsGlobalScalar =
     ctx.preview?.kind === "global_scalar" || ctx.quantityDescriptor?.kind === "global_scalar";
+  const frameLabel = domainFrameSourceLabel(ctx.worldExtentSource);
+  const visibleLabel = visibleVolumeLabel(
+    ctx.isFemBackend,
+    ctx.meshClipEnabled,
+    ctx.meshClipAxis,
+    ctx.meshClipPos,
+  );
 
   return (
     <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 bg-card/20 backdrop-blur-xl border-b border-border/20 z-20 shadow-sm shrink-0">
@@ -51,6 +88,20 @@ export function ViewportBar() {
           <span className="font-mono text-[0.65rem] text-muted-foreground">
             {ctx.meshWorkspacePreset.replaceAll("-", " ")}
           </span>
+          {ctx.isFemBackend && (
+            <>
+              <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Frame</span>
+              <span className="font-mono text-[0.65rem] text-muted-foreground">{frameLabel}</span>
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Visible</span>
+              <span className={cn(
+                "font-mono text-[0.65rem]",
+                ctx.meshClipEnabled ? "text-amber-300" : "text-muted-foreground",
+              )}>
+                {visibleLabel}
+              </span>
+            </>
+          )}
           {ctx.meshClipEnabled && (
             <>
               <span className="w-[1px] h-4 bg-border/40 shrink-0" />
@@ -164,6 +215,21 @@ export function ViewportBar() {
                   ))}
                 </SelectContent>
               </Select>
+            </>
+          )}
+
+          {ctx.isFemBackend && (
+            <>
+              <span className="w-[1px] h-4 bg-border/40 shrink-0" />
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Frame</span>
+              <span className="font-mono text-[0.65rem] text-muted-foreground">{frameLabel}</span>
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded-sm">Visible</span>
+              <span className={cn(
+                "font-mono text-[0.65rem]",
+                ctx.meshClipEnabled ? "text-amber-300" : "text-muted-foreground",
+              )}>
+                {visibleLabel}
+              </span>
             </>
           )}
 
@@ -333,6 +399,13 @@ export function ViewportCanvasArea() {
   const antennaPreviewBadgeVisible =
     ctx.antennaOverlays.length > 0 &&
     (ctx.requestedPreviewQuantity === "H_ant" || selectedAntennaName != null);
+  const selectedObjectOverlay = useMemo(
+    () =>
+      ctx.selectedObjectId
+        ? ctx.objectOverlays.find((overlay) => overlay.id === ctx.selectedObjectId) ?? null
+        : null,
+    [ctx.objectOverlays, ctx.selectedObjectId],
+  );
 
   /* ── Determine which viewport is active ── */
   const isFdm3DActive =
@@ -560,6 +633,11 @@ export function ViewportCanvasArea() {
             >
               Isolate
             </button>
+          </div>
+          <div className="pointer-events-auto rounded-full border border-border/40 bg-background/75 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground shadow-md backdrop-blur-md">
+            {selectedObjectOverlay?.fidelity === "segment-backed"
+              ? "Mesh Segment"
+              : "Bounds Fallback"}
           </div>
         </div>
       ) : null}

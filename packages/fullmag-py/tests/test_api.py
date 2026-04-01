@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import json
+import os
 import struct
 import textwrap
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -702,6 +705,140 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(assets[0]["geometry_name"], "box")
         self.assertEqual(assets[0]["mesh"]["mesh_name"], "box")
 
+    def test_fem_backend_forwards_study_universe_to_mesh_asset_realization(self) -> None:
+        fm.reset()
+        study = fm.study("fem_universe_forwarding")
+        study.engine("fem")
+        study.universe(
+            mode="manual",
+            size=(80e-9, 60e-9, 40e-9),
+            center=(5e-9, -2e-9, 1e-9),
+        )
+
+        body = study.geometry(fm.Box(size=(10e-9, 10e-9, 10e-9), name="box"), name="box")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1.0, 0.0, 0.0)
+
+        mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            ),
+            elements=np.asarray([[0, 1, 2, 3]], dtype=np.int32),
+            element_markers=np.asarray([1], dtype=np.int32),
+            boundary_faces=np.asarray([[0, 1, 2]], dtype=np.int32),
+            boundary_markers=np.asarray([1], dtype=np.int32),
+        )
+
+        problem = flat_world._build_problem()
+        with patch.dict(os.environ, {"FULLMAG_FEM_MESH_CACHE_DIR": ""}), patch(
+            "fullmag.meshing.realize_fem_mesh_asset", return_value=mesh
+        ) as mocked_mesh, patch(
+            "fullmag.meshing.realize_fem_domain_mesh_asset",
+            return_value=(mesh, [{"geometry_name": "box", "marker": 1}]),
+        ) as mocked_domain, patch("fullmag._core.validate_mesh_ir", return_value=True):
+            problem.to_ir(requested_backend=fm.BackendTarget.FEM)
+
+        self.assertEqual(mocked_mesh.call_count, 1)
+        self.assertEqual(mocked_domain.call_count, 1)
+        forwarded_universe = mocked_mesh.call_args.kwargs["study_universe"]
+        forwarded_domain_universe = mocked_domain.call_args.kwargs["study_universe"]
+        self.assertIsNotNone(forwarded_universe)
+        self.assertEqual(forwarded_universe["mode"], "manual")
+        self.assertEqual(forwarded_universe["size"], [80e-9, 60e-9, 40e-9])
+        self.assertEqual(forwarded_universe["center"], [5e-9, -2e-9, 1e-9])
+        self.assertEqual(forwarded_domain_universe, forwarded_universe)
+
+    def test_fem_backend_emits_shared_domain_mesh_asset_for_manual_universe(self) -> None:
+        fm.reset()
+        study = fm.study("fem_shared_domain_asset")
+        study.engine("fem")
+        study.universe(
+            mode="manual",
+            size=(80e-9, 60e-9, 40e-9),
+            center=(0.0, 0.0, 0.0),
+        )
+
+        left = study.geometry(fm.Box(size=(10e-9, 10e-9, 10e-9), name="left"), name="left")
+        left.Ms = 800e3
+        left.Aex = 13e-12
+        left.alpha = 0.1
+        left.m = fm.uniform(1.0, 0.0, 0.0)
+
+        right = study.geometry(
+            fm.Box(size=(10e-9, 10e-9, 10e-9), name="right").translate((20e-9, 0.0, 0.0)),
+            name="right",
+        )
+        right.Ms = 800e3
+        right.Aex = 13e-12
+        right.alpha = 0.1
+        right.m = fm.uniform(1.0, 0.0, 0.0)
+
+        mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            ),
+            elements=np.asarray([[0, 1, 2, 3]], dtype=np.int32),
+            element_markers=np.asarray([1], dtype=np.int32),
+            boundary_faces=np.asarray([[0, 1, 2]], dtype=np.int32),
+            boundary_markers=np.asarray([1], dtype=np.int32),
+        )
+        domain_mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [2.0, 2.0, 2.0],
+                    [3.0, 2.0, 2.0],
+                    [2.0, 3.0, 2.0],
+                    [2.0, 2.0, 3.0],
+                ]
+            ),
+            elements=np.asarray([[0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int32),
+            element_markers=np.asarray([1, 0], dtype=np.int32),
+            boundary_faces=np.asarray([[0, 1, 2], [4, 5, 6]], dtype=np.int32),
+            boundary_markers=np.asarray([10, 99], dtype=np.int32),
+        )
+
+        problem = flat_world._build_problem()
+        with patch.dict(os.environ, {"FULLMAG_FEM_MESH_CACHE_DIR": ""}), patch(
+            "fullmag.meshing.realize_fem_mesh_asset", return_value=mesh
+        ), patch(
+            "fullmag.meshing.realize_fem_domain_mesh_asset",
+            return_value=(
+                domain_mesh,
+                [
+                    {"geometry_name": "left", "marker": 1},
+                    {"geometry_name": "right", "marker": 2},
+                ],
+            ),
+        ), patch("fullmag._core.validate_mesh_ir", return_value=True):
+            ir = problem.to_ir(requested_backend=fm.BackendTarget.FEM)
+
+        domain_asset = ir["geometry_assets"]["fem_domain_mesh_asset"]
+        self.assertIsNotNone(domain_asset)
+        self.assertEqual(domain_asset["mesh"]["mesh_name"], "study_domain")
+        self.assertEqual(
+            domain_asset["region_markers"],
+            [
+                {"geometry_name": "left", "marker": 1},
+                {"geometry_name": "right", "marker": 2},
+            ],
+        )
+
     def test_surface_only_imported_geometry_is_rejected_for_executable_fem_assets(self) -> None:
         geometry = fm.ImportedGeometry(
             source="examples/nanoflower.stl",
@@ -1091,6 +1228,51 @@ class ProblemApiTests(unittest.TestCase):
         self.assertIn("track.alpha = 0.1", rewritten)
         self.assertNotIn("track.alpha = 1.0", rewritten)
 
+    def test_builder_draft_exports_domain_frame_for_manual_multibody_universe(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("domain_frame_manual")
+        study.engine("fem")
+        study.universe(
+            mode="manual",
+            size=(400e-9, 300e-9, 200e-9),
+            center=(25e-9, 0.0, 0.0),
+        )
+
+        left = study.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="left")
+        left.Ms = 800e3
+        left.Aex = 13e-12
+        left.alpha = 0.1
+        left.m = fm.uniform(1, 0, 0)
+
+        right = study.geometry(
+            fm.Box(80e-9, 20e-9, 5e-9).translate((140e-9, 0.0, 0.0)),
+            name="right",
+        )
+        right.Ms = 800e3
+        right.Aex = 13e-12
+        right.alpha = 0.1
+        right.m = fm.uniform(1, 0, 0)
+
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_builder_domain_frame.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+
+        draft = export_builder_draft(loaded)
+        self.assertIsNotNone(draft["domain_frame"])
+        self.assertEqual(draft["domain_frame"]["effective_source"], "declared_universe_manual")
+        self.assertEqual(draft["domain_frame"]["effective_extent"], [400e-9, 300e-9, 200e-9])
+        self.assertEqual(draft["domain_frame"]["effective_center"], [25e-9, 0.0, 0.0])
+        self.assertEqual(draft["domain_frame"]["object_bounds_min"], [-50e-9, -10e-9, -2.5e-9])
+        self.assertAlmostEqual(draft["domain_frame"]["object_bounds_max"][0], 180e-9)
+        self.assertAlmostEqual(draft["domain_frame"]["object_bounds_max"][1], 10e-9)
+        self.assertAlmostEqual(draft["domain_frame"]["object_bounds_max"][2], 2.5e-9)
+
     def test_script_rewrite_applies_stage_overrides(self) -> None:
         script = """
         import fullmag as fm
@@ -1241,6 +1423,40 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(loaded.stages[1].entrypoint_kind, "flat_run")
         self.assertEqual(loaded.stages[0].problem.study.to_ir()["kind"], "relaxation")
         self.assertEqual(loaded.stages[1].problem.study.to_ir()["kind"], "time_evolution")
+        self.assertIsNotNone(loaded.workspace_problem)
+        self.assertEqual(loaded.workspace_problem.study.to_ir()["kind"], "time_evolution")
+
+    def test_builder_draft_prefers_workspace_problem_when_available(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.name("workspace_source")
+        fm.engine("fdm")
+        fm.cell(5e-9, 5e-9, 5e-9)
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        fm.relax(max_steps=25)
+        fm.run(4e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_builder_workspace_problem.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+
+        self.assertIsNotNone(loaded.workspace_problem)
+        mutated_problem = replace(copy.deepcopy(loaded.problem), name="final_stage_only")
+        loaded_with_workspace = replace(loaded, problem=mutated_problem)
+
+        draft = export_builder_draft(loaded_with_workspace)
+        rewritten = rewrite_loaded_problem_script(loaded_with_workspace)["rendered_source"]
+
+        self.assertEqual(draft["geometries"][0]["name"], "track")
+        self.assertIn('fm.name("workspace_source")', rewritten)
+        self.assertNotIn('fm.name("final_stage_only")', rewritten)
 
     def test_flat_geometry_mesh_api_builds_explicit_mesh_asset(self) -> None:
         script = """

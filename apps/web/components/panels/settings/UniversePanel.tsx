@@ -42,17 +42,30 @@ export default function UniversePanel() {
   );
 
   const declaredSize = builderUniverse?.size ?? null;
-  const effectiveExtent = ctx.worldExtent ?? declaredSize;
+  const worldExtent = ctx.worldExtent ?? declaredSize;
+  const meshExtent = ctx.meshExtent ?? null;
   const center = builderUniverse?.center ?? ctx.worldCenter ?? null;
   const padding = builderUniverse?.padding ?? null;
-  const mode = builderUniverse?.mode ?? (effectiveExtent ? "derived" : null);
-  const role = ctx.isFemBackend ? "FEM outer domain / air box source" : "FDM world box / grid domain";
+  const mode = builderUniverse?.mode ?? (worldExtent ? "derived" : null);
+  const role = ctx.isFemBackend
+    ? "Declared universe / workspace framing"
+    : "FDM world box / grid domain";
   const sourceSummary = builderUniverse
-    ? "Explicit `study.universe(...)` captured by the builder manifest."
+    ? (ctx.isFemBackend
+        ? "Explicit `study.universe(...)` captured by the builder manifest. In the current FEM pipeline this is treated as declared workspace framing, not a guaranteed outer air box."
+        : "Explicit `study.universe(...)` captured by the builder manifest.")
+    : ctx.isFemBackend && ctx.worldExtentSource === "declared_universe_manual"
+      ? "The current FEM world box comes from previously captured universe metadata. It is shown as declared framing, not as a guaranteed solver air box."
+    : ctx.isFemBackend && ctx.worldExtentSource === "object_union_bounds"
+      ? `No explicit universe in the script yet; the control room is framing the FEM world from ${ctx.objectOverlays.length} object bounds.`
+    : ctx.isFemBackend && ctx.worldExtentSource === "declared_universe_auto_padding"
+        ? "No manual universe size in the script yet; the control room is deriving the world box from object bounds plus declared padding."
+    : ctx.isFemBackend && ctx.worldExtentSource === "mesh_bounds"
+      ? "Object bounds are not available, so the control room is falling back to the realized FEM mesh bounds for workspace framing."
     : ctx.isFemBackend && ctx.objectOverlays.length > 0
-      ? `No explicit universe in the script yet; deriving the FEM domain from ${ctx.objectOverlays.length} object bounds.`
-    : effectiveExtent
-      ? "No explicit universe in the script yet; using current mesh/grid extent as the effective domain."
+      ? `No explicit universe in the script yet; deriving the FEM world frame from ${ctx.objectOverlays.length} object bounds.`
+    : worldExtent
+      ? "No explicit universe in the script yet; using the current declared world/grid extent for control-room framing."
       : "Universe metadata is not available for this workspace yet.";
 
   const updateUniverse = useCallback(
@@ -202,9 +215,10 @@ export default function UniversePanel() {
       <SidebarSection title="Live Introspection" defaultOpen={true}>
         <div className="grid grid-cols-2 gap-3">
           <MetricField label="Mode" value={mode ? humanizeToken(mode) : "—"} tooltip="Current universe derivation mode." />
-          <MetricField label="Role" value={role} tooltip="The physical significance of the universe box in the active backend." />
+          <MetricField label="Role" value={role} tooltip="How this box should be interpreted in the active backend." />
           <MetricField label="Declared Size" value={formatVector(declaredSize, "m")} tooltip="Size explicitly declared in the builder." />
-          <MetricField label="Effective Extent" value={formatVector(effectiveExtent, "m")} tooltip="Actual size utilized by the simulation engine." />
+          <MetricField label="World Extent" value={formatVector(worldExtent, "m")} tooltip="Declared or derived workspace/world framing used by the control room." />
+          <MetricField label="Mesh Extent" value={formatVector(meshExtent, "m")} tooltip="Bounding-box extent of the currently realized mesh." />
           <MetricField label="Center" value={formatVector(center, "m")} tooltip="Absolute origin of the universe bounding box." />
           <MetricField
             label="Padding"

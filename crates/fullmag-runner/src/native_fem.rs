@@ -80,6 +80,19 @@ impl NativeFemBackend {
     }
 
     pub fn create(plan: &fullmag_ir::FemPlanIR) -> Result<Self, RunError> {
+        if matches!(
+            plan.domain_mesh_mode,
+            fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh
+        ) && matches!(
+            plan.demag_realization.as_deref(),
+            Some("airbox_dirichlet" | "airbox_robin" | "poisson_airbox")
+        ) {
+            return Err(RunError {
+                message:
+                    "native FEM air-box demag requires domain_mesh_mode='shared_domain_mesh_with_air'"
+                        .to_string(),
+            });
+        }
         let nodes_flat: Vec<f64> = plan
             .mesh
             .nodes
@@ -121,35 +134,38 @@ impl NativeFemBackend {
             damping: plan.material.damping,
             gyromagnetic_ratio: plan.gyromagnetic_ratio,
         };
-        let demag_kernel_spectra =
-            if plan.enable_demag && !matches!(plan.demag_realization.as_deref(), Some("airbox_dirichlet" | "airbox_robin" | "poisson_airbox")) {
-                let (bbox_min, bbox_max) = mesh_bbox(&plan.mesh.nodes).ok_or_else(|| RunError {
-                    message: "FEM GPU demag requires a non-empty mesh bounding box".to_string(),
-                })?;
-                let requested = plan.hmax.max(1e-12);
-                let extent = [
-                    (bbox_max[0] - bbox_min[0]).abs(),
-                    (bbox_max[1] - bbox_min[1]).abs(),
-                    (bbox_max[2] - bbox_min[2]).abs(),
-                ];
-                let nx = transfer_axis_cells(extent[0], requested);
-                let ny = transfer_axis_cells(extent[1], requested);
-                let nz = transfer_axis_cells(extent[2], requested);
-                let dx = (extent[0] / nx as f64).max(1e-12);
-                let dy = (extent[1] / ny as f64).max(1e-12);
-                let dz = (extent[2] / nz as f64).max(1e-12);
-                if nz == 1 {
-                    Some(fullmag_engine::compute_newell_kernel_spectra_thin_film_2d(
-                        nx, ny, dx, dy, dz,
-                    ))
-                } else {
-                    Some(fullmag_engine::compute_newell_kernel_spectra(
-                        nx, ny, nz, dx, dy, dz,
-                    ))
-                }
+        let demag_kernel_spectra = if plan.enable_demag
+            && !matches!(
+                plan.demag_realization.as_deref(),
+                Some("airbox_dirichlet" | "airbox_robin" | "poisson_airbox")
+            ) {
+            let (bbox_min, bbox_max) = mesh_bbox(&plan.mesh.nodes).ok_or_else(|| RunError {
+                message: "FEM GPU demag requires a non-empty mesh bounding box".to_string(),
+            })?;
+            let requested = plan.hmax.max(1e-12);
+            let extent = [
+                (bbox_max[0] - bbox_min[0]).abs(),
+                (bbox_max[1] - bbox_min[1]).abs(),
+                (bbox_max[2] - bbox_min[2]).abs(),
+            ];
+            let nx = transfer_axis_cells(extent[0], requested);
+            let ny = transfer_axis_cells(extent[1], requested);
+            let nz = transfer_axis_cells(extent[2], requested);
+            let dx = (extent[0] / nx as f64).max(1e-12);
+            let dy = (extent[1] / ny as f64).max(1e-12);
+            let dz = (extent[2] / nz as f64).max(1e-12);
+            if nz == 1 {
+                Some(fullmag_engine::compute_newell_kernel_spectra_thin_film_2d(
+                    nx, ny, dx, dy, dz,
+                ))
             } else {
-                None
-            };
+                Some(fullmag_engine::compute_newell_kernel_spectra(
+                    nx, ny, nz, dx, dy, dz,
+                ))
+            }
+        } else {
+            None
+        };
 
         let precision = match plan.precision {
             fullmag_ir::ExecutionPrecision::Single => {
@@ -821,6 +837,8 @@ mod tests {
                 boundary_markers: vec![1],
             },
             object_segments: Vec::new(),
+            domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+            domain_frame: None,
             fe_order: 1,
             hmax: 0.4,
             initial_magnetization: vec![[1.0, 0.0, 0.0]; 4],
@@ -911,6 +929,8 @@ mod tests {
                 boundary_markers: vec![1; 6],
             },
             object_segments: Vec::new(),
+            domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+            domain_frame: None,
             fe_order: 1,
             hmax: 1.0,
             initial_magnetization: vec![

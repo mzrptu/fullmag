@@ -23,14 +23,29 @@ export default function MetricTile({
     progress != null ? Math.max(0, Math.min(progress, 100)) : null;
 
   return (
-    <article className="flex flex-col gap-2.5 p-3.5 rounded-lg border border-border/40 bg-card/20 shadow-sm" data-tone={tone}>
-      <header className="flex justify-between gap-3 text-[0.8rem] font-semibold uppercase tracking-widest text-muted-foreground">
+    <article
+      className="flex flex-col gap-2 p-3 rounded-lg border border-border/25 bg-gradient-to-b from-card/40 to-card/12 shadow-sm backdrop-blur-sm transition-colors hover:border-border/40"
+      data-tone={tone}
+    >
+      <header className="flex justify-between gap-3 text-[0.6rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
         <span>{label}</span>
-        {detail && <small className="text-sm normal-case tracking-normal text-muted-foreground/80">{detail}</small>}
+        {detail && <small className="text-[0.6rem] normal-case tracking-normal text-muted-foreground/60">{detail}</small>}
       </header>
-      <strong className="text-base font-medium tracking-tight text-foreground">{value}</strong>
+      <strong className="text-sm font-medium tracking-tight text-foreground">{value}</strong>
       {normalized != null && (
-        <progress className={cn("h-2 w-full appearance-none border-none rounded-full bg-muted/40 overflow-hidden [&::-webkit-progress-bar]:bg-transparent [&::-webkit-progress-value]:transition-all [&::-webkit-progress-value]:duration-300 [&::-webkit-progress-value]:rounded-full", tone === "warn" ? "[&::-webkit-progress-value]:bg-amber-500" : tone === "danger" ? "[&::-webkit-progress-value]:bg-destructive" : tone === "accent" ? "[&::-webkit-progress-value]:bg-indigo-500" : tone === "info" ? "[&::-webkit-progress-value]:bg-sky-500" : "[&::-webkit-progress-value]:bg-primary")} value={normalized} max={100} aria-hidden="true" />
+        <div className="h-1.5 w-full rounded-full bg-muted/30 overflow-hidden">
+          <div
+            className={cn(
+              "h-full rounded-full transition-all duration-300",
+              tone === "warn" ? "bg-amber-500" :
+              tone === "danger" ? "bg-destructive" :
+              tone === "accent" ? "bg-indigo-500" :
+              tone === "info" ? "bg-sky-500" :
+              "bg-primary"
+            )}
+            style={{ width: `${normalized}%` }}
+          />
+        </div>
       )}
     </article>
   );

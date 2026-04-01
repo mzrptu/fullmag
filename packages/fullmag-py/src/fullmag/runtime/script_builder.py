@@ -19,6 +19,7 @@ from fullmag.model.antenna import (
     SpinWaveExcitationAnalysis,
 )
 from fullmag.model.discretization import FDM, FEM
+from fullmag.model.domain_frame import build_domain_frame, geometry_bounds as shared_geometry_bounds
 from fullmag.model.dynamics import DEFAULT_GAMMA, LLG
 from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Pulse, Zeeman
 from fullmag.model.geometry import (
@@ -42,12 +43,11 @@ from fullmag.model.outputs import (
 )
 from fullmag.model.problem import Problem
 from fullmag.model.study import Eigenmodes, Relaxation, TimeEvolution
-from fullmag.meshing.surface_assets import load_surface_asset
 from fullmag.runtime.loader import LoadedProblem, LoadedStage
 
 
 def _builder_base_problem(loaded: LoadedProblem) -> Problem:
-    return loaded.problem
+    return loaded.workspace_problem or loaded.problem
 
 
 def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
@@ -71,6 +71,7 @@ def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
         },
         "mesh": _export_global_mesh_state(base_problem),
         "universe": _export_universe(base_problem),
+        "domain_frame": _export_domain_frame(base_problem, source_root=source_root),
         "stages": [_export_stage_draft(stage) for stage in _builder_stage_sequence(loaded)],
         "initial_state": _export_initial_state(base_problem),
         "geometries": [
@@ -1735,56 +1736,7 @@ def _geometry_bounds(
     *,
     source_root: Path | None = None,
 ) -> tuple[tuple[float, float, float] | None, tuple[float, float, float] | None]:
-    if isinstance(geom, ImportedGeometry):
-        try:
-            asset = load_surface_asset(geom.source, source_root=source_root)
-        except Exception:
-            return None, None
-        if asset.bounds_min is None or asset.bounds_max is None:
-            return None, None
-        if isinstance(geom.scale, (int, float)):
-            scale = (float(geom.scale), float(geom.scale), float(geom.scale))
-        else:
-            scale = tuple(float(component) for component in geom.scale)
-        bounds_min = tuple(asset.bounds_min[i] * scale[i] for i in range(3))
-        bounds_max = tuple(asset.bounds_max[i] * scale[i] for i in range(3))
-        return _normalize_bounds_pair(bounds_min, bounds_max)
-    if isinstance(geom, Box):
-        sx, sy, sz = geom.size
-        return (-0.5 * sx, -0.5 * sy, -0.5 * sz), (0.5 * sx, 0.5 * sy, 0.5 * sz)
-    if isinstance(geom, Cylinder):
-        r = geom.radius
-        half_h = 0.5 * geom.height
-        return (-r, -r, -half_h), (r, r, half_h)
-    if isinstance(geom, Ellipsoid):
-        return (-geom.rx, -geom.ry, -geom.rz), (geom.rx, geom.ry, geom.rz)
-    if isinstance(geom, Ellipse):
-        half_h = 0.5 * geom.height
-        return (-geom.rx, -geom.ry, -half_h), (geom.rx, geom.ry, half_h)
-    if isinstance(geom, Translate):
-        bounds_min, bounds_max = _geometry_bounds(geom.geometry, source_root=source_root)
-        if bounds_min is None or bounds_max is None:
-            return None, None
-        return (
-            tuple(bounds_min[i] + geom.offset[i] for i in range(3)),
-            tuple(bounds_max[i] + geom.offset[i] for i in range(3)),
-        )
-    if isinstance(geom, Union):
-        a_min, a_max = _geometry_bounds(geom.a, source_root=source_root)
-        b_min, b_max = _geometry_bounds(geom.b, source_root=source_root)
-        return _combine_bounds_union((a_min, a_max), (b_min, b_max))
-    if isinstance(geom, Intersection):
-        a_min, a_max = _geometry_bounds(geom.a, source_root=source_root)
-        b_min, b_max = _geometry_bounds(geom.b, source_root=source_root)
-        if a_min is None or a_max is None or b_min is None or b_max is None:
-            return None, None
-        return _normalize_bounds_pair(
-            tuple(max(a_min[i], b_min[i]) for i in range(3)),
-            tuple(min(a_max[i], b_max[i]) for i in range(3)),
-        )
-    if isinstance(geom, Difference):
-        return _geometry_bounds(geom.base, source_root=source_root)
-    return None, None
+    return shared_geometry_bounds(geom, source_root=source_root)
 
 
 def _combine_bounds_union(
@@ -1919,6 +1871,23 @@ def _export_universe(problem: Problem) -> dict[str, object] | None:
         "center": list(center) if center is not None else None,
         "padding": list(padding) if padding is not None else None,
     }
+
+
+def _export_domain_frame(
+    problem: Problem,
+    *,
+    source_root: Path | None,
+) -> dict[str, object] | None:
+    runtime_metadata = _normalize_mapping(problem.runtime_metadata)
+    domain_frame = _normalize_mapping(runtime_metadata.get("domain_frame"))
+    if domain_frame:
+        return domain_frame
+    universe = _normalize_mapping(runtime_metadata.get("study_universe"))
+    return build_domain_frame(
+        geometries=[magnet.geometry for magnet in problem.magnets],
+        source_root=source_root,
+        study_universe=universe or None,
+    )
 
 
 def _optional_vec3(value: object) -> tuple[float, float, float] | None:

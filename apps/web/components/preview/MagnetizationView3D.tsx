@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import ViewCube from "./ViewCube";
 import HslSphere from "./HslSphere";
 import FdmInstances from "./r3f/FdmInstances";
+import { rotateCameraAroundTarget, focusCameraOnBounds } from "./camera/cameraHelpers";
 import FdmLighting from "./r3f/FdmLighting";
 import SceneAxes3D from "./r3f/SceneAxes3D";
 import type {
@@ -540,6 +541,12 @@ function MagnetizationView3DInner({
     [snapCamera],
   );
 
+  const handleViewCubeRotate = useCallback((quat: THREE.Quaternion) => {
+    const bridge = viewCubeSceneRef.current;
+    if (!bridge?.camera || !bridge?.controls) return;
+    rotateCameraAroundTarget(bridge.camera, bridge.controls, quat);
+  }, []);
+
   const focusObject = useCallback((objectId: string) => {
     if (!worldExtent) {
       return;
@@ -553,30 +560,12 @@ function MagnetizationView3DInner({
     if (!mapped) {
       return;
     }
-    const { camera, controls } = bridge;
-    const target = new THREE.Vector3(
-      0.5 * (mapped.sceneMin[0] + mapped.sceneMax[0]),
-      0.5 * (mapped.sceneMin[1] + mapped.sceneMax[1]),
-      0.5 * (mapped.sceneMin[2] + mapped.sceneMax[2]),
+    focusCameraOnBounds(
+      bridge.camera,
+      bridge.controls,
+      { min: mapped.sceneMin, max: mapped.sceneMax },
+      { fallbackMinRadius: 1.5 },
     );
-    const size = new THREE.Vector3(
-      mapped.sceneMax[0] - mapped.sceneMin[0],
-      mapped.sceneMax[1] - mapped.sceneMin[1],
-      mapped.sceneMax[2] - mapped.sceneMin[2],
-    );
-    const radius = Math.max(size.length() * 0.5, 1.5);
-    const perspectiveCamera = camera as THREE.PerspectiveCamera;
-    const fov = THREE.MathUtils.degToRad(perspectiveCamera.fov || 50);
-    const distance = Math.max(radius / Math.tan(fov * 0.5), radius * 2.2);
-    const direction = camera.position.clone().sub(controls.target).normalize();
-    if (direction.lengthSq() < 1e-9) {
-      direction.set(...DEFAULT_CAMERA_DIRECTION).normalize();
-    }
-    camera.position.copy(target).add(direction.multiplyScalar(distance));
-    controls.target.copy(target);
-    camera.lookAt(target);
-    camera.updateProjectionMatrix();
-    controls.update();
   }, [grid, objectOverlays, universeCenter, worldExtent]);
 
   useEffect(() => {
@@ -615,10 +604,9 @@ function MagnetizationView3DInner({
         axesWorldExtent[2] > 0 ? ny / axesWorldExtent[2] : 1,
       ]
     : [1, 1, 1];
-  const sceneOpacityMultiplier =
-    objectViewMode === "isolate" && selectedObjectId
-      ? 0.22
-      : 1;
+  // In isolate mode, keep voxels at full opacity to avoid transparent instanced mesh
+  // sorting artifacts. The overlay boxes already hide non-selected objects visually.
+  const sceneOpacityMultiplier = 1;
 
   return (
     <div className="relative flex flex-col h-full">
@@ -864,9 +852,8 @@ function MagnetizationView3DInner({
 
       <ViewCube
         sceneRef={viewCubeSceneRef}
-        grid={grid}
-        defaultDirection={DEFAULT_CAMERA_DIRECTION}
-        defaultUp={DEFAULT_CAMERA_UP}
+        onRotate={handleViewCubeRotate}
+        onReset={resetCamera}
       />
       {!geometryMode ? <HslSphere sceneRef={viewCubeSceneRef} /> : null}
     </div>

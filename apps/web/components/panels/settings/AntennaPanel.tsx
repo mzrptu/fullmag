@@ -292,7 +292,7 @@ export default function AntennaPanel({ nodeId }: { nodeId?: string }) {
   ];
 
   return (
-    <div className="flex flex-col gap-0 border-t border-border/20">
+    <div className="flex flex-col pt-4 px-2">
       <SidebarSection title="Environment Overview" defaultOpen={true}>
         <div className="flex flex-col gap-5">
           <div className="flex flex-wrap gap-1.5">

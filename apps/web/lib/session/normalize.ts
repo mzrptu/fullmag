@@ -344,6 +344,7 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
             padding: normalizeVec3(raw.universe.padding),
           }
         : null,
+    domain_frame: normalizeDomainFrame(raw.domain_frame),
     stages: Array.isArray(raw.stages)
       ? raw.stages.map((stage: any) => ({
           kind: String(stage?.kind ?? "run"),
@@ -513,6 +514,31 @@ function normalizeVec3(raw: unknown): [number, number, number] | null {
   return [Number(raw[0] ?? 0), Number(raw[1] ?? 0), Number(raw[2] ?? 0)];
 }
 
+function normalizeDomainFrame(raw: any) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  return {
+    declared_universe:
+      raw.declared_universe && typeof raw.declared_universe === "object"
+        ? {
+            mode: String(raw.declared_universe.mode ?? "auto"),
+            size: normalizeVec3(raw.declared_universe.size),
+            center: normalizeVec3(raw.declared_universe.center),
+            padding: normalizeVec3(raw.declared_universe.padding),
+          }
+        : null,
+    object_bounds_min: normalizeVec3(raw.object_bounds_min),
+    object_bounds_max: normalizeVec3(raw.object_bounds_max),
+    mesh_bounds_min: normalizeVec3(raw.mesh_bounds_min),
+    mesh_bounds_max: normalizeVec3(raw.mesh_bounds_max),
+    effective_extent: normalizeVec3(raw.effective_extent),
+    effective_center: normalizeVec3(raw.effective_center),
+    effective_source:
+      typeof raw.effective_source === "string" ? raw.effective_source : null,
+  };
+}
+
 function normalizeMeshWorkspace(raw: any): MeshWorkspaceState | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -537,7 +563,20 @@ function normalizeMeshWorkspace(raw: any): MeshWorkspaceState | null {
             boundary_face_count: Number(meshSummaryRaw.boundary_face_count ?? 0),
             bounds_min: normalizeVec3(meshSummaryRaw.bounds_min),
             bounds_max: normalizeVec3(meshSummaryRaw.bounds_max),
+            mesh_extent:
+              normalizeVec3(meshSummaryRaw.mesh_extent)
+              ?? normalizeVec3(meshSummaryRaw.world_extent),
             world_extent: normalizeVec3(meshSummaryRaw.world_extent),
+            world_center: normalizeVec3(meshSummaryRaw.world_center),
+            world_extent_source:
+              typeof meshSummaryRaw.world_extent_source === "string"
+                ? meshSummaryRaw.world_extent_source
+                : null,
+            domain_frame: normalizeDomainFrame(meshSummaryRaw.domain_frame),
+            domain_mesh_mode:
+              typeof meshSummaryRaw.domain_mesh_mode === "string"
+                ? meshSummaryRaw.domain_mesh_mode
+                : null,
             generation_id: String(meshSummaryRaw.generation_id ?? ""),
           }
         : null,

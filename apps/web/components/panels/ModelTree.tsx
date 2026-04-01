@@ -33,6 +33,13 @@ interface ModelTreeProps {
   className?: string;
 }
 
+/* ── Constants for tree geometry ────────────────────────────────────── */
+
+const TREE_INDENT = 18;     /* px per depth level */
+const GUIDE_LEFT_OFFSET = 9; /* center of the guide column (half of TREE_INDENT) */
+const GUIDE_COLOR = "hsl(236.8 16.3% 22.9%)"; /* Surface0 — matches --border */
+const NODE_ROW_HEIGHT = 30;  /* target row height in px */
+
 /* ── Tree Node ─────────────────────────────────────────────────────── */
 
 function TreeNode({
@@ -41,15 +48,20 @@ function TreeNode({
   activeId,
   onNodeClick,
   onContextMenu,
+  isLast = false,
+  parentGuides = [],
 }: {
   node: TreeNodeData;
   depth: number;
   activeId?: string | null;
   onNodeClick?: (id: string) => void;
   onContextMenu?: (e: React.MouseEvent, nodeId: string, label: string) => void;
+  isLast?: boolean;
+  parentGuides?: boolean[];
 }) {
   const [open, setOpen] = useState(node.defaultOpen ?? depth < 2);
   const hasChildren = node.children && node.children.length > 0;
+  const isActive = activeId === node.id;
 
   const handleClick = useCallback(() => {
     if (hasChildren) setOpen((prev) => !prev);
@@ -57,25 +69,101 @@ function TreeNode({
     onNodeClick?.(node.id);
   }, [hasChildren, node, onNodeClick]);
 
+  /* Build guide columns for ancestor levels */
+  const guideColumns = parentGuides.map((showLine, idx) => (
+    <span
+      key={`guide-${idx}`}
+      className="shrink-0 relative"
+      style={{
+        width: `${TREE_INDENT}px`,
+        height: "100%",
+      }}
+    >
+      {showLine && (
+        <span
+          className="absolute top-0 bottom-0"
+          style={{
+            left: `${GUIDE_LEFT_OFFSET}px`,
+            width: "1px",
+            background: GUIDE_COLOR,
+          }}
+        />
+      )}
+    </span>
+  ));
+
+  /* This node's own connector: vertical + horizontal branch */
+  const ownConnector = depth > 0 ? (
+    <span
+      className="shrink-0 relative"
+      style={{
+        width: `${TREE_INDENT}px`,
+        height: "100%",
+        minHeight: `${NODE_ROW_HEIGHT}px`,
+      }}
+    >
+      {/* Vertical line — runs from top to center (or full height if not last) */}
+      <span
+        className="absolute"
+        style={{
+          left: `${GUIDE_LEFT_OFFSET}px`,
+          top: 0,
+          height: isLast ? "50%" : "100%",
+          width: "1px",
+          background: GUIDE_COLOR,
+        }}
+      />
+      {/* Horizontal branch — from vertical line center to the right */}
+      <span
+        className="absolute"
+        style={{
+          left: `${GUIDE_LEFT_OFFSET}px`,
+          top: "50%",
+          width: `${TREE_INDENT - GUIDE_LEFT_OFFSET}px`,
+          height: "1px",
+          background: GUIDE_COLOR,
+        }}
+      />
+    </span>
+  ) : null;
+
+  /* Guides to pass to children: add current level's continuation */
+  const childGuides = depth > 0
+    ? [...parentGuides, !isLast]
+    : parentGuides;
+
   return (
     <div className="flex flex-col">
+      {/* ── Node row ── */}
       <div
         className={cn(
-          "flex items-center gap-1.5 pr-2 py-1 my-[1px] cursor-pointer rounded-md transition-all min-h-[26px] relative overflow-hidden",
-          activeId === node.id
-            ? "bg-primary/10 text-primary font-semibold border border-primary/20 shadow-sm after:absolute after:left-0 after:top-0 after:bottom-0 after:w-[3px] after:bg-primary"
-            : "hover:bg-muted/60 text-foreground border border-transparent"
+          "flex items-center pr-2 cursor-pointer rounded-md transition-all duration-200 relative overflow-hidden group",
+          isActive
+            ? "bg-primary/12 text-primary font-bold border border-primary/25 shadow-[0_0_16px_rgba(137,180,250,0.08)]"
+            : "hover:bg-card/50 text-foreground/90 hover:text-primary border border-transparent"
         )}
-        style={{ paddingLeft: `${Math.max(8, depth * 14 + 8)}px` }}
+        style={{ minHeight: `${NODE_ROW_HEIGHT}px` }}
         onClick={handleClick}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(e, node.id, node.label); }}
         role="treeitem"
         aria-expanded={hasChildren ? open : undefined}
       >
+        {/* Active indicator bar */}
+        {isActive && (
+          <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-primary rounded-r-full" />
+        )}
+
+        {/* Guide columns for ancestor lines */}
+        {guideColumns}
+
+        {/* Own connector (branch from parent) */}
+        {ownConnector}
+
+        {/* Expand/collapse chevron */}
         {hasChildren ? (
-          <span 
+          <span
             className={cn(
-              "flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground transition-transform duration-150", 
+              "flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground/70 transition-transform duration-150 mr-0.5",
               open && "rotate-90"
             )}
           >
@@ -84,41 +172,57 @@ function TreeNode({
             </svg>
           </span>
         ) : (
-          <span className="flex h-3.5 w-3.5 shrink-0" />
+          <span className="flex h-4 w-4 shrink-0 mr-0.5" />
         )}
-        
+
+        {/* Icon */}
         {node.icon && (
-          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-xs opacity-70">
+          <span className={cn(
+            "flex h-4 w-4 shrink-0 items-center justify-center text-xs mr-1.5",
+            isActive ? "opacity-100" : "opacity-60 group-hover:opacity-80"
+          )}>
             {node.icon}
           </span>
         )}
-        
-        <span className="flex-1 truncate font-medium text-sm">
+
+        {/* Label */}
+        <span className={cn(
+          "flex-1 truncate text-[0.8rem]",
+          isActive ? "font-semibold" : "font-medium"
+        )}>
           {node.label}
         </span>
-        
+
+        {/* Status dot */}
         {node.status && (
-          <span 
+          <span
             className={cn(
               "h-1.5 w-1.5 shrink-0 rounded-full",
               node.status === "ready" ? "bg-emerald-500" :
-              node.status === "active" ? "bg-primary" :
+              node.status === "active" ? "bg-primary animate-pulse" :
               node.status === "error" ? "bg-destructive" :
-              "bg-muted-foreground"
-            )} 
+              "bg-muted-foreground/40"
+            )}
           />
         )}
-        
+
+        {/* Badge */}
         {node.badge && (
-          <span className="shrink-0 rounded-full bg-muted px-1.5 py-[1px] text-[0.6rem] font-semibold text-muted-foreground font-mono">
+          <span className={cn(
+            "shrink-0 rounded-md px-1.5 py-[1px] text-[0.58rem] font-semibold font-mono ml-1",
+            isActive
+              ? "bg-primary/15 text-primary border border-primary/20"
+              : "bg-muted/60 text-muted-foreground border border-border/30"
+          )}>
             {node.badge}
           </span>
         )}
       </div>
-      
+
+      {/* ── Children ── */}
       {hasChildren && open && (
-        <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-150" role="group">
-          {node.children!.map((child) => (
+        <div className="flex flex-col" role="group">
+          {node.children!.map((child, idx) => (
             <TreeNode
               key={child.id}
               node={child}
@@ -126,6 +230,8 @@ function TreeNode({
               activeId={activeId}
               onNodeClick={onNodeClick}
               onContextMenu={onContextMenu}
+              isLast={idx === node.children!.length - 1}
+              parentGuides={childGuides}
             />
           ))}
         </div>
@@ -175,7 +281,7 @@ export default function ModelTree({
 
   return (
     <div className={cn("flex flex-col gap-[1px] py-1 select-none", className)} role="tree">
-      {nodes.map((node) => (
+      {nodes.map((node, idx) => (
         <TreeNode
           key={node.id}
           node={node}
@@ -183,6 +289,8 @@ export default function ModelTree({
           activeId={activeId}
           onNodeClick={onNodeClick}
           onContextMenu={handleContextMenu}
+          isLast={idx === nodes.length - 1}
+          parentGuides={[]}
         />
       ))}
 

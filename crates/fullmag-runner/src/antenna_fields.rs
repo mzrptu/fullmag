@@ -37,9 +37,7 @@ fn drive_amplitude_at(drive: &fullmag_ir::RfDriveIR, t: f64) -> f64 {
                 0.0
             }
         }
-        Some(TimeDependenceIR::PiecewiseLinear { points }) => {
-            base * piecewise_linear(points, t)
-        }
+        Some(TimeDependenceIR::PiecewiseLinear { points }) => base * piecewise_linear(points, t),
     }
 }
 

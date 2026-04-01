@@ -38,6 +38,59 @@ pub enum IntegratorChoice {
     Abm3,
 }
 
+fn vec3_from_value(value: &Value) -> Option<[f64; 3]> {
+    let array = value.as_array()?;
+    if array.len() != 3 {
+        return None;
+    }
+    Some([array[0].as_f64()?, array[1].as_f64()?, array[2].as_f64()?])
+}
+
+fn normalized_bounds_pair(bounds_min: ([f64; 3], [f64; 3])) -> Option<([f64; 3], [f64; 3])> {
+    let (bounds_min, bounds_max) = bounds_min;
+    let normalized_min = [
+        bounds_min[0].min(bounds_max[0]),
+        bounds_min[1].min(bounds_max[1]),
+        bounds_min[2].min(bounds_max[2]),
+    ];
+    let normalized_max = [
+        bounds_min[0].max(bounds_max[0]),
+        bounds_min[1].max(bounds_max[1]),
+        bounds_min[2].max(bounds_max[2]),
+    ];
+    if normalized_max
+        .iter()
+        .zip(normalized_min.iter())
+        .any(|(max_value, min_value)| *max_value - *min_value <= 0.0)
+    {
+        return None;
+    }
+    Some((normalized_min, normalized_max))
+}
+
+fn option_bounds_pair(
+    bounds_min: Option<[f64; 3]>,
+    bounds_max: Option<[f64; 3]>,
+) -> Option<([f64; 3], [f64; 3])> {
+    normalized_bounds_pair((bounds_min?, bounds_max?))
+}
+
+fn bounds_extent(bounds_min: [f64; 3], bounds_max: [f64; 3]) -> [f64; 3] {
+    [
+        bounds_max[0] - bounds_min[0],
+        bounds_max[1] - bounds_min[1],
+        bounds_max[2] - bounds_min[2],
+    ]
+}
+
+fn bounds_center(bounds_min: [f64; 3], bounds_max: [f64; 3]) -> [f64; 3] {
+    [
+        0.5 * (bounds_min[0] + bounds_max[0]),
+        0.5 * (bounds_min[1] + bounds_max[1]),
+        0.5 * (bounds_min[2] + bounds_max[2]),
+    ]
+}
+
 /// Algorithm selection for relaxation (energy-minimization) studies.
 ///
 /// See `docs/physics/0500-fdm-relaxation-algorithms.md` for full specification.
@@ -807,12 +860,269 @@ impl FemMeshAssetIR {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemDomainRegionMarkerIR {
+    pub geometry_name: String,
+    pub marker: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemDomainMeshAssetIR {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<MeshIR>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub region_markers: Vec<FemDomainRegionMarkerIR>,
+}
+
+impl FemDomainMeshAssetIR {
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+        if self.mesh.is_none() && self.mesh_source.is_none() {
+            errors.push(
+                "fem_domain_mesh_asset must provide either an inline mesh or mesh_source"
+                    .to_string(),
+            );
+        }
+        if let Some(mesh) = &self.mesh {
+            if let Err(mesh_errors) = mesh.validate() {
+                errors.extend(
+                    mesh_errors
+                        .into_iter()
+                        .map(|error| format!("fem_domain_mesh_asset.{error}")),
+                );
+            }
+        }
+        let mut seen_markers = BTreeSet::new();
+        let mut seen_geometries = BTreeSet::new();
+        for region in &self.region_markers {
+            if region.geometry_name.trim().is_empty() {
+                errors.push(
+                    "fem_domain_mesh_asset.region_markers geometry_name must not be empty"
+                        .to_string(),
+                );
+            }
+            if region.marker == 0 {
+                errors.push(
+                    "fem_domain_mesh_asset.region_markers markers must be > 0".to_string(),
+                );
+            }
+            if !seen_markers.insert(region.marker) {
+                errors.push(format!(
+                    "fem_domain_mesh_asset.region_markers marker {} is duplicated",
+                    region.marker
+                ));
+            }
+            if !seen_geometries.insert(region.geometry_name.as_str()) {
+                errors.push(format!(
+                    "fem_domain_mesh_asset.region_markers geometry '{}' is duplicated",
+                    region.geometry_name
+                ));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct GeometryAssetsIR {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fdm_grid_assets: Vec<FdmGridAssetIR>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fem_mesh_assets: Vec<FemMeshAssetIR>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fem_domain_mesh_asset: Option<FemDomainMeshAssetIR>,
+}
+
+impl GeometryAssetsIR {
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+        for asset in &self.fdm_grid_assets {
+            if let Err(asset_errors) = asset.validate() {
+                errors.extend(
+                    asset_errors
+                        .into_iter()
+                        .map(|error| format!("geometry_assets.{error}")),
+                );
+            }
+        }
+        for asset in &self.fem_mesh_assets {
+            if let Err(asset_errors) = asset.validate() {
+                errors.extend(
+                    asset_errors
+                        .into_iter()
+                        .map(|error| format!("geometry_assets.{error}")),
+                );
+            }
+        }
+        if let Some(asset) = &self.fem_domain_mesh_asset {
+            if let Err(asset_errors) = asset.validate() {
+                errors.extend(
+                    asset_errors
+                        .into_iter()
+                        .map(|error| format!("geometry_assets.{error}")),
+                );
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DeclaredUniverseIR {
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub center: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub padding: Option<[f64; 3]>,
+}
+
+impl Default for DeclaredUniverseIR {
+    fn default() -> Self {
+        Self {
+            mode: "auto".to_string(),
+            size: None,
+            center: None,
+            padding: None,
+        }
+    }
+}
+
+impl DeclaredUniverseIR {
+    pub fn from_study_universe_value(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        Some(Self {
+            mode: object
+                .get("mode")
+                .and_then(|candidate| candidate.as_str())
+                .unwrap_or("auto")
+                .to_string(),
+            size: object.get("size").and_then(vec3_from_value),
+            center: object.get("center").and_then(vec3_from_value),
+            padding: object.get("padding").and_then(vec3_from_value),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DomainFrameIR {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_universe: Option<DeclaredUniverseIR>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_bounds_min: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_bounds_max: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh_bounds_min: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh_bounds_max: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_extent: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_center: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_source: Option<String>,
+}
+
+impl DomainFrameIR {
+    pub fn with_mesh_bounds(mut self, mesh_bounds: Option<([f64; 3], [f64; 3])>) -> Self {
+        if let Some((bounds_min, bounds_max)) = mesh_bounds.and_then(normalized_bounds_pair) {
+            self.mesh_bounds_min = Some(bounds_min);
+            self.mesh_bounds_max = Some(bounds_max);
+        }
+        self
+    }
+
+    pub fn finalized(mut self) -> Option<Self> {
+        let object_bounds = option_bounds_pair(self.object_bounds_min, self.object_bounds_max);
+        let mesh_bounds = option_bounds_pair(self.mesh_bounds_min, self.mesh_bounds_max);
+        let declared_universe = self.declared_universe.clone();
+
+        if self.effective_extent.is_none() {
+            if let Some(declared) = declared_universe.as_ref() {
+                if declared.mode == "manual" {
+                    if let Some(size) = declared.size {
+                        self.effective_extent = Some(size);
+                        self.effective_source
+                            .get_or_insert_with(|| "declared_universe_manual".to_string());
+                    }
+                    if self.effective_center.is_none() {
+                        self.effective_center = declared
+                            .center
+                            .or_else(|| {
+                                object_bounds.map(|bounds| bounds_center(bounds.0, bounds.1))
+                            })
+                            .or_else(|| {
+                                mesh_bounds.map(|bounds| bounds_center(bounds.0, bounds.1))
+                            });
+                    }
+                } else {
+                    let base_bounds = object_bounds.or(mesh_bounds);
+                    if let Some((bounds_min, bounds_max)) = base_bounds {
+                        let padding = declared.padding.unwrap_or([0.0, 0.0, 0.0]);
+                        let base_extent = bounds_extent(bounds_min, bounds_max);
+                        if padding.iter().any(|component| component.abs() > 0.0) {
+                            self.effective_extent = Some([
+                                base_extent[0] + 2.0 * padding[0],
+                                base_extent[1] + 2.0 * padding[1],
+                                base_extent[2] + 2.0 * padding[2],
+                            ]);
+                            self.effective_source.get_or_insert_with(|| {
+                                "declared_universe_auto_padding".to_string()
+                            });
+                        } else {
+                            self.effective_extent = Some(base_extent);
+                            self.effective_source.get_or_insert_with(|| {
+                                if object_bounds.is_some() {
+                                    "object_union_bounds".to_string()
+                                } else {
+                                    "mesh_bounds".to_string()
+                                }
+                            });
+                        }
+                        if self.effective_center.is_none() {
+                            self.effective_center = Some(bounds_center(bounds_min, bounds_max));
+                        }
+                    }
+                }
+            } else if let Some((bounds_min, bounds_max)) = object_bounds {
+                self.effective_extent = Some(bounds_extent(bounds_min, bounds_max));
+                self.effective_center = Some(bounds_center(bounds_min, bounds_max));
+                self.effective_source
+                    .get_or_insert_with(|| "object_union_bounds".to_string());
+            } else if let Some((bounds_min, bounds_max)) = mesh_bounds {
+                self.effective_extent = Some(bounds_extent(bounds_min, bounds_max));
+                self.effective_center = Some(bounds_center(bounds_min, bounds_max));
+                self.effective_source
+                    .get_or_insert_with(|| "mesh_bounds".to_string());
+            }
+        }
+
+        if self.declared_universe.is_none()
+            && self.object_bounds_min.is_none()
+            && self.object_bounds_max.is_none()
+            && self.mesh_bounds_min.is_none()
+            && self.mesh_bounds_max.is_none()
+            && self.effective_extent.is_none()
+            && self.effective_center.is_none()
+            && self.effective_source.is_none()
+        {
+            None
+        } else {
+            Some(self)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1150,6 +1460,14 @@ pub struct FemObjectSegmentIR {
     pub boundary_face_count: u32,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FemDomainMeshModeIR {
+    #[default]
+    MergedMagneticMesh,
+    SharedDomainMeshWithAir,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FemPlanIR {
     pub mesh_name: String,
@@ -1158,6 +1476,10 @@ pub struct FemPlanIR {
     pub mesh: MeshIR,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub object_segments: Vec<FemObjectSegmentIR>,
+    #[serde(default)]
+    pub domain_mesh_mode: FemDomainMeshModeIR,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain_frame: Option<DomainFrameIR>,
     pub fe_order: u32,
     pub hmax: f64,
     pub initial_magnetization: Vec<[f64; 3]>,
@@ -1263,6 +1585,10 @@ pub struct FemEigenPlanIR {
     pub mesh: MeshIR,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub object_segments: Vec<FemObjectSegmentIR>,
+    #[serde(default)]
+    pub domain_mesh_mode: FemDomainMeshModeIR,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain_frame: Option<DomainFrameIR>,
     pub fe_order: u32,
     pub hmax: f64,
     pub equilibrium_magnetization: Vec<[f64; 3]>,
@@ -1470,6 +1796,11 @@ impl ProblemIR {
         }
         if self.geometry.entries.is_empty() {
             errors.push("at least one geometry entry is required".to_string());
+        }
+        if let Some(geometry_assets) = &self.geometry_assets {
+            if let Err(asset_errors) = geometry_assets.validate() {
+                errors.extend(asset_errors);
+            }
         }
         if self.regions.is_empty() {
             errors.push("at least one region is required".to_string());

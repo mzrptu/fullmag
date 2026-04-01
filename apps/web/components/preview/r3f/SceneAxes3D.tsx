@@ -7,6 +7,8 @@ import { pickUnitScale } from "../../../lib/units";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
+export type AxesProfile = "full" | "compact" | "triad" | "hidden";
+
 interface SceneAxes3DProps {
   /** Physical extent [x, y, z] in metres */
   worldExtent: [number, number, number];
@@ -26,6 +28,8 @@ interface SceneAxes3DProps {
   axisLabels?: [string, string, string];
   /** Toggle visibility */
   visible?: boolean;
+  /** Axes display profile. Defaults to "full". */
+  profile?: AxesProfile;
 }
 
 /* ── SI prefix logic (from shared lib/units.ts) ─────────────── */
@@ -81,7 +85,10 @@ export default function SceneAxes3D({
   sceneScale,
   axisLabels = ["x", "y", "z"],
   visible = true,
+  profile = "full",
 }: SceneAxes3DProps) {
+  if (profile === "hidden" || !visible) return null;
+
   const axesData = useMemo(() => {
     const [wx, wy, wz] = worldExtent;
     const maxExtent = Math.max(wx, wy, wz);
@@ -116,7 +123,7 @@ export default function SceneAxes3D({
     };
   }, [worldExtent, sceneScale]);
 
-  if (!visible || !axesData) return null;
+  if (!axesData) return null;
 
   const { unit, min, max, hx, hy, hz, scaled, ticks } = axesData;
   const [cx, cy, cz] = center;
@@ -158,11 +165,15 @@ export default function SceneAxes3D({
     });
   }, [ticks.z, scaled, cx, cy, cz, min, max]);
 
+  const showTicks = profile === "full";
+  const showLabels = profile === "full" || profile === "compact";
+  const showLines = profile !== "triad";
+
   return (
     <group>
 
       {/* ── X-axis ticks + labels (along bottom-front edge) ───── */}
-      {xTickElements.map((tick, i) => (
+      {showTicks && xTickElements.map((tick, i) => (
         <group key={`xtick-${i}`}>
           <Line
             points={[
@@ -185,6 +196,7 @@ export default function SceneAxes3D({
         </group>
       ))}
       {/* X axis unit label */}
+      {showLabels && (
       <Billboard position={[cx + max[0] + labelOffset * 1.5, cy + min[1] - labelOffset, cz + min[2]]}>
         <Text
           fontSize={fontSize * 1.15}
@@ -196,9 +208,10 @@ export default function SceneAxes3D({
           {`${axisLabels[0]} (${unit})`}
         </Text>
       </Billboard>
+      )}
 
       {/* ── Y-axis ticks + labels (along left-front edge) ──────── */}
-      {yTickElements.map((tick, i) => (
+      {showTicks && yTickElements.map((tick, i) => (
         <group key={`ytick-${i}`}>
           <Line
             points={[
@@ -221,6 +234,7 @@ export default function SceneAxes3D({
         </group>
       ))}
       {/* Y axis unit label */}
+      {showLabels && (
       <Billboard position={[cx + min[0] - labelOffset, cy + max[1] + labelOffset * 1.5, cz + min[2]]}>
         <Text
           fontSize={fontSize * 1.15}
@@ -232,9 +246,10 @@ export default function SceneAxes3D({
           {`${axisLabels[1]} (${unit})`}
         </Text>
       </Billboard>
+      )}
 
       {/* ── Z-axis ticks + labels (along bottom-left edge) ──────── */}
-      {zTickElements.map((tick, i) => (
+      {showTicks && zTickElements.map((tick, i) => (
         <group key={`ztick-${i}`}>
           <Line
             points={[
@@ -257,6 +272,7 @@ export default function SceneAxes3D({
         </group>
       ))}
       {/* Z axis unit label */}
+      {showLabels && (
       <Billboard position={[cx + min[0], cy + min[1] - labelOffset, cz + max[2] + labelOffset * 1.5]}>
         <Text
           fontSize={fontSize * 1.15}
@@ -268,8 +284,10 @@ export default function SceneAxes3D({
           {`${axisLabels[2]} (${unit})`}
         </Text>
       </Billboard>
+      )}
 
       {/* ── Colored axis arrows at origin corner ───────────────── */}
+      {showLines && (<>
       <Line
         points={[
           [cx + min[0], cy + min[1], cz + min[2]],
@@ -300,6 +318,7 @@ export default function SceneAxes3D({
         transparent
         opacity={0.6}
       />
+      </>)}
     </group>
   );
 }

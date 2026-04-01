@@ -38,6 +38,8 @@ export interface BuilderObjectOverlay {
   label: string;
   boundsMin: [number, number, number];
   boundsMax: [number, number, number];
+  fidelity: "segment-backed" | "bounds-backed";
+  source: "object_segments" | "geometry_bounds";
 }
 
 export interface FocusObjectRequest {
@@ -395,19 +397,74 @@ export function extractGeometryBoundsFromParams(
 
 export function buildObjectOverlays(
   geometries: readonly ScriptBuilderGeometryEntry[],
+  femMesh?: FemLiveMesh | null,
 ): BuilderObjectOverlay[] {
-  return geometries.flatMap((geometry) => {
+  const segmentBoundsByObjectId = new Map<
+    string,
+    { boundsMin: [number, number, number]; boundsMax: [number, number, number] }
+  >();
+  for (const segment of femMesh?.object_segments ?? []) {
+    if (segment.node_count <= 0) {
+      continue;
+    }
+    let boundsMin: [number, number, number] | null = null;
+    let boundsMax: [number, number, number] | null = null;
+    for (let index = segment.node_start; index < segment.node_start + segment.node_count; index += 1) {
+      const node = femMesh?.nodes[index];
+      if (!node || node.length !== 3 || node.some((component) => !Number.isFinite(component))) {
+        continue;
+      }
+      if (!boundsMin || !boundsMax) {
+        boundsMin = [...node] as [number, number, number];
+        boundsMax = [...node] as [number, number, number];
+        continue;
+      }
+      boundsMin = boundsMin.map((component, axis) => Math.min(component, node[axis])) as [
+        number,
+        number,
+        number,
+      ];
+      boundsMax = boundsMax.map((component, axis) => Math.max(component, node[axis])) as [
+        number,
+        number,
+        number,
+      ];
+    }
+    const normalized = normalizeBounds(boundsMin, boundsMax);
+    if (!normalized) {
+      continue;
+    }
+    segmentBoundsByObjectId.set(segment.object_id, normalized);
+  }
+
+  const overlays: BuilderObjectOverlay[] = [];
+  for (const geometry of geometries) {
+    const segmentBounds = segmentBoundsByObjectId.get(geometry.name);
+    if (segmentBounds) {
+      overlays.push({
+        id: geometry.name,
+        label: geometry.name,
+        boundsMin: segmentBounds.boundsMin,
+        boundsMax: segmentBounds.boundsMax,
+        fidelity: "segment-backed",
+        source: "object_segments",
+      });
+      continue;
+    }
     const bounds = extractGeometryBoundsFromParams(geometry);
     if (!bounds) {
-      return [];
+      continue;
     }
-    return [{
+    overlays.push({
       id: geometry.name,
       label: geometry.name,
       boundsMin: bounds.boundsMin,
       boundsMax: bounds.boundsMax,
-    }];
-  });
+      fidelity: "bounds-backed",
+      source: "geometry_bounds",
+    });
+  }
+  return overlays;
 }
 
 export function resolveSelectedObjectId(

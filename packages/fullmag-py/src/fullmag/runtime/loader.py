@@ -46,6 +46,7 @@ class LoadedProblem:
     entrypoint_kind: str
     default_until_seconds: float | None = None
     stages: tuple[LoadedStage, ...] = ()
+    workspace_problem: Problem | None = None
 
     def to_ir(
         self,
@@ -56,7 +57,7 @@ class LoadedProblem:
         asset_cache: dict[str, dict[str, object] | None] | None = None,
         include_geometry_assets: bool = True,
     ) -> dict[str, object]:
-        return self.problem.to_ir(
+        ir = self.problem.to_ir(
             requested_backend=requested_backend,
             execution_mode=execution_mode,
             execution_precision=execution_precision,
@@ -66,6 +67,25 @@ class LoadedProblem:
             asset_cache=asset_cache,
             include_geometry_assets=include_geometry_assets,
         )
+        if self.workspace_problem is None or self.workspace_problem == self.problem:
+            return ir
+
+        workspace_ir = self.workspace_problem.to_ir(
+            requested_backend=requested_backend,
+            execution_mode=execution_mode,
+            execution_precision=execution_precision,
+            script_source=self.script_source,
+            source_root=self.source_path.parent,
+            entrypoint_kind="flat_workspace",
+            asset_cache=asset_cache,
+            include_geometry_assets=False,
+        )
+        runtime_metadata = ir["problem_meta"]["runtime_metadata"]
+        workspace_runtime_metadata = workspace_ir["problem_meta"]["runtime_metadata"]
+        for key in ("model_builder", "script_sync", "domain_frame"):
+            if key in workspace_runtime_metadata:
+                runtime_metadata[key] = workspace_runtime_metadata[key]
+        return ir
 
 
 def load_problem_from_script(
@@ -105,6 +125,7 @@ def load_problem_from_script(
                 entrypoint_kind="flat_sequence" if len(loaded_stages) > 1 else final_stage.entrypoint_kind,
                 default_until_seconds=final_stage.default_until_seconds,
                 stages=loaded_stages,
+                workspace_problem=workspace_problem,
             )
 
         if workspace_problem is not None:
@@ -115,6 +136,7 @@ def load_problem_from_script(
                 entrypoint_kind="flat_workspace",
                 default_until_seconds=None,
                 stages=(),
+                workspace_problem=workspace_problem,
             )
 
         problem, entrypoint_kind = _extract_problem(module)

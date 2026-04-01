@@ -153,6 +153,7 @@ export function serializeModelBuilderGraphV2(graph: ModelBuilderGraphV2): Omit<
     solver: graph.study.solver,
     mesh: graph.study.mesh_defaults,
     universe: graph.universe.value,
+    domain_frame: null,
     stages: graph.study.stages,
     geometries: graph.objects.items.map((objectNode) => objectNode.geometry),
     current_modules: graph.current_modules.modules,

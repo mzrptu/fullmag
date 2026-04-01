@@ -20,6 +20,12 @@ pub(crate) fn execute_reference_fem_eigen(
     plan: &FemEigenPlanIR,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
+    let resolved_demag_realization = plan.demag_realization.as_deref().unwrap_or("transfer_grid");
+    if plan.enable_demag && resolved_demag_realization != "transfer_grid" {
+        return Err(RunError {
+            message: "FEM eigen runner supports demag_realization='transfer_grid' only".to_string(),
+        });
+    }
     if plan.precision != fullmag_ir::ExecutionPrecision::Double {
         return Err(RunError {
             message: "execution_precision='single' is not executable in the FEM eigen CPU reference runner; use 'double'".to_string(),
@@ -233,7 +239,7 @@ fn execution_provenance(plan: &FemEigenPlanIR) -> ExecutionProvenance {
             Some(
                 plan.demag_realization
                     .clone()
-                    .unwrap_or_else(|| "fem_transfer_grid_tensor_fft_newell".to_string()),
+                    .unwrap_or_else(|| "transfer_grid".to_string()),
             )
         } else {
             None
