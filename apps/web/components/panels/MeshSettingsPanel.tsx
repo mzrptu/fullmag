@@ -67,6 +67,8 @@ interface MeshSettingsPanelProps {
   disabled?: boolean;
   generating?: boolean;
   onGenerate?: () => void;
+  generateLabel?: string;
+  generatingLabel?: string;
   nodeCount?: number;
   waitMode?: boolean;
   showAdaptiveSection?: boolean;
@@ -248,6 +250,8 @@ export default function MeshSettingsPanel({
   disabled = false,
   generating = false,
   onGenerate,
+  generateLabel = "Build Mesh",
+  generatingLabel = "Building Mesh...",
   nodeCount,
   waitMode,
   showAdaptiveSection = true,
@@ -771,10 +775,10 @@ export default function MeshSettingsPanel({
             {generating ? (
               <span className="flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin text-primary-foreground/70" />
-                Generating Mesh...
+                {generatingLabel}
               </span>
             ) : (
-              "⚡ Generate Mesh"
+              generateLabel
             )}
           </Button>
 

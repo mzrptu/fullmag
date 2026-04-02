@@ -1,9 +1,16 @@
 "use client";
 
 import { resolveApiBase, resolveApiWsBase } from "./apiBase";
+import type { MeshCommandTarget } from "./session/types";
 
 type JsonObject = Record<string, unknown>;
 type JsonBody = unknown;
+
+interface QueueRemeshPayload {
+  mesh_options?: JsonBody;
+  mesh_target: MeshCommandTarget;
+  mesh_reason?: string;
+}
 
 export class ApiHttpError extends Error {
   status: number;
@@ -58,6 +65,30 @@ export function currentLiveApiClient() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+      });
+    },
+    queueRemesh(payload: QueueRemeshPayload) {
+      return requestJson<JsonObject>(`${baseUrl}/v1/live/current/commands`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "remesh",
+          mesh_options: payload.mesh_options,
+          mesh_target: payload.mesh_target,
+          mesh_reason: payload.mesh_reason,
+        }),
+      });
+    },
+    queueStudyDomainRemesh(meshOptions: JsonBody, meshReason?: string) {
+      return requestJson<JsonObject>(`${baseUrl}/v1/live/current/commands`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "remesh",
+          mesh_options: meshOptions,
+          mesh_target: { kind: "study_domain" },
+          mesh_reason: meshReason,
+        }),
       });
     },
     updatePreview(path: string, payload: JsonBody = {}) {

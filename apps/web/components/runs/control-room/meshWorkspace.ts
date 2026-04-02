@@ -118,6 +118,8 @@ export function deriveMeshWorkspacePreset(args: {
 
 export function meshWorkspaceNodeToDockTab(nodeId: string): FemDockTab | null {
   switch (nodeId) {
+    case "universe-airbox-mesh":
+      return "mesh";
     case "universe-mesh-view":
     case "mesh-view":
       return "view";
@@ -142,6 +144,8 @@ export function meshWorkspaceNodeToDockTab(nodeId: string): FemDockTab | null {
 
 export function meshWorkspaceNodeToPreset(nodeId: string): MeshWorkspacePresetId | null {
   switch (nodeId) {
+    case "universe-airbox-mesh":
+      return "inspect-surface";
     case "universe-mesh-view":
     case "mesh-view":
       return "inspect-volume";

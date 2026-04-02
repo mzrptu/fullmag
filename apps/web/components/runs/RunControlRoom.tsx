@@ -229,7 +229,7 @@ function ControlRoomShell() {
         onAddAntenna={handleAddAntenna}
         onSelectModelNode={handleSelectModelNode}
         meshGenerating={ctx.meshGenerating}
-        onGenerateMesh={ctx.handleMeshGenerate}
+        onGenerateStudyMesh={ctx.handleStudyDomainMeshGenerate}
         selectedObjectId={ctx.selectedObjectId}
         onRequestObjectFocus={ctx.requestFocusObject}
         hasSharedAirboxDomain={ctx.effectiveFemMesh?.domain_mesh_mode === "shared_domain_mesh_with_air"}

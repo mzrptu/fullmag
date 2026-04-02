@@ -2970,28 +2970,6 @@ fn zero_vectors(len: usize) -> Vec<Vector3> {
     vec![[0.0, 0.0, 0.0]; len]
 }
 
-fn combine_fields(
-    exchange_field: &[Vector3],
-    demag_field: &[Vector3],
-    external_field: &[Vector3],
-) -> Vec<Vector3> {
-    #[cfg(feature = "parallel")]
-    {
-        (0..exchange_field.len())
-            .into_par_iter()
-            .map(|i| add(add(exchange_field[i], demag_field[i]), external_field[i]))
-            .collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        exchange_field
-            .iter()
-            .zip(demag_field.iter().zip(external_field.iter()))
-            .map(|(h_ex, (h_demag, h_ext))| add(add(*h_ex, *h_demag), *h_ext))
-            .collect()
-    }
-}
-
 /// Combine 4 field contributions into H_eff.
 fn combine_fields_4(
     exchange_field: &[Vector3],

@@ -11,15 +11,12 @@ import SceneAxes3D from "./r3f/SceneAxes3D";
 import type {
   BuilderObjectOverlay,
   FocusObjectRequest,
-  ViewportScope,
 } from "../runs/control-room/shared";
-import { viewportScopeObjectId } from "../runs/control-room/shared";
 
 interface BoundsPreview3DProps {
   objectOverlays?: BuilderObjectOverlay[];
   selectedObjectId?: string | null;
   focusObjectRequest?: FocusObjectRequest | null;
-  viewportScope?: ViewportScope;
   worldExtent?: [number, number, number] | null;
   worldCenter?: [number, number, number] | null;
   onRequestObjectSelect?: (id: string) => void;
@@ -171,28 +168,22 @@ function OverlayBoxes({
   overlays,
   geomCenter,
   selectedObjectId,
-  viewportScope,
   onRequestObjectSelect,
   onGeometryTranslate,
 }: {
   overlays: BuilderObjectOverlay[];
   geomCenter: THREE.Vector3;
   selectedObjectId?: string | null;
-  viewportScope: ViewportScope;
   onRequestObjectSelect?: (id: string) => void;
   onGeometryTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
 }) {
   const groupRef = useRef<THREE.Group>(null);
-  const scopeObjectId = viewportScopeObjectId(viewportScope);
 
   return (
     <group>
       {overlays.map((overlay) => {
         const selected = selectedObjectId === overlay.id;
-        const dimmed = Boolean(scopeObjectId) && scopeObjectId !== overlay.id;
-        if (scopeObjectId && scopeObjectId !== overlay.id) {
-          return null;
-        }
+        const dimmed = Boolean(selectedObjectId) && selectedObjectId !== overlay.id;
         const displayOverlay = expandedOverlay(overlay, selected);
         const size = [
           displayOverlay.boundsMax[0] - displayOverlay.boundsMin[0],
@@ -275,13 +266,11 @@ export default function BoundsPreview3D({
   objectOverlays = [],
   selectedObjectId = null,
   focusObjectRequest = null,
-  viewportScope = "universe",
   worldExtent = null,
   worldCenter = null,
   onRequestObjectSelect,
   onGeometryTranslate,
 }: BoundsPreview3DProps) {
-  const scopeObjectId = viewportScopeObjectId(viewportScope);
   const bounds = useMemo(() => combineOverlayBounds(objectOverlays), [objectOverlays]);
   const frameCenter = worldCenter
     ? new THREE.Vector3(worldCenter[0], worldCenter[1], worldCenter[2])
@@ -373,7 +362,7 @@ export default function BoundsPreview3D({
 
         <CameraAutoFit maxDim={sceneMaxDim} center={new THREE.Vector3(0, 0, 0)} />
 
-        {worldExtent && !scopeObjectId ? (
+        {worldExtent ? (
           <DomainFrameBox
             worldExtent={worldExtent}
             worldCenter={worldCenter ?? [0, 0, 0]}
@@ -385,12 +374,11 @@ export default function BoundsPreview3D({
           overlays={objectOverlays}
           geomCenter={frameCenter}
           selectedObjectId={selectedObjectId}
-          viewportScope={viewportScope}
           onRequestObjectSelect={onRequestObjectSelect}
           onGeometryTranslate={onGeometryTranslate}
         />
 
-        {worldExtent && !scopeObjectId ? (
+        {worldExtent ? (
           <SceneAxes3D worldExtent={worldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
         ) : null}
 

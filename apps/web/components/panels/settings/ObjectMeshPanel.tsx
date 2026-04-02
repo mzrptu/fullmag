@@ -206,6 +206,8 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
   );
   const effectiveOrder = mesh.order ?? model.meshFeOrder ?? null;
   const effectiveSource = mesh.source ?? model.meshSource ?? null;
+  const sharedDomainMesh =
+    ctx.effectiveFemMesh?.domain_mesh_mode === "shared_domain_mesh_with_air";
 
   /* ── Mesh workspace data from context ── */
   const {
@@ -308,11 +310,11 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
     <div className="flex flex-col pt-4 px-2">
 
       {/* ── Object Header ── */}
-      <SidebarSection title="Object Mesh" defaultOpen={true}>
+      <SidebarSection title="Object Mesh Override" defaultOpen={true}>
         <div className="flex flex-col gap-5">
           <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2.5">
             <div className="text-[0.62rem] font-bold uppercase tracking-widest text-muted-foreground">
-              Mesh for Object
+              Mesh Override for Object
             </div>
             <div className="mt-1 flex items-center justify-between gap-3">
               <span className="font-mono text-xs text-foreground">{geo.name}</span>
@@ -330,7 +332,7 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                 updateGeo(() => createInheritedMeshState())
               }
             >
-              Use Global Mesh
+              Inherit Study Mesh
             </Button>
             <Button
               variant={mesh.mode === "custom" ? "default" : "outline"}
@@ -349,7 +351,7 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                 )
               }
             >
-              Customize Mesh
+              Use Local Override
             </Button>
           </div>
 
@@ -368,18 +370,25 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
               )
             }
             options={[
-              { label: "Inherit Global", value: "inherit" },
+              { label: "Inherit Study Mesh", value: "inherit" },
               { label: "Custom Override", value: "custom" },
             ]}
-            tooltip="Whether this object inherits the global mesh defaults or uses a custom mesh recipe."
+            tooltip="Whether this object inherits the study-domain mesh defaults or uses a custom local override."
           />
 
           {mesh.mode === "inherit" && (
             <div className="rounded-lg border border-border/40 bg-card/30 px-3 py-2 text-xs text-muted-foreground">
-              This object currently inherits the study-level FEM mesh settings. Switch to
-              custom mode to freeze and edit a local mesh recipe for this object only.
+              This object currently inherits the study-level FEM mesh settings.
+              Switch to custom mode to edit a local override for the next domain rebuild.
             </div>
           )}
+          {sharedDomainMesh ? (
+            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100/90">
+              Shared-domain FEM uses one conformal solver mesh. This panel edits only this
+              object's local sizing override, but applying it rebuilds the full study-domain
+              mesh rather than an isolated object mesh.
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-2 gap-3">
             <TextField
@@ -445,7 +454,9 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
             }
             quality={meshQualityData}
             generating={ctx.meshGenerating}
-            onGenerate={ctx.handleMeshGenerate}
+            onGenerate={() => void ctx.handleObjectMeshOverrideRebuild(sceneObject?.id ?? geo.name)}
+            generateLabel={sharedDomainMesh ? "Apply Override + Rebuild Domain Mesh" : "Build Mesh"}
+            generatingLabel={sharedDomainMesh ? "Rebuilding Domain Mesh..." : "Building Mesh..."}
             nodeCount={effectiveFemMesh?.nodes.length}
             disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
             waitMode={ctx.isWaitingForCompute}

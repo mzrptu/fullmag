@@ -56,6 +56,8 @@ export interface LiveState {
 }
 
 export interface FemLiveMesh {
+  mesh_name?: string | null;
+  mesh_id?: string | null;
   nodes: [number, number, number][];
   elements: [number, number, number, number][];
   element_markers?: number[];
@@ -64,6 +66,7 @@ export interface FemLiveMesh {
   object_segments?: FemLiveMeshObjectSegment[];
   mesh_parts?: FemMeshPart[];
   domain_mesh_mode?: string | null;
+  domain_frame?: DomainFrameState | null;
   generation_id?: string | null;
 }
 
@@ -263,6 +266,10 @@ export interface RuntimeStatusState {
   can_accept_commands: boolean;
 }
 
+export type MeshCommandTarget =
+  | { kind: "study_domain" }
+  | { kind: "adaptive_followup" };
+
 export interface CommandStatus {
   session_id: string;
   seq: number | null;
@@ -274,6 +281,8 @@ export interface CommandStatus {
   completion_state: string | null;
   reason: string | null;
   display_selection: CurrentDisplaySelection | null;
+  mesh_target?: MeshCommandTarget | null;
+  mesh_reason?: string | null;
 }
 
 export interface ScriptBuilderSolverState {
@@ -617,6 +626,7 @@ export interface SceneDocument {
 }
 
 export interface MeshSummaryState {
+  mesh_id: string | null;
   mesh_name: string;
   mesh_source: string | null;
   backend: string;
@@ -740,6 +750,8 @@ export interface CommandAckCurrentLiveEvent {
   command_kind: string;
   issued_at_unix_ms: number;
   display_selection?: unknown;
+  mesh_target?: unknown;
+  mesh_reason?: unknown;
 }
 
 export interface CommandRejectedCurrentLiveEvent {
@@ -749,6 +761,8 @@ export interface CommandRejectedCurrentLiveEvent {
   command_kind: string;
   issued_at_unix_ms: number;
   reason: string;
+  mesh_target?: unknown;
+  mesh_reason?: unknown;
 }
 
 export interface CommandCompletedCurrentLiveEvent {
@@ -759,6 +773,8 @@ export interface CommandCompletedCurrentLiveEvent {
   command_kind: string;
   completed_at_unix_ms: number;
   completion_state: string;
+  mesh_target?: unknown;
+  mesh_reason?: unknown;
 }
 
 export type RuntimeCurrentLiveEvent =

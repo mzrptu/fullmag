@@ -47,6 +47,21 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes)} B`;
 }
 
+function meshPartRoleLabel(role: string): string {
+  switch (role) {
+    case "air":
+      return "Air";
+    case "magnetic_object":
+      return "Object";
+    case "interface":
+      return "Interface";
+    case "outer_boundary":
+      return "Outer Boundary";
+    default:
+      return humanizeToken(role);
+  }
+}
+
 export default function UniversePanel() {
   const ctx = useControlRoom();
   const selectedNodeId = ctx.selectedSidebarNodeId ?? "universe";
@@ -134,7 +149,8 @@ export default function UniversePanel() {
     [ctx],
   );
   const airViewState = ctx.airPart ? ctx.meshEntityViewState[ctx.airPart.id] : null;
-  const showAirboxPanel = selectedNodeId === "universe-airbox";
+  const showAirboxPanel =
+    selectedNodeId === "universe-airbox" || selectedNodeId === "universe-airbox-mesh";
   const showBoundaryPanel = selectedNodeId === "universe-boundary";
   const showGlobalMeshPanel =
     selectedNodeId === "universe-mesh" ||
@@ -156,7 +172,7 @@ export default function UniversePanel() {
     if (editable && builderUniverse) {
       await ctx.syncScriptBuilder();
     }
-    await ctx.handleMeshGenerate();
+    await ctx.handleAirboxMeshGenerate();
   }, [builderUniverse, ctx, editable]);
   const remeshStatus = ctx.commandStatus?.command_kind === "remesh" ? ctx.commandStatus : null;
   const remeshRxLabel = remeshStatus
@@ -190,6 +206,107 @@ export default function UniversePanel() {
       meshSummary?.boundary_face_count ?? 0,
     ),
   );
+  const handleIsolateAirboxView = useCallback(() => {
+    ctx.setViewMode("3D");
+    ctx.setSelectedSidebarNodeId("universe-airbox");
+    ctx.setSelectedObjectId(null);
+    ctx.setViewportScope("universe");
+    ctx.setObjectViewMode("context");
+    ctx.setAirMeshVisible(true);
+    ctx.setMeshEntityViewState((prev) => {
+      const next = { ...prev };
+      for (const part of ctx.meshParts) {
+        const current = next[part.id];
+        if (!current) continue;
+        next[part.id] = {
+          ...current,
+          visible: part.role === "air",
+        };
+      }
+      return next;
+    });
+  }, [ctx]);
+  const handleShowFullDomainView = useCallback(() => {
+    ctx.setViewMode("3D");
+    ctx.setSelectedSidebarNodeId("universe-airbox");
+    ctx.setSelectedObjectId(null);
+    ctx.setViewportScope("universe");
+    ctx.setObjectViewMode("context");
+    ctx.setAirMeshVisible(true);
+    ctx.setMeshEntityViewState((prev) => {
+      const next = { ...prev };
+      for (const part of ctx.meshParts) {
+        const current = next[part.id];
+        if (!current) continue;
+        next[part.id] = {
+          ...current,
+          visible: true,
+        };
+      }
+      return next;
+    });
+  }, [ctx]);
+  const airboxIsolated = useMemo(
+    () =>
+      Boolean(
+        ctx.airPart &&
+          ctx.meshParts.length > 0 &&
+          ctx.meshParts.every((part) => {
+            const visible = ctx.meshEntityViewState[part.id]?.visible ?? true;
+            return part.role === "air" ? visible : !visible;
+          }),
+      ),
+    [ctx.airPart, ctx.meshEntityViewState, ctx.meshParts],
+  );
+  const showMeshPartsPanel =
+    ctx.isFemBackend &&
+    ctx.meshParts.length > 0 &&
+    (showAirboxPanel || showGlobalMeshPanel);
+  const handleIsolateMeshPart = useCallback(
+    (partId: string) => {
+      ctx.setViewMode("3D");
+      ctx.setSelectedSidebarNodeId("universe-airbox");
+      ctx.setSelectedObjectId(null);
+      ctx.setViewportScope("universe");
+      ctx.setObjectViewMode("context");
+      ctx.setSelectedEntityId(partId);
+      ctx.setFocusedEntityId(partId);
+      ctx.setMeshEntityViewState((prev) => {
+        const next = { ...prev };
+        for (const part of ctx.meshParts) {
+          const current = next[part.id];
+          if (!current) continue;
+          next[part.id] = {
+            ...current,
+            visible: part.id === partId,
+          };
+        }
+        return next;
+      });
+    },
+    [ctx],
+  );
+  const handleShowAllMeshParts = useCallback(() => {
+    ctx.setViewMode("3D");
+    ctx.setSelectedSidebarNodeId("universe-airbox");
+    ctx.setSelectedObjectId(null);
+    ctx.setViewportScope("universe");
+    ctx.setObjectViewMode("context");
+    ctx.setSelectedEntityId(null);
+    ctx.setFocusedEntityId(null);
+    ctx.setMeshEntityViewState((prev) => {
+      const next = { ...prev };
+      for (const part of ctx.meshParts) {
+        const current = next[part.id];
+        if (!current) continue;
+        next[part.id] = {
+          ...current,
+          visible: true,
+        };
+      }
+      return next;
+    });
+  }, [ctx]);
 
   return (
     <>
@@ -332,6 +449,32 @@ export default function UniversePanel() {
                 ]}
               />
             ) : null}
+            <div className="rounded-lg border border-border/35 bg-background/35 p-3">
+              <div className="mb-2 text-[0.62rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                Viewport
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={airboxIsolated ? "default" : "outline"}
+                  onClick={handleIsolateAirboxView}
+                >
+                  Isolate Airbox
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={!airboxIsolated ? "default" : "outline"}
+                  onClick={handleShowFullDomainView}
+                >
+                  Show Full Domain
+                </Button>
+              </div>
+              <div className="mt-2 text-[0.68rem] leading-relaxed text-muted-foreground">
+                `Isolate Airbox` hides magnetic-body mesh parts only in the 3D viewport, so you can inspect the air region by itself without changing the solver mesh.
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 px-2.5 py-2 transition-colors hover:bg-background/60">
                 <div className="flex items-center gap-1.5 text-muted-foreground">
@@ -384,7 +527,7 @@ export default function UniversePanel() {
                     {ctx.scriptSyncBusy ? "Syncing Script..." : "Generating Mesh..."}
                   </span>
                 ) : (
-                  "⚡ Rebuild Airbox Mesh"
+                  "Build Mesh"
                 )}
               </Button>
               <div className="flex flex-col gap-2 pt-1">
@@ -456,8 +599,108 @@ export default function UniversePanel() {
             </div>
             <div className="text-[0.68rem] text-muted-foreground">
               {ctx.scriptSyncMessage
-                ?? "Change `airbox_hmax` here, then use `Rebuild Airbox Mesh` to sync the script, queue remeshing and watch the shared-domain airbox status below."}
+                ?? "Change `airbox_hmax` here, then use `Build Mesh` to sync the script, queue a study-domain remesh and watch the shared-domain airbox status below."}
             </div>
+          </div>
+        </SidebarSection>
+      ) : null}
+
+      {showMeshPartsPanel ? (
+        <SidebarSection title="Mesh Parts" icon="🧩" defaultOpen={true}>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between rounded-lg border border-border/30 bg-card/20 p-2.5">
+              <div className="text-[0.68rem] leading-relaxed text-muted-foreground">
+                Shared-domain viewport now renders canonical mesh parts directly from the realized FEM mesh.
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleShowAllMeshParts}
+              >
+                Show All
+              </Button>
+            </div>
+            {ctx.meshParts.map((part) => {
+              const viewState = ctx.meshEntityViewState[part.id];
+              const visible = viewState?.visible ?? true;
+              const opacity = viewState?.opacity ?? (part.role === "air" ? 28 : 100);
+              const renderMode = viewState?.renderMode ?? (part.role === "air" ? "wireframe" : "surface+edges");
+              return (
+                <div
+                  key={part.id}
+                  className="rounded-lg border border-border/35 bg-background/35 p-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-foreground">
+                        {part.label || part.id}
+                      </div>
+                      <div className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                        {meshPartRoleLabel(part.role)}
+                        {part.object_id ? ` · ${part.object_id}` : ""}
+                      </div>
+                    </div>
+                    <StatusBadge
+                      label={visible ? "Visible" : "Hidden"}
+                      tone={visible ? "accent" : "default"}
+                    />
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-[0.68rem] text-muted-foreground">
+                    <div>Tetrahedra: {part.element_count.toLocaleString()}</div>
+                    <div>Boundary faces: {part.boundary_face_count.toLocaleString()}</div>
+                    <div>Nodes: {part.node_count.toLocaleString()}</div>
+                    <div>Opacity: {opacity}%</div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={visible ? "outline" : "default"}
+                      onClick={() => updateEntityViewState(part.id, { visible: !visible })}
+                    >
+                      {visible ? "Hide" : "Show"}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleIsolateMeshPart(part.id)}
+                    >
+                      Isolate
+                    </Button>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <SelectField
+                      label="Style"
+                      value={renderMode}
+                      onchange={(value) =>
+                        updateEntityViewState(part.id, {
+                          renderMode: value as typeof renderMode,
+                        })}
+                      options={[
+                        { value: "wireframe", label: "Wireframe" },
+                        { value: "surface", label: "Surface" },
+                        { value: "surface+edges", label: "Surface + Edges" },
+                        { value: "points", label: "Points" },
+                      ]}
+                    />
+                    <TextField
+                      key={`mesh-part-opacity-${part.id}-${opacity}`}
+                      label="Opacity (%)"
+                      defaultValue={String(opacity)}
+                      onBlur={(event) => {
+                        const parsed = Number(event.target.value);
+                        if (!Number.isFinite(parsed)) return;
+                        updateEntityViewState(part.id, {
+                          opacity: Math.max(5, Math.min(100, Math.round(parsed))),
+                        });
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </SidebarSection>
       ) : null}

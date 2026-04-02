@@ -114,7 +114,13 @@ export default function RunSidebar() {
     const sharedAirboxDomain =
       model.effectiveFemMesh?.domain_mesh_mode === "shared_domain_mesh_with_air";
     if (isMeshView) {
-      if (sharedAirboxDomain) return "universe-airbox";
+      if (sharedAirboxDomain) {
+        if (model.femDockTab === "quality") return "mesh-quality";
+        if (model.femDockTab === "pipeline") return "mesh-pipeline";
+        if (model.femDockTab === "view") return "mesh-view";
+        if (model.femDockTab === "mesher") return "universe-airbox-mesh";
+        return "universe-airbox-mesh";
+      }
       if (model.femDockTab === "quality") return "universe-mesh-quality";
       if (model.femDockTab === "pipeline") return "universe-mesh-pipeline";
       if (model.femDockTab === "view") return "universe-mesh-view";
@@ -195,6 +201,7 @@ export default function RunSidebar() {
       case "mesh-algorithm":
       case "mesh-quality":
       case "mesh-pipeline":
+      case "universe-airbox-mesh":
       case "universe-mesh":
       case "universe-mesh-view":
       case "universe-mesh-size":

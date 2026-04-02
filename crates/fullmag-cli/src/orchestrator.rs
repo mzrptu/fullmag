@@ -76,32 +76,6 @@ fn fem_mesh_payload_from_backend_plan(
     }
 }
 
-fn single_object_fem_mesh_payload(
-    mesh: &fullmag_ir::MeshIR,
-    object_id: &str,
-) -> fullmag_runner::FemMeshPayload {
-    fullmag_runner::FemMeshPayload {
-        nodes: mesh.nodes.clone(),
-        elements: mesh.elements.clone(),
-        element_markers: mesh.element_markers.clone(),
-        boundary_faces: mesh.boundary_faces.clone(),
-        boundary_markers: mesh.boundary_markers.clone(),
-        object_segments: vec![fullmag_runner::FemMeshObjectSegment {
-            object_id: object_id.to_string(),
-            geometry_id: None,
-            node_start: 0,
-            node_count: mesh.nodes.len() as u32,
-            element_start: 0,
-            element_count: mesh.elements.len() as u32,
-            boundary_face_start: 0,
-            boundary_face_count: mesh.boundary_faces.len() as u32,
-        }],
-        mesh_parts: Vec::new(),
-        domain_mesh_mode: None,
-        generation_id: None,
-    }
-}
-
 fn default_domain_region_markers(
     geometry_entries: &[fullmag_ir::GeometryEntryIR],
 ) -> Vec<fullmag_ir::FemDomainRegionMarkerIR> {
@@ -227,6 +201,7 @@ fn current_fem_mesh_workspace(
 
     serde_json::json!({
         "mesh_summary": {
+            "mesh_id": format!("{}:{}:{}", mesh.mesh_name, mesh.nodes.len(), mesh.elements.len()),
             "mesh_name": mesh.mesh_name,
             "mesh_source": mesh_source,
             "backend": "fem",
@@ -455,12 +430,44 @@ fn execute_manual_interactive_remesh(
     current_fem_hmax_override: &mut Option<f64>,
     current_adaptive_runtime_state: &Option<serde_json::Value>,
 ) -> Result<()> {
+    let mesh_target = command
+        .mesh_target
+        .as_ref()
+        .ok_or_else(|| anyhow!("remesh command is missing mesh_target"))?;
+    if !matches!(mesh_target, MeshCommandTarget::StudyDomain) {
+        bail!(
+            "interactive remesh currently supports only mesh_target=study_domain, got {:?}",
+            mesh_target
+        );
+    }
     let opts = command
         .mesh_options
         .clone()
         .unwrap_or(serde_json::json!({}));
-    eprintln!("[fullmag] remesh requested with options: {}", opts);
-    live_workspace.push_log("info", format!("Remesh requested — options: {}", opts));
+    let mesh_reason = command
+        .mesh_reason
+        .as_deref()
+        .unwrap_or("manual_ui_rebuild");
+    eprintln!(
+        "[fullmag] remesh requested with target=study_domain reason={} options: {}",
+        mesh_reason, opts
+    );
+    live_workspace.push_log(
+        "info",
+        format!(
+            "Remesh requested — target=study_domain · reason={} · options: {}",
+            mesh_reason, opts
+        ),
+    );
+    if mesh_reason == "airbox_parameter_changed" {
+        eprintln!(
+            "[fullmag] remesh note — airbox change requires full shared-domain remesh (ferromagnet geometry included)"
+        );
+        live_workspace.push_log(
+            "info",
+            "Airbox change requires full shared-domain remesh; ferromagnet mesh will also be regenerated",
+        );
+    }
 
     let adaptive_mesh_runtime = problem
         .problem_meta
@@ -477,11 +484,45 @@ fn execute_manual_interactive_remesh(
             plan.domain_mesh_mode,
             fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir
         );
+        let declared_universe = fem_declared_universe(problem);
         let geometry_entry = problem.geometry.entries.first().cloned();
         let hmax = opts
             .get("hmax")
             .and_then(|v| v.as_f64())
             .unwrap_or(plan.hmax);
+        if shared_domain_remesh && mesh_reason == "airbox_parameter_changed" {
+            let airbox_hmax = declared_universe
+                .as_ref()
+                .and_then(|value| value.airbox_hmax);
+            match airbox_hmax {
+                Some(airbox_hmax) if airbox_hmax > 0.0 => {
+                    eprintln!(
+                        "[fullmag] shared-domain remesh scope — updating airbox grading only (airbox_hmax={:.3e} m, magnetic body hmax remains {:.3e} m)",
+                        airbox_hmax, hmax
+                    );
+                    live_workspace.push_log(
+                        "info",
+                        format!(
+                            "Shared-domain remesh scope — airbox grading update only (airbox_hmax={:.3e}, body_hmax={:.3e})",
+                            airbox_hmax, hmax
+                        ),
+                    );
+                }
+                _ => {
+                    eprintln!(
+                        "[fullmag] shared-domain remesh scope — rebuilding study mesh after airbox parameter change (magnetic body hmax remains {:.3e} m)",
+                        hmax
+                    );
+                    live_workspace.push_log(
+                        "info",
+                        format!(
+                            "Shared-domain remesh scope — airbox parameter change detected; body_hmax remains {:.3e}",
+                            hmax
+                        ),
+                    );
+                }
+            }
+        }
         eprintln!(
             "[fullmag] meshing in progress — hmax={:.3e} m, order=P{} ...",
             hmax, plan.fe_order
@@ -532,18 +573,16 @@ fn execute_manual_interactive_remesh(
         });
 
         let remesh_attempt = if shared_domain_remesh {
-            let study_universe = problem
-                .problem_meta
-                .runtime_metadata
-                .get("study_universe")
-                .ok_or_else(|| {
-                    anyhow!(
-                        "shared-domain remesh requires study_universe metadata in runtime state"
-                    )
-                })?;
+            let declared_universe = declared_universe.ok_or_else(|| {
+                anyhow!(
+                    "shared-domain remesh requires a declared universe in domain_frame or study_universe metadata"
+                )
+            })?;
+            let declared_universe_value = serde_json::to_value(&declared_universe)
+                .context("failed to serialize declared universe for shared-domain remesh")?;
             invoke_shared_domain_remesh_full(
                 &problem.geometry.entries,
-                study_universe,
+                &declared_universe_value,
                 hmax,
                 plan.fe_order,
                 &opts,
@@ -649,6 +688,8 @@ fn execute_manual_interactive_remesh(
                         "gamma_min": quality.gamma_min,
                         "avg_quality": quality.avg_quality,
                     })),
+                    "mesh_target": "study_domain",
+                    "mesh_reason": mesh_reason,
                     "mesh_provenance": remesh_result.mesh_provenance,
                     "size_field_stats": remesh_result.size_field_stats,
                 }));
@@ -1622,6 +1663,10 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 let geometry_entry = stages[0].ir.geometry.entries.first().cloned();
                 let fe_order = fem_plan.fe_order;
                 let mut current_hmax = fem_plan.hmax;
+                let shared_domain_remesh = matches!(
+                    fem_plan.domain_mesh_mode,
+                    fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir
+                );
 
                 if let Some(geom) = geometry_entry {
                     for attempt in 1..=5 {
@@ -1638,13 +1683,36 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             ),
                         );
 
-                        match invoke_remesh_full(
-                            &geom,
-                            current_hmax,
-                            fe_order,
-                            &serde_json::json!({"compute_quality": true}),
-                            None,
-                        ) {
+                        let remesh_attempt = if shared_domain_remesh {
+                            let declared_universe = fem_declared_universe(&stages[0].ir)
+                                .ok_or_else(|| {
+                                    anyhow!(
+                                        "shared-domain auto-coarsen requires a declared universe in domain_frame or study_universe metadata"
+                                    )
+                                })?;
+                            let declared_universe_value =
+                                serde_json::to_value(&declared_universe).context(
+                                    "failed to serialize declared universe for shared-domain auto-coarsen",
+                                )?;
+                            invoke_shared_domain_remesh_full(
+                                &stages[0].ir.geometry.entries,
+                                &declared_universe_value,
+                                current_hmax,
+                                fe_order,
+                                &serde_json::json!({"compute_quality": true}),
+                                None,
+                            )
+                        } else {
+                            invoke_remesh_full(
+                                &geom,
+                                current_hmax,
+                                fe_order,
+                                &serde_json::json!({"compute_quality": true}),
+                                None,
+                            )
+                        };
+
+                        match remesh_attempt {
                             Ok(remesh_result) => {
                                 let new_mesh = remesh_result.clone().into_mesh_ir();
                                 let new_nodes = new_mesh.nodes.len();
@@ -1655,13 +1723,6 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                     new_ram as f64 / 1e9
                                 );
 
-                                for stage in stages.iter_mut() {
-                                    if let Some(assets) = stage.ir.geometry_assets.as_mut() {
-                                        for fem_asset in assets.fem_mesh_assets.iter_mut() {
-                                            fem_asset.mesh = Some(new_mesh.clone());
-                                        }
-                                    }
-                                }
                                 current_mesh_quality = remesh_result.quality.clone();
                                 current_fem_mesh_override = Some(new_mesh.clone());
                                 current_fem_hmax_override = Some(current_hmax);
@@ -1672,18 +1733,96 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                     "element_count": new_mesh.elements.len(),
                                     "boundary_face_count": new_mesh.boundary_faces.len(),
                                     "kind": "auto_coarsen",
+                                    "mesh_target": "study_domain",
+                                    "mesh_reason": "auto_coarsen",
                                     "mesh_provenance": remesh_result.mesh_provenance,
                                 }));
 
+                                for stage in stages.iter_mut() {
+                                    apply_current_fem_overrides(
+                                        &mut stage.ir,
+                                        Some(&new_mesh),
+                                        Some(current_hmax),
+                                        current_adaptive_runtime_state.as_ref(),
+                                    );
+                                    if shared_domain_remesh {
+                                        let region_markers =
+                                            if remesh_result.region_markers.is_empty() {
+                                                default_domain_region_markers(
+                                                    &stage.ir.geometry.entries,
+                                                )
+                                            } else {
+                                                remesh_result.region_markers.clone()
+                                            };
+                                        let domain_asset = stage
+                                            .ir
+                                            .geometry_assets
+                                            .as_mut()
+                                            .and_then(|assets| {
+                                                assets.fem_domain_mesh_asset.as_mut()
+                                            })
+                                            .ok_or_else(|| {
+                                                anyhow!(
+                                                    "shared-domain auto-coarsen produced no fem_domain_mesh_asset"
+                                                )
+                                            })?;
+                                        domain_asset.region_markers = region_markers;
+                                    }
+                                }
+
                                 if new_ram <= ram_budget {
-                                    let mesh_payload =
-                                        single_object_fem_mesh_payload(&new_mesh, &geom.name());
+                                    let live_mesh_payload = {
+                                        let mut remeshed_problem = stages[0].ir.clone();
+                                        apply_current_fem_overrides(
+                                            &mut remeshed_problem,
+                                            Some(&new_mesh),
+                                            Some(current_hmax),
+                                            current_adaptive_runtime_state.as_ref(),
+                                        );
+                                        if shared_domain_remesh {
+                                            let region_markers =
+                                                if remesh_result.region_markers.is_empty() {
+                                                    default_domain_region_markers(
+                                                        &remeshed_problem.geometry.entries,
+                                                    )
+                                                } else {
+                                                    remesh_result.region_markers.clone()
+                                                };
+                                            remeshed_problem
+                                                .geometry_assets
+                                                .as_mut()
+                                                .and_then(|assets| {
+                                                    assets.fem_domain_mesh_asset.as_mut()
+                                                })
+                                                .ok_or_else(|| {
+                                                    anyhow!(
+                                                        "shared-domain auto-coarsen produced no attached fem_domain_mesh_asset"
+                                                    )
+                                                })?
+                                                .region_markers = region_markers;
+                                        }
+                                        fem_mesh_payload_from_backend_plan(
+                                            &fullmag_plan::plan(&remeshed_problem)
+                                                .map_err(|error| anyhow!(error.to_string()))?
+                                                .backend_plan,
+                                        )
+                                        .ok_or_else(|| {
+                                            anyhow!(
+                                                "auto-coarsen updated backend plan did not produce a FEM mesh payload"
+                                            )
+                                        })?
+                                    };
                                     live_workspace.update(|state| {
-                                        state.live_state.latest_step.fem_mesh = Some(mesh_payload);
+                                        state.live_state.latest_step.fem_mesh =
+                                            Some(live_mesh_payload);
                                         state.mesh_workspace = Some(current_fem_mesh_workspace(
                                             &stages[0].ir,
                                             &new_mesh,
-                                            fem_plan.mesh_source.as_deref(),
+                                            if shared_domain_remesh {
+                                                None
+                                            } else {
+                                                fem_plan.mesh_source.as_deref()
+                                            },
                                             fe_order,
                                             current_hmax,
                                             "waiting_for_compute",

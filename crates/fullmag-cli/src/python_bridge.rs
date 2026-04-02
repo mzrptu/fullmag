@@ -477,7 +477,7 @@ pub(crate) fn invoke_remesh_full(
 
 pub(crate) fn invoke_shared_domain_remesh_full(
     geometry_entries: &[fullmag_ir::GeometryEntryIR],
-    study_universe: &serde_json::Value,
+    declared_universe: &serde_json::Value,
     hmax: f64,
     fe_order: u32,
     mesh_options: &serde_json::Value,
@@ -486,7 +486,7 @@ pub(crate) fn invoke_shared_domain_remesh_full(
     let payload = serde_json::json!({
         "mode": "shared_domain_manual_remesh",
         "geometries": geometry_entries,
-        "study_universe": study_universe,
+        "declared_universe": declared_universe,
         "hmax": hmax,
         "order": fe_order,
         "mesh_name": "study_domain",
@@ -524,15 +524,6 @@ pub(crate) fn invoke_shared_domain_remesh_full(
         )
     })?;
     Ok(mesh)
-}
-
-pub(crate) fn invoke_remesh(
-    geometry_entry: &fullmag_ir::GeometryEntryIR,
-    hmax: f64,
-    fe_order: u32,
-    mesh_options: &serde_json::Value,
-) -> Result<fullmag_ir::MeshIR> {
-    Ok(invoke_remesh_full(geometry_entry, hmax, fe_order, mesh_options, None)?.into_mesh_ir())
 }
 
 pub(crate) fn invoke_adaptive_remesh_full(

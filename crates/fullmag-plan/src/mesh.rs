@@ -154,21 +154,10 @@ pub(crate) fn load_fem_domain_mesh_asset(asset: &FemDomainMeshAssetIR) -> Result
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DetectedInterface {
-    pub marker_a: u32,
-    pub marker_b: u32,
-    pub object_a: String,
-    pub object_b: String,
-    pub shared_face_count: u32,
-    pub shared_node_count: u32,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct SharedDomainAnalysis {
     pub node_owner: Vec<u32>,
     pub face_owner: BTreeMap<(u32, u32, u32), u32>,
-    pub interfaces: Vec<DetectedInterface>,
     pub ordered_regions: Vec<(String, u32)>,
     pub shared_interface_nodes: Vec<(u32, Vec<u32>)>,
 }
@@ -242,54 +231,17 @@ pub(crate) fn analyze_shared_domain_mesh(
     }
 
     let mut face_owner = BTreeMap::<(u32, u32, u32), u32>::new();
-    let mut interface_face_counts = BTreeMap::<(u32, u32), u32>::new();
     for (face_key, markers) in &face_markers {
         if markers.len() <= 1 {
             face_owner.insert(*face_key, markers.iter().copied().next().unwrap_or(0));
             continue;
         }
         face_owner.insert(*face_key, u32::MAX);
-        let marker_list = markers.iter().copied().collect::<Vec<_>>();
-        for i in 0..marker_list.len() {
-            for j in (i + 1)..marker_list.len() {
-                let pair = if marker_list[i] <= marker_list[j] {
-                    (marker_list[i], marker_list[j])
-                } else {
-                    (marker_list[j], marker_list[i])
-                };
-                *interface_face_counts.entry(pair).or_insert(0) += 1;
-            }
-        }
-    }
-
-    let mut interfaces = Vec::new();
-    for ((marker_a, marker_b), shared_face_count) in interface_face_counts {
-        let object_a = marker_to_object
-            .get(&marker_a)
-            .cloned()
-            .unwrap_or_else(|| format!("marker_{marker_a}"));
-        let object_b = marker_to_object
-            .get(&marker_b)
-            .cloned()
-            .unwrap_or_else(|| format!("marker_{marker_b}"));
-        let shared_node_count = shared_interface_nodes
-            .iter()
-            .filter(|(_, markers)| markers.contains(&marker_a) && markers.contains(&marker_b))
-            .count() as u32;
-        interfaces.push(DetectedInterface {
-            marker_a,
-            marker_b,
-            object_a,
-            object_b,
-            shared_face_count,
-            shared_node_count,
-        });
     }
 
     Ok(SharedDomainAnalysis {
         node_owner,
         face_owner,
-        interfaces,
         ordered_regions,
         shared_interface_nodes,
     })
@@ -552,32 +504,6 @@ pub(crate) fn reorder_shared_domain_mesh(
     pack_mesh_by_analysis(mesh, &analysis)
 }
 
-pub(crate) fn build_mesh_parts_from_analysis(
-    mesh: &MeshIR,
-    analysis: &SharedDomainAnalysis,
-    object_segments: &[FemObjectSegmentIR],
-    domain_mesh_mode: FemDomainMeshModeIR,
-) -> Vec<FemMeshPartIR> {
-    let mut parts = build_mesh_parts_from_segments(mesh, object_segments, domain_mesh_mode);
-    for interface in &analysis.interfaces {
-        parts.push(FemMeshPartIR {
-            id: format!("interface:{}:{}", interface.object_a, interface.object_b),
-            label: format!("{} ↔ {}", interface.object_a, interface.object_b),
-            role: FemMeshPartRole::Interface,
-            object_id: None,
-            geometry_id: None,
-            material_id: None,
-            element_selector: FemMeshPartSelector::ElementMarkerSet { markers: vec![] },
-            boundary_face_selector: FemMeshPartSelector::BoundaryFaceRange { start: 0, count: 0 },
-            node_selector: FemMeshPartSelector::NodeRange { start: 0, count: 0 },
-            bounds_min: None,
-            bounds_max: None,
-            parent_id: None,
-        });
-    }
-    parts
-}
-
 pub(crate) fn resolve_fem_domain_mesh_asset(
     problem: &ProblemIR,
     solver_supports_conformal: bool,
@@ -770,14 +696,19 @@ pub(crate) fn study_universe_planner_note(
 ) -> Option<String> {
     let study_universe = study_universe_metadata(problem)?;
     if let Some(config) = air_box_config {
+        let airbox_hmax_note = study_universe
+            .airbox_hmax
+            .map(|value| format!(", airbox_hmax={value:.3e}"))
+            .unwrap_or_default();
         return Some(format!(
-            "study_universe lowered to FEM air-box configuration (mode={}, center=[{:.3e}, {:.3e}, {:.3e}], factor={:.3}, boundary_marker={})",
+            "study_universe lowered to FEM air-box configuration (mode={}, center=[{:.3e}, {:.3e}, {:.3e}], factor={:.3}, boundary_marker={}{})",
             study_universe.mode,
             study_universe.center[0],
             study_universe.center[1],
             study_universe.center[2],
             config.factor,
-            config.boundary_marker
+            config.boundary_marker,
+            airbox_hmax_note,
         ));
     }
 

@@ -48,18 +48,18 @@ def _geometry_from_ir(entry: dict[str, Any]) -> Any:
 
     if kind == "box":
         size = entry["size"]
-        return Box(size[0], size[1], size[2])
+        return Box(size[0], size[1], size[2], name=entry.get("name", "box"))
     if kind == "cylinder":
-        return Cylinder(entry["radius"], entry["height"])
+        return Cylinder(entry["radius"], entry["height"], name=entry.get("name", "cylinder"))
     if kind == "ellipsoid":
         radii = entry["radii"]
-        return Ellipsoid(radii[0], radii[1], radii[2])
+        return Ellipsoid(radii[0], radii[1], radii[2], name=entry.get("name", "ellipsoid"))
     if kind == "sphere":
         r = entry["radius"]
-        return Ellipsoid(r, r, r)  # Sphere → Ellipsoid with equal radii
+        return Ellipsoid(r, r, r, name=entry.get("name", "sphere"))  # Sphere → Ellipsoid with equal radii
     if kind == "ellipse":
         radii = entry["radii"]
-        return Ellipse(radii[0], radii[1], entry["height"])
+        return Ellipse(radii[0], radii[1], entry["height"], name=entry.get("name", "ellipse"))
     if kind == "imported_geometry":
         raw_scale = entry.get("scale", 1.0)
         # Rust serializes ImportedGeometryScaleIR as {"Uniform": f} or {"Anisotropic": [x,y,z]}
@@ -72,27 +72,32 @@ def _geometry_from_ir(entry: dict[str, Any]) -> Any:
             source=entry["source"],
             scale=raw_scale,
             volume=entry.get("volume", "full"),
+            name=entry.get("name"),
         )
     if kind == "difference":
         return Difference(
             base=_geometry_from_ir(entry["base"]),
             tool=_geometry_from_ir(entry["tool"]),
+            name=entry.get("name", "difference"),
         )
     if kind == "union":
         return Union(
             a=_geometry_from_ir(entry["a"]),
             b=_geometry_from_ir(entry["b"]),
+            name=entry.get("name", "union"),
         )
     if kind == "intersection":
         return Intersection(
             a=_geometry_from_ir(entry["a"]),
             b=_geometry_from_ir(entry["b"]),
+            name=entry.get("name", "intersection"),
         )
     if kind == "translate":
         by = entry["by"]
         return Translate(
             geometry=_geometry_from_ir(entry["base"]),
             offset=(by[0], by[1], by[2]),
+            name=entry.get("name"),
         )
     raise ValueError(f"unsupported geometry kind for remesh: {kind!r}")
 
@@ -173,8 +178,23 @@ def _mesh_result_payload(
     return result
 
 
-def _describe_remesh_job(mode: str, hmax: float, order: int) -> str:
-    return f"Remesh: accepted - mode={mode}, hmax={float(hmax):.3e}, order=P{int(order)}"
+def _describe_remesh_job(
+    mode: str,
+    hmax: float,
+    order: int,
+    *,
+    declared_universe: dict[str, Any] | None = None,
+) -> str:
+    summary = f"Remesh: accepted - mode={mode}, hmax={float(hmax):.3e}, order=P{int(order)}"
+    if mode != "shared_domain_manual_remesh" or not isinstance(declared_universe, dict):
+        return summary
+    airbox_hmax = declared_universe.get("airbox_hmax")
+    if isinstance(airbox_hmax, (int, float)) and float(airbox_hmax) > 0.0:
+        return (
+            f"{summary}, scope=shared_domain, body_hmax={float(hmax):.3e}, "
+            f"airbox_hmax={float(airbox_hmax):.3e}"
+        )
+    return f"{summary}, scope=shared_domain"
 
 
 def main() -> None:
@@ -196,7 +216,18 @@ def main() -> None:
         if mode == "adaptive_size_field":
             mesh_opts.compute_quality = bool(mesh_opts_dict.get("compute_quality", True))
             mesh_opts.per_element_quality = bool(mesh_opts_dict.get("per_element_quality", False))
-        emit_progress(_describe_remesh_job(mode, float(hmax), int(order)))
+        emit_progress(
+            _describe_remesh_job(
+                mode,
+                float(hmax),
+                int(order),
+                declared_universe=(
+                    config.get("declared_universe")
+                    if isinstance(config.get("declared_universe"), dict)
+                    else config.get("study_universe")
+                ),
+            )
+        )
         region_markers = None
 
         # Redirect the real stdout fd to /dev/null during mesh generation —
@@ -227,16 +258,18 @@ def main() -> None:
                     raise ValueError(
                         "shared_domain_manual_remesh mode requires a non-empty geometries payload"
                     )
-                study_universe = config.get("study_universe")
-                if not isinstance(study_universe, dict):
+                declared_universe = config.get("declared_universe")
+                if not isinstance(declared_universe, dict):
+                    declared_universe = config.get("study_universe")
+                if not isinstance(declared_universe, dict):
                     raise ValueError(
-                        "shared_domain_manual_remesh mode requires a study_universe payload"
+                        "shared_domain_manual_remesh mode requires a declared_universe payload"
                     )
                 geometries = [_geometry_from_ir(entry) for entry in raw_geometries]
                 mesh_data, region_markers = realize_fem_domain_mesh_asset(
                     geometries,
                     FEM(order=int(order), hmax=float(hmax)),
-                    study_universe=study_universe,
+                    study_universe=declared_universe,
                 )
             elif mode == "manual_remesh":
                 mesh_data = generate_mesh(geometry, hmax=hmax, order=order, options=mesh_opts)

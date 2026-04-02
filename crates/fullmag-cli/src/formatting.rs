@@ -73,6 +73,10 @@ pub(crate) fn fem_domain_frame(
     base_frame.with_mesh_bounds(mesh_bounds).finalized()
 }
 
+pub(crate) fn fem_declared_universe(problem: &ProblemIR) -> Option<DeclaredUniverseIR> {
+    fem_domain_frame(problem, None).and_then(|frame| frame.declared_universe)
+}
+
 pub(crate) fn log_execution_plan(
     stage_index: usize,
     stage_count: usize,

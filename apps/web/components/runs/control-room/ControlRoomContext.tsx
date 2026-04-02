@@ -891,6 +891,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const meshFeOrder = typeof femArtifactLayout?.fe_order === "number" ? femArtifactLayout.fe_order : null;
   const meshHmax = typeof femArtifactLayout?.hmax === "number" ? femArtifactLayout.hmax : null;
   const meshSummary = meshWorkspace?.mesh_summary ?? null;
+  const liveMeshName = typeof femMesh?.mesh_name === "string" ? femMesh.mesh_name : null;
+  const liveMeshDomainFrame = femMesh?.domain_frame ?? null;
   const builderObjectOverlays = useMemo<BuilderObjectOverlay[]>(
     () => buildObjectOverlays(scriptBuilderGeometries, femMesh),
     [femMesh, scriptBuilderGeometries],
@@ -916,6 +918,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const domainFrame = useMemo<DomainFrameState | null>(() => {
     if (!isFemBackend) {
       return null;
+    }
+    if (liveMeshDomainFrame) {
+      return liveMeshDomainFrame;
     }
     const builderDomainFrame = scriptBuilder?.domain_frame ?? null;
     const meshDomainFrame = meshSummary?.domain_frame ?? null;
@@ -982,6 +987,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     layoutWorldCenter,
     layoutWorldExtent,
     layoutWorldExtentSource,
+    liveMeshDomainFrame,
     meshBoundsMax,
     meshBoundsMin,
     meshSummary?.domain_frame,
@@ -1281,6 +1287,68 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     }
   }, [appendFrontendTrace, liveApi]);
 
+  const buildMeshOptionsPayload = useCallback(
+    (
+      options: MeshOptionsState,
+      refinementZonesOverride?: MeshOptionsState["refinementZones"],
+    ) => ({
+      algorithm_2d: options.algorithm2d,
+      algorithm_3d: options.algorithm3d,
+      hmax: options.hmax ? parseFloat(options.hmax) : null,
+      hmin: options.hmin ? parseFloat(options.hmin) : null,
+      size_factor: options.sizeFactor,
+      size_from_curvature: options.sizeFromCurvature,
+      growth_rate: options.growthRate ? parseFloat(options.growthRate) : null,
+      narrow_regions: options.narrowRegions,
+      smoothing_steps: options.smoothingSteps,
+      optimize: options.optimize || null,
+      optimize_iterations: options.optimizeIters,
+      compute_quality: options.computeQuality,
+      per_element_quality: options.perElementQuality,
+      size_fields:
+        (refinementZonesOverride ?? options.refinementZones).length > 0
+          ? (refinementZonesOverride ?? options.refinementZones)
+          : undefined,
+    }),
+    [],
+  );
+
+  const enqueueStudyDomainRemesh = useCallback(
+    async (
+      meshReason: string,
+      meshOptionsPayload: Record<string, unknown>,
+    ) => {
+      setCommandPostInFlight(true);
+      setCommandErrorMessage(null);
+      const payload = {
+        kind: "remesh",
+        mesh_target: { kind: "study_domain" },
+        mesh_reason: meshReason,
+        mesh_options: meshOptionsPayload,
+      };
+      appendFrontendTrace("info", `TX: REMESH ${JSON.stringify(payload)}`);
+      try {
+        await liveApi.queueStudyDomainRemesh(meshOptionsPayload, meshReason);
+        appendFrontendTrace(
+          "system",
+          `RX: HTTP accepted REMESH target=study_domain reason=${meshReason}`,
+        );
+      } catch (e) {
+        appendFrontendTrace(
+          "error",
+          `RX: HTTP rejected REMESH target=study_domain — ${e instanceof Error ? e.message : "Failed to queue command"}`,
+        );
+        setCommandErrorMessage(
+          e instanceof Error ? e.message : "Failed to queue remesh command",
+        );
+        throw e;
+      } finally {
+        setCommandPostInFlight(false);
+      }
+    },
+    [appendFrontendTrace, liveApi],
+  );
+
   const updatePreview = useCallback(async (path: string, payload: Record<string, unknown> = {}) => {
     const nextSelection: DisplaySelection = { ...requestedDisplaySelection };
     switch (path) {
@@ -1334,32 +1402,102 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [kindForQuantity, liveApi, requestedDisplaySelection]);
 
   const meshGenTopologyRef = useRef<string | null>(null);
+  const meshGenGenerationRef = useRef<string | null>(null);
+  const femGenerationIdRef = useRef<string | null>(null);
 
-  const handleMeshGenerate = useCallback(async () => {
+  const handleStudyDomainMeshGenerate = useCallback(async () => {
     setMeshGenerating(true);
     meshGenTopologyRef.current = femTopologyKeyRef.current;
+    meshGenGenerationRef.current = femGenerationIdRef.current;
     try {
-      await enqueueCommand({
-        kind: "remesh",
-        mesh_options: {
-          algorithm_2d: meshOptions.algorithm2d, algorithm_3d: meshOptions.algorithm3d,
-          hmax: meshOptions.hmax ? parseFloat(meshOptions.hmax) : null,
-          hmin: meshOptions.hmin ? parseFloat(meshOptions.hmin) : null,
-          size_factor: meshOptions.sizeFactor, size_from_curvature: meshOptions.sizeFromCurvature,
-          growth_rate: meshOptions.growthRate ? parseFloat(meshOptions.growthRate) : null,
-          narrow_regions: meshOptions.narrowRegions,
-          smoothing_steps: meshOptions.smoothingSteps, optimize: meshOptions.optimize || null,
-          optimize_iterations: meshOptions.optimizeIters, compute_quality: meshOptions.computeQuality,
-          per_element_quality: meshOptions.perElementQuality,
-          size_fields: meshOptions.refinementZones.length > 0 ? meshOptions.refinementZones : undefined,
-        },
-      });
+      await enqueueStudyDomainRemesh(
+        "manual_ui_rebuild",
+        buildMeshOptionsPayload(meshOptions),
+      );
     } catch (err) {
       setCommandErrorMessage(err instanceof Error ? err.message : "Mesh generation failed");
       setMeshGenerating(false);
       meshGenTopologyRef.current = null;
+      meshGenGenerationRef.current = null;
     }
-  }, [enqueueCommand, meshOptions]);
+  }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshOptions]);
+
+  const handleAirboxMeshGenerate = useCallback(async () => {
+    setMeshGenerating(true);
+    meshGenTopologyRef.current = femTopologyKeyRef.current;
+    meshGenGenerationRef.current = femGenerationIdRef.current;
+    try {
+      await enqueueStudyDomainRemesh(
+        "airbox_parameter_changed",
+        buildMeshOptionsPayload(meshOptions),
+      );
+    } catch (err) {
+      setCommandErrorMessage(
+        err instanceof Error ? err.message : "Airbox mesh rebuild failed",
+      );
+      setMeshGenerating(false);
+      meshGenTopologyRef.current = null;
+      meshGenGenerationRef.current = null;
+    }
+  }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshOptions]);
+
+  const handleObjectMeshOverrideRebuild = useCallback(
+    async (objectId?: string | null) => {
+      setMeshGenerating(true);
+      meshGenTopologyRef.current = femTopologyKeyRef.current;
+      meshGenGenerationRef.current = femGenerationIdRef.current;
+      try {
+        const scriptPath = session?.script_path ?? null;
+        if (!scriptPath) {
+          throw new Error("No script path is available for the active workspace");
+        }
+        setScriptSyncBusy(true);
+        setScriptSyncMessage(null);
+        appendFrontendTrace("info", `TX: SCRIPT_SYNC ${scriptPath}`);
+        if (builderPushTimerRef.current) {
+          clearTimeout(builderPushTimerRef.current);
+          builderPushTimerRef.current = null;
+        }
+        await liveApi.updateSceneDocument(localBuilderDraft);
+        lastBuilderPushSignatureRef.current = localBuilderSignature;
+        const response = await liveApi.syncScript();
+        const syncedPath =
+          typeof response.script_path === "string" && response.script_path.trim().length > 0
+            ? response.script_path
+            : scriptPath;
+        setScriptSyncMessage(
+          `Synced ${syncedPath.split("/").pop() ?? "script"} to canonical Python`,
+        );
+        appendFrontendTrace(
+          "success",
+          `RX: SCRIPT_SYNC ok — ${syncedPath.split("/").pop() ?? "script"}`,
+        );
+        await enqueueStudyDomainRemesh(
+          objectId ? `object_mesh_override_changed:${objectId}` : "object_mesh_override_changed",
+          buildMeshOptionsPayload(meshOptions),
+        );
+      } catch (err) {
+        setCommandErrorMessage(
+          err instanceof Error ? err.message : "Object mesh override rebuild failed",
+        );
+        setMeshGenerating(false);
+        meshGenTopologyRef.current = null;
+        meshGenGenerationRef.current = null;
+      } finally {
+        setScriptSyncBusy(false);
+      }
+    },
+    [
+      appendFrontendTrace,
+      buildMeshOptionsPayload,
+      enqueueStudyDomainRemesh,
+      liveApi,
+      localBuilderDraft,
+      localBuilderSignature,
+      meshOptions,
+      session?.script_path,
+    ],
+  );
 
   const handleLassoRefine = useCallback(async (faceIndices: number[], factor: number) => {
     const currentFemMeshData = femMeshDataRef.current;
@@ -1394,28 +1532,19 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
     setMeshGenerating(true);
     meshGenTopologyRef.current = femTopologyKeyRef.current;
+    meshGenGenerationRef.current = femGenerationIdRef.current;
     try {
-      await liveApi.queueCommand({
-        kind: "remesh",
-        mesh_options: {
-          algorithm_2d: meshOptions.algorithm2d, algorithm_3d: meshOptions.algorithm3d,
-          hmax: meshOptions.hmax ? parseFloat(meshOptions.hmax) : null,
-          hmin: meshOptions.hmin ? parseFloat(meshOptions.hmin) : null,
-          size_factor: meshOptions.sizeFactor, size_from_curvature: meshOptions.sizeFromCurvature,
-          growth_rate: meshOptions.growthRate ? parseFloat(meshOptions.growthRate) : null,
-          narrow_regions: meshOptions.narrowRegions,
-          smoothing_steps: meshOptions.smoothingSteps, optimize: meshOptions.optimize || null,
-          optimize_iterations: meshOptions.optimizeIters, compute_quality: meshOptions.computeQuality,
-          per_element_quality: meshOptions.perElementQuality,
-          size_fields: updatedZones,
-        },
-      });
+      await enqueueStudyDomainRemesh(
+        "lasso_refine",
+        buildMeshOptionsPayload(meshOptions, updatedZones),
+      );
     } catch (err) {
       setCommandErrorMessage(err instanceof Error ? err.message : "Lasso refine failed");
       setMeshGenerating(false);
       meshGenTopologyRef.current = null;
+      meshGenGenerationRef.current = null;
     }
-  }, [meshOptions, liveApi, meshHmax]);
+  }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshHmax, meshOptions]);
 
   const handleCompute = useCallback(() => {
     void enqueueCommand({ kind: "solve" });
@@ -1966,6 +2095,38 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     () => meshParts.filter((part) => part.role === "interface"),
     [meshParts],
   );
+  const visibleMeshPartIds = useMemo(
+    () =>
+      meshParts
+        .filter((part) => meshEntityViewState[part.id]?.visible ?? true)
+        .map((part) => part.id),
+    [meshEntityViewState, meshParts],
+  );
+  const visibleMagneticObjectIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          meshParts
+            .filter(
+              (part) =>
+                part.role === "magnetic_object" &&
+                (meshEntityViewState[part.id]?.visible ?? true) &&
+                typeof part.object_id === "string" &&
+                part.object_id.length > 0,
+            )
+            .map((part) => part.object_id as string),
+        ),
+      ),
+    [meshEntityViewState, meshParts],
+  );
+  const selectedMeshPart = useMemo(
+    () => meshParts.find((part) => part.id === selectedEntityId) ?? null,
+    [meshParts, selectedEntityId],
+  );
+  const focusedMeshPart = useMemo(
+    () => meshParts.find((part) => part.id === focusedEntityId) ?? null,
+    [focusedEntityId, meshParts],
+  );
   const objectOverlays = useMemo<BuilderObjectOverlay[]>(
     () => buildObjectOverlays(scriptBuilderGeometries, effectiveFemMesh),
     [effectiveFemMesh, scriptBuilderGeometries],
@@ -2063,33 +2224,124 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     }
   }, [focusedEntityId, meshParts, selectedEntityId]);
 
-  // Keep femTopologyKeyRef in sync so handleMeshGenerate can snapshot the current key
-  femTopologyKeyRef.current = femTopologyKey;
+  useEffect(() => {
+    if (!meshParts.length) {
+      return;
+    }
+    let nextEntityId: string | null = null;
+    if (
+      selectedSidebarNodeId === "universe-airbox" ||
+      selectedSidebarNodeId === "universe-airbox-mesh"
+    ) {
+      nextEntityId = airPart?.id ?? null;
+    } else if (selectedObjectId) {
+      nextEntityId =
+        meshParts.find(
+          (part) =>
+            part.role === "magnetic_object" && part.object_id === selectedObjectId,
+        )?.id ?? null;
+    }
+    if (nextEntityId !== selectedEntityId) {
+      setSelectedEntityId(nextEntityId);
+    }
+    if (nextEntityId !== focusedEntityId) {
+      setFocusedEntityId(nextEntityId);
+    }
+  }, [
+    airPart?.id,
+    focusedEntityId,
+    meshParts,
+    selectedEntityId,
+    selectedObjectId,
+    selectedSidebarNodeId,
+  ]);
 
-  // Clear meshGenerating flag once the topology actually changes after a remesh command,
-  // or when the remesh command completes with an error on the backend.
+  useEffect(() => {
+    if (!airPart) {
+      return;
+    }
+    const current = meshEntityViewState[airPart.id];
+    if (!current) {
+      return;
+    }
+    if (current.visible !== airMeshVisible || current.opacity !== airMeshOpacity) {
+      setMeshEntityViewState((prev) => {
+        const nextCurrent = prev[airPart.id];
+        if (!nextCurrent) {
+          return prev;
+        }
+        if (
+          nextCurrent.visible === airMeshVisible &&
+          nextCurrent.opacity === airMeshOpacity
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [airPart.id]: {
+            ...nextCurrent,
+            visible: airMeshVisible,
+            opacity: airMeshOpacity,
+          },
+        };
+      });
+    }
+  }, [airMeshOpacity, airMeshVisible, airPart, meshEntityViewState]);
+
+  useEffect(() => {
+    if (!airPart) {
+      return;
+    }
+    const current = meshEntityViewState[airPart.id];
+    if (!current) {
+      return;
+    }
+    if (airMeshVisible !== current.visible) {
+      setAirMeshVisible(current.visible);
+    }
+    if (airMeshOpacity !== current.opacity) {
+      setAirMeshOpacity(current.opacity);
+    }
+  }, [airMeshOpacity, airMeshVisible, airPart, meshEntityViewState]);
+
+  // Keep femTopologyKeyRef in sync so study-domain remesh actions can snapshot the current key
+  femTopologyKeyRef.current = femTopologyKey;
+  femGenerationIdRef.current =
+    effectiveFemMesh?.generation_id ?? meshSummary?.generation_id ?? null;
+
+  // Clear meshGenerating once a new mesh generation arrives. Topology deltas are
+  // kept as a fallback for payloads that may not carry generation ids.
   useEffect(() => {
     if (!meshGenerating) return;
-    if (meshGenTopologyRef.current === null) return;
-    // Topology key changed (or appeared from null) → mesh arrived
-    if (femTopologyKey !== null && femTopologyKey !== meshGenTopologyRef.current) {
+    const currentGenerationId =
+      effectiveFemMesh?.generation_id ?? meshSummary?.generation_id ?? null;
+    const generationChanged =
+      currentGenerationId != null &&
+      meshGenGenerationRef.current != null &&
+      currentGenerationId !== meshGenGenerationRef.current;
+    const topologyChanged =
+      meshGenTopologyRef.current !== null &&
+      femTopologyKey !== null &&
+      femTopologyKey !== meshGenTopologyRef.current;
+    if (generationChanged || topologyChanged) {
       const nodeCount =
         meshSummary?.node_count
-        ?? (effectiveFemMesh ? Math.trunc(effectiveFemMesh.nodes.length / 3) : 0);
+        ?? (effectiveFemMesh ? effectiveFemMesh.nodes.length : 0);
       const elementCount =
         meshSummary?.element_count
-        ?? (effectiveFemMesh ? Math.trunc(effectiveFemMesh.elements.length / 4) : 0);
+        ?? (effectiveFemMesh ? effectiveFemMesh.elements.length : 0);
       appendFrontendTrace(
         "success",
         `RX: REMESH mesh ready — ${nodeCount.toLocaleString()} nodes · ${elementCount.toLocaleString()} tetrahedra`,
       );
       meshGenTopologyRef.current = null;
+      meshGenGenerationRef.current = null;
       setMeshGenerating(false);
     }
   }, [appendFrontendTrace, effectiveFemMesh, femTopologyKey, meshGenerating, meshSummary]);
 
   useEffect(() => {
-    if (!meshGenerating || meshGenTopologyRef.current === null) return;
+    if (!meshGenerating) return;
     // Backend rejected or completed the remesh with an error → stop spinner
     if (
       commandStatus?.command_kind === "remesh" &&
@@ -2097,6 +2349,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         (commandStatus.completion_state != null && commandStatus.completion_state !== "ok"))
     ) {
       meshGenTopologyRef.current = null;
+      meshGenGenerationRef.current = null;
       setMeshGenerating(false);
     }
   }, [meshGenerating, commandStatus]);
@@ -2301,13 +2554,13 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
     femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
     meshFaceDetail, meshQualitySummary, meshWorkspace,
-    meshName: meshSummary?.mesh_name ?? meshName,
+    meshName: effectiveFemMesh?.mesh_name ?? meshSummary?.mesh_name ?? liveMeshName ?? meshName,
     meshSource: meshSummary?.mesh_source ?? meshSource,
     meshExtent: meshSummary?.mesh_extent ?? meshExtent,
     meshBoundsMin: meshSummary?.bounds_min ?? meshBoundsMin,
     meshBoundsMax: meshSummary?.bounds_max ?? meshBoundsMax,
     meshFeOrder: meshSummary?.order ?? meshFeOrder,
-    domainFrame: meshSummary?.domain_frame ?? domainFrame,
+    domainFrame: effectiveFemMesh?.domain_frame ?? meshSummary?.domain_frame ?? domainFrame,
     worldExtent,
     worldCenter,
     worldExtentSource: meshSummary?.world_extent_source ?? worldExtentSource,
@@ -2325,12 +2578,16 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     selectedEntityId,
     focusedEntityId,
     meshParts,
+    visibleMeshPartIds,
+    visibleMagneticObjectIds,
+    selectedMeshPart,
+    focusedMeshPart,
     magneticParts,
     airPart,
     interfaceParts,
     setSolverSettings, setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
-    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
     localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
@@ -2338,12 +2595,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
     femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
     meshFaceDetail, meshQualitySummary, meshWorkspace,
-    meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder,
+    meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder, liveMeshName,
     domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
-    selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, magneticParts, airPart, interfaceParts, requestFocusObject,
+    selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart, magneticParts, airPart, interfaceParts, requestFocusObject,
     setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
-    handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   ]);
 
   if (!state) {

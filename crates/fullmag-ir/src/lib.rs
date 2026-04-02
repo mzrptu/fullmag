@@ -984,6 +984,8 @@ pub struct DeclaredUniverseIR {
     pub center: Option<[f64; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub padding: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub airbox_hmax: Option<f64>,
 }
 
 impl Default for DeclaredUniverseIR {
@@ -993,6 +995,7 @@ impl Default for DeclaredUniverseIR {
             size: None,
             center: None,
             padding: None,
+            airbox_hmax: None,
         }
     }
 }
@@ -1009,6 +1012,9 @@ impl DeclaredUniverseIR {
             size: object.get("size").and_then(vec3_from_value),
             center: object.get("center").and_then(vec3_from_value),
             padding: object.get("padding").and_then(vec3_from_value),
+            airbox_hmax: object
+                .get("airbox_hmax")
+                .and_then(|candidate| candidate.as_f64()),
         })
     }
 }

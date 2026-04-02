@@ -163,7 +163,9 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
           onChange={ctx.setMeshOptions}
           quality={ctx.meshQualityData}
           generating={ctx.meshGenerating}
-          onGenerate={ctx.handleMeshGenerate}
+          onGenerate={ctx.handleStudyDomainMeshGenerate}
+          generateLabel="Build Study Mesh"
+          generatingLabel="Building Study Mesh..."
           nodeCount={ctx.effectiveFemMesh?.nodes.length}
           disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
           waitMode={ctx.isWaitingForCompute}
@@ -178,7 +180,9 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
           onChange={ctx.setMeshOptions}
           quality={ctx.meshQualityData}
           generating={ctx.meshGenerating}
-          onGenerate={ctx.handleMeshGenerate}
+          onGenerate={ctx.handleStudyDomainMeshGenerate}
+          generateLabel="Build Study Mesh"
+          generatingLabel="Building Study Mesh..."
           nodeCount={ctx.effectiveFemMesh?.nodes.length}
           disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
           waitMode={ctx.isWaitingForCompute}

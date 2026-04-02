@@ -87,6 +87,25 @@ pub(crate) fn mesh_preview_active_mask(mesh: &FemMeshPayload, quantity: &str) ->
             .any(|active| *active)
             .then_some(active_mask);
     }
+    if !mesh.mesh_parts.is_empty() {
+        let mut active_mask = vec![false; mesh.nodes.len()];
+        for part in &mesh.mesh_parts {
+            if part.role != "magnetic_object" {
+                continue;
+            }
+            let start = usize::try_from(part.node_start).ok()?;
+            let count = usize::try_from(part.node_count).ok()?;
+            let end = start.saturating_add(count).min(active_mask.len());
+            if start >= end {
+                continue;
+            }
+            active_mask[start..end].fill(true);
+        }
+        return active_mask
+            .iter()
+            .any(|active| *active)
+            .then_some(active_mask);
+    }
     let mut active_mask = vec![false; mesh.nodes.len()];
     for segment in &mesh.object_segments {
         if segment.object_id == AIR_OBJECT_SEGMENT_ID {
@@ -109,7 +128,28 @@ pub(crate) fn mesh_preview_active_mask(mesh: &FemMeshPayload, quantity: &str) ->
 #[cfg(test)]
 mod tests {
     use super::{mesh_preview_active_mask, quantity_spatial_domain, AIR_OBJECT_SEGMENT_ID};
-    use fullmag_runner::{FemMeshObjectSegment, FemMeshPayload};
+    use fullmag_runner::{FemMeshObjectSegment, FemMeshPartPayload, FemMeshPayload};
+
+    fn test_mesh(
+        nodes: Vec<[f64; 3]>,
+        object_segments: Vec<FemMeshObjectSegment>,
+        mesh_parts: Vec<FemMeshPartPayload>,
+    ) -> FemMeshPayload {
+        FemMeshPayload {
+            mesh_name: "test_mesh".to_string(),
+            mesh_id: "test_mesh:gen0".to_string(),
+            nodes,
+            elements: Vec::new(),
+            element_markers: Vec::new(),
+            boundary_faces: Vec::new(),
+            boundary_markers: Vec::new(),
+            object_segments,
+            mesh_parts,
+            domain_mesh_mode: None,
+            domain_frame: None,
+            generation_id: Some("gen0".to_string()),
+        }
+    }
 
     #[test]
     fn quantity_spatial_domain_marks_magnetization_as_magnetic_only() {
@@ -119,8 +159,8 @@ mod tests {
 
     #[test]
     fn mesh_preview_active_mask_uses_object_segments_for_m() {
-        let mesh = FemMeshPayload {
-            nodes: vec![
+        let mesh = test_mesh(
+            vec![
                 [0.0, 0.0, 0.0],
                 [1.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0],
@@ -128,11 +168,7 @@ mod tests {
                 [2.0, 0.0, 0.0],
                 [2.0, 1.0, 0.0],
             ],
-            elements: Vec::new(),
-            element_markers: Vec::new(),
-            boundary_faces: Vec::new(),
-            boundary_markers: Vec::new(),
-            object_segments: vec![FemMeshObjectSegment {
+            vec![FemMeshObjectSegment {
                 object_id: "flower".to_string(),
                 geometry_id: Some("flower_geom".to_string()),
                 node_start: 0,
@@ -142,10 +178,8 @@ mod tests {
                 boundary_face_start: 0,
                 boundary_face_count: 0,
             }],
-            mesh_parts: Vec::new(),
-            domain_mesh_mode: None,
-            generation_id: None,
-        };
+            Vec::new(),
+        );
 
         assert_eq!(
             mesh_preview_active_mask(&mesh, "m"),
@@ -156,8 +190,8 @@ mod tests {
 
     #[test]
     fn mesh_preview_active_mask_ignores_air_segment() {
-        let mesh = FemMeshPayload {
-            nodes: vec![
+        let mesh = test_mesh(
+            vec![
                 [0.0, 0.0, 0.0],
                 [1.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0],
@@ -165,11 +199,7 @@ mod tests {
                 [2.0, 0.0, 0.0],
                 [2.0, 1.0, 0.0],
             ],
-            elements: Vec::new(),
-            element_markers: Vec::new(),
-            boundary_faces: Vec::new(),
-            boundary_markers: Vec::new(),
-            object_segments: vec![
+            vec![
                 FemMeshObjectSegment {
                     object_id: "flower".to_string(),
                     geometry_id: Some("flower_geom".to_string()),
@@ -191,10 +221,62 @@ mod tests {
                     boundary_face_count: 0,
                 },
             ],
-            mesh_parts: Vec::new(),
-            domain_mesh_mode: None,
-            generation_id: None,
-        };
+            Vec::new(),
+        );
+
+        assert_eq!(
+            mesh_preview_active_mask(&mesh, "m"),
+            Some(vec![true, true, true, true, false, false])
+        );
+    }
+
+    #[test]
+    fn mesh_preview_active_mask_uses_mesh_parts_before_legacy_segments() {
+        let mesh = test_mesh(
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [2.0, 0.0, 0.0],
+                [2.0, 1.0, 0.0],
+            ],
+            Vec::new(),
+            vec![
+                FemMeshPartPayload {
+                    id: "mag:flower".to_string(),
+                    label: "Flower".to_string(),
+                    role: "magnetic_object".to_string(),
+                    object_id: Some("flower".to_string()),
+                    geometry_id: Some("flower_geom".to_string()),
+                    material_id: None,
+                    element_start: 0,
+                    element_count: 0,
+                    boundary_face_start: 0,
+                    boundary_face_count: 0,
+                    node_start: 0,
+                    node_count: 4,
+                    bounds_min: None,
+                    bounds_max: None,
+                },
+                FemMeshPartPayload {
+                    id: "air".to_string(),
+                    label: "Air".to_string(),
+                    role: "air".to_string(),
+                    object_id: None,
+                    geometry_id: None,
+                    material_id: None,
+                    element_start: 0,
+                    element_count: 0,
+                    boundary_face_start: 0,
+                    boundary_face_count: 0,
+                    node_start: 4,
+                    node_count: 2,
+                    bounds_min: None,
+                    bounds_max: None,
+                },
+            ],
+        );
 
         assert_eq!(
             mesh_preview_active_mask(&mesh, "m"),

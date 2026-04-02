@@ -21,7 +21,6 @@ import {
   fmtPreviewMaxPoints,
   fmtSI,
   resolveAntennaNodeName,
-  viewportScopeObjectId,
 } from "./shared";
 import { useControlRoom } from "./ControlRoomContext";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
@@ -393,7 +392,6 @@ export function ViewportCanvasArea() {
     ctx.selectedSidebarNodeId,
     ctx.scriptBuilderCurrentModules.map((module) => module.name),
   );
-  const scopeObjectId = viewportScopeObjectId(ctx.viewportScope);
   const visibleObjectIds = useMemo(
     () =>
       (ctx.sceneDocument?.objects ?? [])
@@ -405,31 +403,46 @@ export function ViewportCanvasArea() {
   const antennaPreviewBadgeVisible =
     ctx.antennaOverlays.length > 0 &&
     (ctx.requestedPreviewQuantity === "H_ant" || selectedAntennaName != null);
+  const selectedFemObjectId = ctx.selectedObjectId;
   const selectedObjectOverlay = useMemo(
     () =>
-      scopeObjectId
-        ? ctx.objectOverlays.find((overlay) => overlay.id === scopeObjectId) ?? null
+      selectedFemObjectId
+        ? ctx.objectOverlays.find((overlay) => overlay.id === selectedFemObjectId) ?? null
         : null,
-    [ctx.objectOverlays, scopeObjectId],
+    [ctx.objectOverlays, selectedFemObjectId],
   );
   const displayObjectOverlays = useMemo(
-    () =>
-      scopeObjectId
-        ? ctx.objectOverlays
-        : ctx.objectOverlays.filter((overlay) => visibleObjectIds.includes(overlay.id)),
-    [ctx.objectOverlays, scopeObjectId, visibleObjectIds],
+    () => {
+      if (ctx.isFemBackend && ctx.meshParts.length > 0) {
+        return ctx.objectOverlays.filter((overlay) =>
+          ctx.visibleMagneticObjectIds.includes(overlay.id),
+        );
+      }
+      return ctx.objectOverlays.filter((overlay) => visibleObjectIds.includes(overlay.id));
+    },
+    [ctx.isFemBackend, ctx.meshParts.length, ctx.objectOverlays, ctx.visibleMagneticObjectIds, visibleObjectIds],
   );
   const hasExactScopeSegment = useMemo(
-    () =>
-      scopeObjectId
-        ? (ctx.effectiveFemMesh?.object_segments ?? []).some((segment) => segment.object_id === scopeObjectId)
-        : false,
-    [ctx.effectiveFemMesh?.object_segments, scopeObjectId],
+    () => {
+      if (!selectedFemObjectId) {
+        return false;
+      }
+      const meshParts = ctx.effectiveFemMesh?.mesh_parts ?? [];
+      if (meshParts.length > 0) {
+        return meshParts.some(
+          (part) => part.role === "magnetic_object" && part.object_id === selectedFemObjectId,
+        );
+      }
+      return (ctx.effectiveFemMesh?.object_segments ?? []).some(
+        (segment) => segment.object_id === selectedFemObjectId,
+      );
+    },
+    [ctx.effectiveFemMesh?.mesh_parts, ctx.effectiveFemMesh?.object_segments, selectedFemObjectId],
   );
   const missingExactScopeSegment = Boolean(
     ctx.isFemBackend &&
       ctx.femMeshData &&
-      scopeObjectId &&
+      selectedFemObjectId &&
       !hasExactScopeSegment,
   );
 
@@ -528,8 +541,9 @@ export function ViewportCanvasArea() {
         antennaOverlays={ctx.antennaOverlays}
         selectedAntennaId={selectedAntennaName}
         objectOverlays={displayObjectOverlays}
-        selectedMeshObjectId={scopeObjectId}
-        selectedObjectId={scopeObjectId}
+        selectedObjectId={selectedFemObjectId}
+        selectedEntityId={ctx.selectedEntityId}
+        focusedEntityId={ctx.focusedEntityId}
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
         meshParts={ctx.meshParts}
         meshEntityViewState={ctx.meshEntityViewState}
@@ -537,7 +551,6 @@ export function ViewportCanvasArea() {
         airSegmentVisible={ctx.airMeshVisible}
         airSegmentOpacity={ctx.airMeshOpacity}
         focusObjectRequest={ctx.focusObjectRequest}
-        viewportScope={ctx.viewportScope}
         onAntennaTranslate={ctx.applyAntennaTranslation}
         worldExtent={ctx.worldExtent}
         worldCenter={ctx.worldCenter}
@@ -567,8 +580,9 @@ export function ViewportCanvasArea() {
         antennaOverlays={ctx.antennaOverlays}
         selectedAntennaId={selectedAntennaName}
         objectOverlays={displayObjectOverlays}
-        selectedObjectId={scopeObjectId}
-        selectedMeshObjectId={scopeObjectId}
+        selectedObjectId={selectedFemObjectId}
+        selectedEntityId={ctx.selectedEntityId}
+        focusedEntityId={ctx.focusedEntityId}
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
         meshParts={ctx.meshParts}
         meshEntityViewState={ctx.meshEntityViewState}
@@ -576,7 +590,6 @@ export function ViewportCanvasArea() {
         airSegmentVisible={ctx.airMeshVisible}
         airSegmentOpacity={ctx.airMeshOpacity}
         focusObjectRequest={ctx.focusObjectRequest}
-        viewportScope={ctx.viewportScope}
         onAntennaTranslate={ctx.applyAntennaTranslation}
         worldExtent={ctx.worldExtent}
         worldCenter={ctx.worldCenter}
@@ -614,9 +627,8 @@ export function ViewportCanvasArea() {
     conditionalContent = (
       <BoundsPreview3D
         objectOverlays={displayObjectOverlays}
-        selectedObjectId={scopeObjectId}
+        selectedObjectId={selectedFemObjectId}
         focusObjectRequest={ctx.focusObjectRequest}
-        viewportScope={ctx.viewportScope}
         worldExtent={ctx.worldExtent}
         worldCenter={ctx.worldCenter}
         onRequestObjectSelect={handleRequestObjectSelect}
@@ -654,19 +666,24 @@ export function ViewportCanvasArea() {
       {ctx.isFemBackend ? (
         <div className="viewportOverlay absolute right-3 top-14 z-10 flex items-center gap-2">
           <div className="pointer-events-auto rounded-full border border-border/40 bg-background/75 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground shadow-md backdrop-blur-md">
-            {scopeObjectId ? `Object Scope: ${scopeObjectId}` : "Domain Scope"}
+            {ctx.visibleMeshPartIds.length}/{ctx.meshParts.length || 0} parts visible
           </div>
-          {scopeObjectId ? (
+          {selectedFemObjectId ? (
             <button
               type="button"
               className="pointer-events-auto rounded-full border border-amber-300/25 bg-background/75 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-amber-100 shadow-md backdrop-blur-md transition-colors hover:bg-amber-400/15"
               onClick={() => {
                 ctx.setViewMode("3D");
-                ctx.requestFocusObject(scopeObjectId);
+                ctx.requestFocusObject(selectedFemObjectId);
               }}
             >
-              Focus {scopeObjectId}
+              Focus {selectedFemObjectId}
             </button>
+          ) : null}
+          {ctx.focusedMeshPart ? (
+            <div className="pointer-events-auto rounded-full border border-cyan-300/25 bg-background/75 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-cyan-100 shadow-md backdrop-blur-md">
+              Part: {ctx.focusedMeshPart.label || ctx.focusedMeshPart.id}
+            </div>
           ) : null}
           {missingExactScopeSegment ? (
             <div className="pointer-events-auto rounded-full border border-rose-300/25 bg-background/80 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-rose-200 shadow-md backdrop-blur-md">
@@ -713,9 +730,11 @@ export function ViewportCanvasArea() {
             </button>
           </div>
           <div className="pointer-events-auto rounded-full border border-border/40 bg-background/75 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground shadow-md backdrop-blur-md">
-            {selectedObjectOverlay?.fidelity === "segment-backed"
-              ? "Mesh Segment"
-              : "Bounds Fallback"}
+            {selectedObjectOverlay?.source === "mesh_parts"
+              ? "Mesh Part"
+              : selectedObjectOverlay?.source === "object_segments"
+                ? "Legacy Segment"
+                : "Bounds Fallback"}
           </div>
         </div>
       ) : null}

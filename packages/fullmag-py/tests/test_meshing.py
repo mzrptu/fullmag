@@ -17,7 +17,7 @@ from fullmag.meshing.asset_pipeline import (
     realize_fem_mesh_asset,
 )
 from fullmag.meshing.gmsh_bridge import MeshData, SizeFieldData, _extract_gmsh_connectivity
-from fullmag.meshing.remesh_cli import _mesh_result_payload, _size_field_from_dict
+from fullmag.meshing.remesh_cli import _geometry_from_ir, _mesh_result_payload, _size_field_from_dict
 from fullmag.meshing.remesh_cli import _describe_remesh_job
 from fullmag.meshing.quality import validate_mesh
 from fullmag.meshing.surface_assets import export_geometry_to_stl
@@ -190,6 +190,31 @@ class MeshScaffoldTests(unittest.TestCase):
             _describe_remesh_job("manual_remesh", 20e-9, 1),
             "Remesh: accepted - mode=manual_remesh, hmax=2.000e-08, order=P1",
         )
+
+    def test_remesh_cli_describes_shared_domain_airbox_scope(self) -> None:
+        self.assertEqual(
+            _describe_remesh_job(
+                "shared_domain_manual_remesh",
+                20e-9,
+                1,
+                declared_universe={"airbox_hmax": 60e-9},
+            ),
+            "Remesh: accepted - mode=shared_domain_manual_remesh, hmax=2.000e-08, order=P1, "
+            "scope=shared_domain, body_hmax=2.000e-08, airbox_hmax=6.000e-08",
+        )
+
+    def test_geometry_from_ir_preserves_imported_geometry_name(self) -> None:
+        geometry = _geometry_from_ir(
+            {
+                "kind": "imported_geometry",
+                "name": "nanoflower_left_geom",
+                "source": "nanoflower.stl",
+                "format": "stl",
+                "scale": 1e-9,
+            }
+        )
+
+        self.assertEqual(geometry.geometry_name, "nanoflower_left_geom")
 
     def test_meshdata_to_ir_has_canonical_shape(self) -> None:
         mesh = self._unit_tet_mesh()

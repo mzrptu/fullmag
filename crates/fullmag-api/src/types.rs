@@ -16,6 +16,13 @@ use tokio::sync::{broadcast, watch, Mutex, RwLock};
 pub(crate) type CurrentPreviewConfig = LivePreviewRequest;
 pub(crate) type CurrentDisplaySelection = DisplaySelectionState;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum MeshCommandTarget {
+    StudyDomain,
+    AdaptiveFollowup,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AppState {
     pub repo_root: PathBuf,
@@ -219,6 +226,7 @@ pub(crate) struct SessionStateEventView<'a> {
     pub live_state: Option<&'a LiveState>,
     pub runtime_status: &'a RuntimeStatusView,
     pub metadata: Option<&'a Value>,
+    pub mesh_workspace: Option<&'a Value>,
     pub scene_document: Option<&'a SceneDocument>,
     pub scalar_rows: &'a [ScalarRow],
     pub engine_log: &'a [EngineLogEntry],
@@ -239,6 +247,7 @@ pub(crate) struct SessionStateResponseView<'a> {
     pub live_state: Option<&'a LiveState>,
     pub runtime_status: &'a RuntimeStatusView,
     pub metadata: Option<&'a Value>,
+    pub mesh_workspace: Option<&'a Value>,
     pub scene_document: Option<&'a SceneDocument>,
     pub scalar_rows: &'a [ScalarRow],
     pub engine_log: &'a [EngineLogEntry],
@@ -542,6 +551,10 @@ pub(crate) struct SessionCommandRequest {
     #[serde(default)]
     pub mesh_options: Option<Value>,
     #[serde(default)]
+    pub mesh_target: Option<MeshCommandTarget>,
+    #[serde(default)]
+    pub mesh_reason: Option<String>,
+    #[serde(default)]
     pub state_path: Option<String>,
     #[serde(default)]
     pub state_format: Option<String>,
@@ -611,6 +624,10 @@ pub(crate) struct SessionCommand {
     pub relax_alpha: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh_options: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh_target: Option<MeshCommandTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -787,6 +804,7 @@ mod tests {
             live_state: response.live_state.as_ref(),
             runtime_status: &response.runtime_status,
             metadata: response.metadata.as_ref(),
+            mesh_workspace: response.mesh_workspace.as_ref(),
             scene_document: response.scene_document.as_ref(),
             scalar_rows: &response.scalar_rows,
             engine_log: &response.engine_log,

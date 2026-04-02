@@ -9,6 +9,7 @@ import type {
   FemMeshPart,
   LatestFields,
   LiveState,
+  MeshCommandTarget,
   ModelBuilderGraphV2,
   MeshWorkspaceState,
   PreviewConfig,
@@ -116,6 +117,20 @@ function normalizeDisplayKind(raw: unknown): DisplayKind {
     default:
       return "vector_field";
   }
+}
+
+export function normalizeMeshCommandTarget(raw: unknown): MeshCommandTarget | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const kind = (raw as { kind?: unknown }).kind;
+  if (kind === "study_domain") {
+    return { kind: "study_domain" };
+  }
+  if (kind === "adaptive_followup") {
+    return { kind: "adaptive_followup" };
+  }
+  return null;
 }
 
 function normalizeRuntimeStatusKind(raw: unknown): RuntimeStatusKind {
@@ -235,6 +250,8 @@ function normalizeFemLiveMesh(raw: unknown): FemLiveMesh | null {
         ])
     : [];
   return {
+    mesh_name: typeof mesh.mesh_name === "string" ? mesh.mesh_name : null,
+    mesh_id: typeof mesh.mesh_id === "string" ? mesh.mesh_id : null,
     nodes,
     elements,
     element_markers: Array.isArray(mesh.element_markers)
@@ -248,6 +265,7 @@ function normalizeFemLiveMesh(raw: unknown): FemLiveMesh | null {
     mesh_parts: normalizeMeshParts(mesh.mesh_parts),
     domain_mesh_mode:
       typeof mesh.domain_mesh_mode === "string" ? mesh.domain_mesh_mode : null,
+    domain_frame: normalizeDomainFrame(mesh.domain_frame),
     generation_id: typeof mesh.generation_id === "string" ? mesh.generation_id : null,
   };
 }
@@ -910,6 +928,10 @@ function normalizeMeshWorkspace(raw: any): MeshWorkspaceState | null {
     mesh_summary:
       meshSummaryRaw && typeof meshSummaryRaw === "object"
         ? {
+            mesh_id:
+              typeof meshSummaryRaw.mesh_id === "string"
+                ? meshSummaryRaw.mesh_id
+                : null,
             mesh_name: String(meshSummaryRaw.mesh_name ?? ""),
             mesh_source:
               typeof meshSummaryRaw.mesh_source === "string"

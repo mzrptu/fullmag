@@ -3,6 +3,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum MeshCommandTarget {
+    StudyDomain,
+    AdaptiveFollowup,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct ScriptRunSummary {
     pub session_id: String,
@@ -161,6 +168,10 @@ pub(crate) struct SessionCommand {
     pub relax_alpha: Option<f64>,
     #[serde(default)]
     pub mesh_options: Option<serde_json::Value>,
+    #[serde(default)]
+    pub mesh_target: Option<MeshCommandTarget>,
+    #[serde(default)]
+    pub mesh_reason: Option<String>,
     #[serde(default)]
     pub state_path: Option<String>,
     #[serde(default)]

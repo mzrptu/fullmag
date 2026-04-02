@@ -1856,13 +1856,19 @@ def _resolve_universe(
     if override_universe:
         return override_universe
     runtime_metadata = _normalize_mapping(problem.runtime_metadata)
-    universe = _normalize_mapping(runtime_metadata.get("study_universe"))
+    domain_frame = _normalize_mapping(runtime_metadata.get("domain_frame"))
+    universe = _normalize_mapping(domain_frame.get("declared_universe"))
+    if not universe:
+        universe = _normalize_mapping(runtime_metadata.get("study_universe"))
     return universe or None
 
 
 def _export_universe(problem: Problem) -> dict[str, object] | None:
     runtime_metadata = _normalize_mapping(problem.runtime_metadata)
-    universe = _normalize_mapping(runtime_metadata.get("study_universe"))
+    domain_frame = _normalize_mapping(runtime_metadata.get("domain_frame"))
+    universe = _normalize_mapping(domain_frame.get("declared_universe"))
+    if not universe:
+        universe = _normalize_mapping(runtime_metadata.get("study_universe"))
     if not universe:
         return None
     mode = universe.get("mode")
@@ -2035,6 +2041,7 @@ def _stage_signature(problem: Problem) -> dict[str, object]:
         "mesh_workflow": runtime_metadata.get("mesh_workflow"),
         "interactive": runtime_metadata.get("interactive_session_requested"),
         "wait_for_solve": runtime_metadata.get("wait_for_solve"),
+        "domain_frame": runtime_metadata.get("domain_frame"),
         "study_universe": runtime_metadata.get("study_universe"),
     }
 

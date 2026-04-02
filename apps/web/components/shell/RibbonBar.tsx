@@ -83,7 +83,7 @@ interface RibbonBarProps {
   onAddAntenna?: (kind: "MicrostripAntenna" | "CPWAntenna") => void;
   onSelectModelNode?: (nodeId: string) => void;
   meshGenerating?: boolean;
-  onGenerateMesh?: () => void;
+  onGenerateStudyMesh?: () => void;
   selectedObjectId?: string | null;
   onRequestObjectFocus?: (objectId: string) => void;
   hasSharedAirboxDomain?: boolean;
@@ -96,7 +96,7 @@ interface RibbonBarProps {
 function inferTab(nodeId: string | null | undefined): RibbonTab {
   if (!nodeId) return "Home";
   if (nodeId === "session" || nodeId === "script-builder") return "Builder";
-  if (nodeId === "universe-airbox" || nodeId === "universe-boundary") return "Mesh";
+  if (nodeId === "universe-airbox" || nodeId.startsWith("universe-airbox") || nodeId === "universe-boundary") return "Mesh";
   if (nodeId === "universe-mesh" || nodeId.startsWith("universe-mesh-")) return "Mesh";
   if (nodeId.startsWith("mesh") || nodeId === "mesh") return "Mesh";
   // Per-object mesh nodes (e.g. "geo-nanoflower-mesh") → Mesh tab
@@ -206,8 +206,8 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           accent: true,
           disabled: !p.isFemBackend || p.meshGenerating,
           action: () => {
-            p.onSelectModelNode?.("universe-airbox");
-            p.onGenerateMesh?.();
+            p.onSelectModelNode?.(p.hasSharedAirboxDomain ? "universe-airbox-mesh" : "universe-mesh");
+            p.onGenerateStudyMesh?.();
           },
         },
         { id: "import", icon: <FileText size={20} />, label: "Import", tooltip: "Import mesh file", disabled: true, iconColor: "text-sky-400" },
@@ -222,7 +222,7 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           label: "Quality",
           tooltip: "View mesh quality metrics",
           action: () => {
-            p.onSelectModelNode?.("universe-mesh-quality");
+            p.onSelectModelNode?.(p.hasSharedAirboxDomain ? "mesh-quality" : "universe-mesh-quality");
             p.onViewChange?.("Mesh");
           },
           iconColor: "text-emerald-400",
@@ -482,7 +482,7 @@ export default function RibbonBar(props: RibbonBarProps) {
                 setManualTab(tab);
                 if (props.onSelectModelNode) {
                   if (tab === "Home") props.onSelectModelNode("universe");
-                  else if (tab === "Mesh") props.onSelectModelNode(props.hasSharedAirboxDomain ? "universe-airbox" : "universe-mesh");
+                  else if (tab === "Mesh") props.onSelectModelNode(props.hasSharedAirboxDomain ? "universe-airbox-mesh" : "universe-mesh");
                   else if (tab === "Study") props.onSelectModelNode("study");
                   else if (tab === "Results") props.onSelectModelNode("results");
                   else if (tab === "Builder") props.onSelectModelNode("script-builder");

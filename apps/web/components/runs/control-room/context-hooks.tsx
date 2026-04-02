@@ -282,6 +282,10 @@ export interface ModelContextValue {
   selectedEntityId: string | null;
   focusedEntityId: string | null;
   meshParts: FemMeshPart[];
+  visibleMeshPartIds: string[];
+  visibleMagneticObjectIds: string[];
+  selectedMeshPart: FemMeshPart | null;
+  focusedMeshPart: FemMeshPart | null;
   magneticParts: FemMeshPart[];
   airPart: FemMeshPart | null;
   interfaceParts: FemMeshPart[];
@@ -316,7 +320,9 @@ export interface ModelContextValue {
   setSelectedEntityId: (id: string | null) => void;
   setFocusedEntityId: (id: string | null) => void;
   requestFocusObject: (objectId: string) => void;
-  handleMeshGenerate: () => Promise<void>;
+  handleStudyDomainMeshGenerate: () => Promise<void>;
+  handleAirboxMeshGenerate: () => Promise<void>;
+  handleObjectMeshOverrideRebuild: (objectId?: string | null) => Promise<void>;
   handleLassoRefine: (faceIndices: number[], factor: number) => Promise<void>;
   openFemMeshWorkspace: (tab?: FemDockTab) => void;
   applyMeshWorkspacePreset: (presetId: MeshWorkspacePresetId) => void;

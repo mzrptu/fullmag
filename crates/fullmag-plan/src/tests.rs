@@ -161,11 +161,15 @@ fn analyze_detects_interface_between_touching_markers() {
     )
     .expect("analysis should succeed for touching markers");
 
-    assert_eq!(analysis.interfaces.len(), 1);
-    assert_eq!(analysis.interfaces[0].object_a, "left");
-    assert_eq!(analysis.interfaces[0].object_b, "right");
-    assert_eq!(analysis.interfaces[0].shared_face_count, 1);
-    assert_eq!(analysis.interfaces[0].shared_node_count, 3);
+    assert_eq!(
+        analysis.ordered_regions,
+        vec![("left".to_string(), 1), ("right".to_string(), 2)]
+    );
+    assert_eq!(analysis.shared_interface_nodes.len(), 3);
+    assert!(analysis
+        .shared_interface_nodes
+        .iter()
+        .all(|(_node, owners)| owners == &vec![1, 2]));
 }
 
 #[test]
@@ -770,6 +774,89 @@ fn fem_backend_populates_domain_frame_and_domain_mesh_mode() {
             assert_eq!(domain_frame.effective_extent, Some([8.0, 6.0, 4.0]));
             assert_eq!(domain_frame.mesh_bounds_min, Some([0.0, 0.0, 0.0]));
             assert_eq!(domain_frame.mesh_bounds_max, Some([1.0, 1.0, 1.0]));
+        }
+        _ => panic!("expected FEM plan"),
+    }
+}
+
+#[test]
+fn fem_backend_prefers_domain_frame_declared_universe_over_legacy_study_universe() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.problem_meta.runtime_metadata.insert(
+        "domain_frame".to_string(),
+        serde_json::json!({
+            "declared_universe": {
+                "mode": "manual",
+                "size": [9.0, 7.0, 5.0],
+                "center": [1.0, 2.0, 3.0],
+                "airbox_hmax": 7.5,
+            },
+            "object_bounds_min": [0.0, 0.0, 0.0],
+            "object_bounds_max": [1.0, 1.0, 1.0],
+            "effective_extent": [9.0, 7.0, 5.0],
+            "effective_center": [1.0, 2.0, 3.0],
+            "effective_source": "declared_universe_manual",
+        }),
+    );
+    ir.problem_meta.runtime_metadata.insert(
+        "study_universe".to_string(),
+        serde_json::json!({
+            "mode": "manual",
+            "size": [99.0, 99.0, 99.0],
+            "center": [0.0, 0.0, 0.0],
+            "airbox_hmax": 0.5,
+        }),
+    );
+    ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+        fdm: Some(fullmag_ir::FdmHintsIR {
+            cell: [2e-9, 2e-9, 5e-9],
+            default_cell: None,
+            per_magnet: None,
+            demag: None,
+            boundary_correction: None,
+        }),
+        fem: Some(fullmag_ir::FemHintsIR {
+            order: 1,
+            hmax: 2e-9,
+            mesh: None,
+        }),
+        hybrid: None,
+    });
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
+            geometry_name: "strip".to_string(),
+            mesh_source: None,
+            mesh: Some(fullmag_ir::MeshIR {
+                mesh_name: "strip".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                elements: vec![[0, 1, 2, 3]],
+                element_markers: vec![1],
+                boundary_faces: vec![[0, 1, 2]],
+                boundary_markers: vec![1],
+            }),
+        }],
+        fem_domain_mesh_asset: None,
+    });
+
+    let plan = plan(&ir).expect("FEM plan should respect declared_universe from domain_frame");
+    match plan.backend_plan {
+        BackendPlanIR::Fem(fem) => {
+            let domain_frame = fem
+                .domain_frame
+                .expect("domain_frame should be carried into FemPlanIR");
+            let declared_universe = domain_frame
+                .declared_universe
+                .expect("declared_universe should be preserved");
+            assert_eq!(declared_universe.size, Some([9.0, 7.0, 5.0]));
+            assert_eq!(declared_universe.center, Some([1.0, 2.0, 3.0]));
+            assert_eq!(declared_universe.airbox_hmax, Some(7.5));
         }
         _ => panic!("expected FEM plan"),
     }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { ReactNode } from "react";
-import type { FemLiveMesh } from "../../../lib/useSessionStream";
+import type { FemLiveMesh, FemMeshPart } from "../../../lib/useSessionStream";
 import {
   resolveSelectedObjectIdFromModelBuilderGraph,
   resolveSelectedMeshObjectIdFromModelBuilderGraph,
@@ -42,8 +42,8 @@ export interface BuilderObjectOverlay {
   label: string;
   boundsMin: [number, number, number];
   boundsMax: [number, number, number];
-  fidelity: "segment-backed" | "bounds-backed";
-  source: "object_segments" | "geometry_bounds";
+  fidelity: "mesh-backed" | "bounds-backed";
+  source: "mesh_parts" | "object_segments" | "geometry_bounds";
 }
 
 export interface FocusObjectRequest {
@@ -404,6 +404,45 @@ export function buildObjectOverlays(
   geometries: readonly ScriptBuilderGeometryEntry[],
   femMesh?: FemLiveMesh | null,
 ): BuilderObjectOverlay[] {
+  const meshPartBoundsByObjectId = new Map<
+    string,
+    { boundsMin: [number, number, number]; boundsMax: [number, number, number] }
+  >();
+  const mergeBounds = (
+    existing:
+      | { boundsMin: [number, number, number]; boundsMax: [number, number, number] }
+      | undefined,
+    next: { boundsMin: [number, number, number]; boundsMax: [number, number, number] },
+  ): { boundsMin: [number, number, number]; boundsMax: [number, number, number] } => {
+    if (!existing) {
+      return next;
+    }
+    return {
+      boundsMin: existing.boundsMin.map((component, axis) => Math.min(component, next.boundsMin[axis])) as [
+        number,
+        number,
+        number,
+      ],
+      boundsMax: existing.boundsMax.map((component, axis) => Math.max(component, next.boundsMax[axis])) as [
+        number,
+        number,
+        number,
+      ],
+    };
+  };
+  for (const part of femMesh?.mesh_parts ?? []) {
+    if (part.role !== "magnetic_object" || !part.object_id) {
+      continue;
+    }
+    const normalized = normalizeMeshPartBounds(part);
+    if (!normalized) {
+      continue;
+    }
+    meshPartBoundsByObjectId.set(
+      part.object_id,
+      mergeBounds(meshPartBoundsByObjectId.get(part.object_id), normalized),
+    );
+  }
   const segmentBoundsByObjectId = new Map<
     string,
     { boundsMin: [number, number, number]; boundsMax: [number, number, number] }
@@ -444,6 +483,18 @@ export function buildObjectOverlays(
 
   const overlays: BuilderObjectOverlay[] = [];
   for (const geometry of geometries) {
+    const meshPartBounds = meshPartBoundsByObjectId.get(geometry.name);
+    if (meshPartBounds) {
+      overlays.push({
+        id: geometry.name,
+        label: geometry.name,
+        boundsMin: meshPartBounds.boundsMin,
+        boundsMax: meshPartBounds.boundsMax,
+        fidelity: "mesh-backed",
+        source: "mesh_parts",
+      });
+      continue;
+    }
     const segmentBounds = segmentBoundsByObjectId.get(geometry.name);
     if (segmentBounds) {
       overlays.push({
@@ -451,7 +502,7 @@ export function buildObjectOverlays(
         label: geometry.name,
         boundsMin: segmentBounds.boundsMin,
         boundsMax: segmentBounds.boundsMax,
-        fidelity: "segment-backed",
+        fidelity: "mesh-backed",
         source: "object_segments",
       });
       continue;
@@ -470,6 +521,12 @@ export function buildObjectOverlays(
     });
   }
   return overlays;
+}
+
+function normalizeMeshPartBounds(
+  part: Pick<FemMeshPart, "bounds_min" | "bounds_max">,
+): { boundsMin: [number, number, number]; boundsMax: [number, number, number] } | null {
+  return normalizeBounds(part.bounds_min ?? null, part.bounds_max ?? null);
 }
 
 export function resolveSelectedObjectId(

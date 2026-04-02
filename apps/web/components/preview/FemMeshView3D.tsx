@@ -23,9 +23,7 @@ import type {
   AntennaOverlay,
   BuilderObjectOverlay,
   FocusObjectRequest,
-  ViewportScope,
 } from "../runs/control-room/shared";
-import { viewportScopeObjectId } from "../runs/control-room/shared";
 
 const AIR_OBJECT_SEGMENT_ID = "__air__";
 
@@ -80,7 +78,8 @@ interface Props {
   selectedAntennaId?: string | null;
   objectOverlays?: BuilderObjectOverlay[];
   selectedObjectId?: string | null;
-  selectedMeshObjectId?: string | null;
+  selectedEntityId?: string | null;
+  focusedEntityId?: string | null;
   objectSegments?: FemLiveMeshObjectSegment[];
   meshParts?: FemMeshPart[];
   meshEntityViewState?: MeshEntityViewStateMap;
@@ -88,7 +87,6 @@ interface Props {
   airSegmentVisible?: boolean;
   airSegmentOpacity?: number;
   focusObjectRequest?: FocusObjectRequest | null;
-  viewportScope?: ViewportScope;
   worldExtent?: [number, number, number] | null;
   worldCenter?: [number, number, number] | null;
   onAntennaTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
@@ -512,7 +510,8 @@ function FemMeshView3DInner({
   selectedAntennaId,
   objectOverlays = [],
   selectedObjectId,
-  selectedMeshObjectId = null,
+  selectedEntityId = null,
+  focusedEntityId = null,
   objectSegments = [],
   meshParts = [],
   meshEntityViewState = {},
@@ -520,7 +519,6 @@ function FemMeshView3DInner({
   airSegmentVisible = true,
   airSegmentOpacity = 28,
   focusObjectRequest = null,
-  viewportScope = "universe",
   worldExtent = null,
   worldCenter = null,
   onAntennaTranslate,
@@ -556,35 +554,36 @@ function FemMeshView3DInner({
   const clipPos = controlledClipPos ?? internalClipPos;
   const showArrows = controlledShowArrows ?? internalShowArrows;
   const shrinkFactor = controlledShrinkFactor ?? internalShrinkFactor;
-  const scopeObjectId =
-    viewportScopeObjectId(viewportScope) ?? selectedMeshObjectId ?? selectedObjectId ?? null;
   const hasMeshParts = meshParts.length > 0;
   const magneticSegments = useMemo(
     () => objectSegments.filter((segment) => segment.object_id !== AIR_OBJECT_SEGMENT_ID),
     [objectSegments],
   );
   const visibleMagneticIds = useMemo(() => {
-    if (scopeObjectId) {
-      return new Set([scopeObjectId]);
-    }
     if (visibleObjectIds && visibleObjectIds.length > 0) {
       return new Set(visibleObjectIds);
     }
     return new Set(magneticSegments.map((segment) => segment.object_id));
-  }, [magneticSegments, scopeObjectId, visibleObjectIds]);
+  }, [magneticSegments, visibleObjectIds]);
   const airSegmentIds = useMemo(
     () =>
-      !scopeObjectId && airSegmentVisible
+      airSegmentVisible
         ? new Set([AIR_OBJECT_SEGMENT_ID])
         : new Set<string>(),
-    [airSegmentVisible, scopeObjectId],
+    [airSegmentVisible],
   );
   const visibleLayers = useMemo<RenderLayer[]>(() => {
     if (!hasMeshParts) {
       return [];
     }
     const layers: RenderLayer[] = [];
-    const visibleIdSet = new Set(visibleObjectIds ?? []);
+    const preferredCameraPartId =
+      (focusedEntityId && meshParts.some((part) => part.id === focusedEntityId)
+        ? focusedEntityId
+        : null)
+      ?? (selectedEntityId && meshParts.some((part) => part.id === selectedEntityId)
+        ? selectedEntityId
+        : null);
     for (const part of meshParts) {
       if (part.role === "interface" || part.role === "outer_boundary") {
         continue;
@@ -599,21 +598,6 @@ function FemMeshView3DInner({
       if (!viewState.visible) {
         continue;
       }
-      if (scopeObjectId) {
-        if (part.object_id !== scopeObjectId) {
-          continue;
-        }
-      } else if (part.role === "air") {
-        if (!airSegmentVisible) {
-          continue;
-        }
-      } else if (
-        part.object_id &&
-        visibleIdSet.size > 0 &&
-        !visibleIdSet.has(part.object_id)
-      ) {
-        continue;
-      }
       layers.push({
         part,
         viewState,
@@ -623,41 +607,45 @@ function FemMeshView3DInner({
         ),
         elementIndices: collectPartElementIndices(part, meshData.nElements),
         nodeMask: collectPartNodeMask(part, meshData.nNodes),
-        isPrimaryForCamera: false,
+        isPrimaryForCamera: preferredCameraPartId
+          ? part.id === preferredCameraPartId
+          : false,
         isMagnetic: part.role === "magnetic_object",
       });
     }
-    return layers.map((layer, index) => ({ ...layer, isPrimaryForCamera: index === 0 }));
+    if (layers.length > 0 && !layers.some((layer) => layer.isPrimaryForCamera)) {
+      layers[0] = { ...layers[0], isPrimaryForCamera: true };
+    }
+    return layers;
   }, [
-    airSegmentVisible,
+    focusedEntityId,
     hasMeshParts,
     meshData.boundaryFaces.length,
     meshData.nElements,
     meshData.nNodes,
     meshEntityViewState,
     meshParts,
-    scopeObjectId,
-    visibleObjectIds,
+    selectedEntityId,
   ]);
   const missingMagneticMask =
     meshData.quantityDomain === "magnetic_only" &&
     (!meshData.activeMask || meshData.activeMask.length !== meshData.nNodes);
   const missingExactScopeSegment =
-    Boolean(scopeObjectId) &&
+    Boolean(selectedObjectId) &&
     (hasMeshParts
       ? !meshParts.some(
-          (part) => part.role === "magnetic_object" && part.object_id === scopeObjectId,
+          (part) => part.role === "magnetic_object" && part.object_id === selectedObjectId,
         )
-      : !magneticSegments.some((segment) => segment.object_id === scopeObjectId));
+      : !magneticSegments.some((segment) => segment.object_id === selectedObjectId));
   const magneticBoundaryFaceIndices = useMemo(() => {
     if (missingExactScopeSegment) {
       return null;
     }
-    if (scopeObjectId) {
+    if (selectedObjectId) {
       return collectSegmentBoundaryFaceIndices(
         magneticSegments,
         Math.floor(meshData.boundaryFaces.length / 3),
-        scopeObjectId,
+        selectedObjectId,
       );
     }
     return collectSegmentBoundaryFaceIndicesByIds(
@@ -669,18 +657,18 @@ function FemMeshView3DInner({
     magneticSegments,
     meshData.boundaryFaces.length,
     missingExactScopeSegment,
-    scopeObjectId,
+    selectedObjectId,
     visibleMagneticIds,
   ]);
   const magneticElementIndices = useMemo(() => {
     if (missingExactScopeSegment) {
       return null;
     }
-    if (scopeObjectId) {
+    if (selectedObjectId) {
       return collectSegmentElementIndices(
         magneticSegments,
         meshData.nElements,
-        scopeObjectId,
+        selectedObjectId,
       );
     }
     return collectSegmentElementIndicesByIds(
@@ -692,7 +680,7 @@ function FemMeshView3DInner({
     magneticSegments,
     meshData.nElements,
     missingExactScopeSegment,
-    scopeObjectId,
+    selectedObjectId,
     visibleMagneticIds,
   ]);
   const airBoundaryFaceIndices = useMemo(
@@ -776,11 +764,11 @@ function FemMeshView3DInner({
   const shouldRenderMagneticGeometry =
     !hasMeshParts &&
     !missingExactScopeSegment &&
-    (scopeObjectId != null || visibleMagneticIds.size > 0) &&
+    (selectedObjectId != null || visibleMagneticIds.size > 0) &&
     hasMagneticDisplayContent;
   const shouldRenderAirGeometry =
     !hasMeshParts &&
-    !scopeObjectId &&
+    !selectedObjectId &&
     airSegmentVisible &&
     airSegmentIds.size > 0 &&
     hasAirDisplayContent;
@@ -828,8 +816,9 @@ function FemMeshView3DInner({
     });
   }, []);
   const handleFaceContextMenu = useCallback((e: any) => {
-    e.stopPropagation();
-    e.preventDefault();
+    e?.stopPropagation?.();
+    e?.preventDefault?.();
+    e?.nativeEvent?.preventDefault?.();
     if (e.faceIndex != null) setCtxMenu({ x: e.clientX, y: e.clientY, faceIdx: e.faceIndex });
   }, []);
   const dismissCtxMenu = useCallback(() => setCtxMenu(null), []);
@@ -842,8 +831,9 @@ function FemMeshView3DInner({
   }, [ctxMenu]);
 
   const lastFittedGeomRef = useRef<string | null>(null);
+  const partFocused = hasMeshParts && visibleLayers.length <= 1;
   const axesWorldExtent = useMemo<[number, number, number]>(() => {
-    if (scopeObjectId) {
+    if (partFocused) {
       return geomSize;
     }
     if (
@@ -853,9 +843,9 @@ function FemMeshView3DInner({
       return worldExtent;
     }
     return geomSize;
-  }, [geomSize, worldExtent]);
+  }, [geomSize, partFocused, worldExtent]);
   const axesCenter = useMemo<[number, number, number]>(() => {
-    if (scopeObjectId) {
+    if (partFocused) {
       return [0, 0, 0];
     }
     if (
@@ -869,7 +859,7 @@ function FemMeshView3DInner({
       ];
     }
     return [0, 0, 0];
-  }, [geomCenter.x, geomCenter.y, geomCenter.z, worldCenter]);
+  }, [geomCenter.x, geomCenter.y, geomCenter.z, partFocused, worldCenter]);
   const sceneMaxDim = useMemo(
     () => Math.max(maxDim, axesWorldExtent[0], axesWorldExtent[1], axesWorldExtent[2]),
     [axesWorldExtent, maxDim],
@@ -1040,7 +1030,7 @@ function FemMeshView3DInner({
             <FemHighlightView meshData={meshData} selectedFaces={selectedFaces} center={geomCenter} />
           </>
         ) : null}
-        {antennaOverlays.length > 0 && !scopeObjectId ? (
+        {antennaOverlays.length > 0 && !partFocused ? (
           <AntennaOverlayMeshes
             overlays={antennaOverlays}
             geomCenter={geomCenter}
@@ -1048,15 +1038,15 @@ function FemMeshView3DInner({
             onAntennaTranslate={onAntennaTranslate}
           />
         ) : null}
-        {!scopeObjectId ? (
+        {!partFocused ? (
           <SceneAxes3D worldExtent={axesWorldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
         ) : null}
         
         <SyncedControls controlsRefObject={controlsRef} viewCubeBridgeRef={viewCubeSceneRef} />
       </Canvas>
-      {missingExactScopeSegment && scopeObjectId ? (
+      {missingExactScopeSegment && selectedObjectId ? (
         <div className="pointer-events-none absolute inset-x-4 top-16 z-20 rounded-xl border border-rose-400/25 bg-background/85 px-4 py-3 text-sm text-rose-200 shadow-lg backdrop-blur-md">
-          Object mesh segmentation unavailable for shared-domain FEM: `{scopeObjectId}`
+          Object mesh segmentation unavailable for shared-domain FEM: `{selectedObjectId}`
         </div>
       ) : null}
       {missingMagneticMask ? (

@@ -26,7 +26,8 @@ use tracing::info;
 
 use fullmag_runner::quantities::{quantity_spec, QuantityKind};
 use fullmag_runner::{
-    CommandAckEvent, DisplaySelection, LivePreviewField, RuntimeEventEnvelope, StepUpdate,
+    CommandAckEvent, DisplaySelection, LivePreviewField, MeshCommandTargetEvent,
+    RuntimeEventEnvelope, StepUpdate,
 };
 
 mod artifacts;
@@ -390,6 +391,8 @@ fn build_preview_control_command(
         relax_algorithm: None,
         relax_alpha: None,
         mesh_options: None,
+        mesh_target: None,
+        mesh_reason: None,
         state_path: None,
         state_format: None,
         state_dataset: None,
@@ -613,6 +616,12 @@ async fn enqueue_current_live_command(
     );
     if let Some(mesh_options) = command.mesh_options.as_ref() {
         eprintln!("[fullmag-api]    mesh_options: {}", mesh_options);
+    }
+    if let Some(mesh_target) = command.mesh_target.as_ref() {
+        eprintln!("[fullmag-api]    mesh_target: {:?}", mesh_target);
+    }
+    if let Some(mesh_reason) = command.mesh_reason.as_ref() {
+        eprintln!("[fullmag-api]    mesh_reason: {}", mesh_reason);
     }
     let ack_json = serialize_runtime_event(&build_command_ack_event(&session_id, &command))?;
     let _ = state
@@ -1005,6 +1014,19 @@ fn build_session_command(req: SessionCommandRequest) -> Result<SessionCommand, A
             "load_state command requires state_path",
         ));
     }
+    if kind == "remesh" && req.mesh_target.is_none() {
+        return Err(ApiError::bad_request("remesh command requires mesh_target"));
+    }
+    if kind != "remesh" && req.mesh_target.is_some() {
+        return Err(ApiError::bad_request(
+            "mesh_target is supported only for remesh commands",
+        ));
+    }
+    if kind != "remesh" && req.mesh_reason.is_some() {
+        return Err(ApiError::bad_request(
+            "mesh_reason is supported only for remesh commands",
+        ));
+    }
 
     Ok(SessionCommand {
         seq: 0,
@@ -1020,6 +1042,8 @@ fn build_session_command(req: SessionCommandRequest) -> Result<SessionCommand, A
         relax_algorithm: req.relax_algorithm,
         relax_alpha: req.relax_alpha,
         mesh_options: req.mesh_options,
+        mesh_target: req.mesh_target,
+        mesh_reason: req.mesh_reason,
         state_path: req.state_path,
         state_format: req.state_format,
         state_dataset: req.state_dataset,
@@ -1366,6 +1390,8 @@ async fn import_magnetization_state_for_current_workspace(
                     relax_algorithm: None,
                     relax_alpha: None,
                     mesh_options: None,
+                    mesh_target: None,
+                    mesh_reason: None,
                     state_path: Some(stored_abs_path.display().to_string()),
                     state_format: Some(loaded.format.clone()),
                     state_dataset: loaded.dataset.clone(),
@@ -1701,6 +1727,7 @@ fn serialize_current_live_session_event(
             live_state: snapshot.live_state.as_ref(),
             runtime_status: &snapshot.runtime_status,
             metadata: snapshot.metadata.as_ref(),
+            mesh_workspace: snapshot.mesh_workspace.as_ref(),
             scene_document: snapshot.scene_document.as_ref(),
             scalar_rows: &snapshot.scalar_rows,
             engine_log: &snapshot.engine_log,
@@ -1726,6 +1753,7 @@ fn serialize_current_live_response(
         live_state: snapshot.live_state.as_ref(),
         runtime_status: &snapshot.runtime_status,
         metadata: snapshot.metadata.as_ref(),
+        mesh_workspace: snapshot.mesh_workspace.as_ref(),
         scene_document: snapshot.scene_document.as_ref(),
         scalar_rows: &snapshot.scalar_rows,
         engine_log: &snapshot.engine_log,
@@ -1755,8 +1783,17 @@ fn build_command_ack_event(session_id: &str, command: &SessionCommand) -> Runtim
         command_id: command.command_id.clone(),
         command_kind: command.kind.clone(),
         issued_at_unix_ms: command.created_at_unix_ms,
+        mesh_target: command.mesh_target.as_ref().map(mesh_command_target_event),
+        mesh_reason: command.mesh_reason.clone(),
         display_selection: command.display_selection.clone(),
     })
+}
+
+fn mesh_command_target_event(target: &MeshCommandTarget) -> MeshCommandTargetEvent {
+    match target {
+        MeshCommandTarget::StudyDomain => MeshCommandTargetEvent::StudyDomain,
+        MeshCommandTarget::AdaptiveFollowup => MeshCommandTargetEvent::AdaptiveFollowup,
+    }
 }
 
 fn live_state_has_fresh_preview(live_state: Option<&LiveState>) -> bool {

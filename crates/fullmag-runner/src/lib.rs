@@ -37,14 +37,15 @@ pub use interactive::display::{
 };
 pub use interactive::events::{
     CommandAckEvent, CommandCompletedEvent, CommandRejectedEvent, DisplayUpdatedEvent,
-    RuntimeEventEnvelope, RuntimeStatus, RuntimeStatusChangedEvent, StepDeltaEvent,
+    MeshCommandTargetEvent, RuntimeEventEnvelope, RuntimeStatus, RuntimeStatusChangedEvent,
+    StepDeltaEvent,
 };
 pub use interactive::runtime::InteractiveRuntime;
 pub use interactive_runtime::{InteractiveFdmPreviewRuntime, InteractiveFemPreviewRuntime};
 pub use types::{
-    ExecutionProvenance, FemEigenRunResult, FemMeshObjectSegment, FemMeshPayload, LivePreviewField,
-    LivePreviewRequest, LiveVectorFieldSnapshot, RunError, RunResult, RunStatus, RuntimeEngineInfo,
-    StepAction, StepStats, StepUpdate,
+    ExecutionProvenance, FemEigenRunResult, FemMeshObjectSegment, FemMeshPartPayload,
+    FemMeshPayload, LivePreviewField, LivePreviewRequest, LiveVectorFieldSnapshot, RunError,
+    RunResult, RunStatus, RuntimeEngineInfo, StepAction, StepStats, StepUpdate,
 };
 
 use fullmag_ir::{BackendPlanIR, FdmMultilayerPlanIR, FdmPlanIR, OutputIR, ProblemIR};

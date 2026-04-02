@@ -8,7 +8,7 @@ import type {
   ScalarRow,
   SessionState,
 } from "./types";
-import { normalizeDisplaySelection } from "./normalize";
+import { normalizeDisplaySelection, normalizeMeshCommandTarget } from "./normalize";
 
 function lastScalarStep(rows: ScalarRow[]): number {
   return rows.length > 0 ? rows[rows.length - 1]?.step ?? -1 : -1;
@@ -134,10 +134,6 @@ export function mergeSessionState(prev: SessionState | null, next: SessionState)
     merged.runtime_status = prev.runtime_status;
   }
 
-  if (!merged.mesh_workspace && prev.mesh_workspace) {
-    merged.mesh_workspace = prev.mesh_workspace;
-  }
-
   if (
     prev.scene_document &&
     (
@@ -219,6 +215,11 @@ export function mergeCommandStatusEvent(
         completion_state: null,
         reason: null,
         display_selection: displaySelection,
+        mesh_target: normalizeMeshCommandTarget(raw.mesh_target),
+        mesh_reason:
+          typeof raw.mesh_reason === "string" && raw.mesh_reason.trim().length > 0
+            ? raw.mesh_reason
+            : null,
       },
     };
   }
@@ -237,6 +238,11 @@ export function mergeCommandStatusEvent(
         completion_state: null,
         reason: String(raw.reason ?? ""),
         display_selection: prev.display_selection,
+        mesh_target: normalizeMeshCommandTarget(raw.mesh_target),
+        mesh_reason:
+          typeof raw.mesh_reason === "string" && raw.mesh_reason.trim().length > 0
+            ? raw.mesh_reason
+            : null,
       },
     };
   }
@@ -254,6 +260,11 @@ export function mergeCommandStatusEvent(
       completion_state: String(raw.completion_state ?? ""),
       reason: null,
       display_selection: prev.display_selection,
+      mesh_target: normalizeMeshCommandTarget(raw.mesh_target),
+      mesh_reason:
+        typeof raw.mesh_reason === "string" && raw.mesh_reason.trim().length > 0
+          ? raw.mesh_reason
+          : null,
     },
   };
 }

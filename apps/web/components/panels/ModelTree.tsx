@@ -503,6 +503,26 @@ export function buildFullmagModelTree(opts: {
     });
   }
 
+  if (opts.domainMeshMode === "shared_domain_mesh_with_air") {
+    studyChildren.push({
+      id: "mesh",
+      label: "Mesh",
+      icon: "◫",
+      badge: opts.meshElements
+        ? `${opts.meshElements.toLocaleString()} el`
+        : opts.meshNodes
+          ? `${opts.meshNodes.toLocaleString()} nodes`
+          : "—",
+      status: opts.meshStatus ?? "pending",
+      defaultOpen: false,
+      children: [
+        { id: "mesh-view", label: "Domain Inspector", icon: "👁" },
+        { id: "mesh-quality", label: "Quality", icon: "📊" },
+        { id: "mesh-pipeline", label: "Pipeline", icon: "🧭" },
+      ],
+    });
+  }
+
   studyChildren.push({
     id: "objects",
     label: "Objects",
@@ -689,6 +709,13 @@ function _buildUniverseChildren(opts: {
         opts.airPartElementCount != null
           ? `${opts.airPartElementCount.toLocaleString()} el`
           : (opts.airPartNodeCount != null ? `${opts.airPartNodeCount.toLocaleString()} nodes` : undefined),
+      children: [
+        {
+          id: "universe-airbox-mesh",
+          label: "Mesh",
+          icon: "◫",
+        },
+      ],
     });
   }
   children.push({
@@ -700,7 +727,7 @@ function _buildUniverseChildren(opts: {
   if (opts.domainMeshMode !== "shared_domain_mesh_with_air") {
     children.push({
       id: "universe-mesh",
-      label: "Global Mesh",
+      label: "Study Mesh",
       icon: "◫",
       badge: opts.meshElements
         ? `${opts.meshElements.toLocaleString()} el`
@@ -744,7 +771,7 @@ function _buildGeometryNode(
 
   const meshNode: TreeNodeData = {
     id: `${geoId}-mesh`,
-    label: "Mesh",
+    label: "Mesh Override",
     icon: "◫",
     status: geo.mesh?.mode === "custom" ? "ready" : "pending",
     badge:
@@ -754,7 +781,7 @@ function _buildGeometryNode(
     children: [
       {
         id: `${geoId}-mesh-mode`,
-        label: geo.mesh?.mode === "custom" ? "Mode: custom override" : "Mode: inherit global",
+        label: geo.mesh?.mode === "custom" ? "Mode: custom override" : "Mode: inherit study mesh",
         icon: "⇆",
       },
       {
@@ -811,7 +838,7 @@ function _buildObjectNode(objectNode: {
   const geometryChildren = _buildGeometryParamChildren(geometryId, geo);
   const meshNode: TreeNodeData = {
     id: meshId,
-    label: "Mesh",
+    label: "Mesh Override",
     icon: "◫",
     status: geo.mesh?.mode === "custom" ? "ready" : "pending",
     badge:
@@ -821,7 +848,7 @@ function _buildObjectNode(objectNode: {
     children: [
       {
         id: `${meshId}-mode`,
-        label: geo.mesh?.mode === "custom" ? "Mode: custom override" : "Mode: inherit global",
+        label: geo.mesh?.mode === "custom" ? "Mode: custom override" : "Mode: inherit study mesh",
         icon: "⇆",
       },
       {

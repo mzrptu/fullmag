@@ -21,36 +21,22 @@ pub(crate) struct StudyUniverseMetadata {
     pub size: Option<[f64; 3]>,
     pub center: [f64; 3],
     pub padding: [f64; 3],
-}
-
-pub(crate) fn json_vec3(value: Option<&serde_json::Value>) -> Option<[f64; 3]> {
-    let array = value?.as_array()?;
-    if array.len() != 3 {
-        return None;
-    }
-    let mut out = [0.0; 3];
-    for (index, component) in array.iter().enumerate() {
-        out[index] = component.as_f64()?;
-    }
-    Some(out)
+    pub airbox_hmax: Option<f64>,
 }
 
 pub(crate) fn study_universe_metadata(problem: &ProblemIR) -> Option<StudyUniverseMetadata> {
+    if let Some(domain_frame) = problem_domain_frame(problem) {
+        if let Some(declared_universe) = domain_frame.declared_universe {
+            return Some(StudyUniverseMetadata::from(&declared_universe));
+        }
+    }
+
     let raw = problem
         .problem_meta
         .runtime_metadata
         .get("study_universe")?;
-    let object = raw.as_object()?;
-    Some(StudyUniverseMetadata {
-        mode: object
-            .get("mode")
-            .and_then(|value| value.as_str())
-            .unwrap_or("auto")
-            .to_string(),
-        size: json_vec3(object.get("size")),
-        center: json_vec3(object.get("center")).unwrap_or([0.0, 0.0, 0.0]),
-        padding: json_vec3(object.get("padding")).unwrap_or([0.0, 0.0, 0.0]),
-    })
+    let declared_universe = DeclaredUniverseIR::from_study_universe_value(raw)?;
+    Some(StudyUniverseMetadata::from(&declared_universe))
 }
 
 pub(crate) fn problem_domain_frame(problem: &ProblemIR) -> Option<DomainFrameIR> {
@@ -70,6 +56,18 @@ pub(crate) fn problem_domain_frame(problem: &ProblemIR) -> Option<DomainFrameIR>
             ..DomainFrameIR::default()
         })
         .and_then(DomainFrameIR::finalized)
+}
+
+impl From<&DeclaredUniverseIR> for StudyUniverseMetadata {
+    fn from(value: &DeclaredUniverseIR) -> Self {
+        Self {
+            mode: value.mode.clone(),
+            size: value.size,
+            center: value.center.unwrap_or([0.0, 0.0, 0.0]),
+            padding: value.padding.unwrap_or([0.0, 0.0, 0.0]),
+            airbox_hmax: value.airbox_hmax,
+        }
+    }
 }
 
 /// Generate deterministic random unit vectors from a seed.

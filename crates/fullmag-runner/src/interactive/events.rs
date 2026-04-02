@@ -1,6 +1,13 @@
 use super::{DisplayKind, DisplaySelectionState};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MeshCommandTargetEvent {
+    StudyDomain,
+    AdaptiveFollowup,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeStatus {
@@ -66,6 +73,10 @@ pub struct CommandAckEvent {
     pub command_kind: String,
     pub issued_at_unix_ms: u128,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_target: Option<MeshCommandTargetEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub display_selection: Option<DisplaySelectionState>,
 }
 
@@ -75,6 +86,10 @@ pub struct CommandRejectedEvent {
     pub command_id: String,
     pub command_kind: String,
     pub issued_at_unix_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_target: Option<MeshCommandTargetEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_reason: Option<String>,
     pub reason: String,
 }
 
@@ -85,6 +100,10 @@ pub struct CommandCompletedEvent {
     pub command_id: String,
     pub command_kind: String,
     pub completed_at_unix_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_target: Option<MeshCommandTargetEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_reason: Option<String>,
     pub completion_state: String,
 }
 

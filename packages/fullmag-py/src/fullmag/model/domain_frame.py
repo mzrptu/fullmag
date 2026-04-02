@@ -164,11 +164,17 @@ def build_domain_frame(
         declared_size = _optional_vec3(study_universe.get("size"))
         declared_center = _optional_vec3(study_universe.get("center"))
         declared_padding = _optional_vec3(study_universe.get("padding"))
+        declared_airbox_hmax = study_universe.get("airbox_hmax")
         declared_universe = {
             "mode": str(declared_mode) if isinstance(declared_mode, str) else "auto",
             "size": list(declared_size) if declared_size is not None else None,
             "center": list(declared_center) if declared_center is not None else None,
             "padding": list(declared_padding) if declared_padding is not None else None,
+            "airbox_hmax": (
+                float(declared_airbox_hmax)
+                if isinstance(declared_airbox_hmax, (int, float))
+                else None
+            ),
         }
         if declared_universe["mode"] == "manual" and declared_size is not None:
             effective_extent = declared_size

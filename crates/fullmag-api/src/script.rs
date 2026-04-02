@@ -127,28 +127,6 @@ pub(crate) fn scene_document_overrides(scene_document: &SceneDocument) -> Result
         .rewrite_overrides)
 }
 
-pub(crate) fn parse_optional_text_f64(raw: &str) -> Value {
-    raw.trim()
-        .parse::<f64>()
-        .ok()
-        .map_or(Value::Null, Value::from)
-}
-
-pub(crate) fn parse_optional_text_f64_or_auto(raw: &str) -> Value {
-    let trimmed = raw.trim();
-    if trimmed.eq_ignore_ascii_case("auto") {
-        return Value::String("auto".to_string());
-    }
-    parse_optional_text_f64(trimmed)
-}
-
-pub(crate) fn parse_optional_text_u64(raw: &str) -> Value {
-    raw.trim()
-        .parse::<u64>()
-        .ok()
-        .map_or(Value::Null, Value::from)
-}
-
 pub(crate) fn read_magnetization_state_with_python(
     repo_root: &Path,
     path: &Path,

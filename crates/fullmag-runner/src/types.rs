@@ -293,6 +293,8 @@ pub struct FemMeshPartPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FemMeshPayload {
+    pub mesh_name: String,
+    pub mesh_id: String,
     pub nodes: Vec<[f64; 3]>,
     pub elements: Vec<[u32; 4]>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -307,12 +309,17 @@ pub struct FemMeshPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain_mesh_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain_frame: Option<fullmag_ir::DomainFrameIR>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation_id: Option<String>,
 }
 
 impl From<&fullmag_ir::FemPlanIR> for FemMeshPayload {
     fn from(plan: &fullmag_ir::FemPlanIR) -> Self {
+        let generation_id = Uuid::new_v4().to_string();
         Self {
+            mesh_name: plan.mesh.mesh_name.clone(),
+            mesh_id: format!("{}:{}", plan.mesh.mesh_name, generation_id),
             nodes: plan.mesh.nodes.clone(),
             elements: plan.mesh.elements.clone(),
             element_markers: plan.mesh.element_markers.clone(),
@@ -338,14 +345,18 @@ impl From<&fullmag_ir::FemPlanIR> for FemMeshPayload {
                 .map(FemMeshPartPayload::from)
                 .collect(),
             domain_mesh_mode: Some(domain_mesh_mode_name(plan.domain_mesh_mode).to_string()),
-            generation_id: Some(Uuid::new_v4().to_string()),
+            domain_frame: plan.domain_frame.clone(),
+            generation_id: Some(generation_id),
         }
     }
 }
 
 impl From<&fullmag_ir::FemEigenPlanIR> for FemMeshPayload {
     fn from(plan: &fullmag_ir::FemEigenPlanIR) -> Self {
+        let generation_id = Uuid::new_v4().to_string();
         Self {
+            mesh_name: plan.mesh.mesh_name.clone(),
+            mesh_id: format!("{}:{}", plan.mesh.mesh_name, generation_id),
             nodes: plan.mesh.nodes.clone(),
             elements: plan.mesh.elements.clone(),
             element_markers: plan.mesh.element_markers.clone(),
@@ -371,7 +382,8 @@ impl From<&fullmag_ir::FemEigenPlanIR> for FemMeshPayload {
                 .map(FemMeshPartPayload::from)
                 .collect(),
             domain_mesh_mode: Some(domain_mesh_mode_name(plan.domain_mesh_mode).to_string()),
-            generation_id: Some(Uuid::new_v4().to_string()),
+            domain_frame: plan.domain_frame.clone(),
+            generation_id: Some(generation_id),
         }
     }
 }
