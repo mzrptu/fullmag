@@ -228,6 +228,7 @@ export interface ModelContextValue {
   solverPlan: SolverPlanSummary | null;
   solverSettings: SolverSettingsState;
   studyStages: ScriptBuilderStageState[];
+  scriptBuilderDemagRealization: string | null;
   scriptBuilderUniverse: ScriptBuilderUniverseState | null;
   scriptBuilderGeometries: ScriptBuilderGeometryEntry[];
   scriptBuilderCurrentModules: ScriptBuilderCurrentModuleEntry[];
@@ -293,6 +294,7 @@ export interface ModelContextValue {
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
   setSceneDocument: React.Dispatch<React.SetStateAction<SceneDocument | null>>;
   setStudyStages: React.Dispatch<React.SetStateAction<ScriptBuilderStageState[]>>;
+  setScriptBuilderDemagRealization: React.Dispatch<React.SetStateAction<string | null>>;
   setScriptBuilderUniverse: React.Dispatch<React.SetStateAction<ScriptBuilderUniverseState | null>>;
   setScriptBuilderGeometries: React.Dispatch<React.SetStateAction<ScriptBuilderGeometryEntry[]>>;
   setScriptBuilderCurrentModules: React.Dispatch<

@@ -90,6 +90,15 @@ export default function UniversePanel() {
   const padding = builderUniverse?.padding ?? null;
   const effectiveAirboxHmax =
     ctx.scriptBuilderUniverse?.airbox_hmax ?? runtimeUniverse?.airbox_hmax ?? null;
+  const outerBoundaryPolicy = ctx.scriptBuilderDemagRealization ?? "auto";
+  const outerBoundaryLabel =
+    outerBoundaryPolicy === "airbox_dirichlet"
+      ? "Dirichlet"
+      : outerBoundaryPolicy === "airbox_robin"
+        ? "Robin"
+        : outerBoundaryPolicy === "transfer_grid"
+          ? "Transfer Grid"
+          : "Auto";
   const mode = builderUniverse?.mode ?? (worldExtent ? "derived" : null);
   const role = ctx.isFemBackend
     ? "Declared universe / workspace framing"
@@ -176,7 +185,7 @@ export default function UniversePanel() {
     "universe-padding",
     "universe-role",
   ].includes(selectedNodeId);
-  const canRebuildAirbox = !ctx.meshGenerating && !ctx.scriptSyncBusy;
+  const canRebuildAirbox = !ctx.meshGenerating && !ctx.scriptSyncBusy && (ctx.awaitingCommand || ctx.isWaitingForCompute);
   const handleAirboxRebuild = useCallback(async () => {
     if (editable && builderUniverse) {
       await ctx.syncScriptBuilder();
@@ -736,16 +745,29 @@ export default function UniversePanel() {
           <div className="flex flex-col gap-3">
             <SelectField
               label="BC Kind"
-              value="robin"
-              onchange={() => {}}
-              disabled={true}
+              value={outerBoundaryPolicy}
+              onchange={(nextValue) => {
+                ctx.setScriptBuilderDemagRealization(
+                  nextValue === "auto" ? null : nextValue,
+                );
+              }}
+              disabled={!editable}
               options={[
-                { value: "dirichlet", label: "Dirichlet" },
-                { value: "robin", label: "Robin" },
-                { value: "shell", label: "Shell Transform" },
+                { value: "auto", label: "Auto" },
+                { value: "airbox_dirichlet", label: "Dirichlet" },
+                { value: "airbox_robin", label: "Robin" },
+                { value: "transfer_grid", label: "Transfer Grid" },
               ]}
             />
-            <MetricField label="Status" value="Solver-controlled" />
+            <MetricField
+              label="Status"
+              value={outerBoundaryPolicy === "auto" ? "Planner-managed" : "Explicit authoring"}
+            />
+            <MetricField label="Effective" value={outerBoundaryLabel} />
+            <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+              `Dirichlet` and `Robin` keep the solve on the shared airbox FEM path.
+              `Transfer Grid` skips the outer airbox boundary solve and uses the FFT transfer-grid demag path instead.
+            </div>
           </div>
         </SidebarSection>
       ) : null}

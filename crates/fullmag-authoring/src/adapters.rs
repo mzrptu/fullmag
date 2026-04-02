@@ -52,6 +52,7 @@ pub fn scene_document_from_script_builder(builder: &ScriptBuilderState) -> Scene
         },
         study: SceneStudyState {
             backend: builder.backend.clone(),
+            demag_realization: builder.demag_realization.clone(),
             solver: builder.solver.clone(),
             mesh_defaults: builder.mesh.clone(),
             stages: builder.stages.clone(),
@@ -133,6 +134,7 @@ pub fn scene_document_to_script_builder(
     Ok(ScriptBuilderState {
         revision: scene.revision,
         backend: scene.study.backend.clone(),
+        demag_realization: scene.study.demag_realization.clone(),
         solver: scene.study.solver.clone(),
         mesh: scene.study.mesh_defaults.clone(),
         universe: scene.universe.clone(),
@@ -150,6 +152,7 @@ pub fn scene_document_to_script_builder_overrides(
 ) -> Result<Value, SceneDocumentValidationError> {
     let builder = scene_document_to_script_builder(scene)?;
     Ok(serde_json::json!({
+        "demag_realization": builder.demag_realization,
         "solver": {
             "integrator": string_or_null(&builder.solver.integrator),
             "fixed_timestep": parse_optional_text_f64(&builder.solver.fixed_timestep),
@@ -483,6 +486,7 @@ mod tests {
         ScriptBuilderState {
             revision: 7,
             backend: Some("fem".to_string()),
+            demag_realization: Some("airbox_robin".to_string()),
             solver: ScriptBuilderSolverState {
                 integrator: "rk45".to_string(),
                 fixed_timestep: "1e-15".to_string(),

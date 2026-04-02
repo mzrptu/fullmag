@@ -104,6 +104,7 @@ interface RenderLayer {
   boundaryFaceIndices: number[] | null;
   elementIndices: number[] | null;
   nodeMask: boolean[] | null;
+  surfaceFaces: [number, number, number][] | null;
   isPrimaryForCamera: boolean;
   isMagnetic: boolean;
   isSelected: boolean;
@@ -253,6 +254,11 @@ function collectPartBoundaryFaceIndices(
   part: FemMeshPart,
   maxFaceCount: number,
 ): number[] | null {
+  if (part.boundary_face_indices.length > 0) {
+    return part.boundary_face_indices.filter(
+      (faceIndex) => Number.isInteger(faceIndex) && faceIndex >= 0 && faceIndex < maxFaceCount,
+    );
+  }
   const start = Math.max(0, Math.trunc(part.boundary_face_start));
   const count = Math.max(0, Math.trunc(part.boundary_face_count));
   const end = Math.min(start + count, maxFaceCount);
@@ -293,6 +299,18 @@ function collectPartNodeMask(
   part: FemMeshPart,
   nNodes: number,
 ): boolean[] | null {
+  if (part.node_indices.length > 0) {
+    const nodeMask = new Array<boolean>(nNodes).fill(false);
+    let sawNode = false;
+    for (const nodeIndex of part.node_indices) {
+      if (!Number.isInteger(nodeIndex) || nodeIndex < 0 || nodeIndex >= nNodes) {
+        continue;
+      }
+      nodeMask[nodeIndex] = true;
+      sawNode = true;
+    }
+    return sawNode ? nodeMask : null;
+  }
   const start = Math.max(0, Math.trunc(part.node_start));
   const count = Math.max(0, Math.trunc(part.node_count));
   const end = Math.min(start + count, nNodes);
@@ -604,14 +622,18 @@ function FemMeshView3DInner({
       ?? null;
     const hasSelection = Boolean(selectedAirPartId || selectedObjectIdForHighlight || preferredCameraPartId);
     for (const part of meshParts) {
-      if (part.role === "interface" || part.role === "outer_boundary") {
-        continue;
-      }
       const defaultViewState: MeshEntityViewState = {
         visible: true,
-        renderMode: part.role === "air" ? "wireframe" : "surface+edges",
-        opacity: part.role === "air" ? 28 : 100,
-        colorField: part.role === "air" ? "none" : "orientation",
+        renderMode:
+          part.role === "air"
+            ? "wireframe"
+            : part.role === "outer_boundary"
+              ? "surface+edges"
+              : "surface+edges",
+        opacity:
+          part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
+        colorField:
+          part.role === "magnetic_object" ? "orientation" : "none",
       };
       const baseViewState = meshEntityViewState[part.id] ?? defaultViewState;
       const isSelected =
@@ -651,6 +673,7 @@ function FemMeshView3DInner({
         ),
         elementIndices: collectPartElementIndices(part, meshData.nElements),
         nodeMask: collectPartNodeMask(part, meshData.nNodes),
+        surfaceFaces: part.surface_faces.length > 0 ? part.surface_faces : null,
         isPrimaryForCamera: preferredCameraPartId
           ? part.id === preferredCameraPartId
           : false,
@@ -1078,6 +1101,7 @@ function FemMeshView3DInner({
                     field={layer.viewState.colorField}
                     renderMode={layer.viewState.renderMode}
                     opacity={layer.viewState.opacity}
+                    customBoundaryFaces={layer.surfaceFaces}
                     displayBoundaryFaceIndices={layer.boundaryFaceIndices}
                     displayElementIndices={layer.elementIndices}
                     qualityPerFace={qualityPerFace}

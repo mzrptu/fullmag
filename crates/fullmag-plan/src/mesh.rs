@@ -64,6 +64,9 @@ pub(crate) fn build_mesh_parts_from_segments(
                     start: segment.node_start,
                     count: segment.node_count,
                 },
+                boundary_face_indices: Vec::new(),
+                node_indices: Vec::new(),
+                surface_faces: Vec::new(),
                 bounds_min: bounds.map(|(min, _)| min),
                 bounds_max: bounds.map(|(_, max)| max),
                 parent_id: None,
@@ -98,6 +101,7 @@ pub(crate) struct ResolvedFemDomainMeshAsset {
     pub mesh: MeshIR,
     pub mesh_source: Option<String>,
     pub object_segments: Vec<FemObjectSegmentIR>,
+    pub mesh_parts: Vec<FemMeshPartIR>,
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +169,13 @@ pub(crate) struct SharedDomainAnalysis {
     pub face_owner: BTreeMap<(u32, u32, u32), u32>,
     pub ordered_regions: Vec<(String, u32)>,
     pub shared_interface_nodes: Vec<(u32, Vec<u32>)>,
+    pub interface_faces: Vec<SharedInterfaceFace>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SharedInterfaceFace {
+    pub face: [u32; 3],
+    pub markers: Vec<u32>,
 }
 
 pub(crate) fn analyze_shared_domain_mesh(
@@ -222,16 +233,18 @@ pub(crate) fn analyze_shared_domain_mesh(
     }
 
     let mut face_markers = BTreeMap::<(u32, u32, u32), BTreeSet<u32>>::new();
+    let mut all_face_markers = BTreeMap::<(u32, u32, u32), BTreeSet<u32>>::new();
+    let mut representative_faces = BTreeMap::<(u32, u32, u32), [u32; 3]>::new();
     for (element_index, element) in mesh.elements.iter().enumerate() {
         let marker = mesh.element_markers[element_index];
-        if marker == 0 {
-            continue;
-        }
         for face in tet_faces(element) {
-            face_markers
-                .entry(sorted_face_key(face))
-                .or_default()
-                .insert(marker);
+            let key = sorted_face_key(face);
+            all_face_markers.entry(key).or_default().insert(marker);
+            representative_faces.entry(key).or_insert(face);
+            if marker == 0 {
+                continue;
+            }
+            face_markers.entry(key).or_default().insert(marker);
         }
     }
 
@@ -244,11 +257,30 @@ pub(crate) fn analyze_shared_domain_mesh(
         face_owner.insert(*face_key, u32::MAX);
     }
 
+    let interface_faces = all_face_markers
+        .iter()
+        .filter_map(|(face_key, markers)| {
+            if markers.len() <= 1 {
+                return None;
+            }
+            let mut ordered = markers.iter().copied().collect::<Vec<_>>();
+            ordered.sort_unstable();
+            representative_faces
+                .get(face_key)
+                .copied()
+                .map(|face| SharedInterfaceFace {
+                    face,
+                    markers: ordered,
+                })
+        })
+        .collect::<Vec<_>>();
+
     Ok(SharedDomainAnalysis {
         node_owner,
         face_owner,
         ordered_regions,
         shared_interface_nodes,
+        interface_faces,
     })
 }
 
@@ -267,10 +299,34 @@ pub(crate) fn validate_packing_constraints(
     Ok(())
 }
 
+fn mesh_bounds_from_node_indices(
+    mesh: &MeshIR,
+    node_indices: &[u32],
+) -> Option<([f64; 3], [f64; 3])> {
+    bounds_from_points(
+        node_indices
+            .iter()
+            .filter_map(|index| mesh.nodes.get(*index as usize)),
+    )
+}
+
+fn collect_boundary_face_node_indices(mesh: &MeshIR, boundary_face_indices: &[u32]) -> Vec<u32> {
+    let mut unique = BTreeSet::new();
+    for face_index in boundary_face_indices {
+        let Some(face) = mesh.boundary_faces.get(*face_index as usize) else {
+            continue;
+        };
+        unique.insert(face[0]);
+        unique.insert(face[1]);
+        unique.insert(face[2]);
+    }
+    unique.into_iter().collect()
+}
+
 pub(crate) fn pack_mesh_by_analysis(
     mesh: &MeshIR,
     analysis: &SharedDomainAnalysis,
-) -> Result<(MeshIR, Vec<FemObjectSegmentIR>), String> {
+) -> Result<(MeshIR, Vec<FemObjectSegmentIR>, Vec<FemMeshPartIR>), String> {
     let ordered_regions = &analysis.ordered_regions;
     let shared_markers_by_node = analysis
         .shared_interface_nodes
@@ -496,14 +552,128 @@ pub(crate) fn pack_mesh_by_analysis(
             errors.join("; ")
         )
     })?;
-    Ok((reordered_mesh, object_segments))
+    let mut mesh_parts = build_mesh_parts_from_segments(
+        &reordered_mesh,
+        &object_segments,
+        FemDomainMeshModeIR::SharedDomainMeshWithAir,
+    );
+
+    let outer_boundary_marker = select_airbox_boundary_marker(&reordered_mesh);
+    let outer_boundary_face_indices = reordered_mesh
+        .boundary_markers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, marker)| (*marker == outer_boundary_marker).then_some(index as u32))
+        .collect::<Vec<_>>();
+    if !outer_boundary_face_indices.is_empty() {
+        let node_indices =
+            collect_boundary_face_node_indices(&reordered_mesh, &outer_boundary_face_indices);
+        let bounds = mesh_bounds_from_node_indices(&reordered_mesh, &node_indices);
+        mesh_parts.push(FemMeshPartIR {
+            id: "part:outer_boundary".to_string(),
+            label: "Outer Boundary".to_string(),
+            role: FemMeshPartRole::OuterBoundary,
+            object_id: None,
+            geometry_id: None,
+            material_id: None,
+            element_selector: FemMeshPartSelector::ElementRange { start: 0, count: 0 },
+            boundary_face_selector: FemMeshPartSelector::BoundaryFaceRange { start: 0, count: 0 },
+            node_selector: FemMeshPartSelector::NodeRange { start: 0, count: 0 },
+            boundary_face_indices: outer_boundary_face_indices,
+            node_indices,
+            surface_faces: Vec::new(),
+            bounds_min: bounds.map(|(min, _)| min),
+            bounds_max: bounds.map(|(_, max)| max),
+            parent_id: Some(format!("part:{}", AIR_OBJECT_SEGMENT_ID)),
+        });
+    }
+
+    let marker_to_label = analysis
+        .ordered_regions
+        .iter()
+        .map(|(label, marker)| (*marker, label.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut interface_surface_faces = BTreeMap::<(u32, u32), Vec<[u32; 3]>>::new();
+    let mut interface_node_sets = BTreeMap::<(u32, u32), BTreeSet<u32>>::new();
+    for interface_face in &analysis.interface_faces {
+        if interface_face.markers.len() < 2 {
+            continue;
+        }
+        let mut pair = [interface_face.markers[0], interface_face.markers[1]];
+        pair.sort_unstable();
+        let pair_key = (pair[0], pair[1]);
+        let preferred_marker = pair
+            .iter()
+            .copied()
+            .find(|marker| *marker != 0)
+            .unwrap_or(pair[0]);
+        let remapped_face = [
+            remap_node(interface_face.face[0], preferred_marker)?,
+            remap_node(interface_face.face[1], preferred_marker)?,
+            remap_node(interface_face.face[2], preferred_marker)?,
+        ];
+        interface_surface_faces
+            .entry(pair_key)
+            .or_default()
+            .push(remapped_face);
+        let node_set = interface_node_sets.entry(pair_key).or_default();
+        node_set.insert(remapped_face[0]);
+        node_set.insert(remapped_face[1]);
+        node_set.insert(remapped_face[2]);
+    }
+
+    for ((left_marker, right_marker), surface_faces) in interface_surface_faces {
+        if surface_faces.is_empty() {
+            continue;
+        }
+        let left_label = if left_marker == 0 {
+            "Air".to_string()
+        } else {
+            marker_to_label
+                .get(&left_marker)
+                .cloned()
+                .unwrap_or_else(|| format!("marker_{left_marker}"))
+        };
+        let right_label = if right_marker == 0 {
+            "Air".to_string()
+        } else {
+            marker_to_label
+                .get(&right_marker)
+                .cloned()
+                .unwrap_or_else(|| format!("marker_{right_marker}"))
+        };
+        let node_indices = interface_node_sets
+            .remove(&(left_marker, right_marker))
+            .map(|set| set.into_iter().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let bounds = mesh_bounds_from_node_indices(&reordered_mesh, &node_indices);
+        mesh_parts.push(FemMeshPartIR {
+            id: format!("part:interface:{left_marker}:{right_marker}"),
+            label: format!("{left_label} ↔ {right_label}"),
+            role: FemMeshPartRole::Interface,
+            object_id: None,
+            geometry_id: None,
+            material_id: None,
+            element_selector: FemMeshPartSelector::ElementRange { start: 0, count: 0 },
+            boundary_face_selector: FemMeshPartSelector::BoundaryFaceRange { start: 0, count: 0 },
+            node_selector: FemMeshPartSelector::NodeRange { start: 0, count: 0 },
+            boundary_face_indices: Vec::new(),
+            node_indices,
+            surface_faces,
+            bounds_min: bounds.map(|(min, _)| min),
+            bounds_max: bounds.map(|(_, max)| max),
+            parent_id: None,
+        });
+    }
+
+    Ok((reordered_mesh, object_segments, mesh_parts))
 }
 
 pub(crate) fn reorder_shared_domain_mesh(
     mesh: &MeshIR,
     region_markers: &[FemDomainRegionMarkerIR],
     solver_supports_conformal: bool,
-) -> Result<(MeshIR, Vec<FemObjectSegmentIR>), String> {
+) -> Result<(MeshIR, Vec<FemObjectSegmentIR>, Vec<FemMeshPartIR>), String> {
     let analysis = analyze_shared_domain_mesh(mesh, region_markers)?;
     validate_packing_constraints(&analysis, &mesh.mesh_name, solver_supports_conformal)?;
     pack_mesh_by_analysis(mesh, &analysis)
@@ -521,12 +691,13 @@ pub(crate) fn resolve_fem_domain_mesh_asset(
         return Ok(None);
     };
     let mesh = load_fem_domain_mesh_asset(asset)?;
-    let (mesh, object_segments) =
+    let (mesh, object_segments, mesh_parts) =
         reorder_shared_domain_mesh(&mesh, &asset.region_markers, solver_supports_conformal)?;
     Ok(Some(ResolvedFemDomainMeshAsset {
         mesh,
         mesh_source: asset.mesh_source.clone(),
         object_segments,
+        mesh_parts,
     }))
 }
 

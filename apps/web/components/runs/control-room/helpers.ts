@@ -173,6 +173,7 @@ export function meshOptionsToBuilder(
 export function buildLegacyScriptBuilderUpdatePayload(
   solverSettings: SolverSettingsState,
   meshOptions: MeshOptionsState,
+  demagRealization: string | null,
   universe: ScriptBuilderUniverseState | null,
   stages: ScriptBuilderStageState[],
   geometries: ScriptBuilderGeometryEntry[],
@@ -182,6 +183,7 @@ export function buildLegacyScriptBuilderUpdatePayload(
   return buildSceneDocumentFromScriptBuilder({
     revision: 0,
     backend: null,
+    demag_realization: demagRealization,
     solver: solverSettingsToBuilder(solverSettings),
     mesh: meshOptionsToBuilder(meshOptions),
     universe,
@@ -199,6 +201,7 @@ export function buildScriptBuilderUpdatePayload(
   fallback: {
     solverSettings: SolverSettingsState;
     meshOptions: MeshOptionsState;
+    demagRealization: string | null;
     universe: ScriptBuilderUniverseState | null;
     stages: ScriptBuilderStageState[];
     geometries: ScriptBuilderGeometryEntry[];
@@ -216,6 +219,7 @@ export function buildScriptBuilderUpdatePayload(
   return buildLegacyScriptBuilderUpdatePayload(
     fallback.solverSettings,
     fallback.meshOptions,
+    fallback.demagRealization,
     fallback.universe,
     fallback.stages,
     fallback.geometries,
@@ -229,6 +233,7 @@ export function buildScriptBuilderSignature(
   fallback: {
     solverSettings: SolverSettingsState;
     meshOptions: MeshOptionsState;
+    demagRealization: string | null;
     universe: ScriptBuilderUniverseState | null;
     stages: ScriptBuilderStageState[];
     geometries: ScriptBuilderGeometryEntry[];

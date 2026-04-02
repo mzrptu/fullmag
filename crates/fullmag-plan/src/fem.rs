@@ -531,8 +531,22 @@ pub(crate) fn plan_fem(
     let n_elements = mesh.elements.len();
     let mesh_name = mesh.mesh_name.clone();
     let domain_mesh_mode = resolved_domain_mesh_mode(&mesh);
-    let mut resolved_mesh_parts =
-        build_mesh_parts_from_segments(&mesh, &object_segments, domain_mesh_mode);
+    let mut resolved_mesh_parts = if let Some(domain_asset) = resolved_domain_mesh_asset.as_ref() {
+        let mut parts = domain_asset.mesh_parts.clone();
+        // Remap geometry-name object_ids to magnet/object-name object_ids so that
+        // the frontend can match them against the selected object id (e.g. "nanoflower_left"
+        // instead of "nanoflower_left_geom").
+        for part in &mut parts {
+            if let Some(ref geo_id) = part.object_id.clone() {
+                if let Some(&mapped) = geometry_to_object_id.get(geo_id.as_str()) {
+                    part.object_id = Some(mapped.to_string());
+                }
+            }
+        }
+        parts
+    } else {
+        build_mesh_parts_from_segments(&mesh, &object_segments, domain_mesh_mode)
+    };
     assign_material_ids_to_mesh_parts(&mut resolved_mesh_parts, &magnet_entries, &magnet_materials);
     let region_materials = if has_heterogeneous_materials {
         build_region_materials(&mesh, &object_segments, &magnet_materials)
@@ -1043,8 +1057,11 @@ pub(crate) fn plan_fem_eigen(
     let n_nodes = mesh.nodes.len();
     let n_elements = mesh.elements.len();
     let domain_mesh_mode = resolved_domain_mesh_mode(&mesh);
-    let mut resolved_mesh_parts =
-        build_mesh_parts_from_segments(&mesh, &object_segments, domain_mesh_mode);
+    let mut resolved_mesh_parts = if let Some(domain_asset) = resolved_domain_mesh_asset.as_ref() {
+        domain_asset.mesh_parts.clone()
+    } else {
+        build_mesh_parts_from_segments(&mesh, &object_segments, domain_mesh_mode)
+    };
     let mesh_part_materials = magnet_entries
         .iter()
         .map(|entry| (entry.magnet_name.clone(), material.clone()))

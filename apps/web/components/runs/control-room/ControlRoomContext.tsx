@@ -47,6 +47,7 @@ import {
   selectModelBuilderUniverse,
   serializeModelBuilderGraphV2,
   setModelBuilderCurrentModules as applyModelBuilderCurrentModules,
+  setModelBuilderDemagRealization as applyModelBuilderDemagRealization,
   setModelBuilderExcitationAnalysis as applyModelBuilderExcitationAnalysis,
   setModelBuilderGeometries as applyModelBuilderGeometries,
   setModelBuilderMeshDefaults as applyModelBuilderMeshDefaults,
@@ -327,6 +328,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     () => selectModelBuilderStages(modelBuilderGraph),
     [modelBuilderGraph],
   );
+  const scriptBuilderDemagRealization = useMemo(
+    () => modelBuilderGraph?.study.demag_realization ?? null,
+    [modelBuilderGraph],
+  );
   const scriptBuilderUniverse = useMemo(
     () => selectModelBuilderUniverse(modelBuilderGraph),
     [modelBuilderGraph],
@@ -527,6 +532,16 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     },
     [modelBuilderDefaults],
   );
+  const setScriptBuilderDemagRealization = useCallback<
+    Dispatch<SetStateAction<string | null>>
+  >(
+    (update) => {
+      setModelBuilderGraph((currentGraph) =>
+        applyModelBuilderDemagRealization(currentGraph, update, modelBuilderDefaults),
+      );
+    },
+    [modelBuilderDefaults],
+  );
   const setScriptBuilderUniverse = useCallback<
     Dispatch<SetStateAction<ScriptBuilderUniverseState | null>>
   >(
@@ -575,6 +590,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         {
           solverSettings,
           meshOptions,
+          demagRealization: scriptBuilderDemagRealization,
           universe: scriptBuilderUniverse,
           stages: studyStages,
           geometries: scriptBuilderGeometries,
@@ -587,6 +603,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       meshOptions,
       sceneDocumentDraft,
       solverSettings,
+      scriptBuilderDemagRealization,
       scriptBuilderUniverse,
       studyStages,
       scriptBuilderGeometries,
@@ -658,6 +675,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         : buildScriptBuilderSignature(modelBuilderGraph, {
             solverSettings,
             meshOptions,
+            demagRealization: scriptBuilderDemagRealization,
             universe: scriptBuilderUniverse,
             stages: studyStages,
             geometries: scriptBuilderGeometries,
@@ -669,6 +687,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       meshOptions,
       sceneDocumentDraft,
       solverSettings,
+      scriptBuilderDemagRealization,
       scriptBuilderUniverse,
       studyStages,
       scriptBuilderGeometries,
@@ -682,6 +701,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         return buildScriptBuilderSignature(remoteModelBuilderGraph, {
           solverSettings,
           meshOptions,
+          demagRealization: scriptBuilderDemagRealization,
           universe: scriptBuilderUniverse,
           stages: studyStages,
           geometries: scriptBuilderGeometries,
@@ -702,6 +722,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       scriptBuilder,
       meshOptions,
       solverSettings,
+      scriptBuilderDemagRealization,
       scriptBuilderUniverse,
       studyStages,
       scriptBuilderGeometries,
@@ -799,6 +820,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       solverSettings,
       meshOptions,
       universe: incomingGraph.universe.value,
+      demagRealization: incomingGraph.study.demag_realization,
       stages: incomingGraph.study.stages,
       geometries: incomingGraph.objects.items.map((objectNode) => objectNode.geometry),
       currentModules: incomingGraph.current_modules.modules,
@@ -2706,7 +2728,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const modelValue = useMemo<ModelContextValue>(() => ({
     sceneDocument: localBuilderDraft,
     modelBuilderGraph,
-    material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
+    material, solverPlan, solverSettings, studyStages, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
@@ -2743,11 +2765,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     magneticParts,
     airPart,
     interfaceParts,
-    setSolverSettings, setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
+    setSolverSettings, setSceneDocument, setStudyStages, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
     setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
-    localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
+    localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
@@ -2757,7 +2779,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
     selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart, magneticParts, airPart, interfaceParts, requestFocusObject,
-    setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
+    setSceneDocument, setStudyStages, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   ]);
 

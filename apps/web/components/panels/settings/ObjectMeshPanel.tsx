@@ -458,7 +458,8 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
             generateLabel={sharedDomainMesh ? "Apply Override + Rebuild Domain Mesh" : "Build Mesh"}
             generatingLabel={sharedDomainMesh ? "Rebuilding Domain Mesh..." : "Building Mesh..."}
             nodeCount={effectiveFemMesh?.nodes.length}
-            disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
+            disabled={mesh.mode !== "custom" || ctx.meshGenerating}
+            generateDisabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
             waitMode={ctx.isWaitingForCompute}
             showAdaptiveSection={false}
           />

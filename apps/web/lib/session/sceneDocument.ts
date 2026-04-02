@@ -144,6 +144,7 @@ export function buildSceneDocumentFromScriptBuilder(
     },
     study: {
       backend: builder.backend,
+      demag_realization: builder.demag_realization,
       solver: builder.solver,
       mesh_defaults: builder.mesh,
       stages: builder.stages,
@@ -199,6 +200,7 @@ export function buildScriptBuilderFromSceneDocument(
   return {
     revision: scene.revision,
     backend: scene.study.backend,
+    demag_realization: scene.study.demag_realization,
     solver: scene.study.solver,
     mesh: scene.study.mesh_defaults,
     universe: scene.universe,

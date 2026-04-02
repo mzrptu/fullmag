@@ -201,8 +201,23 @@ function normalizeMeshPart(raw: Record<string, unknown>): FemMeshPart {
     element_count: Number(raw.element_count ?? 0),
     boundary_face_start: Number(raw.boundary_face_start ?? 0),
     boundary_face_count: Number(raw.boundary_face_count ?? 0),
+    boundary_face_indices: Array.isArray(raw.boundary_face_indices)
+      ? raw.boundary_face_indices.map((value) => Number(value ?? 0))
+      : [],
     node_start: Number(raw.node_start ?? 0),
     node_count: Number(raw.node_count ?? 0),
+    node_indices: Array.isArray(raw.node_indices)
+      ? raw.node_indices.map((value) => Number(value ?? 0))
+      : [],
+    surface_faces: Array.isArray(raw.surface_faces)
+      ? raw.surface_faces
+          .filter((face) => Array.isArray(face) && face.length >= 3)
+          .map((face) => [
+            Number(face[0] ?? 0),
+            Number(face[1] ?? 0),
+            Number(face[2] ?? 0),
+          ] as [number, number, number])
+      : [],
     bounds_min: normalizeVec3(raw.bounds_min),
     bounds_max: normalizeVec3(raw.bounds_max),
   };
@@ -511,6 +526,10 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
       typeof raw.backend === "string" && raw.backend.trim().length > 0
         ? raw.backend
         : null,
+    demag_realization:
+      typeof raw.demag_realization === "string" && raw.demag_realization.trim().length > 0
+        ? raw.demag_realization
+        : null,
     solver: {
       integrator: String(raw.solver?.integrator ?? ""),
       fixed_timestep: String(raw.solver?.fixed_timestep ?? ""),
@@ -701,6 +720,7 @@ function normalizeModelBuilderGraph(raw: any): ModelBuilderGraphV2 | null {
   const projectedBuilder = normalizeScriptBuilder({
     revision: raw.revision,
     backend: raw.study?.backend,
+    demag_realization: raw.study?.demag_realization,
     solver: raw.study?.solver,
     mesh: raw.study?.mesh_defaults,
     universe: raw.universe?.value,
@@ -722,6 +742,7 @@ function emptyScriptBuilderState(): ScriptBuilderState {
   return normalizeScriptBuilder({
     revision: 0,
     backend: null,
+    demag_realization: null,
     solver: {},
     mesh: {},
     universe: null,
@@ -793,6 +814,7 @@ function normalizeSceneStudy(raw: any) {
   const normalized = normalizeScriptBuilder({
     revision: 0,
     backend: raw?.backend ?? null,
+    demag_realization: raw?.demag_realization ?? null,
     solver: raw?.solver ?? {},
     mesh: raw?.mesh_defaults ?? {},
     universe: null,
@@ -804,6 +826,7 @@ function normalizeSceneStudy(raw: any) {
   });
   return {
     backend: normalized?.backend ?? null,
+    demag_realization: normalized?.demag_realization ?? null,
     solver: normalized?.solver ?? defaults.solver,
     mesh_defaults: normalized?.mesh ?? defaults.mesh,
     stages: normalized?.stages ?? [],

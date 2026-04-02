@@ -283,8 +283,14 @@ pub struct FemMeshPartPayload {
     pub element_count: u32,
     pub boundary_face_start: u32,
     pub boundary_face_count: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boundary_face_indices: Vec<u32>,
     pub node_start: u32,
     pub node_count: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub node_indices: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub surface_faces: Vec<[u32; 3]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bounds_min: Option<[f64; 3]>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -401,8 +407,11 @@ impl From<&fullmag_ir::FemMeshPartIR> for FemMeshPartPayload {
             element_count: selector_count(&part.element_selector),
             boundary_face_start: selector_start(&part.boundary_face_selector),
             boundary_face_count: selector_count(&part.boundary_face_selector),
+            boundary_face_indices: part.boundary_face_indices.clone(),
             node_start: selector_start(&part.node_selector),
             node_count: selector_count(&part.node_selector),
+            node_indices: part.node_indices.clone(),
+            surface_faces: part.surface_faces.clone(),
             bounds_min: part.bounds_min,
             bounds_max: part.bounds_max,
         }

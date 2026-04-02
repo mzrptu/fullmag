@@ -93,6 +93,15 @@ pub(crate) fn mesh_preview_active_mask(mesh: &FemMeshPayload, quantity: &str) ->
             if part.role != "magnetic_object" {
                 continue;
             }
+            if !part.node_indices.is_empty() {
+                for node_index in &part.node_indices {
+                    let Some(active) = active_mask.get_mut(*node_index as usize) else {
+                        continue;
+                    };
+                    *active = true;
+                }
+                continue;
+            }
             let start = usize::try_from(part.node_start).ok()?;
             let count = usize::try_from(part.node_count).ok()?;
             let end = start.saturating_add(count).min(active_mask.len());

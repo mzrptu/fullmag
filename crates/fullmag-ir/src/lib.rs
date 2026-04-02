@@ -1498,6 +1498,12 @@ pub struct FemMeshPartIR {
     pub element_selector: FemMeshPartSelector,
     pub boundary_face_selector: FemMeshPartSelector,
     pub node_selector: FemMeshPartSelector,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boundary_face_indices: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub node_indices: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub surface_faces: Vec<[u32; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bounds_min: Option<[f64; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

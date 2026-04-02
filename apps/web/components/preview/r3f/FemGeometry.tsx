@@ -10,6 +10,7 @@ interface FemGeometryProps {
   field: FemColorField;
   renderMode: RenderMode;
   opacity: number;
+  customBoundaryFaces?: [number, number, number][] | null;
   displayBoundaryFaceIndices?: number[] | null;
   displayElementIndices?: number[] | null;
   qualityPerFace?: number[] | null;
@@ -166,6 +167,7 @@ export function FemGeometry({
   field,
   renderMode,
   opacity,
+  customBoundaryFaces,
   displayBoundaryFaceIndices,
   displayElementIndices,
   qualityPerFace,
@@ -181,6 +183,9 @@ export function FemGeometry({
 }: FemGeometryProps) {
   const { invalidate } = useThree();
   const displayBoundaryFaceSignature = useMemo(() => {
+    if (customBoundaryFaces && customBoundaryFaces.length > 0) {
+      return `custom:${customBoundaryFaces.length}`;
+    }
     if (!displayBoundaryFaceIndices || displayBoundaryFaceIndices.length === 0) {
       return "all";
     }
@@ -189,7 +194,7 @@ export function FemGeometry({
       displayBoundaryFaceIndices[0] ?? 0,
       displayBoundaryFaceIndices[displayBoundaryFaceIndices.length - 1] ?? 0,
     ].join(":");
-  }, [displayBoundaryFaceIndices]);
+  }, [customBoundaryFaces, displayBoundaryFaceIndices]);
   const displayElementSignature = useMemo(() => {
     if (!displayElementIndices || displayElementIndices.length === 0) {
       return "all";
@@ -216,7 +221,11 @@ export function FemGeometry({
     pointsVertexMap,
     displayedToOriginalFace,
   } = useMemo(() => {
-    const { nodes, elements, boundaryFaces, nNodes } = meshData;
+    const { nodes, elements, nNodes } = meshData;
+    const boundaryFaces = customBoundaryFaces
+      ? new Uint32Array(customBoundaryFaces.flat())
+      : meshData.boundaryFaces;
+    const boundaryFacesArray = Array.from(boundaryFaces);
     const positions = new Float32Array(nNodes * 3);
     for (let i = 0; i < nNodes * 3; i++) positions[i] = nodes[i];
 
@@ -428,10 +437,15 @@ export function FemGeometry({
     }
 
     const pointNodeIndices =
-      activeElementOffsets.length > 0
+      customBoundaryFaces && customBoundaryFaces.length > 0
+        ? collectFaceNodeIndices(
+            boundaryFacesArray,
+            Array.from({ length: boundaryFaces.length / 3 }, (_, index) => index),
+          )
+        : activeElementOffsets.length > 0
         ? collectElementNodeIndices(elements, meshData.nElements, activeElementOffsets)
         : preferredFaceIndices
-          ? collectFaceNodeIndices(boundaryFaces, preferredFaceIndices)
+          ? collectFaceNodeIndices(boundaryFacesArray, preferredFaceIndices)
           : Array.from({ length: nNodes }, (_, index) => index);
     const pointPositions = new Float32Array(pointNodeIndices.length * 3);
     pointVMap = new Int32Array(pointNodeIndices.length);
@@ -461,6 +475,7 @@ export function FemGeometry({
       displayedToOriginalFace: faceIndexMap,
     };
   }, [
+    customBoundaryFaces,
     topologySignature,
     clipAxis,
     clipEnabled,
@@ -477,7 +492,11 @@ export function FemGeometry({
     if (!geometry) return;
     const baseColors = computeVertexColors(
       meshData.nNodes, field, meshData.fieldData,
-      meshData.nodes, meshData.boundaryFaces, qualityPerFace,
+      meshData.nodes,
+      customBoundaryFaces
+        ? customBoundaryFaces.flat()
+        : Array.from(meshData.boundaryFaces),
+      qualityPerFace,
     );
     
     // Sub-select or map colors
@@ -509,7 +528,7 @@ export function FemGeometry({
       pointsColorAttr.needsUpdate = true;
     }
     invalidate();
-  }, [geometry, invalidate, meshData.boundaryFaces, meshData.fieldData, meshData.nNodes, meshData.nodes, field, pointsGeometry, pointsVertexMap, qualityPerFace, vertexMap]);
+  }, [customBoundaryFaces, geometry, invalidate, meshData.boundaryFaces, meshData.fieldData, meshData.nNodes, meshData.nodes, field, pointsGeometry, pointsVertexMap, qualityPerFace, vertexMap]);
 
   // ── Notify parent about geometry center (proper useEffect, not useMemo side-effect) ─
   const onGeometryCenterRef = useRef(onGeometryCenter);

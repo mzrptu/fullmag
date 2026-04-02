@@ -92,8 +92,11 @@ export interface FemMeshPart {
   element_count: number;
   boundary_face_start: number;
   boundary_face_count: number;
+  boundary_face_indices: number[];
   node_start: number;
   node_count: number;
+  node_indices: number[];
+  surface_faces: [number, number, number][];
   bounds_min: [number, number, number] | null;
   bounds_max: [number, number, number] | null;
 }
@@ -453,6 +456,7 @@ export interface ScriptBuilderExcitationAnalysisEntry {
 export interface ScriptBuilderState {
   revision: number;
   backend: string | null;
+  demag_realization: string | null;
   solver: ScriptBuilderSolverState;
   mesh: ScriptBuilderMeshState;
   universe: ScriptBuilderUniverseState | null;
@@ -485,6 +489,7 @@ export interface ModelBuilderGraphStudyNode {
   kind: "study";
   label: string;
   backend: string | null;
+  demag_realization: string | null;
   solver: ScriptBuilderSolverState;
   mesh_defaults: ScriptBuilderMeshState;
   stages: ScriptBuilderStageState[];
@@ -595,6 +600,7 @@ export interface SceneCurrentModulesState {
 
 export interface SceneStudyState {
   backend: string | null;
+  demag_realization: string | null;
   solver: ScriptBuilderSolverState;
   mesh_defaults: ScriptBuilderMeshState;
   stages: ScriptBuilderStageState[];

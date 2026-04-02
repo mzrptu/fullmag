@@ -58,6 +58,7 @@ def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
     return {
         "revision": 1,
         "backend": base_problem.runtime.backend_target.value,
+        "demag_realization": _export_demag_realization(base_problem),
         "solver": {
             "integrator": base_problem.study.dynamics.integrator,
             "fixed_timestep": _text_number(base_problem.study.dynamics.fixed_timestep),
@@ -170,6 +171,11 @@ def render_loaded_problem_as_script(
     if current_module_lines:
         lines.append("")
         lines.extend(current_module_lines)
+
+    demag_lines = _render_demag(base_problem, overrides=overrides, surface=surface)
+    if demag_lines:
+        lines.append("")
+        lines.extend(demag_lines)
 
     mesh_lines = _render_mesh_workflow(
         base_problem,
@@ -1847,6 +1853,33 @@ def _surface_call(surface: str, name: str) -> str:
     return f"{root}.{name}"
 
 
+def _problem_demag_realization(problem: Problem) -> str | None:
+    for term in problem.energy:
+        if isinstance(term, Demag):
+            return term.realization
+    return None
+
+
+def _export_demag_realization(problem: Problem) -> str | None:
+    realization = _problem_demag_realization(problem)
+    return str(realization) if isinstance(realization, str) and realization.strip() else None
+
+
+def _render_demag(
+    problem: Problem,
+    *,
+    overrides: dict[str, object],
+    surface: str,
+) -> list[str]:
+    realization = overrides.get("demag_realization", _problem_demag_realization(problem))
+    if not isinstance(realization, str) or realization.strip() in {"", "auto"}:
+        return []
+    return [
+        "# Outer boundary / demag",
+        f"{_surface_call(surface, 'demag')}(realization={_py_repr(realization)})",
+    ]
+
+
 def _resolve_universe(
     problem: Problem,
     *,
@@ -2089,7 +2122,14 @@ def _validate_energy_terms(problem: Problem) -> None:
             continue
         if isinstance(term, Demag):
             demag_count += 1
-            if term.realization not in {None, "auto"}:
+            if term.realization not in {
+                None,
+                "auto",
+                "transfer_grid",
+                "poisson_airbox",
+                "airbox_dirichlet",
+                "airbox_robin",
+            }:
                 raise ValueError(
                     "canonical flat-script rewrite does not yet support explicit demag realizations"
                 )

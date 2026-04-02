@@ -17,7 +17,14 @@ class Demag:
     realization: str | None = None
 
     def __post_init__(self) -> None:
-        allowed = (None, "auto", "transfer_grid", "poisson_airbox")
+        allowed = (
+            None,
+            "auto",
+            "transfer_grid",
+            "poisson_airbox",
+            "airbox_dirichlet",
+            "airbox_robin",
+        )
         if self.realization not in allowed:
             raise ValueError(
                 f"Demag realization must be one of {allowed!r}, got {self.realization!r}"
@@ -200,4 +207,3 @@ class Magnetoelastic:
             "body": self.body,
             "law": self.law,
         }
-

@@ -537,6 +537,7 @@ class _WorldState:
     _mesh_source: str | None = None
     _api_surface: str = "flat"
     _study_universe: StudyUniverseConfig | None = None
+    _demag_realization: str | None = None
 
     # Magnets (ordered)
     _magnets: list[MagnetHandle] = field(default_factory=list)
@@ -808,6 +809,15 @@ class StudyBuilder:
         )
         return self
 
+    def demag(self, *, realization: str | None = None) -> "StudyBuilder":
+        demag(realization=realization)
+        return self
+
+    def airbox(self, *, hmax: float | None = None) -> "StudyBuilder":
+        """Configure airbox mesh element size, as a distinct step from the universe geometry."""
+        _configure_study_universe(airbox_hmax=hmax)
+        return self
+
     def geometry(self, shape: object, name: str = "body") -> MagnetHandle:
         return geometry(shape, name=name)
 
@@ -913,6 +923,13 @@ def study(problem_name: str | None = None) -> StudyBuilder:
     if problem_name is not None:
         require_non_empty(problem_name, "problem_name")
     return StudyBuilder(problem_name)
+
+
+def demag(*, realization: str | None = None) -> None:
+    """Configure the demag realization / outer-boundary policy for the flat API."""
+    if realization is not None:
+        Demag(realization=realization)
+    _state._demag_realization = realization
 
 
 # ---------------------------------------------------------------------------
@@ -1661,7 +1678,7 @@ def _build_problem(
     magnets = [h._to_ferromagnet() for h in s._magnets]
 
     # Energy terms — default to Exchange + Demag (like mumax)
-    energy: list = [Exchange(), Demag()]
+    energy: list = [Exchange(), Demag(realization=s._demag_realization)]
     # Check if any magnet has DMI
     for h in s._magnets:
         if h.Dind is not None:

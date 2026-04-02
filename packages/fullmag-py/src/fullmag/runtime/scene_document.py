@@ -111,6 +111,7 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
         },
         "study": {
             "backend": builder.get("backend"),
+            "demag_realization": builder.get("demag_realization"),
             "solver": builder.get("solver") or {},
             "mesh_defaults": builder.get("mesh") or {},
             "stages": builder.get("stages") or [],
@@ -191,6 +192,7 @@ def build_builder_from_scene_document(scene: dict[str, Any]) -> dict[str, Any]:
     return {
         "revision": int(scene.get("revision", 0)),
         "backend": study.get("backend"),
+        "demag_realization": study.get("demag_realization"),
         "solver": study.get("solver") or {},
         "mesh": study.get("mesh_defaults") or {},
         "universe": scene.get("universe"),
@@ -207,6 +209,7 @@ def builder_overrides_from_scene_document(scene: dict[str, Any]) -> dict[str, An
     solver = dict(builder.get("solver") or {})
     mesh = dict(builder.get("mesh") or {})
     return {
+        "demag_realization": builder.get("demag_realization"),
         "solver": {
             "integrator": solver.get("integrator") or None,
             "fixed_timestep": _number_or_none(solver.get("fixed_timestep")),

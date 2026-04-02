@@ -98,6 +98,7 @@ export function createModelBuilderGraphV2(
       kind: "study",
       label: "Study",
       backend: builder?.backend ?? null,
+      demag_realization: builder?.demag_realization ?? null,
       solver: builder?.solver ?? EMPTY_SOLVER,
       mesh_defaults: builder?.mesh ?? EMPTY_MESH,
       stages: builder?.stages ?? [],
@@ -152,6 +153,7 @@ export function serializeModelBuilderGraphV2(graph: ModelBuilderGraphV2): Omit<
 > {
   return {
     backend: graph.study.backend,
+    demag_realization: graph.study.demag_realization,
     solver: graph.study.solver,
     mesh: graph.study.mesh_defaults,
     universe: graph.universe.value,
@@ -217,6 +219,22 @@ export function setModelBuilderStages(
     study: {
       ...ensured.study,
       stages: nextStages,
+    },
+  };
+}
+
+export function setModelBuilderDemagRealization(
+  graph: ModelBuilderGraphV2 | null | undefined,
+  action: SetStateAction<string | null>,
+  defaults?: ModelBuilderGraphDefaults,
+): ModelBuilderGraphV2 {
+  const ensured = ensureModelBuilderGraphV2(graph, defaults);
+  const nextValue = applyStateAction(ensured.study.demag_realization, action);
+  return {
+    ...ensured,
+    study: {
+      ...ensured.study,
+      demag_realization: nextValue,
     },
   };
 }

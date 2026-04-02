@@ -313,6 +313,8 @@ pub struct ScriptBuilderState {
     pub revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demag_realization: Option<String>,
     pub solver: ScriptBuilderSolverState,
     pub mesh: ScriptBuilderMeshState,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -65,6 +65,8 @@ interface MeshSettingsPanelProps {
   onChange: (next: MeshOptionsState) => void;
   quality?: MeshQualityData | null;
   disabled?: boolean;
+  /** Disables only the generate/build button, independently of `disabled`. */
+  generateDisabled?: boolean;
   generating?: boolean;
   onGenerate?: () => void;
   generateLabel?: string;
@@ -248,6 +250,7 @@ export default function MeshSettingsPanel({
   onChange,
   quality,
   disabled = false,
+  generateDisabled,
   generating = false,
   onGenerate,
   generateLabel = "Build Mesh",
@@ -770,7 +773,7 @@ export default function MeshSettingsPanel({
             className="w-full h-8 text-sm font-semibold transition-all duration-300 relative overflow-hidden"
             variant="default"
             onClick={onGenerate}
-            disabled={disabled || generating}
+            disabled={(generateDisabled ?? disabled) || generating}
           >
             {generating ? (
               <span className="flex items-center gap-2">

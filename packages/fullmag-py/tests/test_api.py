@@ -325,6 +325,36 @@ class ProblemApiTests(unittest.TestCase):
                 overridden,
             )
 
+    def test_study_script_rewrite_preserves_explicit_outer_boundary_policy(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "study_outer_boundary.py"
+            path.write_text(
+                "\n".join(
+                    [
+                        "import fullmag as fm",
+                        'study = fm.study("outer_boundary_demo")',
+                        'study.engine("fem")',
+                        "study.universe(mode='auto', padding=(10e-9, 10e-9, 10e-9))",
+                        "study.demag(realization='airbox_robin')",
+                        "body = study.geometry(fm.Box(20e-9, 20e-9, 10e-9), name='body')",
+                        "body.Ms = 800e3",
+                        "body.Aex = 13e-12",
+                        "body.alpha = 0.1",
+                        "body.m = fm.uniform(1, 0, 0)",
+                        "study.run(1e-12)",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = fm.load_problem_from_script(path)
+            draft = export_builder_draft(loaded)
+            self.assertEqual(draft["demag_realization"], "airbox_robin")
+
+            rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+            self.assertIn('study.demag(realization="airbox_robin")', rewritten)
+
     def test_manual_study_universe_expands_box_fdm_grid_asset_domain(self) -> None:
         fm.reset()
         study = fm.study("manual_universe_grid")

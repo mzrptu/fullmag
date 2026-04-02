@@ -192,6 +192,8 @@ pub struct SceneCurrentModulesState {
 pub struct SceneStudyState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demag_realization: Option<String>,
     #[serde(default = "default_solver")]
     pub solver: ScriptBuilderSolverState,
     #[serde(default = "default_mesh")]

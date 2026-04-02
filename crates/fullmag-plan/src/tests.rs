@@ -173,6 +173,59 @@ fn analyze_detects_interface_between_touching_markers() {
 }
 
 #[test]
+fn reorder_shared_domain_mesh_materializes_interface_and_outer_boundary_parts() {
+    let mesh = MeshIR {
+        mesh_name: "shared_with_air".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ],
+        elements: vec![[0, 1, 2, 3], [0, 1, 2, 4]],
+        element_markers: vec![1, 0],
+        boundary_faces: vec![
+            [0, 1, 3],
+            [0, 2, 3],
+            [1, 2, 3],
+            [0, 1, 4],
+            [0, 2, 4],
+            [1, 2, 4],
+        ],
+        boundary_markers: vec![10, 10, 10, 99, 99, 99],
+    };
+
+    let (_reordered, _segments, parts) = crate::mesh::reorder_shared_domain_mesh(
+        &mesh,
+        &[fullmag_ir::FemDomainRegionMarkerIR {
+            geometry_name: "flower".to_string(),
+            marker: 1,
+        }],
+        true,
+    )
+    .expect("shared-domain reorder should succeed");
+
+    let interface_part = parts
+        .iter()
+        .find(|part| part.role == fullmag_ir::FemMeshPartRole::Interface)
+        .expect("expected a materialized interface part");
+    assert_eq!(interface_part.label, "Air ↔ flower");
+    assert!(!interface_part.node_indices.is_empty());
+    assert_eq!(interface_part.surface_faces.len(), 1);
+    assert!(interface_part.bounds_min.is_some());
+
+    let boundary_part = parts
+        .iter()
+        .find(|part| part.role == fullmag_ir::FemMeshPartRole::OuterBoundary)
+        .expect("expected a materialized outer-boundary part");
+    assert_eq!(boundary_part.parent_id.as_deref(), Some("part:__air__"));
+    assert_eq!(boundary_part.boundary_face_indices.len(), 3);
+    assert!(!boundary_part.node_indices.is_empty());
+    assert!(boundary_part.bounds_max.is_some());
+}
+
+#[test]
 fn analyze_classifies_air_nodes() {
     let mesh = MeshIR {
         mesh_name: "air".to_string(),
@@ -304,7 +357,7 @@ fn pack_duplicates_shared_interface_nodes_per_region() {
     let analysis = crate::mesh::analyze_shared_domain_mesh(&mesh, &region_markers)
         .expect("analysis should succeed");
 
-    let (packed, segments) = crate::mesh::pack_mesh_by_analysis(&mesh, &analysis)
+    let (packed, segments, mesh_parts) = crate::mesh::pack_mesh_by_analysis(&mesh, &analysis)
         .expect("packing should duplicate shared interface nodes");
 
     assert_eq!(packed.nodes.len(), 8);
@@ -317,6 +370,9 @@ fn pack_duplicates_shared_interface_nodes_per_region() {
     assert_eq!(packed.nodes[0], packed.nodes[4]);
     assert_eq!(packed.nodes[1], packed.nodes[5]);
     assert_eq!(packed.nodes[2], packed.nodes[6]);
+    assert!(mesh_parts
+        .iter()
+        .any(|part| part.role == fullmag_ir::FemMeshPartRole::Interface));
 }
 
 #[test]
