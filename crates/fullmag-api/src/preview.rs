@@ -3,7 +3,7 @@
 use crate::types::*;
 use fullmag_runner::quantities::quantity_spec;
 use fullmag_runner::quantities::QuantityKind;
-use fullmag_runner::LivePreviewField;
+use fullmag_runner::{FemMeshPayload, LivePreviewField};
 use serde_json::Value;
 
 pub(crate) fn live_step_metric_value(step: &StepUpdateView, metric_key: &str) -> Option<f64> {
@@ -33,6 +33,13 @@ pub(crate) fn quantity_unit(quantity: &str) -> &'static str {
     fullmag_runner::quantities::quantity_unit(quantity)
 }
 
+pub(crate) fn quantity_spatial_domain(quantity: &str) -> &'static str {
+    match quantity {
+        "m" => "magnetic_only",
+        _ => "full_domain",
+    }
+}
+
 pub(crate) fn current_vector_field(
     current: &SessionStateResponse,
     quantity: &str,
@@ -54,6 +61,70 @@ pub(crate) fn current_vector_field(
         }
     }
     parse_field_value(current.latest_fields.get(quantity)?)
+}
+
+pub(crate) fn mesh_preview_active_mask(mesh: &FemMeshPayload, quantity: &str) -> Option<Vec<bool>> {
+    if quantity != "m" {
+        return None;
+    }
+    let mut active_mask = vec![false; mesh.nodes.len()];
+    for segment in &mesh.object_segments {
+        let start = usize::try_from(segment.node_start).ok()?;
+        let count = usize::try_from(segment.node_count).ok()?;
+        let end = start.saturating_add(count).min(active_mask.len());
+        if start >= end {
+            continue;
+        }
+        active_mask[start..end].fill(true);
+    }
+    active_mask
+        .iter()
+        .any(|active| *active)
+        .then_some(active_mask)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mesh_preview_active_mask, quantity_spatial_domain};
+    use fullmag_runner::{FemMeshObjectSegment, FemMeshPayload};
+
+    #[test]
+    fn quantity_spatial_domain_marks_magnetization_as_magnetic_only() {
+        assert_eq!(quantity_spatial_domain("m"), "magnetic_only");
+        assert_eq!(quantity_spatial_domain("H_demag"), "full_domain");
+    }
+
+    #[test]
+    fn mesh_preview_active_mask_uses_object_segments_for_m() {
+        let mesh = FemMeshPayload {
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [2.0, 0.0, 0.0],
+                [2.0, 1.0, 0.0],
+            ],
+            elements: Vec::new(),
+            boundary_faces: Vec::new(),
+            object_segments: vec![FemMeshObjectSegment {
+                object_id: "flower".to_string(),
+                geometry_id: Some("flower_geom".to_string()),
+                node_start: 0,
+                node_count: 4,
+                element_start: 0,
+                element_count: 0,
+                boundary_face_start: 0,
+                boundary_face_count: 0,
+            }],
+        };
+
+        assert_eq!(
+            mesh_preview_active_mask(&mesh, "m"),
+            Some(vec![true, true, true, true, false, false])
+        );
+        assert_eq!(mesh_preview_active_mask(&mesh, "H_demag"), None);
+    }
 }
 
 pub(crate) fn cached_preview_field_owned(

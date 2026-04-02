@@ -17,6 +17,48 @@ use crate::validate::{
     planned_study_controls, validate_eigen_outputs, validate_executable_outputs,
 };
 
+fn geometry_to_object_id_map(
+    magnet_entries: &[crate::mesh::MagnetPlanningEntry],
+) -> BTreeMap<&str, &str> {
+    magnet_entries
+        .iter()
+        .map(|entry| (entry.geometry_name.as_str(), entry.magnet_name.as_str()))
+        .collect()
+}
+
+fn remap_segment_object_ids(
+    segments: &[fullmag_ir::FemObjectSegmentIR],
+    geometry_to_object_id: &BTreeMap<&str, &str>,
+) -> Result<Vec<fullmag_ir::FemObjectSegmentIR>, PlanError> {
+    segments
+        .iter()
+        .map(|segment| {
+            let Some(mapped_object_id) = geometry_to_object_id.get(segment.object_id.as_str())
+            else {
+                return Err(PlanError {
+                    reasons: vec![format!(
+                        "FEM object segment '{}' does not map to any magnet/object id",
+                        segment.object_id
+                    )],
+                });
+            };
+            Ok(fullmag_ir::FemObjectSegmentIR {
+                object_id: (*mapped_object_id).to_string(),
+                geometry_id: segment
+                    .geometry_id
+                    .clone()
+                    .or_else(|| Some(segment.object_id.clone())),
+                node_start: segment.node_start,
+                node_count: segment.node_count,
+                element_start: segment.element_start,
+                element_count: segment.element_count,
+                boundary_face_start: segment.boundary_face_start,
+                boundary_face_count: segment.boundary_face_count,
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn plan_fem(
     problem: &ProblemIR,
     resolved_backend: BackendTarget,
@@ -248,9 +290,10 @@ pub(crate) fn plan_fem(
     }
 
     let material = selected_material.expect("validation should have caught missing FEM material");
-    let (mesh, object_segments, mesh_source, initial_magnetization) =
+    let geometry_to_object_id = geometry_to_object_id_map(&magnet_entries);
+    let (mesh, raw_object_segments, mesh_source, initial_magnetization) =
         if let Some(domain_asset) = resolved_domain_mesh_asset.as_ref() {
-            let mut initial = vec![[1.0, 0.0, 0.0]; domain_asset.mesh.nodes.len()];
+            let mut initial = vec![[0.0, 0.0, 0.0]; domain_asset.mesh.nodes.len()];
             for entry in &magnet_entries {
                 let Some(segment) = domain_asset
                     .object_segments
@@ -300,6 +343,7 @@ pub(crate) fn plan_fem(
                 merged_initial_magnetization,
             )
         };
+    let object_segments = remap_segment_object_ids(&raw_object_segments, &geometry_to_object_id)?;
     let n_nodes = mesh.nodes.len();
     let n_elements = mesh.elements.len();
     let mesh_name = mesh.mesh_name.clone();
@@ -748,9 +792,10 @@ pub(crate) fn plan_fem_eigen(
 
     let material =
         selected_material.expect("validation should have caught missing FEM eigen material");
-    let (mesh, object_segments, mesh_source, equilibrium_magnetization) =
+    let geometry_to_object_id = geometry_to_object_id_map(&magnet_entries);
+    let (mesh, raw_object_segments, mesh_source, equilibrium_magnetization) =
         if let Some(domain_asset) = resolved_domain_mesh_asset.as_ref() {
-            let mut equilibrium = vec![[1.0, 0.0, 0.0]; domain_asset.mesh.nodes.len()];
+            let mut equilibrium = vec![[0.0, 0.0, 0.0]; domain_asset.mesh.nodes.len()];
             for entry in &magnet_entries {
                 let Some(segment) = domain_asset
                     .object_segments
@@ -795,6 +840,7 @@ pub(crate) fn plan_fem_eigen(
             };
             (mesh, object_segments, mesh_source, merged_equilibrium)
         };
+    let object_segments = remap_segment_object_ids(&raw_object_segments, &geometry_to_object_id)?;
     let mesh_name = mesh.mesh_name.clone();
     let n_nodes = mesh.nodes.len();
     let n_elements = mesh.elements.len();

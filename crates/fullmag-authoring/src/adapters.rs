@@ -81,12 +81,15 @@ pub fn scene_document_to_script_builder(
         .objects
         .iter()
         .map(|object| {
-            let material = materials.get(&object.material_ref).cloned().ok_or_else(|| {
-                SceneDocumentValidationError::new(format!(
-                    "missing material '{}' for object '{}'",
-                    object.material_ref, object.id
-                ))
-            })?;
+            let material = materials
+                .get(&object.material_ref)
+                .cloned()
+                .ok_or_else(|| {
+                    SceneDocumentValidationError::new(format!(
+                        "missing material '{}' for object '{}'",
+                        object.material_ref, object.id
+                    ))
+                })?;
             let magnetization_ref = object
                 .magnetization_ref
                 .as_ref()
@@ -430,7 +433,9 @@ fn read_vec3(value: &Value) -> Option<[f64; 3]> {
 }
 
 fn is_zero_vec3(value: [f64; 3]) -> bool {
-    value.iter().all(|component| component.abs() <= f64::EPSILON)
+    value
+        .iter()
+        .all(|component| component.abs() <= f64::EPSILON)
 }
 
 fn string_or_null(value: &str) -> Value {
@@ -468,9 +473,9 @@ mod tests {
     use super::*;
     use crate::{
         ScriptBuilderCurrentModuleState, ScriptBuilderDriveState, ScriptBuilderInitialState,
-        ScriptBuilderMaterialState, ScriptBuilderMeshOperationState, ScriptBuilderMeshSizeFieldState,
-        ScriptBuilderMeshState, ScriptBuilderPerGeometryMeshState, ScriptBuilderSolverState,
-        ScriptBuilderStageState,
+        ScriptBuilderMaterialState, ScriptBuilderMeshOperationState,
+        ScriptBuilderMeshSizeFieldState, ScriptBuilderMeshState, ScriptBuilderPerGeometryMeshState,
+        ScriptBuilderSolverState, ScriptBuilderStageState,
     };
 
     fn sample_builder() -> ScriptBuilderState {
@@ -637,7 +642,9 @@ mod tests {
         scene.objects[0].magnetization_ref = None;
         let error = scene_document_to_script_builder(&scene)
             .expect_err("missing magnetization ref must fail");
-        assert!(error.message.contains("must reference a magnetization asset"));
+        assert!(error
+            .message
+            .contains("must reference a magnetization asset"));
     }
 
     #[test]
@@ -646,7 +653,9 @@ mod tests {
         scene.magnetization_assets[0].kind = "procedural".to_string();
         let error = scene_document_to_script_builder(&scene)
             .expect_err("unsupported magnetization kind must fail");
-        assert!(error.message.contains("unsupported magnetization asset kind"));
+        assert!(error
+            .message
+            .contains("unsupported magnetization asset kind"));
     }
 
     #[test]

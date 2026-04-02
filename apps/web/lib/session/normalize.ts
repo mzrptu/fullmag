@@ -243,6 +243,10 @@ function normalizePreviewState(
     spatial_kind: raw.spatial_kind === "mesh" ? "mesh" : "grid",
     quantity: String(raw.quantity ?? ""),
     unit: String(raw.unit ?? ""),
+    quantity_domain:
+      raw.quantity_domain === "magnetic_only" || raw.quantity_domain === "surface_only"
+        ? raw.quantity_domain
+        : "full_domain",
     component: String(raw.component ?? "3D"),
     layer: Number(raw.layer ?? 0),
     all_layers: Boolean(raw.all_layers),

@@ -64,6 +64,7 @@ export interface FemLiveMesh {
 
 export interface FemLiveMeshObjectSegment {
   object_id: string;
+  geometry_id?: string | null;
   node_start: number;
   node_count: number;
   element_start: number;
@@ -125,6 +126,7 @@ export interface SpatialPreviewState {
   spatial_kind: "grid" | "mesh";
   quantity: string;
   unit: string;
+  quantity_domain: "magnetic_only" | "full_domain" | "surface_only";
   component: string;
   layer: number;
   all_layers: boolean;

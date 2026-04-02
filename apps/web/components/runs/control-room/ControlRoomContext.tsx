@@ -1884,7 +1884,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   // Topology base: stable reference that only changes when mesh structure changes.
   // This prevents full geometry rebuild (and camera reset) on every field data update.
-  const femMeshBase = useMemo<Omit<FemMeshData, "fieldData"> | null>(() => {
+  const femMeshBase = useMemo<Omit<FemMeshData, "fieldData" | "activeMask" | "quantityDomain"> | null>(() => {
     if (!effectiveFemMesh || !flatNodes || !flatFaces || !flatElements) return null;
     const nNodes = effectiveFemMesh.nodes.length;
     const nElements = effectiveFemMesh.elements.length;
@@ -1903,8 +1903,16 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   // Combined: new object only when topology OR field data changes
   const femMeshData = useMemo<FemMeshData | null>(() => {
     if (!femMeshBase) return null;
-    return { ...femMeshBase, fieldData: femFieldData };
-  }, [femMeshBase, femFieldData]);
+    return {
+      ...femMeshBase,
+      fieldData: femFieldData,
+      activeMask:
+        activeMask && activeMask.length === femMeshBase.nNodes
+          ? activeMask
+          : null,
+      quantityDomain: spatialPreview?.quantity_domain ?? "full_domain",
+    };
+  }, [activeMask, femFieldData, femMeshBase, spatialPreview?.quantity_domain]);
   femMeshDataRef.current = femMeshData;
 
   const femHasFieldData = Boolean(femMeshData?.fieldData);

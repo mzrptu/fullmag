@@ -1384,8 +1384,7 @@ async fn import_magnetization_state_for_current_workspace(
                     &state.current_workspace_root,
                     Path::new(snapshot.session.script_path.trim()),
                 )?;
-                snapshot.builder_adapter =
-                    scene_document_builder_projection(&scene_document).ok();
+                snapshot.builder_adapter = scene_document_builder_projection(&scene_document).ok();
                 snapshot.scene_document = Some(scene_document);
             }
             if let Some(scene_document) = snapshot.scene_document.as_mut() {
@@ -1397,8 +1396,7 @@ async fn import_magnetization_state_for_current_workspace(
                     sample_index: req.sample_index.or(loaded.sample_index),
                 });
                 scene_document.revision = scene_document.revision.saturating_add(1);
-                snapshot.builder_adapter =
-                    scene_document_builder_projection(scene_document).ok();
+                snapshot.builder_adapter = scene_document_builder_projection(scene_document).ok();
             }
         }
         let messages = build_current_live_ws_messages(&state, snapshot)?;
@@ -1816,6 +1814,7 @@ fn build_spatial_preview_state(
 
     let unit = quantity_unit(&quantity).to_string();
     let display_kind = display_kind_for_quantity(&quantity).to_string();
+    let quantity_domain = crate::preview::quantity_spatial_domain(&quantity).to_string();
 
     if let Some(mesh) = current.fem_mesh.as_ref() {
         let vectors = current_vector_field(current, &quantity)?.0;
@@ -1823,6 +1822,7 @@ fn build_spatial_preview_state(
             return None;
         }
         let (min, max) = component_min_max(&vectors, component);
+        let active_mask = crate::preview::mesh_preview_active_mask(mesh, &quantity);
         return Some(PreviewState::Spatial(SpatialPreviewState {
             display_kind,
             config_revision: config.revision,
@@ -1831,6 +1831,7 @@ fn build_spatial_preview_state(
             spatial_kind: "mesh".to_string(),
             quantity,
             unit,
+            quantity_domain,
             component: component.to_string(),
             layer: 0,
             all_layers: true,
@@ -1857,7 +1858,7 @@ fn build_spatial_preview_state(
             fem_mesh: Some(mesh.clone()),
             original_node_count: Some(mesh.nodes.len()),
             original_face_count: Some(mesh.boundary_faces.len()),
-            active_mask: None,
+            active_mask,
         }));
     }
 
@@ -1904,6 +1905,7 @@ fn build_spatial_preview_state(
             spatial_kind: "grid".to_string(),
             quantity,
             unit,
+            quantity_domain,
             component: component.to_string(),
             layer: (config.layer as usize).min(full_z.saturating_sub(1)),
             all_layers: config.all_layers,
@@ -1969,6 +1971,7 @@ fn build_spatial_preview_state(
         spatial_kind: "grid".to_string(),
         quantity,
         unit,
+        quantity_domain,
         component: component.to_string(),
         layer,
         all_layers: config.all_layers,
@@ -2055,6 +2058,10 @@ fn build_preview_state_from_live_field(
             })?
             .clone();
         let (min, max) = component_min_max(&vectors, component);
+        let active_mask = field
+            .active_mask
+            .clone()
+            .or_else(|| crate::preview::mesh_preview_active_mask(&mesh, &field.quantity));
         return Some(PreviewState::Spatial(SpatialPreviewState {
             display_kind,
             config_revision: field.config_revision,
@@ -2063,6 +2070,7 @@ fn build_preview_state_from_live_field(
             spatial_kind: "mesh".to_string(),
             quantity: field.quantity.clone(),
             unit: field.unit.clone(),
+            quantity_domain: field.quantity_domain.clone(),
             component: component.to_string(),
             layer: 0,
             all_layers: true,
@@ -2089,7 +2097,7 @@ fn build_preview_state_from_live_field(
             fem_mesh: Some(mesh.clone()),
             original_node_count: Some(mesh.nodes.len()),
             original_face_count: Some(mesh.boundary_faces.len()),
-            active_mask: None,
+            active_mask,
         }));
     }
 
@@ -2114,6 +2122,7 @@ fn build_preview_state_from_live_field(
             spatial_kind: "grid".to_string(),
             quantity: field.quantity.clone(),
             unit: field.unit.clone(),
+            quantity_domain: field.quantity_domain.clone(),
             component: component.to_string(),
             layer: display_selection
                 .selection
@@ -2157,6 +2166,7 @@ fn build_preview_state_from_live_field(
         spatial_kind: "grid".to_string(),
         quantity: field.quantity.clone(),
         unit: field.unit.clone(),
+        quantity_domain: field.quantity_domain.clone(),
         component: component.to_string(),
         layer: display_selection
             .selection

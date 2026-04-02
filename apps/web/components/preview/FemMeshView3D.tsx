@@ -31,6 +31,8 @@ export interface FemMeshData {
   nNodes: number;
   nElements: number;
   fieldData?: { x: number[]; y: number[]; z: number[]; };
+  activeMask?: boolean[] | null;
+  quantityDomain?: "magnetic_only" | "full_domain" | "surface_only" | null;
 }
 
 export interface MeshSelectionSnapshot {
@@ -321,6 +323,7 @@ function AntennaOverlayMeshes({
 function FemMeshView3DInner({
   meshData,
   colorField = "z",
+  fieldLabel,
   toolbarMode = "visible",
   renderMode: controlledRenderMode,
   opacity: controlledOpacity,
@@ -386,6 +389,9 @@ function FemMeshView3DInner({
   const shrinkFactor = controlledShrinkFactor ?? internalShrinkFactor;
   const scopeObjectId =
     viewportScopeObjectId(viewportScope) ?? selectedMeshObjectId ?? selectedObjectId ?? null;
+  const missingMagneticMask =
+    meshData.quantityDomain === "magnetic_only" &&
+    (!meshData.activeMask || meshData.activeMask.length !== meshData.nNodes);
   const missingExactScopeSegment =
     Boolean(scopeObjectId) &&
     !objectSegments.some((segment) => segment.object_id === scopeObjectId);
@@ -422,7 +428,7 @@ function FemMeshView3DInner({
   
   const topologySignature = topologyKey ?? `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}`;
   const effectiveOpacity = opacity;
-  const effectiveShowArrows = showArrows;
+  const effectiveShowArrows = showArrows && !missingMagneticMask;
 
   useEffect(() => { setField(colorField); }, [colorField]);
   useEffect(() => {
@@ -618,6 +624,11 @@ function FemMeshView3DInner({
       {missingExactScopeSegment && scopeObjectId ? (
         <div className="pointer-events-none absolute inset-x-4 top-16 z-20 rounded-xl border border-rose-400/25 bg-background/85 px-4 py-3 text-sm text-rose-200 shadow-lg backdrop-blur-md">
           Object mesh segmentation unavailable for shared-domain FEM: `{scopeObjectId}`
+        </div>
+      ) : null}
+      {missingMagneticMask ? (
+        <div className="pointer-events-none absolute inset-x-4 top-16 z-20 rounded-xl border border-amber-400/25 bg-background/85 px-4 py-3 text-sm text-amber-100 shadow-lg backdrop-blur-md">
+          Magnetic-region preview mask unavailable for quantity `{fieldLabel ?? "m"}`.
         </div>
       ) : null}
 

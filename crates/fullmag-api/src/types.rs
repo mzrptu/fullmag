@@ -310,6 +310,7 @@ pub(crate) struct SpatialPreviewState {
     pub spatial_kind: String,
     pub quantity: String,
     pub unit: String,
+    pub quantity_domain: String,
     pub component: String,
     pub layer: usize,
     pub all_layers: bool,
@@ -672,6 +673,7 @@ mod tests {
     fn sample_builder() -> ScriptBuilderState {
         ScriptBuilderState {
             revision: 3,
+            backend: None,
             solver: fullmag_authoring::ScriptBuilderSolverState {
                 integrator: "rk45".to_string(),
                 fixed_timestep: String::new(),

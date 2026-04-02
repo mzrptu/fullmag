@@ -904,9 +904,7 @@ impl FemDomainMeshAssetIR {
                 );
             }
             if region.marker == 0 {
-                errors.push(
-                    "fem_domain_mesh_asset.region_markers markers must be > 0".to_string(),
-                );
+                errors.push("fem_domain_mesh_asset.region_markers markers must be > 0".to_string());
             }
             if !seen_markers.insert(region.marker) {
                 errors.push(format!(
@@ -1452,6 +1450,8 @@ pub struct FdmMaterialIR {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FemObjectSegmentIR {
     pub object_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_id: Option<String>,
     pub node_start: u32,
     pub node_count: u32,
     pub element_start: u32,

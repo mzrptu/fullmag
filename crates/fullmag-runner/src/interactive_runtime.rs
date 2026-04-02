@@ -12,7 +12,10 @@ use crate::fem_reference;
 use crate::native_fdm::{NativeFdmBackend, NativeFdmPreviewSnapshot};
 #[cfg(feature = "fem-gpu")]
 use crate::native_fem::{DeviceInfo as FemDeviceInfo, NativeFemBackend};
-use crate::preview::{build_grid_preview_field, normalize_quantity_id, select_observables};
+use crate::preview::{
+    build_grid_preview_field, build_mesh_preview_field_with_active_mask, mesh_quantity_active_mask,
+    normalize_quantity_id, select_observables,
+};
 use crate::relaxation::{llg_overdamped_uses_pure_damping, relaxation_converged};
 use crate::schedules::{
     advance_due_schedules, collect_field_schedules, collect_scalar_schedules, is_due, same_time,
@@ -91,6 +94,7 @@ fn build_cached_grid_preview_fields(
 fn build_cached_mesh_preview_fields(
     display_state: &DisplaySelectionState,
     observables: &StateObservables,
+    mesh: &fullmag_ir::MeshIR,
 ) -> Option<Vec<LivePreviewField>> {
     let quantities = cached_preview_quantities_for(display_state);
     if quantities.is_empty() {
@@ -103,9 +107,10 @@ fn build_cached_mesh_preview_fields(
             .map(|quantity| {
                 let mut request = base_request.clone();
                 request.quantity = quantity.to_string();
-                crate::preview::build_mesh_preview_field(
+                build_mesh_preview_field_with_active_mask(
                     &request,
                     select_observables(observables, quantity),
+                    mesh_quantity_active_mask(quantity, mesh),
                 )
             })
             .collect(),
@@ -1824,9 +1829,10 @@ impl CpuInteractiveFemPreviewRuntime {
     ) -> Result<LivePreviewField, RunError> {
         let observables =
             fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?;
-        Ok(crate::preview::build_mesh_preview_field(
+        Ok(build_mesh_preview_field_with_active_mask(
             request,
             select_observables(&observables, &request.quantity),
+            mesh_quantity_active_mask(&request.quantity, &self.plan_signature.mesh),
         ))
     }
 
@@ -1848,9 +1854,10 @@ impl CpuInteractiveFemPreviewRuntime {
             }
             let mut preview_request = request.clone();
             preview_request.quantity = quantity.to_string();
-            cached.push(crate::preview::build_mesh_preview_field(
+            cached.push(build_mesh_preview_field_with_active_mask(
                 &preview_request,
                 select_observables(&observables, quantity),
+                mesh_quantity_active_mask(quantity, &self.plan_signature.mesh),
             ));
         }
         Ok(cached)
@@ -1942,15 +1949,20 @@ impl CpuInteractiveFemPreviewRuntime {
             );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
-                Some(crate::preview::build_mesh_preview_field(
+                Some(build_mesh_preview_field_with_active_mask(
                     &preview_cfg,
                     select_observables(&current_observables, &preview_cfg.quantity),
+                    mesh_quantity_active_mask(&preview_cfg.quantity, &self.plan_signature.mesh),
                 ))
             } else {
                 None
             };
             let cached_preview_fields = if cached_preview_due {
-                build_cached_mesh_preview_fields(&display_state, &current_observables)
+                build_cached_mesh_preview_fields(
+                    &display_state,
+                    &current_observables,
+                    &self.plan_signature.mesh,
+                )
             } else {
                 None
             };
@@ -2024,15 +2036,20 @@ impl CpuInteractiveFemPreviewRuntime {
             );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
-                Some(crate::preview::build_mesh_preview_field(
+                Some(build_mesh_preview_field_with_active_mask(
                     &preview_cfg,
                     select_observables(&observables, &preview_cfg.quantity),
+                    mesh_quantity_active_mask(&preview_cfg.quantity, &self.plan_signature.mesh),
                 ))
             } else {
                 None
             };
             let cached_preview_fields = if cached_preview_due {
-                build_cached_mesh_preview_fields(&display_state, &observables)
+                build_cached_mesh_preview_fields(
+                    &display_state,
+                    &observables,
+                    &self.plan_signature.mesh,
+                )
             } else {
                 None
             };
@@ -2196,9 +2213,10 @@ impl CpuInteractiveFemPreviewRuntime {
             );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
-                Some(crate::preview::build_mesh_preview_field(
+                Some(build_mesh_preview_field_with_active_mask(
                     &preview_cfg,
                     select_observables(&current_observables, &preview_cfg.quantity),
+                    mesh_quantity_active_mask(&preview_cfg.quantity, &self.plan_signature.mesh),
                 ))
             } else {
                 None
@@ -2278,9 +2296,10 @@ impl CpuInteractiveFemPreviewRuntime {
             );
             let preview_field = if preview_due && !display_is_global_scalar(&display_state) {
                 let preview_cfg = display_state.preview_request();
-                Some(crate::preview::build_mesh_preview_field(
+                Some(build_mesh_preview_field_with_active_mask(
                     &preview_cfg,
                     select_observables(&observables, &preview_cfg.quantity),
+                    mesh_quantity_active_mask(&preview_cfg.quantity, &self.plan_signature.mesh),
                 ))
             } else {
                 None
@@ -2380,9 +2399,10 @@ impl GpuInteractiveFemPreviewRuntime {
         request: &LivePreviewRequest,
     ) -> Result<LivePreviewField, RunError> {
         if crate::preview::normalize_quantity_id(&request.quantity) == "H_ant" {
-            return Ok(crate::preview::build_mesh_preview_field(
+            return Ok(build_mesh_preview_field_with_active_mask(
                 request,
                 &self.antenna_field,
+                None,
             ));
         }
         self.backend
@@ -2407,9 +2427,10 @@ impl GpuInteractiveFemPreviewRuntime {
             let mut preview_request = request.clone();
             preview_request.quantity = quantity.to_string();
             if quantity == "H_ant" {
-                cached.push(crate::preview::build_mesh_preview_field(
+                cached.push(build_mesh_preview_field_with_active_mask(
                     &preview_request,
                     &self.antenna_field,
+                    None,
                 ));
             } else {
                 cached.push(

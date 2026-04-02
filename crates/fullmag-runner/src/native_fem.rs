@@ -10,7 +10,9 @@
 use fullmag_fem_sys as ffi;
 
 #[cfg(feature = "fem-gpu")]
-use crate::preview::{build_mesh_preview_field, normalize_quantity_id};
+use crate::preview::{
+    build_mesh_preview_field_with_active_mask, mesh_quantity_active_mask, normalize_quantity_id,
+};
 #[cfg(feature = "fem-gpu")]
 use crate::types::{LivePreviewField, LivePreviewRequest, RunError, StepStats};
 
@@ -63,6 +65,7 @@ pub(crate) fn is_gpu_available() -> bool {
 #[cfg(feature = "fem-gpu")]
 pub(crate) struct NativeFemBackend {
     handle: *mut ffi::fullmag_fem_backend,
+    magnetic_node_mask: Vec<bool>,
 }
 
 #[cfg(feature = "fem-gpu")]
@@ -458,7 +461,11 @@ impl NativeFemBackend {
             return Err(RunError { message: msg });
         }
 
-        Ok(Self { handle })
+        Ok(Self {
+            handle,
+            magnetic_node_mask: mesh_quantity_active_mask("m", &plan.mesh)
+                .unwrap_or_else(|| vec![true; plan.mesh.nodes.len()]),
+        })
     }
 
     pub fn set_interrupt_signal(&mut self, signal: Option<&AtomicBool>) -> Result<(), RunError> {
@@ -734,7 +741,13 @@ impl NativeFemBackend {
             "H_mel" => self.copy_h_mel(node_count)?,
             _ => self.copy_m(node_count)?,
         };
-        Ok(build_mesh_preview_field(request, &values))
+        let active_mask = (normalize_quantity_id(&request.quantity) == "m")
+            .then(|| self.magnetic_node_mask.clone());
+        Ok(build_mesh_preview_field_with_active_mask(
+            request,
+            &values,
+            active_mask,
+        ))
     }
 
     pub fn device_info(&self) -> Result<DeviceInfo, RunError> {

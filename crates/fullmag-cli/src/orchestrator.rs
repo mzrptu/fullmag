@@ -86,6 +86,7 @@ fn single_object_fem_mesh_payload(
         boundary_faces: mesh.boundary_faces.clone(),
         object_segments: vec![fullmag_runner::FemMeshObjectSegment {
             object_id: object_id.to_string(),
+            geometry_id: None,
             node_start: 0,
             node_count: mesh.nodes.len() as u32,
             element_start: 0,
@@ -3018,14 +3019,12 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        fem_mesh_payload_from_backend_plan,
-        wait_for_solve_prompt,
-        wait_for_solve_supported,
+        fem_mesh_payload_from_backend_plan, wait_for_solve_prompt, wait_for_solve_supported,
     };
     use fullmag_ir::{
-        BackendPlanIR, ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR,
-        FdmPlanIR, FemDomainMeshModeIR, FemObjectSegmentIR, FemPlanIR, GridDimensions,
-        IntegratorChoice, MaterialIR, MeshIR,
+        BackendPlanIR, ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, FdmPlanIR,
+        FemDomainMeshModeIR, FemObjectSegmentIR, FemPlanIR, GridDimensions, IntegratorChoice,
+        MaterialIR, MeshIR,
     };
 
     fn tiny_fdm_plan() -> BackendPlanIR {
@@ -3183,6 +3182,7 @@ mod tests {
             object_segments: vec![
                 FemObjectSegmentIR {
                     object_id: "left".to_string(),
+                    geometry_id: Some("left_geom".to_string()),
                     node_start: 0,
                     node_count: 4,
                     element_start: 0,
@@ -3192,6 +3192,7 @@ mod tests {
                 },
                 FemObjectSegmentIR {
                     object_id: "right".to_string(),
+                    geometry_id: Some("right_geom".to_string()),
                     node_start: 4,
                     node_count: 4,
                     element_start: 1,

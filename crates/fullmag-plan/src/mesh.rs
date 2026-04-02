@@ -265,6 +265,7 @@ pub(crate) fn reorder_shared_domain_mesh(
         .iter()
         .map(|(object_id, marker)| FemObjectSegmentIR {
             object_id: object_id.clone(),
+            geometry_id: Some(object_id.clone()),
             node_start: *node_start_by_marker.get(marker).unwrap_or(&0),
             node_count: *node_count_by_marker.get(marker).unwrap_or(&0),
             element_start: *element_start_by_marker.get(marker).unwrap_or(&0),
@@ -586,6 +587,7 @@ pub(crate) fn merge_fem_meshes(
         let mesh = meshes[0].1.clone();
         let segment = FemObjectSegmentIR {
             object_id: meshes[0].0.clone(),
+            geometry_id: Some(meshes[0].0.clone()),
             node_start: 0,
             node_count: mesh.nodes.len() as u32,
             element_start: 0,
@@ -635,6 +637,7 @@ pub(crate) fn merge_fem_meshes(
         boundary_markers.extend(mesh.boundary_markers.iter().copied());
         object_segments.push(FemObjectSegmentIR {
             object_id: object_id.clone(),
+            geometry_id: Some(object_id.clone()),
             node_start,
             node_count: mesh.nodes.len() as u32,
             element_start,

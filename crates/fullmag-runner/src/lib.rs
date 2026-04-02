@@ -42,9 +42,9 @@ pub use interactive::events::{
 pub use interactive::runtime::InteractiveRuntime;
 pub use interactive_runtime::{InteractiveFdmPreviewRuntime, InteractiveFemPreviewRuntime};
 pub use types::{
-    ExecutionProvenance, FemEigenRunResult, FemMeshObjectSegment, FemMeshPayload,
-    LivePreviewField, LivePreviewRequest, LiveVectorFieldSnapshot, RunError, RunResult,
-    RunStatus, RuntimeEngineInfo, StepAction, StepStats, StepUpdate,
+    ExecutionProvenance, FemEigenRunResult, FemMeshObjectSegment, FemMeshPayload, LivePreviewField,
+    LivePreviewRequest, LiveVectorFieldSnapshot, RunError, RunResult, RunStatus, RuntimeEngineInfo,
+    StepAction, StepStats, StepUpdate,
 };
 
 use fullmag_ir::{BackendPlanIR, FdmMultilayerPlanIR, FdmPlanIR, OutputIR, ProblemIR};
@@ -1001,7 +1001,7 @@ mod tests {
     use super::*;
     use fullmag_ir::{
         ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, GridDimensions,
-        IntegratorChoice,
+        IntegratorChoice, MeshIR,
     };
     #[cfg(feature = "cuda")]
     use fullmag_ir::{FdmGridAssetIR, GeometryAssetsIR, GeometryEntryIR};
@@ -1343,5 +1343,36 @@ mod tests {
         );
         assert_eq!(m_snapshots[0].step, 0);
         assert!(m_snapshots[1].step > 0);
+    }
+
+    #[test]
+    fn mesh_preview_active_mask_marks_only_non_air_nodes_for_m() {
+        let mesh = MeshIR {
+            mesh_name: "shared".to_string(),
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [2.0, 0.0, 0.0],
+                [2.0, 1.0, 0.0],
+                [2.0, 0.0, 1.0],
+                [3.0, 0.0, 0.0],
+            ],
+            elements: vec![[0, 1, 2, 3], [4, 5, 6, 7]],
+            element_markers: vec![1, 0],
+            boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
+            boundary_markers: vec![1, 99],
+        };
+
+        let magnetization_mask = crate::preview::mesh_quantity_active_mask("m", &mesh)
+            .expect("magnetization preview should expose a mask for FEM mesh previews");
+        let demag_mask = crate::preview::mesh_quantity_active_mask("H_demag", &mesh);
+
+        assert_eq!(
+            magnetization_mask,
+            vec![true, true, true, true, false, false, false, false]
+        );
+        assert!(demag_mask.is_none());
     }
 }

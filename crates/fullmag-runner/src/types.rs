@@ -227,6 +227,7 @@ pub struct LivePreviewField {
     pub quantity: String,
     pub unit: String,
     pub spatial_kind: String,
+    pub quantity_domain: String,
     pub preview_grid: [u32; 3],
     pub original_grid: [u32; 3],
     pub vector_field_values: Vec<f64>,
@@ -255,6 +256,8 @@ pub struct LiveVectorFieldSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FemMeshObjectSegment {
     pub object_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geometry_id: Option<String>,
     pub node_start: u32,
     pub node_count: u32,
     pub element_start: u32,
@@ -283,6 +286,7 @@ impl From<&fullmag_ir::FemPlanIR> for FemMeshPayload {
                 .iter()
                 .map(|segment| FemMeshObjectSegment {
                     object_id: segment.object_id.clone(),
+                    geometry_id: segment.geometry_id.clone(),
                     node_start: segment.node_start,
                     node_count: segment.node_count,
                     element_start: segment.element_start,
@@ -306,6 +310,7 @@ impl From<&fullmag_ir::FemEigenPlanIR> for FemMeshPayload {
                 .iter()
                 .map(|segment| FemMeshObjectSegment {
                     object_id: segment.object_id.clone(),
+                    geometry_id: segment.geometry_id.clone(),
                     node_start: segment.node_start,
                     node_count: segment.node_count,
                     element_start: segment.element_start,

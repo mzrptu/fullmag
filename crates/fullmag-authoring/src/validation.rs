@@ -55,7 +55,10 @@ pub fn validate_scene_document(scene: &SceneDocument) -> Result<(), SceneDocumen
                 "magnetization asset ids must not be empty",
             ));
         }
-        if !matches!(asset.kind.as_str(), "uniform" | "random" | "file" | "sampled") {
+        if !matches!(
+            asset.kind.as_str(),
+            "uniform" | "random" | "file" | "sampled"
+        ) {
             return Err(SceneDocumentValidationError::new(format!(
                 "unsupported magnetization asset kind '{}'",
                 asset.kind

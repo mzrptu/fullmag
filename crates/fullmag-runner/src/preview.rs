@@ -1,4 +1,5 @@
 use crate::types::{LivePreviewField, LivePreviewRequest, StateObservables};
+use fullmag_ir::MeshIR;
 
 #[derive(Debug, Clone)]
 pub(crate) struct GridPreviewPlan {
@@ -32,6 +33,13 @@ pub(crate) fn quantity_unit(quantity: &str) -> &'static str {
         "m" => "dimensionless",
         "H_ex" | "H_demag" | "H_ant" | "H_ext" | "H_eff" | "H_ani" | "H_dmi" => "A/m",
         _ => "",
+    }
+}
+
+pub(crate) fn quantity_spatial_domain(quantity: &str) -> &'static str {
+    match normalize_quantity_id(quantity) {
+        "m" => "magnetic_only",
+        _ => "full_domain",
     }
 }
 
@@ -256,6 +264,7 @@ pub(crate) fn build_grid_preview_field_from_flat_plan(
         quantity: quantity.to_string(),
         unit: quantity_unit(quantity).to_string(),
         spatial_kind: "grid".to_string(),
+        quantity_domain: quantity_spatial_domain(quantity).to_string(),
         preview_grid: plan.preview_grid,
         original_grid: plan.original_grid,
         vector_field_values,
@@ -270,9 +279,34 @@ pub(crate) fn build_grid_preview_field_from_flat_plan(
     }
 }
 
-pub(crate) fn build_mesh_preview_field(
+pub(crate) fn mesh_quantity_active_mask(quantity: &str, mesh: &MeshIR) -> Option<Vec<bool>> {
+    if normalize_quantity_id(quantity) != "m" {
+        return None;
+    }
+    let mut active_mask = vec![false; mesh.nodes.len()];
+    for (element_index, element) in mesh.elements.iter().enumerate() {
+        if mesh
+            .element_markers
+            .get(element_index)
+            .copied()
+            .unwrap_or(0)
+            == 0
+        {
+            continue;
+        }
+        for &node_index in element {
+            if let Some(active) = active_mask.get_mut(node_index as usize) {
+                *active = true;
+            }
+        }
+    }
+    Some(active_mask)
+}
+
+pub(crate) fn build_mesh_preview_field_with_active_mask(
     request: &LivePreviewRequest,
     values: &[[f64; 3]],
+    active_mask: Option<Vec<bool>>,
 ) -> LivePreviewField {
     let quantity = normalize_quantity_id(&request.quantity);
     LivePreviewField {
@@ -280,6 +314,7 @@ pub(crate) fn build_mesh_preview_field(
         quantity: quantity.to_string(),
         unit: quantity_unit(quantity).to_string(),
         spatial_kind: "mesh".to_string(),
+        quantity_domain: quantity_spatial_domain(quantity).to_string(),
         preview_grid: [values.len() as u32, 1, 1],
         original_grid: [0, 0, 0],
         vector_field_values: flatten_vectors(values),
@@ -290,7 +325,7 @@ pub(crate) fn build_mesh_preview_field(
         applied_layer_stride: 1,
         auto_downscaled: false,
         auto_downscale_message: None,
-        active_mask: None,
+        active_mask,
     }
 }
 

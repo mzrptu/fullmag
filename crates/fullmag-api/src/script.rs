@@ -2,11 +2,11 @@
 
 use crate::error::ApiError;
 use crate::types::*;
+use crate::ReadMagnetizationStateHelperResponse;
 use fullmag_authoring::{
     scene_document_from_script_builder, scene_document_problem_projection,
     scene_document_to_script_builder, SceneDocument, ScriptBuilderState,
 };
-use crate::ReadMagnetizationStateHelperResponse;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;

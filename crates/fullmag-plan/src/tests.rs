@@ -1,4 +1,3 @@
-
 use super::*;
 
 #[test]
@@ -527,14 +526,22 @@ fn fem_backend_multibody_merges_disjoint_mesh_assets() {
             assert_eq!(fem.mesh.elements.len(), 2);
             assert_eq!(fem.initial_magnetization.len(), 8);
             assert_eq!(fem.object_segments.len(), 2);
-            assert_eq!(fem.object_segments[0].object_id, "free_geom");
+            assert_eq!(fem.object_segments[0].object_id, "free");
+            assert_eq!(
+                fem.object_segments[0].geometry_id.as_deref(),
+                Some("free_geom")
+            );
             assert_eq!(fem.object_segments[0].node_start, 0);
             assert_eq!(fem.object_segments[0].node_count, 4);
             assert_eq!(fem.object_segments[0].element_start, 0);
             assert_eq!(fem.object_segments[0].element_count, 1);
             assert_eq!(fem.object_segments[0].boundary_face_start, 0);
             assert_eq!(fem.object_segments[0].boundary_face_count, 1);
-            assert_eq!(fem.object_segments[1].object_id, "ref_geom");
+            assert_eq!(fem.object_segments[1].object_id, "ref");
+            assert_eq!(
+                fem.object_segments[1].geometry_id.as_deref(),
+                Some("ref_geom")
+            );
             assert_eq!(fem.object_segments[1].node_start, 4);
             assert_eq!(fem.object_segments[1].node_count, 4);
             assert_eq!(fem.object_segments[1].element_start, 1);
@@ -1286,7 +1293,21 @@ fn fem_eigen_accepts_shared_domain_mesh_with_air_when_transfer_grid_is_used() {
             assert_eq!(fem.demag_realization.as_deref(), Some("transfer_grid"));
             assert_eq!(fem.object_segments.len(), 1);
             assert_eq!(fem.object_segments[0].object_id, "strip");
+            assert_eq!(fem.object_segments[0].geometry_id.as_deref(), Some("strip"));
             assert_eq!(fem.object_segments[0].node_count, 4);
+            assert_eq!(fem.equilibrium_magnetization.len(), 8);
+            let magnetic_start = fem.object_segments[0].node_start as usize;
+            let magnetic_end = magnetic_start + fem.object_segments[0].node_count as usize;
+            assert!(fem.equilibrium_magnetization[magnetic_start..magnetic_end]
+                .iter()
+                .all(|value| value.iter().any(|component| component.abs() > 0.0)));
+            assert!(
+                fem.equilibrium_magnetization
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| *index < magnetic_start || *index >= magnetic_end)
+                    .all(|(_, value)| *value == [0.0, 0.0, 0.0])
+            );
         }
         other => panic!("expected FEM eigen plan, got {other:?}"),
     }

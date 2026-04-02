@@ -18,7 +18,8 @@ use crate::antenna_fields::{
 use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
 use crate::interactive_runtime::{display_is_global_scalar, display_refresh_due};
 use crate::preview::{
-    build_mesh_preview_field, flatten_vectors, normalize_quantity_id, select_observables,
+    build_mesh_preview_field_with_active_mask, flatten_vectors, mesh_quantity_active_mask,
+    normalize_quantity_id, select_observables,
 };
 use crate::relaxation::{llg_overdamped_uses_pure_damping, relaxation_converged};
 use crate::scalar_metrics::{
@@ -56,9 +57,10 @@ pub(crate) fn snapshot_preview(
         .clone()
         .unwrap_or_else(|| vec![[0.0, 0.0, 0.0]; state.magnetization().len()]);
     let observables = observe_state(&problem, &state, &antenna_field)?;
-    Ok(build_mesh_preview_field(
+    Ok(build_mesh_preview_field_with_active_mask(
         request,
         select_observables(&observables, &request.quantity),
+        mesh_quantity_active_mask(&request.quantity, &plan.mesh),
     ))
 }
 
@@ -85,9 +87,10 @@ pub(crate) fn snapshot_vector_fields(
         }
         let mut preview_request = request.clone();
         preview_request.quantity = quantity.to_string();
-        cached.push(build_mesh_preview_field(
+        cached.push(build_mesh_preview_field_with_active_mask(
             &preview_request,
             select_observables(&observables, quantity),
+            mesh_quantity_active_mask(quantity, &plan.mesh),
         ));
     }
     Ok(cached)
@@ -275,9 +278,10 @@ fn execute_reference_fem_impl(
                 let preview_targets_global_scalar = display_is_global_scalar(&display_selection);
                 let preview_field = if preview_due && !preview_targets_global_scalar {
                     let request = display_selection.preview_request();
-                    Some(build_mesh_preview_field(
+                    Some(build_mesh_preview_field_with_active_mask(
                         &request,
                         select_observables(&current_observables, &request.quantity),
+                        mesh_quantity_active_mask(&request.quantity, &plan.mesh),
                     ))
                 } else {
                     None
@@ -375,9 +379,10 @@ fn execute_reference_fem_impl(
             let preview_field = if preview_due && !preview_targets_global_scalar {
                 let selection = display_selection.as_ref().expect("checked preview_due");
                 let request = selection.preview_request();
-                Some(build_mesh_preview_field(
+                Some(build_mesh_preview_field_with_active_mask(
                     &request,
                     select_observables(&observables, &request.quantity),
+                    mesh_quantity_active_mask(&request.quantity, &plan.mesh),
                 ))
             } else {
                 None
