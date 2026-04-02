@@ -232,6 +232,10 @@ function ControlRoomShell() {
         onGenerateMesh={ctx.handleMeshGenerate}
         selectedObjectId={ctx.selectedObjectId}
         onRequestObjectFocus={ctx.requestFocusObject}
+        hasSharedAirboxDomain={ctx.effectiveFemMesh?.domain_mesh_mode === "shared_domain_mesh_with_air"}
+        canSyncScriptBuilder={Boolean(ctx.sessionFooter.scriptPath)}
+        scriptSyncBusy={ctx.scriptSyncBusy}
+        onSyncScriptBuilder={() => void ctx.syncScriptBuilder()}
       />
       <PanelGroup
         orientation="horizontal"
@@ -300,6 +304,11 @@ function ControlRoomShell() {
                   error={ctx.error}
                   presentationMode="current"
                   convergenceThreshold={Number(ctx.solverSettings.torqueTolerance) || DEFAULT_CONVERGENCE_THRESHOLD}
+                  commandStatus={ctx.commandStatus}
+                  commandBusy={ctx.commandBusy}
+                  commandMessage={ctx.commandMessage}
+                  activity={ctx.activity}
+                  meshWorkspace={ctx.meshWorkspace}
                 />
               </div>
             </Panel>

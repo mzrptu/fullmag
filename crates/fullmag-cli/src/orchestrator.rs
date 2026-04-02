@@ -6,7 +6,7 @@ use fullmag_ir::{
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::args::*;
@@ -100,6 +100,19 @@ fn single_object_fem_mesh_payload(
         domain_mesh_mode: None,
         generation_id: None,
     }
+}
+
+fn default_domain_region_markers(
+    geometry_entries: &[fullmag_ir::GeometryEntryIR],
+) -> Vec<fullmag_ir::FemDomainRegionMarkerIR> {
+    geometry_entries
+        .iter()
+        .enumerate()
+        .map(|(index, geometry)| fullmag_ir::FemDomainRegionMarkerIR {
+            geometry_name: geometry.name().to_string(),
+            marker: (index + 1) as u32,
+        })
+        .collect()
 }
 
 fn current_fem_mesh_workspace(
@@ -363,9 +376,17 @@ fn apply_current_fem_overrides(
     adaptive_runtime_state: Option<&serde_json::Value>,
 ) {
     if let Some(mesh) = mesh_override {
+        let fallback_region_markers = default_domain_region_markers(&problem.geometry.entries);
         if let Some(assets) = problem.geometry_assets.as_mut() {
-            for fem_asset in &mut assets.fem_mesh_assets {
-                fem_asset.mesh = Some(mesh.clone());
+            if let Some(domain_asset) = assets.fem_domain_mesh_asset.as_mut() {
+                domain_asset.mesh = Some(mesh.clone());
+                if domain_asset.region_markers.is_empty() {
+                    domain_asset.region_markers = fallback_region_markers;
+                }
+            } else {
+                for fem_asset in &mut assets.fem_mesh_assets {
+                    fem_asset.mesh = Some(mesh.clone());
+                }
             }
         }
     }
@@ -419,6 +440,254 @@ fn renormalize_magnetization(values: &mut [[f64; 3]]) {
             *value = [1.0, 0.0, 0.0];
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_manual_interactive_remesh(
+    command: &SessionCommand,
+    problem: &ProblemIR,
+    backend_plan: &BackendPlanIR,
+    workspace_status: &str,
+    live_workspace: &LocalLiveWorkspace,
+    current_mesh_quality: &mut Option<crate::python_bridge::RemeshQualitySummary>,
+    current_mesh_history: &mut Vec<serde_json::Value>,
+    current_fem_mesh_override: &mut Option<fullmag_ir::MeshIR>,
+    current_fem_hmax_override: &mut Option<f64>,
+    current_adaptive_runtime_state: &Option<serde_json::Value>,
+) -> Result<()> {
+    let opts = command
+        .mesh_options
+        .clone()
+        .unwrap_or(serde_json::json!({}));
+    eprintln!("[fullmag] remesh requested with options: {}", opts);
+    live_workspace.push_log("info", format!("Remesh requested — options: {}", opts));
+
+    let adaptive_mesh_runtime = problem
+        .problem_meta
+        .runtime_metadata
+        .get("adaptive_mesh")
+        .cloned();
+    let fem_plan = match backend_plan {
+        BackendPlanIR::Fem(plan) => Some(plan),
+        _ => None,
+    };
+
+    if let Some(plan) = fem_plan {
+        let shared_domain_remesh = matches!(
+            plan.domain_mesh_mode,
+            fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir
+        );
+        let geometry_entry = problem.geometry.entries.first().cloned();
+        let hmax = opts
+            .get("hmax")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(plan.hmax);
+        eprintln!(
+            "[fullmag] meshing in progress — hmax={:.3e} m, order=P{} ...",
+            hmax, plan.fe_order
+        );
+        live_workspace.push_log(
+            "info",
+            format!(
+                "Meshing in progress — hmax={:.3e}, order=P{}",
+                hmax, plan.fe_order
+            ),
+        );
+        let mesh_start = std::time::Instant::now();
+        let remesh_progress_stage = Arc::new(Mutex::new(None::<u8>));
+        let remesh_progress_callback = Some({
+            let live_workspace = live_workspace.clone();
+            let remesh_progress_stage = Arc::clone(&remesh_progress_stage);
+            Arc::new(move |event: PythonProgressEvent| {
+                let terminal_update = match &event {
+                    PythonProgressEvent::Message(message) => {
+                        match map_remesh_progress_message(message) {
+                            Some(stage) => {
+                                let mut guard = remesh_progress_stage
+                                    .lock()
+                                    .expect("remesh progress mutex poisoned");
+                                if guard
+                                    .map(|current| current == stage.percent)
+                                    .unwrap_or(false)
+                                {
+                                    None
+                                } else {
+                                    *guard = Some(stage.percent);
+                                    Some(format!(
+                                        "[fullmag] remesh {:02}% - {}",
+                                        stage.percent, stage.label
+                                    ))
+                                }
+                            }
+                            None => Some(format!("[fullmag] remesh info - {}", message)),
+                        }
+                    }
+                    PythonProgressEvent::FemSurfacePreview { .. } => None,
+                };
+                apply_python_progress_event(&live_workspace, event);
+                if let Some(line) = terminal_update {
+                    eprintln!("{}", line);
+                }
+            }) as PythonProgressCallback
+        });
+
+        let remesh_attempt = if shared_domain_remesh {
+            let study_universe = problem
+                .problem_meta
+                .runtime_metadata
+                .get("study_universe")
+                .ok_or_else(|| {
+                    anyhow!(
+                        "shared-domain remesh requires study_universe metadata in runtime state"
+                    )
+                })?;
+            invoke_shared_domain_remesh_full(
+                &problem.geometry.entries,
+                study_universe,
+                hmax,
+                plan.fe_order,
+                &opts,
+                remesh_progress_callback,
+            )
+        } else {
+            let geom = geometry_entry
+                .as_ref()
+                .ok_or_else(|| anyhow!("no geometry entry available"))?;
+            invoke_remesh_full(geom, hmax, plan.fe_order, &opts, remesh_progress_callback)
+        };
+
+        match remesh_attempt {
+            Ok(remesh_result) => {
+                let elapsed = mesh_start.elapsed();
+                let new_mesh = remesh_result.clone().into_mesh_ir();
+                let node_count = new_mesh.nodes.len();
+                let elem_count = new_mesh.elements.len();
+                let face_count = new_mesh.boundary_faces.len();
+                let remeshed_mesh_source = if shared_domain_remesh {
+                    None
+                } else {
+                    plan.mesh_source.clone()
+                };
+                let live_mesh_payload = {
+                    let mut remeshed_problem = problem.clone();
+                    apply_current_fem_overrides(
+                        &mut remeshed_problem,
+                        Some(&new_mesh),
+                        Some(hmax),
+                        current_adaptive_runtime_state.as_ref(),
+                    );
+                    if shared_domain_remesh {
+                        let region_markers = if remesh_result.region_markers.is_empty() {
+                            default_domain_region_markers(&remeshed_problem.geometry.entries)
+                        } else {
+                            remesh_result.region_markers.clone()
+                        };
+                        remeshed_problem
+                            .geometry_assets
+                            .as_mut()
+                            .and_then(|assets| assets.fem_domain_mesh_asset.as_mut())
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "shared-domain remesh produced a domain mesh but no fem_domain_mesh_asset is attached"
+                                )
+                            })?
+                            .region_markers = region_markers;
+                    }
+                    fem_mesh_payload_from_backend_plan(
+                        &fullmag_plan::plan(&remeshed_problem)
+                            .map_err(|error| anyhow!(error.to_string()))?
+                            .backend_plan,
+                    )
+                    .ok_or_else(|| {
+                        anyhow!("updated backend plan did not produce a FEM mesh payload")
+                    })?
+                };
+                live_workspace.push_log(
+                    "success",
+                    format!(
+                        "Remesh complete — {} nodes, {} elements, {} boundary faces ({:.1}s)",
+                        node_count,
+                        elem_count,
+                        face_count,
+                        elapsed.as_secs_f64()
+                    ),
+                );
+                eprintln!(
+                    "[fullmag] ✓ remesh complete — {} nodes, {} elements ({:.1}s)",
+                    node_count,
+                    elem_count,
+                    elapsed.as_secs_f64()
+                );
+                if node_count > 50_000 {
+                    live_workspace.push_log(
+                        "warn",
+                        format!(
+                            "⛔ Mesh has {} nodes — CPU dense solver will likely OOM. Increase hmax.",
+                            node_count
+                        ),
+                    );
+                } else if node_count > 10_000 {
+                    live_workspace.push_log(
+                        "warn",
+                        format!(
+                            "⚠ Mesh has {} nodes — may be slow with CPU dense solver.",
+                            node_count
+                        ),
+                    );
+                }
+                *current_mesh_quality = remesh_result.quality.clone();
+                *current_fem_mesh_override = Some(new_mesh.clone());
+                *current_fem_hmax_override = Some(hmax);
+                current_mesh_history.push(serde_json::json!({
+                    "mesh_name": new_mesh.mesh_name,
+                    "generation_mode": remesh_result.generation_mode,
+                    "node_count": node_count,
+                    "element_count": elem_count,
+                    "boundary_face_count": face_count,
+                    "quality": remesh_result.quality.as_ref().map(|quality| serde_json::json!({
+                        "sicn_p5": quality.sicn_p5,
+                        "gamma_min": quality.gamma_min,
+                        "avg_quality": quality.avg_quality,
+                    })),
+                    "mesh_provenance": remesh_result.mesh_provenance,
+                    "size_field_stats": remesh_result.size_field_stats,
+                }));
+
+                live_workspace.update(|state| {
+                    state.live_state.latest_step.fem_mesh = Some(live_mesh_payload);
+                    state.mesh_workspace = Some(current_fem_mesh_workspace(
+                        problem,
+                        &new_mesh,
+                        remeshed_mesh_source.as_deref(),
+                        plan.fe_order,
+                        hmax,
+                        workspace_status,
+                        adaptive_mesh_runtime.as_ref(),
+                        current_adaptive_runtime_state.as_ref(),
+                        current_mesh_quality.as_ref(),
+                        current_mesh_history,
+                    ));
+                });
+            }
+            Err(error) => {
+                let elapsed = mesh_start.elapsed();
+                eprintln!(
+                    "[fullmag] ✗ remesh FAILED after {:.1}s: {}",
+                    elapsed.as_secs_f64(),
+                    error
+                );
+                live_workspace.push_log("error", format!("Remesh failed: {}", error));
+            }
+        }
+    } else {
+        eprintln!("[fullmag] ✗ cannot remesh — no FEM plan available (wrong backend?)");
+        live_workspace.push_log(
+            "warn",
+            "Cannot remesh — no FEM plan available (wrong backend?)",
+        );
+    }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -628,6 +897,7 @@ fn maybe_execute_adaptive_relaxation_followup_passes(
                 "node_coords": fem_plan.mesh.nodes,
                 "h_values": afem_step.nodal_h,
             }),
+            None,
         )?;
         let new_mesh = remesh_result.clone().into_mesh_ir();
         let new_topo = fullmag_engine::fem::MeshTopology::from_ir(&new_mesh)
@@ -1373,6 +1643,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             current_hmax,
                             fe_order,
                             &serde_json::json!({"compute_quality": true}),
+                            None,
                         ) {
                             Ok(remesh_result) => {
                                 let new_mesh = remesh_result.clone().into_mesh_ir();
@@ -1563,140 +1834,18 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     break;
                 }
                 "remesh" => {
-                    let opts = cmd.mesh_options.unwrap_or(serde_json::json!({}));
-                    eprintln!("[fullmag] remesh requested with options: {}", opts);
-                    live_workspace
-                        .push_log("info", format!("Remesh requested — options: {}", opts));
-                    let geometry_entry = stages[0].ir.geometry.entries.first().cloned();
-                    let adaptive_mesh_runtime = stages[0]
-                        .ir
-                        .problem_meta
-                        .runtime_metadata
-                        .get("adaptive_mesh")
-                        .cloned();
-                    let fem_plan = match &stage_execution_plans[0].backend_plan {
-                        BackendPlanIR::Fem(plan) => Some(plan),
-                        _ => None,
-                    };
-                    if let (Some(geom), Some(plan)) = (geometry_entry.as_ref(), fem_plan) {
-                        let hmax = opts
-                            .get("hmax")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(plan.hmax);
-                        eprintln!(
-                            "[fullmag] meshing in progress — hmax={:.3e} m, order=P{} ...",
-                            hmax, plan.fe_order
-                        );
-                        live_workspace.push_log(
-                            "info",
-                            format!(
-                                "Meshing in progress — hmax={:.3e}, order=P{}",
-                                hmax, plan.fe_order
-                            ),
-                        );
-                        let mesh_start = std::time::Instant::now();
-                        match invoke_remesh_full(geom, hmax, plan.fe_order, &opts) {
-                            Ok(remesh_result) => {
-                                let elapsed = mesh_start.elapsed();
-                                let new_mesh = remesh_result.clone().into_mesh_ir();
-                                let node_count = new_mesh.nodes.len();
-                                let elem_count = new_mesh.elements.len();
-                                let face_count = new_mesh.boundary_faces.len();
-                                live_workspace.push_log(
-                                    "success",
-                                    format!(
-                                        "Remesh complete — {} nodes, {} elements, {} boundary faces ({:.1}s)",
-                                        node_count, elem_count, face_count, elapsed.as_secs_f64()
-                                    ),
-                                );
-                                eprintln!(
-                                    "[fullmag] ✓ remesh complete — {} nodes, {} elements ({:.1}s)",
-                                    node_count,
-                                    elem_count,
-                                    elapsed.as_secs_f64()
-                                );
-                                if node_count > 50_000 {
-                                    live_workspace.push_log(
-                                        "warn",
-                                        format!(
-                                            "⛔ Mesh has {} nodes — CPU dense solver will likely OOM. Increase hmax.",
-                                            node_count
-                                        ),
-                                    );
-                                } else if node_count > 10_000 {
-                                    live_workspace.push_log(
-                                        "warn",
-                                        format!(
-                                            "⚠ Mesh has {} nodes — may be slow with CPU dense solver.",
-                                            node_count
-                                        ),
-                                    );
-                                }
-                                current_mesh_quality = remesh_result.quality.clone();
-                                current_fem_mesh_override = Some(new_mesh.clone());
-                                current_fem_hmax_override = Some(hmax);
-                                current_mesh_history.push(serde_json::json!({
-                                    "mesh_name": new_mesh.mesh_name,
-                                    "generation_mode": remesh_result.generation_mode,
-                                    "node_count": node_count,
-                                    "element_count": elem_count,
-                                    "boundary_face_count": face_count,
-                                    "quality": remesh_result.quality.as_ref().map(|quality| serde_json::json!({
-                                        "sicn_p5": quality.sicn_p5,
-                                        "gamma_min": quality.gamma_min,
-                                        "avg_quality": quality.avg_quality,
-                                    })),
-                                    "mesh_provenance": remesh_result.mesh_provenance,
-                                    "size_field_stats": remesh_result.size_field_stats,
-                                }));
-                                for stage in stages.iter_mut() {
-                                    if let Some(assets) = stage.ir.geometry_assets.as_mut() {
-                                        for fem_asset in assets.fem_mesh_assets.iter_mut() {
-                                            fem_asset.mesh = Some(new_mesh.clone());
-                                        }
-                                    }
-                                }
-
-                                let mesh_payload =
-                                    single_object_fem_mesh_payload(&new_mesh, &geom.name());
-                                let mesh_workspace_problem =
-                                    &stages.last().expect("stages should not be empty").ir;
-
-                                live_workspace.update(|state| {
-                                    state.live_state.latest_step.fem_mesh = Some(mesh_payload);
-                                    state.mesh_workspace = Some(current_fem_mesh_workspace(
-                                        mesh_workspace_problem,
-                                        &new_mesh,
-                                        plan.mesh_source.as_deref(),
-                                        plan.fe_order,
-                                        hmax,
-                                        "waiting_for_compute",
-                                        adaptive_mesh_runtime.as_ref(),
-                                        current_adaptive_runtime_state.as_ref(),
-                                        current_mesh_quality.as_ref(),
-                                        &current_mesh_history,
-                                    ));
-                                });
-                            }
-                            Err(e) => {
-                                let elapsed = mesh_start.elapsed();
-                                eprintln!(
-                                    "[fullmag] ✗ remesh FAILED after {:.1}s: {}",
-                                    elapsed.as_secs_f64(),
-                                    e
-                                );
-                                live_workspace.push_log("error", format!("Remesh failed: {}", e));
-                            }
-                        }
-                    } else {
-                        let reason = if geometry_entry.is_none() {
-                            "no geometry entry available"
-                        } else {
-                            "no FEM plan available (wrong backend?)"
-                        };
-                        eprintln!("[fullmag] ✗ cannot remesh — {}", reason);
-                        live_workspace.push_log("warn", format!("Cannot remesh — {}", reason));
-                    }
+                    execute_manual_interactive_remesh(
+                        &cmd,
+                        &stages[0].ir,
+                        &stage_execution_plans[0].backend_plan,
+                        "waiting_for_compute",
+                        &live_workspace,
+                        &mut current_mesh_quality,
+                        &mut current_mesh_history,
+                        &mut current_fem_mesh_override,
+                        &mut current_fem_hmax_override,
+                        &current_adaptive_runtime_state,
+                    )?;
                 }
                 "stop" => {
                     eprintln!("[fullmag] aborted by user during wait_for_solve");
@@ -2376,10 +2525,50 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     .enter_awaiting_command(continuation_magnetization.clone(), &live_workspace);
             }
 
+            if command.kind == "remesh" {
+                let mut remesh_problem = interactive_template_ir.clone();
+                apply_current_fem_overrides(
+                    &mut remesh_problem,
+                    current_fem_mesh_override.as_ref(),
+                    current_fem_hmax_override,
+                    current_adaptive_runtime_state.as_ref(),
+                );
+                execute_manual_interactive_remesh(
+                    &command,
+                    &remesh_problem,
+                    &fullmag_plan::plan(&remesh_problem)
+                        .map_err(|error| anyhow!(error.to_string()))?
+                        .backend_plan,
+                    "awaiting_command",
+                    &live_workspace,
+                    &mut current_mesh_quality,
+                    &mut current_mesh_history,
+                    &mut current_fem_mesh_override,
+                    &mut current_fem_hmax_override,
+                    &current_adaptive_runtime_state,
+                )?;
+                interactive_runtime_host
+                    .enter_awaiting_command(continuation_magnetization.clone(), &live_workspace);
+                continue;
+            }
+
             let Some(mut stage) =
                 (match build_interactive_command_stage(&interactive_template_ir, &command) {
                     Ok(stage) => stage,
-                    Err(_) => continue,
+                    Err(error) => {
+                        eprintln!(
+                            "[fullmag] interactive command '{}' rejected: {}",
+                            command.kind, error
+                        );
+                        live_workspace.push_log(
+                            "error",
+                            format!(
+                                "Interactive command '{}' is not supported here: {}",
+                                command.kind, error
+                            ),
+                        );
+                        continue;
+                    }
                 })
             else {
                 break;
@@ -3024,13 +3213,17 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
+        apply_current_fem_overrides, default_domain_region_markers,
         fem_mesh_payload_from_backend_plan, wait_for_solve_prompt, wait_for_solve_supported,
     };
     use fullmag_ir::{
-        BackendPlanIR, ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, FdmPlanIR,
-        FemDomainMeshModeIR, FemObjectSegmentIR, FemPlanIR, GridDimensions, IntegratorChoice,
-        MaterialIR, MeshIR,
+        BackendPlanIR, BackendPolicyIR, BackendTarget, DiscretizationHintsIR, DynamicsIR,
+        ExchangeBoundaryCondition, ExecutionMode, ExecutionPrecision, FdmMaterialIR, FdmPlanIR,
+        FemDomainMeshAssetIR, FemDomainMeshModeIR, FemObjectSegmentIR, FemPlanIR, GeometryAssetsIR,
+        GeometryEntryIR, GeometryIR, GridDimensions, IntegratorChoice, MaterialIR, MeshIR,
+        ProblemIR, ProblemMeta, SamplingIR, StudyIR, ValidationProfileIR,
     };
+    use std::collections::BTreeMap;
 
     fn tiny_fdm_plan() -> BackendPlanIR {
         BackendPlanIR::Fdm(FdmPlanIR {
@@ -3276,6 +3469,95 @@ mod tests {
         })
     }
 
+    fn tiny_problem_with_shared_domain_asset() -> ProblemIR {
+        ProblemIR {
+            ir_version: "test-ir".to_string(),
+            problem_meta: ProblemMeta {
+                name: "shared-domain-test".to_string(),
+                description: None,
+                script_language: "python".to_string(),
+                script_source: None,
+                script_api_version: "0".to_string(),
+                serializer_version: "0".to_string(),
+                entrypoint_kind: "test".to_string(),
+                source_hash: None,
+                runtime_metadata: BTreeMap::new(),
+                backend_revision: None,
+                seeds: Vec::new(),
+            },
+            geometry: GeometryIR {
+                entries: vec![
+                    GeometryEntryIR::Box {
+                        name: "left".to_string(),
+                        size: [1.0, 1.0, 1.0],
+                    },
+                    GeometryEntryIR::Box {
+                        name: "right".to_string(),
+                        size: [1.0, 1.0, 1.0],
+                    },
+                ],
+            },
+            geometry_assets: Some(GeometryAssetsIR {
+                fdm_grid_assets: Vec::new(),
+                fem_mesh_assets: Vec::new(),
+                fem_domain_mesh_asset: Some(FemDomainMeshAssetIR {
+                    mesh_source: None,
+                    mesh: Some(MeshIR {
+                        mesh_name: "old_shared".to_string(),
+                        nodes: vec![[0.0, 0.0, 0.0]],
+                        elements: Vec::new(),
+                        element_markers: Vec::new(),
+                        boundary_faces: Vec::new(),
+                        boundary_markers: Vec::new(),
+                    }),
+                    region_markers: Vec::new(),
+                }),
+            }),
+            regions: Vec::new(),
+            materials: Vec::new(),
+            magnets: Vec::new(),
+            energy_terms: Vec::new(),
+            study: StudyIR::TimeEvolution {
+                dynamics: DynamicsIR::Llg {
+                    gyromagnetic_ratio: 2.211e5,
+                    integrator: "heun".to_string(),
+                    fixed_timestep: Some(1e-13),
+                    adaptive_timestep: None,
+                    mechanics: None,
+                },
+                sampling: SamplingIR {
+                    outputs: Vec::new(),
+                },
+            },
+            backend_policy: BackendPolicyIR {
+                requested_backend: BackendTarget::Fem,
+                execution_precision: ExecutionPrecision::Double,
+                discretization_hints: Some(DiscretizationHintsIR {
+                    fdm: None,
+                    fem: None,
+                    hybrid: None,
+                }),
+            },
+            validation_profile: ValidationProfileIR {
+                execution_mode: ExecutionMode::Strict,
+            },
+            current_modules: Vec::new(),
+            excitation_analysis: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            temperature: None,
+            elastic_materials: Vec::new(),
+            elastic_bodies: Vec::new(),
+            magnetostriction_laws: Vec::new(),
+            mechanical_bcs: Vec::new(),
+            mechanical_loads: Vec::new(),
+        }
+    }
+
     #[test]
     fn wait_for_solve_is_supported_for_fdm_and_fem() {
         assert!(wait_for_solve_supported(&tiny_fdm_plan()));
@@ -3306,5 +3588,67 @@ mod tests {
         assert_eq!(payload.object_segments[0].element_count, 1);
         assert_eq!(payload.object_segments[1].object_id, "right");
         assert_eq!(payload.object_segments[1].boundary_face_count, 1);
+    }
+
+    #[test]
+    fn default_domain_region_markers_follow_geometry_order() {
+        let markers = default_domain_region_markers(&[
+            GeometryEntryIR::Box {
+                name: "left".to_string(),
+                size: [1.0, 1.0, 1.0],
+            },
+            GeometryEntryIR::Box {
+                name: "right".to_string(),
+                size: [1.0, 1.0, 1.0],
+            },
+        ]);
+
+        assert_eq!(markers.len(), 2);
+        assert_eq!(markers[0].geometry_name, "left");
+        assert_eq!(markers[0].marker, 1);
+        assert_eq!(markers[1].geometry_name, "right");
+        assert_eq!(markers[1].marker, 2);
+    }
+
+    #[test]
+    fn fem_overrides_update_shared_domain_asset_instead_of_object_mesh_assets() {
+        let mut problem = tiny_problem_with_shared_domain_asset();
+        let new_mesh = MeshIR {
+            mesh_name: "study_domain".to_string(),
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            elements: vec![[0, 1, 2, 3]],
+            element_markers: vec![1],
+            boundary_faces: vec![[0, 1, 2]],
+            boundary_markers: vec![7],
+        };
+
+        apply_current_fem_overrides(&mut problem, Some(&new_mesh), Some(2.5), None);
+
+        let assets = problem
+            .geometry_assets
+            .as_ref()
+            .expect("problem should retain geometry assets");
+        let domain_asset = assets
+            .fem_domain_mesh_asset
+            .as_ref()
+            .expect("shared-domain asset should still be present");
+        assert_eq!(domain_asset.mesh.as_ref(), Some(&new_mesh));
+        assert_eq!(domain_asset.region_markers.len(), 2);
+        assert_eq!(domain_asset.region_markers[0].geometry_name, "left");
+        assert_eq!(domain_asset.region_markers[1].geometry_name, "right");
+        assert_eq!(
+            problem
+                .backend_policy
+                .discretization_hints
+                .as_ref()
+                .and_then(|hints| hints.fem.as_ref())
+                .map(|hints| hints.hmax),
+            Some(2.5)
+        );
     }
 }

@@ -1264,6 +1264,7 @@ def _extract_mesh_data(
     quality: MeshQualityReport | None = None,
     has_physical_groups: bool = False,
 ) -> MeshData:
+    emit_progress("Gmsh: extracting mesh data")
     node_tags, coords, _ = gmsh.model.mesh.getNodes()
     if len(node_tags) == 0:
         raise ValueError("gmsh produced an empty node set")
@@ -1359,6 +1360,7 @@ def _apply_mesh_options(
     hscale: float = 1.0,
 ) -> None:
     """Apply MeshOptions to the Gmsh context before mesh.generate()."""
+    emit_progress("Gmsh: applying mesh options")
     gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
     # The exported mesh asset is intentionally first-order topology.
     # Higher-order FEM lives in the solver space (`fe_order`), not in the
@@ -1390,9 +1392,11 @@ def _apply_mesh_options(
             extra_field_ids.append(fid)
 
     if opts.size_fields:
+        emit_progress("Gmsh: configuring mesh size fields")
         _configure_mesh_size_fields(gmsh, opts.size_fields, hscale, extra_field_ids)
     elif extra_field_ids:
         # No explicit size_fields but we have auto-generated fields (e.g. narrow regions)
+        emit_progress("Gmsh: configuring mesh size fields")
         _configure_mesh_size_fields(gmsh, [], hscale, extra_field_ids)
 
 
@@ -1673,6 +1677,7 @@ def _remesh_box(
     gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add("fullmag_box_afem")
+        emit_progress("AFEM: building OCC box geometry")
         sx, sy, sz = geometry.size
         gmsh.model.occ.addBox(-sx / 2.0, -sy / 2.0, -sz / 2.0, sx, sy, sz)
         gmsh.model.occ.synchronize()
@@ -1705,6 +1710,7 @@ def _remesh_cylinder(
     gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add("fullmag_cylinder_afem")
+        emit_progress("AFEM: building OCC cylinder geometry")
         gmsh.model.occ.addCylinder(
             0.0, 0.0, -geometry.height / 2.0,
             0.0, 0.0, geometry.height,
@@ -1740,6 +1746,7 @@ def _remesh_csg(
     gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add("fullmag_csg_afem")
+        emit_progress("AFEM: building OCC geometry")
         _add_geometry_to_occ(gmsh, geometry, scale=SCALE)
         gmsh.model.occ.synchronize()
         emit_progress("AFEM: applying adaptive size field (µm-scaled)")

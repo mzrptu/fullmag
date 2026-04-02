@@ -217,8 +217,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [meshOptionsState, setMeshOptionsState] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
   const [meshQualityData, setMeshQualityData] = useState<MeshQualityData | null>(null);
   const [meshGenerating, setMeshGenerating] = useState(false);
+  const [frontendTraceLog, setFrontendTraceLog] = useState<EngineLogEntry[]>([]);
   const femTopologyKeyRef = useRef<string | null>(null);
   const femMeshDataRef = useRef<FemMeshData | null>(null);
+  const lastLoggedCommandStatusRef = useRef<string | null>(null);
   const [solverSettingsState, setSolverSettingsState] =
     useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
   const [modelBuilderGraph, setModelBuilderGraph] = useState<ModelBuilderGraphV2 | null>(null);
@@ -1237,18 +1239,47 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       : "magnitude";
   const effectiveVectorComponent = isMeshPreview ? previewVectorComponent : component;
 
+  const appendFrontendTrace = useCallback((level: string, message: string) => {
+    if (level === "error") {
+      console.error(`[control-room] ${message}`);
+    } else if (level === "warn") {
+      console.warn(`[control-room] ${message}`);
+    } else {
+      console.info(`[control-room] ${message}`);
+    }
+    setFrontendTraceLog((prev) => {
+      const next = [
+        ...prev,
+        {
+          timestamp_unix_ms: Date.now(),
+          level,
+          message,
+        },
+      ];
+      return next.length > 120 ? next.slice(next.length - 120) : next;
+    });
+  }, []);
+
   /* Callbacks */
   const enqueueCommand = useCallback(async (payload: Record<string, unknown>) => {
     setCommandPostInFlight(true);
     setCommandErrorMessage(null);
+    const commandKind =
+      typeof payload.kind === "string" ? payload.kind.toUpperCase() : "COMMAND";
+    appendFrontendTrace("info", `TX: ${commandKind} ${JSON.stringify(payload)}`);
     try {
       await liveApi.queueCommand(payload);
+      appendFrontendTrace("system", `RX: HTTP accepted ${commandKind}`);
     } catch (e) {
+      appendFrontendTrace(
+        "error",
+        `RX: HTTP rejected ${commandKind} — ${e instanceof Error ? e.message : "Failed to queue command"}`,
+      );
       setCommandErrorMessage(e instanceof Error ? e.message : "Failed to queue command");
     } finally {
       setCommandPostInFlight(false);
     }
-  }, [liveApi]);
+  }, [appendFrontendTrace, liveApi]);
 
   const updatePreview = useCallback(async (path: string, payload: Record<string, unknown> = {}) => {
     const nextSelection: DisplaySelection = { ...requestedDisplaySelection };
@@ -1308,7 +1339,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setMeshGenerating(true);
     meshGenTopologyRef.current = femTopologyKeyRef.current;
     try {
-      await liveApi.queueCommand({
+      await enqueueCommand({
         kind: "remesh",
         mesh_options: {
           algorithm_2d: meshOptions.algorithm2d, algorithm_3d: meshOptions.algorithm3d,
@@ -1328,7 +1359,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       setMeshGenerating(false);
       meshGenTopologyRef.current = null;
     }
-  }, [meshOptions, liveApi]);
+  }, [enqueueCommand, meshOptions]);
 
   const handleLassoRefine = useCallback(async (faceIndices: number[], factor: number) => {
     const currentFemMeshData = femMeshDataRef.current;
@@ -1670,11 +1701,13 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     const scriptPath = session?.script_path ?? null;
     if (!scriptPath) {
       setScriptSyncMessage("No script path is available for the active workspace");
+      appendFrontendTrace("warn", "TX: SCRIPT_SYNC skipped — no script path available");
       return;
     }
 
     setScriptSyncBusy(true);
     setScriptSyncMessage(null);
+    appendFrontendTrace("info", `TX: SCRIPT_SYNC ${scriptPath}`);
     try {
       if (builderPushTimerRef.current) {
         clearTimeout(builderPushTimerRef.current);
@@ -1688,12 +1721,52 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
           ? response.script_path
           : scriptPath;
       setScriptSyncMessage(`Synced ${syncedPath.split("/").pop() ?? "script"} to canonical Python`);
+      appendFrontendTrace(
+        "success",
+        `RX: SCRIPT_SYNC ok — ${syncedPath.split("/").pop() ?? "script"}`,
+      );
     } catch (error) {
       setScriptSyncMessage(error instanceof Error ? error.message : "Failed to sync script");
+      appendFrontendTrace(
+        "error",
+        `RX: SCRIPT_SYNC failed — ${error instanceof Error ? error.message : "Failed to sync script"}`,
+      );
     } finally {
       setScriptSyncBusy(false);
     }
-  }, [liveApi, localBuilderDraft, localBuilderSignature, session?.script_path]);
+  }, [appendFrontendTrace, liveApi, localBuilderDraft, localBuilderSignature, session?.script_path]);
+
+  useEffect(() => {
+    if (!commandStatus) return;
+    const key = [
+      commandStatus.command_id,
+      commandStatus.state,
+      commandStatus.completion_state ?? "",
+      commandStatus.reason ?? "",
+    ].join("|");
+    if (lastLoggedCommandStatusRef.current === key) return;
+    lastLoggedCommandStatusRef.current = key;
+
+    const commandKind = commandStatus.command_kind.toUpperCase();
+    if (commandStatus.state === "acknowledged") {
+      appendFrontendTrace(
+        "system",
+        `RX: ${commandKind} ACK seq=${commandStatus.seq ?? "?"} id=${commandStatus.command_id}`,
+      );
+      return;
+    }
+    if (commandStatus.state === "rejected") {
+      appendFrontendTrace(
+        "error",
+        `RX: ${commandKind} REJECTED — ${commandStatus.reason ?? "unknown reason"}`,
+      );
+      return;
+    }
+    appendFrontendTrace(
+      commandStatus.completion_state && commandStatus.completion_state !== "ok" ? "warn" : "success",
+      `RX: ${commandKind} COMPLETED${commandStatus.completion_state ? ` (${commandStatus.completion_state})` : ""}`,
+    );
+  }, [appendFrontendTrace, commandStatus]);
 
   useEffect(() => {
     if (!optimisticDisplaySelection) {
@@ -2000,10 +2073,20 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     if (meshGenTopologyRef.current === null) return;
     // Topology key changed (or appeared from null) → mesh arrived
     if (femTopologyKey !== null && femTopologyKey !== meshGenTopologyRef.current) {
+      const nodeCount =
+        meshSummary?.node_count
+        ?? (effectiveFemMesh ? Math.trunc(effectiveFemMesh.nodes.length / 3) : 0);
+      const elementCount =
+        meshSummary?.element_count
+        ?? (effectiveFemMesh ? Math.trunc(effectiveFemMesh.elements.length / 4) : 0);
+      appendFrontendTrace(
+        "success",
+        `RX: REMESH mesh ready — ${nodeCount.toLocaleString()} nodes · ${elementCount.toLocaleString()} tetrahedra`,
+      );
       meshGenTopologyRef.current = null;
       setMeshGenerating(false);
     }
-  }, [femTopologyKey, meshGenerating]);
+  }, [appendFrontendTrace, effectiveFemMesh, femTopologyKey, meshGenerating, meshSummary]);
 
   useEffect(() => {
     if (!meshGenerating || meshGenTopologyRef.current === null) return;
@@ -2129,6 +2212,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     scriptPath: session?.script_path ?? null,
     artifactDir: session?.artifact_dir ?? null,
   }), [session?.requested_backend, session?.script_path, session?.artifact_dir]);
+  const mergedEngineLog = useMemo<EngineLogEntry[]>(
+    () => [...(engineLog ?? []), ...frontendTraceLog],
+    [engineLog, frontendTraceLog],
+  );
 
   /* ═══════════════════════════════════════════════════════════════
    * SPLIT useMemo — each context domain has its own memo so that
@@ -2184,7 +2271,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   ]);
 
   const commandValue = useMemo<CommandContextValue>(() => ({
-    connection, error, session, run, metadata, engineLog, quantities, artifacts: artifactsArr,
+    connection, error, session, run, metadata, engineLog: mergedEngineLog, quantities, artifacts: artifactsArr,
     workspaceStatus, isWaitingForCompute, solverNotStartedMessage, isFemBackend, runtimeEngineLabel,
     activity, sessionFooter, runtimeStatus, runtimeCanAcceptCommands,
     commandStatus, activeCommandKind, activeCommandState,
@@ -2194,7 +2281,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setRunUntilInput, enqueueCommand, handleCompute, handleSimulationAction,
     handleStateExport, handleStateImport, syncScriptBuilder,
   }), [
-    connection, error, session, run, metadata, engineLog, quantities, artifactsArr,
+    connection, error, session, run, metadata, mergedEngineLog, quantities, artifactsArr,
     workspaceStatus, isWaitingForCompute, solverNotStartedMessage, isFemBackend, runtimeEngineLabel,
     activity, sessionFooter, runtimeStatus, runtimeCanAcceptCommands,
     commandStatus, activeCommandKind, activeCommandState,

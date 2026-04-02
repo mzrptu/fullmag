@@ -315,36 +315,78 @@ pub(crate) fn pack_mesh_by_analysis(
     analysis: &SharedDomainAnalysis,
 ) -> Result<(MeshIR, Vec<FemObjectSegmentIR>), String> {
     let ordered_regions = &analysis.ordered_regions;
+    let shared_markers_by_node = analysis
+        .shared_interface_nodes
+        .iter()
+        .map(|(node_index, markers)| (*node_index as usize, markers.clone()))
+        .collect::<BTreeMap<_, _>>();
 
-    let mut node_order = Vec::with_capacity(mesh.nodes.len());
+    let mut reordered_nodes = Vec::with_capacity(
+        mesh.nodes.len() + analysis.shared_interface_nodes.len() * ordered_regions.len(),
+    );
     let mut node_start_by_marker = BTreeMap::new();
     let mut node_count_by_marker = BTreeMap::new();
+    let mut node_map_by_marker = BTreeMap::<u32, BTreeMap<usize, u32>>::new();
     for (_object_id, marker) in ordered_regions {
-        node_start_by_marker.insert(*marker, node_order.len() as u32);
+        node_start_by_marker.insert(*marker, reordered_nodes.len() as u32);
+        let marker_node_map = node_map_by_marker.entry(*marker).or_default();
         for (node_index, owner) in analysis.node_owner.iter().enumerate() {
-            if *owner == *marker {
-                node_order.push(node_index);
+            let shared_with_marker = shared_markers_by_node
+                .get(&node_index)
+                .map(|markers| markers.contains(marker))
+                .unwrap_or(false);
+            if *owner == *marker || shared_with_marker {
+                marker_node_map.insert(node_index, reordered_nodes.len() as u32);
+                reordered_nodes.push(mesh.nodes[node_index]);
             }
         }
         let start = *node_start_by_marker
             .get(marker)
             .expect("node_start inserted above");
-        node_count_by_marker.insert(*marker, node_order.len() as u32 - start);
+        node_count_by_marker.insert(*marker, reordered_nodes.len() as u32 - start);
     }
+    let mut air_node_map = BTreeMap::<usize, u32>::new();
     for (node_index, owner) in analysis.node_owner.iter().enumerate() {
         if *owner == 0 {
-            node_order.push(node_index);
+            air_node_map.insert(node_index, reordered_nodes.len() as u32);
+            reordered_nodes.push(mesh.nodes[node_index]);
         }
     }
 
-    let mut old_to_new = vec![0u32; mesh.nodes.len()];
-    for (new_index, old_index) in node_order.iter().enumerate() {
-        old_to_new[*old_index] = new_index as u32;
-    }
-    let reordered_nodes = node_order
-        .iter()
-        .map(|old_index| mesh.nodes[*old_index])
-        .collect::<Vec<_>>();
+    let remap_node = |old_index: u32, owner_marker: u32| -> Result<u32, String> {
+        let old_index = old_index as usize;
+        if owner_marker == 0 {
+            if let Some(new_index) = air_node_map.get(&old_index) {
+                return Ok(*new_index);
+            }
+            let fallback_marker = *analysis.node_owner.get(old_index).ok_or_else(|| {
+                format!(
+                    "shared-domain FEM mesh '{}' references node {} outside node_owner bounds",
+                    mesh.mesh_name, old_index
+                )
+            })?;
+            return node_map_by_marker
+                .get(&fallback_marker)
+                .and_then(|mapping| mapping.get(&old_index))
+                .copied()
+                .ok_or_else(|| {
+                    format!(
+                        "shared-domain FEM mesh '{}' is missing a magnetic remap for air-adjacent node {}",
+                        mesh.mesh_name, old_index
+                    )
+                });
+        }
+        node_map_by_marker
+            .get(&owner_marker)
+            .and_then(|mapping| mapping.get(&old_index))
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "shared-domain FEM mesh '{}' is missing a remap for node {} in marker {}",
+                    mesh.mesh_name, old_index, owner_marker
+                )
+            })
+    };
 
     let mut reordered_elements = Vec::with_capacity(mesh.elements.len());
     let mut reordered_markers = Vec::with_capacity(mesh.element_markers.len());
@@ -357,10 +399,10 @@ pub(crate) fn pack_mesh_by_analysis(
                 continue;
             }
             reordered_elements.push([
-                old_to_new[element[0] as usize],
-                old_to_new[element[1] as usize],
-                old_to_new[element[2] as usize],
-                old_to_new[element[3] as usize],
+                remap_node(element[0], *marker)?,
+                remap_node(element[1], *marker)?,
+                remap_node(element[2], *marker)?,
+                remap_node(element[3], *marker)?,
             ]);
             reordered_markers.push(*marker);
         }
@@ -374,10 +416,10 @@ pub(crate) fn pack_mesh_by_analysis(
             continue;
         }
         reordered_elements.push([
-            old_to_new[element[0] as usize],
-            old_to_new[element[1] as usize],
-            old_to_new[element[2] as usize],
-            old_to_new[element[3] as usize],
+            remap_node(element[0], 0)?,
+            remap_node(element[1], 0)?,
+            remap_node(element[2], 0)?,
+            remap_node(element[3], 0)?,
         ]);
         reordered_markers.push(0);
     }
@@ -398,9 +440,9 @@ pub(crate) fn pack_mesh_by_analysis(
                 continue;
             }
             reordered_boundary_faces.push([
-                old_to_new[face[0] as usize],
-                old_to_new[face[1] as usize],
-                old_to_new[face[2] as usize],
+                remap_node(face[0], *marker)?,
+                remap_node(face[1], *marker)?,
+                remap_node(face[2], *marker)?,
             ]);
             reordered_boundary_markers.push(mesh.boundary_markers[face_index]);
         }
@@ -419,9 +461,9 @@ pub(crate) fn pack_mesh_by_analysis(
             continue;
         }
         reordered_boundary_faces.push([
-            old_to_new[face[0] as usize],
-            old_to_new[face[1] as usize],
-            old_to_new[face[2] as usize],
+            remap_node(face[0], 0)?,
+            remap_node(face[1], 0)?,
+            remap_node(face[2], 0)?,
         ]);
         reordered_boundary_markers.push(mesh.boundary_markers[face_index]);
     }
@@ -503,9 +545,10 @@ pub(crate) fn pack_mesh_by_analysis(
 pub(crate) fn reorder_shared_domain_mesh(
     mesh: &MeshIR,
     region_markers: &[FemDomainRegionMarkerIR],
+    solver_supports_conformal: bool,
 ) -> Result<(MeshIR, Vec<FemObjectSegmentIR>), String> {
     let analysis = analyze_shared_domain_mesh(mesh, region_markers)?;
-    validate_packing_constraints(&analysis, &mesh.mesh_name, false)?;
+    validate_packing_constraints(&analysis, &mesh.mesh_name, solver_supports_conformal)?;
     pack_mesh_by_analysis(mesh, &analysis)
 }
 
@@ -537,6 +580,7 @@ pub(crate) fn build_mesh_parts_from_analysis(
 
 pub(crate) fn resolve_fem_domain_mesh_asset(
     problem: &ProblemIR,
+    solver_supports_conformal: bool,
 ) -> Result<Option<ResolvedFemDomainMeshAsset>, String> {
     let Some(asset) = problem
         .geometry_assets
@@ -546,7 +590,8 @@ pub(crate) fn resolve_fem_domain_mesh_asset(
         return Ok(None);
     };
     let mesh = load_fem_domain_mesh_asset(asset)?;
-    let (mesh, object_segments) = reorder_shared_domain_mesh(&mesh, &asset.region_markers)?;
+    let (mesh, object_segments) =
+        reorder_shared_domain_mesh(&mesh, &asset.region_markers, solver_supports_conformal)?;
     Ok(Some(ResolvedFemDomainMeshAsset {
         mesh,
         mesh_source: asset.mesh_source.clone(),

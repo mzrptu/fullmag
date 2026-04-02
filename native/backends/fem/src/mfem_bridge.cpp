@@ -127,6 +127,39 @@ Vec3 node_coords(const Context &ctx, uint32_t node) {
     };
 }
 
+double scalar_field_value(
+    const std::vector<double> &field,
+    size_t index,
+    double fallback)
+{
+    return index < field.size() ? field[index] : fallback;
+}
+
+double average_magnetic_scalar_field(
+    const std::vector<double> &field,
+    const std::vector<uint8_t> &magnetic_node_mask,
+    double fallback)
+{
+    if (field.empty()) {
+        return fallback;
+    }
+
+    double sum = 0.0;
+    size_t count = 0;
+    const size_t node_count = std::min(field.size(), magnetic_node_mask.size());
+    for (size_t node = 0; node < node_count; ++node) {
+        if (magnetic_node_mask[node] == 0u) {
+            continue;
+        }
+        sum += field[node];
+        count += 1;
+    }
+    if (count == 0) {
+        return fallback;
+    }
+    return sum / static_cast<double>(count);
+}
+
 uint32_t transfer_axis_cells(double extent, double requested_cell) {
     if (requested_cell <= 0.0) {
         return 1;
@@ -259,6 +292,7 @@ void rasterize_magnetization_to_transfer_grid(
     const Context &ctx,
     const std::vector<double> &magnetization_xyz,
     const TransferGridDesc &desc,
+    double transfer_grid_reference_ms,
     std::vector<uint8_t> &active_mask,
     std::vector<double> &cell_magnetization_xyz)
 {
@@ -302,12 +336,36 @@ void rasterize_magnetization_to_transfer_grid(
                     const size_t cell = desc.index(ix, iy, iz);
                     active_mask[cell] = 1u;
                     const size_t out = cell * 3u;
+                    const double n0_scale =
+                        scalar_field_value(
+                            ctx.Ms_field,
+                            static_cast<size_t>(element[0]),
+                            ctx.material.saturation_magnetisation) /
+                        transfer_grid_reference_ms;
+                    const double n1_scale =
+                        scalar_field_value(
+                            ctx.Ms_field,
+                            static_cast<size_t>(element[1]),
+                            ctx.material.saturation_magnetisation) /
+                        transfer_grid_reference_ms;
+                    const double n2_scale =
+                        scalar_field_value(
+                            ctx.Ms_field,
+                            static_cast<size_t>(element[2]),
+                            ctx.material.saturation_magnetisation) /
+                        transfer_grid_reference_ms;
+                    const double n3_scale =
+                        scalar_field_value(
+                            ctx.Ms_field,
+                            static_cast<size_t>(element[3]),
+                            ctx.material.saturation_magnetisation) /
+                        transfer_grid_reference_ms;
                     for (int component = 0; component < 3; ++component) {
                         cell_magnetization_xyz[out + component] =
-                            (*bary)[0] * magnetization_xyz[static_cast<size_t>(element[0]) * 3u + component] +
-                            (*bary)[1] * magnetization_xyz[static_cast<size_t>(element[1]) * 3u + component] +
-                            (*bary)[2] * magnetization_xyz[static_cast<size_t>(element[2]) * 3u + component] +
-                            (*bary)[3] * magnetization_xyz[static_cast<size_t>(element[3]) * 3u + component];
+                            (*bary)[0] * magnetization_xyz[static_cast<size_t>(element[0]) * 3u + component] * n0_scale +
+                            (*bary)[1] * magnetization_xyz[static_cast<size_t>(element[1]) * 3u + component] * n1_scale +
+                            (*bary)[2] * magnetization_xyz[static_cast<size_t>(element[2]) * 3u + component] * n2_scale +
+                            (*bary)[3] * magnetization_xyz[static_cast<size_t>(element[3]) * 3u + component] * n3_scale;
                     }
                 }
             }
@@ -470,11 +528,13 @@ bool apply_exchange_component(
     bool allow_interrupt,
     const mfem::SparseMatrix &stiffness,
     const std::vector<double> &lumped_mass,
-    double prefactor,
     const std::vector<double> &m_values,
     std::vector<double> &h_component,
     std::vector<double> &tmp_host,
-    double exchange_stiffness,
+    const std::vector<double> &a_field,
+    const std::vector<double> &ms_field,
+    double uniform_exchange_stiffness,
+    double uniform_ms,
     double *energy_out,
     std::string &error)
 {
@@ -496,14 +556,22 @@ bool apply_exchange_component(
             return false;
         }
         const double mass = lumped_mass[static_cast<size_t>(i)];
+        const double A_i = scalar_field_value(
+            a_field,
+            static_cast<size_t>(i),
+            uniform_exchange_stiffness);
+        const double Ms_i = scalar_field_value(ms_field, static_cast<size_t>(i), uniform_ms);
         if (mass <= 0.0) {
             // S08: non-magnetic nodes may have zero lumped mass when
             // assembly is restricted to magnetic elements — set h=0.
             h_component[static_cast<size_t>(i)] = 0.0;
+        } else if (Ms_i <= 0.0) {
+            h_component[static_cast<size_t>(i)] = 0.0;
         } else {
-            h_component[static_cast<size_t>(i)] = -prefactor * tmp_host[i] / mass;
+            const double prefactor_i = 2.0 * A_i / (kMu0 * Ms_i);
+            h_component[static_cast<size_t>(i)] = -prefactor_i * tmp_host[i] / mass;
         }
-        energy += exchange_stiffness * m_values[static_cast<size_t>(i)] * tmp_host[static_cast<size_t>(i)];
+        energy += A_i * m_values[static_cast<size_t>(i)] * tmp_host[static_cast<size_t>(i)];
     }
     if (energy_out != nullptr) {
         *energy_out = energy;
@@ -574,10 +642,10 @@ void llg_rhs_aos(
     const std::vector<double> &h_xyz,
     double gamma,
     double alpha,
+    const std::vector<double> *alpha_field,
     std::vector<double> &rhs_xyz,
     double &max_rhs)
 {
-    const double gamma_bar = gamma / (1.0 + alpha * alpha);
     const size_t n = m_xyz.size() / 3u;
     rhs_xyz.resize(m_xyz.size());
     max_rhs = 0.0;
@@ -590,6 +658,10 @@ void llg_rhs_aos(
         const double hx = h_xyz[base + 0];
         const double hy = h_xyz[base + 1];
         const double hz = h_xyz[base + 2];
+        const double alpha_i = alpha_field == nullptr
+            ? alpha
+            : scalar_field_value(*alpha_field, i, alpha);
+        const double gamma_bar = gamma / (1.0 + alpha_i * alpha_i);
 
         const double px = my * hz - mz * hy;
         const double py = mz * hx - mx * hz;
@@ -599,9 +671,9 @@ void llg_rhs_aos(
         const double dy = mz * px - mx * pz;
         const double dz = mx * py - my * px;
 
-        rhs_xyz[base + 0] = -gamma_bar * (px + alpha * dx);
-        rhs_xyz[base + 1] = -gamma_bar * (py + alpha * dy);
-        rhs_xyz[base + 2] = -gamma_bar * (pz + alpha * dz);
+        rhs_xyz[base + 0] = -gamma_bar * (px + alpha_i * dx);
+        rhs_xyz[base + 1] = -gamma_bar * (py + alpha_i * dy);
+        rhs_xyz[base + 2] = -gamma_bar * (pz + alpha_i * dz);
 
         max_rhs = std::max(
             max_rhs,
@@ -1160,7 +1232,11 @@ double external_energy_from_field(
             m_xyz[base + 0] * ctx.h_ext_xyz[base + 0] +
             m_xyz[base + 1] * ctx.h_ext_xyz[base + 1] +
             m_xyz[base + 2] * ctx.h_ext_xyz[base + 2];
-        energy += -kMu0 * ctx.material.saturation_magnetisation * mdoth * ctx.mfem_lumped_mass[i];
+        const double Ms_i = scalar_field_value(
+            ctx.Ms_field,
+            i,
+            ctx.material.saturation_magnetisation);
+        energy += -kMu0 * Ms_i * mdoth * ctx.mfem_lumped_mass[i];
     }
     return energy;
 }
@@ -1197,8 +1273,6 @@ bool compute_exchange_for_magnetization(
         ctx.mfem_exchange_tmp.resize(ctx.mfem_lumped_mass.size(), 0.0);
     }
 
-    const double prefactor = 2.0 * ctx.material.exchange_stiffness /
-                             (kMu0 * ctx.material.saturation_magnetisation);
     double exchange_energy_accum = 0.0;
     double component_energy = 0.0;
 
@@ -1207,11 +1281,13 @@ bool compute_exchange_for_magnetization(
             allow_interrupt,
             stiffness,
             ctx.mfem_lumped_mass,
-            prefactor,
             ctx.mfem_mx,
             ctx.mfem_h_ex_x,
             ctx.mfem_exchange_tmp,
+            ctx.A_field,
+            ctx.Ms_field,
             ctx.material.exchange_stiffness,
+            ctx.material.saturation_magnetisation,
             exchange_energy != nullptr ? &component_energy : nullptr,
             error)) {
         return false;
@@ -1225,11 +1301,13 @@ bool compute_exchange_for_magnetization(
             allow_interrupt,
             stiffness,
             ctx.mfem_lumped_mass,
-            prefactor,
             ctx.mfem_my,
             ctx.mfem_h_ex_y,
             ctx.mfem_exchange_tmp,
+            ctx.A_field,
+            ctx.Ms_field,
             ctx.material.exchange_stiffness,
+            ctx.material.saturation_magnetisation,
             exchange_energy != nullptr ? &component_energy : nullptr,
             error)) {
         return false;
@@ -1243,11 +1321,13 @@ bool compute_exchange_for_magnetization(
             allow_interrupt,
             stiffness,
             ctx.mfem_lumped_mass,
-            prefactor,
             ctx.mfem_mz,
             ctx.mfem_h_ex_z,
             ctx.mfem_exchange_tmp,
+            ctx.A_field,
+            ctx.Ms_field,
             ctx.material.exchange_stiffness,
+            ctx.material.saturation_magnetisation,
             exchange_energy != nullptr ? &component_energy : nullptr,
             error)) {
         return false;
@@ -1321,10 +1401,21 @@ bool ensure_transfer_grid_backend(
     }
 
     ctx.transfer_grid.desc = build_transfer_grid_desc(ctx, bbox_min, bbox_max);
+    const double transfer_grid_reference_ms = std::max(
+        average_magnetic_scalar_field(
+            ctx.Ms_field,
+            ctx.magnetic_node_mask,
+            ctx.material.saturation_magnetisation),
+        1e-18);
+    const double transfer_grid_reference_a = average_magnetic_scalar_field(
+        ctx.A_field,
+        ctx.magnetic_node_mask,
+        ctx.material.exchange_stiffness);
     rasterize_magnetization_to_transfer_grid(
         ctx,
         magnetization_xyz,
         ctx.transfer_grid.desc,
+        transfer_grid_reference_ms,
         ctx.transfer_grid.active_mask,
         ctx.transfer_grid.magnetization_xyz);
 
@@ -1347,8 +1438,8 @@ bool ensure_transfer_grid_backend(
         ctx.transfer_grid.desc.dz,
     };
     fdm_plan.material = fullmag_fdm_material_desc{
-        ctx.material.saturation_magnetisation,
-        ctx.material.exchange_stiffness,
+        transfer_grid_reference_ms,
+        transfer_grid_reference_a,
         ctx.material.damping,
         ctx.material.gyromagnetic_ratio,
     };
@@ -1410,6 +1501,12 @@ bool compute_demag_for_magnetization(
         ctx,
         m_xyz,
         ctx.transfer_grid.desc,
+        std::max(
+            average_magnetic_scalar_field(
+                ctx.Ms_field,
+                ctx.magnetic_node_mask,
+                ctx.material.saturation_magnetisation),
+            1e-18),
         ctx.transfer_grid.active_mask,
         ctx.transfer_grid.magnetization_xyz);
     if (allow_interrupt && poll_interrupt(ctx)) {
@@ -1489,8 +1586,12 @@ bool compute_demag_for_magnetization(
             m_xyz[base + 0] * h_demag_xyz[base + 0] +
             m_xyz[base + 1] * h_demag_xyz[base + 1] +
             m_xyz[base + 2] * h_demag_xyz[base + 2];
+        const double Ms_i = scalar_field_value(
+            ctx.Ms_field,
+            node,
+            ctx.material.saturation_magnetisation);
         demag_energy +=
-            -0.5 * kMu0 * ctx.material.saturation_magnetisation * mdoth * ctx.mfem_lumped_mass[node];
+            -0.5 * kMu0 * Ms_i * mdoth * ctx.mfem_lumped_mass[node];
     }
 
     return true;
@@ -1717,7 +1818,19 @@ public:
         }
 
         // M = M_s * m (A/m)
-        const double Ms = ctx_.material.saturation_magnetisation;
+        double Ms = ctx_.material.saturation_magnetisation;
+        if (!ctx_.Ms_field.empty()) {
+            Ms = 0.0;
+            for (int i = 0; i < ndof; ++i) {
+                const int global_dof = dofs[i] >= 0 ? dofs[i] : -1 - dofs[i];
+                const double weight = shape(i);
+                Ms += weight
+                    * scalar_field_value(
+                        ctx_.Ms_field,
+                        static_cast<size_t>(global_dof),
+                        ctx_.material.saturation_magnetisation);
+            }
+        }
         V(0) = Ms * mx;
         V(1) = Ms * my;
         V(2) = Ms * mz;
@@ -2005,9 +2118,12 @@ bool recover_demag_field(
             m_xyz[base + 0] * h_demag_xyz[base + 0] +
             m_xyz[base + 1] * h_demag_xyz[base + 1] +
             m_xyz[base + 2] * h_demag_xyz[base + 2];
+        const double Ms_i = scalar_field_value(
+            ctx.Ms_field,
+            i,
+            ctx.material.saturation_magnetisation);
         demag_energy +=
-            -0.5 * kMu0 * ctx.material.saturation_magnetisation *
-            mdoth * ctx.mfem_lumped_mass[i];
+            -0.5 * kMu0 * Ms_i * mdoth * ctx.mfem_lumped_mass[i];
     }
 
     // Robin BC correction: E_bdr = (μ₀/2) · β · ∫_Γ u² dS
@@ -2536,6 +2652,7 @@ bool context_snapshot_stats_mfem(
             ctx.h_eff_xyz,
             ctx.material.gyromagnetic_ratio,
             ctx.material.damping,
+            ctx.alpha_field.empty() ? nullptr : &ctx.alpha_field,
             rhs_current,
             max_rhs_current);
         zero_non_magnetic_nodes_aos(rhs_current, ctx.magnetic_node_mask);
@@ -2609,6 +2726,7 @@ bool context_step_exchange_heun_mfem(
             h_eff_now,
             ctx.material.gyromagnetic_ratio,
             ctx.material.damping,
+            ctx.alpha_field.empty() ? nullptr : &ctx.alpha_field,
             k1,
             max_rhs_k1);
         zero_non_magnetic_nodes_aos(k1, ctx.magnetic_node_mask);
@@ -2655,6 +2773,7 @@ bool context_step_exchange_heun_mfem(
             h_eff_pred,
             ctx.material.gyromagnetic_ratio,
             ctx.material.damping,
+            ctx.alpha_field.empty() ? nullptr : &ctx.alpha_field,
             k2,
             max_rhs_k2);
         zero_non_magnetic_nodes_aos(k2, ctx.magnetic_node_mask);
@@ -2712,6 +2831,7 @@ bool context_step_exchange_heun_mfem(
             ctx.h_eff_xyz,
             ctx.material.gyromagnetic_ratio,
             ctx.material.damping,
+            ctx.alpha_field.empty() ? nullptr : &ctx.alpha_field,
             rhs_final,
             max_rhs_final);
         zero_non_magnetic_nodes_aos(rhs_final, ctx.magnetic_node_mask);
@@ -2845,6 +2965,7 @@ static bool evaluate_rhs(
         ScopedPhaseTimer timer(timings != nullptr ? &timings->rhs_wall_time_ns : nullptr);
         llg_rhs_aos(m_state, ws.h_eff_tmp,
                     ctx.material.gyromagnetic_ratio, ctx.material.damping,
+                    ctx.alpha_field.empty() ? nullptr : &ctx.alpha_field,
                     out_k, max_rhs);
         zero_non_magnetic_nodes_aos(out_k, ctx.magnetic_node_mask);
     }
@@ -3099,6 +3220,7 @@ bool context_step_explicit_rk_mfem(
         ScopedPhaseTimer timer(&timings.rhs_wall_time_ns);
         llg_rhs_aos(ctx.m_xyz, ctx.h_eff_xyz,
                     ctx.material.gyromagnetic_ratio, ctx.material.damping,
+                    ctx.alpha_field.empty() ? nullptr : &ctx.alpha_field,
                     rhs_final, max_rhs_final);
         zero_non_magnetic_nodes_aos(rhs_final, ctx.magnetic_node_mask);
         max_rhs_final = max_norm_aos(rhs_final);

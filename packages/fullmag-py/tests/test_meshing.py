@@ -18,6 +18,7 @@ from fullmag.meshing.asset_pipeline import (
 )
 from fullmag.meshing.gmsh_bridge import MeshData, SizeFieldData, _extract_gmsh_connectivity
 from fullmag.meshing.remesh_cli import _mesh_result_payload, _size_field_from_dict
+from fullmag.meshing.remesh_cli import _describe_remesh_job
 from fullmag.meshing.quality import validate_mesh
 from fullmag.meshing.surface_assets import export_geometry_to_stl
 from fullmag.meshing.voxelization import VoxelMaskData, voxelize_geometry
@@ -103,6 +104,24 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertEqual(airbox.center, (0.0, 0.0, 0.0))
         self.assertEqual(airbox.hmax, 0.5)
 
+    def test_study_universe_auto_mode_accepts_explicit_size_as_airbox(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        airbox = _study_universe_airbox_options(
+            [left],
+            {
+                "mode": "auto",
+                "size": [10.0, 12.0, 14.0],
+                "center": [1.0, -2.0, 3.0],
+                "padding": [0.0, 0.0, 0.0],
+                "airbox_hmax": 0.75,
+            },
+        )
+        self.assertIsNotNone(airbox)
+        assert airbox is not None
+        self.assertEqual(airbox.size, (10.0, 12.0, 14.0))
+        self.assertEqual(airbox.center, (1.0, -2.0, 3.0))
+        self.assertEqual(airbox.hmax, 0.75)
+
     def test_meshdata_roundtrip_json(self) -> None:
         mesh = self._unit_tet_mesh()
 
@@ -145,6 +164,32 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertEqual(payload["generation_mode"], "adaptive_size_field")
         self.assertEqual(payload["mesh_provenance"]["geometry_kind"], "box")
         self.assertEqual(payload["size_field_stats"]["n_nodes"], 4)
+
+    def test_remesh_cli_payload_preserves_shared_domain_region_markers(self) -> None:
+        mesh = self._unit_tet_mesh()
+
+        payload = _mesh_result_payload(
+            mesh,
+            mesh_name="study_domain",
+            generation_mode="shared_domain_manual_remesh",
+            mesh_provenance={"geometry_kind": "shared_domain", "order": 1, "hmax": 5e-9},
+            region_markers=[
+                {"geometry_name": "left", "marker": 1},
+                {"geometry_name": "right", "marker": 2},
+            ],
+        )
+
+        self.assertEqual(payload["mesh_name"], "study_domain")
+        self.assertEqual(payload["generation_mode"], "shared_domain_manual_remesh")
+        self.assertEqual(len(payload["region_markers"]), 2)
+        self.assertEqual(payload["region_markers"][0]["geometry_name"], "left")
+        self.assertEqual(payload["region_markers"][1]["marker"], 2)
+
+    def test_remesh_cli_describes_start_of_job(self) -> None:
+        self.assertEqual(
+            _describe_remesh_job("manual_remesh", 20e-9, 1),
+            "Remesh: accepted - mode=manual_remesh, hmax=2.000e-08, order=P1",
+        )
 
     def test_meshdata_to_ir_has_canonical_shape(self) -> None:
         mesh = self._unit_tet_mesh()

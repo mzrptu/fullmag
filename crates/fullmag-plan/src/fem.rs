@@ -257,9 +257,11 @@ pub(crate) fn plan_fem(
         .collect();
 
     let resolved_domain_mesh_asset =
-        resolve_fem_domain_mesh_asset(problem).map_err(|message| PlanError {
-            reasons: vec![message],
-        })?;
+        resolve_fem_domain_mesh_asset(problem, runtime_requests_cuda(problem)).map_err(
+            |message| PlanError {
+                reasons: vec![message],
+            },
+        )?;
     let mut merged_initial_magnetization = Vec::new();
     let mut mesh_parts = Vec::with_capacity(problem.magnets.len());
     let mut mesh_sources = Vec::with_capacity(problem.magnets.len());
@@ -809,7 +811,7 @@ pub(crate) fn plan_fem_eigen(
         .collect();
 
     let resolved_domain_mesh_asset =
-        resolve_fem_domain_mesh_asset(problem).map_err(|message| PlanError {
+        resolve_fem_domain_mesh_asset(problem, false).map_err(|message| PlanError {
             reasons: vec![message],
         })?;
     let mut merged_equilibrium = Vec::new();

@@ -1,66 +1,33 @@
-"""Imported STL nanoflower executed on the FEM backend.
+"""Canonical Fullmag script generated from the model builder.
 
-Study-root scripting API — compatible with the emerging model builder.
-    fullmag examples/nanoflower_fem.py
+Source: nanoflower_fem.py
+Entrypoint: flat_workspace
 """
 
 import fullmag as fm
 
 study = fm.study("nanoflower_fem")
 
-# ── Engine ──────────────────────────────────────────────────
+# Engine
 study.engine("fem")
 study.device("cuda:0", precision="double")
+study.universe(mode="auto", size=(4e-07, 4e-07, 4e-07), center=(0, 0, 0), padding=(0, 0, 0))
 study.interactive(True)
-# Shared-domain FEM:
-# - `study.mesh(...)` controls the magnetic-body target size
-# - `study.universe(..., airbox_hmax=...)` controls the outer air domain
-study.universe(
-    mode="manual",
-    size=(400e-9, 400e-9, 400e-9),
-    center=(0.0, 0.0, 0.0),
-    airbox_hmax=60e-9,
-)
-study.mesh(hmax=20e-9, order=1)
 
-# ── Geometry & Material ─────────────────────────────────────
-FLOWER_SPAN_X = 329.98683166503906e-9
-FLOWER_GAP_X = 5e-9
-FLOWER_PITCH_X = FLOWER_SPAN_X + FLOWER_GAP_X
-FLOWER_OFFSET_X = 0.5 * FLOWER_PITCH_X
+# Geometry & Material
+body = study.geometry(fm.ImportedGeometry(source="nanoflower.stl", name="nanoflower_left", scale=1e-09), name="nanoflower_left")
+body.Ms = 752000
+body.Aex = 1.55e-11
+body.alpha = 0.1
+body.m = fm.random(seed=1)
 
-
-def add_nanoflower(name: str, offset_x: float, seed: int):
-    flower = study.geometry(
-        fm.ImportedGeometry(
-            source="nanoflower.stl",
-            units="nm",
-            name=name,
-        ).translate((offset_x, 0.0, 0.0)),
-        name=name,
-    )
-    flower.Ms = 752e3       # saturation magnetisation [A/m]
-    flower.Aex = 15.5e-12   # exchange stiffness [J/m]
-    flower.alpha = 0.1      # Gilbert damping
-    flower.m = fm.random(seed=seed)
-    return flower
-
-
-flower_left = add_nanoflower("nanoflower_left", 0, seed=1)
-# flower_right = add_nanoflower("nanoflower_right", FLOWER_OFFSET_X, seed=2)
-
-# Explicitly realize the shared magnetic+air mesh before solve.
+# Mesh
+study.mesh(hmax=2e-08, order=1, algorithm_2d=6, algorithm_3d=1, size_factor=1, size_from_curvature=0, smoothing_steps=1, optimize_iterations=1, narrow_regions=0, compute_quality=False, per_element_quality=False)
 study.build_mesh()
 
-# ── Solver ──────────────────────────────────────────────────
-study.solver(dt=1e-15, g=2.115, integrator="heun")
+# Solver
+study.solver(integrator="heun", dt=1e-15, gamma=233728.481992)
 
-# ── Outputs ─────────────────────────────────────────────────
-# study.save("m", every=1e-13)
-# study.save("E_ex", every=1e-13)
-# study.save("E_demag", every=1e-13)
-# study.save("E_total", every=1e-13)
-
-# ── Run ─────────────────────────────────────────────────────
-# study.relax()
-# study.run(5e-10)
+# Outputs
+study.save("m", every=1e-12)
+study.save("E_total", every=1e-12)

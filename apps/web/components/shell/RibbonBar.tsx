@@ -46,7 +46,7 @@ interface RibbonGroup {
   actions: RibbonAction[];
 }
 
-type RibbonTab = "Home" | "Mesh" | "Study" | "Results";
+type RibbonTab = "Home" | "Mesh" | "Study" | "Results" | "Builder";
 
 interface RibbonBarProps {
   viewMode?: string;
@@ -86,11 +86,16 @@ interface RibbonBarProps {
   onGenerateMesh?: () => void;
   selectedObjectId?: string | null;
   onRequestObjectFocus?: (objectId: string) => void;
+  hasSharedAirboxDomain?: boolean;
+  canSyncScriptBuilder?: boolean;
+  scriptSyncBusy?: boolean;
+  onSyncScriptBuilder?: () => void;
 }
 
 /* ── Tab inference from tree node ── */
 function inferTab(nodeId: string | null | undefined): RibbonTab {
   if (!nodeId) return "Home";
+  if (nodeId === "session" || nodeId === "script-builder") return "Builder";
   if (nodeId === "universe-airbox" || nodeId === "universe-boundary") return "Mesh";
   if (nodeId === "universe-mesh" || nodeId.startsWith("universe-mesh-")) return "Mesh";
   if (nodeId.startsWith("mesh") || nodeId === "mesh") return "Mesh";
@@ -252,6 +257,51 @@ function buildStudyGroups(p: RibbonBarProps): RibbonGroup[] {
   ];
 }
 
+function buildBuilderGroups(p: RibbonBarProps): RibbonGroup[] {
+  return [
+    {
+      id: "builder-inspect",
+      title: "Builder",
+      actions: [
+        {
+          id: "builder-session",
+          icon: <Cog size={20} />,
+          label: "Session",
+          tooltip: "Workspace runtime and session metadata",
+          active: p.selectedNodeId === "session",
+          iconColor: "text-slate-400",
+          action: () => p.onSelectModelNode?.("session"),
+        },
+        {
+          id: "builder-script",
+          icon: <FileText size={20} />,
+          label: "Script Builder",
+          tooltip: "Script rewrite contract and builder sync controls",
+          active: p.selectedNodeId === "script-builder",
+          iconColor: "text-emerald-400",
+          action: () => p.onSelectModelNode?.("script-builder"),
+        },
+      ],
+    },
+    {
+      id: "builder-sync",
+      title: "Sync",
+      actions: [
+        {
+          id: "builder-sync-script",
+          icon: <RefreshCw size={20} className={cn(p.scriptSyncBusy && "animate-spin")} />,
+          label: p.scriptSyncBusy ? "Syncing..." : "Sync Script",
+          tooltip: "Rewrite the Python script from the current builder state",
+          accent: true,
+          disabled: !p.canSyncScriptBuilder || p.scriptSyncBusy,
+          action: () => p.onSyncScriptBuilder?.(),
+        },
+      ],
+    },
+    buildViewGroup(p),
+  ];
+}
+
 function buildResultsGroups(p: RibbonBarProps): RibbonGroup[] {
   const quickPreviewActions: RibbonAction[] =
     (p.quickPreviewTargets?.slice(0, 6) ?? []).map((target) => {
@@ -380,7 +430,7 @@ const RibbonActionTrigger = React.forwardRef<
 });
 RibbonActionTrigger.displayName = "RibbonActionTrigger";
 
-const TABS: RibbonTab[] = ["Home", "Mesh", "Study", "Results"];
+const TABS: RibbonTab[] = ["Home", "Mesh", "Study", "Results", "Builder"];
 
 /* ── Component ──────────────────────────────────── */
 
@@ -399,6 +449,7 @@ export default function RibbonBar(props: RibbonBarProps) {
       case "Mesh": return buildMeshGroups(props);
       case "Study": return buildStudyGroups(props);
       case "Results": return buildResultsGroups(props);
+      case "Builder": return buildBuilderGroups(props);
       default: return buildHomeGroups(props);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -431,9 +482,10 @@ export default function RibbonBar(props: RibbonBarProps) {
                 setManualTab(tab);
                 if (props.onSelectModelNode) {
                   if (tab === "Home") props.onSelectModelNode("universe");
-                  else if (tab === "Mesh") props.onSelectModelNode("universe-mesh");
+                  else if (tab === "Mesh") props.onSelectModelNode(props.hasSharedAirboxDomain ? "universe-airbox" : "universe-mesh");
                   else if (tab === "Study") props.onSelectModelNode("study");
                   else if (tab === "Results") props.onSelectModelNode("results");
+                  else if (tab === "Builder") props.onSelectModelNode("script-builder");
                 }
               }}
               className={cn(

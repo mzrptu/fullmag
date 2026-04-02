@@ -147,9 +147,14 @@ export default function RunSidebar() {
   );
   const activeNodeLabel =
     activeNode?.label ??
+    (activeNodeId === "session"
+      ? "Session"
+      : activeNodeId === "script-builder"
+        ? "Script Builder"
+        :
     (activeNodeId === "antennas"
       ? "Antenna / RF Source"
-      : activeAntennaName ?? "Workspace");
+      : activeAntennaName ?? "Workspace"));
 
   const selectModelNode = useCallback((id: string) => {
     model.setSelectedSidebarNodeId(id);

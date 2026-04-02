@@ -607,10 +607,21 @@ async fn enqueue_current_live_command(
 ) -> Result<Json<SessionCommandResponse>, ApiError> {
     let session_id = current_live_session_id(&state).await?;
     let command = enqueue_current_control_command(&state, build_session_command(req)?).await;
+    eprintln!(
+        "[fullmag-api] RX <- frontend command {} seq={} id={}",
+        command.kind, command.seq, command.command_id
+    );
+    if let Some(mesh_options) = command.mesh_options.as_ref() {
+        eprintln!("[fullmag-api]    mesh_options: {}", mesh_options);
+    }
     let ack_json = serialize_runtime_event(&build_command_ack_event(&session_id, &command))?;
     let _ = state
         .current_live_events
         .send(CurrentLiveWireMessage::Text(ack_json));
+    eprintln!(
+        "[fullmag-api] TX -> frontend ack {} seq={} id={}",
+        command.kind, command.seq, command.command_id
+    );
     let response = SessionCommandResponse {
         command_id: command.command_id.clone(),
         session_id,
@@ -1454,12 +1465,20 @@ async fn sync_current_live_script(
     } else {
         None
     };
+    eprintln!(
+        "[fullmag-api] RX <- frontend script sync {}",
+        script_path.display()
+    );
     let response = rewrite_script_via_python_helper(
         &state.repo_root,
         &state.current_workspace_root,
         &script_path,
         overrides.as_ref(),
     )?;
+    eprintln!(
+        "[fullmag-api] TX -> frontend script sync ok {}",
+        response.script_path
+    );
     Ok(Json(response))
 }
 
@@ -1467,6 +1486,10 @@ async fn update_current_live_scene(
     State(state): State<Arc<AppState>>,
     Json(mut scene_document): Json<SceneDocument>,
 ) -> Result<Json<SceneDocument>, ApiError> {
+    eprintln!(
+        "[fullmag-api] RX <- frontend scene update revision={} version={}",
+        scene_document.revision, scene_document.version
+    );
     let (scene_document, session_state_messages, public_json) = {
         let mut current = state.current_live_state.write().await;
         let snapshot = current
@@ -1498,6 +1521,10 @@ async fn update_current_live_scene(
 
     *state.current_live_public_snapshot.write().await = Some(public_json);
     send_current_live_ws_messages(&state, session_state_messages);
+    eprintln!(
+        "[fullmag-api] TX -> frontend scene update committed revision={}",
+        scene_document.revision
+    );
     Ok(Json(scene_document))
 }
 

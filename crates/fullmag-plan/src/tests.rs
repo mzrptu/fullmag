@@ -237,6 +237,85 @@ fn validate_rejects_shared_nodes_for_now() {
 }
 
 #[test]
+fn validate_accepts_shared_nodes_when_solver_supports_conformal() {
+    let mesh = MeshIR {
+        mesh_name: "touching".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ],
+        elements: vec![[0, 1, 2, 3], [0, 1, 2, 4]],
+        element_markers: vec![1, 2],
+        boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
+        boundary_markers: vec![10, 20],
+    };
+    let analysis = crate::mesh::analyze_shared_domain_mesh(
+        &mesh,
+        &[
+            fullmag_ir::FemDomainRegionMarkerIR {
+                geometry_name: "left".to_string(),
+                marker: 1,
+            },
+            fullmag_ir::FemDomainRegionMarkerIR {
+                geometry_name: "right".to_string(),
+                marker: 2,
+            },
+        ],
+    )
+    .expect("analysis should succeed");
+
+    crate::mesh::validate_packing_constraints(&analysis, &mesh.mesh_name, true)
+        .expect("conformal-native path should accept shared interface nodes");
+}
+
+#[test]
+fn pack_duplicates_shared_interface_nodes_per_region() {
+    let mesh = MeshIR {
+        mesh_name: "touching".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ],
+        elements: vec![[0, 1, 2, 3], [0, 1, 2, 4]],
+        element_markers: vec![1, 2],
+        boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
+        boundary_markers: vec![10, 20],
+    };
+    let region_markers = vec![
+        fullmag_ir::FemDomainRegionMarkerIR {
+            geometry_name: "left".to_string(),
+            marker: 1,
+        },
+        fullmag_ir::FemDomainRegionMarkerIR {
+            geometry_name: "right".to_string(),
+            marker: 2,
+        },
+    ];
+    let analysis = crate::mesh::analyze_shared_domain_mesh(&mesh, &region_markers)
+        .expect("analysis should succeed");
+
+    let (packed, segments) = crate::mesh::pack_mesh_by_analysis(&mesh, &analysis)
+        .expect("packing should duplicate shared interface nodes");
+
+    assert_eq!(packed.nodes.len(), 8);
+    assert_eq!(packed.elements, vec![[0, 1, 2, 3], [4, 5, 6, 7]]);
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].object_id, "left");
+    assert_eq!(segments[0].node_count, 4);
+    assert_eq!(segments[1].object_id, "right");
+    assert_eq!(segments[1].node_count, 4);
+    assert_eq!(packed.nodes[0], packed.nodes[4]);
+    assert_eq!(packed.nodes[1], packed.nodes[5]);
+    assert_eq!(packed.nodes[2], packed.nodes[6]);
+}
+
+#[test]
 fn pack_produces_same_result_as_before() {
     let mesh = MeshIR {
         mesh_name: "shared_ok".to_string(),
@@ -276,7 +355,7 @@ fn pack_produces_same_result_as_before() {
         .expect("disjoint mesh should validate");
     let packed_via_analysis = crate::mesh::pack_mesh_by_analysis(&mesh, &analysis)
         .expect("packing via analysis should succeed");
-    let packed_via_public = crate::mesh::reorder_shared_domain_mesh(&mesh, &region_markers)
+    let packed_via_public = crate::mesh::reorder_shared_domain_mesh(&mesh, &region_markers, false)
         .expect("public reorder should succeed");
 
     assert_eq!(packed_via_analysis, packed_via_public);
@@ -1087,6 +1166,76 @@ fn fem_plan_heterogeneous_materials_populates_region_materials_for_cuda() {
     assert_eq!(fem.mesh_parts[0].material_id.as_deref(), Some("Py"));
     assert_eq!(fem.mesh_parts[1].material_id.as_deref(), Some("Co"));
     assert!(fem.material.ms_field.is_some());
+}
+
+#[test]
+fn fem_plan_conformal_shared_domain_duplicates_interface_nodes_for_cuda() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.problem_meta.runtime_metadata.insert(
+        "runtime_selection".to_string(),
+        serde_json::json!({"device": "cuda", "device_index": 0}),
+    );
+    ir.geometry.entries.push(GeometryEntryIR::Box {
+        name: "second".to_string(),
+        size: [1.0, 1.0, 1.0],
+    });
+    ir.regions.push(fullmag_ir::RegionIR {
+        name: "second".to_string(),
+        geometry: "second".to_string(),
+    });
+    ir.magnets.push(fullmag_ir::MagnetIR {
+        name: "second".to_string(),
+        region: "second".to_string(),
+        material: "Py".to_string(),
+        initial_magnetization: Some(InitialMagnetizationIR::Uniform {
+            value: [0.0, 1.0, 0.0],
+        }),
+    });
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![],
+        fem_domain_mesh_asset: Some(fullmag_ir::FemDomainMeshAssetIR {
+            mesh_source: None,
+            mesh: Some(fullmag_ir::MeshIR {
+                mesh_name: "touching".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [0.0, 0.0, -1.0],
+                ],
+                elements: vec![[0, 1, 2, 3], [0, 1, 2, 4]],
+                element_markers: vec![1, 2],
+                boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
+                boundary_markers: vec![10, 20],
+            }),
+            region_markers: vec![
+                fullmag_ir::FemDomainRegionMarkerIR {
+                    geometry_name: "strip".to_string(),
+                    marker: 1,
+                },
+                fullmag_ir::FemDomainRegionMarkerIR {
+                    geometry_name: "second".to_string(),
+                    marker: 2,
+                },
+            ],
+        }),
+    });
+    ir.energy_terms = vec![fullmag_ir::EnergyTermIR::Exchange];
+
+    let planned = plan(&ir).expect("CUDA FEM should accept conformal shared-domain meshes");
+    let BackendPlanIR::Fem(fem) = planned.backend_plan else {
+        panic!("expected FEM plan");
+    };
+
+    assert_eq!(fem.mesh.nodes.len(), 8);
+    assert_eq!(fem.object_segments.len(), 2);
+    assert_eq!(fem.object_segments[0].object_id, "strip");
+    assert_eq!(fem.object_segments[0].node_count, 4);
+    assert_eq!(fem.object_segments[1].object_id, "second");
+    assert_eq!(fem.object_segments[1].node_count, 4);
 }
 
 #[test]

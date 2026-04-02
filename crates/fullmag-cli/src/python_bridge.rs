@@ -47,6 +47,8 @@ pub(crate) struct RemeshCliResponse {
     pub mesh_provenance: Option<serde_json::Value>,
     #[serde(default)]
     pub size_field_stats: Option<serde_json::Value>,
+    #[serde(default)]
+    pub region_markers: Vec<fullmag_ir::FemDomainRegionMarkerIR>,
 }
 
 impl RemeshCliResponse {
@@ -64,6 +66,12 @@ impl RemeshCliResponse {
 
 pub(crate) const PYTHON_PROGRESS_PREFIX: &str = "[fullmag-progress] ";
 const PYTHON_PROGRESS_JSON_PREFIX: &str = "json:";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RemeshTerminalProgress {
+    pub percent: u8,
+    pub label: &'static str,
+}
 
 pub(crate) fn parse_python_progress_event(message: &str) -> PythonProgressEvent {
     let trimmed = message.trim();
@@ -86,6 +94,102 @@ pub(crate) fn parse_python_progress_event(message: &str) -> PythonProgressEvent 
         },
         _ => PythonProgressEvent::Message(trimmed.to_string()),
     }
+}
+
+pub(crate) fn map_remesh_progress_message(message: &str) -> Option<RemeshTerminalProgress> {
+    let lower = message.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return None;
+    }
+
+    if lower.contains("remesh: accepted") || lower.contains("request queued") {
+        return Some(RemeshTerminalProgress {
+            percent: 5,
+            label: "accepted",
+        });
+    }
+    if lower.contains("importing stl surface") {
+        return Some(RemeshTerminalProgress {
+            percent: 15,
+            label: "importing STL surface",
+        });
+    }
+    if lower.contains("importing cad shapes") || lower.contains("importing cad geometry") {
+        return Some(RemeshTerminalProgress {
+            percent: 15,
+            label: "importing CAD geometry",
+        });
+    }
+    if lower.contains("building occ")
+        || lower.contains("creating geometry from classified surfaces")
+        || lower.contains("classifying stl surfaces")
+        || lower.contains("adding airbox domain")
+        || lower.contains("generating box geometry")
+        || lower.contains("generating cylinder geometry")
+    {
+        return Some(RemeshTerminalProgress {
+            percent: 15,
+            label: "building geometry",
+        });
+    }
+    if lower.contains("applying adaptive size field")
+        || lower.contains("applying mesh options")
+        || lower.contains("configuring mesh size fields")
+    {
+        return Some(RemeshTerminalProgress {
+            percent: 30,
+            label: "configuring mesh fields",
+        });
+    }
+    if lower.contains("generating adaptive 3d mesh")
+        || lower.contains("generating air-box 3d mesh")
+        || lower.contains("generating 3d tetrahedral mesh")
+    {
+        return Some(RemeshTerminalProgress {
+            percent: 75,
+            label: "generating 3D mesh",
+        });
+    }
+    if lower.contains("optimizing mesh") {
+        return Some(RemeshTerminalProgress {
+            percent: 85,
+            label: "optimizing mesh",
+        });
+    }
+    if lower.contains("extracting quality metrics") {
+        return Some(RemeshTerminalProgress {
+            percent: 92,
+            label: "extracting quality metrics",
+        });
+    }
+    if lower.contains("extracting mesh data") {
+        return Some(RemeshTerminalProgress {
+            percent: 97,
+            label: "extracting mesh data",
+        });
+    }
+    if lower.contains("mesh ready") {
+        return Some(RemeshTerminalProgress {
+            percent: 100,
+            label: "mesh ready",
+        });
+    }
+
+    None
+}
+
+fn filter_non_progress_stderr(stderr_text: &str) -> String {
+    stderr_text
+        .lines()
+        .filter(|line| {
+            !line
+                .trim_start()
+                .starts_with(PYTHON_PROGRESS_PREFIX.trim_end())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 pub(crate) fn run_python_helper(args: &[String]) -> Result<std::process::Output> {
@@ -331,6 +435,7 @@ pub(crate) fn invoke_remesh_full(
     hmax: f64,
     fe_order: u32,
     mesh_options: &serde_json::Value,
+    progress_callback: Option<PythonProgressCallback>,
 ) -> Result<RemeshCliResponse> {
     let payload = serde_json::json!({
         "mode": "manual_remesh",
@@ -346,10 +451,11 @@ pub(crate) fn invoke_remesh_full(
          from fullmag.meshing.remesh_cli import main; main()",
         payload_json = serde_json::to_string(&payload_str)?,
     );
-    let output = run_python_helper(&["-c".to_string(), script])?;
+    let output = run_python_helper_with_progress(&["-c".to_string(), script], progress_callback)?;
     let stderr_text = String::from_utf8_lossy(&output.stderr);
-    if !stderr_text.is_empty() {
-        eprintln!("[fullmag] remesh stderr:\n{}", stderr_text.trim());
+    let non_progress_stderr = filter_non_progress_stderr(&stderr_text);
+    if output.status.success() && !non_progress_stderr.is_empty() {
+        eprintln!("[fullmag] remesh stderr:\n{}", non_progress_stderr);
     }
     if !output.status.success() {
         bail!(
@@ -369,13 +475,64 @@ pub(crate) fn invoke_remesh_full(
     Ok(mesh)
 }
 
+pub(crate) fn invoke_shared_domain_remesh_full(
+    geometry_entries: &[fullmag_ir::GeometryEntryIR],
+    study_universe: &serde_json::Value,
+    hmax: f64,
+    fe_order: u32,
+    mesh_options: &serde_json::Value,
+    progress_callback: Option<PythonProgressCallback>,
+) -> Result<RemeshCliResponse> {
+    let payload = serde_json::json!({
+        "mode": "shared_domain_manual_remesh",
+        "geometries": geometry_entries,
+        "study_universe": study_universe,
+        "hmax": hmax,
+        "order": fe_order,
+        "mesh_name": "study_domain",
+        "mesh_options": mesh_options,
+    });
+    let payload_str = serde_json::to_string(&payload)?;
+
+    let script = format!(
+        "import sys; sys.stdin = __import__('io').StringIO({payload_json}); \
+         from fullmag.meshing.remesh_cli import main; main()",
+        payload_json = serde_json::to_string(&payload_str)?,
+    );
+    let output = run_python_helper_with_progress(&["-c".to_string(), script], progress_callback)?;
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
+    let non_progress_stderr = filter_non_progress_stderr(&stderr_text);
+    if output.status.success() && !non_progress_stderr.is_empty() {
+        eprintln!(
+            "[fullmag] shared-domain remesh stderr:\n{}",
+            non_progress_stderr
+        );
+    }
+    if !output.status.success() {
+        bail!(
+            "shared-domain remesh_cli.py failed (exit {}):\n{}",
+            output.status.code().unwrap_or(-1),
+            stderr_text.trim()
+        );
+    }
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    let mesh: RemeshCliResponse = serde_json::from_slice(&output.stdout).with_context(|| {
+        format!(
+            "failed to parse shared-domain remesh output ({} bytes):\n{}",
+            output.stdout.len(),
+            &stdout_text[..stdout_text.len().min(2000)]
+        )
+    })?;
+    Ok(mesh)
+}
+
 pub(crate) fn invoke_remesh(
     geometry_entry: &fullmag_ir::GeometryEntryIR,
     hmax: f64,
     fe_order: u32,
     mesh_options: &serde_json::Value,
 ) -> Result<fullmag_ir::MeshIR> {
-    Ok(invoke_remesh_full(geometry_entry, hmax, fe_order, mesh_options)?.into_mesh_ir())
+    Ok(invoke_remesh_full(geometry_entry, hmax, fe_order, mesh_options, None)?.into_mesh_ir())
 }
 
 pub(crate) fn invoke_adaptive_remesh_full(
@@ -384,6 +541,7 @@ pub(crate) fn invoke_adaptive_remesh_full(
     fe_order: u32,
     mesh_options: &serde_json::Value,
     size_field: &serde_json::Value,
+    progress_callback: Option<PythonProgressCallback>,
 ) -> Result<RemeshCliResponse> {
     let payload = serde_json::json!({
         "mode": "adaptive_size_field",
@@ -400,10 +558,11 @@ pub(crate) fn invoke_adaptive_remesh_full(
          from fullmag.meshing.remesh_cli import main; main()",
         payload_json = serde_json::to_string(&payload_str)?,
     );
-    let output = run_python_helper(&["-c".to_string(), script])?;
+    let output = run_python_helper_with_progress(&["-c".to_string(), script], progress_callback)?;
     let stderr_text = String::from_utf8_lossy(&output.stderr);
-    if !stderr_text.is_empty() {
-        eprintln!("[fullmag] adaptive remesh stderr:\n{}", stderr_text.trim());
+    let non_progress_stderr = filter_non_progress_stderr(&stderr_text);
+    if output.status.success() && !non_progress_stderr.is_empty() {
+        eprintln!("[fullmag] adaptive remesh stderr:\n{}", non_progress_stderr);
     }
     if !output.status.success() {
         bail!(
@@ -446,5 +605,67 @@ mod tests {
             }
             other => panic!("expected fem surface preview event, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn map_remesh_progress_message_maps_known_phases() {
+        assert_eq!(
+            map_remesh_progress_message(
+                "Remesh: accepted - mode=manual_remesh, hmax=2.0e-08, order=P1"
+            ),
+            Some(RemeshTerminalProgress {
+                percent: 5,
+                label: "accepted",
+            })
+        );
+        assert_eq!(
+            map_remesh_progress_message("Gmsh: importing STL surface"),
+            Some(RemeshTerminalProgress {
+                percent: 15,
+                label: "importing STL surface",
+            })
+        );
+        assert_eq!(
+            map_remesh_progress_message("Gmsh: applying mesh options"),
+            Some(RemeshTerminalProgress {
+                percent: 30,
+                label: "configuring mesh fields",
+            })
+        );
+        assert_eq!(
+            map_remesh_progress_message("Gmsh: generating 3D tetrahedral mesh"),
+            Some(RemeshTerminalProgress {
+                percent: 75,
+                label: "generating 3D mesh",
+            })
+        );
+        assert_eq!(
+            map_remesh_progress_message("Gmsh: extracting quality metrics"),
+            Some(RemeshTerminalProgress {
+                percent: 92,
+                label: "extracting quality metrics",
+            })
+        );
+        assert_eq!(
+            map_remesh_progress_message("Gmsh: mesh ready - 100 nodes, 200 elements"),
+            Some(RemeshTerminalProgress {
+                percent: 100,
+                label: "mesh ready",
+            })
+        );
+    }
+
+    #[test]
+    fn map_remesh_progress_message_returns_none_for_unknown_messages() {
+        assert_eq!(
+            map_remesh_progress_message("some unrelated python log"),
+            None
+        );
+    }
+
+    #[test]
+    fn filter_non_progress_stderr_strips_progress_lines() {
+        let stderr = "[fullmag-progress] Remesh: accepted\nplain error\n[fullmag-progress] Gmsh: mesh ready\n";
+        assert_eq!(filter_non_progress_stderr(stderr), "plain error");
     }
 }

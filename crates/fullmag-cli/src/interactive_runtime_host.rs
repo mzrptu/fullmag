@@ -53,6 +53,10 @@ impl CurrentLiveDisplaySelectionHandle {
                 match wait_for_current_live_control(after_seq, 15_000) {
                     Ok(Some(command)) => {
                         after_seq = after_seq.max(command.seq);
+                        eprintln!(
+                            "[fullmag-host] RX <- api command {} seq={} id={}",
+                            command.kind, command.seq, command.command_id
+                        );
                         // Parse into typed command to determine control classification
                         let typed = crate::command_bridge::classify_command(&command);
                         if let Some(ref typed_cmd) = typed {

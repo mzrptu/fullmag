@@ -20,12 +20,15 @@ from typing import Any
 
 import numpy as np
 
+from fullmag._progress import emit_progress
+from fullmag.meshing.asset_pipeline import realize_fem_domain_mesh_asset
 from fullmag.meshing.gmsh_bridge import (
     MeshOptions,
     SizeFieldData,
     generate_mesh,
     remesh_with_size_field,
 )
+from fullmag.model.discretization import FEM
 from fullmag.model.geometry import (
     Box,
     Cylinder,
@@ -129,6 +132,7 @@ def _mesh_result_payload(
     generation_mode: str,
     mesh_provenance: dict[str, Any],
     size_field_stats: dict[str, Any] | None = None,
+    region_markers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "mesh_name": mesh_name,
@@ -143,6 +147,9 @@ def _mesh_result_payload(
 
     if size_field_stats is not None:
         result["size_field_stats"] = size_field_stats
+
+    if region_markers is not None:
+        result["region_markers"] = region_markers
 
     if mesh_data.quality is not None:
         q = mesh_data.quality
@@ -166,13 +173,21 @@ def _mesh_result_payload(
     return result
 
 
+def _describe_remesh_job(mode: str, hmax: float, order: int) -> str:
+    return f"Remesh: accepted - mode={mode}, hmax={float(hmax):.3e}, order=P{int(order)}"
+
+
 def main() -> None:
     try:
         raw = sys.stdin.read()
         config = json.loads(raw)
 
-        geometry = _geometry_from_ir(config["geometry"])
         mode = str(config.get("mode", "manual_remesh") or "manual_remesh")
+        geometry = (
+            _geometry_from_ir(config["geometry"])
+            if mode != "shared_domain_manual_remesh"
+            else None
+        )
         mesh_opts_dict = config.get("mesh_options", {})
         # hmax can come from mesh_options (GUI override) or top-level config
         hmax = mesh_opts_dict.get("hmax") or config["hmax"]
@@ -181,6 +196,8 @@ def main() -> None:
         if mode == "adaptive_size_field":
             mesh_opts.compute_quality = bool(mesh_opts_dict.get("compute_quality", True))
             mesh_opts.per_element_quality = bool(mesh_opts_dict.get("per_element_quality", False))
+        emit_progress(_describe_remesh_job(mode, float(hmax), int(order)))
+        region_markers = None
 
         # Redirect the real stdout fd to /dev/null during mesh generation —
         # C libraries like MMG3D print progress banners directly to fd 1,
@@ -204,11 +221,29 @@ def main() -> None:
                     order=order,
                     options=mesh_opts,
                 )
+            elif mode == "shared_domain_manual_remesh":
+                raw_geometries = config.get("geometries")
+                if not isinstance(raw_geometries, list) or not raw_geometries:
+                    raise ValueError(
+                        "shared_domain_manual_remesh mode requires a non-empty geometries payload"
+                    )
+                study_universe = config.get("study_universe")
+                if not isinstance(study_universe, dict):
+                    raise ValueError(
+                        "shared_domain_manual_remesh mode requires a study_universe payload"
+                    )
+                geometries = [_geometry_from_ir(entry) for entry in raw_geometries]
+                mesh_data, region_markers = realize_fem_domain_mesh_asset(
+                    geometries,
+                    FEM(order=int(order), hmax=float(hmax)),
+                    study_universe=study_universe,
+                )
             elif mode == "manual_remesh":
                 mesh_data = generate_mesh(geometry, hmax=hmax, order=order, options=mesh_opts)
             else:
                 raise ValueError(
-                    f"unsupported remesh_cli mode {mode!r}; expected 'manual_remesh' or 'adaptive_size_field'"
+                    f"unsupported remesh_cli mode {mode!r}; expected 'manual_remesh', "
+                    "'adaptive_size_field' or 'shared_domain_manual_remesh'"
                 )
         finally:
             # Flush any C-level buffered output (still aimed at /dev/null)
@@ -236,12 +271,17 @@ def main() -> None:
             mesh_name=config.get("mesh_name", "remeshed"),
             generation_mode=mode,
             mesh_provenance={
-                "geometry_kind": config["geometry"].get("kind"),
+                "geometry_kind": (
+                    "shared_domain"
+                    if mode == "shared_domain_manual_remesh"
+                    else config["geometry"].get("kind")
+                ),
                 "order": int(order),
                 "hmax": float(hmax),
                 "mesh_options": mesh_opts_dict,
             },
             size_field_stats=size_field_stats,
+            region_markers=region_markers,
         )
 
         json.dump(result, sys.stdout, separators=(",", ":"))

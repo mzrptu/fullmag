@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState, useMemo } from "react";
-import type { LiveState, ScalarRow, SessionManifest, RunManifest, ArtifactEntry, EngineLogEntry } from "../../lib/useSessionStream";
+import type { LiveState, ScalarRow, SessionManifest, RunManifest, ArtifactEntry, EngineLogEntry, CommandStatus, MeshWorkspaceState } from "../../lib/useSessionStream";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { fmtSI, fmtExp, fmtTime, fmtDuration, fmtStepValue, fmtSIOrDash, fmtExpOrDash } from "@/lib/format";
@@ -10,6 +10,7 @@ import ScalarTable from "./ScalarTable";
 import { buildLogEntries } from "./engine/buildLogEntries";
 import { CHART_PRESETS } from "./engine/chartPresets";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "./SolverSettingsPanel";
+import type { ActivityInfo } from "../runs/control-room/types";
 
 /* ── Types ─────────────────────────────────────────────────── */
 
@@ -28,10 +29,37 @@ interface EngineConsoleProps {
   error: string | null;
   presentationMode?: "session" | "current";
   convergenceThreshold?: number;
+  commandStatus?: CommandStatus | null;
+  commandBusy?: boolean;
+  commandMessage?: string | null;
+  activity?: ActivityInfo | null;
+  meshWorkspace?: MeshWorkspaceState | null;
 }
 
 function fmtTimeOrDash(v: number, enabled: boolean): string {
   return enabled ? fmtTime(v) : "—";
+}
+
+function estimateMeshPayloadBytes(
+  nodeCount: number,
+  elementCount: number,
+  boundaryFaceCount: number,
+): number {
+  return (
+    nodeCount * 3 * 8 +
+    elementCount * 4 * 4 +
+    elementCount * 4 +
+    boundaryFaceCount * 3 * 4 +
+    boundaryFaceCount * 4
+  );
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "—";
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(2)} MiB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${Math.round(bytes)} B`;
 }
 
 /* buildLogEntries and CHART_PRESETS extracted to engine/ submodules */
@@ -59,6 +87,11 @@ export default function EngineConsole({
   error,
   presentationMode = "current",
   convergenceThreshold: convergenceThresholdProp,
+  commandStatus = null,
+  commandBusy = false,
+  commandMessage = null,
+  activity = null,
+  meshWorkspace = null,
 }: EngineConsoleProps) {
   const convergenceThreshold = convergenceThresholdProp ?? DEFAULT_CONVERGENCE_THRESHOLD;
   const [activeTab, setActiveTab] = useState<ConsoleTab>("live");
@@ -71,6 +104,28 @@ export default function EngineConsole({
     () => buildLogEntries(session, run, liveState, scalarRows, engineLog, connection, error, presentationMode, convergenceThreshold),
     [session, run, liveState, scalarRows, engineLog, connection, error, presentationMode, convergenceThreshold],
   );
+  const meshSummary = meshWorkspace?.mesh_summary ?? null;
+  const meshQualitySummary = meshWorkspace?.mesh_quality_summary ?? null;
+  const meshPayloadEstimate = formatBytes(
+    estimateMeshPayloadBytes(
+      meshSummary?.node_count ?? 0,
+      meshSummary?.element_count ?? 0,
+      meshSummary?.boundary_face_count ?? 0,
+    ),
+  );
+  const activeCommandLabel = commandStatus?.command_kind
+    ? commandStatus.command_kind.toUpperCase()
+    : (commandBusy ? "PENDING" : "—");
+  const activeCommandStateLabel = commandStatus
+    ? (commandStatus.state === "completed"
+      ? `COMPLETED${commandStatus.completion_state ? ` (${commandStatus.completion_state})` : ""}`
+      : commandStatus.state.toUpperCase())
+    : (commandBusy ? "POSTING" : "IDLE");
+  const activityLabel = activity?.label ?? "Idle";
+  const activityDetail = activity?.detail ?? commandMessage ?? "No active runtime command.";
+  const meshProgressValue = activity?.progressMode === "determinate"
+    ? activity.progressValue ?? 0
+    : (commandBusy ? 42 : 100);
 
   const workspaceStatus = liveState?.status ?? session?.status ?? run?.status ?? "idle";
 
@@ -411,6 +466,14 @@ export default function EngineConsole({
             {/* Key metrics */}
             <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2 p-0 mt-2">
               <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Command</span>
+                <span className="font-mono text-sm font-semibold text-foreground">{activeCommandLabel}</span>
+              </div>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Command State</span>
+                <span className="font-mono text-sm font-semibold text-foreground">{activeCommandStateLabel}</span>
+              </div>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
                 <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Steps</span>
                 <span className="font-mono text-sm font-semibold text-foreground">{(liveState?.step ?? run?.total_steps ?? 0).toLocaleString()}</span>
               </div>
@@ -430,6 +493,32 @@ export default function EngineConsole({
                   {fmtExpOrDash(liveState?.max_dm_dt ?? 0, hasSolverTelemetry)}
                 </span>
               </div>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Mesh Nodes</span>
+                <span className="font-mono text-sm font-semibold text-foreground">{meshSummary?.node_count.toLocaleString() ?? "—"}</span>
+              </div>
+              <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Tetrahedra</span>
+                <span className="font-mono text-sm font-semibold text-foreground">{meshSummary?.element_count.toLocaleString() ?? "—"}</span>
+              </div>
+            </div>
+            <div className="grid gap-2 rounded-md border border-border/40 bg-card/20 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {activityLabel}
+                </span>
+                <span className="font-mono text-[0.7rem] font-semibold text-muted-foreground">
+                  {activity?.progressMode === "determinate"
+                    ? `${Math.round(meshProgressValue)}%`
+                    : (commandBusy ? "ACTIVE" : "READY")}
+                </span>
+              </div>
+              <progress
+                className="w-full h-1.5 rounded-full overflow-hidden bg-muted appearance-none fill-primary [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary"
+                value={Math.max(0, Math.min(100, meshProgressValue))}
+                max={100}
+              />
+              <div className="text-xs text-muted-foreground">{activityDetail}</div>
             </div>
           </div>
         </TabsContent>
@@ -467,6 +556,32 @@ export default function EngineConsole({
             <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
               <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Artifacts</span>
               <span className="font-mono text-sm font-semibold text-foreground">{artifacts.length}</span>
+            </div>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Mesh Nodes</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{meshSummary?.node_count.toLocaleString() ?? "—"}</span>
+            </div>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Tetrahedra</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{meshSummary?.element_count.toLocaleString() ?? "—"}</span>
+            </div>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Boundary Faces</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{meshSummary?.boundary_face_count.toLocaleString() ?? "—"}</span>
+            </div>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Mesh Payload Est.</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{meshPayloadEstimate}</span>
+            </div>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Avg Quality</span>
+              <span className="font-mono text-sm font-semibold text-foreground">
+                {meshQualitySummary ? meshQualitySummary.avg_quality.toFixed(3) : "—"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-card/30 border border-border/40 shadow-sm">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Command State</span>
+              <span className="font-mono text-sm font-semibold text-foreground">{activeCommandStateLabel}</span>
             </div>
 
             {/* Throughput bar */}
