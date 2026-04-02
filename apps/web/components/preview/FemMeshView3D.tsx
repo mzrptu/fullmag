@@ -23,6 +23,7 @@ import type {
   AntennaOverlay,
   BuilderObjectOverlay,
   FocusObjectRequest,
+  ObjectViewMode,
 } from "../runs/control-room/shared";
 
 const AIR_OBJECT_SEGMENT_ID = "__air__";
@@ -80,6 +81,7 @@ interface Props {
   selectedObjectId?: string | null;
   selectedEntityId?: string | null;
   focusedEntityId?: string | null;
+  objectViewMode?: ObjectViewMode;
   objectSegments?: FemLiveMeshObjectSegment[];
   meshParts?: FemMeshPart[];
   meshEntityViewState?: MeshEntityViewStateMap;
@@ -100,6 +102,8 @@ interface RenderLayer {
   nodeMask: boolean[] | null;
   isPrimaryForCamera: boolean;
   isMagnetic: boolean;
+  isSelected: boolean;
+  isDimmed: boolean;
 }
 
 function collectSegmentBoundaryFaceIndices(
@@ -512,6 +516,7 @@ function FemMeshView3DInner({
   selectedObjectId,
   selectedEntityId = null,
   focusedEntityId = null,
+  objectViewMode = "context",
   objectSegments = [],
   meshParts = [],
   meshEntityViewState = {},
@@ -584,6 +589,15 @@ function FemMeshView3DInner({
       ?? (selectedEntityId && meshParts.some((part) => part.id === selectedEntityId)
         ? selectedEntityId
         : null);
+    const selectedPart = preferredCameraPartId
+      ? meshParts.find((part) => part.id === preferredCameraPartId) ?? null
+      : null;
+    const selectedAirPartId = selectedPart?.role === "air" ? selectedPart.id : null;
+    const selectedObjectIdForHighlight =
+      selectedObjectId
+      ?? (selectedPart?.role === "magnetic_object" ? selectedPart.object_id : null)
+      ?? null;
+    const hasSelection = Boolean(selectedAirPartId || selectedObjectIdForHighlight || preferredCameraPartId);
     for (const part of meshParts) {
       if (part.role === "interface" || part.role === "outer_boundary") {
         continue;
@@ -594,8 +608,33 @@ function FemMeshView3DInner({
         opacity: part.role === "air" ? 28 : 100,
         colorField: part.role === "air" ? "none" : "orientation",
       };
-      const viewState = meshEntityViewState[part.id] ?? defaultViewState;
-      if (!viewState.visible) {
+      const baseViewState = meshEntityViewState[part.id] ?? defaultViewState;
+      const isSelected =
+        selectedAirPartId != null
+          ? part.id === selectedAirPartId
+          : selectedObjectIdForHighlight != null
+            ? part.object_id === selectedObjectIdForHighlight
+            : preferredCameraPartId != null
+              ? part.id === preferredCameraPartId
+              : false;
+      const isDimmed = hasSelection && !isSelected && objectViewMode === "context";
+      const viewState: MeshEntityViewState = {
+        ...baseViewState,
+        renderMode:
+          isSelected &&
+          part.role !== "air" &&
+          baseViewState.renderMode === "surface"
+            ? "surface+edges"
+            : baseViewState.renderMode,
+        opacity: isDimmed
+          ? Math.min(baseViewState.opacity, part.role === "air" ? 8 : 14)
+          : isSelected
+            ? Math.max(baseViewState.opacity, part.role === "air" ? 52 : 96)
+            : baseViewState.opacity,
+      };
+      const visibleForMode =
+        objectViewMode === "isolate" && hasSelection ? isSelected : viewState.visible;
+      if (!visibleForMode) {
         continue;
       }
       layers.push({
@@ -611,6 +650,8 @@ function FemMeshView3DInner({
           ? part.id === preferredCameraPartId
           : false,
         isMagnetic: part.role === "magnetic_object",
+        isSelected,
+        isDimmed,
       });
     }
     if (layers.length > 0 && !layers.some((layer) => layer.isPrimaryForCamera)) {
@@ -625,7 +666,9 @@ function FemMeshView3DInner({
     meshData.nNodes,
     meshEntityViewState,
     meshParts,
+    objectViewMode,
     selectedEntityId,
+    selectedObjectId,
   ]);
   const missingMagneticMask =
     meshData.quantityDomain === "magnetic_only" &&

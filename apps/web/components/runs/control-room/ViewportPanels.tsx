@@ -544,6 +544,7 @@ export function ViewportCanvasArea() {
         selectedObjectId={selectedFemObjectId}
         selectedEntityId={ctx.selectedEntityId}
         focusedEntityId={ctx.focusedEntityId}
+        objectViewMode={ctx.objectViewMode}
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
         meshParts={ctx.meshParts}
         meshEntityViewState={ctx.meshEntityViewState}
@@ -583,6 +584,7 @@ export function ViewportCanvasArea() {
         selectedObjectId={selectedFemObjectId}
         selectedEntityId={ctx.selectedEntityId}
         focusedEntityId={ctx.focusedEntityId}
+        objectViewMode={ctx.objectViewMode}
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
         meshParts={ctx.meshParts}
         meshEntityViewState={ctx.meshEntityViewState}
@@ -668,6 +670,34 @@ export function ViewportCanvasArea() {
           <div className="pointer-events-auto rounded-full border border-border/40 bg-background/75 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground shadow-md backdrop-blur-md">
             {ctx.visibleMeshPartIds.length}/{ctx.meshParts.length || 0} parts visible
           </div>
+          {ctx.selectedMeshPart || selectedFemObjectId ? (
+            <div className="pointer-events-auto flex overflow-hidden rounded-full border border-border/40 bg-background/75 shadow-md backdrop-blur-md">
+              <button
+                type="button"
+                className={cn(
+                  "px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] transition-colors",
+                  ctx.objectViewMode === "context"
+                    ? "bg-primary/20 text-primary"
+                    : "text-muted-foreground hover:bg-muted/50",
+                )}
+                onClick={() => ctx.setObjectViewMode("context")}
+              >
+                Context
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] transition-colors",
+                  ctx.objectViewMode === "isolate"
+                    ? "bg-primary/20 text-primary"
+                    : "text-muted-foreground hover:bg-muted/50",
+                )}
+                onClick={() => ctx.setObjectViewMode("isolate")}
+              >
+                Isolate
+              </button>
+            </div>
+          ) : null}
           {selectedFemObjectId ? (
             <button
               type="button"
@@ -679,6 +709,13 @@ export function ViewportCanvasArea() {
             >
               Focus {selectedFemObjectId}
             </button>
+          ) : null}
+          {ctx.selectedMeshPart ? (
+            <div className="pointer-events-auto rounded-full border border-amber-300/25 bg-background/75 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-amber-100 shadow-md backdrop-blur-md">
+              {ctx.selectedMeshPart.role === "air"
+                ? "Airbox Selected"
+                : ctx.selectedMeshPart.label || ctx.selectedMeshPart.id}
+            </div>
           ) : null}
           {ctx.focusedMeshPart ? (
             <div className="pointer-events-auto rounded-full border border-cyan-300/25 bg-background/75 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-cyan-100 shadow-md backdrop-blur-md">

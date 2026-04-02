@@ -9,11 +9,11 @@ import { fmtSI } from "../../runs/control-room/shared";
 import SelectField from "../../ui/SelectField";
 import { TextField } from "../../ui/TextField";
 import { Button } from "../../ui/button";
+import MeshSettingsPanel from "../MeshSettingsPanel";
 import { MetricField, SidebarSection, StatusBadge, ToggleRow, CompactInputGrid } from "./primitives";
 import {
   humanizeToken,
   readBuilderContract,
-  readBuilderUniverse,
 } from "./helpers";
 
 function formatVector(value: [number, number, number] | null, unit: string): string {
@@ -66,37 +66,40 @@ export default function UniversePanel() {
   const ctx = useControlRoom();
   const selectedNodeId = ctx.selectedSidebarNodeId ?? "universe";
   const builderContract = useMemo(() => readBuilderContract(ctx.metadata), [ctx.metadata]);
-  const manifestUniverse = useMemo(() => readBuilderUniverse(ctx.metadata), [ctx.metadata]);
+  const runtimeUniverse = useMemo<ScriptBuilderUniverseState | null>(() => {
+    const declared = ctx.domainFrame?.declared_universe ?? null;
+    if (!declared) return null;
+    return {
+      mode: declared.mode ?? "auto",
+      size: declared.size ?? null,
+      center: declared.center ?? null,
+      padding: declared.padding ?? null,
+      airbox_hmax: declared.airbox_hmax ?? null,
+    };
+  }, [ctx.domainFrame?.declared_universe]);
   const builderUniverse = useMemo<ScriptBuilderUniverseState | null>(() => {
     if (ctx.scriptBuilderUniverse) return ctx.scriptBuilderUniverse;
-    if (!manifestUniverse) return null;
-    return {
-      mode: manifestUniverse.mode ?? "auto",
-      size: manifestUniverse.size ?? null,
-      center: manifestUniverse.center ?? null,
-      padding: manifestUniverse.padding ?? null,
-      airbox_hmax: manifestUniverse.airbox_hmax ?? null,
-    };
-  }, [ctx.scriptBuilderUniverse, manifestUniverse]);
-  const editable = Boolean(
-    builderContract?.editableScopes.includes("universe") && builderUniverse,
-  );
+    return runtimeUniverse;
+  }, [ctx.scriptBuilderUniverse, runtimeUniverse]);
+  const editable = Boolean(builderContract?.editableScopes.includes("universe"));
 
   const declaredSize = builderUniverse?.size ?? null;
   const worldExtent = ctx.worldExtent ?? declaredSize;
   const meshExtent = ctx.meshExtent ?? null;
   const center = builderUniverse?.center ?? ctx.worldCenter ?? null;
   const padding = builderUniverse?.padding ?? null;
+  const effectiveAirboxHmax =
+    ctx.scriptBuilderUniverse?.airbox_hmax ?? runtimeUniverse?.airbox_hmax ?? null;
   const mode = builderUniverse?.mode ?? (worldExtent ? "derived" : null);
   const role = ctx.isFemBackend
     ? "Declared universe / workspace framing"
     : "FDM world box / grid domain";
   const sourceSummary = builderUniverse
     ? (ctx.isFemBackend
-        ? "Explicit `study.universe(...)` captured by the builder manifest. In the current FEM pipeline this is treated as declared workspace framing, not a guaranteed outer air box."
-        : "Explicit `study.universe(...)` captured by the builder manifest.")
+        ? "Universe/Airbox values below come directly from the active runtime domain frame and live mesh state."
+        : "Universe values below come directly from the active runtime state.")
     : ctx.isFemBackend && ctx.worldExtentSource === "declared_universe_manual"
-      ? "The current FEM world box comes from previously captured universe metadata. It is shown as declared framing, not as a guaranteed solver air box."
+      ? "The current FEM world box comes from the active runtime domain frame."
     : ctx.isFemBackend && ctx.worldExtentSource === "object_union_bounds"
       ? `No explicit universe in the script yet; the control room is framing the FEM world from ${ctx.objectOverlays.length} object bounds.`
     : ctx.isFemBackend && ctx.worldExtentSource === "declared_universe_auto_padding"
@@ -111,10 +114,16 @@ export default function UniversePanel() {
 
   const updateUniverse = useCallback(
     (updater: (current: ScriptBuilderUniverseState) => ScriptBuilderUniverseState) => {
-      if (!builderUniverse) return;
-      ctx.setScriptBuilderUniverse((prev) => updater(prev ?? builderUniverse));
+      const seed: ScriptBuilderUniverseState = builderUniverse ?? runtimeUniverse ?? {
+        mode: "auto",
+        size: null,
+        center: null,
+        padding: null,
+        airbox_hmax: null,
+      };
+      ctx.setScriptBuilderUniverse((prev) => updater(prev ?? seed));
     },
-    [builderUniverse, ctx],
+    [builderUniverse, ctx, runtimeUniverse],
   );
 
   const updateVecComponent = useCallback(
@@ -385,11 +394,11 @@ export default function UniversePanel() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <TextField
-                key={`airbox-hmax-${builderUniverse?.airbox_hmax ?? "auto"}`}
+                key={`airbox-hmax-${effectiveAirboxHmax ?? "auto"}`}
                 label="Airbox Hmax (nm)"
-                defaultValue={formatNm(builderUniverse?.airbox_hmax)}
+                defaultValue={formatNm(effectiveAirboxHmax)}
                 onBlur={(event) => {
-                  if (!editable || !builderUniverse) return;
+                  if (!editable) return;
                   const value = event.target.value;
                   const trimmed = value.trim();
                   if (trimmed.length === 0) {
@@ -404,7 +413,7 @@ export default function UniversePanel() {
                   }));
                 }}
                 disabled={!editable}
-                tooltip="Declared maximum tetrahedron size for the airbox domain. Leave blank to keep automatic grading."
+                tooltip="Live runtime maximum tetrahedron size for the airbox region. Leave blank to keep automatic grading."
               />
               <MetricField
                 label="Airbox Nodes"
@@ -449,6 +458,23 @@ export default function UniversePanel() {
                 ]}
               />
             ) : null}
+            <div className="rounded-lg border border-border/35 bg-background/35 p-3">
+              <div className="mb-2 text-[0.62rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                Shared-Domain Mesher Policy
+              </div>
+              <div className="mb-3 text-[0.68rem] leading-relaxed text-muted-foreground">
+                `Airbox Hmax` above controls only the air region. The controls below come from the active runtime mesher policy and affect the conformal shared-domain rebuild for airbox + magnetic bodies.
+              </div>
+              <MeshSettingsPanel
+                options={ctx.meshOptions}
+                onChange={ctx.setMeshOptions}
+                quality={ctx.meshQualityData}
+                generating={ctx.meshGenerating}
+                disabled={ctx.meshGenerating}
+                nodeCount={meshSummary?.node_count ?? ctx.effectiveFemMesh?.nodes.length}
+                showAdaptiveSection={false}
+              />
+            </div>
             <div className="rounded-lg border border-border/35 bg-background/35 p-3">
               <div className="mb-2 text-[0.62rem] font-semibold uppercase tracking-widest text-muted-foreground">
                 Viewport

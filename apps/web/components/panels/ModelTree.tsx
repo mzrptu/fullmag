@@ -421,10 +421,10 @@ export function buildFullmagModelTree(opts: {
       opts.universeDeclaredSize ||
       opts.universeEffectiveSize,
   );
-  const universeMode = graphUniverse?.mode ?? opts.universeMode ?? null;
-  const universeDeclaredSize = graphUniverse?.size ?? opts.universeDeclaredSize ?? null;
-  const universeCenter = graphUniverse?.center ?? opts.universeCenter ?? null;
-  const universePadding = graphUniverse?.padding ?? opts.universePadding ?? null;
+  const universeMode = opts.universeMode ?? graphUniverse?.mode ?? null;
+  const universeDeclaredSize = opts.universeDeclaredSize ?? graphUniverse?.size ?? null;
+  const universeCenter = opts.universeCenter ?? graphUniverse?.center ?? null;
+  const universePadding = opts.universePadding ?? graphUniverse?.padding ?? null;
 
   /* ── Physics ─────────────────────────────────────────────────────── */
   const physicsChildren: TreeNodeData[] = [

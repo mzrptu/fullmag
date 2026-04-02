@@ -55,6 +55,7 @@ export default function RunSidebar() {
         return "Workspace framing";
     }
   }, [cmd.isFemBackend, model.worldExtentSource]);
+  const runtimeDeclaredUniverse = model.domainFrame?.declared_universe ?? null;
 
   /* ── Build model tree nodes ── */
   const modelTreeNodes = useMemo(
@@ -64,9 +65,11 @@ export default function RunSidebar() {
         sceneDocument: model.sceneDocument,
         studyLabel: "Study",
         backend: cmd.isFemBackend ? "FEM" : "FDM",
+        universeMode: runtimeDeclaredUniverse?.mode ?? null,
+        universeDeclaredSize: runtimeDeclaredUniverse?.size ?? null,
         universeEffectiveSize: model.worldExtent,
         universeCenter: model.worldCenter,
-        universePadding: model.scriptBuilderUniverse?.padding ?? null,
+        universePadding: runtimeDeclaredUniverse?.padding ?? null,
         universeRole,
         domainMeshMode: model.effectiveFemMesh?.domain_mesh_mode ?? null,
         airPartElementCount: model.airPart?.element_count ?? null,
@@ -103,7 +106,7 @@ export default function RunSidebar() {
       model.mesherSourceKind, model.meshFeOrder, model.meshName,
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm,
-      tp.effectiveDmDt, tp.scalarRows.length, model.worldCenter, model.worldExtent, model.scriptBuilderUniverse?.padding,
+      tp.effectiveDmDt, tp.scalarRows.length, model.worldCenter, model.worldExtent, runtimeDeclaredUniverse?.mode, runtimeDeclaredUniverse?.padding, runtimeDeclaredUniverse?.size,
       universeRole,
     ],
   );
