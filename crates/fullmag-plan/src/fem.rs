@@ -8,10 +8,10 @@ use std::collections::BTreeMap;
 
 use crate::error::PlanError;
 use crate::mesh::{
-    build_air_box_config, compatible_fem_material, initial_vectors_for_magnet,
-    load_mesh_from_source, merge_fem_meshes, mesh_bounds, resolve_fem_domain_mesh_asset,
-    resolved_domain_mesh_mode, study_universe_planner_note, MagnetPlanningEntry,
-    AIR_OBJECT_SEGMENT_ID,
+    build_air_box_config, build_mesh_parts_from_segments, compatible_fem_material,
+    initial_vectors_for_magnet, load_mesh_from_source, merge_fem_meshes, mesh_bounds,
+    resolve_fem_domain_mesh_asset, resolved_domain_mesh_mode, study_universe_planner_note,
+    MagnetPlanningEntry, AIR_OBJECT_SEGMENT_ID,
 };
 use crate::util::{problem_domain_frame, runtime_requests_cuda, MU0};
 use crate::validate::{
@@ -63,6 +63,167 @@ fn remap_segment_object_ids(
         .collect()
 }
 
+fn assign_material_ids_to_mesh_parts(
+    mesh_parts: &mut [fullmag_ir::FemMeshPartIR],
+    magnet_entries: &[MagnetPlanningEntry],
+    magnet_materials: &BTreeMap<String, fullmag_ir::MaterialIR>,
+) {
+    let geometry_to_magnet = magnet_entries
+        .iter()
+        .map(|entry| (entry.geometry_name.as_str(), entry.magnet_name.as_str()))
+        .collect::<BTreeMap<_, _>>();
+
+    for part in mesh_parts {
+        let Some(candidate_object_id) = part.object_id.as_deref() else {
+            continue;
+        };
+        let matches_object = magnet_entries
+            .iter()
+            .any(|entry| entry.magnet_name == candidate_object_id);
+        let matches_geometry = part
+            .geometry_id
+            .as_deref()
+            .and_then(|geometry_id| geometry_to_magnet.get(geometry_id))
+            .is_some();
+        if matches_object || matches_geometry {
+            let material_name = magnet_materials
+                .get(candidate_object_id)
+                .map(|material| material.name.clone())
+                .or_else(|| {
+                    part.geometry_id
+                        .as_deref()
+                        .and_then(|geometry_id| geometry_to_magnet.get(geometry_id))
+                        .and_then(|magnet_name| magnet_materials.get(*magnet_name))
+                        .map(|material| material.name.clone())
+                });
+            part.material_id = material_name;
+        }
+    }
+}
+
+fn heterogeneous_fem_material_shape_supported(
+    reference: &fullmag_ir::MaterialIR,
+    candidate: &fullmag_ir::MaterialIR,
+) -> bool {
+    reference.anisotropy_axis == candidate.anisotropy_axis
+        && reference.cubic_anisotropy_axis1 == candidate.cubic_anisotropy_axis1
+        && reference.cubic_anisotropy_axis2 == candidate.cubic_anisotropy_axis2
+}
+
+fn segment_element_marker(
+    mesh: &fullmag_ir::MeshIR,
+    segment: &fullmag_ir::FemObjectSegmentIR,
+) -> u32 {
+    if segment.element_count == 0 {
+        return 0;
+    }
+    mesh.element_markers
+        .get(segment.element_start as usize)
+        .copied()
+        .unwrap_or(0)
+}
+
+fn build_region_materials(
+    mesh: &fullmag_ir::MeshIR,
+    object_segments: &[fullmag_ir::FemObjectSegmentIR],
+    magnet_materials: &BTreeMap<String, fullmag_ir::MaterialIR>,
+) -> Vec<fullmag_ir::FemRegionMaterialIR> {
+    object_segments
+        .iter()
+        .filter(|segment| segment.object_id != AIR_OBJECT_SEGMENT_ID)
+        .filter_map(|segment| {
+            magnet_materials.get(&segment.object_id).map(|material| {
+                fullmag_ir::FemRegionMaterialIR {
+                    object_id: segment.object_id.clone(),
+                    material: material.clone(),
+                    element_marker: segment_element_marker(mesh, segment),
+                }
+            })
+        })
+        .collect()
+}
+
+fn values_differ(values: &[f64], reference: f64) -> bool {
+    values
+        .iter()
+        .any(|value| (*value - reference).abs() > 1e-18)
+}
+
+fn build_region_material_fields(
+    base_material: &fullmag_ir::MaterialIR,
+    mesh: &fullmag_ir::MeshIR,
+    object_segments: &[fullmag_ir::FemObjectSegmentIR],
+    magnet_materials: &BTreeMap<String, fullmag_ir::MaterialIR>,
+) -> fullmag_ir::MaterialIR {
+    let node_count = mesh.nodes.len();
+    if node_count == 0 {
+        return base_material.clone();
+    }
+
+    let mut material = base_material.clone();
+    let mut ms_values = vec![base_material.saturation_magnetisation; node_count];
+    let mut a_values = vec![base_material.exchange_stiffness; node_count];
+    let mut alpha_values = vec![base_material.damping; node_count];
+    let mut ku_values = vec![base_material.uniaxial_anisotropy.unwrap_or(0.0); node_count];
+    let mut ku2_values = vec![base_material.uniaxial_anisotropy_k2.unwrap_or(0.0); node_count];
+    let mut kc1_values = vec![base_material.cubic_anisotropy_kc1.unwrap_or(0.0); node_count];
+    let mut kc2_values = vec![base_material.cubic_anisotropy_kc2.unwrap_or(0.0); node_count];
+    let mut kc3_values = vec![base_material.cubic_anisotropy_kc3.unwrap_or(0.0); node_count];
+
+    for segment in object_segments {
+        if segment.object_id == AIR_OBJECT_SEGMENT_ID {
+            continue;
+        }
+        let Some(region_material) = magnet_materials.get(&segment.object_id) else {
+            continue;
+        };
+        let start = segment.node_start as usize;
+        let end = start
+            .saturating_add(segment.node_count as usize)
+            .min(node_count);
+        for index in start..end {
+            ms_values[index] = region_material.saturation_magnetisation;
+            a_values[index] = region_material.exchange_stiffness;
+            alpha_values[index] = region_material.damping;
+            ku_values[index] = region_material.uniaxial_anisotropy.unwrap_or(0.0);
+            ku2_values[index] = region_material.uniaxial_anisotropy_k2.unwrap_or(0.0);
+            kc1_values[index] = region_material.cubic_anisotropy_kc1.unwrap_or(0.0);
+            kc2_values[index] = region_material.cubic_anisotropy_kc2.unwrap_or(0.0);
+            kc3_values[index] = region_material.cubic_anisotropy_kc3.unwrap_or(0.0);
+        }
+    }
+
+    material.ms_field =
+        values_differ(&ms_values, base_material.saturation_magnetisation).then_some(ms_values);
+    material.a_field =
+        values_differ(&a_values, base_material.exchange_stiffness).then_some(a_values);
+    material.alpha_field =
+        values_differ(&alpha_values, base_material.damping).then_some(alpha_values);
+    material.ku_field = values_differ(&ku_values, base_material.uniaxial_anisotropy.unwrap_or(0.0))
+        .then_some(ku_values);
+    material.ku2_field = values_differ(
+        &ku2_values,
+        base_material.uniaxial_anisotropy_k2.unwrap_or(0.0),
+    )
+    .then_some(ku2_values);
+    material.kc1_field = values_differ(
+        &kc1_values,
+        base_material.cubic_anisotropy_kc1.unwrap_or(0.0),
+    )
+    .then_some(kc1_values);
+    material.kc2_field = values_differ(
+        &kc2_values,
+        base_material.cubic_anisotropy_kc2.unwrap_or(0.0),
+    )
+    .then_some(kc2_values);
+    material.kc3_field = values_differ(
+        &kc3_values,
+        base_material.cubic_anisotropy_kc3.unwrap_or(0.0),
+    )
+    .then_some(kc3_values);
+    material
+}
+
 pub(crate) fn plan_fem(
     problem: &ProblemIR,
     resolved_backend: BackendTarget,
@@ -103,6 +264,8 @@ pub(crate) fn plan_fem(
     let mut mesh_parts = Vec::with_capacity(problem.magnets.len());
     let mut mesh_sources = Vec::with_capacity(problem.magnets.len());
     let mut selected_material: Option<fullmag_ir::MaterialIR> = None;
+    let mut has_heterogeneous_materials = false;
+    let mut magnet_materials = BTreeMap::<String, fullmag_ir::MaterialIR>::new();
     let mut magnet_entries = Vec::with_capacity(problem.magnets.len());
 
     for magnet in &problem.magnets {
@@ -134,15 +297,20 @@ pub(crate) fn plan_fem(
         };
         if let Some(reference_material) = selected_material.as_ref() {
             if !compatible_fem_material(reference_material, &material) {
-                errors.push(format!(
-                    "current multi-body FEM baseline requires identical material law across magnets; '{}' is incompatible with '{}'",
-                    magnet.name,
-                    problem.magnets[0].name
-                ));
+                if !heterogeneous_fem_material_shape_supported(reference_material, &material) {
+                    errors.push(format!(
+                        "current multi-body FEM baseline requires shared anisotropy axes/material-law shape across magnets; '{}' is incompatible with '{}'",
+                        magnet.name,
+                        problem.magnets[0].name
+                    ));
+                } else {
+                    has_heterogeneous_materials = true;
+                }
             }
         } else {
             selected_material = Some(material.clone());
         }
+        magnet_materials.insert(magnet.name.clone(), material.clone());
 
         magnet_entries.push(MagnetPlanningEntry {
             magnet_name: magnet.name.clone(),
@@ -293,7 +461,16 @@ pub(crate) fn plan_fem(
         return Err(PlanError { reasons: errors });
     }
 
-    let material = selected_material.expect("validation should have caught missing FEM material");
+    if has_heterogeneous_materials && !runtime_requests_cuda(problem) {
+        return Err(PlanError {
+            reasons: vec![
+                "heterogeneous multi-body FEM materials currently require the native GPU FEM path; request a CUDA runtime or keep identical material coefficients on CPU".to_string(),
+            ],
+        });
+    }
+
+    let base_material =
+        selected_material.expect("validation should have caught missing FEM material");
     let geometry_to_object_id = geometry_to_object_id_map(&magnet_entries);
     let (mesh, raw_object_segments, mesh_source, initial_magnetization) =
         if let Some(domain_asset) = resolved_domain_mesh_asset.as_ref() {
@@ -352,6 +529,19 @@ pub(crate) fn plan_fem(
     let n_elements = mesh.elements.len();
     let mesh_name = mesh.mesh_name.clone();
     let domain_mesh_mode = resolved_domain_mesh_mode(&mesh);
+    let mut resolved_mesh_parts =
+        build_mesh_parts_from_segments(&mesh, &object_segments, domain_mesh_mode);
+    assign_material_ids_to_mesh_parts(&mut resolved_mesh_parts, &magnet_entries, &magnet_materials);
+    let region_materials = if has_heterogeneous_materials {
+        build_region_materials(&mesh, &object_segments, &magnet_materials)
+    } else {
+        Vec::new()
+    };
+    let material = if has_heterogeneous_materials {
+        build_region_material_fields(&base_material, &mesh, &object_segments, &magnet_materials)
+    } else {
+        base_material.clone()
+    };
     let domain_frame = problem_domain_frame(problem)
         .map(|frame| frame.with_mesh_bounds(mesh_bounds(&mesh)))
         .and_then(DomainFrameIR::finalized);
@@ -390,12 +580,14 @@ pub(crate) fn plan_fem(
         mesh_source,
         mesh,
         object_segments,
+        mesh_parts: resolved_mesh_parts,
         domain_mesh_mode,
         domain_frame,
         fe_order: fem_hints.order,
         hmax: fem_hints.hmax,
         initial_magnetization,
         material,
+        region_materials,
         enable_exchange,
         enable_demag,
         external_field,
@@ -849,6 +1041,17 @@ pub(crate) fn plan_fem_eigen(
     let n_nodes = mesh.nodes.len();
     let n_elements = mesh.elements.len();
     let domain_mesh_mode = resolved_domain_mesh_mode(&mesh);
+    let mut resolved_mesh_parts =
+        build_mesh_parts_from_segments(&mesh, &object_segments, domain_mesh_mode);
+    let mesh_part_materials = magnet_entries
+        .iter()
+        .map(|entry| (entry.magnet_name.clone(), material.clone()))
+        .collect::<BTreeMap<_, _>>();
+    assign_material_ids_to_mesh_parts(
+        &mut resolved_mesh_parts,
+        &magnet_entries,
+        &mesh_part_materials,
+    );
     let domain_frame = problem_domain_frame(problem)
         .map(|frame| frame.with_mesh_bounds(mesh_bounds(&mesh)))
         .and_then(DomainFrameIR::finalized);
@@ -877,6 +1080,7 @@ pub(crate) fn plan_fem_eigen(
         mesh_source,
         mesh,
         object_segments,
+        mesh_parts: resolved_mesh_parts,
         domain_mesh_mode,
         domain_frame,
         fe_order: fem_hints.order,

@@ -11,6 +11,7 @@ import numpy as np
 import fullmag as fm
 from fullmag import _core as fullmag_core
 from fullmag.meshing.asset_pipeline import (
+    _study_universe_airbox_options,
     realize_fdm_grid_asset,
     realize_fem_domain_mesh_asset,
     realize_fem_mesh_asset,
@@ -84,6 +85,23 @@ class MeshScaffoldTests(unittest.TestCase):
         np.testing.assert_array_equal(mesh.element_markers, loaded.element_markers)
         np.testing.assert_array_equal(mesh.boundary_faces, loaded.boundary_faces)
         np.testing.assert_array_equal(mesh.boundary_markers, loaded.boundary_markers)
+
+    def test_study_universe_airbox_hmax_overrides_grading(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        airbox = _study_universe_airbox_options(
+            [left],
+            {
+                "mode": "manual",
+                "size": [8.0, 8.0, 8.0],
+                "center": [0.0, 0.0, 0.0],
+                "airbox_hmax": 0.5,
+            },
+        )
+        self.assertIsNotNone(airbox)
+        assert airbox is not None
+        self.assertEqual(airbox.size, (8.0, 8.0, 8.0))
+        self.assertEqual(airbox.center, (0.0, 0.0, 0.0))
+        self.assertEqual(airbox.hmax, 0.5)
 
     def test_meshdata_roundtrip_json(self) -> None:
         mesh = self._unit_tet_mesh()

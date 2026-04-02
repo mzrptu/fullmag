@@ -29,6 +29,8 @@ import type {
 } from "../../../lib/useSessionStream";
 import type {
   DomainFrameState,
+  FemMeshPart,
+  MeshEntityViewStateMap,
   ModelBuilderGraphV2,
   SceneDocument,
   ScriptBuilderCurrentModuleEntry,
@@ -199,6 +201,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [objectViewMode, setObjectViewMode] = useState<ObjectViewMode>("context");
   const [airMeshVisible, setAirMeshVisible] = useState(true);
   const [airMeshOpacity, setAirMeshOpacity] = useState(28);
+  const [meshEntityViewState, setMeshEntityViewState] = useState<MeshEntityViewStateMap>({});
+  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [focusedEntityId, setFocusedEntityId] = useState<string | null>(null);
   const [commandPostInFlight, setCommandPostInFlight] = useState(false);
   const [commandErrorMessage, setCommandErrorMessage] = useState<string | null>(null);
   const [scriptSyncBusy, setScriptSyncBusy] = useState(false);
@@ -934,6 +939,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
             size: scriptBuilderUniverse.size,
             center: scriptBuilderUniverse.center,
             padding: scriptBuilderUniverse.padding,
+            airbox_hmax: scriptBuilderUniverse.airbox_hmax,
           }
         : null,
       object_bounds_min: builderObjectBounds?.boundsMin ?? null,
@@ -1871,6 +1877,22 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     () => (isMeshPreview && renderPreview?.fem_mesh ? renderPreview.fem_mesh : femMesh),
     [femMesh, isMeshPreview, renderPreview?.fem_mesh],
   );
+  const meshParts = useMemo<FemMeshPart[]>(
+    () => effectiveFemMesh?.mesh_parts ?? [],
+    [effectiveFemMesh],
+  );
+  const magneticParts = useMemo(
+    () => meshParts.filter((part) => part.role === "magnetic_object"),
+    [meshParts],
+  );
+  const airPart = useMemo(
+    () => meshParts.find((part) => part.role === "air") ?? null,
+    [meshParts],
+  );
+  const interfaceParts = useMemo(
+    () => meshParts.filter((part) => part.role === "interface"),
+    [meshParts],
+  );
   const objectOverlays = useMemo<BuilderObjectOverlay[]>(
     () => buildObjectOverlays(scriptBuilderGeometries, effectiveFemMesh),
     [effectiveFemMesh, scriptBuilderGeometries],
@@ -1937,6 +1959,36 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       firstElement,
     ].join(":");
   }, [effectiveFemMesh, femMesh?.elements.length]);
+
+  useEffect(() => {
+    if (!meshParts.length) {
+      setMeshEntityViewState({});
+      setSelectedEntityId(null);
+      setFocusedEntityId(null);
+      return;
+    }
+    setMeshEntityViewState((prev) => {
+      const next: MeshEntityViewStateMap = {};
+      for (const part of meshParts) {
+        next[part.id] = prev[part.id] ?? {
+          visible: true,
+          renderMode: part.role === "air" ? "wireframe" : "surface+edges",
+          opacity: part.role === "air" ? 28 : 100,
+          colorField: part.role === "air" ? "none" : "orientation",
+        };
+      }
+      return next;
+    });
+  }, [effectiveFemMesh?.generation_id, meshParts]);
+
+  useEffect(() => {
+    if (selectedEntityId && !meshParts.some((part) => part.id === selectedEntityId)) {
+      setSelectedEntityId(null);
+    }
+    if (focusedEntityId && !meshParts.some((part) => part.id === focusedEntityId)) {
+      setFocusedEntityId(null);
+    }
+  }, [focusedEntityId, meshParts, selectedEntityId]);
 
   // Keep femTopologyKeyRef in sync so handleMeshGenerate can snapshot the current key
   femTopologyKeyRef.current = femTopologyKey;
@@ -2182,9 +2234,16 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     objectViewMode,
     airMeshVisible,
     airMeshOpacity,
+    meshEntityViewState,
+    selectedEntityId,
+    focusedEntityId,
+    meshParts,
+    magneticParts,
+    airPart,
+    interfaceParts,
     setSolverSettings, setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
-    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setAirMeshVisible, setAirMeshOpacity, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
     localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
@@ -2195,7 +2254,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder,
     domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
-    selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, requestFocusObject,
+    selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, magneticParts, airPart, interfaceParts, requestFocusObject,
     setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   ]);

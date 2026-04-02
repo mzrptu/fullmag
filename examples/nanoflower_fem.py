@@ -12,11 +12,16 @@ study = fm.study("nanoflower_fem")
 study.engine("fem")
 study.device("cuda:0", precision="double")
 study.interactive(True)
+# Shared-domain FEM:
+# - `study.mesh(...)` controls the magnetic-body target size
+# - `study.universe(..., airbox_hmax=...)` controls the outer air domain
 study.universe(
     mode="manual",
     size=(400e-9, 400e-9, 400e-9),
     center=(0.0, 0.0, 0.0),
+    airbox_hmax=60e-9,
 )
+study.mesh(hmax=20e-9, order=1)
 
 # ── Geometry & Material ─────────────────────────────────────
 FLOWER_SPAN_X = 329.98683166503906e-9
@@ -26,7 +31,7 @@ FLOWER_OFFSET_X = 0.5 * FLOWER_PITCH_X
 
 
 def add_nanoflower(name: str, offset_x: float, seed: int):
-    flower = fm.geometry(
+    flower = study.geometry(
         fm.ImportedGeometry(
             source="nanoflower.stl",
             units="nm",
@@ -38,12 +43,14 @@ def add_nanoflower(name: str, offset_x: float, seed: int):
     flower.Aex = 15.5e-12   # exchange stiffness [J/m]
     flower.alpha = 0.1      # Gilbert damping
     flower.m = fm.random(seed=seed)
-    flower.mesh(hmax=20e-9, order=1).build()
     return flower
 
 
 flower_left = add_nanoflower("nanoflower_left", 0, seed=1)
 # flower_right = add_nanoflower("nanoflower_right", FLOWER_OFFSET_X, seed=2)
+
+# Explicitly realize the shared magnetic+air mesh before solve.
+study.build_mesh()
 
 # ── Solver ──────────────────────────────────────────────────
 study.solver(dt=1e-15, g=2.115, integrator="heun")

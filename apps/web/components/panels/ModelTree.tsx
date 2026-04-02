@@ -299,6 +299,9 @@ export function buildFullmagModelTree(opts: {
   universeCenter?: [number, number, number] | null;
   universePadding?: [number, number, number] | null;
   universeRole?: string | null;
+  domainMeshMode?: string | null;
+  airPartElementCount?: number | null;
+  airPartNodeCount?: number | null;
   geometryKind?: string;
   materialName?: string;
   materialMsat?: number | null;
@@ -489,6 +492,9 @@ export function buildFullmagModelTree(opts: {
         universeCenter,
         universePadding,
         universeRole: opts.universeRole,
+        domainMeshMode: opts.domainMeshMode,
+        airPartElementCount: opts.airPartElementCount,
+        airPartNodeCount: opts.airPartNodeCount,
         meshStatus: opts.meshStatus,
         meshElements: opts.meshElements,
         meshNodes: opts.meshNodes,
@@ -619,6 +625,9 @@ function _buildUniverseChildren(opts: {
   universeCenter?: [number, number, number] | null;
   universePadding?: [number, number, number] | null;
   universeRole?: string | null;
+  domainMeshMode?: string | null;
+  airPartElementCount?: number | null;
+  airPartNodeCount?: number | null;
   meshStatus?: NodeStatus;
   meshElements?: number;
   meshNodes?: number;
@@ -627,63 +636,90 @@ function _buildUniverseChildren(opts: {
   const children: TreeNodeData[] = [];
   const effectiveSize = opts.universeEffectiveSize ?? null;
   const declaredSize = opts.universeDeclaredSize ?? null;
-
-  if (effectiveSize) {
+  children.push({
+    id: "universe-domain-frame",
+    label: "Domain Frame",
+    icon: "📐",
+    status: "ready",
+    children: [
+      effectiveSize
+        ? {
+            id: "universe-effective-size",
+            label: `Effective extent: ${fmtVec(effectiveSize)}`,
+            icon: "📏",
+          }
+        : null,
+      declaredSize
+        ? {
+            id: "universe-size",
+            label: `Declared size: ${fmtVec(declaredSize)}`,
+            icon: "◫",
+          }
+        : null,
+      opts.universeCenter
+        ? {
+            id: "universe-center",
+            label: `Center: ${fmtVec(opts.universeCenter)}`,
+            icon: "⌖",
+          }
+        : null,
+      hasNonZeroVec(opts.universePadding)
+        ? {
+            id: "universe-padding",
+            label: `Padding: ${fmtVec(opts.universePadding)}`,
+            icon: "↔",
+          }
+        : null,
+      opts.universeRole
+        ? {
+            id: "universe-role",
+            label: opts.universeRole,
+            icon: "⚙",
+          }
+        : null,
+    ].filter(Boolean) as TreeNodeData[],
+  });
+  if (opts.domainMeshMode === "shared_domain_mesh_with_air") {
     children.push({
-      id: "universe-effective-size",
-      label: `Effective extent: ${fmtVec(effectiveSize)}`,
-      icon: "📏",
-    });
-  }
-  if (declaredSize) {
-    children.push({
-      id: "universe-size",
-      label: `Declared size: ${fmtVec(declaredSize)}`,
-      icon: "◫",
-    });
-  }
-  if (opts.universeCenter) {
-    children.push({
-      id: "universe-center",
-      label: `Center: ${fmtVec(opts.universeCenter)}`,
-      icon: "⌖",
-    });
-  }
-  if (hasNonZeroVec(opts.universePadding)) {
-    children.push({
-      id: "universe-padding",
-      label: `Padding: ${fmtVec(opts.universePadding)}`,
-      icon: "↔",
-    });
-  }
-  if (opts.universeRole) {
-    children.push({
-      id: "universe-role",
-      label: opts.universeRole,
-      icon: "⚙",
+      id: "universe-airbox",
+      label: "Airbox",
+      icon: "🌐",
+      status: "ready",
+      badge:
+        opts.airPartElementCount != null
+          ? `${opts.airPartElementCount.toLocaleString()} el`
+          : (opts.airPartNodeCount != null ? `${opts.airPartNodeCount.toLocaleString()} nodes` : undefined),
     });
   }
   children.push({
-    id: "universe-mesh",
-    label: "Global Mesh",
-    icon: "◫",
-    badge: opts.meshElements
-      ? `${opts.meshElements.toLocaleString()} el`
-      : opts.meshNodes
-        ? `${opts.meshNodes.toLocaleString()} nodes`
-        : "—",
-    status: opts.meshStatus ?? "pending",
-    children: [
-      { id: "universe-mesh-view", label: "Inspect View", icon: "👁" },
-      {
-        id: "universe-mesh-size",
-        label: opts.meshFeOrder != null ? `Order: P${opts.meshFeOrder}` : "Size",
-        icon: "📏",
-      },
-      { id: "universe-mesh-quality", label: "Quality", icon: "📊" },
-      { id: "universe-mesh-pipeline", label: "Pipeline", icon: "🧭" },
-    ],
+    id: "universe-boundary",
+    label: "Outer Boundary",
+    icon: "🔲",
+    status: "ready",
   });
+  if (opts.domainMeshMode !== "shared_domain_mesh_with_air") {
+    children.push({
+      id: "universe-mesh",
+      label: "Global Mesh",
+      icon: "◫",
+      badge: opts.meshElements
+        ? `${opts.meshElements.toLocaleString()} el`
+        : opts.meshNodes
+          ? `${opts.meshNodes.toLocaleString()} nodes`
+          : "—",
+      status: opts.meshStatus ?? "pending",
+      children: [
+        { id: "universe-mesh-view", label: "Inspect View", icon: "👁" },
+        {
+          id: "universe-mesh-size",
+          label: opts.meshFeOrder != null ? `Order: P${opts.meshFeOrder}` : "Size",
+          icon: "📏",
+        },
+        { id: "universe-mesh-quality", label: "Quality", icon: "📊" },
+        { id: "universe-mesh-pipeline", label: "Pipeline", icon: "🧭" },
+      ],
+    });
+  }
   return children;
 }
 

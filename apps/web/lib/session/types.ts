@@ -62,6 +62,9 @@ export interface FemLiveMesh {
   boundary_faces: [number, number, number][];
   boundary_markers?: number[];
   object_segments?: FemLiveMeshObjectSegment[];
+  mesh_parts?: FemMeshPart[];
+  domain_mesh_mode?: string | null;
+  generation_id?: string | null;
 }
 
 export interface FemLiveMeshObjectSegment {
@@ -74,6 +77,40 @@ export interface FemLiveMeshObjectSegment {
   boundary_face_start: number;
   boundary_face_count: number;
 }
+
+export interface FemMeshPart {
+  id: string;
+  label: string;
+  role: "air" | "magnetic_object" | "interface" | "outer_boundary";
+  object_id: string | null;
+  geometry_id: string | null;
+  material_id: string | null;
+  element_start: number;
+  element_count: number;
+  boundary_face_start: number;
+  boundary_face_count: number;
+  node_start: number;
+  node_count: number;
+  bounds_min: [number, number, number] | null;
+  bounds_max: [number, number, number] | null;
+}
+
+export interface MeshEntityViewState {
+  visible: boolean;
+  renderMode: "surface" | "surface+edges" | "wireframe" | "points";
+  opacity: number;
+  colorField:
+    | "orientation"
+    | "x"
+    | "y"
+    | "z"
+    | "magnitude"
+    | "quality"
+    | "sicn"
+    | "none";
+}
+
+export type MeshEntityViewStateMap = Record<string, MeshEntityViewState>;
 
 export interface ScalarRow {
   step: number;
@@ -286,6 +323,7 @@ export interface ScriptBuilderUniverseState {
   size: [number, number, number] | null;
   center: [number, number, number] | null;
   padding: [number, number, number] | null;
+  airbox_hmax: number | null;
 }
 
 export interface DomainFrameDeclaredUniverseState {
@@ -293,6 +331,7 @@ export interface DomainFrameDeclaredUniverseState {
   size: [number, number, number] | null;
   center: [number, number, number] | null;
   padding: [number, number, number] | null;
+  airbox_hmax: number | null;
 }
 
 export interface DomainFrameState {

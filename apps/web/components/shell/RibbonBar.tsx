@@ -91,6 +91,7 @@ interface RibbonBarProps {
 /* ── Tab inference from tree node ── */
 function inferTab(nodeId: string | null | undefined): RibbonTab {
   if (!nodeId) return "Home";
+  if (nodeId === "universe-airbox" || nodeId === "universe-boundary") return "Mesh";
   if (nodeId === "universe-mesh" || nodeId.startsWith("universe-mesh-")) return "Mesh";
   if (nodeId.startsWith("mesh") || nodeId === "mesh") return "Mesh";
   // Per-object mesh nodes (e.g. "geo-nanoflower-mesh") → Mesh tab
@@ -200,7 +201,7 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           accent: true,
           disabled: !p.isFemBackend || p.meshGenerating,
           action: () => {
-            p.onSelectModelNode?.("universe-mesh");
+            p.onSelectModelNode?.("universe-airbox");
             p.onGenerateMesh?.();
           },
         },

@@ -1,6 +1,7 @@
 use fullmag_ir::{
     AirBoxConfigIR, FemDomainMeshAssetIR, FemDomainMeshModeIR, FemDomainRegionMarkerIR,
-    FemObjectSegmentIR, InitialMagnetizationIR, MeshIR, ProblemIR,
+    FemMeshPartIR, FemMeshPartRole, FemMeshPartSelector, FemObjectSegmentIR,
+    InitialMagnetizationIR, MeshIR, ProblemIR,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -20,6 +21,71 @@ pub(crate) fn resolved_domain_mesh_mode(mesh: &MeshIR) -> FemDomainMeshModeIR {
     } else {
         FemDomainMeshModeIR::MergedMagneticMesh
     }
+}
+
+pub(crate) fn build_mesh_parts_from_segments(
+    mesh: &MeshIR,
+    object_segments: &[FemObjectSegmentIR],
+    _domain_mesh_mode: FemDomainMeshModeIR,
+) -> Vec<FemMeshPartIR> {
+    object_segments
+        .iter()
+        .map(|segment| {
+            let role = if segment.object_id == AIR_OBJECT_SEGMENT_ID {
+                FemMeshPartRole::Air
+            } else {
+                FemMeshPartRole::MagneticObject
+            };
+            let bounds = compute_segment_bounds(mesh, segment);
+            FemMeshPartIR {
+                id: format!("part:{}", segment.object_id),
+                label: segment.object_id.clone(),
+                role: role.clone(),
+                object_id: match role {
+                    FemMeshPartRole::MagneticObject => Some(segment.object_id.clone()),
+                    _ => None,
+                },
+                geometry_id: segment.geometry_id.clone(),
+                material_id: None,
+                element_selector: FemMeshPartSelector::ElementRange {
+                    start: segment.element_start,
+                    count: segment.element_count,
+                },
+                boundary_face_selector: FemMeshPartSelector::BoundaryFaceRange {
+                    start: segment.boundary_face_start,
+                    count: segment.boundary_face_count,
+                },
+                node_selector: FemMeshPartSelector::NodeRange {
+                    start: segment.node_start,
+                    count: segment.node_count,
+                },
+                bounds_min: bounds.map(|(min, _)| min),
+                bounds_max: bounds.map(|(_, max)| max),
+                parent_id: None,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn compute_segment_bounds(
+    mesh: &MeshIR,
+    segment: &FemObjectSegmentIR,
+) -> Option<([f64; 3], [f64; 3])> {
+    let start = segment.node_start as usize;
+    let end = start + segment.node_count as usize;
+    if start >= end || end > mesh.nodes.len() {
+        return None;
+    }
+
+    let mut min = mesh.nodes[start];
+    let mut max = mesh.nodes[start];
+    for node in &mesh.nodes[start..end] {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(node[axis]);
+            max[axis] = max[axis].max(node[axis]);
+        }
+    }
+    Some((min, max))
 }
 
 #[derive(Debug, Clone)]
@@ -88,10 +154,29 @@ pub(crate) fn load_fem_domain_mesh_asset(asset: &FemDomainMeshAssetIR) -> Result
     }
 }
 
-pub(crate) fn reorder_shared_domain_mesh(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DetectedInterface {
+    pub marker_a: u32,
+    pub marker_b: u32,
+    pub object_a: String,
+    pub object_b: String,
+    pub shared_face_count: u32,
+    pub shared_node_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SharedDomainAnalysis {
+    pub node_owner: Vec<u32>,
+    pub face_owner: BTreeMap<(u32, u32, u32), u32>,
+    pub interfaces: Vec<DetectedInterface>,
+    pub ordered_regions: Vec<(String, u32)>,
+    pub shared_interface_nodes: Vec<(u32, Vec<u32>)>,
+}
+
+pub(crate) fn analyze_shared_domain_mesh(
     mesh: &MeshIR,
     region_markers: &[FemDomainRegionMarkerIR],
-) -> Result<(MeshIR, Vec<FemObjectSegmentIR>), String> {
+) -> Result<SharedDomainAnalysis, String> {
     if region_markers.is_empty() {
         return Err(
             "fem_domain_mesh_asset.region_markers must describe at least one magnetic region"
@@ -117,31 +202,126 @@ pub(crate) fn reorder_shared_domain_mesh(
         }
     }
 
-    let mut node_owner = vec![0u32; mesh.nodes.len()];
+    let mut node_marker_sets = vec![BTreeSet::<u32>::new(); mesh.nodes.len()];
     for (element_index, element) in mesh.elements.iter().enumerate() {
         let marker = mesh.element_markers[element_index];
         if marker == 0 {
             continue;
         }
         for &node in element {
-            let slot = &mut node_owner[node as usize];
-            if *slot == 0 {
-                *slot = marker;
-            } else if *slot != marker {
-                return Err(format!(
-                    "shared-domain FEM mesh '{}' reuses node {} across magnetic markers {} and {}",
-                    mesh.mesh_name, node, *slot, marker
-                ));
+            if let Some(slot) = node_marker_sets.get_mut(node as usize) {
+                slot.insert(marker);
             }
         }
     }
 
+    let mut node_owner = vec![0u32; mesh.nodes.len()];
+    let mut shared_interface_nodes: Vec<(u32, Vec<u32>)> = Vec::new();
+    for (node_index, markers) in node_marker_sets.iter().enumerate() {
+        if markers.is_empty() {
+            continue;
+        }
+        node_owner[node_index] = *markers.iter().next().expect("non-empty set");
+        if markers.len() > 1 {
+            shared_interface_nodes.push((node_index as u32, markers.iter().copied().collect()));
+        }
+    }
+
+    let mut face_markers = BTreeMap::<(u32, u32, u32), BTreeSet<u32>>::new();
+    for (element_index, element) in mesh.elements.iter().enumerate() {
+        let marker = mesh.element_markers[element_index];
+        if marker == 0 {
+            continue;
+        }
+        for face in tet_faces(element) {
+            face_markers
+                .entry(sorted_face_key(face))
+                .or_default()
+                .insert(marker);
+        }
+    }
+
+    let mut face_owner = BTreeMap::<(u32, u32, u32), u32>::new();
+    let mut interface_face_counts = BTreeMap::<(u32, u32), u32>::new();
+    for (face_key, markers) in &face_markers {
+        if markers.len() <= 1 {
+            face_owner.insert(*face_key, markers.iter().copied().next().unwrap_or(0));
+            continue;
+        }
+        face_owner.insert(*face_key, u32::MAX);
+        let marker_list = markers.iter().copied().collect::<Vec<_>>();
+        for i in 0..marker_list.len() {
+            for j in (i + 1)..marker_list.len() {
+                let pair = if marker_list[i] <= marker_list[j] {
+                    (marker_list[i], marker_list[j])
+                } else {
+                    (marker_list[j], marker_list[i])
+                };
+                *interface_face_counts.entry(pair).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut interfaces = Vec::new();
+    for ((marker_a, marker_b), shared_face_count) in interface_face_counts {
+        let object_a = marker_to_object
+            .get(&marker_a)
+            .cloned()
+            .unwrap_or_else(|| format!("marker_{marker_a}"));
+        let object_b = marker_to_object
+            .get(&marker_b)
+            .cloned()
+            .unwrap_or_else(|| format!("marker_{marker_b}"));
+        let shared_node_count = shared_interface_nodes
+            .iter()
+            .filter(|(_, markers)| markers.contains(&marker_a) && markers.contains(&marker_b))
+            .count() as u32;
+        interfaces.push(DetectedInterface {
+            marker_a,
+            marker_b,
+            object_a,
+            object_b,
+            shared_face_count,
+            shared_node_count,
+        });
+    }
+
+    Ok(SharedDomainAnalysis {
+        node_owner,
+        face_owner,
+        interfaces,
+        ordered_regions,
+        shared_interface_nodes,
+    })
+}
+
+pub(crate) fn validate_packing_constraints(
+    analysis: &SharedDomainAnalysis,
+    mesh_name: &str,
+    solver_supports_conformal: bool,
+) -> Result<(), String> {
+    if !solver_supports_conformal && !analysis.shared_interface_nodes.is_empty() {
+        return Err(format!(
+            "shared-domain FEM mesh '{}' currently requires disjoint node ownership; {} interface nodes detected. This will be supported in a future release.",
+            mesh_name,
+            analysis.shared_interface_nodes.len()
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn pack_mesh_by_analysis(
+    mesh: &MeshIR,
+    analysis: &SharedDomainAnalysis,
+) -> Result<(MeshIR, Vec<FemObjectSegmentIR>), String> {
+    let ordered_regions = &analysis.ordered_regions;
+
     let mut node_order = Vec::with_capacity(mesh.nodes.len());
     let mut node_start_by_marker = BTreeMap::new();
     let mut node_count_by_marker = BTreeMap::new();
-    for (_object_id, marker) in &ordered_regions {
+    for (_object_id, marker) in ordered_regions {
         node_start_by_marker.insert(*marker, node_order.len() as u32);
-        for (node_index, owner) in node_owner.iter().enumerate() {
+        for (node_index, owner) in analysis.node_owner.iter().enumerate() {
             if *owner == *marker {
                 node_order.push(node_index);
             }
@@ -151,7 +331,7 @@ pub(crate) fn reorder_shared_domain_mesh(
             .expect("node_start inserted above");
         node_count_by_marker.insert(*marker, node_order.len() as u32 - start);
     }
-    for (node_index, owner) in node_owner.iter().enumerate() {
+    for (node_index, owner) in analysis.node_owner.iter().enumerate() {
         if *owner == 0 {
             node_order.push(node_index);
         }
@@ -170,7 +350,7 @@ pub(crate) fn reorder_shared_domain_mesh(
     let mut reordered_markers = Vec::with_capacity(mesh.element_markers.len());
     let mut element_start_by_marker = BTreeMap::new();
     let mut element_count_by_marker = BTreeMap::new();
-    for (_object_id, marker) in &ordered_regions {
+    for (_object_id, marker) in ordered_regions {
         element_start_by_marker.insert(*marker, reordered_elements.len() as u32);
         for (element_index, element) in mesh.elements.iter().enumerate() {
             if mesh.element_markers[element_index] != *marker {
@@ -202,33 +382,15 @@ pub(crate) fn reorder_shared_domain_mesh(
         reordered_markers.push(0);
     }
 
-    let mut face_owner = BTreeMap::<(u32, u32, u32), u32>::new();
-    for (element_index, element) in mesh.elements.iter().enumerate() {
-        let marker = mesh.element_markers[element_index];
-        if marker == 0 {
-            continue;
-        }
-        for face in tet_faces(element) {
-            let key = sorted_face_key(face);
-            if let Some(existing) = face_owner.insert(key, marker) {
-                if existing != marker {
-                    return Err(format!(
-                        "shared-domain FEM mesh '{}' mixes magnetic markers {} and {} on face {:?}",
-                        mesh.mesh_name, existing, marker, key
-                    ));
-                }
-            }
-        }
-    }
-
     let mut reordered_boundary_faces = Vec::with_capacity(mesh.boundary_faces.len());
     let mut reordered_boundary_markers = Vec::with_capacity(mesh.boundary_markers.len());
     let mut boundary_start_by_marker = BTreeMap::new();
     let mut boundary_count_by_marker = BTreeMap::new();
-    for (_object_id, marker) in &ordered_regions {
+    for (_object_id, marker) in ordered_regions {
         boundary_start_by_marker.insert(*marker, reordered_boundary_faces.len() as u32);
         for (face_index, face) in mesh.boundary_faces.iter().enumerate() {
-            let owner = face_owner
+            let owner = analysis
+                .face_owner
                 .get(&sorted_face_key(*face))
                 .copied()
                 .unwrap_or(0);
@@ -248,7 +410,8 @@ pub(crate) fn reorder_shared_domain_mesh(
         boundary_count_by_marker.insert(*marker, reordered_boundary_faces.len() as u32 - start);
     }
     for (face_index, face) in mesh.boundary_faces.iter().enumerate() {
-        let owner = face_owner
+        let owner = analysis
+            .face_owner
             .get(&sorted_face_key(*face))
             .copied()
             .unwrap_or(0);
@@ -335,6 +498,41 @@ pub(crate) fn reorder_shared_domain_mesh(
         )
     })?;
     Ok((reordered_mesh, object_segments))
+}
+
+pub(crate) fn reorder_shared_domain_mesh(
+    mesh: &MeshIR,
+    region_markers: &[FemDomainRegionMarkerIR],
+) -> Result<(MeshIR, Vec<FemObjectSegmentIR>), String> {
+    let analysis = analyze_shared_domain_mesh(mesh, region_markers)?;
+    validate_packing_constraints(&analysis, &mesh.mesh_name, false)?;
+    pack_mesh_by_analysis(mesh, &analysis)
+}
+
+pub(crate) fn build_mesh_parts_from_analysis(
+    mesh: &MeshIR,
+    analysis: &SharedDomainAnalysis,
+    object_segments: &[FemObjectSegmentIR],
+    domain_mesh_mode: FemDomainMeshModeIR,
+) -> Vec<FemMeshPartIR> {
+    let mut parts = build_mesh_parts_from_segments(mesh, object_segments, domain_mesh_mode);
+    for interface in &analysis.interfaces {
+        parts.push(FemMeshPartIR {
+            id: format!("interface:{}:{}", interface.object_a, interface.object_b),
+            label: format!("{} ↔ {}", interface.object_a, interface.object_b),
+            role: FemMeshPartRole::Interface,
+            object_id: None,
+            geometry_id: None,
+            material_id: None,
+            element_selector: FemMeshPartSelector::ElementMarkerSet { markers: vec![] },
+            boundary_face_selector: FemMeshPartSelector::BoundaryFaceRange { start: 0, count: 0 },
+            node_selector: FemMeshPartSelector::NodeRange { start: 0, count: 0 },
+            bounds_min: None,
+            bounds_max: None,
+            parent_id: None,
+        });
+    }
+    parts
 }
 
 pub(crate) fn resolve_fem_domain_mesh_asset(

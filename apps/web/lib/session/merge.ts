@@ -68,6 +68,12 @@ export function mergeSessionState(prev: SessionState | null, next: SessionState)
 
   if (!merged.fem_mesh && prev.fem_mesh) {
     merged.fem_mesh = prev.fem_mesh;
+  } else if (
+    merged.fem_mesh?.generation_id &&
+    prev.fem_mesh?.generation_id &&
+    merged.fem_mesh.generation_id !== prev.fem_mesh.generation_id
+  ) {
+    // New mesh generation: keep the fresh payload and let higher layers reset view state.
   }
 
   const liveRegressed =

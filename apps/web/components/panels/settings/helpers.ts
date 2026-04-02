@@ -38,6 +38,7 @@ export interface BuilderUniverseSummary {
   size: [number, number, number] | null;
   center: [number, number, number] | null;
   padding: [number, number, number] | null;
+  airbox_hmax: number | null;
 }
 
 export function readBuilderModel(metadata: Record<string, unknown> | null): Record<string, unknown> | null {
@@ -80,6 +81,10 @@ export function readBuilderUniverse(metadata: Record<string, unknown> | null): B
     size: asVec3Tuple(universe.size),
     center: asVec3Tuple(universe.center),
     padding: asVec3Tuple(universe.padding),
+    airbox_hmax:
+      typeof universe.airbox_hmax === "number" && Number.isFinite(universe.airbox_hmax)
+        ? universe.airbox_hmax
+        : null,
   };
 }
 

@@ -251,6 +251,8 @@ def _study_universe_airbox_options(
     mode = study_universe.get("mode")
     resolved_mode = str(mode) if isinstance(mode, str) else "auto"
     declared_center = _optional_vec3(study_universe.get("center")) or (0.0, 0.0, 0.0)
+    airbox_hmax = study_universe.get("airbox_hmax")
+    resolved_airbox_hmax = float(airbox_hmax) if airbox_hmax is not None else None
 
     if resolved_mode == "manual":
         declared_size = _optional_vec3(study_universe.get("size"))
@@ -259,6 +261,7 @@ def _study_universe_airbox_options(
         return AirboxOptions(
             size=declared_size,
             center=declared_center,
+            hmax=resolved_airbox_hmax,
         )
 
     padding = _optional_vec3(study_universe.get("padding")) or (0.0, 0.0, 0.0)
@@ -285,6 +288,7 @@ def _study_universe_airbox_options(
     return AirboxOptions(
         size=size,
         center=center,
+        hmax=resolved_airbox_hmax,
     )
 
 

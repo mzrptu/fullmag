@@ -345,6 +345,9 @@ def _render_runtime(
             padding = _optional_vec3(universe.get("padding"))
             if padding is not None:
                 universe_kwargs.append(f"padding={_py_tuple3(padding)}")
+            airbox_hmax = universe.get("airbox_hmax")
+            if airbox_hmax is not None:
+                universe_kwargs.append(f"airbox_hmax={_py_number(float(airbox_hmax))}")
             lines.append(f"{_surface_call(surface, 'universe')}({', '.join(universe_kwargs)})")
     if runtime_metadata.get("interactive_session_requested") is True:
         lines.append(f"{_surface_call(surface, 'interactive')}(True)")
@@ -1866,11 +1869,13 @@ def _export_universe(problem: Problem) -> dict[str, object] | None:
     size = _optional_vec3(universe.get("size"))
     center = _optional_vec3(universe.get("center"))
     padding = _optional_vec3(universe.get("padding"))
+    airbox_hmax = universe.get("airbox_hmax")
     return {
         "mode": str(mode) if isinstance(mode, str) else "auto",
         "size": list(size) if size is not None else None,
         "center": list(center) if center is not None else None,
         "padding": list(padding) if padding is not None else None,
+        "airbox_hmax": float(airbox_hmax) if airbox_hmax is not None else None,
     }
 
 

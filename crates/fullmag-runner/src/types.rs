@@ -1,8 +1,10 @@
 //! Public and internal types for the runner.
 
+use fullmag_ir::{FemMeshPartRole, FemMeshPartSelector};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::atomic::AtomicBool;
+use uuid::Uuid;
 
 // ----- public types -----
 
@@ -267,6 +269,29 @@ pub struct FemMeshObjectSegment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FemMeshPartPayload {
+    pub id: String,
+    pub label: String,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geometry_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub material_id: Option<String>,
+    pub element_start: u32,
+    pub element_count: u32,
+    pub boundary_face_start: u32,
+    pub boundary_face_count: u32,
+    pub node_start: u32,
+    pub node_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds_min: Option<[f64; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds_max: Option<[f64; 3]>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FemMeshPayload {
     pub nodes: Vec<[f64; 3]>,
     pub elements: Vec<[u32; 4]>,
@@ -277,6 +302,12 @@ pub struct FemMeshPayload {
     pub boundary_markers: Vec<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub object_segments: Vec<FemMeshObjectSegment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mesh_parts: Vec<FemMeshPartPayload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain_mesh_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_id: Option<String>,
 }
 
 impl From<&fullmag_ir::FemPlanIR> for FemMeshPayload {
@@ -301,6 +332,13 @@ impl From<&fullmag_ir::FemPlanIR> for FemMeshPayload {
                     boundary_face_count: segment.boundary_face_count,
                 })
                 .collect(),
+            mesh_parts: plan
+                .mesh_parts
+                .iter()
+                .map(FemMeshPartPayload::from)
+                .collect(),
+            domain_mesh_mode: Some(domain_mesh_mode_name(plan.domain_mesh_mode).to_string()),
+            generation_id: Some(Uuid::new_v4().to_string()),
         }
     }
 }
@@ -327,7 +365,69 @@ impl From<&fullmag_ir::FemEigenPlanIR> for FemMeshPayload {
                     boundary_face_count: segment.boundary_face_count,
                 })
                 .collect(),
+            mesh_parts: plan
+                .mesh_parts
+                .iter()
+                .map(FemMeshPartPayload::from)
+                .collect(),
+            domain_mesh_mode: Some(domain_mesh_mode_name(plan.domain_mesh_mode).to_string()),
+            generation_id: Some(Uuid::new_v4().to_string()),
         }
+    }
+}
+
+impl From<&fullmag_ir::FemMeshPartIR> for FemMeshPartPayload {
+    fn from(part: &fullmag_ir::FemMeshPartIR) -> Self {
+        Self {
+            id: part.id.clone(),
+            label: part.label.clone(),
+            role: mesh_part_role_name(&part.role).to_string(),
+            object_id: part.object_id.clone(),
+            geometry_id: part.geometry_id.clone(),
+            material_id: part.material_id.clone(),
+            element_start: selector_start(&part.element_selector),
+            element_count: selector_count(&part.element_selector),
+            boundary_face_start: selector_start(&part.boundary_face_selector),
+            boundary_face_count: selector_count(&part.boundary_face_selector),
+            node_start: selector_start(&part.node_selector),
+            node_count: selector_count(&part.node_selector),
+            bounds_min: part.bounds_min,
+            bounds_max: part.bounds_max,
+        }
+    }
+}
+
+fn selector_start(selector: &FemMeshPartSelector) -> u32 {
+    match selector {
+        FemMeshPartSelector::ElementRange { start, .. }
+        | FemMeshPartSelector::BoundaryFaceRange { start, .. }
+        | FemMeshPartSelector::NodeRange { start, .. } => *start,
+        FemMeshPartSelector::ElementMarkerSet { .. } => 0,
+    }
+}
+
+fn selector_count(selector: &FemMeshPartSelector) -> u32 {
+    match selector {
+        FemMeshPartSelector::ElementRange { count, .. }
+        | FemMeshPartSelector::BoundaryFaceRange { count, .. }
+        | FemMeshPartSelector::NodeRange { count, .. } => *count,
+        FemMeshPartSelector::ElementMarkerSet { markers } => markers.len() as u32,
+    }
+}
+
+fn mesh_part_role_name(role: &FemMeshPartRole) -> &'static str {
+    match role {
+        FemMeshPartRole::Air => "air",
+        FemMeshPartRole::MagneticObject => "magnetic_object",
+        FemMeshPartRole::Interface => "interface",
+        FemMeshPartRole::OuterBoundary => "outer_boundary",
+    }
+}
+
+fn domain_mesh_mode_name(mode: fullmag_ir::FemDomainMeshModeIR) -> &'static str {
+    match mode {
+        fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh => "merged_magnetic_mesh",
+        fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir => "shared_domain_mesh_with_air",
     }
 }
 

@@ -531,6 +531,8 @@ export function ViewportCanvasArea() {
         selectedMeshObjectId={scopeObjectId}
         selectedObjectId={scopeObjectId}
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
+        meshParts={ctx.meshParts}
+        meshEntityViewState={ctx.meshEntityViewState}
         visibleObjectIds={visibleObjectIds}
         airSegmentVisible={ctx.airMeshVisible}
         airSegmentOpacity={ctx.airMeshOpacity}
@@ -568,6 +570,8 @@ export function ViewportCanvasArea() {
         selectedObjectId={scopeObjectId}
         selectedMeshObjectId={scopeObjectId}
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
+        meshParts={ctx.meshParts}
+        meshEntityViewState={ctx.meshEntityViewState}
         visibleObjectIds={visibleObjectIds}
         airSegmentVisible={ctx.airMeshVisible}
         airSegmentOpacity={ctx.airMeshOpacity}

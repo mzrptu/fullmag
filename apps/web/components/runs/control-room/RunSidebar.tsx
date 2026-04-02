@@ -68,6 +68,9 @@ export default function RunSidebar() {
         universeCenter: model.worldCenter,
         universePadding: model.scriptBuilderUniverse?.padding ?? null,
         universeRole,
+        domainMeshMode: model.effectiveFemMesh?.domain_mesh_mode ?? null,
+        airPartElementCount: model.airPart?.element_count ?? null,
+        airPartNodeCount: model.airPart?.node_count ?? null,
         geometryKind: model.mesherSourceKind ?? undefined,
         materialName:
           model.material?.name
@@ -108,7 +111,10 @@ export default function RunSidebar() {
   /* ── Determine active node (from explicit selection or viewport context) ── */
   const fallbackNodeId = useMemo(() => {
     const isMeshView = cmd.isFemBackend && vp.effectiveViewMode === "Mesh";
+    const sharedAirboxDomain =
+      model.effectiveFemMesh?.domain_mesh_mode === "shared_domain_mesh_with_air";
     if (isMeshView) {
+      if (sharedAirboxDomain) return "universe-airbox";
       if (model.femDockTab === "quality") return "universe-mesh-quality";
       if (model.femDockTab === "pipeline") return "universe-mesh-pipeline";
       if (model.femDockTab === "view") return "universe-mesh-view";
@@ -123,7 +129,7 @@ export default function RunSidebar() {
       model.modelBuilderGraph?.objects.items[0]?.id;
     if (firstObjectId) return `obj-${firstObjectId}`;
     return "objects";
-  }, [vp.effectiveViewMode, model.femDockTab, cmd.interactiveControlsEnabled,
+  }, [vp.effectiveViewMode, model.effectiveFemMesh?.domain_mesh_mode, model.femDockTab, cmd.interactiveControlsEnabled,
       cmd.isFemBackend, model.modelBuilderGraph, model.sceneDocument, vp.previewControlsActive]);
 
   const activeNodeId = model.selectedSidebarNodeId ?? fallbackNodeId;

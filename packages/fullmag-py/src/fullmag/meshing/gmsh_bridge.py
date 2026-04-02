@@ -126,6 +126,7 @@ class AirboxOptions:
     boundary_marker: int = 99
     size: tuple[float, float, float] | None = None
     center: tuple[float, float, float] | None = None
+    hmax: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -431,7 +432,7 @@ def _add_airbox_geo(
 
     x0, y0, z0 = cx - ox / 2, cy - oy / 2, cz - oz / 2
     x1, y1, z1 = cx + ox / 2, cy + oy / 2, cz + oz / 2
-    h_outer = hmax * max(airbox.grading_ratio ** 4, 1.0)
+    h_outer = airbox.hmax if airbox.hmax is not None else hmax * max(airbox.grading_ratio ** 4, 1.0)
 
     # 3 — build box geometry using GEO points/lines/surfaces
     p = []
@@ -636,7 +637,7 @@ def _add_airbox_and_fragment(
 
     # 7 — mesh grading: fine at interface, coarse at outer boundary
     if airbox.grading_ratio > 1.0:
-        h_outer = hmax * airbox.grading_ratio ** 4
+        h_outer = airbox.hmax if airbox.hmax is not None else hmax * airbox.grading_ratio ** 4
         if explicit_size is not None:
             d_outer = max(
                 max(ox - dx, 0.0),

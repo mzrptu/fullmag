@@ -142,6 +142,9 @@ mod tests {
                 boundary_face_start: 0,
                 boundary_face_count: 0,
             }],
+            mesh_parts: Vec::new(),
+            domain_mesh_mode: None,
+            generation_id: None,
         };
 
         assert_eq!(
@@ -188,6 +191,9 @@ mod tests {
                     boundary_face_count: 0,
                 },
             ],
+            mesh_parts: Vec::new(),
+            domain_mesh_mode: None,
+            generation_id: None,
         };
 
         assert_eq!(

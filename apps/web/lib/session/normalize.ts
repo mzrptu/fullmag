@@ -4,6 +4,9 @@
 import type {
   CurrentDisplaySelection,
   DisplayKind,
+  FemLiveMesh,
+  FemLiveMeshObjectSegment,
+  FemMeshPart,
   LatestFields,
   LiveState,
   ModelBuilderGraphV2,
@@ -133,6 +136,120 @@ function normalizeRuntimeStatusKind(raw: unknown): RuntimeStatusKind {
     default:
       return "unknown";
   }
+}
+
+function normalizeFemMeshPartRole(
+  raw: unknown,
+): "air" | "magnetic_object" | "interface" | "outer_boundary" {
+  switch (raw) {
+    case "air":
+    case "magnetic_object":
+    case "interface":
+    case "outer_boundary":
+      return raw;
+    default:
+      return "magnetic_object";
+  }
+}
+
+function normalizeFemLiveMeshObjectSegments(raw: unknown): FemLiveMeshObjectSegment[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .filter((value) => value && typeof value === "object")
+    .map((value) => {
+      const segment = value as Record<string, unknown>;
+      return {
+        object_id: String(segment.object_id ?? ""),
+        geometry_id: typeof segment.geometry_id === "string" ? segment.geometry_id : null,
+        node_start: Number(segment.node_start ?? 0),
+        node_count: Number(segment.node_count ?? 0),
+        element_start: Number(segment.element_start ?? 0),
+        element_count: Number(segment.element_count ?? 0),
+        boundary_face_start: Number(segment.boundary_face_start ?? 0),
+        boundary_face_count: Number(segment.boundary_face_count ?? 0),
+      };
+    });
+}
+
+function normalizeMeshPart(raw: Record<string, unknown>): FemMeshPart {
+  return {
+    id: String(raw.id ?? ""),
+    label: String(raw.label ?? ""),
+    role: normalizeFemMeshPartRole(raw.role),
+    object_id: typeof raw.object_id === "string" ? raw.object_id : null,
+    geometry_id: typeof raw.geometry_id === "string" ? raw.geometry_id : null,
+    material_id: typeof raw.material_id === "string" ? raw.material_id : null,
+    element_start: Number(raw.element_start ?? 0),
+    element_count: Number(raw.element_count ?? 0),
+    boundary_face_start: Number(raw.boundary_face_start ?? 0),
+    boundary_face_count: Number(raw.boundary_face_count ?? 0),
+    node_start: Number(raw.node_start ?? 0),
+    node_count: Number(raw.node_count ?? 0),
+    bounds_min: normalizeVec3(raw.bounds_min),
+    bounds_max: normalizeVec3(raw.bounds_max),
+  };
+}
+
+function normalizeMeshParts(raw: unknown): FemMeshPart[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .filter((value) => value && typeof value === "object")
+    .map((value) => normalizeMeshPart(value as Record<string, unknown>));
+}
+
+function normalizeFemLiveMesh(raw: unknown): FemLiveMesh | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const mesh = raw as Record<string, unknown>;
+  const nodes = Array.isArray(mesh.nodes)
+    ? mesh.nodes
+        .filter((node) => Array.isArray(node) && node.length >= 3)
+        .map((node) => [Number(node[0] ?? 0), Number(node[1] ?? 0), Number(node[2] ?? 0)] as [
+          number,
+          number,
+          number,
+        ])
+    : [];
+  const elements = Array.isArray(mesh.elements)
+    ? mesh.elements
+        .filter((element) => Array.isArray(element) && element.length >= 4)
+        .map((element) => [
+          Number(element[0] ?? 0),
+          Number(element[1] ?? 0),
+          Number(element[2] ?? 0),
+          Number(element[3] ?? 0),
+        ] as [number, number, number, number])
+    : [];
+  const boundaryFaces = Array.isArray(mesh.boundary_faces)
+    ? mesh.boundary_faces
+        .filter((face) => Array.isArray(face) && face.length >= 3)
+        .map((face) => [Number(face[0] ?? 0), Number(face[1] ?? 0), Number(face[2] ?? 0)] as [
+          number,
+          number,
+          number,
+        ])
+    : [];
+  return {
+    nodes,
+    elements,
+    element_markers: Array.isArray(mesh.element_markers)
+      ? mesh.element_markers.map((value) => Number(value ?? 0))
+      : [],
+    boundary_faces: boundaryFaces,
+    boundary_markers: Array.isArray(mesh.boundary_markers)
+      ? mesh.boundary_markers.map((value) => Number(value ?? 0))
+      : [],
+    object_segments: normalizeFemLiveMeshObjectSegments(mesh.object_segments),
+    mesh_parts: normalizeMeshParts(mesh.mesh_parts),
+    domain_mesh_mode:
+      typeof mesh.domain_mesh_mode === "string" ? mesh.domain_mesh_mode : null,
+    generation_id: typeof mesh.generation_id === "string" ? mesh.generation_id : null,
+  };
 }
 
 /* ── Sub-object normalizers ── */
@@ -297,7 +414,7 @@ function normalizePreviewState(
             Number(raw.preview_grid[2]),
           ]
         : [0, 0, 0],
-    fem_mesh: raw.fem_mesh ?? null,
+    fem_mesh: normalizeFemLiveMesh(raw.fem_mesh),
     original_node_count:
       raw.original_node_count != null ? Number(raw.original_node_count) : null,
     original_face_count:
@@ -355,6 +472,10 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
             size: normalizeVec3(raw.universe.size),
             center: normalizeVec3(raw.universe.center),
             padding: normalizeVec3(raw.universe.padding),
+            airbox_hmax:
+              raw.universe.airbox_hmax != null
+                ? Number(raw.universe.airbox_hmax)
+                : null,
           }
         : null,
     domain_frame: normalizeDomainFrame(raw.domain_frame),
@@ -638,6 +759,10 @@ function normalizeSceneDocument(raw: any): SceneDocument | null {
             size: normalizeVec3(raw.universe.size),
             center: normalizeVec3(raw.universe.center),
             padding: normalizeVec3(raw.universe.padding),
+            airbox_hmax:
+              raw.universe.airbox_hmax != null
+                ? Number(raw.universe.airbox_hmax)
+                : null,
           }
         : null,
     objects: Array.isArray(raw.objects)
@@ -758,6 +883,10 @@ function normalizeDomainFrame(raw: any) {
             size: normalizeVec3(raw.declared_universe.size),
             center: normalizeVec3(raw.declared_universe.center),
             padding: normalizeVec3(raw.declared_universe.padding),
+            airbox_hmax:
+              raw.declared_universe.airbox_hmax != null
+                ? Number(raw.declared_universe.airbox_hmax)
+                : null,
           }
         : null,
     object_bounds_min: normalizeVec3(raw.object_bounds_min),
@@ -936,7 +1065,7 @@ export function normalizeSessionState(
         preview_max_points: rawLive.latest_step?.preview_max_points ?? null,
         preview_auto_downscaled: Boolean(rawLive.latest_step?.preview_auto_downscaled),
         preview_auto_downscale_message: rawLive.latest_step?.preview_auto_downscale_message ?? null,
-        fem_mesh: rawLive.latest_step?.fem_mesh ?? null,
+        fem_mesh: normalizeFemLiveMesh(rawLive.latest_step?.fem_mesh),
         magnetization: toFloat64Array(rawLive.latest_step?.magnetization),
         finished: Boolean(rawLive.latest_step?.finished),
       }
@@ -985,7 +1114,7 @@ export function normalizeSessionState(
             typeof quantity?.scalar_metric_key === "string" ? quantity.scalar_metric_key : null,
         }))
       : [],
-    fem_mesh: raw.fem_mesh ?? raw.live_state?.latest_step?.fem_mesh ?? null,
+    fem_mesh: normalizeFemLiveMesh(raw.fem_mesh ?? raw.live_state?.latest_step?.fem_mesh),
     latest_fields: latestFields,
     artifacts: Array.isArray(raw.artifacts) ? raw.artifacts : [],
     display_selection: displaySelection,

@@ -1,6 +1,288 @@
 use super::*;
 
 #[test]
+fn mesh_parts_from_shared_domain_produces_air_and_magnetic() {
+    let mesh = MeshIR {
+        mesh_name: "shared".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [2.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+            [2.0, 0.0, 1.0],
+            [3.0, 0.0, 0.0],
+        ],
+        elements: vec![[0, 1, 2, 3], [4, 5, 6, 7]],
+        element_markers: vec![1, 0],
+        boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
+        boundary_markers: vec![1, 99],
+    };
+    let object_segments = vec![
+        fullmag_ir::FemObjectSegmentIR {
+            object_id: "flower".to_string(),
+            geometry_id: Some("flower_geom".to_string()),
+            node_start: 0,
+            node_count: 4,
+            element_start: 0,
+            element_count: 1,
+            boundary_face_start: 0,
+            boundary_face_count: 1,
+        },
+        fullmag_ir::FemObjectSegmentIR {
+            object_id: crate::mesh::AIR_OBJECT_SEGMENT_ID.to_string(),
+            geometry_id: None,
+            node_start: 4,
+            node_count: 4,
+            element_start: 1,
+            element_count: 1,
+            boundary_face_start: 1,
+            boundary_face_count: 1,
+        },
+    ];
+
+    let parts = crate::mesh::build_mesh_parts_from_segments(
+        &mesh,
+        &object_segments,
+        fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir,
+    );
+
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].role, fullmag_ir::FemMeshPartRole::MagneticObject);
+    assert_eq!(parts[0].object_id.as_deref(), Some("flower"));
+    assert_eq!(parts[1].role, fullmag_ir::FemMeshPartRole::Air);
+    assert_eq!(parts[1].object_id, None);
+}
+
+#[test]
+fn mesh_parts_from_merged_magnetic_has_no_air() {
+    let mesh = MeshIR {
+        mesh_name: "merged".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        elements: vec![[0, 1, 2, 3]],
+        element_markers: vec![1],
+        boundary_faces: vec![[0, 1, 2]],
+        boundary_markers: vec![1],
+    };
+    let object_segments = vec![fullmag_ir::FemObjectSegmentIR {
+        object_id: "flower".to_string(),
+        geometry_id: Some("flower_geom".to_string()),
+        node_start: 0,
+        node_count: 4,
+        element_start: 0,
+        element_count: 1,
+        boundary_face_start: 0,
+        boundary_face_count: 1,
+    }];
+
+    let parts = crate::mesh::build_mesh_parts_from_segments(
+        &mesh,
+        &object_segments,
+        fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+    );
+
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0].role, fullmag_ir::FemMeshPartRole::MagneticObject);
+    assert!(parts
+        .iter()
+        .all(|part| part.role != fullmag_ir::FemMeshPartRole::Air));
+}
+
+#[test]
+fn mesh_parts_bounds_are_correct() {
+    let mesh = MeshIR {
+        mesh_name: "bounds".to_string(),
+        nodes: vec![
+            [-1.0, 2.0, 3.0],
+            [4.0, -5.0, 6.0],
+            [0.5, 1.5, -2.5],
+            [9.0, 9.0, 9.0],
+        ],
+        elements: vec![[0, 1, 2, 3]],
+        element_markers: vec![1],
+        boundary_faces: vec![[0, 1, 2]],
+        boundary_markers: vec![1],
+    };
+    let object_segments = vec![fullmag_ir::FemObjectSegmentIR {
+        object_id: "sample".to_string(),
+        geometry_id: Some("sample_geom".to_string()),
+        node_start: 0,
+        node_count: 3,
+        element_start: 0,
+        element_count: 1,
+        boundary_face_start: 0,
+        boundary_face_count: 1,
+    }];
+
+    let parts = crate::mesh::build_mesh_parts_from_segments(
+        &mesh,
+        &object_segments,
+        fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+    );
+
+    assert_eq!(parts[0].bounds_min, Some([-1.0, -5.0, -2.5]));
+    assert_eq!(parts[0].bounds_max, Some([4.0, 2.0, 6.0]));
+}
+
+#[test]
+fn analyze_detects_interface_between_touching_markers() {
+    let mesh = MeshIR {
+        mesh_name: "touching".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ],
+        elements: vec![[0, 1, 2, 3], [0, 1, 2, 4]],
+        element_markers: vec![1, 2],
+        boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
+        boundary_markers: vec![10, 20],
+    };
+    let analysis = crate::mesh::analyze_shared_domain_mesh(
+        &mesh,
+        &[
+            fullmag_ir::FemDomainRegionMarkerIR {
+                geometry_name: "left".to_string(),
+                marker: 1,
+            },
+            fullmag_ir::FemDomainRegionMarkerIR {
+                geometry_name: "right".to_string(),
+                marker: 2,
+            },
+        ],
+    )
+    .expect("analysis should succeed for touching markers");
+
+    assert_eq!(analysis.interfaces.len(), 1);
+    assert_eq!(analysis.interfaces[0].object_a, "left");
+    assert_eq!(analysis.interfaces[0].object_b, "right");
+    assert_eq!(analysis.interfaces[0].shared_face_count, 1);
+    assert_eq!(analysis.interfaces[0].shared_node_count, 3);
+}
+
+#[test]
+fn analyze_classifies_air_nodes() {
+    let mesh = MeshIR {
+        mesh_name: "air".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [3.0, 0.0, 0.0],
+            [4.0, 0.0, 0.0],
+            [3.0, 1.0, 0.0],
+            [3.0, 0.0, 1.0],
+        ],
+        elements: vec![[0, 1, 2, 3], [4, 5, 6, 7]],
+        element_markers: vec![1, 0],
+        boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
+        boundary_markers: vec![10, 99],
+    };
+    let analysis = crate::mesh::analyze_shared_domain_mesh(
+        &mesh,
+        &[fullmag_ir::FemDomainRegionMarkerIR {
+            geometry_name: "flower".to_string(),
+            marker: 1,
+        }],
+    )
+    .expect("analysis should succeed");
+
+    assert_eq!(&analysis.node_owner[..4], &[1, 1, 1, 1]);
+    assert_eq!(&analysis.node_owner[4..], &[0, 0, 0, 0]);
+}
+
+#[test]
+fn validate_rejects_shared_nodes_for_now() {
+    let mesh = MeshIR {
+        mesh_name: "touching".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ],
+        elements: vec![[0, 1, 2, 3], [0, 1, 2, 4]],
+        element_markers: vec![1, 2],
+        boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
+        boundary_markers: vec![10, 20],
+    };
+    let analysis = crate::mesh::analyze_shared_domain_mesh(
+        &mesh,
+        &[
+            fullmag_ir::FemDomainRegionMarkerIR {
+                geometry_name: "left".to_string(),
+                marker: 1,
+            },
+            fullmag_ir::FemDomainRegionMarkerIR {
+                geometry_name: "right".to_string(),
+                marker: 2,
+            },
+        ],
+    )
+    .expect("analysis should succeed");
+
+    let error = crate::mesh::validate_packing_constraints(&analysis, &mesh.mesh_name, false)
+        .expect_err("shared nodes should still be rejected");
+    assert!(error.contains("disjoint node ownership"));
+}
+
+#[test]
+fn pack_produces_same_result_as_before() {
+    let mesh = MeshIR {
+        mesh_name: "shared_ok".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [3.0, 0.0, 0.0],
+            [4.0, 0.0, 0.0],
+            [3.0, 1.0, 0.0],
+            [3.0, 0.0, 1.0],
+            [8.0, 0.0, 0.0],
+            [9.0, 0.0, 0.0],
+            [8.0, 1.0, 0.0],
+            [8.0, 0.0, 1.0],
+        ],
+        elements: vec![[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]],
+        element_markers: vec![1, 2, 0],
+        boundary_faces: vec![[0, 1, 2], [4, 5, 6], [8, 9, 10]],
+        boundary_markers: vec![10, 20, 99],
+    };
+    let region_markers = vec![
+        fullmag_ir::FemDomainRegionMarkerIR {
+            geometry_name: "left".to_string(),
+            marker: 1,
+        },
+        fullmag_ir::FemDomainRegionMarkerIR {
+            geometry_name: "right".to_string(),
+            marker: 2,
+        },
+    ];
+
+    let analysis = crate::mesh::analyze_shared_domain_mesh(&mesh, &region_markers)
+        .expect("analysis should succeed");
+    crate::mesh::validate_packing_constraints(&analysis, &mesh.mesh_name, false)
+        .expect("disjoint mesh should validate");
+    let packed_via_analysis = crate::mesh::pack_mesh_by_analysis(&mesh, &analysis)
+        .expect("packing via analysis should succeed");
+    let packed_via_public = crate::mesh::reorder_shared_domain_mesh(&mesh, &region_markers)
+        .expect("public reorder should succeed");
+
+    assert_eq!(packed_via_analysis, packed_via_public);
+}
+
+#[test]
 fn bootstrap_example_plans_successfully() {
     let ir = ProblemIR::bootstrap_example();
     let plan = plan(&ir).expect("bootstrap example should plan successfully");
@@ -128,9 +410,67 @@ fn fem_backend_with_mesh_asset_plans_successfully() {
             assert_eq!(fem.initial_magnetization.len(), 4);
             assert!(fem.enable_exchange);
             assert!(!fem.enable_demag);
+            assert_eq!(fem.mesh_parts.len(), 1);
+            assert_eq!(
+                fem.mesh_parts[0].role,
+                fullmag_ir::FemMeshPartRole::MagneticObject
+            );
+            assert_eq!(fem.mesh_parts[0].material_id.as_deref(), Some("Py"));
         }
         _ => panic!("expected FEM plan"),
     }
+}
+
+#[test]
+fn fem_plan_serializes_mesh_parts() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+        fdm: Some(fullmag_ir::FdmHintsIR {
+            cell: [2e-9, 2e-9, 5e-9],
+            default_cell: None,
+            per_magnet: None,
+            demag: None,
+            boundary_correction: None,
+        }),
+        fem: Some(fullmag_ir::FemHintsIR {
+            order: 1,
+            hmax: 2e-9,
+            mesh: Some("meshes/unit_tet.msh".to_string()),
+        }),
+        hybrid: None,
+    });
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
+            geometry_name: "strip".to_string(),
+            mesh_source: Some("meshes/unit_tet.msh".to_string()),
+            mesh: Some(fullmag_ir::MeshIR {
+                mesh_name: "strip".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                elements: vec![[0, 1, 2, 3]],
+                element_markers: vec![1],
+                boundary_faces: vec![[0, 1, 2]],
+                boundary_markers: vec![1],
+            }),
+        }],
+        fem_domain_mesh_asset: None,
+    });
+
+    let plan = plan(&ir).expect("FEM mesh asset should produce a FemPlanIR");
+    let json =
+        serde_json::to_value(&plan).expect("execution plan with mesh_parts should serialize");
+    let mesh_parts = json
+        .get("backend_plan")
+        .and_then(|value| value.get("mesh_parts"))
+        .and_then(serde_json::Value::as_array)
+        .expect("FemPlanIR JSON should include mesh_parts");
+    assert!(!mesh_parts.is_empty());
 }
 
 #[test]
@@ -638,11 +978,115 @@ fn fem_backend_multibody_rejects_incompatible_material_law() {
         fem_domain_mesh_asset: None,
     });
 
-    let error = plan(&ir).expect_err("incompatible multi-body FEM materials should fail");
+    let error = plan(&ir).expect_err("heterogeneous multi-body FEM materials should fail on CPU");
     assert!(error
         .reasons
         .iter()
-        .any(|reason| reason.contains("requires identical material law")));
+        .any(|reason| reason.contains("native GPU FEM path")));
+}
+
+#[test]
+fn fem_plan_heterogeneous_materials_populates_region_materials_for_cuda() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.problem_meta.runtime_metadata.insert(
+        "runtime_selection".to_string(),
+        serde_json::json!({"device": "cuda", "device_index": 0}),
+    );
+    ir.materials.push(fullmag_ir::MaterialIR {
+        name: "Co".to_string(),
+        saturation_magnetisation: 1.1e6,
+        exchange_stiffness: 20e-12,
+        damping: 0.02,
+        uniaxial_anisotropy: Some(5.0e4),
+        anisotropy_axis: Some([0.0, 0.0, 1.0]),
+        uniaxial_anisotropy_k2: None,
+        cubic_anisotropy_kc1: None,
+        cubic_anisotropy_kc2: None,
+        cubic_anisotropy_kc3: None,
+        cubic_anisotropy_axis1: None,
+        cubic_anisotropy_axis2: None,
+        ms_field: None,
+        a_field: None,
+        alpha_field: None,
+        ku_field: None,
+        ku2_field: None,
+        kc1_field: None,
+        kc2_field: None,
+        kc3_field: None,
+    });
+    ir.materials[0].uniaxial_anisotropy = Some(2.5e4);
+    ir.materials[0].damping = 0.5;
+    ir.materials[0].anisotropy_axis = Some([0.0, 0.0, 1.0]);
+    ir.geometry.entries.push(GeometryEntryIR::Box {
+        name: "second".to_string(),
+        size: [1.0, 1.0, 1.0],
+    });
+    ir.regions.push(fullmag_ir::RegionIR {
+        name: "second".to_string(),
+        geometry: "second".to_string(),
+    });
+    ir.magnets.push(fullmag_ir::MagnetIR {
+        name: "second".to_string(),
+        region: "second".to_string(),
+        material: "Co".to_string(),
+        initial_magnetization: Some(InitialMagnetizationIR::Uniform {
+            value: [0.0, 1.0, 0.0],
+        }),
+    });
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![
+            fullmag_ir::FemMeshAssetIR {
+                geometry_name: "strip".to_string(),
+                mesh_source: None,
+                mesh: Some(fullmag_ir::MeshIR {
+                    mesh_name: "strip".to_string(),
+                    nodes: vec![
+                        [0.0, 0.0, 0.0],
+                        [1.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    elements: vec![[0, 1, 2, 3]],
+                    element_markers: vec![1],
+                    boundary_faces: vec![[0, 1, 2]],
+                    boundary_markers: vec![1],
+                }),
+            },
+            fullmag_ir::FemMeshAssetIR {
+                geometry_name: "second".to_string(),
+                mesh_source: None,
+                mesh: Some(fullmag_ir::MeshIR {
+                    mesh_name: "second".to_string(),
+                    nodes: vec![
+                        [0.0, 0.0, 2.0],
+                        [1.0, 0.0, 2.0],
+                        [0.0, 1.0, 2.0],
+                        [0.0, 0.0, 3.0],
+                    ],
+                    elements: vec![[0, 1, 2, 3]],
+                    element_markers: vec![1],
+                    boundary_faces: vec![[0, 1, 2]],
+                    boundary_markers: vec![1],
+                }),
+            },
+        ],
+        fem_domain_mesh_asset: None,
+    });
+
+    let planned = plan(&ir).expect("heterogeneous FEM should plan on CUDA");
+    let BackendPlanIR::Fem(fem) = planned.backend_plan else {
+        panic!("expected FEM plan");
+    };
+
+    assert_eq!(fem.region_materials.len(), 2);
+    assert_eq!(fem.region_materials[0].object_id, "strip");
+    assert_eq!(fem.region_materials[1].object_id, "second");
+    assert_eq!(fem.mesh_parts.len(), 2);
+    assert_eq!(fem.mesh_parts[0].material_id.as_deref(), Some("Py"));
+    assert_eq!(fem.mesh_parts[1].material_id.as_deref(), Some("Co"));
+    assert!(fem.material.ms_field.is_some());
 }
 
 #[test]

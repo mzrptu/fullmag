@@ -13,7 +13,12 @@ import { FemHighlightView } from "./r3f/FemHighlightView";
 import { rotateCameraAroundTarget, setCameraPresetAroundTarget, focusCameraOnBounds, fitCameraToBounds } from "./camera/cameraHelpers";
 import SceneAxes3D from "./r3f/SceneAxes3D";
 import { computeFaceAspectRatios } from "./r3f/colorUtils";
-import type { FemLiveMeshObjectSegment } from "../../lib/session/types";
+import type {
+  FemLiveMeshObjectSegment,
+  FemMeshPart,
+  MeshEntityViewState,
+  MeshEntityViewStateMap,
+} from "../../lib/session/types";
 import type {
   AntennaOverlay,
   BuilderObjectOverlay,
@@ -77,6 +82,8 @@ interface Props {
   selectedObjectId?: string | null;
   selectedMeshObjectId?: string | null;
   objectSegments?: FemLiveMeshObjectSegment[];
+  meshParts?: FemMeshPart[];
+  meshEntityViewState?: MeshEntityViewStateMap;
   visibleObjectIds?: string[];
   airSegmentVisible?: boolean;
   airSegmentOpacity?: number;
@@ -85,6 +92,16 @@ interface Props {
   worldExtent?: [number, number, number] | null;
   worldCenter?: [number, number, number] | null;
   onAntennaTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
+}
+
+interface RenderLayer {
+  part: FemMeshPart;
+  viewState: MeshEntityViewState;
+  boundaryFaceIndices: number[] | null;
+  elementIndices: number[] | null;
+  nodeMask: boolean[] | null;
+  isPrimaryForCamera: boolean;
+  isMagnetic: boolean;
 }
 
 function collectSegmentBoundaryFaceIndices(
@@ -224,6 +241,63 @@ function collectSegmentNodeMask(
     }
   }
   return sawNode ? nodeMask : null;
+}
+
+function collectPartBoundaryFaceIndices(
+  part: FemMeshPart,
+  maxFaceCount: number,
+): number[] | null {
+  const start = Math.max(0, Math.trunc(part.boundary_face_start));
+  const count = Math.max(0, Math.trunc(part.boundary_face_count));
+  const end = Math.min(start + count, maxFaceCount);
+  const faceIndices: number[] = [];
+  for (let faceIndex = start; faceIndex < end; faceIndex += 1) {
+    faceIndices.push(faceIndex);
+  }
+  if (faceIndices.length === 0) {
+    return [];
+  }
+  if (faceIndices.length >= maxFaceCount) {
+    return null;
+  }
+  return faceIndices;
+}
+
+function collectPartElementIndices(
+  part: FemMeshPart,
+  maxElementCount: number,
+): number[] | null {
+  const start = Math.max(0, Math.trunc(part.element_start));
+  const count = Math.max(0, Math.trunc(part.element_count));
+  const end = Math.min(start + count, maxElementCount);
+  const elementIndices: number[] = [];
+  for (let elementIndex = start; elementIndex < end; elementIndex += 1) {
+    elementIndices.push(elementIndex);
+  }
+  if (elementIndices.length === 0) {
+    return [];
+  }
+  if (elementIndices.length >= maxElementCount) {
+    return null;
+  }
+  return elementIndices;
+}
+
+function collectPartNodeMask(
+  part: FemMeshPart,
+  nNodes: number,
+): boolean[] | null {
+  const start = Math.max(0, Math.trunc(part.node_start));
+  const count = Math.max(0, Math.trunc(part.node_count));
+  const end = Math.min(start + count, nNodes);
+  if (start >= end) {
+    return null;
+  }
+  const nodeMask = new Array<boolean>(nNodes).fill(false);
+  for (let nodeIndex = start; nodeIndex < end; nodeIndex += 1) {
+    nodeMask[nodeIndex] = true;
+  }
+  return nodeMask;
 }
 
 function expandedOverlayBounds(
@@ -440,6 +514,8 @@ function FemMeshView3DInner({
   selectedObjectId,
   selectedMeshObjectId = null,
   objectSegments = [],
+  meshParts = [],
+  meshEntityViewState = {},
   visibleObjectIds,
   airSegmentVisible = true,
   airSegmentOpacity = 28,
@@ -482,6 +558,7 @@ function FemMeshView3DInner({
   const shrinkFactor = controlledShrinkFactor ?? internalShrinkFactor;
   const scopeObjectId =
     viewportScopeObjectId(viewportScope) ?? selectedMeshObjectId ?? selectedObjectId ?? null;
+  const hasMeshParts = meshParts.length > 0;
   const magneticSegments = useMemo(
     () => objectSegments.filter((segment) => segment.object_id !== AIR_OBJECT_SEGMENT_ID),
     [objectSegments],
@@ -502,12 +579,76 @@ function FemMeshView3DInner({
         : new Set<string>(),
     [airSegmentVisible, scopeObjectId],
   );
+  const visibleLayers = useMemo<RenderLayer[]>(() => {
+    if (!hasMeshParts) {
+      return [];
+    }
+    const layers: RenderLayer[] = [];
+    const visibleIdSet = new Set(visibleObjectIds ?? []);
+    for (const part of meshParts) {
+      if (part.role === "interface" || part.role === "outer_boundary") {
+        continue;
+      }
+      const defaultViewState: MeshEntityViewState = {
+        visible: true,
+        renderMode: part.role === "air" ? "wireframe" : "surface+edges",
+        opacity: part.role === "air" ? 28 : 100,
+        colorField: part.role === "air" ? "none" : "orientation",
+      };
+      const viewState = meshEntityViewState[part.id] ?? defaultViewState;
+      if (!viewState.visible) {
+        continue;
+      }
+      if (scopeObjectId) {
+        if (part.object_id !== scopeObjectId) {
+          continue;
+        }
+      } else if (part.role === "air") {
+        if (!airSegmentVisible) {
+          continue;
+        }
+      } else if (
+        part.object_id &&
+        visibleIdSet.size > 0 &&
+        !visibleIdSet.has(part.object_id)
+      ) {
+        continue;
+      }
+      layers.push({
+        part,
+        viewState,
+        boundaryFaceIndices: collectPartBoundaryFaceIndices(
+          part,
+          Math.floor(meshData.boundaryFaces.length / 3),
+        ),
+        elementIndices: collectPartElementIndices(part, meshData.nElements),
+        nodeMask: collectPartNodeMask(part, meshData.nNodes),
+        isPrimaryForCamera: false,
+        isMagnetic: part.role === "magnetic_object",
+      });
+    }
+    return layers.map((layer, index) => ({ ...layer, isPrimaryForCamera: index === 0 }));
+  }, [
+    airSegmentVisible,
+    hasMeshParts,
+    meshData.boundaryFaces.length,
+    meshData.nElements,
+    meshData.nNodes,
+    meshEntityViewState,
+    meshParts,
+    scopeObjectId,
+    visibleObjectIds,
+  ]);
   const missingMagneticMask =
     meshData.quantityDomain === "magnetic_only" &&
     (!meshData.activeMask || meshData.activeMask.length !== meshData.nNodes);
   const missingExactScopeSegment =
     Boolean(scopeObjectId) &&
-    !magneticSegments.some((segment) => segment.object_id === scopeObjectId);
+    (hasMeshParts
+      ? !meshParts.some(
+          (part) => part.role === "magnetic_object" && part.object_id === scopeObjectId,
+        )
+      : !magneticSegments.some((segment) => segment.object_id === scopeObjectId));
   const magneticBoundaryFaceIndices = useMemo(() => {
     if (missingExactScopeSegment) {
       return null;
@@ -568,6 +709,27 @@ function FemMeshView3DInner({
     [airSegmentIds, meshData.nElements, objectSegments],
   );
   const magneticArrowNodeMask = useMemo(() => {
+    if (hasMeshParts) {
+      const visibleMagneticLayers = visibleLayers.filter((layer) => layer.isMagnetic);
+      if (visibleMagneticLayers.length === 0) {
+        return meshData.activeMask ?? null;
+      }
+      const baseActiveMask = meshData.activeMask;
+      const combined = new Array<boolean>(meshData.nNodes).fill(false);
+      for (const layer of visibleMagneticLayers) {
+        const nodeMask = layer.nodeMask;
+        if (!nodeMask) {
+          continue;
+        }
+        for (let index = 0; index < nodeMask.length; index += 1) {
+          combined[index] = combined[index] || nodeMask[index];
+        }
+      }
+      if (!baseActiveMask || baseActiveMask.length !== meshData.nNodes) {
+        return combined;
+      }
+      return combined.map((visible, index) => visible && baseActiveMask[index]);
+    }
     const nodeMask = collectSegmentNodeMask(magneticSegments, meshData.nNodes, visibleMagneticIds);
     if (!nodeMask) {
       return meshData.activeMask ?? null;
@@ -577,7 +739,14 @@ function FemMeshView3DInner({
       return nodeMask;
     }
     return nodeMask.map((visible, index) => visible && baseActiveMask[index]);
-  }, [magneticSegments, meshData.activeMask, meshData.nNodes, visibleMagneticIds]);
+  }, [
+    hasMeshParts,
+    magneticSegments,
+    meshData.activeMask,
+    meshData.nNodes,
+    visibleLayers,
+    visibleMagneticIds,
+  ]);
   const hasMagneticDisplayContent = useMemo(() => {
     if (missingExactScopeSegment) {
       return false;
@@ -605,10 +774,12 @@ function FemMeshView3DInner({
     return faceCount > 0 || elementCount > 0;
   }, [airBoundaryFaceIndices, airElementIndices, meshData.boundaryFaces.length, meshData.nElements]);
   const shouldRenderMagneticGeometry =
+    !hasMeshParts &&
     !missingExactScopeSegment &&
     (scopeObjectId != null || visibleMagneticIds.size > 0) &&
     hasMagneticDisplayContent;
   const shouldRenderAirGeometry =
+    !hasMeshParts &&
     !scopeObjectId &&
     airSegmentVisible &&
     airSegmentIds.size > 0 &&
@@ -616,8 +787,15 @@ function FemMeshView3DInner({
   
   const topologySignature = topologyKey ?? `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}`;
   const effectiveOpacity = opacity;
+  const arrowField = hasMeshParts
+    ? (visibleLayers.find((layer) => layer.isMagnetic)?.viewState.colorField ?? field)
+    : field;
   const effectiveShowArrows =
-    showArrows && !missingMagneticMask && shouldRenderMagneticGeometry;
+    showArrows &&
+    !missingMagneticMask &&
+    (hasMeshParts
+      ? visibleLayers.some((layer) => layer.isMagnetic)
+      : shouldRenderMagneticGeometry);
 
   useEffect(() => { setField(colorField); }, [colorField]);
   useEffect(() => {
@@ -786,7 +964,30 @@ function FemMeshView3DInner({
         
         {!missingExactScopeSegment ? (
           <>
-            {shouldRenderAirGeometry ? (
+            {hasMeshParts
+              ? visibleLayers.map((layer) => (
+                  <FemGeometry
+                    key={layer.part.id}
+                    meshData={meshData}
+                    field={layer.viewState.colorField}
+                    renderMode={layer.viewState.renderMode}
+                    opacity={layer.viewState.opacity}
+                    displayBoundaryFaceIndices={layer.boundaryFaceIndices}
+                    displayElementIndices={layer.elementIndices}
+                    qualityPerFace={qualityPerFace}
+                    shrinkFactor={shrinkFactor}
+                    clipEnabled={clipEnabled}
+                    clipAxis={clipAxis}
+                    clipPos={clipPos}
+                    onGeometryCenter={layer.isPrimaryForCamera ? handleGeometryCenter : undefined}
+                    onFaceClick={handleFaceClick}
+                    onFaceHover={handleFaceHover}
+                    onFaceUnhover={handleFaceUnhover}
+                    onFaceContextMenu={handleFaceContextMenu}
+                  />
+                ))
+              : null}
+            {!hasMeshParts && shouldRenderAirGeometry ? (
               <FemGeometry
                 meshData={meshData}
                 field={"none"}
@@ -806,7 +1007,7 @@ function FemMeshView3DInner({
                 onFaceContextMenu={handleFaceContextMenu}
               />
             ) : null}
-            {shouldRenderMagneticGeometry ? (
+            {!hasMeshParts && shouldRenderMagneticGeometry ? (
               <FemGeometry
                 meshData={meshData}
                 field={field}
@@ -828,7 +1029,7 @@ function FemMeshView3DInner({
             ) : null}
             <FemArrows
               meshData={meshData}
-              field={field}
+              field={arrowField}
               arrowDensity={arrowDensity}
               center={geomCenter}
               maxDim={maxDim}

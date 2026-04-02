@@ -28,7 +28,9 @@ interface SettingsPanelProps {
 
 export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps) {
   const ctx = useControlRoom();
-  const showTelemetrySections = ctx.effectiveViewMode !== "Mesh";
+  const showTelemetrySections =
+    ctx.effectiveViewMode !== "Mesh" &&
+    !(nodeId === "universe" || nodeId.startsWith("universe-"));
   const builderContract = useMemo(() => readBuilderContract(ctx.metadata), [ctx.metadata]);
   const canSyncScriptBuilder =
     Boolean(builderContract?.rewriteStrategy === "canonical_rewrite" && ctx.sessionFooter.scriptPath);

@@ -221,6 +221,7 @@ class ProblemApiTests(unittest.TestCase):
             size=(60e-9, 40e-9, 20e-9),
             center=(5e-9, 0.0, -1e-9),
             padding=(2e-9, 2e-9, 1e-9),
+            airbox_hmax=50e-9,
         )
 
         body = study.geometry(fm.Box(size=(20e-9, 10e-9, 5e-9), name="track"), name="track")
@@ -241,6 +242,7 @@ class ProblemApiTests(unittest.TestCase):
             problem.runtime_metadata["study_universe"]["center"],
             [5e-9, 0.0, -1e-9],
         )
+        self.assertEqual(problem.runtime_metadata["study_universe"]["airbox_hmax"], 50e-9)
 
         ir = problem.to_ir()
         builder = ir["problem_meta"]["runtime_metadata"]["model_builder"]
@@ -251,6 +253,7 @@ class ProblemApiTests(unittest.TestCase):
             builder["problem"]["universe"]["padding"],
             [2e-9, 2e-9, 1e-9],
         )
+        self.assertEqual(builder["problem"]["universe"]["airbox_hmax"], 50e-9)
 
     def test_load_problem_from_study_script_preserves_universe_metadata(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -267,6 +270,7 @@ class ProblemApiTests(unittest.TestCase):
                     study.universe(
                         mode="auto",
                         padding=(10e-9, 5e-9, 2e-9),
+                        airbox_hmax=25e-9,
                     )
 
                     body = study.geometry(fm.Box(size=(10e-9, 10e-9, 5e-9), name="track"), name="track")
@@ -288,14 +292,19 @@ class ProblemApiTests(unittest.TestCase):
                 loaded.problem.runtime_metadata["study_universe"]["padding"],
                 [10e-9, 5e-9, 2e-9],
             )
+            self.assertEqual(
+                loaded.problem.runtime_metadata["study_universe"]["airbox_hmax"],
+                25e-9,
+            )
 
             draft = export_builder_draft(loaded)
             self.assertEqual(draft["universe"]["mode"], "auto")
             self.assertEqual(draft["universe"]["padding"], [10e-9, 5e-9, 2e-9])
+            self.assertEqual(draft["universe"]["airbox_hmax"], 25e-9)
 
             rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
             self.assertIn('study = fm.study("captured_study")', rewritten)
-            self.assertIn('study.universe(mode="auto", center=(0, 0, 0), padding=(1e-08, 5e-09, 2e-09))', rewritten)
+            self.assertIn('study.universe(mode="auto", center=(0, 0, 0), padding=(1e-08, 5e-09, 2e-09), airbox_hmax=2.5e-08)', rewritten)
             self.assertIn('study.geometry(fm.Box(1e-08, 1e-08, 5e-09), name="track")', rewritten)
             self.assertIn('study.run(1e-12)', rewritten)
 
@@ -307,11 +316,12 @@ class ProblemApiTests(unittest.TestCase):
                         "size": [80e-9, 60e-9, 40e-9],
                         "center": [5e-9, -2e-9, 1e-9],
                         "padding": [0.0, 0.0, 0.0],
+                        "airbox_hmax": 30e-9,
                     },
                 },
             )["rendered_source"]
             self.assertIn(
-                'study.universe(mode="manual", size=(8e-08, 6e-08, 4e-08), center=(5e-09, -2e-09, 1e-09), padding=(0, 0, 0))',
+                'study.universe(mode="manual", size=(8e-08, 6e-08, 4e-08), center=(5e-09, -2e-09, 1e-09), padding=(0, 0, 0), airbox_hmax=3e-08)',
                 overridden,
             )
 

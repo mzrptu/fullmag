@@ -1460,6 +1460,53 @@ pub struct FemObjectSegmentIR {
     pub boundary_face_count: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FemMeshPartRole {
+    Air,
+    MagneticObject,
+    Interface,
+    OuterBoundary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FemMeshPartSelector {
+    ElementMarkerSet { markers: Vec<u32> },
+    ElementRange { start: u32, count: u32 },
+    BoundaryFaceRange { start: u32, count: u32 },
+    NodeRange { start: u32, count: u32 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemMeshPartIR {
+    pub id: String,
+    pub label: String,
+    pub role: FemMeshPartRole,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material_id: Option<String>,
+    pub element_selector: FemMeshPartSelector,
+    pub boundary_face_selector: FemMeshPartSelector,
+    pub node_selector: FemMeshPartSelector,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds_min: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds_max: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemRegionMaterialIR {
+    pub object_id: String,
+    pub material: MaterialIR,
+    pub element_marker: u32,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FemDomainMeshModeIR {
@@ -1476,6 +1523,8 @@ pub struct FemPlanIR {
     pub mesh: MeshIR,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub object_segments: Vec<FemObjectSegmentIR>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mesh_parts: Vec<FemMeshPartIR>,
     #[serde(default)]
     pub domain_mesh_mode: FemDomainMeshModeIR,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1484,6 +1533,8 @@ pub struct FemPlanIR {
     pub hmax: f64,
     pub initial_magnetization: Vec<[f64; 3]>,
     pub material: MaterialIR,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub region_materials: Vec<FemRegionMaterialIR>,
     pub enable_exchange: bool,
     pub enable_demag: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1585,6 +1636,8 @@ pub struct FemEigenPlanIR {
     pub mesh: MeshIR,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub object_segments: Vec<FemObjectSegmentIR>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mesh_parts: Vec<FemMeshPartIR>,
     #[serde(default)]
     pub domain_mesh_mode: FemDomainMeshModeIR,
     #[serde(default, skip_serializing_if = "Option::is_none")]

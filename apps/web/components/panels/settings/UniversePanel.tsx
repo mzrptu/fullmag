@@ -7,7 +7,8 @@ import type { ScriptBuilderUniverseState } from "../../../lib/session/types";
 import { fmtSI } from "../../runs/control-room/shared";
 import SelectField from "../../ui/SelectField";
 import { TextField } from "../../ui/TextField";
-import { MetricField, SidebarSection, PropertyRow, StatusBadge, ToggleRow, CompactInputGrid } from "./primitives";
+import { Button } from "../../ui/button";
+import { MetricField, SidebarSection, StatusBadge, ToggleRow, CompactInputGrid } from "./primitives";
 import {
   humanizeToken,
   readBuilderContract,
@@ -25,6 +26,7 @@ function hasNonZeroVector(value: [number, number, number] | null): boolean {
 
 export default function UniversePanel() {
   const ctx = useControlRoom();
+  const selectedNodeId = ctx.selectedSidebarNodeId ?? "universe";
   const builderContract = useMemo(() => readBuilderContract(ctx.metadata), [ctx.metadata]);
   const manifestUniverse = useMemo(() => readBuilderUniverse(ctx.metadata), [ctx.metadata]);
   const builderUniverse = useMemo<ScriptBuilderUniverseState | null>(() => {
@@ -35,6 +37,7 @@ export default function UniversePanel() {
       size: manifestUniverse.size ?? null,
       center: manifestUniverse.center ?? null,
       padding: manifestUniverse.padding ?? null,
+      airbox_hmax: manifestUniverse.airbox_hmax ?? null,
     };
   }, [ctx.scriptBuilderUniverse, manifestUniverse]);
   const editable = Boolean(
@@ -97,9 +100,48 @@ export default function UniversePanel() {
     value == null || !Number.isFinite(value) ? "" : (value * 1e9).toFixed(1);
   const formatPercent = (value: number | null | undefined): string =>
     value == null || !Number.isFinite(value) ? "" : Math.round(value).toString();
+  const updateEntityViewState = useCallback(
+    (entityId: string, patch: Partial<(typeof ctx.meshEntityViewState)[string]>) => {
+      ctx.setMeshEntityViewState((prev) => {
+        const current = prev[entityId];
+        if (!current) return prev;
+        return { ...prev, [entityId]: { ...current, ...patch } };
+      });
+    },
+    [ctx],
+  );
+  const airViewState = ctx.airPart ? ctx.meshEntityViewState[ctx.airPart.id] : null;
+  const showAirboxPanel = selectedNodeId === "universe-airbox";
+  const showBoundaryPanel = selectedNodeId === "universe-boundary";
+  const showGlobalMeshPanel =
+    selectedNodeId === "universe-mesh" ||
+    selectedNodeId === "universe-mesh-view" ||
+    selectedNodeId === "universe-mesh-size" ||
+    selectedNodeId === "universe-mesh-quality" ||
+    selectedNodeId === "universe-mesh-pipeline";
+  const showUniverseOverview = [
+    "universe",
+    "universe-domain-frame",
+    "universe-effective-size",
+    "universe-size",
+    "universe-center",
+    "universe-padding",
+    "universe-role",
+  ].includes(selectedNodeId);
+  const canRebuildAirbox =
+    !ctx.meshGenerating &&
+    !ctx.scriptSyncBusy &&
+    (ctx.awaitingCommand || ctx.isWaitingForCompute);
+  const handleAirboxRebuild = useCallback(async () => {
+    if (editable && builderUniverse) {
+      await ctx.syncScriptBuilder();
+    }
+    await ctx.handleMeshGenerate();
+  }, [builderUniverse, ctx, editable]);
 
   return (
     <>
+      {showUniverseOverview ? (
       <SidebarSection title="General Properties" icon="⚙" defaultOpen={true}>
         <div className="flex flex-col gap-2">
           {editable && builderUniverse ? (
@@ -126,7 +168,9 @@ export default function UniversePanel() {
           </div>
         </div>
       </SidebarSection>
+      ) : null}
 
+      {showUniverseOverview ? (
       <SidebarSection title="Domain Extent" icon="📐" defaultOpen={true}>
         {editable && builderUniverse ? (
           <div className="flex flex-col gap-3">
@@ -161,47 +205,141 @@ export default function UniversePanel() {
           </div>
         )}
       </SidebarSection>
+      ) : null}
 
-      {ctx.isFemBackend && (
-        <SidebarSection title="Airbox Config" icon="🌐" defaultOpen={true}>
+      {ctx.isFemBackend && (showUniverseOverview || showAirboxPanel) ? (
+        <SidebarSection title="Airbox Mesh" icon="🌐" defaultOpen={true}>
           <div className="flex flex-col gap-3">
-            <ToggleRow
-              label="Show Airbox Mesh"
-              checked={ctx.airMeshVisible}
-              onChange={ctx.setAirMeshVisible}
-            />
+            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2.5 text-[0.68rem] leading-relaxed text-cyan-100/90">
+              Shared-domain FEM still builds one conformal solver mesh for airbox + ferromagnetyki.
+              `Airbox Hmax` steruje tylko docelową gęstością regionu powietrza; przy interfejsach generator nadal zagęszcza siatkę wokół ciał magnetycznych.
+            </div>
             <div className="grid grid-cols-2 gap-3">
+              <TextField
+                key={`airbox-hmax-${builderUniverse?.airbox_hmax ?? "auto"}`}
+                label="Airbox Hmax (nm)"
+                defaultValue={formatNm(builderUniverse?.airbox_hmax)}
+                onBlur={(event) => {
+                  if (!editable || !builderUniverse) return;
+                  const value = event.target.value;
+                  const trimmed = value.trim();
+                  if (trimmed.length === 0) {
+                    updateUniverse((current) => ({ ...current, airbox_hmax: null }));
+                    return;
+                  }
+                  const parsed = Number(trimmed);
+                  if (!Number.isFinite(parsed) || parsed <= 0) return;
+                  updateUniverse((current) => ({
+                    ...current,
+                    airbox_hmax: parsed * 1e-9,
+                  }));
+                }}
+                disabled={!editable}
+                tooltip="Declared maximum tetrahedron size for the airbox domain. Leave blank to keep automatic grading."
+              />
+              <MetricField
+                label="Airbox Nodes"
+                value={ctx.airPart ? ctx.airPart.node_count.toLocaleString() : "—"}
+                tooltip="Current node count in the airbox partition of the realized shared-domain mesh."
+              />
+              <MetricField
+                label="Airbox Elements"
+                value={ctx.airPart ? ctx.airPart.element_count.toLocaleString() : "—"}
+                tooltip="Current tetrahedron count in the airbox partition of the realized shared-domain mesh."
+              />
               <TextField
                 key={`airbox-opacity-${ctx.airMeshOpacity}`}
                 label="Airbox Opacity (%)"
                 defaultValue={formatPercent(ctx.airMeshOpacity)}
-                onBlur={(value) => {
-                  const parsed = Number(value);
+                onBlur={(event) => {
+                  const parsed = Number(event.target.value);
                   if (!Number.isFinite(parsed)) return;
                   ctx.setAirMeshOpacity(Math.max(5, Math.min(100, Math.round(parsed))));
                 }}
                 tooltip="Viewport-only opacity for the Universe / airbox mesh in FEM domain view."
               />
+            </div>
+            <ToggleRow
+              label="Show Airbox Mesh"
+              checked={ctx.airMeshVisible}
+              onChange={ctx.setAirMeshVisible}
+            />
+            {airViewState ? (
               <SelectField
-                label="Boundary Mode"
-                value="robin"
-                onchange={() => {}}
-                disabled={true}
+                label="Airbox Style"
+                value={airViewState.renderMode}
+                onchange={(value) =>
+                  updateEntityViewState(ctx.airPart!.id, {
+                    renderMode: value as typeof airViewState.renderMode,
+                  })}
                 options={[
-                  { value: "dirichlet", label: "Dirichlet" },
-                  { value: "robin", label: "Robin" },
-                  { value: "shell", label: "Shell Transform" },
+                  { value: "wireframe", label: "Wireframe" },
+                  { value: "surface", label: "Surface" },
+                  { value: "surface+edges", label: "Surface + Edges" },
+                  { value: "points", label: "Points" },
                 ]}
               />
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="solid"
+                disabled={!canRebuildAirbox}
+                onClick={() => void handleAirboxRebuild()}
+              >
+                {ctx.meshGenerating || ctx.scriptSyncBusy ? "Working..." : "Sync + Rebuild Airbox Mesh"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={ctx.scriptSyncBusy}
+                onClick={() => void ctx.syncScriptBuilder()}
+              >
+                Sync Script
+              </Button>
             </div>
-            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2.5 text-[0.68rem] leading-relaxed text-cyan-100/90">
-              These controls affect FEM viewport rendering only. Solver-side airbox sizing and grading still come from the planning / meshing pipeline.
+            <div className="text-[0.68rem] text-muted-foreground">
+              {ctx.scriptSyncMessage
+                ?? (canRebuildAirbox
+                  ? "You can change `airbox_hmax` here and rebuild the shared-domain mesh."
+                  : "Mesh rebuild is available when the workspace is awaiting a command or waiting for compute.")}
             </div>
           </div>
         </SidebarSection>
-      )}
+      ) : null}
 
-      <SidebarSection title="Live Introspection" icon="📊" defaultOpen={true}>
+      {ctx.isFemBackend && showBoundaryPanel ? (
+        <SidebarSection title="Outer Boundary" icon="🔲" defaultOpen={true}>
+          <div className="flex flex-col gap-3">
+            <SelectField
+              label="BC Kind"
+              value="robin"
+              onchange={() => {}}
+              disabled={true}
+              options={[
+                { value: "dirichlet", label: "Dirichlet" },
+                { value: "robin", label: "Robin" },
+                { value: "shell", label: "Shell Transform" },
+              ]}
+            />
+            <MetricField label="Status" value="Solver-controlled" />
+          </div>
+        </SidebarSection>
+      ) : null}
+
+      {showGlobalMeshPanel ? (
+        <SidebarSection title="Domain Mesh" icon="◫" defaultOpen={true}>
+          <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+            In the shared-domain FEM flow this node is now only diagnostic.
+            Use `Universe → Airbox` to tune the airbox mesh and use each object's `Mesh` panel for local magnetic-body overrides.
+          </div>
+        </SidebarSection>
+      ) : null}
+
+      {showUniverseOverview ? (
+      <SidebarSection title="Universe Summary" icon="📊" defaultOpen={true}>
         <div className="grid grid-cols-2 gap-3">
           <MetricField label="Mode" value={mode ? humanizeToken(mode) : "—"} tooltip="Current universe derivation mode." />
           <MetricField label="Role" value={role} tooltip="How this box should be interpreted in the active backend." />
@@ -216,6 +354,7 @@ export default function UniversePanel() {
           />
         </div>
       </SidebarSection>
+      ) : null}
     </>
   );
 }

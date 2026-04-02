@@ -96,6 +96,9 @@ fn single_object_fem_mesh_payload(
             boundary_face_start: 0,
             boundary_face_count: mesh.boundary_faces.len() as u32,
         }],
+        mesh_parts: Vec::new(),
+        domain_mesh_mode: None,
+        generation_id: None,
     }
 }
 
@@ -3094,6 +3097,7 @@ mod tests {
                 boundary_markers: vec![1],
             },
             object_segments: Vec::new(),
+            mesh_parts: Vec::new(),
             domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
             domain_frame: None,
             fe_order: 1,
@@ -3121,6 +3125,7 @@ mod tests {
                 kc2_field: None,
                 kc3_field: None,
             },
+            region_materials: Vec::new(),
             enable_exchange: true,
             enable_demag: true,
             external_field: None,
@@ -3203,6 +3208,7 @@ mod tests {
                     boundary_face_count: 1,
                 },
             ],
+            mesh_parts: Vec::new(),
             domain_mesh_mode: FemDomainMeshModeIR::SharedDomainMeshWithAir,
             domain_frame: None,
             fe_order: 1,
@@ -3230,6 +3236,7 @@ mod tests {
                 kc2_field: None,
                 kc3_field: None,
             },
+            region_materials: Vec::new(),
             enable_exchange: true,
             enable_demag: true,
             external_field: None,

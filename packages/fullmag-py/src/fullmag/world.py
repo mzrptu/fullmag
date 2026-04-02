@@ -483,6 +483,7 @@ class StudyUniverseConfig:
     size: tuple[float, float, float] | None = None
     center: tuple[float, float, float] = (0.0, 0.0, 0.0)
     padding: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    airbox_hmax: float | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in {"auto", "manual"}:
@@ -497,6 +498,9 @@ class StudyUniverseConfig:
         for index, component in enumerate(normalized_padding):
             require_non_negative(component, f"padding[{index}]")
         object.__setattr__(self, "padding", normalized_padding)
+        if self.airbox_hmax is not None:
+            object.__setattr__(self, "airbox_hmax", float(self.airbox_hmax))
+            require_positive(self.airbox_hmax, "airbox_hmax")
         if self.mode == "manual" and self.size is None:
             raise ValueError("manual universe mode requires an explicit size")
 
@@ -506,6 +510,7 @@ class StudyUniverseConfig:
             "size": list(self.size) if self.size is not None else None,
             "center": list(self.center),
             "padding": list(self.padding),
+            "airbox_hmax": self.airbox_hmax,
         }
 
 
@@ -659,6 +664,7 @@ def _configure_study_universe(
     size: Sequence[float] | None = None,
     center: Sequence[float] | None = None,
     padding: Sequence[float] | None = None,
+    airbox_hmax: float | None = None,
 ) -> StudyUniverseConfig:
     current = _state._study_universe or StudyUniverseConfig()
     universe = StudyUniverseConfig(
@@ -666,6 +672,7 @@ def _configure_study_universe(
         size=current.size if size is None else as_vector3(size, "size"),
         center=current.center if center is None else as_vector3(center, "center"),
         padding=current.padding if padding is None else as_vector3(padding, "padding"),
+        airbox_hmax=current.airbox_hmax if airbox_hmax is None else float(airbox_hmax),
     )
     _state._study_universe = universe
     return universe
@@ -790,8 +797,15 @@ class StudyBuilder:
         size: Sequence[float] | None = None,
         center: Sequence[float] | None = None,
         padding: Sequence[float] | None = None,
+        airbox_hmax: float | None = None,
     ) -> "StudyBuilder":
-        _configure_study_universe(mode=mode, size=size, center=center, padding=padding)
+        _configure_study_universe(
+            mode=mode,
+            size=size,
+            center=center,
+            padding=padding,
+            airbox_hmax=airbox_hmax,
+        )
         return self
 
     def geometry(self, shape: object, name: str = "body") -> MagnetHandle:

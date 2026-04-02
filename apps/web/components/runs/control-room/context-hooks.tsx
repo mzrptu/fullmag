@@ -34,6 +34,8 @@ import type {
 } from "../../../lib/useSessionStream";
 import type {
   DomainFrameState,
+  FemMeshPart,
+  MeshEntityViewStateMap,
   ModelBuilderGraphV2,
   SceneDocument,
   ScriptBuilderCurrentModuleEntry,
@@ -276,6 +278,13 @@ export interface ModelContextValue {
   objectViewMode: ObjectViewMode;
   airMeshVisible: boolean;
   airMeshOpacity: number;
+  meshEntityViewState: MeshEntityViewStateMap;
+  selectedEntityId: string | null;
+  focusedEntityId: string | null;
+  meshParts: FemMeshPart[];
+  magneticParts: FemMeshPart[];
+  airPart: FemMeshPart | null;
+  interfaceParts: FemMeshPart[];
   /* Actions */
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
   setSceneDocument: React.Dispatch<React.SetStateAction<SceneDocument | null>>;
@@ -303,6 +312,9 @@ export interface ModelContextValue {
   setObjectViewMode: React.Dispatch<React.SetStateAction<ObjectViewMode>>;
   setAirMeshVisible: React.Dispatch<React.SetStateAction<boolean>>;
   setAirMeshOpacity: React.Dispatch<React.SetStateAction<number>>;
+  setMeshEntityViewState: React.Dispatch<React.SetStateAction<MeshEntityViewStateMap>>;
+  setSelectedEntityId: (id: string | null) => void;
+  setFocusedEntityId: (id: string | null) => void;
   requestFocusObject: (objectId: string) => void;
   handleMeshGenerate: () => Promise<void>;
   handleLassoRefine: (faceIndices: number[], factor: number) => Promise<void>;
