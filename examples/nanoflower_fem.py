@@ -14,7 +14,7 @@ study.device("cuda:0", precision="double")
 study.interactive(True)
 study.universe(
     mode="manual",
-    size=(800e-9, 800e-9, 800e-9),
+    size=(400e-9, 400e-9, 400e-9),
     center=(0.0, 0.0, 0.0),
 )
 

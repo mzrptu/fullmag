@@ -109,6 +109,140 @@ function collectSegmentBoundaryFaceIndices(
   return faceIndices;
 }
 
+function collectSegmentElementIndices(
+  objectSegments: readonly FemLiveMeshObjectSegment[],
+  maxElementCount: number,
+  objectViewMode: ObjectViewMode,
+  selectedObjectId?: string | null,
+): number[] | null {
+  const relevantSegments =
+    objectViewMode === "isolate" && selectedObjectId
+      ? objectSegments.filter((segment) => segment.object_id === selectedObjectId)
+      : objectSegments;
+  if (relevantSegments.length === 0) {
+    return null;
+  }
+  const elementIndices: number[] = [];
+  for (const segment of relevantSegments) {
+    const start = Math.max(0, Math.trunc(segment.element_start));
+    const count = Math.max(0, Math.trunc(segment.element_count));
+    const end = Math.min(start + count, maxElementCount);
+    for (let elementIndex = start; elementIndex < end; elementIndex += 1) {
+      elementIndices.push(elementIndex);
+    }
+  }
+  if (elementIndices.length === 0 || elementIndices.length >= maxElementCount) {
+    return null;
+  }
+  return elementIndices;
+}
+
+function expandedOverlayBounds(
+  overlay: BuilderObjectOverlay,
+): { min: [number, number, number]; max: [number, number, number] } | null {
+  const extent = [
+    overlay.boundsMax[0] - overlay.boundsMin[0],
+    overlay.boundsMax[1] - overlay.boundsMin[1],
+    overlay.boundsMax[2] - overlay.boundsMin[2],
+  ] as const;
+  if (extent.some((value) => !Number.isFinite(value) || value <= 0)) {
+    return null;
+  }
+  const tolerance = Math.max(Math.max(...extent) * 0.02, 1e-12);
+  return {
+    min: [
+      overlay.boundsMin[0] - tolerance,
+      overlay.boundsMin[1] - tolerance,
+      overlay.boundsMin[2] - tolerance,
+    ],
+    max: [
+      overlay.boundsMax[0] + tolerance,
+      overlay.boundsMax[1] + tolerance,
+      overlay.boundsMax[2] + tolerance,
+    ],
+  };
+}
+
+function collectBoundaryFaceIndicesFromOverlayBounds(
+  meshData: FemMeshData,
+  overlay: BuilderObjectOverlay | null,
+): number[] | null {
+  if (!overlay) {
+    return null;
+  }
+  const bounds = expandedOverlayBounds(overlay);
+  if (!bounds) {
+    return null;
+  }
+  const faceIndices: number[] = [];
+  for (let faceIndex = 0; faceIndex < meshData.boundaryFaces.length / 3; faceIndex += 1) {
+    const base = faceIndex * 3;
+    const ia = meshData.boundaryFaces[base];
+    const ib = meshData.boundaryFaces[base + 1];
+    const ic = meshData.boundaryFaces[base + 2];
+    const aBase = ia * 3;
+    const bBase = ib * 3;
+    const cBase = ic * 3;
+    const centroid = [
+      (meshData.nodes[aBase] + meshData.nodes[bBase] + meshData.nodes[cBase]) / 3,
+      (meshData.nodes[aBase + 1] + meshData.nodes[bBase + 1] + meshData.nodes[cBase + 1]) / 3,
+      (meshData.nodes[aBase + 2] + meshData.nodes[bBase + 2] + meshData.nodes[cBase + 2]) / 3,
+    ] as const;
+    if (
+      centroid[0] >= bounds.min[0] && centroid[0] <= bounds.max[0] &&
+      centroid[1] >= bounds.min[1] && centroid[1] <= bounds.max[1] &&
+      centroid[2] >= bounds.min[2] && centroid[2] <= bounds.max[2]
+    ) {
+      faceIndices.push(faceIndex);
+    }
+  }
+  if (faceIndices.length === 0 || faceIndices.length >= meshData.boundaryFaces.length / 3) {
+    return null;
+  }
+  return faceIndices;
+}
+
+function collectElementIndicesFromOverlayBounds(
+  meshData: FemMeshData,
+  overlay: BuilderObjectOverlay | null,
+): number[] | null {
+  if (!overlay) {
+    return null;
+  }
+  const bounds = expandedOverlayBounds(overlay);
+  if (!bounds) {
+    return null;
+  }
+  const elementIndices: number[] = [];
+  for (let elementIndex = 0; elementIndex < meshData.nElements; elementIndex += 1) {
+    const base = elementIndex * 4;
+    const ia = meshData.elements[base];
+    const ib = meshData.elements[base + 1];
+    const ic = meshData.elements[base + 2];
+    const id = meshData.elements[base + 3];
+    const aBase = ia * 3;
+    const bBase = ib * 3;
+    const cBase = ic * 3;
+    const dBase = id * 3;
+    const centroid = [
+      (meshData.nodes[aBase] + meshData.nodes[bBase] + meshData.nodes[cBase] + meshData.nodes[dBase]) / 4,
+      (meshData.nodes[aBase + 1] + meshData.nodes[bBase + 1] + meshData.nodes[cBase + 1] + meshData.nodes[dBase + 1]) / 4,
+      (meshData.nodes[aBase + 2] + meshData.nodes[bBase + 2] + meshData.nodes[cBase + 2] + meshData.nodes[dBase + 2]) / 4,
+    ] as const;
+    if (
+      centroid[0] >= bounds.min[0] && centroid[0] <= bounds.max[0] &&
+      centroid[1] >= bounds.min[1] && centroid[1] <= bounds.max[1] &&
+      centroid[2] >= bounds.min[2] && centroid[2] <= bounds.max[2]
+    ) {
+      elementIndices.push(elementIndex);
+    }
+  }
+  if (elementIndices.length === 0 || elementIndices.length >= meshData.nElements) {
+    return null;
+  }
+  return elementIndices;
+}
+
 const RENDER_OPTIONS: { value: RenderMode; label: string }[] = [
   { value: "surface", label: "Surface" },
   { value: "surface+edges", label: "S+E" },
@@ -635,19 +769,6 @@ function FemMeshView3DInner({
   const viewCubeSceneRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const faceARsRef = useRef<Float32Array | null>(null);
-  const displayBoundaryFaceIndices = useMemo(
-    () =>
-      collectSegmentBoundaryFaceIndices(
-        objectSegments,
-        Math.floor(meshData.boundaryFaces.length / 3),
-        objectViewMode,
-        selectedObjectId,
-      ),
-    [meshData.boundaryFaces.length, objectSegments, objectViewMode, selectedObjectId],
-  );
-  
-  const topologySignature = topologyKey ?? `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}`;
-
   const renderMode = controlledRenderMode ?? internalRenderMode;
   const opacity = controlledOpacity ?? internalOpacity;
   const clipEnabled = controlledClipEnabled ?? internalClipEnabled;
@@ -655,6 +776,63 @@ function FemMeshView3DInner({
   const clipPos = controlledClipPos ?? internalClipPos;
   const showArrows = controlledShowArrows ?? internalShowArrows;
   const shrinkFactor = controlledShrinkFactor ?? internalShrinkFactor;
+  const effectiveMeshObjectId = selectedMeshObjectId ?? selectedObjectId ?? null;
+  const effectiveMeshOverlay = useMemo(
+    () =>
+      effectiveMeshObjectId
+        ? objectOverlays.find((candidate) => candidate.id === effectiveMeshObjectId) ?? null
+        : null,
+    [effectiveMeshObjectId, objectOverlays],
+  );
+  const meshIsolationMode: ObjectViewMode = (
+    effectiveMeshObjectId && (objectViewMode === "isolate" || renderMode === "wireframe")
+  )
+    ? "isolate"
+    : "context";
+  const displayBoundaryFaceIndices = useMemo(() => {
+    const segmentFaceIndices = collectSegmentBoundaryFaceIndices(
+      objectSegments,
+      Math.floor(meshData.boundaryFaces.length / 3),
+      meshIsolationMode,
+      effectiveMeshObjectId,
+    );
+    if (segmentFaceIndices) {
+      return segmentFaceIndices;
+    }
+    if (meshIsolationMode !== "isolate" || !effectiveMeshOverlay) {
+      return null;
+    }
+    return collectBoundaryFaceIndicesFromOverlayBounds(meshData, effectiveMeshOverlay);
+  }, [
+    effectiveMeshObjectId,
+    effectiveMeshOverlay,
+    meshData,
+    meshIsolationMode,
+    objectSegments,
+  ]);
+  const displayElementIndices = useMemo(() => {
+    const segmentElementIndices = collectSegmentElementIndices(
+      objectSegments,
+      meshData.nElements,
+      meshIsolationMode,
+      effectiveMeshObjectId,
+    );
+    if (segmentElementIndices) {
+      return segmentElementIndices;
+    }
+    if (meshIsolationMode !== "isolate" || !effectiveMeshOverlay) {
+      return null;
+    }
+    return collectElementIndicesFromOverlayBounds(meshData, effectiveMeshOverlay);
+  }, [
+    effectiveMeshObjectId,
+    effectiveMeshOverlay,
+    meshData,
+    meshIsolationMode,
+    objectSegments,
+  ]);
+  
+  const topologySignature = topologyKey ?? `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}`;
   const isolateSelectedObject = objectViewMode === "isolate" && Boolean(selectedObjectId);
   const effectiveOpacity = isolateSelectedObject ? Math.max(opacity * 0.18, 8) : opacity;
   const effectiveShowArrows = isolateSelectedObject ? false : showArrows;
@@ -800,19 +978,13 @@ function FemMeshView3DInner({
     const ar = faceARsRef.current ? faceARsRef.current[idx] : 0;
     return { faceIdx: idx, ar, sicn: qualityPerFace?.[idx] };
   }, [hoveredFace, qualityPerFace]);
-  const selectedMeshOverlay = useMemo(
-    () =>
-      selectedMeshObjectId
-        ? objectOverlays.find((candidate) => candidate.id === selectedMeshObjectId) ?? null
-        : null,
-    [objectOverlays, selectedMeshObjectId],
-  );
+  const selectedMeshOverlay = effectiveMeshOverlay;
   const selectedMeshSegment = useMemo(
     () =>
-      selectedMeshObjectId
-        ? objectSegments.find((candidate) => candidate.object_id === selectedMeshObjectId) ?? null
+      effectiveMeshObjectId
+        ? objectSegments.find((candidate) => candidate.object_id === effectiveMeshObjectId) ?? null
         : null,
-    [objectSegments, selectedMeshObjectId],
+    [effectiveMeshObjectId, objectSegments],
   );
 
   return (
@@ -834,7 +1006,7 @@ function FemMeshView3DInner({
         <FemClipPlanes enabled={clipEnabled} axis={clipAxis} posPercentage={clipPos} geomSize={geomSize} />
         
         <FemGeometry
-          meshData={meshData} field={field} renderMode={renderMode} opacity={effectiveOpacity} displayBoundaryFaceIndices={displayBoundaryFaceIndices} qualityPerFace={qualityPerFace}
+          meshData={meshData} field={field} renderMode={renderMode} opacity={effectiveOpacity} displayBoundaryFaceIndices={displayBoundaryFaceIndices} displayElementIndices={displayElementIndices} qualityPerFace={qualityPerFace}
           shrinkFactor={shrinkFactor} clipEnabled={clipEnabled} clipAxis={clipAxis} clipPos={clipPos}
           onGeometryCenter={handleGeometryCenter}
           onFaceClick={handleFaceClick} onFaceHover={handleFaceHover} onFaceUnhover={handleFaceUnhover} onFaceContextMenu={handleFaceContextMenu}
@@ -859,7 +1031,7 @@ function FemMeshView3DInner({
             onGeometryTranslate={onGeometryTranslate}
           />
         ) : null}
-        {selectedMeshOverlay || selectedMeshSegment ? (
+        {(meshIsolationMode !== "isolate") && (selectedMeshOverlay || selectedMeshSegment) ? (
           <SelectedObjectMeshOverlay
             meshData={meshData}
             overlay={selectedMeshOverlay}

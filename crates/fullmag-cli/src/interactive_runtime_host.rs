@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use fullmag_ir::BackendPlanIR;
+use fullmag_ir::{BackendPlanIR, FemDomainMeshModeIR};
 
 use crate::control_room::*;
 use crate::live_workspace::*;
@@ -260,7 +260,7 @@ impl InteractiveRuntimeHost {
             })),
             runtime: None,
             base_problem,
-            runtime_capable: matches!(backend_plan, BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_)),
+            runtime_capable: supports_idle_interactive_runtime(backend_plan),
             dynamic_idle_preview_supported: supports_dynamic_live_preview(backend_plan),
         }
     }
@@ -530,6 +530,16 @@ impl InteractiveRuntimeHost {
                 );
             }
         }
+    }
+}
+
+fn supports_idle_interactive_runtime(backend_plan: &BackendPlanIR) -> bool {
+    match backend_plan {
+        BackendPlanIR::Fdm(_) => true,
+        BackendPlanIR::Fem(fem) => {
+            fem.domain_mesh_mode != FemDomainMeshModeIR::SharedDomainMeshWithAir
+        }
+        _ => false,
     }
 }
 

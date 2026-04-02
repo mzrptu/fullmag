@@ -568,6 +568,10 @@ export function resolveSelectedMeshObjectId(
   if (!nodeId) {
     return null;
   }
+  const resolvedObjectId = resolveSelectedObjectId(nodeId, source);
+  if (resolvedObjectId) {
+    return resolvedObjectId;
+  }
   const sceneDocument =
     source &&
     !Array.isArray(source) &&

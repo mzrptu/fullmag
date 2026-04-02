@@ -346,6 +346,105 @@ def _contains_points_in_geometry(
     raise TypeError(f"unsupported geometry type for point containment: {type(geometry)!r}")
 
 
+def _bounds_center(
+    bounds_min: tuple[float, float, float],
+    bounds_max: tuple[float, float, float],
+) -> np.ndarray:
+    return 0.5 * (np.asarray(bounds_min, dtype=np.float64) + np.asarray(bounds_max, dtype=np.float64))
+
+
+def _bounds_intersection_volume(
+    left_min: tuple[float, float, float],
+    left_max: tuple[float, float, float],
+    right_min: tuple[float, float, float],
+    right_max: tuple[float, float, float],
+) -> float:
+    overlap = np.minimum(np.asarray(left_max), np.asarray(right_max)) - np.maximum(
+        np.asarray(left_min),
+        np.asarray(right_min),
+    )
+    if np.any(overlap <= 0.0):
+        return 0.0
+    return float(np.prod(overlap))
+
+
+def _element_bounds_for_marker(
+    mesh: MeshData,
+    marker: int,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    mask = np.asarray(mesh.element_markers, dtype=np.int32) == int(marker)
+    if not np.any(mask):
+        return None
+    element_nodes = mesh.nodes[mesh.elements[mask].reshape(-1)]
+    mins = element_nodes.min(axis=0)
+    maxs = element_nodes.max(axis=0)
+    return (
+        (float(mins[0]), float(mins[1]), float(mins[2])),
+        (float(maxs[0]), float(maxs[1]), float(maxs[2])),
+    )
+
+
+def _match_geometry_bounds_to_source_markers(
+    geometries: list[Geometry],
+    mesh: MeshData,
+) -> dict[str, int] | None:
+    geometry_bounds_by_name: dict[str, tuple[tuple[float, float, float], tuple[float, float, float]]] = {}
+    for geometry in geometries:
+        bounds_min, bounds_max = geometry_bounds(geometry)
+        if bounds_min is None or bounds_max is None:
+            return None
+        geometry_bounds_by_name[geometry.geometry_name] = (bounds_min, bounds_max)
+
+    marker_candidates = sorted(
+        int(marker)
+        for marker in np.unique(np.asarray(mesh.element_markers, dtype=np.int32))
+        if int(marker) > 0
+    )
+    if len(marker_candidates) < len(geometries):
+        return None
+
+    magnetic_markers = marker_candidates[: len(geometries)]
+    source_bounds_by_marker: dict[int, tuple[tuple[float, float, float], tuple[float, float, float]]] = {}
+    for marker in magnetic_markers:
+        bounds = _element_bounds_for_marker(mesh, marker)
+        if bounds is None:
+            return None
+        source_bounds_by_marker[marker] = bounds
+
+    unmatched_geometry_names = {geometry.geometry_name for geometry in geometries}
+    marker_mapping: dict[str, int] = {}
+    for marker in magnetic_markers:
+        source_min, source_max = source_bounds_by_marker[marker]
+        source_center = _bounds_center(source_min, source_max)
+        best_name: str | None = None
+        best_intersection = -1.0
+        best_distance = math.inf
+        for geometry_name in unmatched_geometry_names:
+            geometry_min, geometry_max = geometry_bounds_by_name[geometry_name]
+            intersection = _bounds_intersection_volume(
+                source_min,
+                source_max,
+                geometry_min,
+                geometry_max,
+            )
+            geometry_center = _bounds_center(geometry_min, geometry_max)
+            distance = float(np.linalg.norm(source_center - geometry_center))
+            if intersection > best_intersection + 1e-30 or (
+                math.isclose(intersection, best_intersection) and distance < best_distance
+            ):
+                best_name = geometry_name
+                best_intersection = intersection
+                best_distance = distance
+        if best_name is None:
+            return None
+        marker_mapping[best_name] = marker
+        unmatched_geometry_names.remove(best_name)
+
+    if unmatched_geometry_names:
+        return None
+    return marker_mapping
+
+
 def realize_fem_domain_mesh_asset(
     geometries: list[Geometry],
     hints: FEM,
@@ -380,34 +479,51 @@ def realize_fem_domain_mesh_asset(
             airbox=airbox,
         )
 
-    element_centroids = mesh.nodes[mesh.elements].mean(axis=1)
+    source_markers = np.asarray(mesh.element_markers, dtype=np.int32)
+    marker_mapping = _match_geometry_bounds_to_source_markers(geometries, mesh)
     assigned_markers = np.zeros(mesh.n_elements, dtype=np.int32)
     region_markers: list[dict[str, object]] = []
-    used_marker = 1
-    for geometry in geometries:
-        inside = _contains_points_in_geometry(geometry, element_centroids)
-        overlap = inside & (assigned_markers != 0)
-        if np.any(overlap):
-            raise ValueError(
-                f"shared FEM domain mesh classification overlapped for geometry '{geometry.geometry_name}'"
+    if marker_mapping is not None:
+        for used_marker, geometry in enumerate(geometries, start=1):
+            source_marker = marker_mapping.get(geometry.geometry_name)
+            if source_marker is None:
+                raise ValueError(
+                    f"shared FEM domain mesh classification could not map geometry "
+                    f"'{geometry.geometry_name}' to a source marker"
+                )
+            assigned_markers[source_markers == source_marker] = used_marker
+            region_markers.append(
+                {
+                    "geometry_name": geometry.geometry_name,
+                    "marker": used_marker,
+                }
             )
-        assigned_markers[inside] = used_marker
-        region_markers.append(
-            {
-                "geometry_name": geometry.geometry_name,
-                "marker": used_marker,
-            }
-        )
-        used_marker += 1
+    else:
+        element_centroids = mesh.nodes[mesh.elements].mean(axis=1)
+        used_marker = 1
+        for geometry in geometries:
+            inside = _contains_points_in_geometry(geometry, element_centroids)
+            overlap = inside & (assigned_markers != 0)
+            if np.any(overlap):
+                raise ValueError(
+                    f"shared FEM domain mesh classification overlapped for geometry '{geometry.geometry_name}'"
+                )
+            assigned_markers[inside] = used_marker
+            region_markers.append(
+                {
+                    "geometry_name": geometry.geometry_name,
+                    "marker": used_marker,
+                }
+            )
+            used_marker += 1
 
-    if np.any(assigned_markers == 0):
-        source_markers = np.asarray(mesh.element_markers, dtype=np.int32)
-        magnetic_source_mask = source_markers == 1
-        if np.any(magnetic_source_mask & (assigned_markers == 0)):
-            raise ValueError(
-                "shared FEM domain mesh contains magnetic elements that could not be mapped "
-                "back to any geometry"
-            )
+        if np.any(assigned_markers == 0):
+            magnetic_source_mask = source_markers == 1
+            if np.any(magnetic_source_mask & (assigned_markers == 0)):
+                raise ValueError(
+                    "shared FEM domain mesh contains magnetic elements that could not be mapped "
+                    "back to any geometry"
+                )
 
     classified_mesh = MeshData(
         nodes=mesh.nodes,

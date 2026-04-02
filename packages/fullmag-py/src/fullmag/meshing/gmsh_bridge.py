@@ -401,9 +401,9 @@ def _add_airbox_geo(
     surface.  The body surface loop is reused as a *hole* in the airbox
     shell, producing a conforming interface without OCC ``fragment``.
 
-    After return the model has the same physical groups as the OCC path:
-      - volume physical group 1 = magnetic body,
-      - volume physical group 2 = air,
+    After return the model has physical groups:
+      - volume physical groups 1..N = magnetic bodies,
+      - volume physical group N+1 = air,
       - surface physical group ``airbox.boundary_marker`` = Γ_out,
       - surface physical group 10 = magnetic–air interface.
     """
@@ -485,10 +485,12 @@ def _add_airbox_geo(
     gmsh.model.geo.synchronize()
 
     # 5 — physical groups (same convention as the OCC path)
-    gmsh.model.addPhysicalGroup(3, body_vol_tags, tag=1)
-    gmsh.model.setPhysicalName(3, 1, "magnetic")
-    gmsh.model.addPhysicalGroup(3, [air_vol], tag=2)
-    gmsh.model.setPhysicalName(3, 2, "air")
+    for index, body_vol_tag in enumerate(body_vol_tags, start=1):
+        gmsh.model.addPhysicalGroup(3, [body_vol_tag], tag=index)
+        gmsh.model.setPhysicalName(3, index, f"magnetic_{index}")
+    air_tag = len(body_vol_tags) + 1
+    gmsh.model.addPhysicalGroup(3, [air_vol], tag=air_tag)
+    gmsh.model.setPhysicalName(3, air_tag, "air")
     gmsh.model.addPhysicalGroup(2, outer_surf_tags, tag=airbox.boundary_marker)
     gmsh.model.setPhysicalName(2, airbox.boundary_marker, "Gamma_out")
     gmsh.model.addPhysicalGroup(2, body_surf_tags, tag=10)

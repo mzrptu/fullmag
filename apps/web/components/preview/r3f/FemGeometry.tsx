@@ -11,6 +11,7 @@ interface FemGeometryProps {
   renderMode: RenderMode;
   opacity: number;
   displayBoundaryFaceIndices?: number[] | null;
+  displayElementIndices?: number[] | null;
   qualityPerFace?: number[] | null;
   shrinkFactor?: number;
   clipEnabled?: boolean;
@@ -21,6 +22,44 @@ interface FemGeometryProps {
   onFaceHover?: (e: any) => void;
   onFaceUnhover?: (e: any) => void;
   onFaceContextMenu?: (e: any) => void;
+}
+
+function collectFaceNodeIndices(boundaryFaces: number[], faceIndices: readonly number[]): number[] {
+  const maxFaces = Math.floor(boundaryFaces.length / 3);
+  const unique = new Set<number>();
+  for (const faceIndex of faceIndices) {
+    if (!Number.isInteger(faceIndex) || faceIndex < 0 || faceIndex >= maxFaces) {
+      continue;
+    }
+    const base = faceIndex * 3;
+    unique.add(boundaryFaces[base]);
+    unique.add(boundaryFaces[base + 1]);
+    unique.add(boundaryFaces[base + 2]);
+  }
+  return Array.from(unique);
+}
+
+function collectElementNodeIndices(
+  elements: number[],
+  nElements: number,
+  elementOffsets: readonly number[],
+): number[] {
+  const unique = new Set<number>();
+  for (const elementOffset of elementOffsets) {
+    if (
+      !Number.isInteger(elementOffset) ||
+      elementOffset < 0 ||
+      elementOffset + 3 >= elements.length ||
+      Math.trunc(elementOffset / 4) >= nElements
+    ) {
+      continue;
+    }
+    unique.add(elements[elementOffset]);
+    unique.add(elements[elementOffset + 1]);
+    unique.add(elements[elementOffset + 2]);
+    unique.add(elements[elementOffset + 3]);
+  }
+  return Array.from(unique);
 }
 
 /* ── Helper: compute vertex colors from field data ─────────────────── */
@@ -128,6 +167,7 @@ export function FemGeometry({
   renderMode,
   opacity,
   displayBoundaryFaceIndices,
+  displayElementIndices,
   qualityPerFace,
   shrinkFactor,
   clipEnabled,
@@ -150,18 +190,30 @@ export function FemGeometry({
       displayBoundaryFaceIndices[displayBoundaryFaceIndices.length - 1] ?? 0,
     ].join(":");
   }, [displayBoundaryFaceIndices]);
+  const displayElementSignature = useMemo(() => {
+    if (!displayElementIndices || displayElementIndices.length === 0) {
+      return "all";
+    }
+    return [
+      displayElementIndices.length,
+      displayElementIndices[0] ?? 0,
+      displayElementIndices[displayElementIndices.length - 1] ?? 0,
+    ].join(":");
+  }, [displayElementIndices]);
 
   // ── Topology memo: only rebuilds when mesh structure changes ─────
-  const topologySignature = `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}:${displayBoundaryFaceSignature}:${shrinkFactor ?? 1}:${clipEnabled ? `${clipAxis}${clipPos}` : "noclip"}`;
+  const topologySignature = `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}:${displayBoundaryFaceSignature}:${displayElementSignature}:${shrinkFactor ?? 1}:${clipEnabled ? `${clipAxis}${clipPos}` : "noclip"}`;
 
   const {
     geometry,
     edgesGeometry,
     tetraEdgesGeometry,
+    pointsGeometry,
     center,
     maxDim,
     geoSize,
     vertexMap,
+    pointsVertexMap,
     displayedToOriginalFace,
   } = useMemo(() => {
     const { nodes, elements, boundaryFaces, nNodes } = meshData;
@@ -170,6 +222,9 @@ export function FemGeometry({
 
     const preferredFaceIndices = Array.isArray(displayBoundaryFaceIndices) && displayBoundaryFaceIndices.length > 0
       ? displayBoundaryFaceIndices
+      : null;
+    const preferredElementIndices = Array.isArray(displayElementIndices) && displayElementIndices.length > 0
+      ? displayElementIndices
       : null;
 
     // Compute unclipped bounding box for stable centering. When the mesh includes
@@ -214,26 +269,48 @@ export function FemGeometry({
     const isVolumetric = elements.length >= 4;
     const doVolumeClip = isVolumetric && clipEnabled;
     const doShrink = isVolumetric && shrinkFactor && shrinkFactor < 0.999;
+    const baseElementOffsets = preferredElementIndices
+      ? preferredElementIndices
+          .filter((elementIndex) => Number.isInteger(elementIndex) && elementIndex >= 0 && elementIndex < meshData.nElements)
+          .map((elementIndex) => elementIndex * 4)
+      : Array.from({ length: meshData.nElements }, (_, elementIndex) => elementIndex * 4);
 
     let finalIndices: Uint32Array | null = null;
     let finalPositions: Float32Array = positions;
     let vMap: Int32Array | null = null;
+    let pointVMap: Int32Array | null = null;
     let faceIndexMap: Int32Array | null = null;
     const tetraEdgePairs: number[] = [];
 
     const getAxisIdx = () => clipAxis === "y" ? 1 : clipAxis === "z" ? 2 : 0;
     const clipAxisSize = clipAxis === "y" ? size.y : clipAxis === "z" ? size.z : size.x;
     const posReal = ((clipPos ?? 50) / 100 - 0.5) * clipAxisSize;
+    const axisIdx = getAxisIdx();
+    const activeElementOffsets = clipEnabled && isVolumetric
+      ? baseElementOffsets.filter((elementOffset) => {
+          const a = elements[elementOffset];
+          const b = elements[elementOffset + 1];
+          const cIdx = elements[elementOffset + 2];
+          const d = elements[elementOffset + 3];
+          const cx = (
+            positions[a * 3 + axisIdx] +
+            positions[b * 3 + axisIdx] +
+            positions[cIdx * 3 + axisIdx] +
+            positions[d * 3 + axisIdx]
+          ) / 4;
+          return cx <= posReal;
+        })
+      : baseElementOffsets;
 
     if (doShrink) {
       const keptTets: number[] = [];
-      const axisIdx = getAxisIdx();
-      for (let i = 0; i < elements.length; i += 4) {
-        if (clipEnabled) {
-          const cx = (positions[elements[i]*3+axisIdx] + positions[elements[i+1]*3+axisIdx] + positions[elements[i+2]*3+axisIdx] + positions[elements[i+3]*3+axisIdx]) / 4;
-          if (cx > posReal) continue;
-        }
-        keptTets.push(elements[i], elements[i+1], elements[i+2], elements[i+3]);
+      for (const elementOffset of activeElementOffsets) {
+        keptTets.push(
+          elements[elementOffset],
+          elements[elementOffset + 1],
+          elements[elementOffset + 2],
+          elements[elementOffset + 3],
+        );
       }
 
       finalPositions = new Float32Array(keptTets.length / 4 * 12 * 3);
@@ -274,11 +351,11 @@ export function FemGeometry({
         else faceMap.set(key, [a, b, c]);
       };
 
-      const axisIdx = getAxisIdx();
-      for (let i = 0; i < elements.length; i += 4) {
-        const a = elements[i], b = elements[i+1], cIdx = elements[i+2], d = elements[i+3];
-        const cx = (positions[a*3+axisIdx] + positions[b*3+axisIdx] + positions[cIdx*3+axisIdx] + positions[d*3+axisIdx]) / 4;
-        if (cx > posReal) continue; // clipped
+      for (const elementOffset of activeElementOffsets) {
+        const a = elements[elementOffset];
+        const b = elements[elementOffset + 1];
+        const cIdx = elements[elementOffset + 2];
+        const d = elements[elementOffset + 3];
         addFace(a, b, d);
         addFace(b, cIdx, d);
         addFace(cIdx, a, d);
@@ -329,11 +406,11 @@ export function FemGeometry({
         seenEdges.add(key);
         tetraEdgePairs.push(lo, hi);
       };
-      for (let i = 0; i < elements.length; i += 4) {
-        const a = elements[i];
-        const b = elements[i + 1];
-        const cIdx = elements[i + 2];
-        const d = elements[i + 3];
+      for (const elementOffset of activeElementOffsets) {
+        const a = elements[elementOffset];
+        const b = elements[elementOffset + 1];
+        const cIdx = elements[elementOffset + 2];
+        const d = elements[elementOffset + 3];
         registerEdge(a, b);
         registerEdge(a, cIdx);
         registerEdge(a, d);
@@ -350,15 +427,37 @@ export function FemGeometry({
       tetraWireGeom.setIndex(new THREE.BufferAttribute(new Uint32Array(tetraEdgePairs), 1));
     }
 
+    const pointNodeIndices =
+      activeElementOffsets.length > 0
+        ? collectElementNodeIndices(elements, meshData.nElements, activeElementOffsets)
+        : preferredFaceIndices
+          ? collectFaceNodeIndices(boundaryFaces, preferredFaceIndices)
+          : Array.from({ length: nNodes }, (_, index) => index);
+    const pointPositions = new Float32Array(pointNodeIndices.length * 3);
+    pointVMap = new Int32Array(pointNodeIndices.length);
+    for (let i = 0; i < pointNodeIndices.length; i += 1) {
+      const nodeIndex = pointNodeIndices[i];
+      pointVMap[i] = nodeIndex;
+      const base = nodeIndex * 3;
+      pointPositions[i * 3] = positions[base];
+      pointPositions[i * 3 + 1] = positions[base + 1];
+      pointPositions[i * 3 + 2] = positions[base + 2];
+    }
+    const ptsGeom = new THREE.BufferGeometry();
+    ptsGeom.setAttribute("position", new THREE.BufferAttribute(pointPositions, 3));
+    ptsGeom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(pointPositions.length), 3));
+
     invalidate();
     return {
       geometry: geom,
       edgesGeometry: edgesGeom,
       tetraEdgesGeometry: tetraWireGeom,
+      pointsGeometry: ptsGeom,
       center: new THREE.Vector3(cX, cY, cZ),
       maxDim: ms,
       geoSize: size,
       vertexMap: vMap,
+      pointsVertexMap: pointVMap,
       displayedToOriginalFace: faceIndexMap,
     };
   }, [
@@ -367,6 +466,7 @@ export function FemGeometry({
     clipEnabled,
     clipPos,
     displayBoundaryFaceIndices,
+    displayElementIndices,
     invalidate,
     meshData,
     shrinkFactor,
@@ -396,8 +496,20 @@ export function FemGeometry({
       }
     }
     colorAttr.needsUpdate = true;
+    if (pointsGeometry) {
+      const pointsColorAttr = pointsGeometry.getAttribute("color") as THREE.BufferAttribute;
+      if (pointsVertexMap) {
+        for (let i = 0; i < pointsVertexMap.length; i += 1) {
+          const orig = pointsVertexMap[i];
+          pointsColorAttr.array[i * 3] = baseColors[orig * 3];
+          pointsColorAttr.array[i * 3 + 1] = baseColors[orig * 3 + 1];
+          pointsColorAttr.array[i * 3 + 2] = baseColors[orig * 3 + 2];
+        }
+      }
+      pointsColorAttr.needsUpdate = true;
+    }
     invalidate();
-  }, [geometry, vertexMap, meshData.fieldData, field, qualityPerFace, meshData.nNodes, invalidate]);
+  }, [geometry, invalidate, meshData.boundaryFaces, meshData.fieldData, meshData.nNodes, meshData.nodes, field, pointsGeometry, pointsVertexMap, qualityPerFace, vertexMap]);
 
   // ── Notify parent about geometry center (proper useEffect, not useMemo side-effect) ─
   const onGeometryCenterRef = useRef(onGeometryCenter);
@@ -413,7 +525,8 @@ export function FemGeometry({
     g: THREE.BufferGeometry | null;
     e: THREE.BufferGeometry | null;
     t: THREE.BufferGeometry | null;
-  }>({ g: null, e: null, t: null });
+    p: THREE.BufferGeometry | null;
+  }>({ g: null, e: null, t: null, p: null });
   useEffect(() => {
     if (prevGeomsRef.current.g && prevGeomsRef.current.g !== geometry) {
       prevGeomsRef.current.g.dispose();
@@ -424,13 +537,17 @@ export function FemGeometry({
     if (prevGeomsRef.current.t && prevGeomsRef.current.t !== tetraEdgesGeometry) {
       prevGeomsRef.current.t.dispose();
     }
-    prevGeomsRef.current = { g: geometry, e: edgesGeometry, t: tetraEdgesGeometry };
+    if (prevGeomsRef.current.p && prevGeomsRef.current.p !== pointsGeometry) {
+      prevGeomsRef.current.p.dispose();
+    }
+    prevGeomsRef.current = { g: geometry, e: edgesGeometry, t: tetraEdgesGeometry, p: pointsGeometry };
     return () => {
       geometry?.dispose();
       edgesGeometry?.dispose();
       tetraEdgesGeometry?.dispose();
+      pointsGeometry?.dispose();
     };
-  }, [geometry, edgesGeometry, tetraEdgesGeometry]);
+  }, [edgesGeometry, geometry, pointsGeometry, tetraEdgesGeometry]);
 
   const showSurface = renderMode === "surface" || renderMode === "surface+edges";
   const showWire = renderMode === "surface+edges";
@@ -520,7 +637,7 @@ export function FemGeometry({
       )}
 
       {showPoints && (
-        <points geometry={geometry}>
+        <points geometry={pointsGeometry}>
           <pointsMaterial 
             vertexColors 
             size={maxDim * 0.008} 

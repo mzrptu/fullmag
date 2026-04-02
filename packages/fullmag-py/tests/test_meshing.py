@@ -10,7 +10,11 @@ import numpy as np
 
 import fullmag as fm
 from fullmag import _core as fullmag_core
-from fullmag.meshing.asset_pipeline import realize_fdm_grid_asset, realize_fem_mesh_asset
+from fullmag.meshing.asset_pipeline import (
+    realize_fdm_grid_asset,
+    realize_fem_domain_mesh_asset,
+    realize_fem_mesh_asset,
+)
 from fullmag.meshing.gmsh_bridge import MeshData, SizeFieldData, _extract_gmsh_connectivity
 from fullmag.meshing.remesh_cli import _mesh_result_payload, _size_field_from_dict
 from fullmag.meshing.quality import validate_mesh
@@ -477,6 +481,84 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertIsInstance(loaded, MeshData)
         np.testing.assert_allclose(mesh.nodes, loaded.nodes)
         np.testing.assert_array_equal(mesh.elements, loaded.elements)
+
+    def test_realize_fem_domain_mesh_asset_prefers_source_markers_over_point_containment(self) -> None:
+        left = fm.Box(size=(1.0, 1.0, 1.0), name="left")
+        right = fm.Box(size=(1.0, 1.0, 1.0), name="right").translate((2.0, 0.0, 0.0))
+
+        shared_domain_mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [-0.5, -0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, -0.5, 0.5],
+                    [1.5, -0.5, -0.5],
+                    [2.5, -0.5, -0.5],
+                    [1.5, 0.5, -0.5],
+                    [1.5, -0.5, 0.5],
+                    [-2.0, -2.0, -2.0],
+                    [4.0, -2.0, -2.0],
+                    [-2.0, 2.0, -2.0],
+                    [-2.0, -2.0, 2.0],
+                ],
+                dtype=np.float64,
+            ),
+            elements=np.asarray(
+                [
+                    [0, 1, 2, 3],
+                    [4, 5, 6, 7],
+                    [8, 9, 10, 11],
+                ],
+                dtype=np.int32,
+            ),
+            element_markers=np.asarray([1, 2, 3], dtype=np.int32),
+            boundary_faces=np.asarray([[0, 1, 2], [4, 5, 6], [8, 9, 10]], dtype=np.int32),
+            boundary_markers=np.asarray([10, 10, 99], dtype=np.int32),
+        )
+
+        class _FakeSurface:
+            def copy(self) -> "_FakeSurface":
+                return self
+
+            def export(self, _path: Path) -> None:
+                return None
+
+        fake_trimesh = type(
+            "FakeTrimesh",
+            (),
+            {
+                "util": type(
+                    "Util",
+                    (),
+                    {"concatenate": staticmethod(lambda meshes: _FakeSurface())},
+                )
+            },
+        )
+
+        with patch(
+            "fullmag.meshing.asset_pipeline._import_trimesh",
+            return_value=fake_trimesh,
+        ), patch(
+            "fullmag.meshing.asset_pipeline._geometry_to_trimesh",
+            return_value=_FakeSurface(),
+        ), patch(
+            "fullmag.meshing.asset_pipeline.generate_mesh_from_file",
+            return_value=shared_domain_mesh,
+        ), patch(
+            "fullmag.meshing.asset_pipeline._contains_points_in_geometry",
+            side_effect=AssertionError("point containment fallback should not run"),
+        ):
+            mesh, region_markers = realize_fem_domain_mesh_asset(
+                [left, right],
+                fm.FEM(order=1, hmax=0.1),
+                study_universe={"mode": "manual", "size": [8.0, 8.0, 8.0], "center": [0.0, 0.0, 0.0]},
+            )
+
+        np.testing.assert_array_equal(mesh.element_markers, np.asarray([1, 2, 0], dtype=np.int32))
+        self.assertEqual(region_markers[0], {"geometry_name": "left", "marker": 1})
+        self.assertEqual(region_markers[1]["marker"], 2)
+        self.assertIn("right", region_markers[1]["geometry_name"])
 
 
 class SizeFieldDataTests(unittest.TestCase):
