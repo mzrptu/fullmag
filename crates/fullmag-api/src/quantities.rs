@@ -1,6 +1,7 @@
 //! Quantity descriptor building and run manifest scalar extraction.
 
 use crate::types::*;
+use fullmag_ir::{BackendPlanIR, ExecutionPlanIR};
 use fullmag_runner::quantities::{quantity_specs, QuantityKind};
 use fullmag_runner::FemMeshPayload;
 use serde_json::Value;
@@ -84,10 +85,11 @@ pub(crate) fn run_manifest_scalar_value(
 }
 
 pub(crate) fn extract_fem_mesh_from_metadata(metadata: &Value) -> Option<FemMeshPayload> {
-    let fem = metadata
-        .get("execution_plan")?
-        .get("backend_plan")?
-        .get("Fem")?;
-    let mesh = fem.get("mesh")?;
-    serde_json::from_value(mesh.clone()).ok()
+    let execution_plan =
+        serde_json::from_value::<ExecutionPlanIR>(metadata.get("execution_plan")?.clone()).ok()?;
+    match execution_plan.backend_plan {
+        BackendPlanIR::Fem(fem) => Some(FemMeshPayload::from(&fem)),
+        BackendPlanIR::FemEigen(fem) => Some(FemMeshPayload::from(&fem)),
+        BackendPlanIR::Fdm(_) | BackendPlanIR::FdmMultilayer(_) => None,
+    }
 }

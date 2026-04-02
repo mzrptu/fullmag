@@ -56,7 +56,9 @@ export interface DispersionRow {
 export interface FemMeshPayload {
   nodes: [number, number, number][];
   elements: [number, number, number, number][];
+  element_markers?: number[];
   boundary_faces: [number, number, number][];
+  boundary_markers?: number[];
   object_segments?: {
     object_id: string;
     geometry_id?: string | null;

@@ -197,6 +197,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [viewportScope, setViewportScope] = useState<ViewportScope>("universe");
   const [focusObjectRequest, setFocusObjectRequest] = useState<FocusObjectRequest | null>(null);
   const [objectViewMode, setObjectViewMode] = useState<ObjectViewMode>("context");
+  const [airMeshVisible, setAirMeshVisible] = useState(true);
+  const [airMeshOpacity, setAirMeshOpacity] = useState(28);
   const [commandPostInFlight, setCommandPostInFlight] = useState(false);
   const [commandErrorMessage, setCommandErrorMessage] = useState<string | null>(null);
   const [scriptSyncBusy, setScriptSyncBusy] = useState(false);
@@ -2178,9 +2180,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     viewportScope,
     focusObjectRequest,
     objectViewMode,
+    airMeshVisible,
+    airMeshOpacity,
     setSolverSettings, setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
-    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setAirMeshVisible, setAirMeshOpacity, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
     localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
@@ -2191,7 +2195,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder,
     domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
-    selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, requestFocusObject,
+    selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, requestFocusObject,
     setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   ]);

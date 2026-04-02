@@ -8,6 +8,8 @@ use std::path::Path;
 
 use crate::util::{generate_random_unit_vectors, study_universe_metadata, StudyUniverseMetadata};
 
+pub(crate) const AIR_OBJECT_SEGMENT_ID: &str = "__air__";
+
 pub(crate) fn mesh_has_air_elements(mesh: &MeshIR) -> bool {
     mesh.element_markers.iter().any(|&marker| marker == 0)
 }
@@ -261,7 +263,7 @@ pub(crate) fn reorder_shared_domain_mesh(
         reordered_boundary_markers.push(mesh.boundary_markers[face_index]);
     }
 
-    let object_segments = ordered_regions
+    let mut object_segments = ordered_regions
         .iter()
         .map(|(object_id, marker)| FemObjectSegmentIR {
             object_id: object_id.clone(),
@@ -274,6 +276,48 @@ pub(crate) fn reorder_shared_domain_mesh(
             boundary_face_count: *boundary_count_by_marker.get(marker).unwrap_or(&0),
         })
         .collect::<Vec<_>>();
+    let air_node_start = ordered_regions
+        .last()
+        .and_then(|(_, marker)| {
+            node_start_by_marker
+                .get(marker)
+                .zip(node_count_by_marker.get(marker))
+                .map(|(start, count)| start + count)
+        })
+        .unwrap_or(0);
+    let air_element_start = ordered_regions
+        .last()
+        .and_then(|(_, marker)| {
+            element_start_by_marker
+                .get(marker)
+                .zip(element_count_by_marker.get(marker))
+                .map(|(start, count)| start + count)
+        })
+        .unwrap_or(0);
+    let air_boundary_face_start = ordered_regions
+        .last()
+        .and_then(|(_, marker)| {
+            boundary_start_by_marker
+                .get(marker)
+                .zip(boundary_count_by_marker.get(marker))
+                .map(|(start, count)| start + count)
+        })
+        .unwrap_or(0);
+    let air_node_count = reordered_nodes.len() as u32 - air_node_start;
+    let air_element_count = reordered_elements.len() as u32 - air_element_start;
+    let air_boundary_face_count = reordered_boundary_faces.len() as u32 - air_boundary_face_start;
+    if air_node_count > 0 || air_element_count > 0 || air_boundary_face_count > 0 {
+        object_segments.push(FemObjectSegmentIR {
+            object_id: AIR_OBJECT_SEGMENT_ID.to_string(),
+            geometry_id: None,
+            node_start: air_node_start,
+            node_count: air_node_count,
+            element_start: air_element_start,
+            element_count: air_element_count,
+            boundary_face_start: air_boundary_face_start,
+            boundary_face_count: air_boundary_face_count,
+        });
+    }
 
     let reordered_mesh = MeshIR {
         mesh_name: mesh.mesh_name.clone(),

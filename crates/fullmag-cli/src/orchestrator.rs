@@ -83,7 +83,9 @@ fn single_object_fem_mesh_payload(
     fullmag_runner::FemMeshPayload {
         nodes: mesh.nodes.clone(),
         elements: mesh.elements.clone(),
+        element_markers: mesh.element_markers.clone(),
         boundary_faces: mesh.boundary_faces.clone(),
+        boundary_markers: mesh.boundary_markers.clone(),
         object_segments: vec![fullmag_runner::FemMeshObjectSegment {
             object_id: object_id.to_string(),
             geometry_id: None,
@@ -3291,6 +3293,8 @@ mod tests {
             .expect("shared-domain FEM backend plan should yield a mesh payload");
 
         assert_eq!(payload.object_segments.len(), 2);
+        assert_eq!(payload.element_markers, vec![1, 2]);
+        assert_eq!(payload.boundary_markers, vec![1, 2]);
         assert_eq!(payload.object_segments[0].object_id, "left");
         assert_eq!(payload.object_segments[0].element_count, 1);
         assert_eq!(payload.object_segments[1].object_id, "right");

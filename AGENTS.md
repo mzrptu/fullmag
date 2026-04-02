@@ -142,6 +142,31 @@ Rules:
 13. **No single source file should exceed ~1000 lines.** When a module grows past this threshold,
     split it into focused submodules. Monolithic files are harder to review, test, and maintain.
 
+## FEM mesh architecture invariant
+
+This rule is non-negotiable for all FEM mesh, Universe, and visualization work.
+
+Fullmag must model FEM meshing on three distinct levels:
+
+1. `Universe mesh config` — study-level meshing policy for the air/domain region.
+2. `Per-object mesh config` — independent meshing policy for each ferromagnetic object.
+3. `Final shared-domain solver mesh` — one conforming FEM mesh assembled from Universe + objects.
+
+Implications:
+
+1. `Universe` is not “just another object”. It is the solver domain.
+2. Each object must remain independently inspectable and tunable in the UI and planner.
+3. Users must be able to improve the mesh of object `A` without implicitly rewriting the authoring
+   contract for object `B`.
+4. The final solver path must still consume one conforming shared-domain mesh; separate authoring
+   controls must not degrade into disconnected solver meshes.
+5. Viewport visibility, isolate mode, and mesh preview scope are rendering concerns only. They must
+   never change solver physics or remove domains from the actual FEM problem.
+6. Air/Universe meshing is expected to support a coarser target mesh and grading policy than the
+   magnetic bodies, while preserving a correct air/magnet interface.
+7. Any refactor that collapses `Universe mesh`, `Object mesh`, and `Final solver mesh` back into
+   one anonymous mesh blob is an architectural regression.
+
 ## Modularity rules
 
 Performance work does not justify monolithic architecture.

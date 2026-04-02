@@ -58,7 +58,9 @@ export interface LiveState {
 export interface FemLiveMesh {
   nodes: [number, number, number][];
   elements: [number, number, number, number][];
+  element_markers?: number[];
   boundary_faces: [number, number, number][];
+  boundary_markers?: number[];
   object_segments?: FemLiveMeshObjectSegment[];
 }
 

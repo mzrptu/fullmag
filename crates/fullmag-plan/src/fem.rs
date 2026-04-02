@@ -11,6 +11,7 @@ use crate::mesh::{
     build_air_box_config, compatible_fem_material, initial_vectors_for_magnet,
     load_mesh_from_source, merge_fem_meshes, mesh_bounds, resolve_fem_domain_mesh_asset,
     resolved_domain_mesh_mode, study_universe_planner_note, MagnetPlanningEntry,
+    AIR_OBJECT_SEGMENT_ID,
 };
 use crate::util::{problem_domain_frame, runtime_requests_cuda, MU0};
 use crate::validate::{
@@ -33,6 +34,9 @@ fn remap_segment_object_ids(
     segments
         .iter()
         .map(|segment| {
+            if segment.object_id == AIR_OBJECT_SEGMENT_ID {
+                return Ok(segment.clone());
+            }
             let Some(mapped_object_id) = geometry_to_object_id.get(segment.object_id.as_str())
             else {
                 return Err(PlanError {

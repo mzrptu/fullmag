@@ -394,6 +394,14 @@ export function ViewportCanvasArea() {
     ctx.scriptBuilderCurrentModules.map((module) => module.name),
   );
   const scopeObjectId = viewportScopeObjectId(ctx.viewportScope);
+  const visibleObjectIds = useMemo(
+    () =>
+      (ctx.sceneDocument?.objects ?? [])
+        .filter((object) => object.visible !== false)
+        .map((object) => object.name || object.id)
+        .filter((id) => id.length > 0),
+    [ctx.sceneDocument?.objects],
+  );
   const antennaPreviewBadgeVisible =
     ctx.antennaOverlays.length > 0 &&
     (ctx.requestedPreviewQuantity === "H_ant" || selectedAntennaName != null);
@@ -403,6 +411,13 @@ export function ViewportCanvasArea() {
         ? ctx.objectOverlays.find((overlay) => overlay.id === scopeObjectId) ?? null
         : null,
     [ctx.objectOverlays, scopeObjectId],
+  );
+  const displayObjectOverlays = useMemo(
+    () =>
+      scopeObjectId
+        ? ctx.objectOverlays
+        : ctx.objectOverlays.filter((overlay) => visibleObjectIds.includes(overlay.id)),
+    [ctx.objectOverlays, scopeObjectId, visibleObjectIds],
   );
   const hasExactScopeSegment = useMemo(
     () =>
@@ -431,7 +446,7 @@ export function ViewportCanvasArea() {
     ctx.isFemBackend &&
     !ctx.femMeshData &&
     (ctx.effectiveViewMode === "3D" || ctx.effectiveViewMode === "Mesh") &&
-    ctx.objectOverlays.length > 0;
+    displayObjectOverlays.length > 0;
 
   /* ── Determine what goes into the conditional slot ── */
   let conditionalContent: React.ReactNode = null;
@@ -512,10 +527,13 @@ export function ViewportCanvasArea() {
         onRefine={ctx.handleLassoRefine}
         antennaOverlays={ctx.antennaOverlays}
         selectedAntennaId={selectedAntennaName}
-        objectOverlays={ctx.objectOverlays}
+        objectOverlays={displayObjectOverlays}
         selectedMeshObjectId={scopeObjectId}
         selectedObjectId={scopeObjectId}
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
+        visibleObjectIds={visibleObjectIds}
+        airSegmentVisible={ctx.airMeshVisible}
+        airSegmentOpacity={ctx.airMeshOpacity}
         focusObjectRequest={ctx.focusObjectRequest}
         viewportScope={ctx.viewportScope}
         onAntennaTranslate={ctx.applyAntennaTranslation}
@@ -546,10 +564,13 @@ export function ViewportCanvasArea() {
         onSelectionChange={ctx.setMeshSelection}
         antennaOverlays={ctx.antennaOverlays}
         selectedAntennaId={selectedAntennaName}
-        objectOverlays={ctx.objectOverlays}
+        objectOverlays={displayObjectOverlays}
         selectedObjectId={scopeObjectId}
         selectedMeshObjectId={scopeObjectId}
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
+        visibleObjectIds={visibleObjectIds}
+        airSegmentVisible={ctx.airMeshVisible}
+        airSegmentOpacity={ctx.airMeshOpacity}
         focusObjectRequest={ctx.focusObjectRequest}
         viewportScope={ctx.viewportScope}
         onAntennaTranslate={ctx.applyAntennaTranslation}
@@ -588,7 +609,7 @@ export function ViewportCanvasArea() {
   } else if (showFemBoundsPreview) {
     conditionalContent = (
       <BoundsPreview3D
-        objectOverlays={ctx.objectOverlays}
+        objectOverlays={displayObjectOverlays}
         selectedObjectId={scopeObjectId}
         focusObjectRequest={ctx.focusObjectRequest}
         viewportScope={ctx.viewportScope}

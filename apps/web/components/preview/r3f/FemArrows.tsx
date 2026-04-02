@@ -14,6 +14,8 @@ interface FemArrowsProps {
   center: THREE.Vector3;
   maxDim: number;
   visible: boolean;
+  activeNodeMask?: boolean[] | null;
+  boundaryFaceIndices?: number[] | null;
   lengthMode?: ArrowLengthMode;
 }
 
@@ -181,7 +183,17 @@ function sampleCandidateNodes(
   return result;
 }
 
-export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visible, lengthMode = "magnitude" }: FemArrowsProps) {
+export function FemArrows({
+  meshData,
+  field,
+  arrowDensity,
+  center,
+  maxDim,
+  visible,
+  activeNodeMask,
+  boundaryFaceIndices,
+  lengthMode = "magnitude",
+}: FemArrowsProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const { invalidate } = useThree();
 
@@ -194,23 +206,38 @@ export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visib
     if (!visible) return emptyRet;
     const fld = meshData.fieldData;
     if (!fld) return emptyRet;
-    if (
-      meshData.quantityDomain === "magnetic_only" &&
-      (!meshData.activeMask || meshData.activeMask.length !== meshData.nNodes)
-    ) {
+    const effectiveNodeMask =
+      activeNodeMask && activeNodeMask.length === meshData.nNodes
+        ? activeNodeMask
+        : meshData.activeMask && meshData.activeMask.length === meshData.nNodes
+          ? meshData.activeMask
+          : null;
+    if (meshData.quantityDomain === "magnetic_only" && !effectiveNodeMask) {
       return emptyRet;
     }
 
     const boundaryCandidateNodes = (() => {
       const unique = new Set<number>();
-      for (let i = 0; i < meshData.boundaryFaces.length; i += 1) {
-        unique.add(meshData.boundaryFaces[i]);
+      if (boundaryFaceIndices && boundaryFaceIndices.length > 0) {
+        for (const faceIndex of boundaryFaceIndices) {
+          const base = faceIndex * 3;
+          if (base + 2 >= meshData.boundaryFaces.length) {
+            continue;
+          }
+          unique.add(meshData.boundaryFaces[base]);
+          unique.add(meshData.boundaryFaces[base + 1]);
+          unique.add(meshData.boundaryFaces[base + 2]);
+        }
+      } else {
+        for (let i = 0; i < meshData.boundaryFaces.length; i += 1) {
+          unique.add(meshData.boundaryFaces[i]);
+        }
       }
       return Array.from(unique);
     })();
     const maskedCandidateNodes =
-      meshData.activeMask && meshData.activeMask.length === meshData.nNodes
-        ? meshData.activeMask
+      effectiveNodeMask
+        ? effectiveNodeMask
             .map((active, nodeIndex) => (active ? nodeIndex : -1))
             .filter((nodeIndex) => nodeIndex >= 0)
         : null;
@@ -296,7 +323,7 @@ export function FemArrows({ meshData, field, arrowDensity, center, maxDim, visib
     }
 
     return { count: resultCount, instancePositions: positions, quaternions: quaternionsList, scales: scalesList, colors: colorsList };
-  }, [meshData, field, arrowDensity, center, visible, lengthMode]);
+  }, [meshData, field, arrowDensity, center, visible, lengthMode, activeNodeMask, boundaryFaceIndices]);
 
   // Apply instance matrices
   useEffect(() => {

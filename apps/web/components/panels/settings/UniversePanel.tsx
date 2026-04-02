@@ -95,6 +95,8 @@ export default function UniversePanel() {
 
   const formatNm = (value: number | null | undefined): string =>
     value == null || !Number.isFinite(value) ? "" : (value * 1e9).toFixed(1);
+  const formatPercent = (value: number | null | undefined): string =>
+    value == null || !Number.isFinite(value) ? "" : Math.round(value).toString();
 
   return (
     <>
@@ -164,19 +166,21 @@ export default function UniversePanel() {
         <SidebarSection title="Airbox Config" icon="🌐" defaultOpen={true}>
           <div className="flex flex-col gap-3">
             <ToggleRow
-              label="Enable Airbox"
-              checked={false}
-              onChange={() => {}}
-              disabled={true}
+              label="Show Airbox Mesh"
+              checked={ctx.airMeshVisible}
+              onChange={ctx.setAirMeshVisible}
             />
             <div className="grid grid-cols-2 gap-3">
               <TextField
-                key="airbox-factor"
-                label="Airbox Factor"
-                defaultValue="1.5"
-                onBlur={() => {}}
-                disabled={true}
-                tooltip="Controls how large the airbox is relative to geometry."
+                key={`airbox-opacity-${ctx.airMeshOpacity}`}
+                label="Airbox Opacity (%)"
+                defaultValue={formatPercent(ctx.airMeshOpacity)}
+                onBlur={(value) => {
+                  const parsed = Number(value);
+                  if (!Number.isFinite(parsed)) return;
+                  ctx.setAirMeshOpacity(Math.max(5, Math.min(100, Math.round(parsed))));
+                }}
+                tooltip="Viewport-only opacity for the Universe / airbox mesh in FEM domain view."
               />
               <SelectField
                 label="Boundary Mode"
@@ -190,8 +194,8 @@ export default function UniversePanel() {
                 ]}
               />
             </div>
-            <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[0.68rem] leading-relaxed text-amber-500/90">
-              Airbox parameters are being migrated to the Universe scope. Full configuration will be available soon.
+            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2.5 text-[0.68rem] leading-relaxed text-cyan-100/90">
+              These controls affect FEM viewport rendering only. Solver-side airbox sizing and grading still come from the planning / meshing pipeline.
             </div>
           </div>
         </SidebarSection>

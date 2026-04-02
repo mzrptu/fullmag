@@ -35,6 +35,21 @@ Users write ordinary Python scripts and notebooks, but those objects serialize i
 - `external_solvers/` — reference solver codebases (gitignored): mumax3, mumax+, BORIS, tetmag, tetrax
 - `docs/` — specs, ADRs, and publication-style physics notes
 
+### FEM mesh contract
+
+For FEM, Fullmag is expected to preserve three separate semantic layers:
+
+1. `Universe mesh config` — meshing policy for the study-level air/domain region
+2. `Per-object mesh config` — independent meshing policy for each magnetic object
+3. `Final shared-domain solver mesh` — one conforming mesh assembled from Universe + objects
+
+This means:
+
+- users must be able to inspect and tune the mesh of `Universe` and of each object separately,
+- the final solver mesh must still be one shared-domain FEM mesh,
+- UI visibility or isolate mode must never change the physical solver domain,
+- air/domain meshing is expected to be coarser than object/interfacial meshing where appropriate.
+
 ## Execution chain
 
 ```text

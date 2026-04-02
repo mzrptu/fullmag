@@ -6,6 +6,8 @@ use fullmag_runner::quantities::QuantityKind;
 use fullmag_runner::{FemMeshPayload, LivePreviewField};
 use serde_json::Value;
 
+const AIR_OBJECT_SEGMENT_ID: &str = "__air__";
+
 pub(crate) fn live_step_metric_value(step: &StepUpdateView, metric_key: &str) -> Option<f64> {
     match metric_key {
         "e_ex" => Some(step.e_ex),
@@ -67,8 +69,29 @@ pub(crate) fn mesh_preview_active_mask(mesh: &FemMeshPayload, quantity: &str) ->
     if quantity != "m" {
         return None;
     }
+    if mesh.element_markers.len() == mesh.elements.len() && !mesh.elements.is_empty() {
+        let mut active_mask = vec![false; mesh.nodes.len()];
+        for (element_index, element) in mesh.elements.iter().enumerate() {
+            if mesh.element_markers[element_index] == 0 {
+                continue;
+            }
+            for &node_index in element {
+                let Some(active) = active_mask.get_mut(node_index as usize) else {
+                    continue;
+                };
+                *active = true;
+            }
+        }
+        return active_mask
+            .iter()
+            .any(|active| *active)
+            .then_some(active_mask);
+    }
     let mut active_mask = vec![false; mesh.nodes.len()];
     for segment in &mesh.object_segments {
+        if segment.object_id == AIR_OBJECT_SEGMENT_ID {
+            continue;
+        }
         let start = usize::try_from(segment.node_start).ok()?;
         let count = usize::try_from(segment.node_count).ok()?;
         let end = start.saturating_add(count).min(active_mask.len());
@@ -85,7 +108,7 @@ pub(crate) fn mesh_preview_active_mask(mesh: &FemMeshPayload, quantity: &str) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{mesh_preview_active_mask, quantity_spatial_domain};
+    use super::{mesh_preview_active_mask, quantity_spatial_domain, AIR_OBJECT_SEGMENT_ID};
     use fullmag_runner::{FemMeshObjectSegment, FemMeshPayload};
 
     #[test]
@@ -106,7 +129,9 @@ mod tests {
                 [2.0, 1.0, 0.0],
             ],
             elements: Vec::new(),
+            element_markers: Vec::new(),
             boundary_faces: Vec::new(),
+            boundary_markers: Vec::new(),
             object_segments: vec![FemMeshObjectSegment {
                 object_id: "flower".to_string(),
                 geometry_id: Some("flower_geom".to_string()),
@@ -124,6 +149,51 @@ mod tests {
             Some(vec![true, true, true, true, false, false])
         );
         assert_eq!(mesh_preview_active_mask(&mesh, "H_demag"), None);
+    }
+
+    #[test]
+    fn mesh_preview_active_mask_ignores_air_segment() {
+        let mesh = FemMeshPayload {
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [2.0, 0.0, 0.0],
+                [2.0, 1.0, 0.0],
+            ],
+            elements: Vec::new(),
+            element_markers: Vec::new(),
+            boundary_faces: Vec::new(),
+            boundary_markers: Vec::new(),
+            object_segments: vec![
+                FemMeshObjectSegment {
+                    object_id: "flower".to_string(),
+                    geometry_id: Some("flower_geom".to_string()),
+                    node_start: 0,
+                    node_count: 4,
+                    element_start: 0,
+                    element_count: 0,
+                    boundary_face_start: 0,
+                    boundary_face_count: 0,
+                },
+                FemMeshObjectSegment {
+                    object_id: AIR_OBJECT_SEGMENT_ID.to_string(),
+                    geometry_id: None,
+                    node_start: 4,
+                    node_count: 2,
+                    element_start: 0,
+                    element_count: 0,
+                    boundary_face_start: 0,
+                    boundary_face_count: 0,
+                },
+            ],
+        };
+
+        assert_eq!(
+            mesh_preview_active_mask(&mesh, "m"),
+            Some(vec![true, true, true, true, false, false])
+        );
     }
 }
 

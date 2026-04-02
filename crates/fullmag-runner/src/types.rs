@@ -270,7 +270,11 @@ pub struct FemMeshObjectSegment {
 pub struct FemMeshPayload {
     pub nodes: Vec<[f64; 3]>,
     pub elements: Vec<[u32; 4]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub element_markers: Vec<u32>,
     pub boundary_faces: Vec<[u32; 3]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boundary_markers: Vec<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub object_segments: Vec<FemMeshObjectSegment>,
 }
@@ -280,7 +284,9 @@ impl From<&fullmag_ir::FemPlanIR> for FemMeshPayload {
         Self {
             nodes: plan.mesh.nodes.clone(),
             elements: plan.mesh.elements.clone(),
+            element_markers: plan.mesh.element_markers.clone(),
             boundary_faces: plan.mesh.boundary_faces.clone(),
+            boundary_markers: plan.mesh.boundary_markers.clone(),
             object_segments: plan
                 .object_segments
                 .iter()
@@ -304,7 +310,9 @@ impl From<&fullmag_ir::FemEigenPlanIR> for FemMeshPayload {
         Self {
             nodes: plan.mesh.nodes.clone(),
             elements: plan.mesh.elements.clone(),
+            element_markers: plan.mesh.element_markers.clone(),
             boundary_faces: plan.mesh.boundary_faces.clone(),
+            boundary_markers: plan.mesh.boundary_markers.clone(),
             object_segments: plan
                 .object_segments
                 .iter()

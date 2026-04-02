@@ -274,6 +274,8 @@ export interface ModelContextValue {
   viewportScope: ViewportScope;
   focusObjectRequest: FocusObjectRequest | null;
   objectViewMode: ObjectViewMode;
+  airMeshVisible: boolean;
+  airMeshOpacity: number;
   /* Actions */
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
   setSceneDocument: React.Dispatch<React.SetStateAction<SceneDocument | null>>;
@@ -299,6 +301,8 @@ export interface ModelContextValue {
   setSelectedObjectId: React.Dispatch<React.SetStateAction<string | null>>;
   setViewportScope: React.Dispatch<React.SetStateAction<ViewportScope>>;
   setObjectViewMode: React.Dispatch<React.SetStateAction<ObjectViewMode>>;
+  setAirMeshVisible: React.Dispatch<React.SetStateAction<boolean>>;
+  setAirMeshOpacity: React.Dispatch<React.SetStateAction<number>>;
   requestFocusObject: (objectId: string) => void;
   handleMeshGenerate: () => Promise<void>;
   handleLassoRefine: (faceIndices: number[], factor: number) => Promise<void>;
