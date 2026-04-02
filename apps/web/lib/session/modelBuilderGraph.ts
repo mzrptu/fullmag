@@ -345,19 +345,3 @@ export function resolveSelectedObjectIdFromModelBuilderGraph(
   }
   return null;
 }
-
-export function resolveSelectedMeshObjectIdFromModelBuilderGraph(
-  graph: ModelBuilderGraphV2 | null | undefined,
-  nodeId: string | null | undefined,
-): string | null {
-  if (!graph || !nodeId) {
-    return null;
-  }
-  for (const objectNode of graph.objects.items) {
-    const meshPrefix = objectNode.tree.mesh;
-    if (nodeId === meshPrefix || nodeId.startsWith(`${meshPrefix}-`)) {
-      return objectNode.name;
-    }
-  }
-  return null;
-}

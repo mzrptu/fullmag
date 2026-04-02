@@ -193,6 +193,7 @@ pub fn scene_document_to_script_builder_overrides(
             "size": universe.size,
             "center": universe.center,
             "padding": universe.padding,
+            "airbox_hmax": universe.airbox_hmax,
         })).unwrap_or(Value::Null),
         "stages": builder.stages.iter().map(|stage| serde_json::json!({
             "kind": stage.kind,
@@ -475,7 +476,7 @@ mod tests {
         ScriptBuilderCurrentModuleState, ScriptBuilderDriveState, ScriptBuilderInitialState,
         ScriptBuilderMaterialState, ScriptBuilderMeshOperationState,
         ScriptBuilderMeshSizeFieldState, ScriptBuilderMeshState, ScriptBuilderPerGeometryMeshState,
-        ScriptBuilderSolverState, ScriptBuilderStageState,
+        ScriptBuilderSolverState, ScriptBuilderStageState, ScriptBuilderUniverseState,
     };
 
     fn sample_builder() -> ScriptBuilderState {
@@ -512,7 +513,13 @@ mod tests {
                 adaptive_max_passes: 2,
                 adaptive_error_tolerance: "1e-3".to_string(),
             },
-            universe: None,
+            universe: Some(ScriptBuilderUniverseState {
+                mode: "auto".to_string(),
+                size: None,
+                center: Some([0.0, 0.0, 0.0]),
+                padding: Some([100e-9, 120e-9, 140e-9]),
+                airbox_hmax: Some(60e-9),
+            }),
             domain_frame: None,
             stages: vec![ScriptBuilderStageState {
                 kind: "run".to_string(),
@@ -620,6 +627,7 @@ mod tests {
         assert_eq!(round_trip.backend, builder.backend);
         assert_eq!(round_trip.solver, builder.solver);
         assert_eq!(round_trip.mesh, builder.mesh);
+        assert_eq!(round_trip.universe, builder.universe);
         assert_eq!(round_trip.initial_state, builder.initial_state);
         assert_eq!(round_trip.current_modules, builder.current_modules);
         assert_eq!(round_trip.excitation_analysis, builder.excitation_analysis);
@@ -664,6 +672,15 @@ mod tests {
         let projection =
             scene_document_problem_projection(&scene).expect("problem projection should build");
         assert_eq!(projection.builder.revision, scene.revision);
+        assert_eq!(
+            projection
+                .rewrite_overrides
+                .get("universe")
+                .and_then(Value::as_object)
+                .and_then(|value| value.get("airbox_hmax"))
+                .and_then(Value::as_f64),
+            Some(60e-9)
+        );
         assert_eq!(
             projection
                 .rewrite_overrides

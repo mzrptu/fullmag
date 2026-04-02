@@ -390,7 +390,7 @@ def _add_airbox_geo(
     body_surf_tags: list[int],
     airbox: AirboxOptions,
     hmax: float,
-) -> None:
+) -> int | None:
     """Add an airbox around a GEO-kernel body using pure GEO primitives.
 
     This is the GEO-kernel equivalent of :func:`_add_airbox_and_fragment`.
@@ -517,7 +517,8 @@ def _add_airbox_geo(
         gmsh.model.mesh.field.setNumber(2, "SizeMax", h_outer)
         gmsh.model.mesh.field.setNumber(2, "DistMin", 0.0)
         gmsh.model.mesh.field.setNumber(2, "DistMax", max(d_outer, hmax))
-        gmsh.model.mesh.field.setAsBackgroundMesh(2)
+        return 2
+    return None
 
 
 def _add_airbox_and_fragment(
@@ -525,7 +526,7 @@ def _add_airbox_and_fragment(
     magnetic_tags: list[tuple[int, int]],
     airbox: AirboxOptions,
     hmax: float,
-) -> None:
+) -> int | None:
     """Add an airbox around the magnetic body and fragment for a conforming mesh.
 
     After this call the Gmsh model has physical groups:
@@ -656,7 +657,8 @@ def _add_airbox_and_fragment(
         gmsh.model.mesh.field.setNumber(2, "SizeMax", h_outer)
         gmsh.model.mesh.field.setNumber(2, "DistMin", 0.0)
         gmsh.model.mesh.field.setNumber(2, "DistMax", max(d_outer, hmax))
-        gmsh.model.mesh.field.setAsBackgroundMesh(2)
+        return 2
+    return None
 
 
 def generate_mesh(
@@ -755,13 +757,16 @@ def generate_box_mesh(
         gmsh.model.occ.addBox(-sx / 2.0, -sy / 2.0, -sz / 2.0, sx, sy, sz)
         gmsh.model.occ.synchronize()
         has_airbox = resolved is not None
+        airbox_field_ids: list[int] = []
         if has_airbox:
             emit_progress("Gmsh: adding airbox domain")
-            _add_airbox_and_fragment(
+            airbox_field = _add_airbox_and_fragment(
                 gmsh, [(3, 1)], resolved, hmax,
             )
+            if airbox_field is not None:
+                airbox_field_ids.append(airbox_field)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
-        _apply_mesh_options(gmsh, hmax, order, opts)
+        _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
@@ -794,13 +799,16 @@ def generate_cylinder_mesh(
         gmsh.model.occ.addCylinder(0.0, 0.0, -height / 2.0, 0.0, 0.0, height, radius)
         gmsh.model.occ.synchronize()
         has_airbox = resolved is not None
+        airbox_field_ids: list[int] = []
         if has_airbox:
             emit_progress("Gmsh: adding airbox domain")
-            _add_airbox_and_fragment(
+            airbox_field = _add_airbox_and_fragment(
                 gmsh, [(3, 1)], resolved, hmax,
             )
+            if airbox_field is not None:
+                airbox_field_ids.append(airbox_field)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
-        _apply_mesh_options(gmsh, hmax, order, opts)
+        _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
@@ -880,13 +888,23 @@ def _generate_csg_mesh(
         mag_tags = _add_geometry_to_occ(gmsh, geometry, scale=SCALE)
         gmsh.model.occ.synchronize()
         has_airbox = airbox is not None
+        airbox_field_ids: list[int] = []
         if has_airbox:
             emit_progress("Gmsh: adding airbox domain")
-            _add_airbox_and_fragment(
+            airbox_field = _add_airbox_and_fragment(
                 gmsh, mag_tags, airbox, hmax * SCALE,
             )
+            if airbox_field is not None:
+                airbox_field_ids.append(airbox_field)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
-        _apply_mesh_options(gmsh, hmax * SCALE, order, opts, hscale=SCALE)
+        _apply_mesh_options(
+            gmsh,
+            hmax * SCALE,
+            order,
+            opts,
+            hscale=SCALE,
+            preexisting_field_ids=airbox_field_ids,
+        )
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
@@ -1062,12 +1080,15 @@ def _mesh_cad_file(
         gmsh.model.occ.importShapes(str(path))
         gmsh.model.occ.synchronize()
         has_airbox = airbox is not None
+        airbox_field_ids: list[int] = []
         if has_airbox:
             emit_progress("Gmsh: adding airbox domain")
             volumes = gmsh.model.getEntities(dim=3)
-            _add_airbox_and_fragment(gmsh, volumes, airbox, hmax)
+            airbox_field = _add_airbox_and_fragment(gmsh, volumes, airbox, hmax)
+            if airbox_field is not None:
+                airbox_field_ids.append(airbox_field)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
-        _apply_mesh_options(gmsh, hmax, order, opts)
+        _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
@@ -1182,11 +1203,14 @@ def _mesh_stl_surface(
         gmsh.model.add(path.stem)
         body_vols, body_surfs = _build_stl_volume_model(gmsh, path)
         has_airbox = airbox is not None
+        airbox_field_ids: list[int] = []
         if has_airbox:
             emit_progress("Gmsh: adding airbox domain")
-            _add_airbox_geo(gmsh, body_vols, body_surfs, airbox, hmax)
+            airbox_field = _add_airbox_geo(gmsh, body_vols, body_surfs, airbox, hmax)
+            if airbox_field is not None:
+                airbox_field_ids.append(airbox_field)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
-        _apply_mesh_options(gmsh, hmax, order, opts)
+        _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
@@ -1358,6 +1382,7 @@ def _apply_mesh_options(
     order: int,
     opts: MeshOptions,
     hscale: float = 1.0,
+    preexisting_field_ids: list[int] | None = None,
 ) -> None:
     """Apply MeshOptions to the Gmsh context before mesh.generate()."""
     emit_progress("Gmsh: applying mesh options")
@@ -1384,7 +1409,7 @@ def _apply_mesh_options(
         if opts.growth_rate < 1.5:
             gmsh.option.setNumber("Mesh.Smoothing", max(opts.smoothing_steps, 5))
 
-    extra_field_ids: list[int] = []
+    extra_field_ids: list[int] = list(preexisting_field_ids or [])
 
     if opts.narrow_regions > 0:
         fid = _add_narrow_region_field(gmsh, opts.narrow_regions, hmax, hscale)

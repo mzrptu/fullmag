@@ -37,9 +37,14 @@ pub(crate) fn build_mesh_parts_from_segments(
                 FemMeshPartRole::MagneticObject
             };
             let bounds = compute_segment_bounds(mesh, segment);
+            let label = if role == FemMeshPartRole::Air {
+                "Airbox".to_string()
+            } else {
+                segment.object_id.clone()
+            };
             FemMeshPartIR {
                 id: format!("part:{}", segment.object_id),
-                label: segment.object_id.clone(),
+                label,
                 role: role.clone(),
                 object_id: match role {
                     FemMeshPartRole::MagneticObject => Some(segment.object_id.clone()),
@@ -721,13 +726,13 @@ pub(crate) fn study_universe_planner_note(
 
     if problem.magnets.len() > 1 {
         return Some(
-            "study_universe metadata present, but current multi-body FEM planning does not synthesize a shared air-box mesh; solver domain remains the merged magnetic mesh unless a precomputed shared air mesh is attached"
+            "study_universe metadata present, but this planner-only FEM path still requires a materialized shared-domain mesh asset to carry the air-box into the solver; interactive/runtime materialization normally attaches that conformal domain mesh before execution"
                 .to_string(),
         );
     }
 
     Some(
-        "study_universe metadata present, but the selected FEM mesh has no air elements; solver domain remains the magnetic mesh unless a precomputed air-box mesh is attached"
+        "study_universe metadata present, but the selected FEM mesh has no air elements; solver domain remains magnetic until a shared-domain air-box mesh asset is materialized or attached"
             .to_string(),
     )
 }

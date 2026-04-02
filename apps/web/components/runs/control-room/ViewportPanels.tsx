@@ -422,6 +422,33 @@ export function ViewportCanvasArea() {
     },
     [ctx.isFemBackend, ctx.meshParts.length, ctx.objectOverlays, ctx.visibleMagneticObjectIds, visibleObjectIds],
   );
+  const patchMeshPartViewState = useCallback(
+    (partIds: string[], patch: Partial<(typeof ctx.meshEntityViewState)[string]>) => {
+      if (partIds.length === 0) {
+        return;
+      }
+      ctx.setMeshEntityViewState((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const partId of partIds) {
+          const current = next[partId];
+          if (!current) continue;
+          const updated = { ...current, ...patch };
+          if (
+            updated.visible !== current.visible ||
+            updated.renderMode !== current.renderMode ||
+            updated.opacity !== current.opacity ||
+            updated.colorField !== current.colorField
+          ) {
+            next[partId] = updated;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    },
+    [ctx],
+  );
   const hasExactScopeSegment = useMemo(
     () => {
       if (!selectedFemObjectId) {
@@ -548,6 +575,7 @@ export function ViewportCanvasArea() {
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
         meshParts={ctx.meshParts}
         meshEntityViewState={ctx.meshEntityViewState}
+        onMeshPartViewStatePatch={patchMeshPartViewState}
         visibleObjectIds={visibleObjectIds}
         airSegmentVisible={ctx.airMeshVisible}
         airSegmentOpacity={ctx.airMeshOpacity}
@@ -588,6 +616,7 @@ export function ViewportCanvasArea() {
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
         meshParts={ctx.meshParts}
         meshEntityViewState={ctx.meshEntityViewState}
+        onMeshPartViewStatePatch={patchMeshPartViewState}
         visibleObjectIds={visibleObjectIds}
         airSegmentVisible={ctx.airMeshVisible}
         airSegmentOpacity={ctx.airMeshOpacity}

@@ -124,6 +124,8 @@ pub struct ScriptBuilderUniverseState {
     pub center: Option<[f64; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub padding: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub airbox_hmax: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -135,6 +137,8 @@ pub struct DomainFrameDeclaredUniverseState {
     pub center: Option<[f64; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub padding: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub airbox_hmax: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

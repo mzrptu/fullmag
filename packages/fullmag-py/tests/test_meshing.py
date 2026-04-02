@@ -11,6 +11,7 @@ import numpy as np
 import fullmag as fm
 from fullmag import _core as fullmag_core
 from fullmag.meshing.asset_pipeline import (
+    _shared_domain_local_size_fields,
     _study_universe_airbox_options,
     realize_fdm_grid_asset,
     realize_fem_domain_mesh_asset,
@@ -202,6 +203,43 @@ class MeshScaffoldTests(unittest.TestCase):
             "Remesh: accepted - mode=shared_domain_manual_remesh, hmax=2.000e-08, order=P1, "
             "scope=shared_domain, body_hmax=2.000e-08, airbox_hmax=6.000e-08",
         )
+
+    def test_remesh_cli_describes_shared_domain_local_object_overrides(self) -> None:
+        self.assertEqual(
+            _describe_remesh_job(
+                "shared_domain_manual_remesh",
+                20e-9,
+                1,
+                declared_universe={"airbox_hmax": 60e-9},
+                mesh_options={
+                    "per_geometry": [
+                        {"geometry": "left", "mode": "custom", "hmax": "8e-9"},
+                        {"geometry": "right", "mode": "inherit", "hmax": ""},
+                    ]
+                },
+            ),
+            "Remesh: accepted - mode=shared_domain_manual_remesh, hmax=2.000e-08, order=P1, "
+            "scope=shared_domain, body_hmax=2.000e-08, airbox_hmax=6.000e-08, local_object_overrides=1",
+        )
+
+    def test_shared_domain_local_size_fields_follow_per_geometry_hmax(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        right = fm.Box(4.0, 2.0, 2.0, name="right")
+
+        fields = _shared_domain_local_size_fields(
+            [left, right],
+            default_hmax=20e-9,
+            per_geometry=[
+                {"geometry": "left", "mode": "custom", "hmax": "8e-9"},
+                {"geometry": "right", "mode": "inherit", "hmax": ""},
+            ],
+        )
+
+        self.assertEqual(len(fields), 2)
+        self.assertEqual(fields[0]["kind"], "Box")
+        self.assertAlmostEqual(fields[0]["params"]["VIn"], 8e-9)
+        self.assertAlmostEqual(fields[1]["params"]["VIn"], 20e-9)
+        self.assertGreater(fields[0]["params"]["VOut"], 1e6)
 
     def test_geometry_from_ir_preserves_imported_geometry_name(self) -> None:
         geometry = _geometry_from_ir(

@@ -5,7 +5,6 @@ import type { ReactNode } from "react";
 import type { FemLiveMesh, FemMeshPart } from "../../../lib/useSessionStream";
 import {
   resolveSelectedObjectIdFromModelBuilderGraph,
-  resolveSelectedMeshObjectIdFromModelBuilderGraph,
 } from "../../../lib/session/modelBuilderGraph";
 import type {
   ModelBuilderGraphV2,
@@ -612,67 +611,6 @@ export function resolveSelectedObjectId(
     return geometries[0]?.name ?? null;
   }
   return null;
-}
-
-export function resolveSelectedMeshObjectId(
-  nodeId: string | null | undefined,
-  source:
-    | ModelBuilderGraphV2
-    | SceneDocument
-    | readonly ScriptBuilderGeometryEntry[]
-    | null
-    | undefined,
-): string | null {
-  if (!nodeId) {
-    return null;
-  }
-  const resolvedObjectId = resolveSelectedObjectId(nodeId, source);
-  if (resolvedObjectId) {
-    return resolvedObjectId;
-  }
-  const sceneDocument =
-    source &&
-    !Array.isArray(source) &&
-    "version" in source &&
-    (source as SceneDocument).version === "scene.v1"
-      ? (source as SceneDocument)
-      : null;
-  if (sceneDocument) {
-    const ordered = [...sceneDocument.objects]
-      .map((object) => object.name || object.id)
-      .sort((left, right) => right.length - left.length);
-    for (const name of ordered) {
-      const meshPrefix = `geo-${name}-mesh`;
-      if (nodeId === meshPrefix || nodeId.startsWith(`${meshPrefix}-`)) {
-        return name;
-      }
-    }
-    return null;
-  }
-  const modelBuilderGraph =
-    source && !Array.isArray(source) ? (source as ModelBuilderGraphV2) : null;
-  if (modelBuilderGraph) {
-    return resolveSelectedMeshObjectIdFromModelBuilderGraph(modelBuilderGraph, nodeId);
-  }
-  const geometries = Array.isArray(source) ? source : [];
-  const ordered = [...geometries]
-    .map((geometry) => geometry.name)
-    .sort((left, right) => right.length - left.length);
-  for (const name of ordered) {
-    const meshPrefix = `geo-${name}-mesh`;
-    if (nodeId === meshPrefix || nodeId.startsWith(`${meshPrefix}-`)) {
-      return name;
-    }
-  }
-  return null;
-}
-
-export function viewportScopeObjectId(scope: ViewportScope | null | undefined): string | null {
-  if (!scope || scope === "universe" || !scope.startsWith("object:")) {
-    return null;
-  }
-  const objectId = scope.slice("object:".length).trim();
-  return objectId.length > 0 ? objectId : null;
 }
 
 export function resolveViewportScope(

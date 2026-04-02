@@ -23,7 +23,13 @@ from fullmag.model.geometry import (
     Union,
 )
 
-from .gmsh_bridge import AirboxOptions, MeshData, generate_mesh, generate_mesh_from_file
+from .gmsh_bridge import (
+    AirboxOptions,
+    MeshData,
+    MeshOptions,
+    generate_mesh,
+    generate_mesh_from_file,
+)
 from .surface_assets import _geometry_to_trimesh, _import_trimesh, build_surface_preview_payload
 from .voxelization import VoxelMaskData, voxelize_geometry
 
@@ -295,6 +301,113 @@ def _study_universe_airbox_options(
     )
 
 
+def _coerce_positive_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        candidate = float(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not stripped or stripped == "auto":
+            return None
+        try:
+            candidate = float(stripped)
+        except ValueError:
+            return None
+    else:
+        return None
+    return candidate if math.isfinite(candidate) and candidate > 0.0 else None
+
+
+def _shared_domain_local_size_fields(
+    geometries: list[Geometry],
+    *,
+    default_hmax: float,
+    per_geometry: object,
+) -> list[dict[str, object]]:
+    if not isinstance(per_geometry, list):
+        return []
+
+    override_by_name: dict[str, Mapping[str, object]] = {}
+    for entry in per_geometry:
+        if not isinstance(entry, Mapping):
+            continue
+        raw_name = entry.get("geometry") or entry.get("geometry_name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            continue
+        override_by_name[raw_name.strip()] = entry
+
+    fields: list[dict[str, object]] = []
+    sentinel_outside = max(default_hmax, 1.0) * 1.0e18
+    for geometry in geometries:
+        bounds = geometry_bounds(geometry, source_root=None)
+        if bounds is None:
+            continue
+        bounds_min, bounds_max = bounds
+        entry = override_by_name.get(geometry.geometry_name)
+        target_hmax = _coerce_positive_float(entry.get("hmax") if entry else None) or default_hmax
+        pad = max(target_hmax, default_hmax) * 1.0e-6
+        fields.append(
+            {
+                "kind": "Box",
+                "params": {
+                    "VIn": float(target_hmax),
+                    "VOut": float(sentinel_outside),
+                    "XMin": float(bounds_min[0] - pad),
+                    "XMax": float(bounds_max[0] + pad),
+                    "YMin": float(bounds_min[1] - pad),
+                    "YMax": float(bounds_max[1] + pad),
+                    "ZMin": float(bounds_min[2] - pad),
+                    "ZMax": float(bounds_max[2] + pad),
+                },
+            }
+        )
+    return fields
+
+
+def _mesh_options_from_runtime_metadata(
+    mesh_workflow: Mapping[str, object] | None,
+    *,
+    geometries: list[Geometry],
+    default_hmax: float,
+) -> MeshOptions:
+    raw_mesh_options = (
+        mesh_workflow.get("mesh_options")
+        if isinstance(mesh_workflow, Mapping)
+        and isinstance(mesh_workflow.get("mesh_options"), Mapping)
+        else {}
+    )
+    assert isinstance(raw_mesh_options, Mapping)
+    size_fields = (
+        [field for field in raw_mesh_options.get("size_fields", []) if isinstance(field, Mapping)]
+        if isinstance(raw_mesh_options.get("size_fields"), list)
+        else []
+    )
+    size_fields.extend(
+        _shared_domain_local_size_fields(
+            geometries,
+            default_hmax=default_hmax,
+            per_geometry=mesh_workflow.get("per_geometry") if isinstance(mesh_workflow, Mapping) else None,
+        )
+    )
+    optimize = raw_mesh_options.get("optimize")
+    return MeshOptions(
+        algorithm_2d=int(raw_mesh_options.get("algorithm_2d", 6)),
+        algorithm_3d=int(raw_mesh_options.get("algorithm_3d", 1)),
+        hmin=_coerce_positive_float(raw_mesh_options.get("hmin")),
+        size_factor=float(raw_mesh_options.get("size_factor", 1.0)),
+        size_from_curvature=int(raw_mesh_options.get("size_from_curvature", 0)),
+        growth_rate=_coerce_positive_float(raw_mesh_options.get("growth_rate")),
+        narrow_regions=int(raw_mesh_options.get("narrow_regions", 0)),
+        smoothing_steps=int(raw_mesh_options.get("smoothing_steps", 1)),
+        optimize=str(optimize) if isinstance(optimize, str) and optimize.strip() else None,
+        optimize_iters=int(raw_mesh_options.get("optimize_iterations", 1)),
+        size_fields=size_fields,
+        compute_quality=bool(raw_mesh_options.get("compute_quality", False)),
+        per_element_quality=bool(raw_mesh_options.get("per_element_quality", False)),
+    )
+
+
 def _contains_points_in_geometry(
     geometry: Geometry,
     points: np.ndarray,
@@ -457,6 +570,7 @@ def realize_fem_domain_mesh_asset(
     hints: FEM,
     *,
     study_universe: Mapping[str, object] | None = None,
+    mesh_workflow: Mapping[str, object] | None = None,
 ) -> tuple[MeshData, list[dict[str, object]]]:
     if not geometries:
         raise ValueError("shared FEM domain mesh requires at least one geometry")
@@ -479,11 +593,21 @@ def realize_fem_domain_mesh_asset(
         surface_path = Path(tmp_dir) / "shared_domain_surface.stl"
         combined_surface.export(surface_path)
         emit_progress("Preparing shared FEM domain mesh asset")
+        mesh_options = _mesh_options_from_runtime_metadata(
+            mesh_workflow,
+            geometries=geometries,
+            default_hmax=float(hints.hmax),
+        )
+        if mesh_options.size_fields:
+            emit_progress(
+                f"Shared-domain local sizing active ({len(mesh_options.size_fields)} size fields)"
+            )
         mesh = generate_mesh_from_file(
             surface_path,
             hmax=hints.hmax,
             order=hints.order,
             airbox=airbox,
+            options=mesh_options,
         )
 
     source_markers = np.asarray(mesh.element_markers, dtype=np.int32)

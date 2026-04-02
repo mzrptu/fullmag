@@ -184,17 +184,39 @@ def _describe_remesh_job(
     order: int,
     *,
     declared_universe: dict[str, Any] | None = None,
+    mesh_options: dict[str, Any] | None = None,
 ) -> str:
     summary = f"Remesh: accepted - mode={mode}, hmax={float(hmax):.3e}, order=P{int(order)}"
-    if mode != "shared_domain_manual_remesh" or not isinstance(declared_universe, dict):
-        return summary
-    airbox_hmax = declared_universe.get("airbox_hmax")
-    if isinstance(airbox_hmax, (int, float)) and float(airbox_hmax) > 0.0:
-        return (
-            f"{summary}, scope=shared_domain, body_hmax={float(hmax):.3e}, "
-            f"airbox_hmax={float(airbox_hmax):.3e}"
+    per_geometry = mesh_options.get("per_geometry") if isinstance(mesh_options, dict) else None
+    local_override_count = (
+        sum(
+            1
+            for entry in per_geometry
+            if isinstance(entry, dict)
+            and isinstance(entry.get("hmax"), (int, float, str))
+            and str(entry.get("hmax")).strip() not in {"", "None"}
         )
-    return f"{summary}, scope=shared_domain"
+        if isinstance(per_geometry, list)
+        else 0
+    )
+    if mode != "shared_domain_manual_remesh" or not isinstance(declared_universe, dict):
+        return (
+            f"{summary}, local_object_overrides={local_override_count}"
+            if local_override_count > 0
+            else summary
+        )
+    airbox_hmax = declared_universe.get("airbox_hmax")
+    scope_bits = ["scope=shared_domain"]
+    if isinstance(airbox_hmax, (int, float)) and float(airbox_hmax) > 0.0:
+        scope_bits.extend(
+            [
+                f"body_hmax={float(hmax):.3e}",
+                f"airbox_hmax={float(airbox_hmax):.3e}",
+            ]
+        )
+    if local_override_count > 0:
+        scope_bits.append(f"local_object_overrides={local_override_count}")
+    return f"{summary}, {', '.join(scope_bits)}"
 
 
 def main() -> None:
@@ -226,6 +248,7 @@ def main() -> None:
                     if isinstance(config.get("declared_universe"), dict)
                     else config.get("study_universe")
                 ),
+                mesh_options=mesh_opts_dict,
             )
         )
         region_markers = None
@@ -266,10 +289,19 @@ def main() -> None:
                         "shared_domain_manual_remesh mode requires a declared_universe payload"
                     )
                 geometries = [_geometry_from_ir(entry) for entry in raw_geometries]
+                mesh_workflow = {
+                    "mesh_options": mesh_opts_dict,
+                    "per_geometry": (
+                        mesh_opts_dict.get("per_geometry")
+                        if isinstance(mesh_opts_dict.get("per_geometry"), list)
+                        else []
+                    ),
+                }
                 mesh_data, region_markers = realize_fem_domain_mesh_asset(
                     geometries,
                     FEM(order=int(order), hmax=float(hmax)),
                     study_universe=declared_universe,
+                    mesh_workflow=mesh_workflow,
                 )
             elif mode == "manual_remesh":
                 mesh_data = generate_mesh(geometry, hmax=hmax, order=order, options=mesh_opts)

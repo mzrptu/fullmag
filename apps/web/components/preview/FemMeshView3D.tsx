@@ -85,6 +85,10 @@ interface Props {
   objectSegments?: FemLiveMeshObjectSegment[];
   meshParts?: FemMeshPart[];
   meshEntityViewState?: MeshEntityViewStateMap;
+  onMeshPartViewStatePatch?: (
+    partIds: string[],
+    patch: Partial<MeshEntityViewState>,
+  ) => void;
   visibleObjectIds?: string[];
   airSegmentVisible?: boolean;
   airSegmentOpacity?: number;
@@ -520,6 +524,7 @@ function FemMeshView3DInner({
   objectSegments = [],
   meshParts = [],
   meshEntityViewState = {},
+  onMeshPartViewStatePatch,
   visibleObjectIds,
   airSegmentVisible = true,
   airSegmentOpacity = 28,
@@ -817,6 +822,53 @@ function FemMeshView3DInner({
     hasAirDisplayContent;
   
   const topologySignature = topologyKey ?? `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}`;
+  const toolbarStylePartIds = useMemo(() => {
+    if (!hasMeshParts) {
+      return [] as string[];
+    }
+    const selectedLayerIds = visibleLayers
+      .filter((layer) => layer.isSelected)
+      .map((layer) => layer.part.id);
+    if (selectedLayerIds.length > 0) {
+      return selectedLayerIds;
+    }
+    return visibleLayers.map((layer) => layer.part.id);
+  }, [hasMeshParts, visibleLayers]);
+  const toolbarColorPartIds = useMemo(() => {
+    if (!hasMeshParts) {
+      return [] as string[];
+    }
+    const magneticIds = visibleLayers
+      .filter(
+        (layer) =>
+          toolbarStylePartIds.includes(layer.part.id) && layer.part.role === "magnetic_object",
+      )
+      .map((layer) => layer.part.id);
+    return magneticIds.length > 0 ? magneticIds : toolbarStylePartIds;
+  }, [hasMeshParts, toolbarStylePartIds, visibleLayers]);
+  const toolbarRenderMode = useMemo(() => {
+    if (!hasMeshParts || toolbarStylePartIds.length === 0) {
+      return renderMode;
+    }
+    const targetLayers = visibleLayers.filter((layer) => toolbarStylePartIds.includes(layer.part.id));
+    const values = Array.from(new Set(targetLayers.map((layer) => layer.viewState.renderMode)));
+    return values[0] ?? renderMode;
+  }, [hasMeshParts, renderMode, toolbarStylePartIds, visibleLayers]);
+  const toolbarOpacity = useMemo(() => {
+    if (!hasMeshParts || toolbarStylePartIds.length === 0) {
+      return opacity;
+    }
+    const targetLayer = visibleLayers.find((layer) => toolbarStylePartIds.includes(layer.part.id));
+    return targetLayer?.viewState.opacity ?? opacity;
+  }, [hasMeshParts, opacity, toolbarStylePartIds, visibleLayers]);
+  const toolbarColorField = useMemo(() => {
+    if (!hasMeshParts || toolbarColorPartIds.length === 0) {
+      return field;
+    }
+    const targetLayers = visibleLayers.filter((layer) => toolbarColorPartIds.includes(layer.part.id));
+    const values = Array.from(new Set(targetLayers.map((layer) => layer.viewState.colorField)));
+    return values[0] ?? field;
+  }, [field, hasMeshParts, toolbarColorPartIds, visibleLayers]);
   const effectiveOpacity = opacity;
   const arrowField = hasMeshParts
     ? (visibleLayers.find((layer) => layer.isMagnetic)?.viewState.colorField ?? field)
@@ -977,6 +1029,27 @@ function FemMeshView3DInner({
     const ar = faceARsRef.current ? faceARsRef.current[idx] : 0;
     return { faceIdx: idx, ar, sicn: qualityPerFace?.[idx] };
   }, [hoveredFace, qualityPerFace]);
+  const applyToolbarRenderMode = useCallback((next: RenderMode) => {
+    if (hasMeshParts && toolbarStylePartIds.length > 0 && onMeshPartViewStatePatch) {
+      onMeshPartViewStatePatch(toolbarStylePartIds, { renderMode: next });
+      return;
+    }
+    onRenderModeChange ? onRenderModeChange(next) : setInternalRenderMode(next);
+  }, [hasMeshParts, onMeshPartViewStatePatch, onRenderModeChange, toolbarStylePartIds]);
+  const applyToolbarOpacity = useCallback((next: number) => {
+    if (hasMeshParts && toolbarStylePartIds.length > 0 && onMeshPartViewStatePatch) {
+      onMeshPartViewStatePatch(toolbarStylePartIds, { opacity: next });
+      return;
+    }
+    onOpacityChange ? onOpacityChange(next) : setInternalOpacity(next);
+  }, [hasMeshParts, onMeshPartViewStatePatch, onOpacityChange, toolbarStylePartIds]);
+  const applyToolbarColorField = useCallback((next: FemColorField) => {
+    if (hasMeshParts && toolbarColorPartIds.length > 0 && onMeshPartViewStatePatch) {
+      onMeshPartViewStatePatch(toolbarColorPartIds, { colorField: next });
+      return;
+    }
+    setField(next);
+  }, [hasMeshParts, onMeshPartViewStatePatch, toolbarColorPartIds]);
   return (
     <div className="relative flex flex-1 w-[100%] h-[100%] min-w-0 min-h-0 bg-background overflow-hidden rounded-md fem-canvas-container">
       <Canvas
@@ -1081,9 +1154,7 @@ function FemMeshView3DInner({
             onAntennaTranslate={onAntennaTranslate}
           />
         ) : null}
-        {!partFocused ? (
-          <SceneAxes3D worldExtent={axesWorldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
-        ) : null}
+        <SceneAxes3D worldExtent={axesWorldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
         
         <SyncedControls controlsRefObject={controlsRef} viewCubeBridgeRef={viewCubeSceneRef} />
       </Canvas>
@@ -1105,14 +1176,14 @@ function FemMeshView3DInner({
           <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-1 select-none">Render</span>
             {RENDER_OPTIONS.map((opt) => (
-              <button key={opt.value} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors leading-[1.35] hover:bg-muted/50 hover:text-foreground data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={renderMode === opt.value} onClick={() => onRenderModeChange ? onRenderModeChange(opt.value) : setInternalRenderMode(opt.value)}>{opt.label}</button>
+              <button key={opt.value} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors leading-[1.35] hover:bg-muted/50 hover:text-foreground data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={toolbarRenderMode === opt.value} onClick={() => applyToolbarRenderMode(opt.value)}>{opt.label}</button>
             ))}
           </div>
           {/* Color field */}
           <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-1 select-none">Color</span>
             {COLOR_OPTIONS.map((opt) => (
-              <button key={opt.value} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors leading-[1.35] hover:bg-muted/50 hover:text-foreground data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={field === opt.value} onClick={() => setField(opt.value)}>{opt.label}</button>
+              <button key={opt.value} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors leading-[1.35] hover:bg-muted/50 hover:text-foreground data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={toolbarColorField === opt.value} onClick={() => applyToolbarColorField(opt.value)}>{opt.label}</button>
             ))}
           </div>
           {/* Clip */}
@@ -1136,7 +1207,7 @@ function FemMeshView3DInner({
           {/* Opacity */}
           <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-1 select-none">Opac</span>
-            <input type="range" className="w-[50px] h-[3px] accent-primary" min={10} max={100} value={opacity} onChange={(e) => { const v = Number(e.target.value); onOpacityChange ? onOpacityChange(v) : setInternalOpacity(v); }} />
+            <input type="range" className="w-[50px] h-[3px] accent-primary" min={10} max={100} value={toolbarOpacity} onChange={(e) => { const v = Number(e.target.value); applyToolbarOpacity(v); }} />
           </div>
           {/* Shrink */}
           {meshData.elements.length >= 4 && (

@@ -10,6 +10,7 @@ import type {
   LatestFields,
   LiveState,
   MeshCommandTarget,
+  SceneEditorMeshEntityViewState,
   ModelBuilderGraphV2,
   MeshWorkspaceState,
   PreviewConfig,
@@ -268,6 +269,63 @@ function normalizeFemLiveMesh(raw: unknown): FemLiveMesh | null {
     domain_frame: normalizeDomainFrame(mesh.domain_frame),
     generation_id: typeof mesh.generation_id === "string" ? mesh.generation_id : null,
   };
+}
+
+function normalizeSceneEditorMeshRenderMode(
+  raw: unknown,
+): SceneEditorMeshEntityViewState["render_mode"] {
+  switch (raw) {
+    case "surface":
+    case "surface+edges":
+    case "wireframe":
+    case "points":
+      return raw;
+    default:
+      return "surface";
+  }
+}
+
+function normalizeSceneEditorMeshColorField(
+  raw: unknown,
+): SceneEditorMeshEntityViewState["color_field"] {
+  switch (raw) {
+    case "orientation":
+    case "x":
+    case "y":
+    case "z":
+    case "magnitude":
+    case "quality":
+    case "sicn":
+    case "none":
+      return raw;
+    default:
+      return "orientation";
+  }
+}
+
+function normalizeSceneEditorMeshEntityViewState(
+  raw: unknown,
+): Record<string, SceneEditorMeshEntityViewState> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const normalized: Record<string, SceneEditorMeshEntityViewState> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    normalized[key] = {
+      visible: Boolean((value as Record<string, unknown>).visible ?? true),
+      render_mode: normalizeSceneEditorMeshRenderMode(
+        (value as Record<string, unknown>).render_mode,
+      ),
+      opacity: Number((value as Record<string, unknown>).opacity ?? 100),
+      color_field: normalizeSceneEditorMeshColorField(
+        (value as Record<string, unknown>).color_field,
+      ),
+    };
+  }
+  return normalized;
 }
 
 /* ── Sub-object normalizers ── */
@@ -878,6 +936,30 @@ function normalizeSceneDocument(raw: any): SceneDocument | null {
         typeof raw.editor?.transform_space === "string"
           ? raw.editor.transform_space
           : null,
+      selected_entity_id:
+        typeof raw.editor?.selected_entity_id === "string"
+          ? raw.editor.selected_entity_id
+          : null,
+      focused_entity_id:
+        typeof raw.editor?.focused_entity_id === "string"
+          ? raw.editor.focused_entity_id
+          : null,
+      object_view_mode:
+        raw.editor?.object_view_mode === "context" ||
+        raw.editor?.object_view_mode === "isolate"
+          ? raw.editor.object_view_mode
+          : null,
+      air_mesh_visible:
+        typeof raw.editor?.air_mesh_visible === "boolean"
+          ? raw.editor.air_mesh_visible
+          : null,
+      air_mesh_opacity:
+        raw.editor?.air_mesh_opacity != null
+          ? Number(raw.editor.air_mesh_opacity)
+          : null,
+      mesh_entity_view_state: normalizeSceneEditorMeshEntityViewState(
+        raw.editor?.mesh_entity_view_state,
+      ),
     },
   };
 }

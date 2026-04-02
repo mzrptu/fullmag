@@ -6,6 +6,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct SceneDocument {
@@ -207,7 +208,30 @@ pub struct SceneOutputsState {
     pub items: Vec<Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct SceneMeshEntityViewState {
+    #[serde(default = "default_true")]
+    pub visible: bool,
+    #[serde(default = "default_scene_mesh_render_mode")]
+    pub render_mode: String,
+    #[serde(default = "default_scene_mesh_opacity")]
+    pub opacity: f64,
+    #[serde(default = "default_scene_mesh_color_field")]
+    pub color_field: String,
+}
+
+impl Default for SceneMeshEntityViewState {
+    fn default() -> Self {
+        Self {
+            visible: default_true(),
+            render_mode: default_scene_mesh_render_mode(),
+            opacity: default_scene_mesh_opacity(),
+            color_field: default_scene_mesh_color_field(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct SceneEditorState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_object_id: Option<String>,
@@ -215,6 +239,34 @@ pub struct SceneEditorState {
     pub gizmo_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform_space: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_entity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focused_entity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_view_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub air_mesh_visible: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub air_mesh_opacity: Option<f64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mesh_entity_view_state: BTreeMap<String, SceneMeshEntityViewState>,
+}
+
+impl Default for SceneEditorState {
+    fn default() -> Self {
+        Self {
+            selected_object_id: None,
+            gizmo_mode: None,
+            transform_space: None,
+            selected_entity_id: None,
+            focused_entity_id: None,
+            object_view_mode: Some("context".to_string()),
+            air_mesh_visible: Some(true),
+            air_mesh_opacity: Some(28.0),
+            mesh_entity_view_state: BTreeMap::new(),
+        }
+    }
 }
 
 fn default_scene_version() -> String {
@@ -251,6 +303,18 @@ fn default_mapping_projection() -> String {
 
 fn default_mapping_clamp_mode() -> String {
     "clamp".to_string()
+}
+
+fn default_scene_mesh_render_mode() -> String {
+    "surface".to_string()
+}
+
+const fn default_scene_mesh_opacity() -> f64 {
+    100.0
+}
+
+fn default_scene_mesh_color_field() -> String {
+    "orientation".to_string()
 }
 
 fn default_solver() -> ScriptBuilderSolverState {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   FileText, Play, Pause, Square, Box, Columns2, Grid3X3,
@@ -381,9 +381,17 @@ const RibbonActionTrigger = React.forwardRef<
     previewPending?: boolean;
   } & React.ButtonHTMLAttributes<HTMLButtonElement>
 >(({ action, previewPending, ...props }, ref) => {
+  const handleClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    props.onClick?.(e);
+    if (e.defaultPrevented) {
+      return;
+    }
+    action.action?.();
+  }, [action, props.onClick]);
   return (
     <button
       ref={ref}
+      {...props}
       className={cn(
         "flex min-h-[56px] min-w-[60px] flex-col items-center justify-center gap-1.5 rounded-md border p-1 transition-all",
         action.active
@@ -393,13 +401,10 @@ const RibbonActionTrigger = React.forwardRef<
             : "border-transparent text-foreground hover:border-border/50 hover:bg-muted/80",
         previewPending && action.active && "animate-pulse shadow-[0_0_0_1px_rgba(99,102,241,0.35)]",
         action.disabled && "pointer-events-none cursor-not-allowed opacity-40",
+        props.className,
       )}
       disabled={action.disabled}
-      onClick={(e) => {
-        if (action.action) action.action();
-        if (props.onClick) props.onClick(e);
-      }}
-      {...props}
+      onClick={handleClick}
     >
       <span
         className={cn(
@@ -439,8 +444,10 @@ export default function RibbonBar(props: RibbonBarProps) {
   const [manualTab, setManualTab] = useState<RibbonTab | null>(null);
 
   useEffect(() => {
-    setManualTab(null);
-  }, [props.selectedNodeId]);
+    if (manualTab && inferredTab !== manualTab) {
+      setManualTab(null);
+    }
+  }, [inferredTab, manualTab]);
 
   const activeTab = manualTab ?? inferredTab;
 

@@ -141,6 +141,70 @@ import type {
 /* ── Stable empty arrays ── */
 const EMPTY_SCALAR_ROWS: ScalarRow[] = [];
 const EMPTY_ENGINE_LOG: EngineLogEntry[] = [];
+const DEFAULT_AIR_MESH_OPACITY = 28;
+
+function normalizePersistedObjectViewMode(
+  value: SceneDocument["editor"]["object_view_mode"],
+): ObjectViewMode {
+  return value === "isolate" ? "isolate" : "context";
+}
+
+function normalizePersistedMeshEntityViewState(
+  value: SceneDocument["editor"]["mesh_entity_view_state"],
+): MeshEntityViewStateMap {
+  const next: MeshEntityViewStateMap = {};
+  for (const [entityId, state] of Object.entries(value ?? {})) {
+    next[entityId] = {
+      visible: state.visible,
+      renderMode: state.render_mode,
+      opacity: state.opacity,
+      colorField: state.color_field,
+    };
+  }
+  return next;
+}
+
+function serializeMeshEntityViewStateForScene(
+  value: MeshEntityViewStateMap,
+): SceneDocument["editor"]["mesh_entity_view_state"] {
+  const next: SceneDocument["editor"]["mesh_entity_view_state"] = {};
+  for (const [entityId, state] of Object.entries(value)) {
+    next[entityId] = {
+      visible: state.visible,
+      render_mode: state.renderMode,
+      opacity: state.opacity,
+      color_field: state.colorField,
+    };
+  }
+  return next;
+}
+
+function samePersistedMeshEntityViewState(
+  left: SceneDocument["editor"]["mesh_entity_view_state"],
+  right: SceneDocument["editor"]["mesh_entity_view_state"],
+): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+  for (const key of leftKeys) {
+    const lhs = left[key];
+    const rhs = right[key];
+    if (!rhs) {
+      return false;
+    }
+    if (
+      lhs.visible !== rhs.visible ||
+      lhs.render_mode !== rhs.render_mode ||
+      lhs.opacity !== rhs.opacity ||
+      lhs.color_field !== rhs.color_field
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /* Context interfaces, hooks, and React context objects are in context-hooks.tsx */
 export {
@@ -200,7 +264,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [focusObjectRequest, setFocusObjectRequest] = useState<FocusObjectRequest | null>(null);
   const [objectViewMode, setObjectViewMode] = useState<ObjectViewMode>("context");
   const [airMeshVisible, setAirMeshVisible] = useState(true);
-  const [airMeshOpacity, setAirMeshOpacity] = useState(28);
+  const [airMeshOpacity, setAirMeshOpacity] = useState(DEFAULT_AIR_MESH_OPACITY);
   const [meshEntityViewState, setMeshEntityViewState] = useState<MeshEntityViewStateMap>({});
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [focusedEntityId, setFocusedEntityId] = useState<string | null>(null);
@@ -312,6 +376,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setViewportScope("universe");
     setFocusObjectRequest(null);
     setObjectViewMode("context");
+    setAirMeshVisible(true);
+    setAirMeshOpacity(DEFAULT_AIR_MESH_OPACITY);
+    setMeshEntityViewState({});
+    setSelectedEntityId(null);
+    setFocusedEntityId(null);
   }, [workspaceHydrationKey]);
 
   useEffect(() => {
@@ -529,6 +598,32 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     () => localBuilderDraft?.objects ?? remoteSceneDocument?.objects ?? [],
     [localBuilderDraft, remoteSceneDocument],
   );
+  const meshPerGeometryPayload = useMemo(
+    () =>
+      sceneObjects.map((object) => ({
+        geometry: object.name,
+        mode: object.mesh_override?.mode ?? "inherit",
+        hmax: object.mesh_override?.hmax ?? "",
+        hmin: object.mesh_override?.hmin ?? "",
+        order: object.mesh_override?.order ?? null,
+        source: object.mesh_override?.source ?? null,
+        algorithm_2d: object.mesh_override?.algorithm_2d ?? null,
+        algorithm_3d: object.mesh_override?.algorithm_3d ?? null,
+        size_factor: object.mesh_override?.size_factor ?? null,
+        size_from_curvature: object.mesh_override?.size_from_curvature ?? null,
+        growth_rate: object.mesh_override?.growth_rate ?? "",
+        narrow_regions: object.mesh_override?.narrow_regions ?? null,
+        smoothing_steps: object.mesh_override?.smoothing_steps ?? null,
+        optimize: object.mesh_override?.optimize ?? null,
+        optimize_iterations: object.mesh_override?.optimize_iterations ?? null,
+        compute_quality: object.mesh_override?.compute_quality ?? null,
+        per_element_quality: object.mesh_override?.per_element_quality ?? null,
+        size_fields: object.mesh_override?.size_fields ?? [],
+        operations: object.mesh_override?.operations ?? [],
+        build_requested: object.mesh_override?.build_requested ?? false,
+      })),
+    [sceneObjects],
+  );
   const setSceneDocument = useCallback<Dispatch<SetStateAction<SceneDocument | null>>>(
     (update) => {
       const baseScene = sceneDocumentDraft ?? localBuilderDraft;
@@ -671,14 +766,28 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       ...meshOptionsFromBuilder(incomingGraph.study.mesh_defaults),
     }));
     setModelBuilderGraph(incomingGraph);
-    setSceneDocumentDraft(
+    const hydratedScene =
       remoteSceneDocument ??
-        buildSceneDocumentFromScriptBuilder({
-          revision: incomingGraph.revision,
-          initial_state: incomingGraph.study.initial_state,
-          ...serializeModelBuilderGraphV2(incomingGraph),
-        }),
+      buildSceneDocumentFromScriptBuilder({
+        revision: incomingGraph.revision,
+        initial_state: incomingGraph.study.initial_state,
+        ...serializeModelBuilderGraphV2(incomingGraph),
+      });
+    setSceneDocumentDraft(hydratedScene);
+    setSelectedObjectId(hydratedScene.editor.selected_object_id);
+    setObjectViewMode(normalizePersistedObjectViewMode(hydratedScene.editor.object_view_mode));
+    setAirMeshVisible(hydratedScene.editor.air_mesh_visible ?? true);
+    setAirMeshOpacity(
+      typeof hydratedScene.editor.air_mesh_opacity === "number" &&
+        Number.isFinite(hydratedScene.editor.air_mesh_opacity)
+        ? hydratedScene.editor.air_mesh_opacity
+        : DEFAULT_AIR_MESH_OPACITY,
     );
+    setMeshEntityViewState(
+      normalizePersistedMeshEntityViewState(hydratedScene.editor.mesh_entity_view_state),
+    );
+    setSelectedEntityId(hydratedScene.editor.selected_entity_id);
+    setFocusedEntityId(hydratedScene.editor.focused_entity_id);
     const firstRunStage = incomingGraph.study.stages.find(
       (stage) => stage.kind === "run" && stage.until_seconds.trim().length > 0,
     );
@@ -704,6 +813,54 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     scriptBuilder,
     solverSettings,
     workspaceHydrationKey,
+  ]);
+
+  useEffect(() => {
+    const persistedMeshEntityViewState = serializeMeshEntityViewStateForScene(meshEntityViewState);
+    setSceneDocumentDraft((previousScene) => {
+      if (!previousScene) {
+        return previousScene;
+      }
+      const previousEditor = previousScene.editor;
+      const nextAirMeshOpacity = Number.isFinite(airMeshOpacity)
+        ? airMeshOpacity
+        : DEFAULT_AIR_MESH_OPACITY;
+      if (
+        previousEditor.selected_object_id === selectedObjectId &&
+        previousEditor.selected_entity_id === selectedEntityId &&
+        previousEditor.focused_entity_id === focusedEntityId &&
+        previousEditor.object_view_mode === objectViewMode &&
+        previousEditor.air_mesh_visible === airMeshVisible &&
+        previousEditor.air_mesh_opacity === nextAirMeshOpacity &&
+        samePersistedMeshEntityViewState(
+          previousEditor.mesh_entity_view_state,
+          persistedMeshEntityViewState,
+        )
+      ) {
+        return previousScene;
+      }
+      return {
+        ...previousScene,
+        editor: {
+          ...previousEditor,
+          selected_object_id: selectedObjectId,
+          selected_entity_id: selectedEntityId,
+          focused_entity_id: focusedEntityId,
+          object_view_mode: objectViewMode,
+          air_mesh_visible: airMeshVisible,
+          air_mesh_opacity: nextAirMeshOpacity,
+          mesh_entity_view_state: persistedMeshEntityViewState,
+        },
+      };
+    });
+  }, [
+    airMeshOpacity,
+    airMeshVisible,
+    focusedEntityId,
+    meshEntityViewState,
+    objectViewMode,
+    selectedEntityId,
+    selectedObjectId,
   ]);
 
   useEffect(() => {
@@ -1309,8 +1466,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         (refinementZonesOverride ?? options.refinementZones).length > 0
           ? (refinementZonesOverride ?? options.refinementZones)
           : undefined,
+      per_geometry: meshPerGeometryPayload,
     }),
-    [],
+    [meshPerGeometryPayload],
   );
 
   const enqueueStudyDomainRemesh = useCallback(

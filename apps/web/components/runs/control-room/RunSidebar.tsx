@@ -166,8 +166,26 @@ export default function RunSidebar() {
       : activeAntennaName ?? "Workspace"));
 
   const selectModelNode = useCallback((id: string) => {
+    const objectId = resolveSelectedObjectId(id, model.sceneDocument ?? model.modelBuilderGraph);
     model.setSelectedSidebarNodeId(id);
-    model.setSelectedObjectId(resolveSelectedObjectId(id, model.sceneDocument ?? model.modelBuilderGraph));
+    model.setSelectedObjectId(objectId);
+    if (id === "universe-airbox" || id === "universe-airbox-mesh") {
+      const airPartId = model.airPart?.id ?? null;
+      model.setSelectedEntityId(airPartId);
+      model.setFocusedEntityId(airPartId);
+      return;
+    }
+    if (objectId) {
+      const partId =
+        model.meshParts.find(
+          (part) => part.role === "magnetic_object" && part.object_id === objectId,
+        )?.id ?? null;
+      model.setSelectedEntityId(partId);
+      model.setFocusedEntityId(partId);
+      return;
+    }
+    model.setSelectedEntityId(null);
+    model.setFocusedEntityId(null);
   }, [model]);
 
   /* ── Tree click handler ── */
@@ -395,7 +413,7 @@ export default function RunSidebar() {
               <div className="flex-1 min-h-0 min-w-0 overflow-hidden isolate relative">
                 <ScrollArea className="h-full w-full">
                   <div className="p-1 select-none">
-                    <SettingsPanel nodeId={activeNodeId} nodeLabel={activeNodeLabel} />
+                    <SettingsPanel nodeId={activeNodeId} />
                   </div>
                 </ScrollArea>
               </div>

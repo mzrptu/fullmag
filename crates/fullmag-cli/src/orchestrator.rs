@@ -522,6 +522,41 @@ fn execute_manual_interactive_remesh(
                     );
                 }
             }
+        } else if shared_domain_remesh && mesh_reason.starts_with("object_mesh_override_changed") {
+            let object_id = mesh_reason
+                .strip_prefix("object_mesh_override_changed:")
+                .unwrap_or("selected_object");
+            let custom_override_count = opts
+                .get("per_geometry")
+                .and_then(|value| value.as_array())
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter(|entry| {
+                            entry
+                                .get("mode")
+                                .and_then(|value| value.as_str())
+                                .map(|mode| mode == "custom")
+                                .unwrap_or(false)
+                        })
+                        .count()
+                })
+                .unwrap_or(0);
+            eprintln!(
+                "[fullmag] shared-domain remesh scope — applying local object sizing for {} (custom object overrides={}, default body hmax={:.3e} m)",
+                object_id,
+                custom_override_count,
+                hmax
+            );
+            live_workspace.push_log(
+                "info",
+                format!(
+                    "Shared-domain remesh scope — local object sizing for {} (custom overrides={}, default body hmax={:.3e})",
+                    object_id,
+                    custom_override_count,
+                    hmax
+                ),
+            );
         }
         eprintln!(
             "[fullmag] meshing in progress — hmax={:.3e} m, order=P{} ...",

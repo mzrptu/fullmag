@@ -605,10 +605,31 @@ export interface SceneOutputsState {
   items: Record<string, unknown>[];
 }
 
+export interface SceneEditorMeshEntityViewState {
+  visible: boolean;
+  render_mode: "surface" | "surface+edges" | "wireframe" | "points";
+  opacity: number;
+  color_field:
+    | "orientation"
+    | "x"
+    | "y"
+    | "z"
+    | "magnitude"
+    | "quality"
+    | "sicn"
+    | "none";
+}
+
 export interface SceneEditorState {
   selected_object_id: string | null;
   gizmo_mode: string | null;
   transform_space: string | null;
+  selected_entity_id: string | null;
+  focused_entity_id: string | null;
+  object_view_mode: "context" | "isolate" | null;
+  air_mesh_visible: boolean | null;
+  air_mesh_opacity: number | null;
+  mesh_entity_view_state: Record<string, SceneEditorMeshEntityViewState>;
 }
 
 export interface SceneDocument {

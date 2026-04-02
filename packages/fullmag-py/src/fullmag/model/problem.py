@@ -148,6 +148,7 @@ def build_geometry_assets_for_request(
     geometries: Sequence[object],
     discretization: DiscretizationHints | None,
     study_universe: dict[str, object] | None = None,
+    mesh_workflow: dict[str, object] | None = None,
     asset_cache: dict[str, dict[str, Any] | None] | None = None,
 ) -> dict[str, Any] | None:
     if discretization is None:
@@ -159,6 +160,7 @@ def build_geometry_assets_for_request(
             "geometries": [geometry.to_ir() for geometry in geometries],
             "discretization": discretization.to_ir(),
             "study_universe": study_universe,
+            "mesh_workflow": mesh_workflow,
         },
         sort_keys=True,
     )
@@ -284,6 +286,7 @@ def build_geometry_assets_for_request(
                 list(geometries),
                 discretization.fem,
                 study_universe=study_universe,
+                mesh_workflow=mesh_workflow,
             )
             domain_mesh_ir = domain_mesh.to_ir("study_domain")
             is_valid = validate_mesh_ir(domain_mesh_ir)
@@ -733,6 +736,7 @@ class Problem:
                 geometries=geometries,
                 discretization=discretization,
                 study_universe=study_universe,
+                mesh_workflow=mesh_workflow,
                 asset_cache=effective_asset_cache,
             )
 
@@ -892,6 +896,11 @@ class Problem:
             requested_backend=requested_backend,
             geometries=geometries,
             discretization=discretization,
+            mesh_workflow=(
+                self.runtime_metadata.get("mesh_workflow")
+                if isinstance(self.runtime_metadata.get("mesh_workflow"), dict)
+                else None
+            ),
             asset_cache=asset_cache,
         )
 

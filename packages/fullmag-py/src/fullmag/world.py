@@ -1359,6 +1359,7 @@ def _build_explicit_mesh_assets() -> None:
         requested_backend=BackendTarget.FEM,
         geometries=resolved_geometries,
         discretization=DiscretizationHints(**discretization_kwargs),
+        mesh_workflow=_collect_mesh_workflow_metadata(),
         asset_cache=_state._geometry_asset_cache,
     )
 

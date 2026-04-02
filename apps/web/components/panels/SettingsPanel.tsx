@@ -12,6 +12,7 @@ import AntennaPanel from "./settings/AntennaPanel";
 import MaterialPanel from "./settings/MaterialPanel";
 import MeshPanel from "./settings/MeshPanel";
 import ObjectMeshPanel from "./settings/ObjectMeshPanel";
+import PhysicsPanel from "./settings/PhysicsPanel";
 import RegionPanel from "./settings/RegionPanel";
 import StudyPanel from "./settings/StudyPanel";
 import UniversePanel from "./settings/UniversePanel";
@@ -23,7 +24,6 @@ import StateIoPanel from "./settings/StateIoPanel";
 /* ── Main SettingsPanel ── */
 interface SettingsPanelProps {
   nodeId: string;
-  nodeLabel: string | null;
 }
 
 function SessionInfoPanel() {
@@ -119,11 +119,76 @@ function ScriptBuilderInfoPanel() {
   );
 }
 
-export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps) {
+export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
   const ctx = useControlRoom();
-  const showTelemetrySections =
+  const showSharedDiagnostics =
     ctx.effectiveViewMode !== "Mesh" &&
     !(nodeId === "universe" || nodeId.startsWith("universe-"));
+  const showSolverTelemetrySection = showSharedDiagnostics;
+  const showEnergySection = showSharedDiagnostics && nodeId !== "res-energy";
+  const selectedObjectNodeId = ctx.selectedObjectId ? `geo-${ctx.selectedObjectId}` : undefined;
+  const selectedObjectMeshNodeId = ctx.selectedObjectId ? `geo-${ctx.selectedObjectId}-mesh` : undefined;
+  const airboxSelected =
+    nodeId === "universe-airbox" || nodeId === "universe-airbox-mesh";
+  const selectedObjectPartId =
+    ctx.selectedObjectId
+      ? ctx.meshParts.find(
+          (part) =>
+            part.role === "magnetic_object" && part.object_id === ctx.selectedObjectId,
+        )?.id ?? null
+      : null;
+
+  const showFullFemContext = () => {
+    ctx.setViewMode("3D");
+    ctx.setObjectViewMode("context");
+    ctx.setMeshEntityViewState((prev) => {
+      const next = { ...prev };
+      for (const part of ctx.meshParts) {
+        const current = next[part.id];
+        if (!current) continue;
+        next[part.id] = { ...current, visible: true };
+      }
+      return next;
+    });
+  };
+
+  const isolateSelectedObject = () => {
+    if (!ctx.selectedObjectId) return;
+    ctx.setViewMode("3D");
+    ctx.setObjectViewMode("isolate");
+    ctx.setMeshEntityViewState((prev) => {
+      const next = { ...prev };
+      for (const part of ctx.meshParts) {
+        const current = next[part.id];
+        if (!current) continue;
+        next[part.id] = {
+          ...current,
+          visible:
+            part.role === "magnetic_object" && part.object_id === ctx.selectedObjectId,
+        };
+      }
+      return next;
+    });
+    ctx.setSelectedEntityId(selectedObjectPartId);
+    ctx.setFocusedEntityId(selectedObjectPartId);
+  };
+
+  const isolateAirbox = () => {
+    const airPartId = ctx.airPart?.id ?? null;
+    ctx.setViewMode("3D");
+    ctx.setObjectViewMode("isolate");
+    ctx.setSelectedEntityId(airPartId);
+    ctx.setFocusedEntityId(airPartId);
+    ctx.setMeshEntityViewState((prev) => {
+      const next = { ...prev };
+      for (const part of ctx.meshParts) {
+        const current = next[part.id];
+        if (!current) continue;
+        next[part.id] = { ...current, visible: part.role === "air" };
+      }
+      return next;
+    });
+  };
 
   const renderNodeContent = () => {
     if (nodeId === "session") return <SessionInfoPanel />;
@@ -154,7 +219,23 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
       nodeId === "universe-mesh-pipeline" ||
       nodeId === "universe-mesh-algorithm"
     ) {
-      return <MeshPanel />;
+      return (
+        <>
+          <MeshPanel />
+          <MeshSettingsPanel
+            options={ctx.meshOptions}
+            onChange={ctx.setMeshOptions}
+            quality={ctx.meshQualityData}
+            generating={ctx.meshGenerating}
+            onGenerate={ctx.handleStudyDomainMeshGenerate}
+            generateLabel="Build Study Mesh"
+            generatingLabel="Building Study Mesh..."
+            nodeCount={ctx.effectiveFemMesh?.nodes.length}
+            disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
+            waitMode={ctx.isWaitingForCompute}
+          />
+        </>
+      );
     }
     if (nodeId === "universe-mesh-size" || nodeId === "universe-mesh-quality") {
       return (
@@ -189,12 +270,32 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
         />
       );
     }
-    if (nodeId === "mesh" || nodeId.startsWith("mesh-")) return <MeshPanel />;
-    if (nodeId === "antennas" || nodeId.startsWith("ant-")) return <AntennaPanel nodeId={nodeId} />;
-    if (nodeId === "results" || nodeId.startsWith("res-") || nodeId === "physics" || nodeId.startsWith("phys-")) {
-      if (nodeId === "res-state-io") return <StateIoPanel />;
-      return <ResultsPanel />;
+    if (nodeId === "mesh" || nodeId.startsWith("mesh-")) {
+      return (
+        <>
+          <MeshPanel />
+          <MeshSettingsPanel
+            options={ctx.meshOptions}
+            onChange={ctx.setMeshOptions}
+            quality={ctx.meshQualityData}
+            generating={ctx.meshGenerating}
+            onGenerate={ctx.handleStudyDomainMeshGenerate}
+            generateLabel="Build Study Mesh"
+            generatingLabel="Building Study Mesh..."
+            nodeCount={ctx.effectiveFemMesh?.nodes.length}
+            disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
+            waitMode={ctx.isWaitingForCompute}
+          />
+        </>
+      );
     }
+    if (nodeId === "antennas" || nodeId.startsWith("ant-")) return <AntennaPanel nodeId={nodeId} />;
+    if (nodeId === "physics" || nodeId.startsWith("phys-")) {
+      return <PhysicsPanel />;
+    }
+    if (nodeId === "results" || nodeId === "res-fields") return <ResultsPanel />;
+    if (nodeId === "res-energy") return <EnergyPanel />;
+    if (nodeId === "res-state-io" || nodeId === "res-export") return <StateIoPanel />;
     if (nodeId === "initial-state") return <StateIoPanel />;
     if (nodeId === "objects") return <GeometryPanel />;
     if (nodeId.startsWith("geo-") && nodeId.includes("-mesh")) {
@@ -202,7 +303,12 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
     }
     if (nodeId.startsWith("reg-")) return <RegionPanel nodeId={nodeId} />;
     if (nodeId.startsWith("obj-")) {
-      return <GeometryPanel nodeId={ctx.selectedObjectId ? `geo-${ctx.selectedObjectId}` : undefined} />;
+      return (
+        <>
+          <GeometryPanel nodeId={selectedObjectNodeId} />
+          <ObjectMeshPanel nodeId={selectedObjectMeshNodeId} />
+        </>
+      );
     }
     if (nodeId === "materials" || nodeId.startsWith("mat-")) return <MaterialPanel nodeId={nodeId} />;
     return <GeometryPanel nodeId={nodeId} />;
@@ -234,6 +340,57 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
               >
                 Focus 3D
               </Button>
+              {ctx.isFemBackend ? (
+                <>
+                  <Button
+                    size="sm"
+                    variant={ctx.objectViewMode === "context" ? "default" : "outline"}
+                    type="button"
+                    onClick={showFullFemContext}
+                  >
+                    Context
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={ctx.objectViewMode === "isolate" ? "default" : "outline"}
+                    type="button"
+                    onClick={isolateSelectedObject}
+                  >
+                    Isolate
+                  </Button>
+                </>
+              ) : null}
+            </div>
+          </div>
+        </section>
+      ) : airboxSelected && ctx.isFemBackend ? (
+        <section className="rounded-xl border border-border/40 bg-gradient-to-b from-card/50 to-card/20 px-4 py-3 shadow-[0_2px_12px_rgba(0,0,0,0.15)] backdrop-blur-xl mb-1">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted-foreground/70">
+                Inspecting
+              </div>
+              <div className="truncate font-mono text-sm font-semibold text-foreground mt-0.5">
+                Airbox
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button
+                size="sm"
+                variant={ctx.objectViewMode === "context" ? "default" : "outline"}
+                type="button"
+                onClick={showFullFemContext}
+              >
+                Context
+              </Button>
+              <Button
+                size="sm"
+                variant={ctx.objectViewMode === "isolate" ? "default" : "outline"}
+                type="button"
+                onClick={isolateAirbox}
+              >
+                Isolate
+              </Button>
             </div>
           </div>
         </section>
@@ -243,13 +400,13 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
       {renderNodeContent()}
 
       {/* ── Global sections ── */}
-      {showTelemetrySections && (
+      {showSolverTelemetrySection && (
         <SidebarSection title="Solver Telemetry" icon="📊" badge={ctx.workspaceStatus}>
           <SolverTelemetryPanel />
         </SidebarSection>
       )}
 
-      {showTelemetrySections && (
+      {showEnergySection && (
         <SidebarSection title="Energy" icon="⚡">
           <EnergyPanel />
         </SidebarSection>

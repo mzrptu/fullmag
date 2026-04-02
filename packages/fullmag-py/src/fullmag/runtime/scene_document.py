@@ -121,6 +121,12 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
             "selected_object_id": None,
             "gizmo_mode": None,
             "transform_space": None,
+            "selected_entity_id": None,
+            "focused_entity_id": None,
+            "object_view_mode": "context",
+            "air_mesh_visible": True,
+            "air_mesh_opacity": 28.0,
+            "mesh_entity_view_state": {},
         },
     }
 

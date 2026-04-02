@@ -154,6 +154,12 @@ export function buildSceneDocumentFromScriptBuilder(
       selected_object_id: null,
       gizmo_mode: null,
       transform_space: null,
+      selected_entity_id: null,
+      focused_entity_id: null,
+      object_view_mode: "context",
+      air_mesh_visible: true,
+      air_mesh_opacity: 28,
+      mesh_entity_view_state: {},
     },
   };
 }
