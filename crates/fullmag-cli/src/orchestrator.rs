@@ -66,6 +66,36 @@ fn current_live_metadata(
     })
 }
 
+fn fem_mesh_payload_from_backend_plan(
+    backend_plan: &BackendPlanIR,
+) -> Option<fullmag_runner::FemMeshPayload> {
+    match backend_plan {
+        BackendPlanIR::Fem(fem) => Some(fullmag_runner::FemMeshPayload::from(fem)),
+        BackendPlanIR::FemEigen(fem) => Some(fullmag_runner::FemMeshPayload::from(fem)),
+        BackendPlanIR::Fdm(_) | BackendPlanIR::FdmMultilayer(_) => None,
+    }
+}
+
+fn single_object_fem_mesh_payload(
+    mesh: &fullmag_ir::MeshIR,
+    object_id: &str,
+) -> fullmag_runner::FemMeshPayload {
+    fullmag_runner::FemMeshPayload {
+        nodes: mesh.nodes.clone(),
+        elements: mesh.elements.clone(),
+        boundary_faces: mesh.boundary_faces.clone(),
+        object_segments: vec![fullmag_runner::FemMeshObjectSegment {
+            object_id: object_id.to_string(),
+            node_start: 0,
+            node_count: mesh.nodes.len() as u32,
+            element_start: 0,
+            element_count: mesh.elements.len() as u32,
+            boundary_face_start: 0,
+            boundary_face_count: mesh.boundary_faces.len() as u32,
+        }],
+    }
+}
+
 fn current_fem_mesh_workspace(
     problem: &ProblemIR,
     mesh: &fullmag_ir::MeshIR,
@@ -662,12 +692,8 @@ fn maybe_execute_adaptive_relaxation_followup_passes(
 
         *execution_plan =
             fullmag_plan::plan(&stage.ir).map_err(|error| anyhow!(error.to_string()))?;
-        let mesh_payload = fullmag_runner::FemMeshPayload {
-            nodes: new_mesh.nodes.clone(),
-            elements: new_mesh.elements.clone(),
-            boundary_faces: new_mesh.boundary_faces.clone(),
-            object_segments: Vec::new(),
-        };
+        let mesh_payload = fem_mesh_payload_from_backend_plan(&execution_plan.backend_plan)
+            .expect("adaptive FEM replan should yield an exact FEM mesh payload");
         live_workspace.update(|state| {
             state.metadata = Some(current_live_metadata(&stage.ir, execution_plan, "running"));
             state.live_state.latest_step.fem_mesh = Some(mesh_payload);
@@ -1373,12 +1399,8 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                 }));
 
                                 if new_ram <= ram_budget {
-                                    let mesh_payload = fullmag_runner::FemMeshPayload {
-                                        nodes: new_mesh.nodes.clone(),
-                                        elements: new_mesh.elements.clone(),
-                                        boundary_faces: new_mesh.boundary_faces.clone(),
-                                        object_segments: Vec::new(),
-                                    };
+                                    let mesh_payload =
+                                        single_object_fem_mesh_payload(&new_mesh, &geom.name());
                                     live_workspace.update(|state| {
                                         state.live_state.latest_step.fem_mesh = Some(mesh_payload);
                                         state.mesh_workspace = Some(current_fem_mesh_workspace(
@@ -1629,12 +1651,8 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                     }
                                 }
 
-                                let mesh_payload = fullmag_runner::FemMeshPayload {
-                                    nodes: new_mesh.nodes.clone(),
-                                    elements: new_mesh.elements.clone(),
-                                    boundary_faces: new_mesh.boundary_faces.clone(),
-                                    object_segments: Vec::new(),
-                                };
+                                let mesh_payload =
+                                    single_object_fem_mesh_payload(&new_mesh, &geom.name());
                                 let mesh_workspace_problem =
                                     &stages.last().expect("stages should not be empty").ir;
 
@@ -2999,10 +3017,15 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{wait_for_solve_prompt, wait_for_solve_supported};
+    use super::{
+        fem_mesh_payload_from_backend_plan,
+        wait_for_solve_prompt,
+        wait_for_solve_supported,
+    };
     use fullmag_ir::{
-        BackendPlanIR, ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, FdmPlanIR,
-        FemPlanIR, GridDimensions, IntegratorChoice, MaterialIR, MeshIR,
+        BackendPlanIR, ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR,
+        FdmPlanIR, FemDomainMeshModeIR, FemObjectSegmentIR, FemPlanIR, GridDimensions,
+        IntegratorChoice, MaterialIR, MeshIR,
     };
 
     fn tiny_fdm_plan() -> BackendPlanIR {
@@ -3136,6 +3159,113 @@ mod tests {
         })
     }
 
+    fn tiny_shared_domain_fem_plan() -> BackendPlanIR {
+        BackendPlanIR::Fem(FemPlanIR {
+            mesh_name: "shared".to_string(),
+            mesh_source: None,
+            mesh: MeshIR {
+                mesh_name: "shared".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [2.0, 0.0, 0.0],
+                    [2.0, 1.0, 0.0],
+                    [2.0, 0.0, 1.0],
+                    [3.0, 0.0, 0.0],
+                ],
+                elements: vec![[0, 1, 2, 3], [4, 5, 6, 7]],
+                element_markers: vec![1, 2],
+                boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
+                boundary_markers: vec![1, 2],
+            },
+            object_segments: vec![
+                FemObjectSegmentIR {
+                    object_id: "left".to_string(),
+                    node_start: 0,
+                    node_count: 4,
+                    element_start: 0,
+                    element_count: 1,
+                    boundary_face_start: 0,
+                    boundary_face_count: 1,
+                },
+                FemObjectSegmentIR {
+                    object_id: "right".to_string(),
+                    node_start: 4,
+                    node_count: 4,
+                    element_start: 1,
+                    element_count: 1,
+                    boundary_face_start: 1,
+                    boundary_face_count: 1,
+                },
+            ],
+            domain_mesh_mode: FemDomainMeshModeIR::SharedDomainMeshWithAir,
+            domain_frame: None,
+            fe_order: 1,
+            hmax: 1.0,
+            initial_magnetization: vec![[0.0, 0.0, 1.0]; 8],
+            material: MaterialIR {
+                name: "Py".to_string(),
+                saturation_magnetisation: 800e3,
+                exchange_stiffness: 13e-12,
+                damping: 0.5,
+                uniaxial_anisotropy: None,
+                anisotropy_axis: None,
+                uniaxial_anisotropy_k2: None,
+                cubic_anisotropy_kc1: None,
+                cubic_anisotropy_kc2: None,
+                cubic_anisotropy_kc3: None,
+                cubic_anisotropy_axis1: None,
+                cubic_anisotropy_axis2: None,
+                ms_field: None,
+                a_field: None,
+                alpha_field: None,
+                ku_field: None,
+                ku2_field: None,
+                kc1_field: None,
+                kc2_field: None,
+                kc3_field: None,
+            },
+            enable_exchange: true,
+            enable_demag: true,
+            external_field: None,
+            current_modules: vec![],
+            gyromagnetic_ratio: 2.211e5,
+            precision: ExecutionPrecision::Double,
+            exchange_bc: ExchangeBoundaryCondition::Neumann,
+            integrator: IntegratorChoice::Heun,
+            fixed_timestep: Some(1e-13),
+            adaptive_timestep: None,
+            relaxation: None,
+            demag_realization: None,
+            air_box_config: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
+            dind_field: None,
+            dbulk_field: None,
+            temperature: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
+            magnetoelastic: None,
+        })
+    }
+
     #[test]
     fn wait_for_solve_is_supported_for_fdm_and_fem() {
         assert!(wait_for_solve_supported(&tiny_fdm_plan()));
@@ -3152,5 +3282,17 @@ mod tests {
             !wait_for_solve_prompt(&tiny_fdm_plan()).contains("adjust mesh"),
             "FDM wait message should stay generic"
         );
+    }
+
+    #[test]
+    fn fem_mesh_payload_preserves_exact_segments_for_shared_domain_plan() {
+        let payload = fem_mesh_payload_from_backend_plan(&tiny_shared_domain_fem_plan())
+            .expect("shared-domain FEM backend plan should yield a mesh payload");
+
+        assert_eq!(payload.object_segments.len(), 2);
+        assert_eq!(payload.object_segments[0].object_id, "left");
+        assert_eq!(payload.object_segments[0].element_count, 1);
+        assert_eq!(payload.object_segments[1].object_id, "right");
+        assert_eq!(payload.object_segments[1].boundary_face_count, 1);
     }
 }

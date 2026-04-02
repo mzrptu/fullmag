@@ -109,11 +109,11 @@ export default function RunSidebar() {
   const fallbackNodeId = useMemo(() => {
     const isMeshView = cmd.isFemBackend && vp.effectiveViewMode === "Mesh";
     if (isMeshView) {
-      if (model.femDockTab === "quality") return "mesh-quality";
-      if (model.femDockTab === "pipeline") return "mesh-pipeline";
-      if (model.femDockTab === "view") return "mesh-view";
-      if (model.femDockTab === "mesher") return "mesh-size";
-      return "mesh";
+      if (model.femDockTab === "quality") return "universe-mesh-quality";
+      if (model.femDockTab === "pipeline") return "universe-mesh-pipeline";
+      if (model.femDockTab === "view") return "universe-mesh-view";
+      if (model.femDockTab === "mesher") return "universe-mesh-size";
+      return "universe-mesh";
     }
     if (vp.previewControlsActive) return "res-fields";
     if (cmd.interactiveControlsEnabled) return "study-solver";
@@ -183,7 +183,13 @@ export default function RunSidebar() {
       case "mesh-size":
       case "mesh-algorithm":
       case "mesh-quality":
-      case "mesh-pipeline": {
+      case "mesh-pipeline":
+      case "universe-mesh":
+      case "universe-mesh-view":
+      case "universe-mesh-size":
+      case "universe-mesh-algorithm":
+      case "universe-mesh-quality":
+      case "universe-mesh-pipeline": {
         if (!cmd.isFemBackend) return;
         const preset = meshWorkspaceNodeToPreset(id);
         if (preset) {
@@ -379,4 +385,3 @@ export default function RunSidebar() {
     </div>
   );
 }
-

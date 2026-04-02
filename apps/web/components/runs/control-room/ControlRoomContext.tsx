@@ -75,6 +75,7 @@ import {
   type ObjectViewMode,
   type SlicePlane,
   type VectorComponent,
+  type ViewportScope,
   type ViewportMode,
   FEM_SLICE_COUNT,
   PREVIEW_EVERY_N_DEFAULT,
@@ -92,6 +93,7 @@ import {
   materializationProgressFromMessage,
   parseOptionalNumber,
   parseStageExecutionMessage,
+  resolveViewportScope,
 } from "./shared";
 import {
   buildScriptBuilderSignature,
@@ -192,6 +194,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [runUntilInput, setRunUntilInput] = useState("1e-12");
   const [selectedSidebarNodeId, setSelectedSidebarNodeId] = useState<string | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [viewportScope, setViewportScope] = useState<ViewportScope>("universe");
   const [focusObjectRequest, setFocusObjectRequest] = useState<FocusObjectRequest | null>(null);
   const [objectViewMode, setObjectViewMode] = useState<ObjectViewMode>("context");
   const [commandPostInFlight, setCommandPostInFlight] = useState(false);
@@ -297,9 +300,20 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setSelectedSidebarNodeId(null);
     setSelectedObjectId(null);
+    setViewportScope("universe");
     setFocusObjectRequest(null);
     setObjectViewMode("context");
   }, [workspaceHydrationKey]);
+
+  useEffect(() => {
+    const scope = resolveViewportScope(
+      selectedSidebarNodeId,
+      sceneDocumentDraft ?? remoteSceneDocument ?? modelBuilderGraph,
+    );
+    if (scope) {
+      setViewportScope(scope);
+    }
+  }, [modelBuilderGraph, remoteSceneDocument, sceneDocumentDraft, selectedSidebarNodeId]);
 
   const hasSolverTelemetry =
     (liveState?.step ?? 0) > 0 ||
@@ -868,13 +882,13 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const meshFeOrder = typeof femArtifactLayout?.fe_order === "number" ? femArtifactLayout.fe_order : null;
   const meshHmax = typeof femArtifactLayout?.hmax === "number" ? femArtifactLayout.hmax : null;
   const meshSummary = meshWorkspace?.mesh_summary ?? null;
-  const objectOverlays = useMemo<BuilderObjectOverlay[]>(
+  const builderObjectOverlays = useMemo<BuilderObjectOverlay[]>(
     () => buildObjectOverlays(scriptBuilderGeometries, femMesh),
     [femMesh, scriptBuilderGeometries],
   );
   const builderObjectBounds = useMemo(
-    () => combineBounds(objectOverlays),
-    [objectOverlays],
+    () => combineBounds(builderObjectOverlays),
+    [builderObjectOverlays],
   );
   const builderObjectExtent = useMemo<[number, number, number] | null>(
     () =>
@@ -1443,12 +1457,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       setFemDockTab(preset.dockTab);
       setSelectedSidebarNodeId(
         preset.dockTab === "quality"
-          ? "mesh-quality"
+          ? "universe-mesh-quality"
           : preset.dockTab === "mesher"
-            ? "mesh-size"
+            ? "universe-mesh-size"
             : preset.dockTab === "pipeline"
-              ? "mesh-pipeline"
-              : "mesh-view",
+              ? "universe-mesh-pipeline"
+              : "universe-mesh-view",
       );
     });
 
@@ -1855,6 +1869,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     () => (isMeshPreview && renderPreview?.fem_mesh ? renderPreview.fem_mesh : femMesh),
     [femMesh, isMeshPreview, renderPreview?.fem_mesh],
   );
+  const objectOverlays = useMemo<BuilderObjectOverlay[]>(
+    () => buildObjectOverlays(scriptBuilderGeometries, effectiveFemMesh),
+    [effectiveFemMesh, scriptBuilderGeometries],
+  );
   const [flatNodes, flatFaces, flatElements] = useMemo(() => {
     if (!effectiveFemMesh) return [null, null, null];
     return [
@@ -1869,9 +1887,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const femMeshBase = useMemo<Omit<FemMeshData, "fieldData"> | null>(() => {
     if (!effectiveFemMesh || !flatNodes || !flatFaces || !flatElements) return null;
     const nNodes = effectiveFemMesh.nodes.length;
-    const nElements = femMesh?.elements.length ?? effectiveFemMesh.elements.length;
+    const nElements = effectiveFemMesh.elements.length;
     return { nodes: flatNodes, elements: flatElements, boundaryFaces: flatFaces, nNodes, nElements };
-  }, [effectiveFemMesh, femMesh?.elements.length, flatNodes, flatFaces, flatElements]);
+  }, [effectiveFemMesh, flatNodes, flatFaces, flatElements]);
 
   // Field data: updated on every solver tick when selectedVectors changes.
   const femFieldData = useMemo<FemMeshData["fieldData"] | undefined>(() => {
@@ -2149,11 +2167,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshWorkspacePreset,
     selectedSidebarNodeId,
     selectedObjectId,
+    viewportScope,
     focusObjectRequest,
     objectViewMode,
     setSolverSettings, setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
-    setSelectedSidebarNodeId, setSelectedObjectId, setObjectViewMode, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
     localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
@@ -2164,7 +2183,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder,
     domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
-    selectedSidebarNodeId, selectedObjectId, focusObjectRequest, objectViewMode, requestFocusObject,
+    selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, requestFocusObject,
     setSceneDocument, setStudyStages, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleMeshGenerate, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   ]);

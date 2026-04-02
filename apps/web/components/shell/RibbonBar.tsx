@@ -91,6 +91,7 @@ interface RibbonBarProps {
 /* ── Tab inference from tree node ── */
 function inferTab(nodeId: string | null | undefined): RibbonTab {
   if (!nodeId) return "Home";
+  if (nodeId === "universe-mesh" || nodeId.startsWith("universe-mesh-")) return "Mesh";
   if (nodeId.startsWith("mesh") || nodeId === "mesh") return "Mesh";
   // Per-object mesh nodes (e.g. "geo-nanoflower-mesh") → Mesh tab
   if (nodeId.startsWith("geo-") && nodeId.endsWith("-mesh")) return "Mesh";
@@ -191,14 +192,35 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
     {
       id: "mesh-gen", title: "Generate",
       actions: [
-        { id: "generate", icon: <RefreshCw size={20} className={cn(p.meshGenerating && "animate-spin")} />, label: p.meshGenerating ? "Working..." : "Generate", tooltip: "Re-generate mesh", accent: true, disabled: !p.isFemBackend || p.meshGenerating, action: p.onGenerateMesh },
+        {
+          id: "generate",
+          icon: <RefreshCw size={20} className={cn(p.meshGenerating && "animate-spin")} />,
+          label: p.meshGenerating ? "Working..." : "Generate",
+          tooltip: "Re-generate mesh",
+          accent: true,
+          disabled: !p.isFemBackend || p.meshGenerating,
+          action: () => {
+            p.onSelectModelNode?.("universe-mesh");
+            p.onGenerateMesh?.();
+          },
+        },
         { id: "import", icon: <FileText size={20} />, label: "Import", tooltip: "Import mesh file", disabled: true, iconColor: "text-sky-400" },
       ],
     },
     {
       id: "mesh-quality", title: "Quality",
       actions: [
-        { id: "quality", icon: <ListChecks size={20} />, label: "Quality", tooltip: "View mesh quality metrics", action: () => p.onViewChange?.("Mesh"), iconColor: "text-emerald-400" },
+        {
+          id: "quality",
+          icon: <ListChecks size={20} />,
+          label: "Quality",
+          tooltip: "View mesh quality metrics",
+          action: () => {
+            p.onSelectModelNode?.("universe-mesh-quality");
+            p.onViewChange?.("Mesh");
+          },
+          iconColor: "text-emerald-400",
+        },
         { id: "refine", icon: <Ruler size={20} />, label: "Refine", tooltip: "Adaptive mesh refinement", disabled: true, iconColor: "text-purple-400" },
       ],
     },
@@ -408,7 +430,7 @@ export default function RibbonBar(props: RibbonBarProps) {
                 setManualTab(tab);
                 if (props.onSelectModelNode) {
                   if (tab === "Home") props.onSelectModelNode("universe");
-                  else if (tab === "Mesh") props.onSelectModelNode("mesh");
+                  else if (tab === "Mesh") props.onSelectModelNode("universe-mesh");
                   else if (tab === "Study") props.onSelectModelNode("study");
                   else if (tab === "Results") props.onSelectModelNode("results");
                 }

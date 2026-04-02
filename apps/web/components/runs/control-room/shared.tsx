@@ -52,6 +52,7 @@ export interface FocusObjectRequest {
 }
 
 export type ObjectViewMode = "context" | "isolate";
+export type ViewportScope = "universe" | `object:${string}`;
 
 export interface MeshFaceDetail {
   faceIndex: number;
@@ -605,6 +606,36 @@ export function resolveSelectedMeshObjectId(
     if (nodeId === meshPrefix || nodeId.startsWith(`${meshPrefix}-`)) {
       return name;
     }
+  }
+  return null;
+}
+
+export function viewportScopeObjectId(scope: ViewportScope | null | undefined): string | null {
+  if (!scope || scope === "universe" || !scope.startsWith("object:")) {
+    return null;
+  }
+  const objectId = scope.slice("object:".length).trim();
+  return objectId.length > 0 ? objectId : null;
+}
+
+export function resolveViewportScope(
+  nodeId: string | null | undefined,
+  source:
+    | ModelBuilderGraphV2
+    | SceneDocument
+    | readonly ScriptBuilderGeometryEntry[]
+    | null
+    | undefined,
+): ViewportScope | null {
+  if (!nodeId) {
+    return null;
+  }
+  if (nodeId === "universe" || nodeId.startsWith("universe-")) {
+    return "universe";
+  }
+  const objectId = resolveSelectedObjectId(nodeId, source);
+  if (objectId) {
+    return `object:${objectId}`;
   }
   return null;
 }

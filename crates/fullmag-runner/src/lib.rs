@@ -42,9 +42,9 @@ pub use interactive::events::{
 pub use interactive::runtime::InteractiveRuntime;
 pub use interactive_runtime::{InteractiveFdmPreviewRuntime, InteractiveFemPreviewRuntime};
 pub use types::{
-    ExecutionProvenance, FemEigenRunResult, FemMeshPayload, LivePreviewField, LivePreviewRequest,
-    LiveVectorFieldSnapshot, RunError, RunResult, RunStatus, RuntimeEngineInfo, StepAction,
-    StepStats, StepUpdate,
+    ExecutionProvenance, FemEigenRunResult, FemMeshObjectSegment, FemMeshPayload,
+    LivePreviewField, LivePreviewRequest, LiveVectorFieldSnapshot, RunError, RunResult,
+    RunStatus, RuntimeEngineInfo, StepAction, StepStats, StepUpdate,
 };
 
 use fullmag_ir::{BackendPlanIR, FdmMultilayerPlanIR, FdmPlanIR, OutputIR, ProblemIR};

@@ -118,15 +118,21 @@ export function deriveMeshWorkspacePreset(args: {
 
 export function meshWorkspaceNodeToDockTab(nodeId: string): FemDockTab | null {
   switch (nodeId) {
+    case "universe-mesh-view":
     case "mesh-view":
       return "view";
+    case "universe-mesh-size":
+    case "universe-mesh-algorithm":
     case "mesh-size":
     case "mesh-algorithm":
       return "mesher";
+    case "universe-mesh-quality":
     case "mesh-quality":
       return "quality";
+    case "universe-mesh-pipeline":
     case "mesh-pipeline":
       return "pipeline";
+    case "universe-mesh":
     case "mesh":
       return "mesh";
     default:
@@ -136,13 +142,18 @@ export function meshWorkspaceNodeToDockTab(nodeId: string): FemDockTab | null {
 
 export function meshWorkspaceNodeToPreset(nodeId: string): MeshWorkspacePresetId | null {
   switch (nodeId) {
+    case "universe-mesh-view":
     case "mesh-view":
       return "inspect-volume";
+    case "universe-mesh-size":
+    case "universe-mesh-algorithm":
     case "mesh-size":
     case "mesh-algorithm":
       return "optimize";
+    case "universe-mesh-quality":
     case "mesh-quality":
       return "quality";
+    case "universe-mesh":
     case "mesh":
       return "inspect-surface";
     default:

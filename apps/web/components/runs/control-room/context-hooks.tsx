@@ -58,6 +58,7 @@ import type {
   ObjectViewMode,
   SlicePlane,
   VectorComponent,
+  ViewportScope,
   ViewportMode,
 } from "./shared";
 import { computeMeshFaceDetail } from "./shared";
@@ -270,6 +271,7 @@ export interface ModelContextValue {
   meshWorkspacePreset: MeshWorkspacePresetId;
   selectedSidebarNodeId: string | null;
   selectedObjectId: string | null;
+  viewportScope: ViewportScope;
   focusObjectRequest: FocusObjectRequest | null;
   objectViewMode: ObjectViewMode;
   /* Actions */
@@ -295,6 +297,7 @@ export interface ModelContextValue {
   setFemDockTab: React.Dispatch<React.SetStateAction<FemDockTab>>;
   setSelectedSidebarNodeId: React.Dispatch<React.SetStateAction<string | null>>;
   setSelectedObjectId: React.Dispatch<React.SetStateAction<string | null>>;
+  setViewportScope: React.Dispatch<React.SetStateAction<ViewportScope>>;
   setObjectViewMode: React.Dispatch<React.SetStateAction<ObjectViewMode>>;
   requestFocusObject: (objectId: string) => void;
   handleMeshGenerate: () => Promise<void>;

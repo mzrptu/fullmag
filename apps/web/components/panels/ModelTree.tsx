@@ -489,6 +489,10 @@ export function buildFullmagModelTree(opts: {
         universeCenter,
         universePadding,
         universeRole: opts.universeRole,
+        meshStatus: opts.meshStatus,
+        meshElements: opts.meshElements,
+        meshNodes: opts.meshNodes,
+        meshFeOrder: opts.meshFeOrder,
       }),
     });
   }
@@ -541,22 +545,6 @@ export function buildFullmagModelTree(opts: {
       defaultOpen: false,
       onClick: opts.onPhysicsClick,
       children: physicsChildren,
-    },
-    {
-      id: "mesh",
-      label: "Mesh Defaults",
-      icon: "◫",
-      badge: opts.meshElements ? `${opts.meshElements.toLocaleString()} el` : opts.meshNodes ? `${opts.meshNodes.toLocaleString()} nodes` : "—",
-      status: opts.meshStatus ?? "pending",
-      defaultOpen: false,
-      onClick: opts.onMeshClick,
-      children: [
-        { id: "mesh-view", label: "Inspect View", icon: "👁" },
-        { id: "mesh-size", label: opts.meshFeOrder != null ? `Order: P${opts.meshFeOrder}` : "Size", icon: "📏" },
-        { id: "mesh-algorithm", label: "Algorithm", icon: "⚙" },
-        { id: "mesh-quality", label: "Quality", icon: "📊" },
-        { id: "mesh-pipeline", label: "Pipeline", icon: "🧭" },
-      ],
     },
     {
       id: "study",
@@ -631,6 +619,10 @@ function _buildUniverseChildren(opts: {
   universeCenter?: [number, number, number] | null;
   universePadding?: [number, number, number] | null;
   universeRole?: string | null;
+  meshStatus?: NodeStatus;
+  meshElements?: number;
+  meshNodes?: number;
+  meshFeOrder?: number | null;
 }): TreeNodeData[] {
   const children: TreeNodeData[] = [];
   const effectiveSize = opts.universeEffectiveSize ?? null;
@@ -671,6 +663,27 @@ function _buildUniverseChildren(opts: {
       icon: "⚙",
     });
   }
+  children.push({
+    id: "universe-mesh",
+    label: "Global Mesh",
+    icon: "◫",
+    badge: opts.meshElements
+      ? `${opts.meshElements.toLocaleString()} el`
+      : opts.meshNodes
+        ? `${opts.meshNodes.toLocaleString()} nodes`
+        : "—",
+    status: opts.meshStatus ?? "pending",
+    children: [
+      { id: "universe-mesh-view", label: "Inspect View", icon: "👁" },
+      {
+        id: "universe-mesh-size",
+        label: opts.meshFeOrder != null ? `Order: P${opts.meshFeOrder}` : "Size",
+        icon: "📏",
+      },
+      { id: "universe-mesh-quality", label: "Quality", icon: "📊" },
+      { id: "universe-mesh-pipeline", label: "Pipeline", icon: "🧭" },
+    ],
+  });
   return children;
 }
 

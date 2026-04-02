@@ -54,6 +54,28 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
       );
     }
     if (nodeId === "study" || nodeId.startsWith("study-")) return <StudyPanel />;
+    if (
+      nodeId === "universe-mesh" ||
+      nodeId === "universe-mesh-view" ||
+      nodeId === "universe-mesh-pipeline" ||
+      nodeId === "universe-mesh-algorithm"
+    ) {
+      return <MeshPanel />;
+    }
+    if (nodeId === "universe-mesh-size" || nodeId === "universe-mesh-quality") {
+      return (
+        <MeshSettingsPanel
+          options={ctx.meshOptions}
+          onChange={ctx.setMeshOptions}
+          quality={ctx.meshQualityData}
+          generating={ctx.meshGenerating}
+          onGenerate={ctx.handleMeshGenerate}
+          nodeCount={ctx.effectiveFemMesh?.nodes.length}
+          disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
+          waitMode={ctx.isWaitingForCompute}
+        />
+      );
+    }
     if (nodeId === "universe" || nodeId.startsWith("universe-")) return <UniversePanel />;
     if (nodeId === "mesh-size" || nodeId === "mesh-algorithm" || nodeId === "mesh-quality") {
       return (
@@ -103,22 +125,6 @@ export default function SettingsPanel({ nodeId, nodeLabel }: SettingsPanelProps)
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              <Button
-                size="sm"
-                variant={ctx.objectViewMode === "context" ? "default" : "outline"}
-                type="button"
-                onClick={() => ctx.setObjectViewMode("context")}
-              >
-                Context
-              </Button>
-              <Button
-                size="sm"
-                variant={ctx.objectViewMode === "isolate" ? "default" : "outline"}
-                type="button"
-                onClick={() => ctx.setObjectViewMode("isolate")}
-              >
-                Isolate
-              </Button>
               <Button
                 size="sm"
                 variant="outline"

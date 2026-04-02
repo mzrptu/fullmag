@@ -261,7 +261,7 @@ impl InteractiveRuntimeHost {
             runtime: None,
             base_problem,
             runtime_capable: supports_idle_interactive_runtime(backend_plan),
-            dynamic_idle_preview_supported: supports_dynamic_live_preview(backend_plan),
+            dynamic_idle_preview_supported: supports_dynamic_idle_preview(backend_plan),
         }
     }
 
@@ -540,6 +540,15 @@ fn supports_idle_interactive_runtime(backend_plan: &BackendPlanIR) -> bool {
             fem.domain_mesh_mode != FemDomainMeshModeIR::SharedDomainMeshWithAir
         }
         _ => false,
+    }
+}
+
+fn supports_dynamic_idle_preview(backend_plan: &BackendPlanIR) -> bool {
+    match backend_plan {
+        BackendPlanIR::Fem(fem) => {
+            fem.domain_mesh_mode != FemDomainMeshModeIR::SharedDomainMeshWithAir
+        }
+        _ => supports_dynamic_live_preview(backend_plan),
     }
 }
 
