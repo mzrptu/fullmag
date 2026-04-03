@@ -719,7 +719,11 @@ void compute_uniaxial_anisotropy_field(
 {
     const size_t n = ctx.n_nodes;
     h_ani_xyz.assign(n * 3u, 0.0);
-    if (!ctx.enable_anisotropy || ctx.anisotropy_Ku == 0.0) {
+    // F-05 fix: do not bail out when Ku==0 — Ku2 or per-node fields may
+    // still contribute a nonzero anisotropy field.
+    if (!ctx.enable_anisotropy ||
+        (ctx.anisotropy_Ku == 0.0 && ctx.anisotropy_Ku2 == 0.0 &&
+         ctx.Ku_field.empty() && ctx.Ku2_field.empty())) {
         if (anisotropy_energy != nullptr) {
             *anisotropy_energy = 0.0;
         }
@@ -757,11 +761,10 @@ void compute_uniaxial_anisotropy_field(
         h_ani_xyz[base + 2] = coeff * uz;
 
         if (anisotropy_energy != nullptr && !ctx.mfem_lumped_mass.empty()) {
-            // E = -Ku1(1 - (m·û)²) - Ku2(1 - (m·û)²)²
-            //   = -Ku1 + Ku1(m·û)² - Ku2 + 2Ku2(m·û)² - Ku2(m·û)⁴
-            // Simplified: E_density = -Ku1(1-(m·û)²) - Ku2(1-(m·û)²)²
-            const double sin2 = 1.0 - m_dot_u2;
-            energy += (-Ku_i * sin2 - Ku2_i * sin2 * sin2) *
+            // F-06 fix: energy consistent with field H = (2Ku/μ₀Ms)(m·û)û.
+            // E_density = -Ku1(m·û)² - Ku2(m·û)⁴
+            // (Convention: Ku>0 → easy-axis along û.)
+            energy += (-Ku_i * m_dot_u2 - Ku2_i * m_dot_u2 * m_dot_u2) *
                       ctx.mfem_lumped_mass[i];
         }
     }
@@ -786,8 +789,10 @@ void compute_cubic_anisotropy_field(
 {
     const size_t n = ctx.n_nodes;
     h_cub_xyz.assign(n * 3u, 0.0);
+    // F-05 fix: also check per-node fields — don't bail when only uniform constants are zero.
     if (!ctx.enable_cubic_anisotropy ||
-        (ctx.cubic_Kc1 == 0.0 && ctx.cubic_Kc2 == 0.0 && ctx.cubic_Kc3 == 0.0)) {
+        (ctx.cubic_Kc1 == 0.0 && ctx.cubic_Kc2 == 0.0 && ctx.cubic_Kc3 == 0.0 &&
+         ctx.Kc1_field.empty() && ctx.Kc2_field.empty() && ctx.Kc3_field.empty())) {
         if (cubic_energy != nullptr) {
             *cubic_energy = 0.0;
         }
@@ -889,7 +894,8 @@ bool compute_interfacial_dmi_field(
 {
     const size_t n = ctx.n_nodes;
     h_dmi_xyz.assign(n * 3u, 0.0);
-    if (!ctx.enable_dmi || ctx.dmi_D == 0.0) {
+    // F-05 fix: check per-node field too, not just uniform constant.
+    if (!ctx.enable_dmi || (ctx.dmi_D == 0.0 && ctx.Dind_field.empty())) {
         if (dmi_energy != nullptr) {
             *dmi_energy = 0.0;
         }
@@ -1047,10 +1053,10 @@ bool compute_interfacial_dmi_field(
 }
 
 /// Compute Bloch-type (bulk) DMI effective field using element-loop gradient.
-/// H_dmi = (2D / μ₀Ms) ∇ × m
-///   H_x =  (2D / μ₀Ms) (∂m_z/∂y - ∂m_y/∂z)
-///   H_y =  (2D / μ₀Ms) (∂m_x/∂z - ∂m_z/∂x)
-///   H_z =  (2D / μ₀Ms) (∂m_y/∂x - ∂m_x/∂y)
+/// F-07 fix: sign matches spec H_dmi = -(2D / μ₀Ms) ∇ × m
+///   H_x = -(2D / μ₀Ms) (∂m_z/∂y - ∂m_y/∂z)
+///   H_y = -(2D / μ₀Ms) (∂m_x/∂z - ∂m_z/∂x)
+///   H_z = -(2D / μ₀Ms) (∂m_y/∂x - ∂m_x/∂y)
 /// Energy: e_bulk_dmi = D · m · (∇ × m) (integrated)
 bool compute_bulk_dmi_field(
     Context &ctx,
@@ -1061,7 +1067,8 @@ bool compute_bulk_dmi_field(
 {
     const size_t n = ctx.n_nodes;
     h_dmi_xyz.assign(n * 3u, 0.0);
-    if (!ctx.enable_bulk_dmi || ctx.bulk_dmi_D == 0.0) {
+    // F-05 fix: check per-node field too, not just uniform constant.
+    if (!ctx.enable_bulk_dmi || (ctx.bulk_dmi_D == 0.0 && ctx.Dbulk_field.empty())) {
         if (dmi_energy != nullptr) {
             *dmi_energy = 0.0;
         }
@@ -1129,7 +1136,8 @@ bool compute_bulk_dmi_field(
             elem_D  = uniform_D;
             elem_Ms = uniform_Ms;
         }
-        const double prefactor = 2.0 * elem_D / (kMu0 * elem_Ms);
+        // F-07 fix: negative sign per spec H_bDMI = -(2D/μ₀Ms)(∇×m)
+        const double prefactor = -2.0 * elem_D / (kMu0 * elem_Ms);
 
         const mfem::IntegrationRule &ir =
             mfem::IntRules.Get(fe->GetGeomType(), 2 * fe->GetOrder());
@@ -1672,9 +1680,64 @@ bool compute_effective_fields_for_magnetization(
             ctx.h_dmi_xyz.assign(m_xyz.size(), 0.0);
         }
 
+        // F-03 fix: compute cubic anisotropy and add to H_eff.
+        if (ctx.enable_cubic_anisotropy) {
+            compute_cubic_anisotropy_field(
+                ctx, m_xyz, ctx.h_cubic_ani_xyz, nullptr);
+        } else {
+            ctx.h_cubic_ani_xyz.assign(m_xyz.size(), 0.0);
+        }
+
+        // F-03/F-07 fix: compute bulk DMI and add to H_eff.
+        double bulk_dmi = 0.0;
+        std::vector<double> h_bulk_dmi_xyz;
+        if (ctx.enable_bulk_dmi) {
+            if (!compute_bulk_dmi_field(
+                    ctx, m_xyz, h_bulk_dmi_xyz, &bulk_dmi, error)) {
+                return false;
+            }
+        }
+
         for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
             h_eff_xyz[i] = h_ex_xyz[i] + h_demag_xyz[i] + ctx.h_ext_xyz[i] +
-                           ctx.h_ani_xyz[i] + ctx.h_dmi_xyz[i];
+                           ctx.h_ani_xyz[i] + ctx.h_dmi_xyz[i] +
+                           ctx.h_cubic_ani_xyz[i];
+        }
+
+        // Add bulk DMI to H_eff
+        if (ctx.enable_bulk_dmi && !h_bulk_dmi_xyz.empty()) {
+            for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
+                h_eff_xyz[i] += h_bulk_dmi_xyz[i];
+            }
+        }
+
+        // F-09 fix: add Oersted field to H_eff per step (with time modulation).
+        if (ctx.has_oersted_cylinder && !ctx.h_oe_xyz.empty()) {
+            double I_scale = ctx.oersted_current;
+            switch (ctx.oersted_time_dep_kind) {
+                case 1: { // Sinusoidal
+                    I_scale *= std::sin(2.0 * kPi * ctx.oersted_time_dep_freq * ctx.current_time
+                                        + ctx.oersted_time_dep_phase)
+                             + ctx.oersted_time_dep_offset;
+                    break;
+                }
+                case 2: { // Pulse
+                    I_scale *= (ctx.current_time >= ctx.oersted_time_dep_t_on &&
+                                ctx.current_time <  ctx.oersted_time_dep_t_off) ? 1.0 : 0.0;
+                    break;
+                }
+                default: break;
+            }
+            for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
+                h_eff_xyz[i] += I_scale * ctx.h_oe_xyz[i];
+            }
+        }
+
+        // F-09 fix: add thermal noise to H_eff per step.
+        if (ctx.temperature > 0.0 && !ctx.h_therm_xyz.empty()) {
+            for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
+                h_eff_xyz[i] += ctx.h_therm_xyz[i];
+            }
         }
 
         // Add magnetoelastic field
@@ -2271,14 +2334,48 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
         auto *exchange_form = new mfem::BilinearForm(fes);
         auto *mass_form = new mfem::BilinearForm(fes);
 
-        // S08 multi-region: restrict exchange/mass assembly to magnetic
-        // elements only (MFEM attribute 1).  For single-material meshes the
-        // max attribute is 1, so every element is included.
+        // F-01 fix: build magnetic attribute set from the actual magnetic
+        // element mask instead of hardcoding attribute 1.  This ensures
+        // exchange/mass are assembled on the correct region regardless of
+        // the marker values used by the mesh.
         const int max_attr = mesh->attributes.Max();
         mfem::Array<int> magnetic_attr_marker(max_attr);
         magnetic_attr_marker = 0;
-        // Attribute 1 = magnetic elements
-        magnetic_attr_marker[0] = 1;
+
+        // Collect MFEM attributes that belong to magnetic elements.
+        for (int e = 0; e < mesh->GetNE(); ++e) {
+            if (!ctx.magnetic_element_mask.empty() &&
+                static_cast<size_t>(e) < ctx.magnetic_element_mask.size() &&
+                ctx.magnetic_element_mask[e] == 0u) {
+                continue; // non-magnetic element
+            }
+            const int attr = mesh->GetAttribute(e);
+            if (attr >= 1 && attr <= max_attr) {
+                magnetic_attr_marker[attr - 1] = 1;
+            }
+        }
+
+        // Validate: if exchange is enabled, at least one attribute must be active.
+        {
+            int n_active_attrs = 0;
+            for (int a = 0; a < max_attr; ++a) {
+                n_active_attrs += magnetic_attr_marker[a];
+            }
+            if (ctx.enable_exchange && n_active_attrs == 0) {
+                error = "F-01 validation: enable_exchange=true but no MFEM "
+                        "attributes are marked as magnetic — exchange/mass "
+                        "assembly would be empty.  Check element_markers.";
+                delete exchange_form;
+                delete mass_form;
+                delete gf_mx;
+                delete gf_my;
+                delete gf_mz;
+                delete fes;
+                delete fec;
+                delete mesh;
+                return false;
+            }
+        }
 
         exchange_form->AddDomainIntegrator(
             new mfem::DiffusionIntegrator(), magnetic_attr_marker);
@@ -2289,6 +2386,26 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
             new mfem::MassIntegrator(), magnetic_attr_marker);
         mass_form->Assemble();
         mass_form->Finalize();
+        compute_row_sum_lumped_mass(mass_form->SpMat(), ctx.mfem_lumped_mass);
+        const bool has_nonzero_lumped_mass = std::any_of(
+            ctx.mfem_lumped_mass.begin(),
+            ctx.mfem_lumped_mass.end(),
+            [](double value) { return value > 0.0; });
+        if (ctx.enable_exchange && !has_nonzero_lumped_mass) {
+            error = "F-01 validation: enable_exchange=true but MFEM lumped "
+                    "mass is zero on every node in the resolved magnetic "
+                    "domain.  Check element_markers and magnetic region "
+                    "resolution.";
+            delete exchange_form;
+            delete mass_form;
+            delete gf_mx;
+            delete gf_my;
+            delete gf_mz;
+            delete fes;
+            delete fec;
+            delete mesh;
+            return false;
+        }
 
         ctx.mfem_mesh = mesh;
         ctx.mfem_fec = fec;

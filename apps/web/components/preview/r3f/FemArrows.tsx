@@ -353,11 +353,14 @@ export function FemArrows({
     if (!mesh || count === 0) {
       return;
     }
-    mesh.instanceColor = new THREE.InstancedBufferAttribute(
-      new Float32Array(Math.max(count, 1) * 3),
-      3,
-    );
+    if (!mesh.instanceColor || mesh.instanceColor.count < Math.max(count, 1)) {
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(
+        new Float32Array(Math.max(count, 1) * 3),
+        3,
+      );
+    }
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     mesh.frustumCulled = false;
     mesh.renderOrder = glyphPolicy.renderOrder;
     material.needsUpdate = true;
@@ -370,9 +373,8 @@ export function FemArrows({
 
     const instanceColor = mesh.instanceColor;
     if (!instanceColor) return;
-    const colorArray = instanceColor.array as Float32Array;
-    const matrixArray = mesh.instanceMatrix.array as Float32Array;
     const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
     for (let i = 0; i < count; i++) {
       dummy.position.set(
         instancePositions[i][0],
@@ -387,10 +389,13 @@ export function FemArrows({
       );
       dummy.scale.set(scales[i * 3], scales[i * 3 + 1], scales[i * 3 + 2]);
       dummy.updateMatrix();
-      dummy.matrix.toArray(matrixArray, i * 16);
-      colorArray[i * 3] = colors[i * 3];
-      colorArray[i * 3 + 1] = colors[i * 3 + 1];
-      colorArray[i * 3 + 2] = colors[i * 3 + 2];
+      mesh.setMatrixAt(i, dummy.matrix);
+      color.setRGB(
+        colors[i * 3],
+        colors[i * 3 + 1],
+        colors[i * 3 + 2],
+      );
+      mesh.setColorAt(i, color);
     }
     mesh.count = count;
     mesh.instanceMatrix.needsUpdate = true;

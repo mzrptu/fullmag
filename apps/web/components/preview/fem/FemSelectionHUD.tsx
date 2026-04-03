@@ -56,18 +56,20 @@ export function FemRefineToolbar({
   onRefine,
   onCoarsen,
   onClear,
+  className,
 }: {
   selectedFacesCount: number;
   onRefine: (factor: number) => void;
   onCoarsen: (factor: number) => void;
   onClear: () => void;
+  className?: string;
 }) {
   if (selectedFacesCount <= 0) {
     return null;
   }
 
   return (
-    <div className="absolute bottom-12 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-slate-500/30 bg-slate-900/90 p-2 shadow-xl backdrop-blur-md pointer-events-auto">
+    <div className={cn("z-30 flex items-center gap-2 rounded-lg border border-slate-500/30 bg-slate-900/90 p-2 shadow-xl backdrop-blur-md pointer-events-auto", className)}>
       <span className="px-1 font-mono text-[0.65rem] text-slate-400">
         {selectedFacesCount} faces
       </span>

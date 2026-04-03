@@ -522,7 +522,7 @@ function FemMeshView3DInner({
   const [cameraProjection, setCameraProjection] = useState<CameraProjection>("perspective");
   const [navigationMode, setNavigationMode] = useState<NavigationMode>("trackball");
   const [partExplorerOpen, setPartExplorerOpen] = useState(true);
-  const [legendOpen, setLegendOpen] = useState(true);
+  const [legendOpen, setLegendOpen] = useState(false);
   const [labeledMode, setLabeledMode] = useState(false);
   const [openPopover, setOpenPopover] = useState<"quantity" | "color" | "clip" | "display" | "vectors" | "camera" | "panels" | null>(null);
   const [qualityProfile, setQualityProfile] = useState<ViewportQualityProfileId>("interactive");
@@ -1427,24 +1427,29 @@ function FemMeshView3DInner({
                 />
               </ViewportOverlaySlot>
             ) : null}
+            {onRefine ? (
+              <ViewportOverlaySlot
+                anchor="bottom-center"
+                className={mode === "icon" ? "bottom-14 max-w-[min(92vw,28rem)]" : "bottom-12"}
+              >
+                <FemRefineToolbar
+                  className={mode === "icon" ? "max-w-full flex-wrap justify-center" : undefined}
+                  selectedFacesCount={selectedFaces.length}
+                  onRefine={(factor) => {
+                    onRefine(selectedFaces, factor);
+                    setSelectedFaces([]);
+                  }}
+                  onCoarsen={(factor) => {
+                    onRefine(selectedFaces, factor);
+                    setSelectedFaces([]);
+                  }}
+                  onClear={() => setSelectedFaces([])}
+                />
+              </ViewportOverlaySlot>
+            ) : null}
           </>
         )}
       </ViewportOverlayManager>
-
-      {onRefine ? (
-        <FemRefineToolbar
-          selectedFacesCount={selectedFaces.length}
-          onRefine={(factor) => {
-            onRefine(selectedFaces, factor);
-            setSelectedFaces([]);
-          }}
-          onCoarsen={(factor) => {
-            onRefine(selectedFaces, factor);
-            setSelectedFaces([]);
-          }}
-          onClear={() => setSelectedFaces([])}
-        />
-      ) : null}
 
       <FemHoverTooltip hoveredFace={hoveredFace} hoveredFaceInfo={hoveredFaceInfo} />
 

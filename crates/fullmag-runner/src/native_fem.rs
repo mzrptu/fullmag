@@ -271,7 +271,13 @@ impl NativeFemBackend {
             initial_magnetization_len: m_flat.len() as u64,
             dt_seconds: plan.fixed_timestep.unwrap_or(1e-13),
             adaptive_config: std::ptr::null(),
-            has_uniaxial_anisotropy: if plan.material.uniaxial_anisotropy.is_some() {
+            // F-05 fix: enable uniaxial anisotropy when ANY of the relevant
+            // parameters are set (Ku, Ku2, Ku_field, Ku2_field).
+            has_uniaxial_anisotropy: if plan.material.uniaxial_anisotropy.is_some()
+                || plan.material.uniaxial_anisotropy_k2.is_some()
+                || plan.material.ku_field.is_some()
+                || plan.material.ku2_field.is_some()
+            {
                 1
             } else {
                 0
@@ -279,11 +285,33 @@ impl NativeFemBackend {
             uniaxial_anisotropy_constant: plan.material.uniaxial_anisotropy.unwrap_or(0.0),
             uniaxial_anisotropy_k2: plan.material.uniaxial_anisotropy_k2.unwrap_or(0.0),
             anisotropy_axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
-            has_interfacial_dmi: if plan.interfacial_dmi.is_some() { 1 } else { 0 },
+            // F-05 fix: enable interfacial DMI when D or dind_field is present.
+            has_interfacial_dmi: if plan.interfacial_dmi.is_some()
+                || plan.dind_field.is_some()
+            {
+                1
+            } else {
+                0
+            },
             dmi_constant: plan.interfacial_dmi.unwrap_or(0.0),
-            has_bulk_dmi: if plan.bulk_dmi.is_some() { 1 } else { 0 },
+            // F-05 fix: enable bulk DMI when D or dbulk_field is present.
+            has_bulk_dmi: if plan.bulk_dmi.is_some()
+                || plan.dbulk_field.is_some()
+            {
+                1
+            } else {
+                0
+            },
             bulk_dmi_constant: plan.bulk_dmi.unwrap_or(0.0),
-            has_cubic_anisotropy: if plan.material.cubic_anisotropy_kc1.is_some() {
+            // F-05 fix: enable cubic anisotropy when ANY of Kc1/Kc2/Kc3
+            // or their per-node fields are present.
+            has_cubic_anisotropy: if plan.material.cubic_anisotropy_kc1.is_some()
+                || plan.material.cubic_anisotropy_kc2.is_some()
+                || plan.material.cubic_anisotropy_kc3.is_some()
+                || plan.material.kc1_field.is_some()
+                || plan.material.kc2_field.is_some()
+                || plan.material.kc3_field.is_some()
+            {
                 1
             } else {
                 0

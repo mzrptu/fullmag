@@ -283,14 +283,13 @@ pub(crate) fn mesh_quantity_active_mask(quantity: &str, mesh: &MeshIR) -> Option
     if normalize_quantity_id(quantity) != "m" {
         return None;
     }
+    let magnetic_element_mask = magnetic_element_mask_from_markers(&mesh.element_markers);
     let mut active_mask = vec![false; mesh.nodes.len()];
     for (element_index, element) in mesh.elements.iter().enumerate() {
-        if mesh
-            .element_markers
+        if !magnetic_element_mask
             .get(element_index)
             .copied()
-            .unwrap_or(0)
-            == 0
+            .unwrap_or(true)
         {
             continue;
         }
@@ -301,6 +300,16 @@ pub(crate) fn mesh_quantity_active_mask(quantity: &str, mesh: &MeshIR) -> Option
         }
     }
     Some(active_mask)
+}
+
+fn magnetic_element_mask_from_markers(markers: &[u32]) -> Vec<bool> {
+    let has_air = markers.iter().any(|&marker| marker == 0);
+    let has_magnetic = markers.iter().any(|&marker| marker != 0);
+    if has_air && has_magnetic {
+        markers.iter().map(|&marker| marker != 0).collect()
+    } else {
+        vec![true; markers.len()]
+    }
 }
 
 pub(crate) fn build_mesh_preview_field_with_active_mask(
@@ -446,4 +455,55 @@ fn choose_preview_size(requested: usize, possible: &[usize], full: usize) -> usi
         .copied()
         .find(|size| *size <= requested)
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mesh_quantity_active_mask;
+    use fullmag_ir::MeshIR;
+
+    fn test_mesh(element_markers: Vec<u32>) -> MeshIR {
+        MeshIR {
+            mesh_name: "test".to_string(),
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [2.0, 0.0, 0.0],
+            ],
+            elements: vec![[0, 1, 2, 3], [1, 2, 3, 4]],
+            element_markers,
+            boundary_faces: vec![[0, 1, 2]],
+            boundary_markers: vec![1],
+            per_domain_quality: Default::default(),
+        }
+    }
+
+    #[test]
+    fn mesh_quantity_active_mask_treats_all_zero_markers_as_fully_magnetic() {
+        let mesh = test_mesh(vec![0, 0]);
+        assert_eq!(
+            mesh_quantity_active_mask("m", &mesh),
+            Some(vec![true, true, true, true, true]),
+        );
+    }
+
+    #[test]
+    fn mesh_quantity_active_mask_treats_all_nonzero_markers_as_fully_magnetic() {
+        let mesh = test_mesh(vec![2, 2]);
+        assert_eq!(
+            mesh_quantity_active_mask("m", &mesh),
+            Some(vec![true, true, true, true, true]),
+        );
+    }
+
+    #[test]
+    fn mesh_quantity_active_mask_excludes_air_only_when_air_and_magnetic_are_mixed() {
+        let mesh = test_mesh(vec![1, 0]);
+        assert_eq!(
+            mesh_quantity_active_mask("m", &mesh),
+            Some(vec![true, true, true, true, false]),
+        );
+    }
 }

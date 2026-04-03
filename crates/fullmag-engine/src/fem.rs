@@ -2296,4 +2296,22 @@ mod tests {
             observables.demag_field[air_only_node]
         );
     }
+
+    #[test]
+    fn magnetic_element_mask_marks_all_zero_marker_mesh_as_fully_magnetic() {
+        assert_eq!(magnetic_element_mask_from_markers(&[0, 0, 0]), vec![true, true, true]);
+    }
+
+    #[test]
+    fn magnetic_element_mask_marks_all_nonzero_marker_mesh_as_fully_magnetic() {
+        assert_eq!(magnetic_element_mask_from_markers(&[2, 2, 2]), vec![true, true, true]);
+    }
+
+    #[test]
+    fn magnetic_element_mask_treats_only_mixed_zero_nonzero_markers_as_air_split() {
+        assert_eq!(
+            magnetic_element_mask_from_markers(&[1, 0, 7]),
+            vec![true, false, true],
+        );
+    }
 }

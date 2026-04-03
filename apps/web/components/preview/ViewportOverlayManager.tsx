@@ -5,8 +5,10 @@ import { cn } from "@/lib/utils";
 
 export type ViewportOverlayAnchor =
   | "top-left"
+  | "top-center"
   | "top-right"
   | "bottom-left"
+  | "bottom-center"
   | "bottom-right";
 
 export type ViewportOverlayMode = "full" | "compact" | "icon";
@@ -15,10 +17,14 @@ function anchorClass(anchor: ViewportOverlayAnchor): string {
   switch (anchor) {
     case "top-left":
       return "top-3 left-3 items-start";
+    case "top-center":
+      return "top-3 left-1/2 -translate-x-1/2 items-center";
     case "top-right":
       return "top-3 right-3 items-end";
     case "bottom-left":
       return "bottom-3 left-3 items-start";
+    case "bottom-center":
+      return "bottom-3 left-1/2 -translate-x-1/2 items-center";
     case "bottom-right":
       return "bottom-3 right-3 items-end";
     default:

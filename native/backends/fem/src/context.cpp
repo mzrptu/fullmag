@@ -306,24 +306,23 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
             ctx.transfer_grid.kernel_yz_spectrum,
             0.0);
     }
-    // Build magnetic element mask (matches CPU: marker 1 = magnetic when
-    // both marker-1 and non-marker-1 elements exist; otherwise all magnetic).
+    // Build magnetic element mask to match the shared Rust FEM contract:
+    // - mixed 0/non-zero markers => non-zero markers are magnetic, 0 is air,
+    // - all-zero markers => treat the whole mesh as magnetic,
+    // - all-nonzero markers => treat the whole mesh as magnetic.
     {
         ctx.magnetic_element_mask.assign(static_cast<size_t>(ctx.n_elements), 1u);
         if (!ctx.element_markers.empty()) {
-            bool has_marker_1 = false;
-            bool has_other = false;
+            bool has_air = false;
+            bool has_magnetic = false;
             for (size_t i = 0; i < ctx.element_markers.size(); ++i) {
-                if (ctx.element_markers[i] == 1u) {
-                    has_marker_1 = true;
-                } else {
-                    has_other = true;
-                }
+                has_air = has_air || ctx.element_markers[i] == 0u;
+                has_magnetic = has_magnetic || ctx.element_markers[i] != 0u;
             }
-            if (has_marker_1 && has_other) {
+            if (has_air && has_magnetic) {
                 for (size_t i = 0; i < ctx.element_markers.size(); ++i) {
                     ctx.magnetic_element_mask[i] =
-                        ctx.element_markers[i] == 1u ? 1u : 0u;
+                        ctx.element_markers[i] != 0u ? 1u : 0u;
                 }
             }
         }
