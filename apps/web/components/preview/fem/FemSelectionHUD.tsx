@@ -10,7 +10,7 @@ export function FemSelectionHUD({
   clipAxis,
   clipPos,
   selectedFacesCount,
-  legendOpen,
+  compact = false,
 }: {
   nNodes: number;
   nElements: number;
@@ -19,20 +19,24 @@ export function FemSelectionHUD({
   clipAxis: "x" | "y" | "z";
   clipPos: number;
   selectedFacesCount: number;
-  legendOpen: boolean;
+  compact?: boolean;
 }) {
   return (
     <div
       className={cn(
-        "absolute bottom-3 text-[0.65rem] text-slate-300 font-mono pointer-events-none flex items-baseline gap-3 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-md border border-slate-500/30 shadow-md z-20",
-        legendOpen ? "left-[240px]" : "left-3",
+        "text-[0.65rem] text-slate-300 font-mono pointer-events-none flex items-baseline gap-3 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-md border border-slate-500/30 shadow-md",
+        compact && "gap-2 px-2.5",
       )}
     >
       <span>{nNodes.toLocaleString()} nodes</span>
       <span className="h-[3px] w-[3px] rounded-full bg-slate-500/50" />
       <span>{nElements.toLocaleString()} tets</span>
-      <span className="h-[3px] w-[3px] rounded-full bg-slate-500/50" />
-      <span>{nFaces.toLocaleString()} faces</span>
+      {!compact ? (
+        <>
+          <span className="h-[3px] w-[3px] rounded-full bg-slate-500/50" />
+          <span>{nFaces.toLocaleString()} faces</span>
+        </>
+      ) : null}
       {clipEnabled ? (
         <>
           <span className="h-[3px] w-[3px] rounded-full bg-slate-500/50" />

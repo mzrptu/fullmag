@@ -38,9 +38,9 @@ study.save("H_demag", every=1e-13)
 study.tableautosave(1e-13)
 
 # ── Run ─────────────────────────────────────────────────────
-# study.relax(
-#     tol=1e-6,                       # torque tolerance (max_dm_dt)
-#     max_steps=100_000,               # limit kroków
-#     algorithm="llg_overdamped",     # algorytm relaksacji
-# )
-# study.run(1e-9)
+study.relax(
+    tol=1e-6,                       # torque tolerance (max_dm_dt)
+    max_steps=100_000,               # limit kroków
+    algorithm="llg_overdamped",     # algorytm relaksacji
+)
+study.run(1e-9)

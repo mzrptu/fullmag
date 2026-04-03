@@ -19,6 +19,7 @@ interface ScientificViewportShellProps {
   children: ReactNode;
   toolbar?: ReactNode;
   hud?: ReactNode;
+  gizmos?: ReactNode;
   backgroundColor?: number;
   projection?: ShellProjection;
   navigation?: ShellNavigation;
@@ -34,6 +35,7 @@ interface ScientificViewportShellProps {
   onCanvasCreated?: (payload: { gl: THREE.WebGLRenderer; camera: THREE.Camera }) => void;
   onPointerMissed?: () => void;
   onCanvasContextMenu?: React.MouseEventHandler<Element>;
+  renderDefaultGizmos?: boolean;
 }
 
 function ShellCamera({ projection }: { projection: ShellProjection }) {
@@ -114,6 +116,7 @@ export default function ScientificViewportShell({
   children,
   toolbar,
   hud,
+  gizmos,
   backgroundColor = 0x1e1e2e,
   projection = "perspective",
   navigation = "trackball",
@@ -129,6 +132,7 @@ export default function ScientificViewportShell({
   onCanvasCreated,
   onPointerMissed,
   onCanvasContextMenu,
+  renderDefaultGizmos = true,
 }: ScientificViewportShellProps) {
   const internalBridgeRef = useRef<any>(null);
   const internalControlsRef = useRef<any>(null);
@@ -181,14 +185,16 @@ export default function ScientificViewportShell({
 
       {toolbar}
       {hud}
-      <ViewportGizmoStack
-        sceneRef={effectiveBridgeRef}
-        onRotate={onViewCubeRotate}
-        onReset={onResetView}
-        showOrientationSphere={showOrientationSphere}
-        orientationSphereAxisConvention={orientationSphereAxisConvention}
-        orientationSpherePositionClassName={orientationSpherePositionClassName}
-      />
+      {gizmos ?? (renderDefaultGizmos ? (
+        <ViewportGizmoStack
+          sceneRef={effectiveBridgeRef}
+          onRotate={onViewCubeRotate}
+          onReset={onResetView}
+          showOrientationSphere={showOrientationSphere}
+          orientationSphereAxisConvention={orientationSphereAxisConvention}
+          orientationSpherePositionClassName={orientationSpherePositionClassName}
+        />
+      ) : null)}
     </div>
   );
 }

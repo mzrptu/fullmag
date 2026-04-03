@@ -58,6 +58,9 @@ function useArrowTemplate(maxDim: number) {
     const merged = new THREE.BufferGeometry();
     merged.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     merged.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+    const baseColors = new Float32Array(totalVerts * 3);
+    baseColors.fill(1);
+    merged.setAttribute("color", new THREE.BufferAttribute(baseColors, 3));
 
     const shaftIdx = shaft.getIndex()!;
     const headIdx = head.getIndex()!;
@@ -377,12 +380,11 @@ export function FemArrows({
 
     const instanceColor = mesh.instanceColor ?? instanceColorAttribute;
     if (!instanceColor) return;
-    const colorArray = instanceColor.array as Float32Array;
     const matrixArray = mesh.instanceMatrix.array as Float32Array;
 
     const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
     let matrixOffset = 0;
-    let colorOffset = 0;
 
     for (let i = 0; i < count; i += 1) {
       dummy.position.set(
@@ -400,11 +402,8 @@ export function FemArrows({
       dummy.updateMatrix();
       dummy.matrix.toArray(matrixArray, matrixOffset);
       matrixOffset += 16;
-
-      colorArray[colorOffset] = colors[i * 3];
-      colorArray[colorOffset + 1] = colors[i * 3 + 1];
-      colorArray[colorOffset + 2] = colors[i * 3 + 2];
-      colorOffset += 3;
+      color.fromArray(colors, i * 3);
+      mesh.setColorAt(i, color);
     }
 
     mesh.count = count;

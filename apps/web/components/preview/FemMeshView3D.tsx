@@ -28,6 +28,7 @@ import { FemViewportScene } from "./fem/FemViewportScene";
 import { FemContextMenu, FemHoverTooltip } from "./fem/FemContextMenu";
 import { FemRefineToolbar, FemSelectionHUD } from "./fem/FemSelectionHUD";
 import ScientificViewportShell from "./shared/ScientificViewportShell";
+import ViewportGizmoStack from "./shared/ViewportGizmoStack";
 import type { ViewportQualityProfileId } from "./shared/viewportQualityProfiles";
 import { ViewportOverlayManager, ViewportOverlaySlot } from "./ViewportOverlayManager";
 
@@ -1232,78 +1233,9 @@ function FemMeshView3DInner({
     <div className="relative flex flex-1 w-[100%] h-[100%] min-w-0 min-h-0 bg-background overflow-hidden rounded-md fem-canvas-container">
       <ScientificViewportShell
         toolbar={
-          toolbarMode !== "hidden" ? (
-            <FemViewportToolbar
-              compact={hasMeshParts && meshParts.length > 0 && meshParts.length > 3}
-              renderMode={toolbarRenderMode}
-              surfaceColorField={toolbarColorField}
-              arrowColorField={arrowField}
-              projection={cameraProjection}
-              navigation={navigationMode}
-              qualityProfile={qualityProfile}
-              clipEnabled={clipEnabled}
-              clipAxis={clipAxis}
-              clipPos={clipPos}
-              arrowsVisible={showArrows}
-              arrowDensity={arrowDensity}
-              opacity={toolbarOpacity}
-              shrinkFactor={shrinkFactor}
-              showShrink={meshData.elements.length >= 4}
-              labeledMode={labeledMode}
-              legendOpen={legendOpen}
-              partExplorerOpen={partExplorerOpen}
-              visiblePartsCount={hasMeshParts ? visibleLayers.length : undefined}
-              totalPartsCount={hasMeshParts ? meshParts.length : undefined}
-              hasField={!missingMagneticMask}
-              fieldLabel={fieldLabel}
-              openPopover={openPopover}
-              onOpenPopoverChange={(id) => setOpenPopover(id as typeof openPopover)}
-              onRenderModeChange={applyToolbarRenderMode}
-              onSurfaceColorFieldChange={applyToolbarColorField}
-              onArrowColorFieldChange={setArrowColorField}
-              onProjectionChange={setCameraProjection}
-              onNavigationChange={setNavigationMode}
-              onQualityProfileChange={setQualityProfile}
-              onClipEnabledChange={(v) => {
-                onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v);
-              }}
-              onClipAxisChange={(a) => {
-                onClipAxisChange ? onClipAxisChange(a) : setInternalClipAxis(a);
-              }}
-              onClipPosChange={(v) => {
-                onClipPosChange ? onClipPosChange(v) : setInternalClipPos(v);
-              }}
-              onArrowsVisibleChange={(v) => {
-                onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v);
-              }}
-              onArrowDensityChange={setArrowDensity}
-              onOpacityChange={applyToolbarOpacity}
-              onShrinkFactorChange={(v) => {
-                onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v);
-              }}
-              onLabeledModeChange={setLabeledMode}
-              onToggleLegend={() => setLegendOpen((prev) => !prev)}
-              onTogglePartExplorer={() => setPartExplorerOpen((prev) => !prev)}
-              onCameraPreset={setCameraPreset}
-              onCapture={takeScreenshot}
-              quantityId={quantityId}
-              quantityOptions={prominentQuantityOptions}
-              onQuantityChange={onQuantityChange}
-            />
-          ) : null
+          null
         }
-        hud={
-          <FemSelectionHUD
-            nNodes={meshData.nNodes}
-            nElements={meshData.nElements}
-            nFaces={meshData.boundaryFaces.length / 3}
-            clipEnabled={clipEnabled}
-            clipAxis={clipAxis}
-            clipPos={clipPos}
-            selectedFacesCount={selectedFaces.length}
-            legendOpen={legendOpen}
-          />
-        }
+        hud={null}
         projection={cameraProjection}
         navigation={navigationMode}
         qualityProfile={qualityProfile}
@@ -1312,9 +1244,7 @@ function FemMeshView3DInner({
         controlsRef={controlsRef}
         onViewCubeRotate={handleViewCubeRotate}
         onResetView={() => setCameraPreset("reset")}
-        showOrientationSphere={effectiveShowOrientationLegend}
-        orientationSphereAxisConvention="identity"
-        orientationSpherePositionClassName="top-[118px] right-3"
+        renderDefaultGizmos={false}
         onPointerMissed={() => setSelectedFaces([])}
         onCanvasContextMenu={(e) => e.preventDefault()}
         onCanvasCreated={({ gl }) => {
@@ -1369,6 +1299,70 @@ function FemMeshView3DInner({
       <ViewportOverlayManager>
         {({ mode }) => (
           <>
+            {toolbarMode !== "hidden" ? (
+              <ViewportOverlaySlot
+                anchor="top-center"
+                className={mode === "icon" ? "w-[min(calc(100%-1.5rem),40rem)]" : "w-[min(calc(100%-1.5rem),72rem)]"}
+              >
+                <FemViewportToolbar
+                  compact={mode !== "full"}
+                  renderMode={toolbarRenderMode}
+                  surfaceColorField={toolbarColorField}
+                  arrowColorField={arrowField}
+                  projection={cameraProjection}
+                  navigation={navigationMode}
+                  qualityProfile={qualityProfile}
+                  clipEnabled={clipEnabled}
+                  clipAxis={clipAxis}
+                  clipPos={clipPos}
+                  arrowsVisible={showArrows}
+                  arrowDensity={arrowDensity}
+                  opacity={toolbarOpacity}
+                  shrinkFactor={shrinkFactor}
+                  showShrink={meshData.elements.length >= 4}
+                  labeledMode={labeledMode}
+                  legendOpen={legendOpen}
+                  partExplorerOpen={partExplorerOpen}
+                  visiblePartsCount={hasMeshParts ? visibleLayers.length : undefined}
+                  totalPartsCount={hasMeshParts ? meshParts.length : undefined}
+                  hasField={!missingMagneticMask}
+                  fieldLabel={fieldLabel}
+                  openPopover={openPopover}
+                  onOpenPopoverChange={(id) => setOpenPopover(id as typeof openPopover)}
+                  onRenderModeChange={applyToolbarRenderMode}
+                  onSurfaceColorFieldChange={applyToolbarColorField}
+                  onArrowColorFieldChange={setArrowColorField}
+                  onProjectionChange={setCameraProjection}
+                  onNavigationChange={setNavigationMode}
+                  onQualityProfileChange={setQualityProfile}
+                  onClipEnabledChange={(v) => {
+                    onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v);
+                  }}
+                  onClipAxisChange={(a) => {
+                    onClipAxisChange ? onClipAxisChange(a) : setInternalClipAxis(a);
+                  }}
+                  onClipPosChange={(v) => {
+                    onClipPosChange ? onClipPosChange(v) : setInternalClipPos(v);
+                  }}
+                  onArrowsVisibleChange={(v) => {
+                    onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v);
+                  }}
+                  onArrowDensityChange={setArrowDensity}
+                  onOpacityChange={applyToolbarOpacity}
+                  onShrinkFactorChange={(v) => {
+                    onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v);
+                  }}
+                  onLabeledModeChange={setLabeledMode}
+                  onToggleLegend={() => setLegendOpen((prev) => !prev)}
+                  onTogglePartExplorer={() => setPartExplorerOpen((prev) => !prev)}
+                  onCameraPreset={setCameraPreset}
+                  onCapture={takeScreenshot}
+                  quantityId={quantityId}
+                  quantityOptions={prominentQuantityOptions}
+                  onQuantityChange={onQuantityChange}
+                />
+              </ViewportOverlaySlot>
+            ) : null}
             {missingExactScopeSegment && selectedObjectId ? (
               <ViewportOverlaySlot anchor="top-left" className="max-w-[min(56rem,calc(100%-7rem))]">
                 <div className="pointer-events-none rounded-xl border border-rose-400/25 bg-background/85 px-4 py-3 text-sm text-rose-200 shadow-lg backdrop-blur-md">
@@ -1403,11 +1397,20 @@ function FemMeshView3DInner({
                 />
               </ViewportOverlaySlot>
             ) : null}
-            {hasMeshParts && partExplorerOpen ? (
-              <ViewportOverlaySlot
-                anchor="top-right"
-                className={mode === "icon" ? "top-20 w-[224px]" : "top-20"}
-              >
+            <ViewportOverlaySlot
+              anchor="top-right"
+              className={mode === "icon" ? "top-16 max-w-[224px]" : mode === "compact" ? "top-16" : "top-3"}
+            >
+              <ViewportGizmoStack
+                sceneRef={viewCubeSceneRef}
+                onRotate={handleViewCubeRotate}
+                onReset={() => setCameraPreset("reset")}
+                showOrientationSphere={effectiveShowOrientationLegend}
+                orientationSphereAxisConvention="identity"
+                compact={mode !== "full"}
+                embedded
+              />
+              {hasMeshParts && partExplorerOpen ? (
                 <FemPartExplorerPanel
                   meshParts={meshParts}
                   meshEntityViewState={meshEntityViewState}
@@ -1425,13 +1428,23 @@ function FemMeshView3DInner({
                   onPatchPart={patchSinglePart}
                   onRoleVisibility={handleRoleVisibility}
                 />
-              </ViewportOverlaySlot>
-            ) : null}
-            {onRefine ? (
-              <ViewportOverlaySlot
-                anchor="bottom-center"
-                className={mode === "icon" ? "bottom-14 max-w-[min(92vw,28rem)]" : "bottom-12"}
-              >
+              ) : null}
+            </ViewportOverlaySlot>
+            <ViewportOverlaySlot
+              anchor="bottom-center"
+              className={mode === "icon" ? "bottom-14 max-w-[min(92vw,30rem)]" : "bottom-12"}
+            >
+              <FemSelectionHUD
+                compact={mode !== "full"}
+                nNodes={meshData.nNodes}
+                nElements={meshData.nElements}
+                nFaces={meshData.boundaryFaces.length / 3}
+                clipEnabled={clipEnabled}
+                clipAxis={clipAxis}
+                clipPos={clipPos}
+                selectedFacesCount={selectedFaces.length}
+              />
+              {onRefine ? (
                 <FemRefineToolbar
                   className={mode === "icon" ? "max-w-full flex-wrap justify-center" : undefined}
                   selectedFacesCount={selectedFaces.length}
@@ -1445,8 +1458,8 @@ function FemMeshView3DInner({
                   }}
                   onClear={() => setSelectedFaces([])}
                 />
-              </ViewportOverlaySlot>
-            ) : null}
+              ) : null}
+            </ViewportOverlaySlot>
           </>
         )}
       </ViewportOverlayManager>
