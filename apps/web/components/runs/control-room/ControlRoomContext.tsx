@@ -145,6 +145,15 @@ const EMPTY_SCALAR_ROWS: ScalarRow[] = [];
 const EMPTY_ENGINE_LOG: EngineLogEntry[] = [];
 const DEFAULT_AIR_MESH_OPACITY = 28;
 
+function parseOptionalFiniteNumberText(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function normalizePersistedObjectViewMode(
   value: SceneDocument["editor"]["object_view_mode"],
 ): ObjectViewMode {
@@ -1488,11 +1497,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     ) => ({
       algorithm_2d: options.algorithm2d,
       algorithm_3d: options.algorithm3d,
-      hmax: options.hmax ? parseFloat(options.hmax) : null,
-      hmin: options.hmin ? parseFloat(options.hmin) : null,
+      hmax: parseOptionalFiniteNumberText(options.hmax),
+      hmin: parseOptionalFiniteNumberText(options.hmin),
       size_factor: options.sizeFactor,
       size_from_curvature: options.sizeFromCurvature,
-      growth_rate: options.growthRate ? parseFloat(options.growthRate) : null,
+      growth_rate: parseOptionalFiniteNumberText(options.growthRate),
       narrow_regions: options.narrowRegions,
       smoothing_steps: options.smoothingSteps,
       optimize: options.optimize || null,
@@ -1716,7 +1725,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         if (z < zmin) zmin = z; if (z > zmax) zmax = z;
       }
     }
-    const currentHmax = meshOptions.hmax ? parseFloat(meshOptions.hmax) : (meshHmax ?? 20e-9);
+    const currentHmax = parseOptionalFiniteNumberText(meshOptions.hmax) ?? (meshHmax ?? 20e-9);
     const targetH = currentHmax * factor;
     const pad = currentHmax * 2;
     const zone: import("../../panels/MeshSettingsPanel").SizeFieldSpec = {
@@ -2411,7 +2420,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
           visible: true,
           renderMode: part.role === "air" ? "wireframe" : "surface+edges",
           opacity: part.role === "air" ? 28 : 100,
-          colorField: part.role === "air" ? "none" : "orientation",
+          colorField: "none",
         };
       }
       return next;

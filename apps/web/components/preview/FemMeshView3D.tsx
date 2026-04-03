@@ -121,6 +121,8 @@ interface RenderLayer {
   isMagnetic: boolean;
   isSelected: boolean;
   isDimmed: boolean;
+  meshColor: string;
+  edgeColor: string;
 }
 
 type CameraProjection = "perspective" | "orthographic";
@@ -483,6 +485,25 @@ const COLOR_OPTIONS: { value: FemColorField; label: string; labeledLabel: string
   { value: "none", label: "—", labeledLabel: "None" },
 ];
 
+const OBJECT_MESH_PALETTE = [
+  "#e76f51",
+  "#f4a261",
+  "#e9c46a",
+  "#90be6d",
+  "#43aa8b",
+  "#4d908e",
+  "#577590",
+  "#277da1",
+] as const;
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 33 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}
+
 function partRoleTint(role: FemMeshPart["role"]): string {
   switch (role) {
     case "air":
@@ -495,6 +516,53 @@ function partRoleTint(role: FemMeshPart["role"]): string {
     default:
       return "#60a5fa";
   }
+}
+
+function colorToHex(color: THREE.Color): string {
+  return `#${color.getHexString()}`;
+}
+
+function objectTint(objectId: string | null | undefined): string {
+  if (!objectId) {
+    return "#60a5fa";
+  }
+  const hash = hashString(objectId);
+  const color = new THREE.Color(OBJECT_MESH_PALETTE[hash % OBJECT_MESH_PALETTE.length]);
+  const variant = Math.floor(hash / OBJECT_MESH_PALETTE.length) % 3;
+  if (variant === 1) {
+    color.offsetHSL(0.018, 0.04, 0.045);
+  } else if (variant === 2) {
+    color.offsetHSL(-0.02, 0.02, -0.035);
+  }
+  return colorToHex(color);
+}
+
+function partMeshTint(part: FemMeshPart): string {
+  if (part.role === "air") {
+    return partRoleTint(part.role);
+  }
+  const color = new THREE.Color(
+    part.object_id ? objectTint(part.object_id) : partRoleTint(part.role),
+  );
+  if (part.role === "interface") {
+    color.lerp(new THREE.Color("#f59e0b"), 0.3);
+  } else if (part.role === "outer_boundary") {
+    color.lerp(new THREE.Color("#f8fafc"), 0.38);
+  }
+  return colorToHex(color);
+}
+
+function partEdgeTint(part: FemMeshPart, isSelected: boolean, isDimmed: boolean): string {
+  const color = new THREE.Color(partMeshTint(part));
+  if (part.role === "air") {
+    color.lerp(new THREE.Color("#e0f2fe"), 0.35);
+  } else {
+    color.lerp(new THREE.Color("#0f172a"), isDimmed ? 0.22 : 0.1);
+  }
+  if (isSelected) {
+    color.lerp(new THREE.Color("#ffffff"), 0.55);
+  }
+  return colorToHex(color);
 }
 
 function colorLegendGradient(field: FemColorField): string {
@@ -534,7 +602,7 @@ function colorLegendLabel(field: FemColorField, fieldLabel?: string): string {
       return "surface inverse condition number";
     case "none":
     default:
-      return "part role";
+      return "object / part tint";
   }
 }
 
@@ -864,8 +932,7 @@ function FemMeshView3DInner({
               : "surface+edges",
         opacity:
           part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
-        colorField:
-          part.role === "magnetic_object" ? "orientation" : "none",
+        colorField: "none",
       };
       const baseViewState = meshEntityViewState[part.id] ?? defaultViewState;
       const isSelected =
@@ -912,6 +979,8 @@ function FemMeshView3DInner({
         isMagnetic: part.role === "magnetic_object",
         isSelected,
         isDimmed,
+        meshColor: partMeshTint(part),
+        edgeColor: partEdgeTint(part, isSelected, isDimmed),
       });
     }
     if (layers.length > 0 && !layers.some((layer) => layer.isPrimaryForCamera)) {
@@ -1482,6 +1551,9 @@ function FemMeshView3DInner({
                     clipEnabled={clipEnabled}
                     clipAxis={clipAxis}
                     clipPos={clipPos}
+                    uniformColor={layer.meshColor}
+                    edgeColor={layer.edgeColor}
+                    highlight={layer.isSelected}
                     onGeometryCenter={layer.isPrimaryForCamera ? handleGeometryCenter : undefined}
                     onFaceClick={handleFaceClick}
                     onFaceHover={handleFaceHover}
@@ -1731,7 +1803,7 @@ function FemMeshView3DInner({
                   <button
                     type="button"
                     className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-white/15"
-                    style={{ backgroundColor: partRoleTint(inspectedMeshPart.role) }}
+                    style={{ backgroundColor: partMeshTint(inspectedMeshPart) }}
                     onClick={() => patchSinglePart(inspectedMeshPart.id, { visible: !(meshEntityViewState[inspectedMeshPart.id]?.visible ?? true) })}
                     title={(meshEntityViewState[inspectedMeshPart.id]?.visible ?? true) ? "Hide part" : "Show part"}
                   />
@@ -1844,6 +1916,7 @@ function FemMeshView3DInner({
                   {group.parts.map((part) => {
                     const viewState = meshEntityViewState[part.id];
                     const isSelected = selectedEntityId === part.id;
+                    const tint = partMeshTint(part);
                     const partQuality = partQualityById.get(part.id) ?? null;
                     return (
                       <div
@@ -1859,7 +1932,7 @@ function FemMeshView3DInner({
                           <button
                             type="button"
                             className="mt-0.5 h-3 w-3 shrink-0 rounded-full border border-white/15"
-                            style={{ backgroundColor: partRoleTint(part.role) }}
+                            style={{ backgroundColor: tint }}
                             onClick={() => patchSinglePart(part.id, { visible: !(viewState?.visible ?? true) })}
                             title={(viewState?.visible ?? true) ? "Hide part" : "Show part"}
                           />

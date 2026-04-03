@@ -16,12 +16,13 @@ import type {
 } from "../../../lib/session/types";
 import { serializeModelBuilderGraphV2 } from "../../../lib/session/modelBuilderGraph";
 import { buildSceneDocumentFromScriptBuilder } from "../../../lib/session/sceneDocument";
+import { asVec3, type VectorComponent } from "./shared";
+import type { QuantityDescriptor, DisplayKind } from "../../../lib/session/types";
 import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import { DEFAULT_MESH_OPTIONS } from "../../panels/MeshSettingsPanel";
 import type { MeshOptionsState } from "../../panels/MeshSettingsPanel";
-import type { SolverPlanSummary } from "./types";
-import { asVec3 } from "./shared";
+import type { SolverPlanSummary, PreviewOption } from "./types";
 
 /* ── Record / typing helpers ── */
 

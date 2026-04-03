@@ -7,6 +7,7 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Button } from "../ui/button";
 import { Loader2, ArrowRightLeft } from "lucide-react";
+import { metersTextToNanometersInput, nanometersInputToMetersText } from "@/lib/units";
 
 /* ── Size field spec for lasso refinement zones ────────────────────── */
 
@@ -20,8 +21,8 @@ export interface SizeFieldSpec {
 export interface MeshOptionsState {
   algorithm2d: number;
   algorithm3d: number;
-  hmax: string;          // string for controlled input (SI metres) — primary size control
-  hmin: string;          // string for controlled input (SI metres)
+  hmax: string;          // stored as SI metres; edited in the UI as nanometres
+  hmin: string;          // stored as SI metres; edited in the UI as nanometres
   sizeFactor: number;
   sizeFromCurvature: number;
   growthRate: string;    // "" = Gmsh default (1.8), otherwise float [1.1–3.0]
@@ -37,8 +38,8 @@ export interface MeshOptionsState {
   adaptiveEnabled: boolean;
   adaptivePolicy: string;
   adaptiveTheta: number;
-  adaptiveHMin: string;
-  adaptiveHMax: string;
+  adaptiveHMin: string;  // stored as SI metres; edited in the UI as nanometres
+  adaptiveHMax: string;  // stored as SI metres; edited in the UI as nanometres
   adaptiveMaxPasses: number;
   adaptiveErrorTolerance: string;
 }
@@ -442,35 +443,35 @@ export default function MeshSettingsPanel({
       <Section
         title="Element size"
         eyebrow="Basic"
-        meta={<span className="text-[0.62rem] font-mono text-muted-foreground">SI metres</span>}
+        meta={<span className="text-[0.62rem] font-mono text-muted-foreground">UI in nm</span>}
       >
         <div className="rounded-xl border border-sky-500/20 bg-sky-500/8 px-3 py-2 text-[0.68rem] leading-5 text-sky-100/90">
-          These values shape the next rebuild. The viewport keeps showing the last built mesh until the remesh finishes.
+          These values are entered in nanometres. Fullmag converts them to SI metres for the backend, so typing `1` means `1 nm`, not `1 m`.
         </div>
         <FieldRow
-          label="Maximum element size"
+          label="Maximum element size (nm)"
           hint="Upper bound for the local target size."
           control={(
             <Input
               className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
               type="text"
               placeholder="auto"
-              value={options.hmax}
-              onChange={(e) => set({ hmax: e.target.value })}
+              value={metersTextToNanometersInput(options.hmax)}
+              onChange={(e) => set({ hmax: nanometersInputToMetersText(e.target.value) })}
               disabled={disabled}
             />
           )}
         />
         <FieldRow
-          label="Minimum element size"
+          label="Minimum element size (nm)"
           hint="Lower bound used when local refinement gets very fine."
           control={(
             <Input
               className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
               type="text"
               placeholder="auto"
-              value={options.hmin}
-              onChange={(e) => set({ hmin: e.target.value })}
+              value={metersTextToNanometersInput(options.hmin)}
+              onChange={(e) => set({ hmin: nanometersInputToMetersText(e.target.value) })}
               disabled={disabled}
             />
           )}
@@ -759,22 +760,22 @@ export default function MeshSettingsPanel({
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="flex flex-col gap-1">
-                <span className="ml-1 text-[0.65rem] font-medium text-muted-foreground">Min. edge (m)</span>
+                <span className="ml-1 text-[0.65rem] font-medium text-muted-foreground">Min. edge (nm)</span>
                 <Input
                   className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
-                  placeholder="e.g. 5e-9"
-                  value={options.adaptiveHMin}
-                  onChange={(e) => set({ adaptiveHMin: e.target.value })}
+                  placeholder="e.g. 5"
+                  value={metersTextToNanometersInput(options.adaptiveHMin)}
+                  onChange={(e) => set({ adaptiveHMin: nanometersInputToMetersText(e.target.value) })}
                   disabled={disabled}
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <span className="ml-1 text-[0.65rem] font-medium text-muted-foreground">Max. edge (m)</span>
+                <span className="ml-1 text-[0.65rem] font-medium text-muted-foreground">Max. edge (nm)</span>
                 <Input
                   className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
-                  placeholder="e.g. 30e-9"
-                  value={options.adaptiveHMax}
-                  onChange={(e) => set({ adaptiveHMax: e.target.value })}
+                  placeholder="e.g. 30"
+                  value={metersTextToNanometersInput(options.adaptiveHMax)}
+                  onChange={(e) => set({ adaptiveHMax: nanometersInputToMetersText(e.target.value) })}
                   disabled={disabled}
                 />
               </div>

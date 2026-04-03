@@ -352,38 +352,30 @@ def _shared_domain_local_size_fields(
             continue
         entry = override_by_name.get(geometry.geometry_name)
         target_hmax = _coerce_positive_float(entry.get("hmax") if entry else None) or default_hmax
-        extent = np.asarray(bounds_max, dtype=np.float64) - np.asarray(bounds_min, dtype=np.float64)
-        min_extent = max(float(np.min(extent)), target_hmax)
-        interface_h = min(target_hmax, default_hmax) * 0.6
-        interface_pad = max(target_hmax * 0.75, min_extent * 0.05)
-        transition_pad = max(target_hmax * 3.0, min_extent * 0.18)
+        # Only emit a refinement field when the per-geometry hmax is strictly
+        # finer than the domain default.  Coarser-than-default overrides cannot
+        # be expressed through a Min-combiner background field anyway.
+        if target_hmax >= default_hmax:
+            continue
+        # A Box field is a purely coordinate-based size map: VIn inside the
+        # bounding box, VOut outside.  This works reliably for any geometry
+        # type (analytic or discrete/STL) because it never samples surface
+        # mesh nodes — unlike BoundsSurfaceThreshold/Distance fields whose
+        # discrete-surface sampling is unreliable and can leave the background
+        # field silently inactive, causing the mesh to fall back to the
+        # CharacteristicLengthMax (airbox hmax) everywhere.
         fields.append(
             {
-                "kind": "BoundsSurfaceThreshold",
+                "kind": "Box",
                 "params": {
-                    "BoundsMin": [float(v) for v in bounds_min],
-                    "BoundsMax": [float(v) for v in bounds_max],
-                    "SizeMin": float(interface_h),
-                    "SizeMax": float(target_hmax),
-                    "DistMin": 0.0,
-                    "DistMax": float(interface_pad),
-                    "MatchPadding": float(interface_pad),
-                    "Sampling": 30,
-                },
-            }
-        )
-        fields.append(
-            {
-                "kind": "BoundsSurfaceThreshold",
-                "params": {
-                    "BoundsMin": [float(v) for v in bounds_min],
-                    "BoundsMax": [float(v) for v in bounds_max],
-                    "SizeMin": float(target_hmax),
-                    "SizeMax": float(default_hmax),
-                    "DistMin": 0.0,
-                    "DistMax": float(transition_pad),
-                    "MatchPadding": float(transition_pad),
-                    "Sampling": 30,
+                    "VIn": float(target_hmax),
+                    "VOut": float(default_hmax),
+                    "XMin": float(bounds_min[0]),
+                    "XMax": float(bounds_max[0]),
+                    "YMin": float(bounds_min[1]),
+                    "YMax": float(bounds_max[1]),
+                    "ZMin": float(bounds_min[2]),
+                    "ZMax": float(bounds_max[2]),
                 },
             }
         )
@@ -421,40 +413,23 @@ def _resolve_per_object_mesh_options(
         if bounds_min is None or bounds_max is None:
             continue
         target_hmax = recipe.hmax if recipe.hmax is not None else default_hmax
-        extent = np.asarray(bounds_max, dtype=np.float64) - np.asarray(bounds_min, dtype=np.float64)
-        min_extent = max(float(np.min(extent)), target_hmax)
-        # The interface factor controls how tightly the refined region tracks
-        # the object boundary.  Values < 1 mean finer elements at interfaces.
-        interface_h = target_hmax * assembly_policy.interface_hmax_factor
-        interface_pad = max(interface_h * 1.5, min_extent * 0.05)
-        transition_pad = max(target_hmax * 3.0, min_extent * 0.18)
+        # Only emit a Box field when the per-object hmax is strictly finer than
+        # the domain default.  See _shared_domain_local_size_fields for rationale.
+        if target_hmax >= default_hmax:
+            extra_fields.extend(recipe.size_fields if recipe.size_fields else [])
+            continue
         extra_fields.append(
             {
-                "kind": "BoundsSurfaceThreshold",
+                "kind": "Box",
                 "params": {
-                    "BoundsMin": [float(v) for v in bounds_min],
-                    "BoundsMax": [float(v) for v in bounds_max],
-                    "SizeMin": float(interface_h),
-                    "SizeMax": float(target_hmax),
-                    "DistMin": 0.0,
-                    "DistMax": float(interface_pad),
-                    "MatchPadding": float(interface_pad),
-                    "Sampling": 30,
-                },
-            }
-        )
-        extra_fields.append(
-            {
-                "kind": "BoundsSurfaceThreshold",
-                "params": {
-                    "BoundsMin": [float(v) for v in bounds_min],
-                    "BoundsMax": [float(v) for v in bounds_max],
-                    "SizeMin": float(target_hmax),
-                    "SizeMax": float(default_hmax),
-                    "DistMin": 0.0,
-                    "DistMax": float(transition_pad),
-                    "MatchPadding": float(transition_pad),
-                    "Sampling": 30,
+                    "VIn": float(target_hmax),
+                    "VOut": float(default_hmax),
+                    "XMin": float(bounds_min[0]),
+                    "XMax": float(bounds_max[0]),
+                    "YMin": float(bounds_min[1]),
+                    "YMax": float(bounds_max[1]),
+                    "ZMin": float(bounds_min[2]),
+                    "ZMax": float(bounds_max[2]),
                 },
             }
         )

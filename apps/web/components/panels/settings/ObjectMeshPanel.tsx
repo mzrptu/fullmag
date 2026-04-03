@@ -18,6 +18,11 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import {
+  formatMetersTextAsNanometers,
+  metersTextToNanometersInput,
+  nanometersInputToMetersText,
+} from "@/lib/units";
 
 import MeshSettingsPanel, {
   DEFAULT_MESH_OPTIONS,
@@ -306,11 +311,17 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
 
   const viewportModes: ViewportMode[] = ["Mesh", "3D", "2D"];
   const effectiveHmaxDisplay = formatMeshSetting(
-    mesh.mode === "custom" ? mesh.hmax : model.meshOptions.hmax,
+    formatMetersTextAsNanometers(
+      mesh.mode === "custom" ? mesh.hmax : model.meshOptions.hmax,
+      "Auto / Object defaults",
+    ),
     "Auto / Object defaults",
   );
   const effectiveHminDisplay = formatMeshSetting(
-    mesh.mode === "custom" ? mesh.hmin : model.meshOptions.hmin,
+    formatMetersTextAsNanometers(
+      mesh.mode === "custom" ? mesh.hmin : model.meshOptions.hmin,
+      "Auto / Object defaults",
+    ),
     "Auto / Object defaults",
   );
 
@@ -534,8 +545,9 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                       tooltip="Number of prismatic boundary-layer element rows near this object's walls."
                     />
                     <TextField
-                      label="Thickness (m)"
-                      defaultValue={mesh.boundary_layer_thickness ?? ""}
+                      label="Thickness"
+                      unit="nm"
+                      defaultValue={metersTextToNanometersInput(mesh.boundary_layer_thickness ?? "")}
                       onchange={(e) => {
                         const raw = e.target.value.trim();
                         updateGeo((cur) =>
@@ -543,14 +555,14 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                             order: cur?.order ?? model.meshFeOrder ?? null,
                             source: cur?.source ?? model.meshSource ?? null,
                             buildRequested: cur?.build_requested ?? false,
-                            boundaryLayerThickness: raw.length > 0 ? raw : null,
+                            boundaryLayerThickness: raw.length > 0 ? nanometersInputToMetersText(raw) : null,
                           }),
                         );
                       }}
                       mono
                       disabled={mesh.mode !== "custom"}
-                      placeholder="2e-9"
-                      tooltip="Target first-layer thickness in SI metres."
+                      placeholder="2"
+                      tooltip="Target first-layer thickness in nanometres."
                     />
                     <TextField
                       label="Stretching"
@@ -610,16 +622,22 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                       {[
                         {
                           param: "hmax",
-                          studyVal: model.meshOptions.hmax || "auto",
-                          overrideVal: mesh.mode === "custom" && mesh.hmax.trim() ? mesh.hmax : "—",
-                          effectiveVal: effectiveOptions.hmax || "auto",
+                          studyVal: formatMetersTextAsNanometers(model.meshOptions.hmax, "auto"),
+                          overrideVal:
+                            mesh.mode === "custom" && mesh.hmax.trim()
+                              ? formatMetersTextAsNanometers(mesh.hmax, "—")
+                              : "—",
+                          effectiveVal: formatMetersTextAsNanometers(effectiveOptions.hmax, "auto"),
                           overrideActive: mesh.mode === "custom" && mesh.hmax.trim().length > 0,
                         },
                         {
                           param: "hmin",
-                          studyVal: model.meshOptions.hmin || "auto",
-                          overrideVal: mesh.mode === "custom" && mesh.hmin.trim() ? mesh.hmin : "—",
-                          effectiveVal: effectiveOptions.hmin || "auto",
+                          studyVal: formatMetersTextAsNanometers(model.meshOptions.hmin, "auto"),
+                          overrideVal:
+                            mesh.mode === "custom" && mesh.hmin.trim()
+                              ? formatMetersTextAsNanometers(mesh.hmin, "—")
+                              : "—",
+                          effectiveVal: formatMetersTextAsNanometers(effectiveOptions.hmin, "auto"),
                           overrideActive: mesh.mode === "custom" && mesh.hmin.trim().length > 0,
                         },
                         {

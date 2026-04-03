@@ -10,6 +10,9 @@ interface FemGeometryProps {
   field: FemColorField;
   renderMode: RenderMode;
   opacity: number;
+  uniformColor?: string;
+  edgeColor?: string;
+  highlight?: boolean;
   customBoundaryFaces?: [number, number, number][] | null;
   displayBoundaryFaceIndices?: number[] | null;
   displayElementIndices?: number[] | null;
@@ -167,6 +170,9 @@ export function FemGeometry({
   field,
   renderMode,
   opacity,
+  uniformColor,
+  edgeColor,
+  highlight = false,
   customBoundaryFaces,
   displayBoundaryFaceIndices,
   displayElementIndices,
@@ -205,6 +211,12 @@ export function FemGeometry({
       displayElementIndices[displayElementIndices.length - 1] ?? 0,
     ].join(":");
   }, [displayElementIndices]);
+  const resolvedEdgeColor = edgeColor ?? uniformColor ?? "#dbeafe";
+  const resolvedHighlightEmissive = useMemo(() => {
+    const color = new THREE.Color(uniformColor ?? "#cbd5e1");
+    color.lerp(new THREE.Color("#ffffff"), 0.42);
+    return `#${color.getHexString()}`;
+  }, [uniformColor]);
 
   // ── Topology memo: only rebuilds when mesh structure changes ─────
   const topologySignature = `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}:${displayBoundaryFaceSignature}:${displayElementSignature}:${shrinkFactor ?? 1}:${clipEnabled ? `${clipAxis}${clipPos}` : "noclip"}`;
@@ -490,14 +502,26 @@ export function FemGeometry({
   // ── Color update ──────────────────────────────────────────────────
   useEffect(() => {
     if (!geometry) return;
-    const baseColors = computeVertexColors(
-      meshData.nNodes, field, meshData.fieldData,
-      meshData.nodes,
-      customBoundaryFaces
-        ? customBoundaryFaces.flat()
-        : Array.from(meshData.boundaryFaces),
-      qualityPerFace,
-    );
+    const baseColors =
+      field === "none" && uniformColor
+        ? (() => {
+            const tint = new THREE.Color(uniformColor);
+            const colors = new Float32Array(meshData.nNodes * 3);
+            for (let index = 0; index < meshData.nNodes; index += 1) {
+              colors[index * 3] = tint.r;
+              colors[index * 3 + 1] = tint.g;
+              colors[index * 3 + 2] = tint.b;
+            }
+            return colors;
+          })()
+        : computeVertexColors(
+            meshData.nNodes, field, meshData.fieldData,
+            meshData.nodes,
+            customBoundaryFaces
+              ? customBoundaryFaces.flat()
+              : Array.from(meshData.boundaryFaces),
+            qualityPerFace,
+          );
     
     // Sub-select or map colors
     const colorAttr = geometry.getAttribute("color") as THREE.BufferAttribute;
@@ -528,7 +552,7 @@ export function FemGeometry({
       pointsColorAttr.needsUpdate = true;
     }
     invalidate();
-  }, [customBoundaryFaces, geometry, invalidate, meshData.boundaryFaces, meshData.fieldData, meshData.nNodes, meshData.nodes, field, pointsGeometry, pointsVertexMap, qualityPerFace, vertexMap]);
+  }, [customBoundaryFaces, field, geometry, invalidate, meshData.boundaryFaces, meshData.fieldData, meshData.nNodes, meshData.nodes, pointsGeometry, pointsVertexMap, qualityPerFace, uniformColor, vertexMap]);
 
   // ── Notify parent about geometry center (proper useEffect, not useMemo side-effect) ─
   const onGeometryCenterRef = useRef(onGeometryCenter);
@@ -626,6 +650,7 @@ export function FemGeometry({
       {showSurface && (
         <mesh 
           geometry={geometry}
+          renderOrder={highlight ? 8 : 0}
           onClick={handleMappedFaceClick}
           onPointerOver={handleMappedFaceHover}
           onPointerOut={onFaceUnhover}
@@ -635,7 +660,9 @@ export function FemGeometry({
             vertexColors
             side={isTransparent ? THREE.DoubleSide : THREE.FrontSide}
             flatShading={false}
-            shininess={40}
+            shininess={highlight ? 72 : 40}
+            emissive={highlight ? resolvedHighlightEmissive : "#000000"}
+            emissiveIntensity={highlight ? 0.38 : 0}
             transparent={isTransparent}
             opacity={opacityVal}
             depthWrite={!isTransparent}
@@ -644,14 +671,14 @@ export function FemGeometry({
       )}
       
       {showWire && (
-        <lineSegments geometry={edgesGeometry}>
-          <lineBasicMaterial color={0x9bb7d4} opacity={0.5} transparent />
+        <lineSegments geometry={edgesGeometry} renderOrder={highlight ? 9 : 1}>
+          <lineBasicMaterial color={resolvedEdgeColor} opacity={highlight ? 0.95 : 0.58} transparent />
         </lineSegments>
       )}
 
       {showVolumeWire && (tetraEdgesGeometry ?? edgesGeometry) && (
-        <lineSegments geometry={tetraEdgesGeometry ?? edgesGeometry}>
-          <lineBasicMaterial color={0xdbeafe} opacity={0.28} transparent />
+        <lineSegments geometry={tetraEdgesGeometry ?? edgesGeometry} renderOrder={highlight ? 9 : 1}>
+          <lineBasicMaterial color={resolvedEdgeColor} opacity={highlight ? 0.72 : 0.32} transparent />
         </lineSegments>
       )}
 
@@ -659,7 +686,7 @@ export function FemGeometry({
         <points geometry={pointsGeometry}>
           <pointsMaterial 
             vertexColors 
-            size={maxDim * 0.008} 
+            size={maxDim * 0.008 * (highlight ? 1.15 : 1)}
             sizeAttenuation 
             transparent={isTransparent}
             opacity={opacityVal} 

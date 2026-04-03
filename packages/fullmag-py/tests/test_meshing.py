@@ -42,6 +42,23 @@ from fullmag.meshing.voxelization import VoxelMaskData, voxelize_geometry
 
 
 class MeshScaffoldTests(unittest.TestCase):
+    @staticmethod
+    def _partition_tetra_counts(
+        mesh: MeshData,
+        region_markers: list[dict[str, object]],
+    ) -> dict[str, int]:
+        counts = {
+            "airbox": int(np.count_nonzero(np.asarray(mesh.element_markers, dtype=np.int32) == 0)),
+        }
+        for entry in region_markers:
+            geometry_name = entry.get("geometry_name")
+            marker = entry.get("marker")
+            if isinstance(geometry_name, str) and isinstance(marker, int):
+                counts[geometry_name] = int(
+                    np.count_nonzero(np.asarray(mesh.element_markers, dtype=np.int32) == marker)
+                )
+        return counts
+
     def _write_binary_cube_stl(self, path: Path) -> None:
         vertices = np.asarray(
             [
@@ -314,22 +331,16 @@ class MeshScaffoldTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(len(fields), 4)
-        self.assertEqual(fields[0]["kind"], "BoundsSurfaceThreshold")
-        self.assertEqual(fields[1]["kind"], "BoundsSurfaceThreshold")
-        self.assertAlmostEqual(fields[0]["params"]["SizeMin"], 4.8e-9)
-        self.assertAlmostEqual(fields[0]["params"]["SizeMax"], 8e-9)
-        self.assertAlmostEqual(fields[1]["params"]["SizeMin"], 8e-9)
-        self.assertAlmostEqual(fields[1]["params"]["SizeMax"], 20e-9)
-        self.assertAlmostEqual(fields[2]["params"]["SizeMin"], 12e-9)
-        self.assertAlmostEqual(fields[2]["params"]["SizeMax"], 20e-9)
-        self.assertAlmostEqual(fields[3]["params"]["SizeMin"], 20e-9)
-        self.assertAlmostEqual(fields[3]["params"]["SizeMax"], 20e-9)
-        self.assertEqual(fields[0]["params"]["BoundsMin"], [-1.0, -1.0, -1.0])
-        self.assertEqual(fields[0]["params"]["BoundsMax"], [1.0, 1.0, 1.0])
-        self.assertGreater(fields[1]["params"]["DistMax"], fields[0]["params"]["DistMax"])
-        self.assertEqual(fields[3]["params"]["BoundsMin"], [-2.0, -1.0, -1.0])
-        self.assertEqual(fields[3]["params"]["BoundsMax"], [2.0, 1.0, 1.0])
+        self.assertEqual(len(fields), 1)
+        self.assertEqual(fields[0]["kind"], "Box")
+        self.assertAlmostEqual(fields[0]["params"]["VIn"], 8e-9)
+        self.assertAlmostEqual(fields[0]["params"]["VOut"], 20e-9)
+        self.assertEqual(fields[0]["params"]["XMin"], -1.0)
+        self.assertEqual(fields[0]["params"]["XMax"], 1.0)
+        self.assertEqual(fields[0]["params"]["YMin"], -1.0)
+        self.assertEqual(fields[0]["params"]["YMax"], 1.0)
+        self.assertEqual(fields[0]["params"]["ZMin"], -1.0)
+        self.assertEqual(fields[0]["params"]["ZMax"], 1.0)
 
     def test_apply_mesh_options_falls_back_from_mmg3d_when_size_fields_are_active(self) -> None:
         class _FakeOptionsApi:
@@ -781,16 +792,49 @@ class MeshScaffoldTests(unittest.TestCase):
             default_hmax=120e-9,
             left_hmax=12e-9,
         )
+        very_fine_object_mesh, very_fine_object_markers = self._realize_two_nanoflower_shared_domain(
+            airbox_hmax=120e-9,
+            default_hmax=120e-9,
+            left_hmax=6e-9,
+        )
         fine_airbox_mesh, fine_airbox_markers = self._realize_two_nanoflower_shared_domain(
             airbox_hmax=35e-9,
             default_hmax=120e-9,
         )
 
+        coarse_counts = self._partition_tetra_counts(coarse_mesh, coarse_markers)
+        fine_object_counts = self._partition_tetra_counts(fine_object_mesh, fine_object_markers)
+        very_fine_object_counts = self._partition_tetra_counts(
+            very_fine_object_mesh,
+            very_fine_object_markers,
+        )
+        fine_airbox_counts = self._partition_tetra_counts(fine_airbox_mesh, fine_airbox_markers)
+
         self.assertEqual(len(coarse_markers), 2)
         self.assertEqual(len(fine_object_markers), 2)
+        self.assertEqual(len(very_fine_object_markers), 2)
         self.assertEqual(len(fine_airbox_markers), 2)
         self.assertGreater(fine_object_mesh.n_elements, coarse_mesh.n_elements)
+        self.assertGreater(very_fine_object_mesh.n_elements, fine_object_mesh.n_elements)
         self.assertGreater(fine_airbox_mesh.n_elements, coarse_mesh.n_elements)
+        self.assertGreater(
+            fine_object_counts["nanoflower_left_geom"],
+            coarse_counts["nanoflower_left_geom"],
+        )
+        self.assertGreater(
+            very_fine_object_counts["nanoflower_left_geom"],
+            fine_object_counts["nanoflower_left_geom"],
+        )
+        self.assertLess(fine_object_counts["airbox"], fine_airbox_counts["airbox"])
+        self.assertLess(very_fine_object_counts["airbox"], fine_airbox_counts["airbox"])
+        self.assertLess(
+            fine_object_counts["nanoflower_right_geom"],
+            fine_airbox_counts["nanoflower_right_geom"],
+        )
+        self.assertLess(
+            very_fine_object_counts["nanoflower_right_geom"],
+            fine_airbox_counts["nanoflower_right_geom"],
+        )
 
     def test_realize_fem_mesh_asset_prefers_prebuilt_mesh_when_given(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

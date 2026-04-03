@@ -1654,18 +1654,6 @@ def _apply_mesh_options(
     if has_active_fields:
         gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
         gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
-        # After classifySurfaces+createGeometry the original STL triangulation is
-        # embedded in the model as a 2D mesh.  When generate(3) is called, Gmsh
-        # detects the existing surface mesh and reuses it (only generating new 3D
-        # interior elements constrained by that coarse surface).  The background
-        # Box field therefore never controls the surface element size, making
-        # per-geometry hmax settings have no visible effect.
-        #
-        # Clearing the mesh here removes the embedded STL triangulation while
-        # keeping the GEO topology (points, curves, surfaces, volumes, physical
-        # groups) completely intact.  generate(3) then meshes curves, surfaces
-        # *and* volumes from scratch using the active background field.
-        gmsh.model.mesh.clear()
 
     if opts.size_fields:
         emit_progress("Gmsh: configuring mesh size fields")

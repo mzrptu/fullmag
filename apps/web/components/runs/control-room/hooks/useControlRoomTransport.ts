@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import type { TransportContextValue } from "../context-hooks";
 import { EMPTY_SCALAR_ROWS } from "../shared";
-import type { SessionState, LiveState } from "../../../lib/session/types";
+import type { SessionState, LiveState, ScalarRow } from "../../../../lib/session/types";
 
 export function useControlRoomTransport(state: SessionState | null): TransportContextValue {
   const session = state?.session ?? null;
@@ -68,9 +68,9 @@ export function useControlRoomTransport(state: SessionState | null): TransportCo
   [elapsed, effectiveStep]);
 
   /* Sparklines */
-  const eTotalSpark = useMemo(() => scalarRows.slice(-40).map((r) => r.e_total ?? 0), [scalarRows]);
-  const dmDtSpark = useMemo(() => scalarRows.slice(-40).map((r) => Math.log10(Math.max(r.max_dm_dt ?? 1e-15, 1e-15))), [scalarRows]);
-  const dtSpark = useMemo(() => scalarRows.slice(-40).map((r) => r.solver_dt ?? 0), [scalarRows]);
+  const eTotalSpark = useMemo(() => scalarRows.slice(-40).map((r: ScalarRow) => r.e_total ?? 0), [scalarRows]);
+  const dmDtSpark = useMemo(() => scalarRows.slice(-40).map((r: ScalarRow) => Math.log10(Math.max(r.max_dm_dt ?? 1e-15, 1e-15))), [scalarRows]);
+  const dtSpark = useMemo(() => scalarRows.slice(-40).map((r: ScalarRow) => r.solver_dt ?? 0), [scalarRows]);
 
   const fieldStats = useMemo(() => latestFields?.stats ?? null, [latestFields]);
 
