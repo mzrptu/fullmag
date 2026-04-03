@@ -676,7 +676,7 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80">Resolution</span>
-            <StatusBadge label={sceneObject.mesh_override?.mode === "custom" ? "Custom" : "Inherit"} tone={sceneObject.mesh_override?.mode === "custom" ? "accent" : "default"} />
+            <StatusBadge label={sceneObject.mesh_override?.mode === "custom" ? "Custom" : "Defaults"} tone={sceneObject.mesh_override?.mode === "custom" ? "accent" : "default"} />
           </div>
           <div className="flex items-center justify-between">
             <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80">Geometry</span>

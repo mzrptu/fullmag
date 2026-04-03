@@ -123,10 +123,16 @@ pub(crate) fn apply_current_live_publish(
         if current.run.is_none() && current.session.status == "bootstrapping" {
             current.session.status = live_state.status.clone();
         }
+        // Legacy path: accept fem_mesh embedded in latest_step for backwards compat.
+        // New payloads carry it at the top-level (req.fem_mesh) instead.
         if let Some(fem_mesh) = live_state.latest_step.fem_mesh.clone() {
             current.fem_mesh = Some(fem_mesh);
         }
         current.live_state = Some(live_state);
+    }
+    // Top-level fem_mesh takes precedence — explicit mesh lifecycle event.
+    if let Some(fem_mesh) = req.fem_mesh {
+        current.fem_mesh = Some(fem_mesh);
     }
     if let Some(row) = req.latest_scalar_row {
         upsert_scalar_row(&mut current.scalar_rows, row);

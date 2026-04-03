@@ -1,51 +1,74 @@
-# name: bootstrap
+name: bootstrap
 
-# on:
-#   push:
-#     branches: [master, main]
-#   pull_request:
+on:
+  push:
+    branches: [master, main]
+  pull_request:
 
-# jobs:
-#   bootstrap-check:
-#     runs-on: ubuntu-latest
-#     steps:
-#       - name: Checkout
-#         uses: actions/checkout@v4
-#         with:
-#           fetch-depth: 0
+jobs:
+  rust-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-#       - name: Compute diff range
-#         id: diff
-#         run: |
-#           if [ "${{ github.event_name }}" = "pull_request" ]; then
-#             echo "base=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
-#           elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-#             echo "base=$(git rev-list --max-parents=0 HEAD)" >> "$GITHUB_OUTPUT"
-#           else
-#             echo "base=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
-#           fi
-#           echo "head=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-#       - name: Build dev image
-#         run: docker compose build dev
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
 
-#       - name: Cargo check in container
-#         run: docker compose run --rm --no-deps dev cargo check --workspace
+      - name: Run Rust contract tests
+        run: cargo test -p fullmag-ir -p fullmag-plan -p fullmag-authoring
 
-#       - name: Cargo test in container
-#         run: docker compose run --rm --no-deps dev cargo test --workspace
+  web-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-#       - name: Typecheck web in container
-#         run: docker compose run --rm --no-deps dev bash -lc "pnpm install --dir apps/web && pnpm --dir apps/web typecheck"
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
 
-#       - name: Install Python package and run tests
-#         run: docker compose run --rm --no-deps dev bash -lc "python3 -m venv .venv && . .venv/bin/activate && pip install -e packages/fullmag-py && python -m unittest discover -s packages/fullmag-py/tests -v"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
-#       - name: Repository consistency checks
-#         run: docker compose run --rm --no-deps dev python3 scripts/check_repo_consistency.py
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
 
-#       - name: Physics documentation gate
-#         run: docker compose run --rm --no-deps dev python3 scripts/check_physics_docs_gate.py --base "${{ steps.diff.outputs.base }}" --head "${{ steps.diff.outputs.head }}"
+      - name: Typecheck web app
+        run: pnpm --dir apps/web typecheck
 
-#       - name: Python IR smoke test
-#         run: docker compose run --rm --no-deps dev bash -lc "python3 -m venv .venv && . .venv/bin/activate && pip install -e packages/fullmag-py && /usr/local/cargo/bin/cargo build -p fullmag-cli && python scripts/run_python_ir_smoke.py --cli target/debug/fullmag-cli"
+      - name: Build web app
+        run: pnpm --dir apps/web build
+
+  python-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: packages/fullmag-py/pyproject.toml
+
+      - name: Install Python package
+        run: python -m pip install -e 'packages/fullmag-py[meshing]'
+
+      - name: Run Python API tests
+        run: python -m unittest discover -s packages/fullmag-py/tests -p 'test_api.py' -v
+
+      - name: Run Python meshing tests
+        run: python -m unittest discover -s packages/fullmag-py/tests -p 'test_meshing.py' -v
+
+      - name: Repository consistency checks
+        run: python scripts/check_repo_consistency.py

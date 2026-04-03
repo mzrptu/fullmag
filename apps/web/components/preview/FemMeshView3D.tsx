@@ -3,7 +3,13 @@
 import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
-import { TrackballControls, PivotControls } from "@react-three/drei";
+import {
+  OrbitControls,
+  OrthographicCamera,
+  PerspectiveCamera,
+  PivotControls,
+  TrackballControls,
+} from "@react-three/drei";
 import HslSphere from "./HslSphere";
 import ViewCube from "./ViewCube";
 import { cn } from "@/lib/utils";
@@ -25,6 +31,7 @@ import type {
   FocusObjectRequest,
   ObjectViewMode,
 } from "../runs/control-room/shared";
+import { FieldLegend } from "./field/FieldLegend";
 
 const AIR_OBJECT_SEGMENT_ID = "__air__";
 
@@ -96,6 +103,8 @@ interface Props {
   worldExtent?: [number, number, number] | null;
   worldCenter?: [number, number, number] | null;
   onAntennaTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
+  onEntitySelect?: (id: string | null) => void;
+  onEntityFocus?: (id: string | null) => void;
 }
 
 interface RenderLayer {
@@ -110,6 +119,9 @@ interface RenderLayer {
   isSelected: boolean;
   isDimmed: boolean;
 }
+
+type CameraProjection = "perspective" | "orthographic";
+type NavigationMode = "trackball" | "cad";
 
 function collectSegmentBoundaryFaceIndices(
   objectSegments: readonly FemLiveMeshObjectSegment[],
@@ -350,23 +362,78 @@ function expandedOverlayBounds(
   };
 }
 
-const RENDER_OPTIONS: { value: RenderMode; label: string }[] = [
-  { value: "surface", label: "Surface" },
-  { value: "surface+edges", label: "S+E" },
-  { value: "wireframe", label: "Wire" },
-  { value: "points", label: "Pts" },
+const RENDER_OPTIONS: { value: RenderMode; label: string; labeledLabel: string }[] = [
+  { value: "surface", label: "Surface", labeledLabel: "Surface" },
+  { value: "surface+edges", label: "S+E", labeledLabel: "Surface + Edges" },
+  { value: "wireframe", label: "Wire", labeledLabel: "Wireframe" },
+  { value: "points", label: "Pts", labeledLabel: "Points" },
 ];
 
-const COLOR_OPTIONS: { value: FemColorField; label: string }[] = [
-  { value: "orientation", label: "Ori" },
-  { value: "z", label: "Fz" },
-  { value: "x", label: "Fx" },
-  { value: "y", label: "Fy" },
-  { value: "magnitude", label: "|F|" },
-  { value: "quality", label: "AR" },
-  { value: "sicn", label: "SICN" },
-  { value: "none", label: "—" },
+const COLOR_OPTIONS: { value: FemColorField; label: string; labeledLabel: string }[] = [
+  { value: "orientation", label: "Ori", labeledLabel: "Orientation" },
+  { value: "z", label: "m_z", labeledLabel: "Field Z" },
+  { value: "x", label: "m_x", labeledLabel: "Field X" },
+  { value: "y", label: "m_y", labeledLabel: "Field Y" },
+  { value: "magnitude", label: "|m|", labeledLabel: "|Field|" },
+  { value: "quality", label: "Qual", labeledLabel: "Quality AR" },
+  { value: "sicn", label: "SICN", labeledLabel: "SICN" },
+  { value: "none", label: "—", labeledLabel: "None" },
 ];
+
+function partRoleTint(role: FemMeshPart["role"]): string {
+  switch (role) {
+    case "air":
+      return "#67e8f9";
+    case "interface":
+      return "#f59e0b";
+    case "outer_boundary":
+      return "#c084fc";
+    case "magnetic_object":
+    default:
+      return "#60a5fa";
+  }
+}
+
+function colorLegendGradient(field: FemColorField): string {
+  switch (field) {
+    case "x":
+    case "y":
+    case "z":
+      return "linear-gradient(to right, #3b82f6, #f8fafc, #ef4444)";
+    case "magnitude":
+      return "linear-gradient(to right, #0f172a, #2563eb, #7dd3fc, #f8fafc)";
+    case "quality":
+    case "sicn":
+      return "linear-gradient(to right, #f97316, #facc15, #22c55e)";
+    case "orientation":
+      return "linear-gradient(to right, #ef4444, #f59e0b, #22c55e, #06b6d4, #8b5cf6)";
+    case "none":
+    default:
+      return "linear-gradient(to right, #334155, #64748b)";
+  }
+}
+
+function colorLegendLabel(field: FemColorField, fieldLabel?: string): string {
+  switch (field) {
+    case "orientation":
+      return fieldLabel ? `${fieldLabel} orientation` : "orientation";
+    case "x":
+      return `${fieldLabel ?? "field"} x-component`;
+    case "y":
+      return `${fieldLabel ?? "field"} y-component`;
+    case "z":
+      return `${fieldLabel ?? "field"} z-component`;
+    case "magnitude":
+      return `${fieldLabel ?? "field"} magnitude`;
+    case "quality":
+      return "face aspect ratio";
+    case "sicn":
+      return "surface inverse condition number";
+    case "none":
+    default:
+      return "part role";
+  }
+}
 
 /* ── Global R3F Logic Components ───────────────────────────────────── */
 
@@ -397,16 +464,69 @@ function CameraAutoFit({ maxDim, generation }: { maxDim: number; generation: num
   return null;
 }
 
+function ViewportCamera({
+  projection,
+}: {
+  projection: CameraProjection;
+}) {
+  if (projection === "orthographic") {
+    return (
+      <OrthographicCamera
+        makeDefault
+        position={[3, 2.4, 3]}
+        near={0.0001}
+        far={10000}
+        zoom={80}
+      />
+    );
+  }
+  return (
+    <PerspectiveCamera
+      makeDefault
+      position={[3, 2.4, 3]}
+      fov={45}
+      near={0.0001}
+      far={10000}
+    />
+  );
+}
+
 function SyncedControls({ 
-  controlsRefObject, viewCubeBridgeRef
+  controlsRefObject,
+  viewCubeBridgeRef,
+  navigationMode,
 }: { 
-  controlsRefObject: any, viewCubeBridgeRef: any
+  controlsRefObject: any,
+  viewCubeBridgeRef: any,
+  navigationMode: NavigationMode,
 }) {
   const { camera } = useThree();
   useEffect(() => {
     viewCubeBridgeRef.current = { camera, controls: controlsRefObject.current };
   }, [camera, controlsRefObject, viewCubeBridgeRef]);
-  return <TrackballControls ref={controlsRefObject} rotateSpeed={3} zoomSpeed={1.2} panSpeed={0.8} target={[0, 0, 0]} />;
+  if (navigationMode === "cad") {
+    return (
+      <OrbitControls
+        ref={controlsRefObject}
+        enableDamping
+        dampingFactor={0.08}
+        rotateSpeed={0.85}
+        zoomSpeed={0.85}
+        panSpeed={0.9}
+        screenSpacePanning
+        target={[0, 0, 0]}
+      />
+    );
+  }
+  return (
+    <TrackballControls
+      ref={controlsRefObject}
+      rotateSpeed={3}
+      zoomSpeed={1.2}
+      panSpeed={0.8}
+      target={[0, 0, 0]}
+    />
+  );
 }
 
 function antennaOverlayColors(role: AntennaOverlay["conductors"][number]["role"], selected: boolean) {
@@ -550,6 +670,8 @@ function FemMeshView3DInner({
   worldExtent = null,
   worldCenter = null,
   onAntennaTranslate,
+  onEntitySelect,
+  onEntityFocus,
 }: Props) {
   const [internalRenderMode, setInternalRenderMode] = useState<RenderMode>("surface");
   const [field, setField] = useState<FemColorField>(colorField);
@@ -561,6 +683,11 @@ function FemMeshView3DInner({
   const [internalShowArrows, setInternalShowArrows] = useState(false);
   const [arrowDensity, setArrowDensity] = useState(1200);
   const [internalShrinkFactor, setInternalShrinkFactor] = useState(1);
+  const [cameraProjection, setCameraProjection] = useState<CameraProjection>("perspective");
+  const [navigationMode, setNavigationMode] = useState<NavigationMode>("trackball");
+  const [partExplorerOpen, setPartExplorerOpen] = useState(true);
+  const [legendOpen, setLegendOpen] = useState(true);
+  const [labeledMode, setLabeledMode] = useState(false);
   
   const [hoveredFace, setHoveredFace] = useState<{ idx: number; x: number; y: number } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; faceIdx: number } | null>(null);
@@ -698,11 +825,33 @@ function FemMeshView3DInner({
     selectedEntityId,
     selectedObjectId,
   ]);
+  const partExplorerGroups = useMemo(
+    () => [
+      {
+        label: "Magnetic",
+        parts: meshParts.filter((part) => part.role === "magnetic_object"),
+      },
+      {
+        label: "Interfaces",
+        parts: meshParts.filter((part) => part.role === "interface"),
+      },
+      {
+        label: "Boundary",
+        parts: meshParts.filter((part) => part.role === "outer_boundary"),
+      },
+      {
+        label: "Air",
+        parts: meshParts.filter((part) => part.role === "air"),
+      },
+    ].filter((group) => group.parts.length > 0),
+    [meshParts],
+  );
   const missingMagneticMask =
     meshData.quantityDomain === "magnetic_only" &&
     (!meshData.activeMask || meshData.activeMask.length !== meshData.nNodes);
   const missingExactScopeSegment =
     Boolean(selectedObjectId) &&
+    meshData.nElements > 0 &&
     (hasMeshParts
       ? !meshParts.some(
           (part) => part.role === "magnetic_object" && part.object_id === selectedObjectId,
@@ -896,12 +1045,56 @@ function FemMeshView3DInner({
   const arrowField = hasMeshParts
     ? (visibleLayers.find((layer) => layer.isMagnetic)?.viewState.colorField ?? field)
     : field;
+  const legendField = hasMeshParts
+    ? (visibleLayers.find((layer) => layer.isSelected)?.viewState.colorField
+      ?? visibleLayers.find((layer) => layer.isMagnetic)?.viewState.colorField
+      ?? toolbarColorField)
+    : toolbarColorField;
   const effectiveShowArrows =
     showArrows &&
     !missingMagneticMask &&
     (hasMeshParts
       ? visibleLayers.some((layer) => layer.isMagnetic)
       : shouldRenderMagneticGeometry);
+  const fieldMagnitudeStats = useMemo(() => {
+    if ((legendField === "quality" || legendField === "sicn") && qualityPerFace && qualityPerFace.length > 0) {
+      const values = qualityPerFace.filter((value) => Number.isFinite(value));
+      if (values.length === 0) {
+        return null;
+      }
+      const sum = values.reduce((acc, value) => acc + value, 0);
+      return {
+        min: Math.min(...values),
+        max: Math.max(...values),
+        mean: sum / values.length,
+      };
+    }
+    if (!meshData.fieldData || meshData.nNodes === 0) {
+      return null;
+    }
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    let sum = 0;
+    for (let index = 0; index < meshData.nNodes; index += 1) {
+      const x = meshData.fieldData.x[index] ?? 0;
+      const y = meshData.fieldData.y[index] ?? 0;
+      const z = meshData.fieldData.z[index] ?? 0;
+      const value =
+        legendField === "x" ? x
+          : legendField === "y" ? y
+          : legendField === "z" ? z
+          : legendField === "magnitude" || legendField === "orientation"
+            ? Math.hypot(x, y, z)
+            : 0;
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+      sum += value;
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      return null;
+    }
+    return { min, max, mean: sum / meshData.nNodes };
+  }, [legendField, meshData.fieldData, meshData.nNodes, qualityPerFace]);
 
   useEffect(() => { setField(colorField); }, [colorField]);
   useEffect(() => {
@@ -1073,15 +1266,29 @@ function FemMeshView3DInner({
     }
     setField(next);
   }, [hasMeshParts, onMeshPartViewStatePatch, toolbarColorPartIds]);
+  const patchSinglePart = useCallback((partId: string, patch: Partial<MeshEntityViewState>) => {
+    onMeshPartViewStatePatch?.([partId], patch);
+  }, [onMeshPartViewStatePatch]);
+  const handlePartSelect = useCallback((partId: string) => {
+    onEntitySelect?.(partId);
+    onEntityFocus?.(partId);
+  }, [onEntityFocus, onEntitySelect]);
+  const handleRoleVisibility = useCallback((role: FemMeshPart["role"], visible: boolean) => {
+    if (!onMeshPartViewStatePatch) {
+      return;
+    }
+    const ids = meshParts.filter((part) => part.role === role).map((part) => part.id);
+    onMeshPartViewStatePatch(ids, { visible });
+  }, [meshParts, onMeshPartViewStatePatch]);
   return (
     <div className="relative flex flex-1 w-[100%] h-[100%] min-w-0 min-h-0 bg-background overflow-hidden rounded-md fem-canvas-container">
       <Canvas
-        camera={{ position: [3, 2.4, 3], fov: 45, near: 0.0001, far: 10000 }}
         gl={{ antialias: true, preserveDrawingBuffer: true, localClippingEnabled: true }}
         onPointerMissed={() => setSelectedFaces([])}
         onContextMenu={(e) => e.preventDefault()}
         onCreated={({ gl }) => { canvasRef.current = gl.domElement; }}
       >
+        <ViewportCamera projection={cameraProjection} />
         <color attach="background" args={[0x1e1e2e]} /> {/* Catppuccin Mocha Base */}
         <ambientLight intensity={0.4} />
         <directionalLight position={[1, 2, 3]} intensity={0.9} />
@@ -1180,7 +1387,11 @@ function FemMeshView3DInner({
         ) : null}
         <SceneAxes3D worldExtent={axesWorldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
         
-        <SyncedControls controlsRefObject={controlsRef} viewCubeBridgeRef={viewCubeSceneRef} />
+        <SyncedControls
+          controlsRefObject={controlsRef}
+          viewCubeBridgeRef={viewCubeSceneRef}
+          navigationMode={navigationMode}
+        />
       </Canvas>
       {missingExactScopeSegment && selectedObjectId ? (
         <div className="pointer-events-none absolute inset-x-4 top-16 z-20 rounded-xl border border-rose-400/25 bg-background/85 px-4 py-3 text-sm text-rose-200 shadow-lg backdrop-blur-md">
@@ -1200,14 +1411,14 @@ function FemMeshView3DInner({
           <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-1 select-none">Render</span>
             {RENDER_OPTIONS.map((opt) => (
-              <button key={opt.value} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors leading-[1.35] hover:bg-muted/50 hover:text-foreground data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={toolbarRenderMode === opt.value} onClick={() => applyToolbarRenderMode(opt.value)}>{opt.label}</button>
+              <button key={opt.value} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors leading-[1.35] hover:bg-muted/50 hover:text-foreground data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={toolbarRenderMode === opt.value} title={opt.labeledLabel} onClick={() => applyToolbarRenderMode(opt.value)}>{labeledMode ? opt.labeledLabel : opt.label}</button>
             ))}
           </div>
           {/* Color field */}
           <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
             <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-1 select-none">Color</span>
             {COLOR_OPTIONS.map((opt) => (
-              <button key={opt.value} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors leading-[1.35] hover:bg-muted/50 hover:text-foreground data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={toolbarColorField === opt.value} onClick={() => applyToolbarColorField(opt.value)}>{opt.label}</button>
+              <button key={opt.value} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors leading-[1.35] hover:bg-muted/50 hover:text-foreground data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={toolbarColorField === opt.value} title={opt.labeledLabel} onClick={() => applyToolbarColorField(opt.value)}>{labeledMode ? opt.labeledLabel : opt.label}</button>
             ))}
           </div>
           {/* Clip */}
@@ -1245,6 +1456,28 @@ function FemMeshView3DInner({
             <button className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={showArrows} onClick={() => { const v = !showArrows; onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v); }}>↗ Arrows</button>
             {showArrows && <input type="range" className="w-[50px] h-[3px] accent-primary" min={200} max={3000} step={100} value={arrowDensity} onChange={(e) => setArrowDensity(Number(e.target.value))} />}
           </div>
+          <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
+            <button
+              className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+              data-active={cameraProjection === "orthographic"}
+              onClick={() =>
+                setCameraProjection((prev) =>
+                  prev === "perspective" ? "orthographic" : "perspective",
+                )
+              }
+            >
+              {cameraProjection === "orthographic" ? "Ortho" : "Persp"}
+            </button>
+            <button
+              className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+              data-active={navigationMode === "cad"}
+              onClick={() =>
+                setNavigationMode((prev) => (prev === "trackball" ? "cad" : "trackball"))
+              }
+            >
+              {navigationMode === "cad" ? "CAD" : "Trackball"}
+            </button>
+          </div>
           <div className="w-px h-[20px] bg-border/50 mx-0.5 shrink-0" />
           <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
             {(["reset", "front", "top", "right"] as const).map(view => (
@@ -1252,12 +1485,163 @@ function FemMeshView3DInner({
             ))}
           </div>
           <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
+            <button
+              className="text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 hover:bg-muted/50"
+              onClick={() => setLegendOpen((prev) => !prev)}
+            >
+              Legend
+            </button>
+            <button
+              className="text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 hover:bg-muted/50"
+              onClick={() => setPartExplorerOpen((prev) => !prev)}
+            >
+              Parts
+            </button>
+            <button
+              className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary hover:bg-muted/50"
+              data-active={labeledMode}
+              onClick={() => setLabeledMode((prev) => !prev)}
+              title="Toggle compact / labeled toolbar"
+            >
+              {labeledMode ? "Compact" : "Labels"}
+            </button>
             <button className="text-muted-foreground font-semibold px-1.5 py-1 hover:bg-muted/50" onClick={takeScreenshot} title="Screenshot">📷</button>
           </div>
         </div>
       )}
 
-      <div className="absolute bottom-3 left-3 text-[0.65rem] text-slate-300 font-mono pointer-events-none flex items-baseline gap-3 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-md border border-slate-500/30 shadow-md z-20">
+      {legendOpen && (
+        <FieldLegend
+          colorLabel={colorLegendLabel(legendField, fieldLabel)}
+          lengthLabel={effectiveShowArrows ? "vector magnitude" : undefined}
+          min={legendField === "none" ? undefined : fieldMagnitudeStats?.min}
+          max={legendField === "none" ? undefined : fieldMagnitudeStats?.max}
+          mean={legendField === "none" ? undefined : fieldMagnitudeStats?.mean}
+          gradient={colorLegendGradient(legendField)}
+        />
+      )}
+
+      {hasMeshParts && partExplorerOpen && (
+        <div className="absolute right-3 top-20 z-20 w-[280px] max-h-[calc(100%-7rem)] overflow-hidden rounded-2xl border border-border/40 bg-background/82 shadow-xl backdrop-blur-md">
+          <div className="flex items-center justify-between border-b border-border/30 px-3 py-2">
+            <div>
+              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Part Explorer
+              </p>
+              <p className="text-[0.72rem] font-medium text-foreground">
+                {visibleLayers.length}/{meshParts.length} visible parts
+              </p>
+            </div>
+            <button
+              type="button"
+              className="rounded-md px-2 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+              onClick={() => setPartExplorerOpen(false)}
+            >
+              Hide
+            </button>
+          </div>
+          <div className="border-b border-border/20 px-3 py-2">
+            <div className="flex flex-wrap gap-1.5">
+              {(
+                [
+                  ["air", "Air"],
+                  ["magnetic_object", "Objects"],
+                  ["interface", "Interfaces"],
+                  ["outer_boundary", "Boundary"],
+                ] as const
+              ).map(([role, label]) => {
+                const roleParts = meshParts.filter((part) => part.role === role);
+                if (roleParts.length === 0) {
+                  return null;
+                }
+                const visibleCount = roleParts.filter(
+                  (part) => meshEntityViewState[part.id]?.visible ?? true,
+                ).length;
+                return (
+                  <button
+                    key={role}
+                    type="button"
+                    className="rounded-full border border-border/30 px-2.5 py-1 text-[0.6rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:bg-muted/50"
+                    onClick={() => handleRoleVisibility(role, visibleCount !== roleParts.length)}
+                  >
+                    {label} {visibleCount}/{roleParts.length}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="max-h-[calc(100%-7.5rem)] overflow-y-auto px-2 py-2">
+            {partExplorerGroups.map((group) => (
+              <div key={group.label} className="mb-3">
+                <div className="px-1 pb-1 text-[0.6rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  {group.label}
+                </div>
+                <div className="space-y-1">
+                  {group.parts.map((part) => {
+                    const viewState = meshEntityViewState[part.id];
+                    const isSelected = selectedEntityId === part.id;
+                    const isFocused = focusedEntityId === part.id;
+                    return (
+                      <div
+                        key={part.id}
+                        className={cn(
+                          "rounded-xl border px-2 py-2 transition-colors",
+                          isSelected
+                            ? "border-primary/40 bg-primary/8"
+                            : "border-border/20 bg-background/35",
+                        )}
+                      >
+                        <div className="flex items-start gap-2">
+                          <button
+                            type="button"
+                            className="mt-0.5 h-3 w-3 shrink-0 rounded-full border border-white/15"
+                            style={{ backgroundColor: partRoleTint(part.role) }}
+                            onClick={() => patchSinglePart(part.id, { visible: !(viewState?.visible ?? true) })}
+                            title={(viewState?.visible ?? true) ? "Hide part" : "Show part"}
+                          />
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 text-left"
+                            onClick={() => handlePartSelect(part.id)}
+                          >
+                            <div className="truncate text-[0.72rem] font-medium text-foreground">
+                              {part.label || part.id}
+                            </div>
+                            <div className="mt-0.5 flex flex-wrap gap-2 text-[0.6rem] font-mono text-muted-foreground">
+                              <span>{part.element_count.toLocaleString()} el</span>
+                              <span>{part.node_count.toLocaleString()} n</span>
+                              {part.object_id && <span>{part.object_id}</span>}
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            className={cn(
+                              "rounded-md px-2 py-1 text-[0.58rem] font-semibold uppercase tracking-[0.12em] transition-colors",
+                              isFocused
+                                ? "bg-cyan-500/15 text-cyan-200"
+                                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                            )}
+                            onClick={() => onEntityFocus?.(part.id)}
+                          >
+                            Focus
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div
+        className={cn(
+          "absolute bottom-3 text-[0.65rem] text-slate-300 font-mono pointer-events-none flex items-baseline gap-3 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-md border border-slate-500/30 shadow-md z-20",
+          legendOpen ? "left-[240px]" : "left-3",
+        )}
+      >
         <span>{meshData.nNodes.toLocaleString()} nodes</span><span className="w-[3px] h-[3px] rounded-full bg-slate-500/50" />
         <span>{meshData.nElements.toLocaleString()} tets</span><span className="w-[3px] h-[3px] rounded-full bg-slate-500/50" />
         <span>{(meshData.boundaryFaces.length / 3).toLocaleString()} faces</span>
@@ -1291,7 +1675,7 @@ function FemMeshView3DInner({
       {ctxMenu && (
         <div style={{ left: ctxMenu.x, top: ctxMenu.y }} className="absolute z-50 min-w-[180px] py-1 rounded-lg bg-gradient-to-b from-slate-800/95 to-slate-900/95 border border-slate-500/20 shadow-xl backdrop-blur-md" onClick={(e) => e.stopPropagation()}>
           <button className="flex items-center gap-2 w-full px-3.5 py-1.5 text-[0.73rem] text-slate-200 text-left hover:bg-slate-500/15" onClick={() => { setSelectedFaces([ctxMenu.faceIdx]); setCtxMenu(null); }}><span className="text-xs w-4">🔍</span> Inspect face #{ctxMenu.faceIdx}</button>
-          <button className="flex items-center gap-2 w-full px-3.5 py-1.5 text-[0.73rem] text-slate-200 text-left hover:bg-slate-500/15" onClick={() => { setField("quality"); setCtxMenu(null); }}><span className="text-xs w-4">📊</span> Show quality (AR)</button>
+          <button className="flex items-center gap-2 w-full px-3.5 py-1.5 text-[0.73rem] text-slate-200 text-left hover:bg-slate-500/15" onClick={() => { applyToolbarColorField("quality"); setCtxMenu(null); }}><span className="text-xs w-4">📊</span> Show quality (AR)</button>
           <div className="h-px mx-2.5 my-1 bg-slate-500/15" />
           <button className="flex items-center gap-2 w-full px-3.5 py-1.5 text-[0.73rem] text-slate-200 text-left hover:bg-slate-500/15" onClick={() => { const v = !clipEnabled; onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v); setCtxMenu(null); }}><span className="text-xs w-4">✂️</span> {clipEnabled ? "Disable clip" : "Enable clip"}</button>
           {selectedFaces.length > 0 && (

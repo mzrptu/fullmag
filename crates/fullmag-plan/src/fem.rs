@@ -13,7 +13,7 @@ use crate::mesh::{
     resolve_fem_domain_mesh_asset, resolved_domain_mesh_mode, study_universe_planner_note,
     MagnetPlanningEntry, AIR_OBJECT_SEGMENT_ID,
 };
-use crate::util::{problem_domain_frame, runtime_requests_cuda, MU0};
+use crate::util::{problem_domain_frame, runtime_requests_cuda, shared_domain_mesh_requested, MU0};
 use crate::validate::{
     planned_study_controls, validate_eigen_outputs, validate_executable_outputs,
 };
@@ -531,6 +531,16 @@ pub(crate) fn plan_fem(
     let n_elements = mesh.elements.len();
     let mesh_name = mesh.mesh_name.clone();
     let domain_mesh_mode = resolved_domain_mesh_mode(&mesh);
+    if shared_domain_mesh_requested(problem, demag_realization.as_deref())
+        && domain_mesh_mode != fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir
+    {
+        return Err(PlanError {
+            reasons: vec![
+                "shared-domain FEM was requested, but the resolved final FEM mesh has no air region. Materialize a conformal domain mesh with air via study.build_domain_mesh() / study.domain_mesh(...), or switch Demag to transfer_grid if you want a magnetic-only mesh."
+                    .to_string(),
+            ],
+        });
+    }
     let mut resolved_mesh_parts = if let Some(domain_asset) = resolved_domain_mesh_asset.as_ref() {
         let mut parts = domain_asset.mesh_parts.clone();
         // Remap geometry-name object_ids to magnet/object-name object_ids so that
@@ -1057,6 +1067,16 @@ pub(crate) fn plan_fem_eigen(
     let n_nodes = mesh.nodes.len();
     let n_elements = mesh.elements.len();
     let domain_mesh_mode = resolved_domain_mesh_mode(&mesh);
+    if shared_domain_mesh_requested(problem, demag_realization.as_deref())
+        && domain_mesh_mode != fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir
+    {
+        return Err(PlanError {
+            reasons: vec![
+                "shared-domain FEM was requested, but the resolved final FEM mesh has no air region. Attach a conformal shared-domain mesh asset or switch the eigen demag path to transfer_grid."
+                    .to_string(),
+            ],
+        });
+    }
     let mut resolved_mesh_parts = if let Some(domain_asset) = resolved_domain_mesh_asset.as_ref() {
         domain_asset.mesh_parts.clone()
     } else {

@@ -20,7 +20,62 @@ import {
 import { meshWorkspaceNodeToDockTab, meshWorkspaceNodeToPreset } from "./meshWorkspace";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import type { TreeNodeData } from "../../panels/ModelTree";
+
+type TreeFilterScope = "all" | "objects" | "mesh" | "physics" | "results";
+
+function nodeMatchesScope(node: TreeNodeData, scope: TreeFilterScope): boolean {
+  if (scope === "all") {
+    return true;
+  }
+  const haystack = `${node.id} ${node.label} ${node.badge ?? ""}`.toLowerCase();
+  switch (scope) {
+    case "objects":
+      return /^(objects|obj-|geo-|reg-|mat-|ant-)/.test(node.id) || haystack.includes("object");
+    case "mesh":
+      return (
+        /mesh|airbox|universe-airbox|domain|boundary|interface/.test(haystack) ||
+        node.id.startsWith("mesh") ||
+        node.id.includes("-mesh")
+      );
+    case "physics":
+      return /^(physics|phys-|study-solver|solver)/.test(node.id) || haystack.includes("physics");
+    case "results":
+      return /^(results|res-|analyze|preview)/.test(node.id) || haystack.includes("result");
+  }
+}
+
+function filterTreeNodes(
+  nodes: TreeNodeData[],
+  query: string,
+  scope: TreeFilterScope,
+): TreeNodeData[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  return nodes.flatMap((node) => {
+    const filteredChildren = node.children
+      ? filterTreeNodes(node.children, normalizedQuery, scope)
+      : [];
+    const scopeMatch = nodeMatchesScope(node, scope);
+    const queryMatch =
+      normalizedQuery.length === 0 ||
+      node.label.toLowerCase().includes(normalizedQuery) ||
+      node.id.toLowerCase().includes(normalizedQuery) ||
+      node.badge?.toLowerCase().includes(normalizedQuery);
+    if ((scopeMatch && queryMatch) || filteredChildren.length > 0) {
+      return [{ ...node, children: filteredChildren.length > 0 ? filteredChildren : node.children }];
+    }
+    return [];
+  });
+}
+
+function countTreeNodes(nodes: TreeNodeData[]): number {
+  return nodes.reduce(
+    (count, node) => count + 1 + (node.children ? countTreeNodes(node.children) : 0),
+    0,
+  );
+}
 
 /**
  * RunSidebar — horizontal two-column Master-Detail layout.
@@ -38,6 +93,8 @@ export default function RunSidebar() {
   const inspectorPanelRef = usePanelRef();
   const [treeOpen, setTreeOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [treeQuery, setTreeQuery] = useState("");
+  const [treeFilterScope, setTreeFilterScope] = useState<TreeFilterScope>("all");
   const universeRole = useMemo(() => {
     if (!cmd.isFemBackend) {
       return "Grid / simulation domain";
@@ -145,6 +202,14 @@ export default function RunSidebar() {
   const activeNode = useMemo(
     () => findTreeNodeById(modelTreeNodes, activeNodeId),
     [activeNodeId, modelTreeNodes],
+  );
+  const filteredModelTreeNodes = useMemo(
+    () => filterTreeNodes(modelTreeNodes, treeQuery, treeFilterScope),
+    [modelTreeNodes, treeFilterScope, treeQuery],
+  );
+  const filteredTreeNodeCount = useMemo(
+    () => countTreeNodes(filteredModelTreeNodes),
+    [filteredModelTreeNodes],
   );
   const activeAntennaName = useMemo(
     () =>
@@ -367,9 +432,61 @@ export default function RunSidebar() {
             {treeOpen && (
               <div className="flex-1 min-h-0 min-w-0 pr-1 overflow-hidden isolate relative">
                 <ScrollArea className="h-full w-full">
-                  <div className="p-2 select-none">
+                  <div className="p-2 select-none space-y-2">
+                    <div className="space-y-2 rounded-xl border border-border/25 bg-card/35 p-2 backdrop-blur-sm">
+                      <Input
+                        value={treeQuery}
+                        onChange={(event) => setTreeQuery(event.target.value)}
+                        placeholder="Search nodes, mesh parts, airbox..."
+                        className="h-8 bg-background/50 text-[0.78rem]"
+                        aria-label="Search model tree"
+                      />
+                      <div className="flex flex-wrap gap-1">
+                        {(
+                          [
+                            ["all", "All"],
+                            ["objects", "Objects"],
+                            ["mesh", "Mesh"],
+                            ["physics", "Physics"],
+                            ["results", "Results"],
+                          ] as const
+                        ).map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            className={cn(
+                              "rounded-full border px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] transition-colors",
+                              treeFilterScope === value
+                                ? "border-primary/40 bg-primary/15 text-primary"
+                                : "border-border/30 bg-background/40 text-muted-foreground hover:bg-muted/50",
+                            )}
+                            onClick={() => setTreeFilterScope(value)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-between text-[0.63rem] font-mono text-muted-foreground">
+                        <span>
+                          {filteredTreeNodeCount.toLocaleString()} visible node
+                          {filteredTreeNodeCount === 1 ? "" : "s"}
+                        </span>
+                        {(treeQuery.length > 0 || treeFilterScope !== "all") && (
+                          <button
+                            type="button"
+                            className="rounded px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                            onClick={() => {
+                              setTreeQuery("");
+                              setTreeFilterScope("all");
+                            }}
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                    </div>
                     <ModelTree
-                      nodes={modelTreeNodes}
+                      nodes={filteredModelTreeNodes}
                       activeId={activeNodeId}
                       onNodeClick={handleTreeClick}
                       onContextAction={handleTreeContextAction}

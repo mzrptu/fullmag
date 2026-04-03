@@ -758,6 +758,73 @@ fn fem_backend_without_air_elements_keeps_universe_as_provenance_note() {
 }
 
 #[test]
+fn fem_backend_rejects_requested_shared_domain_without_air_elements() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.problem_meta.runtime_metadata.insert(
+        "study_universe".to_string(),
+        serde_json::json!({
+            "mode": "manual",
+            "size": [8.0, 6.0, 4.0],
+            "center": [0.0, 0.0, 0.0],
+        }),
+    );
+    ir.problem_meta.runtime_metadata.insert(
+        "mesh_workflow".to_string(),
+        serde_json::json!({
+            "build_target": "domain",
+            "domain_mesh_mode": "generated_shared_domain_mesh",
+        }),
+    );
+    ir.energy_terms = vec![
+        fullmag_ir::EnergyTermIR::Exchange,
+        fullmag_ir::EnergyTermIR::Demag { realization: None },
+    ];
+    ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+        fdm: Some(fullmag_ir::FdmHintsIR {
+            cell: [2e-9, 2e-9, 5e-9],
+            default_cell: None,
+            per_magnet: None,
+            demag: None,
+            boundary_correction: None,
+        }),
+        fem: Some(fullmag_ir::FemHintsIR {
+            order: 1,
+            hmax: 2e-9,
+            mesh: None,
+        }),
+        hybrid: None,
+    });
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
+            geometry_name: "strip".to_string(),
+            mesh_source: None,
+            mesh: Some(fullmag_ir::MeshIR {
+                mesh_name: "strip".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                elements: vec![[0, 1, 2, 3]],
+                element_markers: vec![1],
+                boundary_faces: vec![[0, 1, 2]],
+                boundary_markers: vec![1],
+            }),
+        }],
+        fem_domain_mesh_asset: None,
+    });
+
+    let error = plan(&ir).expect_err("shared-domain FEM without air should fail");
+    assert!(error
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("shared-domain FEM was requested")));
+}
+
+#[test]
 fn fem_backend_populates_domain_frame_and_domain_mesh_mode() {
     let mut ir = ProblemIR::bootstrap_example();
     ir.backend_policy.requested_backend = BackendTarget::Fem;

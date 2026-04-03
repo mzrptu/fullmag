@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRightLeft, GitCommitHorizontal, Layers, Loader2, MemoryStick, Triangle } from "lucide-react";
 
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
@@ -9,6 +9,7 @@ import { fmtSI } from "../../runs/control-room/shared";
 import SelectField from "../../ui/SelectField";
 import { TextField } from "../../ui/TextField";
 import { Button } from "../../ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
 import MeshSettingsPanel from "../MeshSettingsPanel";
 import { MetricField, SidebarSection, StatusBadge, ToggleRow, CompactInputGrid } from "./primitives";
 import {
@@ -60,6 +61,30 @@ function meshPartRoleLabel(role: string): string {
     default:
       return humanizeToken(role);
   }
+}
+
+function universeTabFromNodeId(nodeId: string): string {
+  if (nodeId === "universe-boundary") return "boundary";
+  if (
+    nodeId === "universe-airbox"
+    || nodeId === "universe-airbox-mesh"
+  ) {
+    return "airbox";
+  }
+  if (
+    nodeId === "universe-mesh-view"
+    || nodeId === "universe-mesh"
+  ) {
+    return "view";
+  }
+  if (
+    nodeId === "universe-mesh-size"
+    || nodeId === "universe-mesh-quality"
+    || nodeId === "universe-mesh-pipeline"
+  ) {
+    return "build";
+  }
+  return "general";
 }
 
 export default function UniversePanel() {
@@ -167,24 +192,10 @@ export default function UniversePanel() {
     [ctx],
   );
   const airViewState = ctx.airPart ? ctx.meshEntityViewState[ctx.airPart.id] : null;
-  const showAirboxPanel =
-    selectedNodeId === "universe-airbox" || selectedNodeId === "universe-airbox-mesh";
-  const showBoundaryPanel = selectedNodeId === "universe-boundary";
-  const showGlobalMeshPanel =
-    selectedNodeId === "universe-mesh" ||
-    selectedNodeId === "universe-mesh-view" ||
-    selectedNodeId === "universe-mesh-size" ||
-    selectedNodeId === "universe-mesh-quality" ||
-    selectedNodeId === "universe-mesh-pipeline";
-  const showUniverseOverview = [
-    "universe",
-    "universe-domain-frame",
-    "universe-effective-size",
-    "universe-size",
-    "universe-center",
-    "universe-padding",
-    "universe-role",
-  ].includes(selectedNodeId);
+  const [activeTab, setActiveTab] = useState(() => universeTabFromNodeId(selectedNodeId));
+  useEffect(() => {
+    setActiveTab(universeTabFromNodeId(selectedNodeId));
+  }, [selectedNodeId]);
   const canRebuildAirbox = !ctx.meshGenerating && !ctx.scriptSyncBusy && (ctx.awaitingCommand || ctx.isWaitingForCompute);
   const handleAirboxRebuild = useCallback(async () => {
     if (editable && builderUniverse) {
@@ -278,8 +289,7 @@ export default function UniversePanel() {
   );
   const showMeshPartsPanel =
     ctx.isFemBackend &&
-    ctx.meshParts.length > 0 &&
-    (showAirboxPanel || showGlobalMeshPanel);
+    ctx.meshParts.length > 0;
   const handleIsolateMeshPart = useCallback(
     (partId: string) => {
       ctx.setViewMode("3D");
@@ -327,477 +337,504 @@ export default function UniversePanel() {
   }, [ctx]);
 
   return (
-    <>
-      {showUniverseOverview ? (
-      <SidebarSection title="General Properties" icon="⚙" defaultOpen={true}>
-        <div className="flex flex-col gap-2">
-          {editable && builderUniverse ? (
-            <SelectField
-              label="Universe Mode"
-              value={builderUniverse.mode}
-              onchange={(value) => updateUniverse((current) => ({ ...current, mode: value }))}
-              options={[
-                { value: "auto", label: "Auto-fit" },
-                { value: "manual", label: "Manual" },
-              ]}
-              tooltip="Determines how the simulation bounds are established. Auto-fit tightly envelops all defined geometry objects. Manual requires explicit size definitions."
-            />
-          ) : (
-            <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
-              {sourceSummary}
-            </div>
-          )}
-          <div className="flex items-center gap-3 pt-1">
-            <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80 min-w-[4.5rem]">
-              Backend
-            </span>
-            <StatusBadge label={ctx.isFemBackend ? "FEM" : "FDM"} tone="accent" />
-          </div>
-        </div>
-      </SidebarSection>
-      ) : null}
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col gap-3 pt-4 px-2">
+      <TabsList className="grid h-auto grid-cols-5">
+        <TabsTrigger value="general">General</TabsTrigger>
+        <TabsTrigger value="airbox" disabled={!ctx.isFemBackend}>Airbox</TabsTrigger>
+        <TabsTrigger value="view" disabled={!ctx.isFemBackend}>View</TabsTrigger>
+        <TabsTrigger value="boundary" disabled={!ctx.isFemBackend}>Boundary</TabsTrigger>
+        <TabsTrigger value="build" disabled={!ctx.isFemBackend}>Build & Log</TabsTrigger>
+      </TabsList>
 
-      {showUniverseOverview ? (
-      <SidebarSection title="Domain Extent" icon="📐" defaultOpen={true}>
-        {editable && builderUniverse ? (
-          <div className="flex flex-col gap-3">
-            <CompactInputGrid
-              label="Size (nm)"
-              fields={[
-                { label: "X", value: formatNm(builderUniverse.size?.[0]), onChange: (v) => updateVecComponent("size", 0, v), disabled: builderUniverse.mode !== "manual" },
-                { label: "Y", value: formatNm(builderUniverse.size?.[1]), onChange: (v) => updateVecComponent("size", 1, v), disabled: builderUniverse.mode !== "manual" },
-                { label: "Z", value: formatNm(builderUniverse.size?.[2]), onChange: (v) => updateVecComponent("size", 2, v), disabled: builderUniverse.mode !== "manual" },
-              ]}
-            />
-            <CompactInputGrid
-              label="Center (nm)"
-              fields={[
-                { label: "X", value: formatNm(builderUniverse.center?.[0]), onChange: (v) => updateVecComponent("center", 0, v) },
-                { label: "Y", value: formatNm(builderUniverse.center?.[1]), onChange: (v) => updateVecComponent("center", 1, v) },
-                { label: "Z", value: formatNm(builderUniverse.center?.[2]), onChange: (v) => updateVecComponent("center", 2, v) },
-              ]}
-            />
-            <CompactInputGrid
-              label="Padding (nm)"
-              fields={[
-                { label: "X", value: formatNm(builderUniverse.padding?.[0]), onChange: (v) => updateVecComponent("padding", 0, v) },
-                { label: "Y", value: formatNm(builderUniverse.padding?.[1]), onChange: (v) => updateVecComponent("padding", 1, v) },
-                { label: "Z", value: formatNm(builderUniverse.padding?.[2]), onChange: (v) => updateVecComponent("padding", 2, v) },
-              ]}
-            />
-          </div>
-        ) : (
-          <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
-            Universe extent is read-only in this context.
-          </div>
-        )}
-      </SidebarSection>
-      ) : null}
-
-      {ctx.isFemBackend && (showUniverseOverview || showAirboxPanel) ? (
-        <SidebarSection title="Airbox Mesh" icon="🌐" defaultOpen={true}>
-          <div className="flex flex-col gap-3">
-            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2.5 text-[0.68rem] leading-relaxed text-cyan-100/90">
-              Shared-domain FEM still builds one conformal solver mesh for airbox + ferromagnetyki.
-              `Airbox Hmax` steruje tylko docelową gęstością regionu powietrza; przy interfejsach generator nadal zagęszcza siatkę wokół ciał magnetycznych.
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <TextField
-                key={`airbox-hmax-${effectiveAirboxHmax ?? "auto"}`}
-                label="Airbox Hmax (nm)"
-                defaultValue={formatNm(effectiveAirboxHmax)}
-                onBlur={(event) => {
-                  if (!editable) return;
-                  const value = event.target.value;
-                  const trimmed = value.trim();
-                  if (trimmed.length === 0) {
-                    updateUniverse((current) => ({ ...current, airbox_hmax: null }));
-                    return;
-                  }
-                  const parsed = Number(trimmed);
-                  if (!Number.isFinite(parsed) || parsed <= 0) return;
-                  updateUniverse((current) => ({
-                    ...current,
-                    airbox_hmax: parsed * 1e-9,
-                  }));
-                }}
-                disabled={!editable}
-                tooltip="Live runtime maximum tetrahedron size for the airbox region. Leave blank to keep automatic grading."
-              />
-              <MetricField
-                label="Airbox Nodes"
-                value={ctx.airPart ? ctx.airPart.node_count.toLocaleString() : "—"}
-                tooltip="Current node count in the airbox partition of the realized shared-domain mesh."
-              />
-              <MetricField
-                label="Airbox Elements"
-                value={ctx.airPart ? ctx.airPart.element_count.toLocaleString() : "—"}
-                tooltip="Current tetrahedron count in the airbox partition of the realized shared-domain mesh."
-              />
-              <TextField
-                key={`airbox-opacity-${ctx.airMeshOpacity}`}
-                label="Airbox Opacity (%)"
-                defaultValue={formatPercent(ctx.airMeshOpacity)}
-                onBlur={(event) => {
-                  const parsed = Number(event.target.value);
-                  if (!Number.isFinite(parsed)) return;
-                  ctx.setAirMeshOpacity(Math.max(5, Math.min(100, Math.round(parsed))));
-                }}
-                tooltip="Viewport-only opacity for the Universe / airbox mesh in FEM domain view."
-              />
-            </div>
-            <ToggleRow
-              label="Show Airbox Mesh"
-              checked={ctx.airMeshVisible}
-              onChange={ctx.setAirMeshVisible}
-            />
-            {airViewState ? (
+      <TabsContent value="general" className="mt-0">
+        <SidebarSection title="General Properties" defaultOpen={true}>
+          <div className="flex flex-col gap-2">
+            {editable && builderUniverse ? (
               <SelectField
-                label="Airbox Style"
-                value={airViewState.renderMode}
-                onchange={(value) =>
-                  updateEntityViewState(ctx.airPart!.id, {
-                    renderMode: value as typeof airViewState.renderMode,
-                  })}
+                label="Universe Mode"
+                value={builderUniverse.mode}
+                onchange={(value) => updateUniverse((current) => ({ ...current, mode: value }))}
                 options={[
-                  { value: "wireframe", label: "Wireframe" },
-                  { value: "surface", label: "Surface" },
-                  { value: "surface+edges", label: "Surface + Edges" },
-                  { value: "points", label: "Points" },
+                  { value: "auto", label: "Auto-fit" },
+                  { value: "manual", label: "Manual" },
+                ]}
+                tooltip="Determines how the simulation bounds are established. Auto-fit tightly envelops all defined geometry objects. Manual requires explicit size definitions."
+              />
+            ) : (
+              <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+                {sourceSummary}
+              </div>
+            )}
+            <div className="flex items-center gap-3 pt-1">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80 min-w-[4.5rem]">
+                Backend
+              </span>
+              <StatusBadge label={ctx.isFemBackend ? "FEM" : "FDM"} tone="accent" />
+            </div>
+          </div>
+        </SidebarSection>
+
+        <SidebarSection title="Domain Extent" defaultOpen={true}>
+          {editable && builderUniverse ? (
+            <div className="flex flex-col gap-3">
+              <CompactInputGrid
+                label="Size (nm)"
+                fields={[
+                  { label: "X", value: formatNm(builderUniverse.size?.[0]), onChange: (v) => updateVecComponent("size", 0, v), disabled: builderUniverse.mode !== "manual" },
+                  { label: "Y", value: formatNm(builderUniverse.size?.[1]), onChange: (v) => updateVecComponent("size", 1, v), disabled: builderUniverse.mode !== "manual" },
+                  { label: "Z", value: formatNm(builderUniverse.size?.[2]), onChange: (v) => updateVecComponent("size", 2, v), disabled: builderUniverse.mode !== "manual" },
                 ]}
               />
-            ) : null}
-            <div className="rounded-lg border border-border/35 bg-background/35 p-3">
-              <div className="mb-2 text-[0.62rem] font-semibold uppercase tracking-widest text-muted-foreground">
-                Shared-Domain Mesher Policy
-              </div>
-              <div className="mb-3 text-[0.68rem] leading-relaxed text-muted-foreground">
-                `Airbox Hmax` above controls only the air region. The controls below come from the active runtime mesher policy and affect the conformal shared-domain rebuild for airbox + magnetic bodies.
-              </div>
-              <MeshSettingsPanel
-                options={ctx.meshOptions}
-                onChange={ctx.setMeshOptions}
-                quality={ctx.meshQualityData}
-                generating={ctx.meshGenerating}
-                disabled={ctx.meshGenerating}
-                nodeCount={meshSummary?.node_count ?? ctx.effectiveFemMesh?.nodes.length}
-                showAdaptiveSection={false}
+              <CompactInputGrid
+                label="Center (nm)"
+                fields={[
+                  { label: "X", value: formatNm(builderUniverse.center?.[0]), onChange: (v) => updateVecComponent("center", 0, v) },
+                  { label: "Y", value: formatNm(builderUniverse.center?.[1]), onChange: (v) => updateVecComponent("center", 1, v) },
+                  { label: "Z", value: formatNm(builderUniverse.center?.[2]), onChange: (v) => updateVecComponent("center", 2, v) },
+                ]}
+              />
+              <CompactInputGrid
+                label="Padding (nm)"
+                fields={[
+                  { label: "X", value: formatNm(builderUniverse.padding?.[0]), onChange: (v) => updateVecComponent("padding", 0, v) },
+                  { label: "Y", value: formatNm(builderUniverse.padding?.[1]), onChange: (v) => updateVecComponent("padding", 1, v) },
+                  { label: "Z", value: formatNm(builderUniverse.padding?.[2]), onChange: (v) => updateVecComponent("padding", 2, v) },
+                ]}
               />
             </div>
-            <div className="rounded-lg border border-border/35 bg-background/35 p-3">
-              <div className="mb-2 text-[0.62rem] font-semibold uppercase tracking-widest text-muted-foreground">
-                Viewport
+          ) : (
+            <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+              Universe extent is read-only in this context.
+            </div>
+          )}
+        </SidebarSection>
+
+        {ctx.isFemBackend ? (
+          <SidebarSection title="Domain Mesh" defaultOpen={true}>
+            <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+              The shared-domain FEM path now treats Universe mesh controls as domain-level diagnostics.
+              Tune air-region density in the <span className="font-medium text-foreground">Airbox</span> tab
+              and per-object sizing in each object&apos;s <span className="font-medium text-foreground">Mesh</span> panel.
+            </div>
+          </SidebarSection>
+        ) : null}
+
+        <SidebarSection title="Universe Summary" defaultOpen={true}>
+          <div className="grid grid-cols-2 gap-3">
+            <MetricField label="Mode" value={mode ? humanizeToken(mode) : "—"} tooltip="Current universe derivation mode." />
+            <MetricField label="Role" value={role} tooltip="How this box should be interpreted in the active backend." />
+            <MetricField label="Declared Size" value={formatVector(declaredSize, "m")} tooltip="Size explicitly declared in the builder." />
+            <MetricField label="World Extent" value={formatVector(worldExtent, "m")} tooltip="Declared or derived workspace/world framing used by the control room." />
+            <MetricField label="Mesh Extent" value={formatVector(meshExtent, "m")} tooltip="Bounding-box extent of the currently realized mesh." />
+            <MetricField label="Center" value={formatVector(center, "m")} tooltip="Absolute origin of the universe bounding box." />
+            <MetricField
+              label="Padding"
+              value={hasNonZeroVector(padding) ? formatVector(padding, "m") : "—"}
+              tooltip="Calculated padding added around physical objects."
+            />
+          </div>
+        </SidebarSection>
+      </TabsContent>
+
+      <TabsContent value="airbox" className="mt-0">
+        {ctx.isFemBackend ? (
+          <SidebarSection title="Airbox" defaultOpen={true}>
+            <div className="flex flex-col gap-3">
+              <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2.5 text-[0.68rem] leading-relaxed text-cyan-100/90">
+                Shared-domain FEM builds one conformal solver mesh for the airbox and magnetic bodies.
+                `Airbox Hmax` steers the air-region density, while interfaces still refine around the magnetic geometry.
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <TextField
+                  key={`airbox-hmax-${effectiveAirboxHmax ?? "auto"}`}
+                  label="Airbox Hmax (nm)"
+                  defaultValue={formatNm(effectiveAirboxHmax)}
+                  onBlur={(event) => {
+                    if (!editable) return;
+                    const value = event.target.value;
+                    const trimmed = value.trim();
+                    if (trimmed.length === 0) {
+                      updateUniverse((current) => ({ ...current, airbox_hmax: null }));
+                      return;
+                    }
+                    const parsed = Number(trimmed);
+                    if (!Number.isFinite(parsed) || parsed <= 0) return;
+                    updateUniverse((current) => ({
+                      ...current,
+                      airbox_hmax: parsed * 1e-9,
+                    }));
+                  }}
+                  disabled={!editable}
+                  tooltip="Live runtime maximum tetrahedron size for the airbox region. Leave blank to keep automatic grading."
+                />
+                <MetricField
+                  label="Airbox Nodes"
+                  value={ctx.airPart ? ctx.airPart.node_count.toLocaleString() : "—"}
+                  tooltip="Current node count in the airbox partition of the realized shared-domain mesh."
+                />
+                <MetricField
+                  label="Airbox Elements"
+                  value={ctx.airPart ? ctx.airPart.element_count.toLocaleString() : "—"}
+                  tooltip="Current tetrahedron count in the airbox partition of the realized shared-domain mesh."
+                />
+                <TextField
+                  key={`airbox-opacity-${ctx.airMeshOpacity}`}
+                  label="Airbox Opacity (%)"
+                  defaultValue={formatPercent(ctx.airMeshOpacity)}
+                  onBlur={(event) => {
+                    const parsed = Number(event.target.value);
+                    if (!Number.isFinite(parsed)) return;
+                    ctx.setAirMeshOpacity(Math.max(5, Math.min(100, Math.round(parsed))));
+                  }}
+                  tooltip="Viewport-only opacity for the Universe / airbox mesh in FEM domain view."
+                />
+              </div>
+              <ToggleRow
+                label="Show Airbox Mesh"
+                checked={ctx.airMeshVisible}
+                onChange={ctx.setAirMeshVisible}
+              />
+              {airViewState ? (
+                <SelectField
+                  label="Airbox Style"
+                  value={airViewState.renderMode}
+                  onchange={(value) =>
+                    updateEntityViewState(ctx.airPart!.id, {
+                      renderMode: value as typeof airViewState.renderMode,
+                    })}
+                  options={[
+                    { value: "wireframe", label: "Wireframe" },
+                    { value: "surface", label: "Surface" },
+                    { value: "surface+edges", label: "Surface + Edges" },
+                    { value: "points", label: "Points" },
+                  ]}
+                />
+              ) : null}
+              <div className="rounded-lg border border-border/35 bg-background/35 p-3">
+                <div className="mb-2 text-[0.62rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                  Shared-Domain Mesher Policy
+                </div>
+                <div className="mb-3 text-[0.68rem] leading-relaxed text-muted-foreground">
+                  `Airbox Hmax` above controls only the air region. The settings below come from the active runtime mesher policy and affect the conformal shared-domain rebuild for airbox plus magnetic bodies.
+                </div>
+                <MeshSettingsPanel
+                  options={ctx.meshOptions}
+                  onChange={ctx.setMeshOptions}
+                  quality={ctx.meshQualityData}
+                  generating={ctx.meshGenerating}
+                  disabled={ctx.meshGenerating}
+                  nodeCount={meshSummary?.node_count ?? ctx.effectiveFemMesh?.nodes.length}
+                  showAdaptiveSection={false}
+                />
+              </div>
+            </div>
+          </SidebarSection>
+        ) : null}
+      </TabsContent>
+
+      <TabsContent value="view" className="mt-0">
+        {ctx.isFemBackend ? (
+          <>
+            <SidebarSection title="View" defaultOpen={true}>
+              <div className="rounded-lg border border-border/35 bg-background/35 p-3">
+                <div className="mb-2 text-[0.62rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                  Viewport
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={airboxIsolated ? "default" : "outline"}
+                    onClick={handleIsolateAirboxView}
+                  >
+                    Isolate Airbox
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={!airboxIsolated ? "default" : "outline"}
+                    onClick={handleShowFullDomainView}
+                  >
+                    Show Full Domain
+                  </Button>
+                </div>
+                <div className="mt-2 text-[0.68rem] leading-relaxed text-muted-foreground">
+                  `Isolate Airbox` hides magnetic-body mesh parts only in the 3D viewport, so you can inspect the air region by itself without changing the solver mesh.
+                </div>
+              </div>
+            </SidebarSection>
+
+            {showMeshPartsPanel ? (
+              <SidebarSection title="Mesh Parts" defaultOpen={true}>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between rounded-lg border border-border/30 bg-card/20 p-2.5">
+                    <div className="text-[0.68rem] leading-relaxed text-muted-foreground">
+                      Shared-domain viewport renders canonical mesh parts directly from the realized FEM mesh.
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={handleShowAllMeshParts}
+                    >
+                      Show All
+                    </Button>
+                  </div>
+                  {ctx.meshParts.map((part) => {
+                    const viewState = ctx.meshEntityViewState[part.id];
+                    const visible = viewState?.visible ?? true;
+                    const opacity = viewState?.opacity ?? (part.role === "air" ? 28 : 100);
+                    const renderMode = viewState?.renderMode ?? (part.role === "air" ? "wireframe" : "surface+edges");
+                    return (
+                      <div
+                        key={part.id}
+                        className="rounded-lg border border-border/35 bg-background/35 p-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-foreground">
+                              {part.label || part.id}
+                            </div>
+                            <div className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                              {meshPartRoleLabel(part.role)}
+                              {part.object_id ? ` · ${part.object_id}` : ""}
+                            </div>
+                          </div>
+                          <StatusBadge
+                            label={visible ? "Visible" : "Hidden"}
+                            tone={visible ? "accent" : "default"}
+                          />
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-[0.68rem] text-muted-foreground">
+                          <div>Tetrahedra: {part.element_count.toLocaleString()}</div>
+                          <div>Boundary faces: {part.boundary_face_count.toLocaleString()}</div>
+                          <div>Nodes: {part.node_count.toLocaleString()}</div>
+                          <div>Opacity: {opacity}%</div>
+                        </div>
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={visible ? "outline" : "default"}
+                            onClick={() => updateEntityViewState(part.id, { visible: !visible })}
+                          >
+                            {visible ? "Hide" : "Show"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleIsolateMeshPart(part.id)}
+                          >
+                            Isolate
+                          </Button>
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <SelectField
+                            label="Style"
+                            value={renderMode}
+                            onchange={(value) =>
+                              updateEntityViewState(part.id, {
+                                renderMode: value as typeof renderMode,
+                              })}
+                            options={[
+                              { value: "wireframe", label: "Wireframe" },
+                              { value: "surface", label: "Surface" },
+                              { value: "surface+edges", label: "Surface + Edges" },
+                              { value: "points", label: "Points" },
+                            ]}
+                          />
+                          <TextField
+                            key={`mesh-part-opacity-${part.id}-${opacity}`}
+                            label="Opacity (%)"
+                            defaultValue={String(opacity)}
+                            onBlur={(event) => {
+                              const parsed = Number(event.target.value);
+                              if (!Number.isFinite(parsed)) return;
+                              updateEntityViewState(part.id, {
+                                opacity: Math.max(5, Math.min(100, Math.round(parsed))),
+                              });
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </SidebarSection>
+            ) : null}
+          </>
+        ) : null}
+      </TabsContent>
+
+      <TabsContent value="boundary" className="mt-0">
+        {ctx.isFemBackend ? (
+          <SidebarSection title="Outer Boundary" defaultOpen={true}>
+            <div className="flex flex-col gap-3">
+              <SelectField
+                label="BC Kind"
+                value={outerBoundaryPolicy}
+                onchange={(nextValue) => {
+                  ctx.setScriptBuilderDemagRealization(
+                    nextValue === "auto" ? null : nextValue,
+                  );
+                }}
+                disabled={!editable}
+                options={[
+                  { value: "auto", label: "Auto" },
+                  { value: "airbox_dirichlet", label: "Dirichlet" },
+                  { value: "airbox_robin", label: "Robin" },
+                  { value: "transfer_grid", label: "Transfer Grid" },
+                ]}
+              />
+              <MetricField
+                label="Status"
+                value={outerBoundaryPolicy === "auto" ? "Planner-managed" : "Explicit authoring"}
+              />
+              <MetricField label="Effective" value={outerBoundaryLabel} />
+              <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+                `Dirichlet` and `Robin` keep the solve on the shared airbox FEM path.
+                `Transfer Grid` skips the outer airbox boundary solve and uses the FFT transfer-grid demag path instead.
+              </div>
+            </div>
+          </SidebarSection>
+        ) : null}
+      </TabsContent>
+
+      <TabsContent value="build" className="mt-0">
+        {ctx.isFemBackend ? (
+          <SidebarSection title="Build & Log" defaultOpen={true}>
+            <div className="flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 px-2.5 py-2 transition-colors hover:bg-background/60">
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <GitCommitHorizontal size={11} />
+                    <span className="text-[0.6rem] font-medium uppercase tracking-wider">Solver Nodes</span>
+                  </div>
+                  <span className="font-mono text-xs font-semibold text-foreground/90">
+                    {meshSummary?.node_count.toLocaleString() ?? "—"}
+                  </span>
+                </div>
+                <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 px-2.5 py-2 transition-colors hover:bg-background/60">
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <Triangle size={11} />
+                    <span className="text-[0.6rem] font-medium uppercase tracking-wider">Tetrahedra</span>
+                  </div>
+                  <span className="font-mono text-xs font-semibold text-foreground/90">
+                    {meshSummary?.element_count.toLocaleString() ?? "—"}
+                  </span>
+                </div>
+                <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 px-2.5 py-2 transition-colors hover:bg-background/60">
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <Layers size={11} />
+                    <span className="text-[0.6rem] font-medium uppercase tracking-wider">Boundary Faces</span>
+                  </div>
+                  <span className="font-mono text-xs font-semibold text-foreground/90">
+                    {meshSummary?.boundary_face_count.toLocaleString() ?? "—"}
+                  </span>
+                </div>
+                <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 px-2.5 py-2 transition-colors hover:bg-background/60">
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <MemoryStick size={11} />
+                    <span className="text-[0.6rem] font-medium uppercase tracking-wider">Payload RAM</span>
+                  </div>
+                  <span className="font-mono text-xs font-semibold text-foreground/90">
+                    {payloadRamEstimate}
+                  </span>
+                </div>
+              </div>
+              <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-card/20 p-3 shadow-sm transition-all duration-300">
+                <Button
+                  className="relative h-8 w-full overflow-hidden text-sm font-semibold transition-all duration-300"
+                  type="button"
+                  variant="default"
+                  disabled={!canRebuildAirbox}
+                  onClick={() => void handleAirboxRebuild()}
+                >
+                  {ctx.meshGenerating || ctx.scriptSyncBusy ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin text-primary-foreground/70" />
+                      {ctx.scriptSyncBusy ? "Syncing Script..." : "Generating Mesh..."}
+                    </span>
+                  ) : (
+                    "Build Mesh"
+                  )}
+                </Button>
+                <div className="flex flex-col gap-2 pt-1">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="flex items-center gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-emerald-500">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                      </span>
+                      TX: REMESH
+                    </span>
+                    <span className={`flex items-center gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest ${remeshStatusToneClass}`}>
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-35" />
+                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
+                      </span>
+                      RX: {remeshRxLabel}
+                    </span>
+                  </div>
+                  <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
+                    {ctx.meshGenerating || ctx.scriptSyncBusy ? (
+                      ctx.activity.progressMode === "determinate" ? (
+                        <div
+                          className="absolute inset-y-0 left-0 rounded-full bg-primary transition-[width] duration-300"
+                          style={{ width: `${Math.max(6, Math.min(100, progressValue))}%` }}
+                        />
+                      ) : (
+                        <>
+                          <div className="absolute inset-y-0 w-1/3 animate-pulse rounded-full bg-primary opacity-80" />
+                          <div
+                            className="absolute inset-y-0 right-0 w-2/3 animate-pulse rounded-full bg-primary/30"
+                            style={{ animationDelay: "150ms" }}
+                          />
+                        </>
+                      )
+                    ) : (
+                      <div className="absolute inset-y-0 left-0 w-full rounded-full bg-emerald-500/70" />
+                    )}
+                  </div>
+                  <div className="mt-0.5 flex items-center justify-between px-1 opacity-70">
+                    <span className="text-[0.6rem] font-mono uppercase tracking-wider text-muted-foreground">
+                      {ctx.activity.label || "Backend mesh pipeline"}
+                    </span>
+                    <span className="flex items-center gap-1 text-[0.6rem] font-mono uppercase tracking-wider text-muted-foreground tabular-nums">
+                      <ArrowRightLeft className="h-2.5 w-2.5" />
+                      {ctx.activity.progressMode === "determinate"
+                        ? `${Math.round(progressValue)}%`
+                        : (ctx.meshGenerating || ctx.scriptSyncBusy ? "active" : "ready")}
+                    </span>
+                  </div>
+                </div>
+                <div className="rounded-md border border-border/30 bg-background/35 px-2.5 py-2 text-[0.68rem] leading-relaxed text-muted-foreground">
+                  {remeshDetail}
+                  {qualitySummary
+                    ? ` Current avg quality ${qualitySummary.avg_quality.toFixed(3)}.`
+                    : ""}
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
                   size="sm"
-                  variant={airboxIsolated ? "default" : "outline"}
-                  onClick={handleIsolateAirboxView}
+                  variant="outline"
+                  disabled={ctx.scriptSyncBusy}
+                  onClick={() => void ctx.syncScriptBuilder()}
                 >
-                  Isolate Airbox
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={!airboxIsolated ? "default" : "outline"}
-                  onClick={handleShowFullDomainView}
-                >
-                  Show Full Domain
+                  Sync Script
                 </Button>
               </div>
-              <div className="mt-2 text-[0.68rem] leading-relaxed text-muted-foreground">
-                `Isolate Airbox` hides magnetic-body mesh parts only in the 3D viewport, so you can inspect the air region by itself without changing the solver mesh.
+              <div className="text-[0.68rem] text-muted-foreground">
+                {ctx.scriptSyncMessage
+                  ?? "Change `airbox_hmax` here, then use `Build Mesh` to sync the script, queue a study-domain remesh and watch the shared-domain airbox status below."}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 px-2.5 py-2 transition-colors hover:bg-background/60">
-                <div className="flex items-center gap-1.5 text-muted-foreground">
-                  <GitCommitHorizontal size={11} />
-                  <span className="text-[0.6rem] font-medium uppercase tracking-wider">Solver Nodes</span>
-                </div>
-                <span className="font-mono text-xs font-semibold text-foreground/90">
-                  {meshSummary?.node_count.toLocaleString() ?? "—"}
-                </span>
-              </div>
-              <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 px-2.5 py-2 transition-colors hover:bg-background/60">
-                <div className="flex items-center gap-1.5 text-muted-foreground">
-                  <Triangle size={11} />
-                  <span className="text-[0.6rem] font-medium uppercase tracking-wider">Tetrahedra</span>
-                </div>
-                <span className="font-mono text-xs font-semibold text-foreground/90">
-                  {meshSummary?.element_count.toLocaleString() ?? "—"}
-                </span>
-              </div>
-              <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 px-2.5 py-2 transition-colors hover:bg-background/60">
-                <div className="flex items-center gap-1.5 text-muted-foreground">
-                  <Layers size={11} />
-                  <span className="text-[0.6rem] font-medium uppercase tracking-wider">Boundary Faces</span>
-                </div>
-                <span className="font-mono text-xs font-semibold text-foreground/90">
-                  {meshSummary?.boundary_face_count.toLocaleString() ?? "—"}
-                </span>
-              </div>
-              <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 px-2.5 py-2 transition-colors hover:bg-background/60">
-                <div className="flex items-center gap-1.5 text-muted-foreground">
-                  <MemoryStick size={11} />
-                  <span className="text-[0.6rem] font-medium uppercase tracking-wider">Payload RAM</span>
-                </div>
-                <span className="font-mono text-xs font-semibold text-foreground/90">
-                  {payloadRamEstimate}
-                </span>
-              </div>
-            </div>
-            <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-card/20 p-3 shadow-sm transition-all duration-300">
-              <Button
-                className="relative h-8 w-full overflow-hidden text-sm font-semibold transition-all duration-300"
-                type="button"
-                variant="default"
-                disabled={!canRebuildAirbox}
-                onClick={() => void handleAirboxRebuild()}
-              >
-                {ctx.meshGenerating || ctx.scriptSyncBusy ? (
-                  <span className="flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-primary-foreground/70" />
-                    {ctx.scriptSyncBusy ? "Syncing Script..." : "Generating Mesh..."}
-                  </span>
-                ) : (
-                  "Build Mesh"
-                )}
-              </Button>
-              <div className="flex flex-col gap-2 pt-1">
-                <div className="flex items-center justify-between px-1">
-                  <span className="flex items-center gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-emerald-500">
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    </span>
-                    TX: REMESH
-                  </span>
-                  <span className={`flex items-center gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest ${remeshStatusToneClass}`}>
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-35" />
-                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
-                    </span>
-                    RX: {remeshRxLabel}
-                  </span>
-                </div>
-                <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
-                  {ctx.meshGenerating || ctx.scriptSyncBusy ? (
-                    ctx.activity.progressMode === "determinate" ? (
-                      <div
-                        className="absolute inset-y-0 left-0 rounded-full bg-primary transition-[width] duration-300"
-                        style={{ width: `${Math.max(6, Math.min(100, progressValue))}%` }}
-                      />
-                    ) : (
-                      <>
-                        <div className="absolute inset-y-0 w-1/3 animate-pulse rounded-full bg-primary opacity-80" />
-                        <div
-                          className="absolute inset-y-0 right-0 w-2/3 animate-pulse rounded-full bg-primary/30"
-                          style={{ animationDelay: "150ms" }}
-                        />
-                      </>
-                    )
-                  ) : (
-                    <div className="absolute inset-y-0 left-0 w-full rounded-full bg-emerald-500/70" />
-                  )}
-                </div>
-                <div className="mt-0.5 flex items-center justify-between px-1 opacity-70">
-                  <span className="text-[0.6rem] font-mono uppercase tracking-wider text-muted-foreground">
-                    {ctx.activity.label || "Backend mesh pipeline"}
-                  </span>
-                  <span className="flex items-center gap-1 text-[0.6rem] font-mono uppercase tracking-wider text-muted-foreground tabular-nums">
-                    <ArrowRightLeft className="h-2.5 w-2.5" />
-                    {ctx.activity.progressMode === "determinate"
-                      ? `${Math.round(progressValue)}%`
-                      : (ctx.meshGenerating || ctx.scriptSyncBusy ? "active" : "ready")}
-                  </span>
-                </div>
-              </div>
-              <div className="rounded-md border border-border/30 bg-background/35 px-2.5 py-2 text-[0.68rem] leading-relaxed text-muted-foreground">
-                {remeshDetail}
-                {qualitySummary
-                  ? ` Current avg quality ${qualitySummary.avg_quality.toFixed(3)}.`
-                  : ""}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={ctx.scriptSyncBusy}
-                onClick={() => void ctx.syncScriptBuilder()}
-              >
-                Sync Script
-              </Button>
-            </div>
-            <div className="text-[0.68rem] text-muted-foreground">
-              {ctx.scriptSyncMessage
-                ?? "Change `airbox_hmax` here, then use `Build Mesh` to sync the script, queue a study-domain remesh and watch the shared-domain airbox status below."}
-            </div>
-          </div>
-        </SidebarSection>
-      ) : null}
-
-      {showMeshPartsPanel ? (
-        <SidebarSection title="Mesh Parts" icon="🧩" defaultOpen={true}>
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between rounded-lg border border-border/30 bg-card/20 p-2.5">
-              <div className="text-[0.68rem] leading-relaxed text-muted-foreground">
-                Shared-domain viewport now renders canonical mesh parts directly from the realized FEM mesh.
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleShowAllMeshParts}
-              >
-                Show All
-              </Button>
-            </div>
-            {ctx.meshParts.map((part) => {
-              const viewState = ctx.meshEntityViewState[part.id];
-              const visible = viewState?.visible ?? true;
-              const opacity = viewState?.opacity ?? (part.role === "air" ? 28 : 100);
-              const renderMode = viewState?.renderMode ?? (part.role === "air" ? "wireframe" : "surface+edges");
-              return (
-                <div
-                  key={part.id}
-                  className="rounded-lg border border-border/35 bg-background/35 p-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-foreground">
-                        {part.label || part.id}
-                      </div>
-                      <div className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                        {meshPartRoleLabel(part.role)}
-                        {part.object_id ? ` · ${part.object_id}` : ""}
-                      </div>
-                    </div>
-                    <StatusBadge
-                      label={visible ? "Visible" : "Hidden"}
-                      tone={visible ? "accent" : "default"}
-                    />
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-[0.68rem] text-muted-foreground">
-                    <div>Tetrahedra: {part.element_count.toLocaleString()}</div>
-                    <div>Boundary faces: {part.boundary_face_count.toLocaleString()}</div>
-                    <div>Nodes: {part.node_count.toLocaleString()}</div>
-                    <div>Opacity: {opacity}%</div>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={visible ? "outline" : "default"}
-                      onClick={() => updateEntityViewState(part.id, { visible: !visible })}
-                    >
-                      {visible ? "Hide" : "Show"}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleIsolateMeshPart(part.id)}
-                    >
-                      Isolate
-                    </Button>
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <SelectField
-                      label="Style"
-                      value={renderMode}
-                      onchange={(value) =>
-                        updateEntityViewState(part.id, {
-                          renderMode: value as typeof renderMode,
-                        })}
-                      options={[
-                        { value: "wireframe", label: "Wireframe" },
-                        { value: "surface", label: "Surface" },
-                        { value: "surface+edges", label: "Surface + Edges" },
-                        { value: "points", label: "Points" },
-                      ]}
-                    />
-                    <TextField
-                      key={`mesh-part-opacity-${part.id}-${opacity}`}
-                      label="Opacity (%)"
-                      defaultValue={String(opacity)}
-                      onBlur={(event) => {
-                        const parsed = Number(event.target.value);
-                        if (!Number.isFinite(parsed)) return;
-                        updateEntityViewState(part.id, {
-                          opacity: Math.max(5, Math.min(100, Math.round(parsed))),
-                        });
-                      }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </SidebarSection>
-      ) : null}
-
-      {ctx.isFemBackend && showBoundaryPanel ? (
-        <SidebarSection title="Outer Boundary" icon="🔲" defaultOpen={true}>
-          <div className="flex flex-col gap-3">
-            <SelectField
-              label="BC Kind"
-              value={outerBoundaryPolicy}
-              onchange={(nextValue) => {
-                ctx.setScriptBuilderDemagRealization(
-                  nextValue === "auto" ? null : nextValue,
-                );
-              }}
-              disabled={!editable}
-              options={[
-                { value: "auto", label: "Auto" },
-                { value: "airbox_dirichlet", label: "Dirichlet" },
-                { value: "airbox_robin", label: "Robin" },
-                { value: "transfer_grid", label: "Transfer Grid" },
-              ]}
-            />
-            <MetricField
-              label="Status"
-              value={outerBoundaryPolicy === "auto" ? "Planner-managed" : "Explicit authoring"}
-            />
-            <MetricField label="Effective" value={outerBoundaryLabel} />
-            <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
-              `Dirichlet` and `Robin` keep the solve on the shared airbox FEM path.
-              `Transfer Grid` skips the outer airbox boundary solve and uses the FFT transfer-grid demag path instead.
-            </div>
-          </div>
-        </SidebarSection>
-      ) : null}
-
-      {showGlobalMeshPanel ? (
-        <SidebarSection title="Domain Mesh" icon="◫" defaultOpen={true}>
-          <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
-            In the shared-domain FEM flow this node is now only diagnostic.
-            Use `Universe → Airbox` to tune the airbox mesh and use each object's `Mesh` panel for local magnetic-body overrides.
-          </div>
-        </SidebarSection>
-      ) : null}
-
-      {showUniverseOverview ? (
-      <SidebarSection title="Universe Summary" icon="📊" defaultOpen={true}>
-        <div className="grid grid-cols-2 gap-3">
-          <MetricField label="Mode" value={mode ? humanizeToken(mode) : "—"} tooltip="Current universe derivation mode." />
-          <MetricField label="Role" value={role} tooltip="How this box should be interpreted in the active backend." />
-          <MetricField label="Declared Size" value={formatVector(declaredSize, "m")} tooltip="Size explicitly declared in the builder." />
-          <MetricField label="World Extent" value={formatVector(worldExtent, "m")} tooltip="Declared or derived workspace/world framing used by the control room." />
-          <MetricField label="Mesh Extent" value={formatVector(meshExtent, "m")} tooltip="Bounding-box extent of the currently realized mesh." />
-          <MetricField label="Center" value={formatVector(center, "m")} tooltip="Absolute origin of the universe bounding box." />
-          <MetricField
-            label="Padding"
-            value={hasNonZeroVector(padding) ? formatVector(padding, "m") : "—"}
-            tooltip="Calculated padding added around physical objects."
-          />
-        </div>
-      </SidebarSection>
-      ) : null}
-    </>
+          </SidebarSection>
+        ) : null}
+      </TabsContent>
+    </Tabs>
   );
 }

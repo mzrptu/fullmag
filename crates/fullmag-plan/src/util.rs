@@ -1,4 +1,5 @@
 use fullmag_ir::{DeclaredUniverseIR, DomainFrameIR, ProblemIR};
+use serde_json::Value;
 
 pub(crate) const MU0: f64 = 4.0 * std::f64::consts::PI * 1e-7;
 pub(crate) const PLACEMENT_TOLERANCE: f64 = 1e-12;
@@ -13,6 +14,46 @@ pub(crate) fn runtime_requests_cuda(problem: &ProblemIR) -> bool {
         .and_then(|v| v.get("device"))
         .and_then(|v| v.as_str())
         .is_some_and(|d| d == "cuda" || d == "gpu")
+}
+
+pub(crate) fn mesh_workflow_metadata(problem: &ProblemIR) -> Option<&serde_json::Map<String, Value>> {
+    problem
+        .problem_meta
+        .runtime_metadata
+        .get("mesh_workflow")
+        .and_then(|value| value.as_object())
+}
+
+pub(crate) fn shared_domain_mesh_requested(
+    problem: &ProblemIR,
+    requested_demag_realization: Option<&str>,
+) -> bool {
+    if matches!(
+        requested_demag_realization,
+        Some("poisson_airbox" | "airbox_dirichlet" | "airbox_robin")
+    ) {
+        return true;
+    }
+
+    let Some(mesh_workflow) = mesh_workflow_metadata(problem) else {
+        return false;
+    };
+    if mesh_workflow
+        .get("build_target")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| value == "domain")
+    {
+        return true;
+    }
+    mesh_workflow
+        .get("domain_mesh_mode")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| {
+            matches!(
+                value,
+                "generated_shared_domain_mesh" | "explicit_shared_domain_mesh"
+            )
+        })
 }
 
 #[derive(Debug, Clone)]

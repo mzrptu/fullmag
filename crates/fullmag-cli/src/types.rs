@@ -220,6 +220,10 @@ pub(crate) struct CurrentLivePublishPayload {
     /// Typed runtime status for the frontend typed protocol.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_status: Option<fullmag_runner::RuntimeStatus>,
+    /// Explicit mesh payload — promoted to top-level so the mesh lifecycle is
+    /// an independent event, not hidden inside `live_state.latest_step`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fem_mesh: Option<fullmag_runner::FemMeshPayload>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -291,6 +295,8 @@ pub(crate) struct CurrentLivePublishRequest<'a> {
     pub engine_log: Option<&'a [EngineLogEntry]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mesh_workspace: Option<&'a serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fem_mesh: Option<&'a fullmag_runner::FemMeshPayload>,
 }
 
 #[derive(Debug, Clone)]

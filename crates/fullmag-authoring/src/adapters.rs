@@ -694,4 +694,16 @@ mod tests {
             Some(1)
         );
     }
+
+    #[test]
+    fn scene_document_bootstraps_mesh_editor_defaults() {
+        let scene = scene_document_from_script_builder(&sample_builder());
+
+        assert_eq!(scene.editor.object_view_mode.as_deref(), Some("context"));
+        assert_eq!(scene.editor.air_mesh_visible, Some(true));
+        assert_eq!(scene.editor.air_mesh_opacity, Some(28.0));
+        assert_eq!(scene.editor.selected_entity_id, None);
+        assert_eq!(scene.editor.focused_entity_id, None);
+        assert!(scene.editor.mesh_entity_view_state.is_empty());
+    }
 }

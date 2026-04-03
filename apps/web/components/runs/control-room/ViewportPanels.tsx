@@ -469,6 +469,7 @@ export function ViewportCanvasArea() {
   const missingExactScopeSegment = Boolean(
     ctx.isFemBackend &&
       ctx.femMeshData &&
+      ctx.femMeshData.nElements > 0 &&
       selectedFemObjectId &&
       !hasExactScopeSegment,
   );
@@ -583,6 +584,8 @@ export function ViewportCanvasArea() {
         onAntennaTranslate={ctx.applyAntennaTranslation}
         worldExtent={ctx.worldExtent}
         worldCenter={ctx.worldCenter}
+        onEntitySelect={ctx.setSelectedEntityId}
+        onEntityFocus={ctx.setFocusedEntityId}
       />
     );
   } else if (ctx.effectiveViewMode === "3D" && ctx.femMeshData) {

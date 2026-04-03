@@ -21,6 +21,7 @@ from fullmag.meshing.voxelization import VoxelMaskData
 from fullmag.runtime import cli as runtime_cli
 from fullmag.runtime import helper as runtime_helper
 from fullmag.runtime.loader import load_problem_from_script
+from fullmag.runtime.scene_document import build_scene_document_from_builder
 from fullmag.runtime.script_builder import export_builder_draft, rewrite_loaded_problem_script
 from fullmag.meshing.gmsh_bridge import MeshData
 
@@ -355,6 +356,141 @@ class ProblemApiTests(unittest.TestCase):
             rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
             self.assertIn('study.demag(realization="airbox_robin")', rewritten)
 
+    def test_study_shared_domain_mesh_rewrite_uses_build_domain_mesh(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("shared_domain_rewrite")
+        study.engine("fem")
+        study.universe(mode="auto", padding=(10e-9, 10e-9, 10e-9), airbox_hmax=25e-9)
+        study.mesh(hmax=8e-9, order=2)
+        body = study.geometry(fm.Box(20e-9, 20e-9, 10e-9), name="body")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        study.build_mesh()
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "study_shared_domain_rewrite.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with patch("fullmag.world.build_geometry_assets_for_request", return_value=None):
+                loaded = fm.load_problem_from_script(path)
+
+        workflow = loaded.problem.runtime_metadata["mesh_workflow"]
+        self.assertEqual(workflow["build_target"], "domain")
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn("study.build_domain_mesh()", rewritten)
+        self.assertNotIn("study.build_mesh()", rewritten)
+
+    def test_study_build_domain_mesh_alias_builds_explicit_assets(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("shared_domain_alias")
+        study.engine("fem")
+        study.universe(mode="manual", size=(80e-9, 60e-9, 40e-9))
+        study.mesh(hmax=8e-9, order=2)
+        body = study.geometry(fm.Box(20e-9, 20e-9, 10e-9), name="body")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        study.build_domain_mesh()
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "study_build_domain_mesh.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with patch("fullmag.world.build_geometry_assets_for_request", return_value=None) as mocked:
+                loaded = fm.load_problem_from_script(path)
+
+        self.assertEqual(mocked.call_count, 1)
+        workflow = loaded.problem.runtime_metadata["mesh_workflow"]
+        self.assertTrue(workflow["build_requested"])
+        self.assertEqual(workflow["build_target"], "domain")
+
+    def test_study_domain_mesh_attaches_explicit_shared_domain_asset(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("explicit_shared_domain")
+        study.engine("fem")
+        study.domain_mesh(
+            "prebuilt_domain.json",
+            region_markers={"left": 1, "right": 2},
+        )
+        left = study.geometry(fm.Box(20e-9, 20e-9, 10e-9), name="left")
+        left.Ms = 800e3
+        left.Aex = 13e-12
+        left.alpha = 0.1
+        left.m = fm.uniform(1, 0, 0)
+        right = study.geometry(fm.Box(20e-9, 20e-9, 10e-9).translate((30e-9, 0, 0)), name="right")
+        right.Ms = 800e3
+        right.Aex = 13e-12
+        right.alpha = 0.1
+        right.m = fm.uniform(1, 0, 0)
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "study_explicit_domain_mesh.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+
+        workflow = loaded.problem.runtime_metadata["mesh_workflow"]
+        self.assertEqual(workflow["build_target"], "domain")
+        self.assertEqual(workflow["domain_mesh_mode"], "explicit_shared_domain_mesh")
+        self.assertEqual(workflow["domain_mesh_source"], "prebuilt_domain.json")
+        self.assertEqual(
+            workflow["domain_region_markers"],
+            [
+                {"geometry_name": "left", "marker": 1},
+                {"geometry_name": "right", "marker": 2},
+            ],
+        )
+
+        stub_mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            ),
+            elements=np.asarray([[0, 1, 2, 3]], dtype=np.int32),
+            element_markers=np.asarray([1], dtype=np.int32),
+            boundary_faces=np.asarray([[0, 1, 2]], dtype=np.int32),
+            boundary_markers=np.asarray([1], dtype=np.int32),
+        )
+        with patch("fullmag.meshing.realize_fem_mesh_asset", return_value=stub_mesh), patch(
+            "fullmag._core.validate_mesh_ir",
+            return_value=True,
+        ):
+            ir = loaded.problem.to_ir(requested_backend=fm.BackendTarget.FEM)
+        self.assertEqual(
+            ir["geometry_assets"]["fem_domain_mesh_asset"]["mesh_source"],
+            "prebuilt_domain.json",
+        )
+        self.assertEqual(
+            ir["geometry_assets"]["fem_domain_mesh_asset"]["region_markers"],
+            [
+                {"geometry_name": "left", "marker": 1},
+                {"geometry_name": "right", "marker": 2},
+            ],
+        )
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn(
+            'study.domain_mesh(source="prebuilt_domain.json", region_markers={"left": 1, "right": 2})',
+            rewritten,
+        )
+
     def test_manual_study_universe_expands_box_fdm_grid_asset_domain(self) -> None:
         fm.reset()
         study = fm.study("manual_universe_grid")
@@ -410,6 +546,39 @@ class ProblemApiTests(unittest.TestCase):
         for actual, expected in zip(asset["origin"], [-20e-9, -25e-9, -30e-9], strict=True):
             self.assertAlmostEqual(actual, expected)
         self.assertEqual(sum(asset["active_mask"]), 24)
+
+    def test_scene_document_bootstraps_mesh_editor_defaults(self) -> None:
+        scene = build_scene_document_from_builder(
+            {
+                "revision": 3,
+                "backend": "fem",
+                "demag_realization": "airbox_robin",
+                "solver": {"integrator": "rk45"},
+                "mesh": {"hmax": "20e-9"},
+                "universe": {"mode": "auto", "airbox_hmax": 60e-9},
+                "stages": [],
+                "initial_state": None,
+                "geometries": [
+                    {
+                        "name": "flower",
+                        "geometry_kind": "Box",
+                        "geometry_params": {"size": [20e-9, 20e-9, 10e-9]},
+                        "material": {"Ms": 800e3, "Aex": 13e-12, "alpha": 0.1},
+                        "magnetization": {"kind": "uniform", "value": [1.0, 0.0, 0.0]},
+                        "mesh": {"mode": "inherit", "hmax": ""},
+                    }
+                ],
+                "current_modules": [],
+                "excitation_analysis": None,
+            }
+        )
+
+        self.assertEqual(scene["editor"]["object_view_mode"], "context")
+        self.assertTrue(scene["editor"]["air_mesh_visible"])
+        self.assertEqual(scene["editor"]["air_mesh_opacity"], 28.0)
+        self.assertIsNone(scene["editor"]["selected_entity_id"])
+        self.assertIsNone(scene["editor"]["focused_entity_id"])
+        self.assertEqual(scene["editor"]["mesh_entity_view_state"], {})
 
     def test_legacy_dynamics_and_outputs_are_normalized_to_time_evolution(self) -> None:
         geometry = fm.Box(size=(100e-9, 20e-9, 5e-9), name="track")

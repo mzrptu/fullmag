@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   AlertTriangle,
@@ -38,11 +38,12 @@ import type { RenderMode } from "../../preview/FemMeshView3D";
 import { TextField } from "../../ui/TextField";
 import SelectField from "../../ui/SelectField";
 import { Button } from "../../ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
 import type {
   ScriptBuilderPerGeometryMeshEntry,
 } from "../../../lib/session/types";
 import { findSceneObjectByNodeId } from "./objectSelection";
-import { SidebarSection } from "./primitives";
+import { MetricField, SidebarSection } from "./primitives";
 import { HelpTip } from "../../ui/HelpTip";
 
 /* ── Helpers ── */
@@ -149,6 +150,19 @@ function buildCustomMeshState(
   };
 }
 
+function objectMeshTabFromNodeId(nodeId?: string): string {
+  if (!nodeId) return "override";
+  if (nodeId.includes("mesh-view")) return "view";
+  if (nodeId.includes("mesh-quality")) return "diagnostics";
+  if (nodeId.includes("mesh-pipeline")) return "build";
+  return "override";
+}
+
+function formatMeshSetting(value: string | null | undefined, fallback = "Inherited / Auto"): string {
+  if (!value) return fallback;
+  return value.trim().length > 0 ? value : fallback;
+}
+
 /* ── Component ── */
 
 export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
@@ -208,6 +222,14 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
   const effectiveSource = mesh.source ?? model.meshSource ?? null;
   const sharedDomainMesh =
     ctx.effectiveFemMesh?.domain_mesh_mode === "shared_domain_mesh_with_air";
+  const [activeTab, setActiveTab] = useState(() => objectMeshTabFromNodeId(nodeId));
+  useEffect(() => {
+    setActiveTab(objectMeshTabFromNodeId(nodeId));
+  }, [nodeId]);
+  const canBuildOverride = !ctx.meshGenerating && (ctx.awaitingCommand || ctx.isWaitingForCompute);
+  const handleBuildOverride = useCallback(() => {
+    void ctx.handleObjectMeshOverrideRebuild(sceneObject?.id ?? geo?.name ?? null);
+  }, [ctx, geo?.name, sceneObject?.id]);
 
   /* ── Mesh workspace data from context ── */
   const {
@@ -308,13 +330,11 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
   /* ── Main render ── */
   return (
     <div className="flex flex-col pt-4 px-2">
-
-      {/* ── Object Header ── */}
-      <SidebarSection title="Object Mesh Override" defaultOpen={true}>
+      <SidebarSection title="Object Mesh" defaultOpen={true}>
         <div className="flex flex-col gap-5">
           <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2.5">
             <div className="text-[0.62rem] font-bold uppercase tracking-widest text-muted-foreground">
-              Mesh Override for Object
+              Object Mesh Configuration
             </div>
             <div className="mt-1 flex items-center justify-between gap-3">
               <span className="font-mono text-xs text-foreground">{geo.name}</span>
@@ -324,264 +344,347 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant={mesh.mode === "inherit" ? "default" : "outline"}
-              size="sm"
-              onClick={() =>
-                updateGeo(() => createInheritedMeshState())
-              }
-            >
-              Inherit Study Mesh
-            </Button>
-            <Button
-              variant={mesh.mode === "custom" ? "default" : "outline"}
-              size="sm"
-              onClick={() =>
-                updateGeo((currentMesh) =>
-                  buildCustomMeshState(
-                    effectiveOptions,
-                    currentMesh,
-                    {
-                      order: currentMesh?.order ?? model.meshFeOrder ?? null,
-                      source: currentMesh?.source ?? model.meshSource ?? null,
-                      buildRequested: currentMesh?.build_requested ?? false,
-                    },
-                  ),
-                )
-              }
-            >
-              Use Local Override
-            </Button>
-          </div>
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col gap-3">
+            <TabsList className="grid h-auto grid-cols-5">
+              <TabsTrigger value="override">Override</TabsTrigger>
+              <TabsTrigger value="effective">Effective</TabsTrigger>
+              <TabsTrigger value="view">View</TabsTrigger>
+              <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
+              <TabsTrigger value="build">Build</TabsTrigger>
+            </TabsList>
 
-          <SelectField
-            label="Mesh Mode"
-            value={mesh.mode}
-            onchange={(value) =>
-              updateGeo((currentMesh) =>
-                  value === "custom"
-                    ? buildCustomMeshState(effectiveOptions, currentMesh, {
-                        order: currentMesh?.order ?? model.meshFeOrder ?? null,
-                        source: currentMesh?.source ?? model.meshSource ?? null,
-                        buildRequested: currentMesh?.build_requested ?? false,
-                      })
-                    : createInheritedMeshState(),
-              )
-            }
-            options={[
-              { label: "Inherit Study Mesh", value: "inherit" },
-              { label: "Custom Override", value: "custom" },
-            ]}
-            tooltip="Whether this object inherits the study-domain mesh defaults or uses a custom local override."
-          />
+            <TabsContent value="override" className="mt-0">
+              <div className="flex flex-col gap-4">
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant={mesh.mode === "inherit" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() =>
+                      updateGeo(() => createInheritedMeshState())
+                    }
+                  >
+                    Use Object Defaults
+                  </Button>
+                  <Button
+                    variant={mesh.mode === "custom" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() =>
+                      updateGeo((currentMesh) =>
+                        buildCustomMeshState(
+                          effectiveOptions,
+                          currentMesh,
+                          {
+                            order: currentMesh?.order ?? model.meshFeOrder ?? null,
+                            source: currentMesh?.source ?? model.meshSource ?? null,
+                            buildRequested: currentMesh?.build_requested ?? false,
+                          },
+                        ),
+                      )
+                    }
+                  >
+                    Use Local Override
+                  </Button>
+                </div>
 
-          {mesh.mode === "inherit" && (
-            <div className="rounded-lg border border-border/40 bg-card/30 px-3 py-2 text-xs text-muted-foreground">
-              This object currently inherits the study-level FEM mesh settings.
-              Switch to custom mode to edit a local override for the next domain rebuild.
-            </div>
-          )}
-          {sharedDomainMesh ? (
-            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100/90">
-              Shared-domain FEM uses one conformal solver mesh. This panel edits only this
-              object's local sizing override, but applying it rebuilds the full study-domain
-              mesh rather than an isolated object mesh.
-            </div>
-          ) : null}
+                <SelectField
+                  label="Mesh Mode"
+                  value={mesh.mode}
+                  onchange={(value) =>
+                    updateGeo((currentMesh) =>
+                        value === "custom"
+                          ? buildCustomMeshState(effectiveOptions, currentMesh, {
+                              order: currentMesh?.order ?? model.meshFeOrder ?? null,
+                              source: currentMesh?.source ?? model.meshSource ?? null,
+                              buildRequested: currentMesh?.build_requested ?? false,
+                            })
+                          : createInheritedMeshState(),
+                    )
+                  }
+                  options={[
+                    { label: "Object Defaults", value: "inherit" },
+                    { label: "Local Override", value: "custom" },
+                  ]}
+                  tooltip="Whether this object inherits the study's default object mesh settings or uses a custom local override."
+                />
 
-          <div className="grid grid-cols-2 gap-3">
-            <TextField
-              key={`${geo.name}-mesh-order-${effectiveOrder ?? ""}`}
-              label="FEM Order"
-              defaultValue={effectiveOrder != null ? String(effectiveOrder) : ""}
-              onchange={(e) => {
-                const raw = e.target.value.trim();
-                updateGeo((currentMesh) =>
-                  buildCustomMeshState(
-                    effectiveOptions,
-                    currentMesh,
-                    {
-                      order: raw.length > 0 ? Math.max(1, Math.round(Number(raw) || 1)) : null,
-                      source: currentMesh?.source ?? model.meshSource ?? null,
-                      buildRequested: currentMesh?.build_requested ?? false,
-                    },
-                  ),
-                );
-              }}
-              mono
-              disabled={mesh.mode !== "custom"}
-              placeholder="1"
-              tooltip="Finite element polynomial order (P1 = linear, P2 = quadratic)."
-            />
-            <TextField
-              key={`${geo.name}-mesh-source-${effectiveSource ?? ""}`}
-              label="Source Mesh"
-              defaultValue={effectiveSource ?? ""}
-              onchange={(e) => {
-                const raw = e.target.value.trim();
-                updateGeo((currentMesh) =>
-                  buildCustomMeshState(
-                    effectiveOptions,
-                    currentMesh,
-                    {
-                      order: currentMesh?.order ?? model.meshFeOrder ?? null,
-                      source: raw.length > 0 ? raw : null,
-                      buildRequested: currentMesh?.build_requested ?? false,
-                    },
-                  ),
-                );
-              }}
-              mono
-              disabled={mesh.mode !== "custom"}
-              placeholder="mesh.msh"
-              tooltip="File path to a pre-generated mesh for this object. Leave empty to auto-generate."
-            />
-          </div>
+                {mesh.mode === "inherit" && (
+                  <div className="rounded-lg border border-border/40 bg-card/30 px-3 py-2 text-xs text-muted-foreground">
+                    This object currently inherits the study-level object mesh defaults.
+                    Switch to custom mode to edit a local override for the next domain rebuild.
+                  </div>
+                )}
+                {sharedDomainMesh ? (
+                  <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100/90">
+                    Shared-domain FEM uses one conformal solver mesh. This panel edits only this
+                    object&apos;s local sizing override, but applying it rebuilds the full study-domain
+                    mesh rather than an isolated object mesh.
+                  </div>
+                ) : null}
 
-          <MeshSettingsPanel
-            options={effectiveOptions}
-            onChange={(nextOptions) =>
-              updateGeo((currentMesh) =>
-                  mesh.mode === "custom"
-                    ? buildCustomMeshState(nextOptions, currentMesh, {
-                        order: currentMesh?.order ?? model.meshFeOrder ?? null,
-                        source: currentMesh?.source ?? model.meshSource ?? null,
-                        buildRequested: currentMesh?.build_requested ?? false,
-                      })
-                    : currentMesh ?? createInheritedMeshState(),
-              )
-            }
-            quality={meshQualityData}
-            generating={ctx.meshGenerating}
-            onGenerate={() => void ctx.handleObjectMeshOverrideRebuild(sceneObject?.id ?? geo.name)}
-            generateLabel={sharedDomainMesh ? "Apply Override + Rebuild Domain Mesh" : "Build Mesh"}
-            generatingLabel={sharedDomainMesh ? "Rebuilding Domain Mesh..." : "Building Mesh..."}
-            nodeCount={effectiveFemMesh?.nodes.length}
-            disabled={mesh.mode !== "custom" || ctx.meshGenerating}
-            generateDisabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
-            waitMode={ctx.isWaitingForCompute}
-            showAdaptiveSection={false}
-          />
-        </div>
-      </SidebarSection>
+                <div className="grid grid-cols-2 gap-3">
+                  <TextField
+                    key={`${geo.name}-mesh-order-${effectiveOrder ?? ""}`}
+                    label="FEM Order"
+                    defaultValue={effectiveOrder != null ? String(effectiveOrder) : ""}
+                    onchange={(e) => {
+                      const raw = e.target.value.trim();
+                      updateGeo((currentMesh) =>
+                        buildCustomMeshState(
+                          effectiveOptions,
+                          currentMesh,
+                          {
+                            order: raw.length > 0 ? Math.max(1, Math.round(Number(raw) || 1)) : null,
+                            source: currentMesh?.source ?? model.meshSource ?? null,
+                            buildRequested: currentMesh?.build_requested ?? false,
+                          },
+                        ),
+                      );
+                    }}
+                    mono
+                    disabled={mesh.mode !== "custom"}
+                    placeholder="1"
+                    tooltip="Finite element polynomial order (P1 = linear, P2 = quadratic)."
+                  />
+                  <TextField
+                    key={`${geo.name}-mesh-source-${effectiveSource ?? ""}`}
+                    label="Source Mesh"
+                    defaultValue={effectiveSource ?? ""}
+                    onchange={(e) => {
+                      const raw = e.target.value.trim();
+                      updateGeo((currentMesh) =>
+                        buildCustomMeshState(
+                          effectiveOptions,
+                          currentMesh,
+                          {
+                            order: currentMesh?.order ?? model.meshFeOrder ?? null,
+                            source: raw.length > 0 ? raw : null,
+                            buildRequested: currentMesh?.build_requested ?? false,
+                          },
+                        ),
+                      );
+                    }}
+                    mono
+                    disabled={mesh.mode !== "custom"}
+                    placeholder="mesh.msh"
+                    tooltip="File path to a pre-generated mesh for this object. Leave empty to auto-generate."
+                  />
+                </div>
 
-      {/* ── Inspect & Render ── */}
-      <SidebarSection title="Inspect & Render" defaultOpen={true}>
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-            Viewport
-            <HelpTip>Switch between Mesh wireframe view, 3D magnetization view, and 2D heatmap view.</HelpTip>
-          </span>
-          <span className="text-[0.65rem] font-mono text-muted-foreground/70">{meshRenderMode}</span>
-        </div>
-        <div className="flex flex-wrap gap-1">
-          {viewportModes.map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className="appearance-none rounded-md border border-border/40 bg-background/50 px-2.5 py-1.5 text-xs font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
-              data-active={effectiveViewMode === mode}
-              onClick={() => handleViewModeChange(mode)}
-            >
-              {mode}
-            </button>
-          ))}
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {MESH_RENDER_MODE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className="appearance-none rounded-md border border-border/40 bg-background/50 px-2.5 py-1.5 text-xs font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
-              data-active={meshRenderMode === option.value}
-              onClick={() => setMeshRenderMode(option.value as RenderMode)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+                <MeshSettingsPanel
+                  options={effectiveOptions}
+                  onChange={(nextOptions) =>
+                    updateGeo((currentMesh) =>
+                        mesh.mode === "custom"
+                          ? buildCustomMeshState(nextOptions, currentMesh, {
+                              order: currentMesh?.order ?? model.meshFeOrder ?? null,
+                              source: currentMesh?.source ?? model.meshSource ?? null,
+                              buildRequested: currentMesh?.build_requested ?? false,
+                            })
+                          : currentMesh ?? createInheritedMeshState(),
+                    )
+                  }
+                  quality={meshQualityData}
+                  generating={ctx.meshGenerating}
+                  nodeCount={effectiveFemMesh?.nodes.length}
+                  disabled={mesh.mode !== "custom" || ctx.meshGenerating}
+                  waitMode={ctx.isWaitingForCompute}
+                  showAdaptiveSection={false}
+                />
+              </div>
+            </TabsContent>
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-2">
-          {/* Clip Plane */}
-          <div className="grid gap-2 rounded-lg border border-border/30 bg-background/50 p-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[0.7rem] font-semibold tracking-wide text-muted-foreground flex items-center gap-1">
-                Clip Plane
-                <HelpTip>Enable a clipping plane to see inside the volume mesh along a chosen axis.</HelpTip>
-              </span>
-              <button
-                type="button"
-                className="rounded-md border border-border/40 bg-background/70 px-2.5 py-1 text-[0.7rem] font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
-                data-active={meshClipEnabled}
-                onClick={() => setMeshClipEnabled((current) => !current)}
-              >
-                {meshClipEnabled ? "On" : "Off"}
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {(["x", "y", "z"] as const).map((axis) => (
-                <button
-                  key={axis}
-                  type="button"
-                  className="appearance-none rounded-md border border-border/40 bg-background/70 px-2.5 py-1 text-[0.7rem] font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
-                  data-active={meshClipAxis === axis}
-                  disabled={!meshClipEnabled}
-                  onClick={() => setMeshClipAxis(axis)}
-                >
-                  {axis.toUpperCase()}
-                </button>
-              ))}
-            </div>
-            <label className="grid gap-1 text-[0.65rem] text-muted-foreground">
-              <span>Position: {Math.round(meshClipPos)}%</span>
-              <input
-                type="range"
-                className="h-[3px] w-full accent-primary"
-                min={0}
-                max={100}
-                value={meshClipPos}
-                onChange={(event) => setMeshClipPos(Number(event.target.value))}
-                disabled={!meshClipEnabled}
-              />
-            </label>
-          </div>
+            <TabsContent value="effective" className="mt-0">
+              <div className="flex flex-col gap-3">
+                <div className="overflow-x-auto rounded-lg border border-border/40">
+                  <table className="w-full text-[0.72rem]">
+                    <thead>
+                      <tr className="border-b border-border/30 bg-muted/20">
+                        <th className="px-2 py-1.5 text-left font-semibold text-muted-foreground uppercase tracking-widest text-[0.6rem]">Parameter</th>
+                        <th className="px-2 py-1.5 text-right font-semibold text-muted-foreground uppercase tracking-widest text-[0.6rem]">Study default</th>
+                        <th className="px-2 py-1.5 text-right font-semibold text-muted-foreground uppercase tracking-widest text-[0.6rem]">Object override</th>
+                        <th className="px-2 py-1.5 text-right font-semibold text-primary/80 uppercase tracking-widest text-[0.6rem]">Effective</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/20">
+                      {[
+                        {
+                          param: "hmax",
+                          studyVal: model.meshOptions.hmax || "auto",
+                          overrideVal: mesh.mode === "custom" && mesh.hmax.trim() ? mesh.hmax : "—",
+                          effectiveVal: effectiveOptions.hmax || "auto",
+                          overrideActive: mesh.mode === "custom" && mesh.hmax.trim().length > 0,
+                        },
+                        {
+                          param: "hmin",
+                          studyVal: model.meshOptions.hmin || "auto",
+                          overrideVal: mesh.mode === "custom" && mesh.hmin.trim() ? mesh.hmin : "—",
+                          effectiveVal: effectiveOptions.hmin || "auto",
+                          overrideActive: mesh.mode === "custom" && mesh.hmin.trim().length > 0,
+                        },
+                        {
+                          param: "FE order",
+                          studyVal: model.meshFeOrder != null ? `P${model.meshFeOrder}` : "auto",
+                          overrideVal: mesh.mode === "custom" && mesh.order != null ? `P${mesh.order}` : "—",
+                          effectiveVal: effectiveOrder != null ? `P${effectiveOrder}` : "auto",
+                          overrideActive: mesh.mode === "custom" && mesh.order != null,
+                        },
+                        {
+                          param: "Algorithm 2D",
+                          studyVal: String(model.meshOptions.algorithm2d),
+                          overrideVal: mesh.mode === "custom" && mesh.algorithm_2d != null ? String(mesh.algorithm_2d) : "—",
+                          effectiveVal: String(effectiveOptions.algorithm2d),
+                          overrideActive: mesh.mode === "custom" && mesh.algorithm_2d != null,
+                        },
+                        {
+                          param: "Optimize",
+                          studyVal: model.meshOptions.optimize || "none",
+                          overrideVal: "—",
+                          effectiveVal: effectiveOptions.optimize || "none",
+                          overrideActive: false,
+                        },
+                        {
+                          param: "Quality metrics",
+                          studyVal: model.meshOptions.computeQuality ? "on" : "off",
+                          overrideVal: "—",
+                          effectiveVal: effectiveOptions.computeQuality ? "on" : "off",
+                          overrideActive: false,
+                        },
+                      ].map(({ param, studyVal, overrideVal, effectiveVal, overrideActive }) => (
+                        <tr key={param} className={cn("transition-colors hover:bg-muted/10", overrideActive && "bg-amber-500/5")}>
+                          <td className="px-2 py-1.5 font-medium text-muted-foreground">{param}</td>
+                          <td className="px-2 py-1.5 text-right font-mono text-foreground/70">{studyVal}</td>
+                          <td className={cn("px-2 py-1.5 text-right font-mono", overrideActive ? "text-amber-400 font-semibold" : "text-muted-foreground/40")}>{overrideVal}</td>
+                          <td className="px-2 py-1.5 text-right font-mono text-primary font-semibold">{effectiveVal}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <MetricField label="Mode" value={mesh.mode === "custom" ? "Local Override" : "Inherited Defaults"} />
+                  <MetricField label="Mesh Scope" value={sharedDomainMesh ? "Shared Domain" : "Object Mesh"} />
+                </div>
+                <div className="rounded-lg border border-border/35 bg-background/40 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+                  Effective values merge the study&apos;s object mesh defaults with this object&apos;s local override. If the mode is <code className="font-mono text-foreground/80">inherit</code>, every field above comes from the study-level defaults.
+                </div>
+              </div>
+            </TabsContent>
 
-          {/* Display Controls */}
-          <div className="grid gap-2 rounded-lg border border-border/30 bg-background/50 p-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[0.7rem] font-semibold tracking-wide text-muted-foreground flex items-center gap-1">
-                Display
-                <HelpTip>Adjust mesh opacity and toggle magnetization arrows on the mesh surface.</HelpTip>
-              </span>
-              <button
-                type="button"
-                className="flex items-center gap-1.5 rounded-md border border-border/40 bg-background/70 px-2.5 py-1 text-[0.7rem] font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
-                data-active={meshShowArrows}
-                onClick={() => setMeshShowArrows((current) => !current)}
-              >
-                {meshShowArrows ? <Eye size={12} /> : <EyeOff size={12} />}
-                Arrows
-              </button>
-            </div>
-            <label className="grid gap-1 text-[0.65rem] text-muted-foreground">
-              <span>Opacity: {meshOpacity}%</span>
-              <input
-                type="range"
-                className="h-[3px] w-full accent-primary"
-                min={10}
-                max={100}
-                value={meshOpacity}
-                onChange={(event) => setMeshOpacity(Number(event.target.value))}
-              />
-            </label>
-          </div>
-        </div>
-      </SidebarSection>
+            <TabsContent value="view" className="mt-0">
+              <SidebarSection title="Inspect & Render" defaultOpen={true}>
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    Viewport
+                    <HelpTip>Switch between Mesh wireframe view, 3D magnetization view, and 2D heatmap view.</HelpTip>
+                  </span>
+                  <span className="text-[0.65rem] font-mono text-muted-foreground/70">{meshRenderMode}</span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {viewportModes.map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className="appearance-none rounded-md border border-border/40 bg-background/50 px-2.5 py-1.5 text-xs font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+                      data-active={effectiveViewMode === mode}
+                      onClick={() => handleViewModeChange(mode)}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {MESH_RENDER_MODE_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className="appearance-none rounded-md border border-border/40 bg-background/50 px-2.5 py-1.5 text-xs font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+                      data-active={meshRenderMode === option.value}
+                      onClick={() => setMeshRenderMode(option.value as RenderMode)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
 
-      {/* ── Spatial Summary ── */}
-      <SidebarSection title="Topology & Spatial" defaultOpen={true}>
-        <div className="grid grid-cols-2 gap-2">
+                <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                  <div className="grid gap-2 rounded-lg border border-border/30 bg-background/50 p-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[0.7rem] font-semibold tracking-wide text-muted-foreground flex items-center gap-1">
+                        Clip Plane
+                        <HelpTip>Enable a clipping plane to see inside the volume mesh along a chosen axis.</HelpTip>
+                      </span>
+                      <button
+                        type="button"
+                        className="rounded-md border border-border/40 bg-background/70 px-2.5 py-1 text-[0.7rem] font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+                        data-active={meshClipEnabled}
+                        onClick={() => setMeshClipEnabled((current) => !current)}
+                      >
+                        {meshClipEnabled ? "On" : "Off"}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {(["x", "y", "z"] as const).map((axis) => (
+                        <button
+                          key={axis}
+                          type="button"
+                          className="appearance-none rounded-md border border-border/40 bg-background/70 px-2.5 py-1 text-[0.7rem] font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+                          data-active={meshClipAxis === axis}
+                          disabled={!meshClipEnabled}
+                          onClick={() => setMeshClipAxis(axis)}
+                        >
+                          {axis.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="grid gap-1 text-[0.65rem] text-muted-foreground">
+                      <span>Position: {Math.round(meshClipPos)}%</span>
+                      <input
+                        type="range"
+                        className="h-[3px] w-full accent-primary"
+                        min={0}
+                        max={100}
+                        value={meshClipPos}
+                        onChange={(event) => setMeshClipPos(Number(event.target.value))}
+                        disabled={!meshClipEnabled}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid gap-2 rounded-lg border border-border/30 bg-background/50 p-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[0.7rem] font-semibold tracking-wide text-muted-foreground flex items-center gap-1">
+                        Display
+                        <HelpTip>Adjust mesh opacity and toggle magnetization arrows on the mesh surface.</HelpTip>
+                      </span>
+                      <button
+                        type="button"
+                        className="flex items-center gap-1.5 rounded-md border border-border/40 bg-background/70 px-2.5 py-1 text-[0.7rem] font-medium tracking-wide text-muted-foreground transition-colors hover:bg-muted/50 data-[active=true]:border-primary/50 data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
+                        data-active={meshShowArrows}
+                        onClick={() => setMeshShowArrows((current) => !current)}
+                      >
+                        {meshShowArrows ? <Eye size={12} /> : <EyeOff size={12} />}
+                        Arrows
+                      </button>
+                    </div>
+                    <label className="grid gap-1 text-[0.65rem] text-muted-foreground">
+                      <span>Opacity: {meshOpacity}%</span>
+                      <input
+                        type="range"
+                        className="h-[3px] w-full accent-primary"
+                        min={10}
+                        max={100}
+                        value={meshOpacity}
+                        onChange={(event) => setMeshOpacity(Number(event.target.value))}
+                      />
+                    </label>
+                  </div>
+                </div>
+              </SidebarSection>
+            </TabsContent>
+
+            <TabsContent value="diagnostics" className="mt-0">
+              <SidebarSection title="Topology & Spatial" defaultOpen={true}>
+                <div className="grid grid-cols-2 gap-2">
           <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 backdrop-blur-sm px-2.5 py-2 transition-colors hover:bg-background/60">
             <div className="flex items-center gap-1.5 text-muted-foreground">
               <GitCommitHorizontal size={11} />
@@ -656,10 +759,9 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
             </div>
           </div>
         )}
-      </SidebarSection>
+              </SidebarSection>
 
-      {/* ── Quality Snapshot ── */}
-      <SidebarSection title="Quality Snapshot" defaultOpen={false}>
+              <SidebarSection title="Quality Snapshot" defaultOpen={false}>
         <div className="mb-2 flex items-center justify-end">
           <span className="text-[0.65rem] font-mono text-muted-foreground/70">
             {meshQualityData ? "full metrics" : structuredQualitySummary ? "solver metrics" : meshQualitySummary ? "surface estimate" : "pending"}
@@ -727,10 +829,42 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
             Quality metrics not loaded yet. Use the global Optimize preset or enable Extract quality metrics before remeshing.
           </div>
         )}
-      </SidebarSection>
+              </SidebarSection>
+            </TabsContent>
 
-      {/* ── Pipeline Feedback ── */}
-      <SidebarSection title="Pipeline Feedback" defaultOpen={false}>
+            <TabsContent value="build" className="mt-0">
+              <SidebarSection title="Build" defaultOpen={true}>
+                <div className="flex flex-col gap-3">
+                  <div className="rounded-lg border border-border/35 bg-background/40 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+                    {sharedDomainMesh
+                      ? "Applying this override rebuilds the full shared-domain mesh for air plus magnetic bodies."
+                      : "Applying this override rebuilds the realized FEM mesh for the selected object workflow."}
+                  </div>
+                  <Button
+                    className="w-full"
+                    type="button"
+                    disabled={ctx.meshGenerating || ctx.scriptSyncBusy || !canBuildOverride}
+                    onClick={handleBuildOverride}
+                  >
+                    {ctx.meshGenerating || ctx.scriptSyncBusy ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {ctx.scriptSyncBusy
+                          ? "Syncing Script..."
+                          : (sharedDomainMesh ? "Rebuilding Domain Mesh..." : "Building Mesh...")}
+                      </span>
+                    ) : (
+                      sharedDomainMesh ? "Apply Override + Rebuild Domain Mesh" : "Build Mesh"
+                    )}
+                  </Button>
+                  <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+                    {ctx.scriptSyncMessage
+                      ?? "The build action syncs the current scene document back to canonical Python, then queues a remesh with the latest local override."}
+                  </div>
+                </div>
+              </SidebarSection>
+
+              <SidebarSection title="Pipeline Feedback" defaultOpen={false}>
         <div className="mb-2 flex items-center justify-end">
           <span className="text-[0.65rem] font-mono text-muted-foreground/70">
             {meshHighlights.length} logs
@@ -769,10 +903,9 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
             </div>
           </div>
         )}
-      </SidebarSection>
+              </SidebarSection>
 
-      {/* ── Workspace Presets ── */}
-      <SidebarSection title="Workspace Presets" defaultOpen={false}>
+              <SidebarSection title="Workspace Presets" defaultOpen={false}>
         <div className="grid grid-cols-2 gap-2">
           {MESH_WORKSPACE_PRESETS.map((preset) => {
             const active = meshWorkspacePreset === preset.id;
@@ -803,6 +936,10 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
               </button>
             );
           })}
+        </div>
+              </SidebarSection>
+            </TabsContent>
+          </Tabs>
         </div>
       </SidebarSection>
     </div>

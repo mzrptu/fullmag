@@ -31,12 +31,17 @@ impl LocalLiveWorkspaceState {
         let mut live_state = self.live_state.clone();
         let mut metadata = self.metadata.clone();
 
+        // Promote fem_mesh to a top-level payload field — this makes the mesh
+        // lifecycle an explicit event rather than a hidden one-time-at-step-0
+        // trick relying on API-side caching.  After promotion the step view no
+        // longer carries the mesh, so the API protocol is unambiguous.
+        let fem_mesh = live_state.latest_step.fem_mesh.take();
         if live_state.latest_step.step > 0 {
-            live_state.latest_step.fem_mesh = None;
             metadata = None;
         }
 
         CurrentLivePublishPayload {
+            fem_mesh,
             session: Some(self.session.clone()),
             session_status: Some(self.session.status.clone()),
             metadata,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FemMeshData } from "./FemMeshView3D";
 import { DIVERGING_PALETTE, POSITIVE_PALETTE } from "../../lib/colorPalettes";
 import type { AntennaOverlay } from "../runs/control-room/shared";
@@ -572,6 +572,113 @@ function antennaRectColors(
     : { fill: "rgba(249, 115, 22, 0.18)", stroke: "#fb923c" };
 }
 
+interface SliceRenderFrame {
+  width: number;
+  height: number;
+  margin: { left: number; right: number; top: number; bottom: number };
+  innerW: number;
+  innerH: number;
+  scale: number;
+  ox: number;
+  oy: number;
+  bounds: { uMin: number; uMax: number; vMin: number; vMax: number };
+}
+
+interface SliceProbe {
+  canvasX: number;
+  canvasY: number;
+  u: number;
+  v: number;
+  value: number | null;
+  source: "volume" | "boundary" | null;
+}
+
+function pointInPolygon(point: Point2, polygon: Point2[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+    const intersects =
+      yi > point[1] !== yj > point[1] &&
+      point[0] < ((xj - xi) * (point[1] - yi)) / Math.max(yj - yi, 1e-18) + xi;
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function distanceToSegment(point: Point2, a: Point2, b: Point2): { distance: number; t: number } {
+  const abx = b[0] - a[0];
+  const aby = b[1] - a[1];
+  const apx = point[0] - a[0];
+  const apy = point[1] - a[1];
+  const denom = abx * abx + aby * aby;
+  if (denom <= 1e-18) {
+    return { distance: Math.hypot(apx, apy), t: 0 };
+  }
+  const t = clamp((apx * abx + apy * aby) / denom, 0, 1);
+  const closestX = a[0] + abx * t;
+  const closestY = a[1] + aby * t;
+  return {
+    distance: Math.hypot(point[0] - closestX, point[1] - closestY),
+    t,
+  };
+}
+
+function sampleSliceProbe(
+  slice: ReturnType<typeof collectSegments>,
+  frame: SliceRenderFrame,
+  canvasX: number,
+  canvasY: number,
+): SliceProbe | null {
+  const { ox, oy, scale, innerH, bounds } = frame;
+  const u = (canvasX - ox) / scale + bounds.uMin;
+  const v = (oy + innerH - canvasY) / scale + bounds.vMin;
+  if (
+    !Number.isFinite(u) ||
+    !Number.isFinite(v) ||
+    u < bounds.uMin ||
+    u > bounds.uMax ||
+    v < bounds.vMin ||
+    v > bounds.vMax
+  ) {
+    return null;
+  }
+
+  const point: Point2 = [u, v];
+  for (const polygon of slice.polygons) {
+    if (polygon.points.length >= 3 && pointInPolygon(point, polygon.points)) {
+      return { canvasX, canvasY, u, v, value: polygon.value, source: "volume" };
+    }
+  }
+
+  const snapRadius = 10 / Math.max(scale, 1e-9);
+  let best: SliceProbe | null = null;
+  for (const segment of slice.segments) {
+    const { distance, t } = distanceToSegment(point, segment.a, segment.b);
+    if (distance > snapRadius) {
+      continue;
+    }
+    const value = lerp(segment.va, segment.vb, t);
+    if (!best || distance < Math.hypot(best.u - u, best.v - v)) {
+      best = { canvasX, canvasY, u, v, value, source: "boundary" };
+    }
+  }
+  return best ?? { canvasX, canvasY, u, v, value: null, source: null };
+}
+
+function formatProbeValue(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "n/a";
+  }
+  const abs = Math.abs(value);
+  if (abs >= 1e3 || (abs > 0 && abs < 1e-3)) {
+    return value.toExponential(2);
+  }
+  return value.toFixed(4);
+}
+
 export default function FemMeshSlice2D({
   meshData,
   quantityLabel,
@@ -584,7 +691,10 @@ export default function FemMeshSlice2D({
   selectedAntennaId,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const frameRef = useRef<SliceRenderFrame | null>(null);
   const [canvasSize, setCanvasSize] = useState<[number, number]>([0, 0]);
+  const [hoverProbe, setHoverProbe] = useState<SliceProbe | null>(null);
+  const [pinnedProbe, setPinnedProbe] = useState<SliceProbe | null>(null);
 
   const slice = useMemo(
     () => collectSegments(meshData, plane, component, sliceIndex, sliceCount),
@@ -594,6 +704,11 @@ export default function FemMeshSlice2D({
     () => collectAntennaRects(antennaOverlays, plane, slice.planeCoord, selectedAntennaId),
     [antennaOverlays, plane, selectedAntennaId, slice.planeCoord],
   );
+
+  useEffect(() => {
+    setHoverProbe(null);
+    setPinnedProbe(null);
+  }, [component, plane, quantityId, slice.planeCoord, sliceIndex, sliceCount]);
 
   // Track container size so the canvas re-draws on resize
   useEffect(() => {
@@ -640,6 +755,17 @@ export default function FemMeshSlice2D({
     const scale = Math.min(innerW / du, innerH / dv);
     const ox = margin.left + (innerW - du * scale) * 0.5;
     const oy = margin.top + (innerH - dv * scale) * 0.5;
+    frameRef.current = {
+      width,
+      height,
+      margin,
+      innerW,
+      innerH,
+      scale,
+      ox,
+      oy,
+      bounds: slice.bounds,
+    };
 
     const map = ([u, v]: Point2): Point2 => [
       ox + (u - uMin) * scale,
@@ -760,6 +886,59 @@ export default function FemMeshSlice2D({
       width - 16,
       18,
     );
+
+    const colorbarX = width - 44;
+    const colorbarY = margin.top + 18;
+    const colorbarH = Math.max(innerH - 34, 120);
+    const colorbarW = 10;
+    const gradient = ctx.createLinearGradient(0, colorbarY + colorbarH, 0, colorbarY);
+    const palette = slice.valueRange.min < 0 && slice.valueRange.max > 0 ? DIVERGING : POSITIVE;
+    palette.forEach((stop, index) => {
+      gradient.addColorStop(index / Math.max(palette.length - 1, 1), stop);
+    });
+    ctx.fillStyle = gradient;
+    ctx.fillRect(colorbarX, colorbarY, colorbarW, colorbarH);
+    ctx.strokeStyle = BORDER;
+    ctx.strokeRect(colorbarX, colorbarY, colorbarW, colorbarH);
+    ctx.fillStyle = TEXT;
+    ctx.font = "11px IBM Plex Mono, monospace";
+    ctx.textAlign = "left";
+    ctx.fillText(formatProbeValue(slice.valueRange.max), colorbarX - 4, colorbarY + 4);
+    ctx.fillText(
+      formatProbeValue(slice.valueRange.min),
+      colorbarX - 4,
+      colorbarY + colorbarH,
+    );
+    ctx.fillText(quantityLabel, colorbarX - 4, colorbarY - 10);
+
+    const scaleTargetPx = 96;
+    const niceUnits = [1, 2, 5];
+    const worldPerPx = Math.max(du / Math.max(innerW, 1), 1e-18);
+    const rawBarWorld = worldPerPx * scaleTargetPx;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawBarWorld)));
+    const scaleWorld =
+      niceUnits
+        .map((unit) => unit * magnitude)
+        .find((candidate) => candidate >= rawBarWorld) ?? magnitude * 10;
+    const scalePx = scaleWorld / worldPerPx;
+    const scaleX = margin.left + 18;
+    const scaleY = height - 20;
+    ctx.strokeStyle = TEXT_STRONG;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(scaleX, scaleY);
+    ctx.lineTo(scaleX + scalePx, scaleY);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(scaleX, scaleY - 5);
+    ctx.lineTo(scaleX, scaleY + 5);
+    ctx.moveTo(scaleX + scalePx, scaleY - 5);
+    ctx.lineTo(scaleX + scalePx, scaleY + 5);
+    ctx.stroke();
+    ctx.fillStyle = TEXT;
+    ctx.font = "11px IBM Plex Mono, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(`${scaleWorld.toExponential(2)} m`, scaleX + scalePx * 0.5, scaleY - 8);
   }, [
     antennaRects,
     canvasSize,
@@ -772,12 +951,62 @@ export default function FemMeshSlice2D({
     sliceCount,
   ]);
 
+  const updateProbeFromPointer = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    const frame = frameRef.current;
+    if (!canvas || !frame) {
+      setHoverProbe(null);
+      return null;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const canvasX = event.clientX - rect.left;
+    const canvasY = event.clientY - rect.top;
+    const probe = sampleSliceProbe(slice, frame, canvasX, canvasY);
+    setHoverProbe(probe);
+    return probe;
+  }, [slice]);
+
   return (
     <div className="relative h-full min-h-[360px] w-full overflow-hidden rounded-[8px] bg-[#1e1e2e]">
       <canvas
         ref={canvasRef}
         className="block h-full w-full"
+        onMouseMove={(event) => {
+          updateProbeFromPointer(event);
+        }}
+        onMouseLeave={() => setHoverProbe(null)}
+        onClick={(event) => {
+          const probe = updateProbeFromPointer(event);
+          setPinnedProbe(probe);
+        }}
       />
+      {(hoverProbe || pinnedProbe) && (
+        <div className="pointer-events-none absolute right-3 top-3 z-10 min-w-[190px] rounded-xl border border-border/30 bg-background/78 px-3 py-2 text-[0.68rem] font-mono text-slate-200 shadow-lg backdrop-blur-md">
+          <div className="mb-1 flex items-center justify-between text-[0.58rem] font-semibold uppercase tracking-[0.14em] text-slate-400">
+            <span>Probe</span>
+            {pinnedProbe && (
+              <span className="rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-cyan-100">
+                pinned
+              </span>
+            )}
+          </div>
+          {([["Hover", hoverProbe], ["Pinned", pinnedProbe]] as const)
+            .filter(([, probe]) => probe != null)
+            .map(([label, probe]) => (
+              <div key={label} className="mb-1 last:mb-0">
+                <div className="text-[0.56rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                  {label}
+                </div>
+                <div>u {probe!.u.toExponential(3)} m</div>
+                <div>v {probe!.v.toExponential(3)} m</div>
+                <div>
+                  value {formatProbeValue(probe!.value)}
+                  {probe!.source ? ` (${probe!.source})` : ""}
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
     </div>
   );
 }

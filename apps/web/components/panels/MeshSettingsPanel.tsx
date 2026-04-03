@@ -261,6 +261,7 @@ export default function MeshSettingsPanel({
 }: MeshSettingsPanelProps) {
   const sicnCanvasRef = useRef<HTMLCanvasElement>(null);
   const gammaCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const set = useCallback(
     (patch: Partial<MeshOptionsState>) => onChange({ ...options, ...patch }),
@@ -302,7 +303,20 @@ export default function MeshSettingsPanel({
 
   return (
     <div className="flex flex-col gap-2 p-3">
+      {/* ── Basic / Advanced Toggle ── */}
+      <div className="flex items-center justify-between px-0.5 pb-1 border-b border-border/20">
+        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Settings</span>
+        <button
+          type="button"
+          className="flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-muted/50 transition-colors"
+          onClick={() => setShowAdvanced((v) => !v)}
+        >
+          {showAdvanced ? "▲ Basic" : "▼ Advanced"}
+        </button>
+      </div>
+
       {/* ── Algorithm Selection ── */}
+      {showAdvanced && (
       <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
         <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
           <span className="text-xs font-bold uppercase tracking-widest text-foreground">Algorithm</span>
@@ -349,6 +363,7 @@ export default function MeshSettingsPanel({
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Size Control ── */}
       <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
@@ -385,6 +400,8 @@ export default function MeshSettingsPanel({
               />
             </div>
           </div>
+          {showAdvanced && (
+            <>
           <div className="flex items-center justify-between gap-3">
             <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Size factor</span>
             <div className="flex-1 max-w-[140px]">
@@ -449,10 +466,13 @@ export default function MeshSettingsPanel({
               />
             </div>
           </div>
+            </>
+          )}
         </div>
       </div>
 
       {/* ── Optimization ── */}
+      {showAdvanced && (
       <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
         <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
           <span className="text-xs font-bold uppercase tracking-widest text-foreground">Optimization</span>
@@ -511,6 +531,7 @@ export default function MeshSettingsPanel({
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Quality ── */}
       <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
@@ -638,7 +659,7 @@ export default function MeshSettingsPanel({
         </div>
       )}
       {/* ── Adaptive Mesh (AFEM) ── */}
-      {showAdaptiveSection && (
+      {showAdvanced && showAdaptiveSection && (
       <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
         <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
           <span className="text-xs font-bold uppercase tracking-widest text-foreground flex items-center gap-1.5 justify-between w-full">
@@ -732,7 +753,7 @@ export default function MeshSettingsPanel({
       )}
 
       {/* ── Refinement Zones (lasso) ── */}
-      {options.refinementZones.length > 0 && (
+      {showAdvanced && options.refinementZones.length > 0 && (
         <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
           <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
             <span className="text-xs font-bold uppercase tracking-widest text-foreground">

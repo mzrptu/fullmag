@@ -17,7 +17,15 @@ from fullmag.meshing.asset_pipeline import (
     realize_fem_domain_mesh_asset,
     realize_fem_mesh_asset,
 )
-from fullmag.meshing.gmsh_bridge import MeshData, SizeFieldData, _extract_gmsh_connectivity
+from fullmag.meshing.gmsh_bridge import (
+    ALGO_3D_HXT,
+    ALGO_3D_MMG3D,
+    MeshData,
+    MeshOptions,
+    SizeFieldData,
+    _apply_mesh_options,
+    _extract_gmsh_connectivity,
+)
 from fullmag.meshing.remesh_cli import _geometry_from_ir, _mesh_result_payload, _size_field_from_dict
 from fullmag.meshing.remesh_cli import _describe_remesh_job
 from fullmag.meshing.quality import validate_mesh
@@ -239,7 +247,79 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertEqual(fields[0]["kind"], "Box")
         self.assertAlmostEqual(fields[0]["params"]["VIn"], 8e-9)
         self.assertAlmostEqual(fields[1]["params"]["VIn"], 20e-9)
-        self.assertGreater(fields[0]["params"]["VOut"], 1e6)
+        self.assertAlmostEqual(fields[0]["params"]["VOut"], 20e-9)
+        self.assertAlmostEqual(fields[1]["params"]["VOut"], 20e-9)
+
+    def test_apply_mesh_options_falls_back_from_mmg3d_when_size_fields_are_active(self) -> None:
+        class _FakeOptionsApi:
+            def __init__(self) -> None:
+                self.values: dict[str, float] = {}
+
+            def setNumber(self, key: str, value: float) -> None:
+                self.values[key] = float(value)
+
+        class _FakeFieldApi:
+            def __init__(self) -> None:
+                self._next_id = 1
+                self.background: int | None = None
+
+            def add(self, _kind: str) -> int:
+                field_id = self._next_id
+                self._next_id += 1
+                return field_id
+
+            def setNumber(self, _field_id: int, _key: str, _value: float) -> None:
+                return None
+
+            def setNumbers(self, _field_id: int, _key: str, _values: object) -> None:
+                return None
+
+            def setString(self, _field_id: int, _key: str, _value: str) -> None:
+                return None
+
+            def setAsBackgroundMesh(self, field_id: int) -> None:
+                self.background = field_id
+
+        fake_field_api = _FakeFieldApi()
+        fake_gmsh = type(
+            "FakeGmsh",
+            (),
+            {
+                "option": _FakeOptionsApi(),
+                "model": type(
+                    "FakeModel",
+                    (),
+                    {"mesh": type("FakeMesh", (), {"field": fake_field_api})()},
+                )(),
+            },
+        )()
+
+        _apply_mesh_options(
+            fake_gmsh,
+            hmax=20e-9,
+            order=1,
+            opts=MeshOptions(
+                algorithm_3d=ALGO_3D_MMG3D,
+                size_fields=[
+                    {
+                        "kind": "Box",
+                        "params": {
+                            "VIn": 8e-9,
+                            "VOut": 20e-9,
+                            "XMin": -1.0,
+                            "XMax": 1.0,
+                            "YMin": -1.0,
+                            "YMax": 1.0,
+                            "ZMin": -1.0,
+                            "ZMax": 1.0,
+                        },
+                    }
+                ],
+            ),
+        )
+
+        self.assertEqual(fake_gmsh.option.values["Mesh.Algorithm3D"], float(ALGO_3D_HXT))
+        self.assertIsNotNone(fake_field_api.background)
 
     def test_geometry_from_ir_preserves_imported_geometry_name(self) -> None:
         geometry = _geometry_from_ir(

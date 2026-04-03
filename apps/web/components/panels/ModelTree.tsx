@@ -50,6 +50,8 @@ function TreeNode({
   onContextMenu,
   isLast = false,
   parentGuides = [],
+  forceExpandToken = 0,
+  forceExpandValue,
 }: {
   node: TreeNodeData;
   depth: number;
@@ -58,10 +60,19 @@ function TreeNode({
   onContextMenu?: (e: React.MouseEvent, nodeId: string, label: string) => void;
   isLast?: boolean;
   parentGuides?: boolean[];
+  forceExpandToken?: number;
+  forceExpandValue?: boolean;
 }) {
   const [open, setOpen] = useState(node.defaultOpen ?? depth < 2);
   const hasChildren = node.children && node.children.length > 0;
   const isActive = activeId === node.id;
+
+  useEffect(() => {
+    if (!hasChildren || forceExpandValue == null) {
+      return;
+    }
+    setOpen(forceExpandValue);
+  }, [forceExpandToken, forceExpandValue, hasChildren]);
 
   const handleClick = useCallback(() => {
     if (hasChildren) setOpen((prev) => !prev);
@@ -204,6 +215,8 @@ function TreeNode({
               onContextMenu={onContextMenu}
               isLast={idx === node.children!.length - 1}
               parentGuides={childGuides}
+              forceExpandToken={forceExpandToken}
+              forceExpandValue={forceExpandValue}
             />
           ))}
         </div>
@@ -222,6 +235,8 @@ export default function ModelTree({
   className,
 }: ModelTreeProps) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: string; label: string } | null>(null);
+  const [forceExpandToken, setForceExpandToken] = useState(0);
+  const [forceExpandValue, setForceExpandValue] = useState<boolean | undefined>(undefined);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, nodeId: string, label: string) => {
@@ -244,6 +259,14 @@ export default function ModelTree({
 
   const handleAction = useCallback((action: string) => {
     if (ctxMenu) {
+      if (action === "expand-all") {
+        setForceExpandValue(true);
+        setForceExpandToken((prev) => prev + 1);
+      }
+      if (action === "collapse-all") {
+        setForceExpandValue(false);
+        setForceExpandToken((prev) => prev + 1);
+      }
       onContextAction?.(ctxMenu.nodeId, action);
       if (action === "select") onNodeClick?.(ctxMenu.nodeId);
       if (action === "copy-name" && ctxMenu.label) void navigator.clipboard.writeText(ctxMenu.label);
@@ -263,6 +286,8 @@ export default function ModelTree({
           onContextMenu={handleContextMenu}
           isLast={idx === nodes.length - 1}
           parentGuides={[]}
+          forceExpandToken={forceExpandToken}
+          forceExpandValue={forceExpandValue}
         />
       ))}
 
@@ -727,7 +752,7 @@ function _buildUniverseChildren(opts: {
   if (opts.domainMeshMode !== "shared_domain_mesh_with_air") {
     children.push({
       id: "universe-mesh",
-      label: "Study Mesh",
+      label: "FEM Mesh",
       icon: "◫",
       badge: opts.meshElements
         ? `${opts.meshElements.toLocaleString()} el`
@@ -771,17 +796,20 @@ function _buildGeometryNode(
 
   const meshNode: TreeNodeData = {
     id: `${geoId}-mesh`,
-    label: "Mesh Override",
+    label: "Object Mesh",
     icon: "◫",
     status: geo.mesh?.mode === "custom" ? "ready" : "pending",
     badge:
       geo.mesh?.mode === "custom"
         ? (geo.mesh.order ? `P${geo.mesh.order}` : "custom")
-        : "inherit",
+        : "defaults",
     children: [
       {
         id: `${geoId}-mesh-mode`,
-        label: geo.mesh?.mode === "custom" ? "Mode: custom override" : "Mode: inherit study mesh",
+        label:
+          geo.mesh?.mode === "custom"
+            ? "Mode: local override"
+            : "Mode: inherit object mesh defaults",
         icon: "⇆",
       },
       {
@@ -789,7 +817,7 @@ function _buildGeometryNode(
         label:
           geo.mesh?.mode === "custom" && geo.mesh.hmax
             ? `hmax = ${geo.mesh.hmax}`
-            : "hmax from study defaults",
+            : "hmax from object mesh defaults",
         icon: "📏",
       },
       ...(geo.mesh?.mode === "custom" && geo.mesh.source
@@ -838,17 +866,20 @@ function _buildObjectNode(objectNode: {
   const geometryChildren = _buildGeometryParamChildren(geometryId, geo);
   const meshNode: TreeNodeData = {
     id: meshId,
-    label: "Mesh Override",
+    label: "Object Mesh",
     icon: "◫",
     status: geo.mesh?.mode === "custom" ? "ready" : "pending",
     badge:
       geo.mesh?.mode === "custom"
         ? (geo.mesh.order ? `P${geo.mesh.order}` : "custom")
-        : "inherit",
+        : "defaults",
     children: [
       {
         id: `${meshId}-mode`,
-        label: geo.mesh?.mode === "custom" ? "Mode: custom override" : "Mode: inherit study mesh",
+        label:
+          geo.mesh?.mode === "custom"
+            ? "Mode: local override"
+            : "Mode: inherit object mesh defaults",
         icon: "⇆",
       },
       {
@@ -856,7 +887,7 @@ function _buildObjectNode(objectNode: {
         label:
           geo.mesh?.mode === "custom" && geo.mesh.hmax
             ? `hmax = ${geo.mesh.hmax}`
-            : "hmax from study defaults",
+            : "hmax from object mesh defaults",
         icon: "📏",
       },
       ...(geo.mesh?.mode === "custom" && geo.mesh.source

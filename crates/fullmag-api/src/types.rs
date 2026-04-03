@@ -589,6 +589,12 @@ pub(crate) struct CurrentLivePublishRequest {
     pub clear_preview_cache: bool,
     #[serde(default)]
     pub engine_log: Option<Vec<EngineLogEntry>>,
+    /// Explicit mesh payload promoted to top-level — replaces the old implicit
+    /// one-time-at-step-0 transmission that relied on API-side caching.
+    /// Legacy payloads that still carry the mesh inside `live_state.latest_step`
+    /// are also accepted for backwards compatibility.
+    #[serde(default)]
+    pub fem_mesh: Option<FemMeshPayload>,
 }
 
 #[derive(Debug, Serialize)]

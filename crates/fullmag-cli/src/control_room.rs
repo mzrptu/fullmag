@@ -395,6 +395,7 @@ pub(crate) fn publish_current_live_state(
             preview_fields: payload.preview_fields.as_deref(),
             clear_preview_cache: payload.clear_preview_cache,
             engine_log: payload.engine_log.as_deref(),
+            fem_mesh: payload.fem_mesh.as_ref(),
         })
         .send()
         .context("failed to publish current live state")?

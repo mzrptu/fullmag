@@ -43,6 +43,9 @@ export function setCameraPresetAroundTarget(
   camera.position.copy(target).add(dir.multiplyScalar(distance));
   camera.up.copy(up);
   camera.lookAt(target);
+  if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+    (camera as THREE.OrthographicCamera).updateProjectionMatrix();
+  }
   controls.target.copy(target);
   controls.update();
 }
@@ -77,9 +80,14 @@ export function focusCameraOnBounds(
   }
   const minRadius = options?.fallbackMinRadius ?? 1e-9;
   const radius = Math.max(size.length() * 0.5, minRadius);
+  const isOrthographic = (camera as THREE.OrthographicCamera).isOrthographicCamera === true;
   const perspCam = camera as THREE.PerspectiveCamera;
-  const fov = THREE.MathUtils.degToRad(perspCam.fov || 45);
-  const distance = Math.max(radius / Math.tan(fov * 0.5), radius * 2.2);
+  const distance = isOrthographic
+    ? Math.max(radius * 3.2, minRadius * 4)
+    : Math.max(
+        radius / Math.tan(THREE.MathUtils.degToRad(perspCam.fov || 45) * 0.5),
+        radius * 2.2,
+      );
 
   let direction: THREE.Vector3;
   if (options?.preserveDirection !== false) {
@@ -94,7 +102,14 @@ export function focusCameraOnBounds(
   camera.position.copy(target).add(direction.multiplyScalar(distance));
   controls.target.copy(target);
   camera.lookAt(target);
-  (camera as THREE.PerspectiveCamera).updateProjectionMatrix?.();
+  if (isOrthographic) {
+    const ortho = camera as THREE.OrthographicCamera;
+    const frustumHeight = Math.max(Math.abs(ortho.top - ortho.bottom), 1);
+    ortho.zoom = frustumHeight / Math.max(radius * 4, minRadius * 2);
+    ortho.updateProjectionMatrix();
+  } else {
+    perspCam.updateProjectionMatrix?.();
+  }
   controls.update();
 }
 
@@ -108,10 +123,21 @@ export function fitCameraToBounds(
 ) {
   if (maxDim <= 0) return;
   const d = maxDim * 2;
+  const center = targetCenter ?? new THREE.Vector3(0, 0, 0);
+  if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+    const ortho = camera as THREE.OrthographicCamera;
+    ortho.near = maxDim * 0.001;
+    ortho.far = maxDim * 200;
+    const frustumHeight = Math.max(Math.abs(ortho.top - ortho.bottom), 1);
+    ortho.zoom = frustumHeight / Math.max(maxDim * 2.4, 1e-9);
+    camera.position.set(center.x + d * 0.75, center.y + d * 0.6, center.z + d * 0.75);
+    camera.lookAt(center);
+    ortho.updateProjectionMatrix();
+    return;
+  }
   const perspCam = camera as THREE.PerspectiveCamera;
   perspCam.near = maxDim * 0.001;
   perspCam.far = maxDim * 200;
-  const center = targetCenter ?? new THREE.Vector3(0, 0, 0);
   camera.position.set(center.x + d * 0.75, center.y + d * 0.6, center.z + d * 0.75);
   camera.lookAt(center);
   perspCam.updateProjectionMatrix();

@@ -1386,6 +1386,17 @@ def _apply_mesh_options(
 ) -> None:
     """Apply MeshOptions to the Gmsh context before mesh.generate()."""
     emit_progress("Gmsh: applying mesh options")
+    algorithm_3d = opts.algorithm_3d
+    if opts.size_fields and algorithm_3d == ALGO_3D_MMG3D:
+        # MMG3D has proven unstable for imported/shared-domain workflows when a
+        # background size field is active; it can abort with "unable to set mesh
+        # size" before tetra generation starts. HXT remains stable here while
+        # preserving the intended local sizing semantics.
+        emit_progress(
+            "Gmsh: MMG3D is incompatible with active background size fields; "
+            "falling back to HXT for stable local sizing"
+        )
+        algorithm_3d = ALGO_3D_HXT
     gmsh.option.setNumber("Mesh.CharacteristicLengthMax", hmax)
     # The exported mesh asset is intentionally first-order topology.
     # Higher-order FEM lives in the solver space (`fe_order`), not in the
@@ -1394,7 +1405,7 @@ def _apply_mesh_options(
     # has produced unstable/degenerate tetrahedra for imported STL cases.
     gmsh.option.setNumber("Mesh.ElementOrder", 1)
     gmsh.option.setNumber("Mesh.Algorithm", opts.algorithm_2d)
-    gmsh.option.setNumber("Mesh.Algorithm3D", opts.algorithm_3d)
+    gmsh.option.setNumber("Mesh.Algorithm3D", algorithm_3d)
     gmsh.option.setNumber("Mesh.MeshSizeFactor", opts.size_factor)
     gmsh.option.setNumber("Mesh.Smoothing", opts.smoothing_steps)
 

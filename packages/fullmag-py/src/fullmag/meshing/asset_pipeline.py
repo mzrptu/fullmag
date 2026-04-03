@@ -338,7 +338,7 @@ def _shared_domain_local_size_fields(
         override_by_name[raw_name.strip()] = entry
 
     fields: list[dict[str, object]] = []
-    sentinel_outside = max(default_hmax, 1.0) * 1.0e18
+    sentinel_outside = default_hmax  # Use global hmax as outside-box fallback; 1e18 crashed MMG3D
     for geometry in geometries:
         bounds = geometry_bounds(geometry, source_root=None)
         if bounds is None:

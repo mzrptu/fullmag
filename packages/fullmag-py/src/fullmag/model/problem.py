@@ -172,6 +172,32 @@ def build_geometry_assets_for_request(
         "fdm_grid_assets": [],
         "fem_mesh_assets": [],
     }
+    explicit_domain_mesh_source = None
+    explicit_domain_region_markers = None
+    if isinstance(mesh_workflow, dict):
+        source_value = mesh_workflow.get("domain_mesh_source")
+        region_markers_value = mesh_workflow.get("domain_region_markers")
+        if isinstance(source_value, str) and source_value.strip():
+            explicit_domain_mesh_source = source_value
+            if not isinstance(region_markers_value, list) or not region_markers_value:
+                raise ValueError(
+                    "explicit shared-domain mesh assets require a non-empty domain_region_markers payload"
+                )
+            explicit_domain_region_markers = []
+            for entry in region_markers_value:
+                if not isinstance(entry, dict):
+                    raise ValueError(
+                        "domain_region_markers entries must be mappings with geometry_name and marker"
+                    )
+                geometry_name = entry.get("geometry_name")
+                marker = entry.get("marker")
+                if not isinstance(geometry_name, str) or not geometry_name.strip():
+                    raise ValueError("domain_region_markers geometry_name must be a non-empty string")
+                if not isinstance(marker, int) or marker <= 0:
+                    raise ValueError("domain_region_markers marker must be a positive int")
+                explicit_domain_region_markers.append(
+                    {"geometry_name": geometry_name, "marker": marker}
+                )
 
     if discretization.fdm is not None:
         from fullmag.model.geometry import Cylinder, ImportedGeometry
@@ -280,7 +306,13 @@ def build_geometry_assets_for_request(
                     }
                 )
 
-        if study_universe is not None:
+        if explicit_domain_mesh_source is not None:
+            assets["fem_domain_mesh_asset"] = {
+                "mesh_source": explicit_domain_mesh_source,
+                "mesh": None,
+                "region_markers": explicit_domain_region_markers,
+            }
+        elif study_universe is not None:
             emit_progress("Preparing shared FEM domain mesh asset")
             domain_mesh, region_markers = realize_fem_domain_mesh_asset(
                 list(geometries),

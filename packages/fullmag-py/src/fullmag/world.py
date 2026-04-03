@@ -537,6 +537,8 @@ class _WorldState:
     _mesh_source: str | None = None
     _api_surface: str = "flat"
     _study_universe: StudyUniverseConfig | None = None
+    _domain_mesh_source: str | None = None
+    _domain_region_markers: list[dict[str, object]] | None = None
     _demag_realization: str | None = None
 
     # Magnets (ordered)
@@ -613,6 +615,55 @@ def _estimate_auto_hmax() -> float:
         return chosen
     emit_progress("hmax='auto': no materials set yet, falling back to 5 nm")
     return 5e-9
+
+
+def _normalize_domain_region_markers(
+    region_markers: Any,
+) -> list[dict[str, object]]:
+    if isinstance(region_markers, dict):
+        items = region_markers.items()
+    elif isinstance(region_markers, (list, tuple)):
+        normalized_items: list[tuple[str, int]] = []
+        for entry in region_markers:
+            if isinstance(entry, dict):
+                geometry_name = entry.get("geometry_name")
+                marker = entry.get("marker")
+            elif isinstance(entry, (list, tuple)) and len(entry) == 2:
+                geometry_name, marker = entry
+            else:
+                raise TypeError(
+                    "region_markers entries must be {'geometry_name': ..., 'marker': ...} mappings "
+                    "or (geometry_name, marker) pairs"
+                )
+            if not isinstance(geometry_name, str) or not geometry_name.strip():
+                raise ValueError("region_markers geometry_name must be a non-empty string")
+            if not isinstance(marker, int) or marker <= 0:
+                raise ValueError("region_markers marker must be a positive int")
+            normalized_items.append((geometry_name, marker))
+        items = normalized_items
+    else:
+        raise TypeError(
+            "region_markers must be a mapping, list of mappings, or list of (geometry_name, marker) pairs"
+        )
+
+    normalized: list[dict[str, object]] = []
+    seen_geometry_names: set[str] = set()
+    seen_markers: set[int] = set()
+    for geometry_name, marker in items:
+        if not isinstance(geometry_name, str) or not geometry_name.strip():
+            raise ValueError("region_markers geometry_name must be a non-empty string")
+        if not isinstance(marker, int) or marker <= 0:
+            raise ValueError("region_markers marker must be a positive int")
+        if geometry_name in seen_geometry_names:
+            raise ValueError(f"region_markers duplicates geometry_name {geometry_name!r}")
+        if marker in seen_markers:
+            raise ValueError(f"region_markers duplicates marker {marker}")
+        seen_geometry_names.add(geometry_name)
+        seen_markers.add(marker)
+        normalized.append({"geometry_name": geometry_name, "marker": marker})
+    if not normalized:
+        raise ValueError("region_markers must not be empty")
+    return normalized
 
 
 def reset() -> None:
@@ -757,6 +808,10 @@ class StudyBuilder:
         build_mesh()
         return self
 
+    def build_domain_mesh(self) -> "StudyBuilder":
+        build_domain_mesh()
+        return self
+
     def interactive(self, enabled: bool = True) -> "StudyBuilder":
         interactive(enabled)
         return self
@@ -816,6 +871,15 @@ class StudyBuilder:
     def airbox(self, *, hmax: float | None = None) -> "StudyBuilder":
         """Configure airbox mesh element size, as a distinct step from the universe geometry."""
         _configure_study_universe(airbox_hmax=hmax)
+        return self
+
+    def domain_mesh(
+        self,
+        source: str | Path,
+        *,
+        region_markers: Any,
+    ) -> "StudyBuilder":
+        domain_mesh(source, region_markers=region_markers)
         return self
 
     def geometry(self, shape: object, name: str = "body") -> MagnetHandle:
@@ -1065,6 +1129,35 @@ def build_mesh() -> None:
     _build_explicit_mesh_assets()
 
 
+def build_domain_mesh() -> None:
+    """Materialize the shared-domain FEM mesh asset for the current study/universe."""
+    build_mesh()
+
+
+def domain_mesh(
+    source: str | Path,
+    *,
+    region_markers: Any,
+) -> None:
+    """Attach an explicit shared-domain FEM mesh asset.
+
+    Parameters
+    ----------
+    source : str or Path
+        Path to a precomputed shared-domain mesh asset (currently `.json` MeshIR).
+    region_markers : mapping | sequence
+        Magnetic-region marker table. Accepted forms:
+        `{"left": 1, "right": 2}`,
+        `[("left", 1), ("right", 2)]`,
+        or `[{"geometry_name": "left", "marker": 1}, ...]`.
+    """
+    rendered_source = str(Path(source))
+    if not rendered_source.strip():
+        raise ValueError("domain_mesh source must not be empty")
+    _state._domain_mesh_source = rendered_source
+    _state._domain_region_markers = _normalize_domain_region_markers(region_markers)
+
+
 def interactive(enabled: bool = True) -> None:
     """Request that the launcher keep the session open after the run.
 
@@ -1264,6 +1357,7 @@ def _mesh_spec_to_metadata(spec: _MeshSpecState) -> dict[str, object]:
 
 def _collect_mesh_workflow_metadata() -> dict[str, object] | None:
     configured_handles = [handle for handle in _state._magnets if handle._mesh_spec.is_configured()]
+    explicit_domain_mesh = _state._domain_mesh_source is not None
     operations = []
     for handle in _state._magnets:
         for operation in handle._mesh_spec.operations:
@@ -1291,6 +1385,7 @@ def _collect_mesh_workflow_metadata() -> dict[str, object] | None:
         or _state._default_mesh_spec.is_configured()
         or build_requested
         or operations
+        or explicit_domain_mesh
     )
     if not explicit_mesh_api:
         return None
@@ -1341,15 +1436,23 @@ def _collect_mesh_workflow_metadata() -> dict[str, object] | None:
         entry.update(_mesh_spec_to_metadata(handle._mesh_spec))
         per_geometry.append(entry)
 
-    return {
+    mesh_workflow = {
         "explicit_mesh_api": True,
         "build_requested": build_requested,
+        "build_target": "domain" if (_state._study_universe is not None or explicit_domain_mesh) else "mesh",
         "fem": fem_hint.to_ir() if fem_hint is not None else None,
         "operations": operations,
         "mesh_options": mesh_options if mesh_options else None,
         "default_mesh": _mesh_spec_to_metadata(_state._default_mesh_spec),
         "per_geometry": per_geometry,
     }
+    if explicit_domain_mesh:
+        mesh_workflow["domain_mesh_mode"] = "explicit_shared_domain_mesh"
+        mesh_workflow["domain_mesh_source"] = _state._domain_mesh_source
+        mesh_workflow["domain_region_markers"] = list(_state._domain_region_markers or [])
+    elif _state._study_universe is not None:
+        mesh_workflow["domain_mesh_mode"] = "generated_shared_domain_mesh"
+    return mesh_workflow
 
 
 def _build_explicit_mesh_assets() -> None:

@@ -130,6 +130,14 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
   const selectedObjectMeshNodeId = ctx.selectedObjectId ? `geo-${ctx.selectedObjectId}-mesh` : undefined;
   const airboxSelected =
     nodeId === "universe-airbox" || nodeId === "universe-airbox-mesh";
+  const meshGenerateLabel =
+    ctx.effectiveFemMesh?.domain_mesh_mode === "shared_domain_mesh_with_air"
+      ? "Build Domain Mesh"
+      : "Build FEM Mesh";
+  const meshGeneratingLabel =
+    ctx.effectiveFemMesh?.domain_mesh_mode === "shared_domain_mesh_with_air"
+      ? "Building Domain Mesh..."
+      : "Building FEM Mesh...";
   const selectedObjectPartId =
     ctx.selectedObjectId
       ? ctx.meshParts.find(
@@ -228,8 +236,8 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
             quality={ctx.meshQualityData}
             generating={ctx.meshGenerating}
             onGenerate={ctx.handleStudyDomainMeshGenerate}
-            generateLabel="Build Study Mesh"
-            generatingLabel="Building Study Mesh..."
+            generateLabel={meshGenerateLabel}
+            generatingLabel={meshGeneratingLabel}
             nodeCount={ctx.effectiveFemMesh?.nodes.length}
             disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
             waitMode={ctx.isWaitingForCompute}
@@ -245,8 +253,8 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
           quality={ctx.meshQualityData}
           generating={ctx.meshGenerating}
           onGenerate={ctx.handleStudyDomainMeshGenerate}
-          generateLabel="Build Study Mesh"
-          generatingLabel="Building Study Mesh..."
+          generateLabel={meshGenerateLabel}
+          generatingLabel={meshGeneratingLabel}
           nodeCount={ctx.effectiveFemMesh?.nodes.length}
           disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
           waitMode={ctx.isWaitingForCompute}
@@ -262,8 +270,8 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
           quality={ctx.meshQualityData}
           generating={ctx.meshGenerating}
           onGenerate={ctx.handleStudyDomainMeshGenerate}
-          generateLabel="Build Study Mesh"
-          generatingLabel="Building Study Mesh..."
+          generateLabel={meshGenerateLabel}
+          generatingLabel={meshGeneratingLabel}
           nodeCount={ctx.effectiveFemMesh?.nodes.length}
           disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
           waitMode={ctx.isWaitingForCompute}
@@ -280,8 +288,8 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
             quality={ctx.meshQualityData}
             generating={ctx.meshGenerating}
             onGenerate={ctx.handleStudyDomainMeshGenerate}
-            generateLabel="Build Study Mesh"
-            generatingLabel="Building Study Mesh..."
+            generateLabel={meshGenerateLabel}
+            generatingLabel={meshGeneratingLabel}
             nodeCount={ctx.effectiveFemMesh?.nodes.length}
             disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
             waitMode={ctx.isWaitingForCompute}
