@@ -30,16 +30,17 @@ study.build_domain_mesh()
 # study.b_ext(0.001, theta=0, phi=0)  # 0.1 T along +z
 # ── Solver ──────────────────────────────────────────────────
 # study.solver(dt=1e-15, g=2.115)
-study.solver(max_error=1e-6, integrator="rk45", g=2.115)
+study.solver(max_error=1e-6, integrator="rk23", g=2.115)
 
 # ── Outputs ─────────────────────────────────────────────────
-# study.save("m", every=1e-13)
+study.save("m", every=1e-13)
+study.save("H_demag", every=1e-13)
 study.tableautosave(1e-13)
 
 # ── Run ─────────────────────────────────────────────────────
-study.relax(
-    tol=1e-6,                       # torque tolerance (max_dm_dt)
-    max_steps=100_000,               # limit kroków
-    algorithm="llg_overdamped",     # algorytm relaksacji
-)
-study.run(1e-9)
+# study.relax(
+#     tol=1e-6,                       # torque tolerance (max_dm_dt)
+#     max_steps=100_000,               # limit kroków
+#     algorithm="llg_overdamped",     # algorytm relaksacji
+# )
+# study.run(1e-9)

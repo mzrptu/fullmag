@@ -23,6 +23,8 @@ interface ViewCubeProps {
   sceneRef?: React.MutableRefObject<SceneHandle | null>;
   onRotate?: (quaternion: THREE.Quaternion) => void;
   onReset?: () => void;
+  cubeClassName?: string;
+  axisClassName?: string;
 }
 
 type FaceZone = {
@@ -66,6 +68,8 @@ export default function ViewCube({
   sceneRef,
   onRotate,
   onReset,
+  cubeClassName = "top-[80px] right-3",
+  axisClassName = "bottom-5 right-5",
 }: ViewCubeProps) {
   const rafRef = useRef<number | null>(null);
   const dragRef = useRef({ dragging: false, startX: 0, startY: 0, hasDragged: false });
@@ -188,7 +192,7 @@ export default function ViewCube({
   return (
     <>
       {/* ViewCube */}
-      <div className="absolute top-[80px] right-3 w-[88px] h-[98px] z-10 flex flex-col items-center pointer-events-none pt-[6px] rounded-xl bg-gradient-to-b from-slate-800/90 to-slate-900/80 border border-slate-500/20 shadow-xl backdrop-blur-md [perspective:220px]">
+      <div className={`absolute ${cubeClassName} w-[88px] h-[98px] z-10 flex flex-col items-center pointer-events-none pt-[6px] rounded-xl bg-gradient-to-b from-slate-800/90 to-slate-900/80 border border-slate-500/20 shadow-xl backdrop-blur-md [perspective:220px]`}>
         <div
           ref={cubeSceneRef}
           className="relative w-[60px] h-[60px] [transform-style:preserve-3d] cursor-grab active:cursor-grabbing touch-none pointer-events-auto"
@@ -218,7 +222,7 @@ export default function ViewCube({
       </div>
 
       {/* Axis Gizmo */}
-      <div className="absolute bottom-5 right-5 w-[90px] h-[90px] z-10 pointer-events-none [perspective:200px]">
+      <div className={`absolute ${axisClassName} w-[90px] h-[90px] z-10 pointer-events-none [perspective:200px]`}>
         <div ref={axisSceneRef} className="relative w-[90px] h-[90px] [transform-style:preserve-3d]">
           {/* X axis (red) */}
           <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] w-[2px] h-[36px] -ml-[1px] origin-top rounded-[1px] bg-red-500" style={{ transform: "rotateZ(-90deg) translateY(-18px)" }} />

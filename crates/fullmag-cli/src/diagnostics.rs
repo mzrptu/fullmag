@@ -228,19 +228,54 @@ pub(crate) fn diagnose_initial_fem_plan(plan: &FemPlanIR) -> Result<InitialState
             headroom: adaptive.safety,
         });
     }
-    let problem = FemLlgProblem::with_terms_and_demag_transfer_grid(
-        topology,
-        material,
-        dynamics,
-        EffectiveFieldTerms {
-            exchange: plan.enable_exchange,
-            demag: plan.enable_demag,
-            external_field: plan.external_field,
-            per_node_field: None,
-            magnetoelastic: None,
-        },
-        Some([plan.hmax, plan.hmax, plan.hmax]),
-    );
+    let mesh_has_air = plan.mesh.element_markers.iter().any(|marker| *marker == 0);
+    let terms = EffectiveFieldTerms {
+        exchange: plan.enable_exchange,
+        demag: plan.enable_demag,
+        external_field: plan.external_field,
+        per_node_field: None,
+        magnetoelastic: None,
+    };
+    let problem = if !plan.enable_demag {
+        FemLlgProblem::with_terms(topology, material, dynamics, terms)
+    } else {
+        match plan.demag_realization.as_deref() {
+            Some("transfer_grid") => FemLlgProblem::with_terms_and_demag_transfer_grid(
+                topology,
+                material,
+                dynamics,
+                terms,
+                Some([plan.hmax, plan.hmax, plan.hmax]),
+            ),
+            Some("airbox_robin") => FemLlgProblem::with_terms_and_demag_airbox(
+                topology,
+                material,
+                dynamics,
+                terms,
+                false,
+                plan.air_box_config
+                    .as_ref()
+                    .and_then(|config| config.robin_beta_factor),
+            ),
+            Some("poisson_airbox" | "airbox_dirichlet") | _ if mesh_has_air => {
+                FemLlgProblem::with_terms_and_demag_airbox(
+                    topology,
+                    material,
+                    dynamics,
+                    terms,
+                    true,
+                    None,
+                )
+            }
+            _ => FemLlgProblem::with_terms_and_demag_transfer_grid(
+                topology,
+                material,
+                dynamics,
+                terms,
+                Some([plan.hmax, plan.hmax, plan.hmax]),
+            ),
+        }
+    };
     let state = problem
         .new_state(plan.initial_magnetization.clone())
         .map_err(|error| anyhow!("diagnostic FEM state error: {}", error))?;

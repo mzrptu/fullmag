@@ -9,6 +9,7 @@ interface ViewportGizmoStackProps {
   showOrientationSphere?: boolean;
   orientationSphereAxisConvention?: "identity" | "swapYZ";
   orientationSpherePositionClassName?: string;
+  compact?: boolean;
 }
 
 export default function ViewportGizmoStack({
@@ -18,15 +19,24 @@ export default function ViewportGizmoStack({
   showOrientationSphere = false,
   orientationSphereAxisConvention = "identity",
   orientationSpherePositionClassName,
+  compact = false,
 }: ViewportGizmoStackProps) {
   return (
     <>
-      <ViewCube sceneRef={sceneRef} onRotate={onRotate} onReset={onReset} />
+      <ViewCube
+        sceneRef={sceneRef}
+        onRotate={onRotate}
+        onReset={onReset}
+        cubeClassName="top-3 right-3"
+        axisClassName="bottom-5 right-5"
+      />
       {showOrientationSphere ? (
         <HslSphere
           sceneRef={sceneRef}
           axisConvention={orientationSphereAxisConvention}
-          positionClassName={orientationSpherePositionClassName}
+          anchorClassName={orientationSpherePositionClassName}
+          size={compact ? 92 : 110}
+          compact={compact}
         />
       ) : null}
     </>

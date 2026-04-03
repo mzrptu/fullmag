@@ -14,11 +14,12 @@ import type {
   FemMeshData,
   RenderMode,
 } from "../FemMeshView3D";
-import type { MeshEntityViewState } from "../../../lib/session/types";
+import type { FemMeshPart, MeshEntityViewState } from "../../../lib/session/types";
 
 export interface FemViewportRenderLayer {
   part: {
     id: string;
+    role: FemMeshPart["role"];
   };
   viewState: MeshEntityViewState;
   boundaryFaceIndices: number[] | null;
@@ -151,7 +152,8 @@ export function FemViewportScene({
   effectiveShowArrows,
   arrowField,
   arrowDensity,
-  magneticArrowNodeMask,
+  arrowActiveNodeMask,
+  arrowBoundaryFaceIndices,
   selectedFaces,
   antennaOverlays,
   focusedEntityId,
@@ -191,7 +193,8 @@ export function FemViewportScene({
   effectiveShowArrows: boolean;
   arrowField: FemColorField;
   arrowDensity: number;
-  magneticArrowNodeMask: boolean[] | null;
+  arrowActiveNodeMask: boolean[] | null;
+  arrowBoundaryFaceIndices: number[] | null;
   selectedFaces: number[];
   antennaOverlays: AntennaOverlay[];
   focusedEntityId: string | null;
@@ -227,7 +230,13 @@ export function FemViewportScene({
             <FemGeometry
               key={layer.part.id}
               meshData={meshData}
-              field={layer.viewState.colorField}
+              field={
+                layer.viewState.colorField === "none" &&
+                meshData.quantityDomain === "full_domain" &&
+                layer.part.role !== "magnetic_object"
+                  ? field
+                  : layer.viewState.colorField
+              }
               renderMode={layer.viewState.renderMode}
               opacity={layer.viewState.opacity}
               customBoundaryFaces={layer.surfaceFaces}
@@ -253,7 +262,7 @@ export function FemViewportScene({
       {!hasMeshParts && shouldRenderAirGeometry ? (
         <FemGeometry
           meshData={meshData}
-          field="none"
+          field={meshData.quantityDomain === "full_domain" ? field : "none"}
           renderMode={renderMode}
           opacity={airSegmentOpacity}
           displayBoundaryFaceIndices={airBoundaryFaceIndices}
@@ -299,8 +308,8 @@ export function FemViewportScene({
         center={dynamicGeomCenter}
         maxDim={dynamicMaxDim}
         visible={effectiveShowArrows}
-        activeNodeMask={magneticArrowNodeMask}
-        boundaryFaceIndices={magneticBoundaryFaceIndices}
+        activeNodeMask={arrowActiveNodeMask}
+        boundaryFaceIndices={arrowBoundaryFaceIndices}
       />
       <FemHighlightView meshData={meshData} selectedFaces={selectedFaces} center={dynamicGeomCenter} />
 

@@ -197,9 +197,29 @@ export function FemArrows({
 }: FemArrowsProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const { invalidate } = useThree();
+  const glyphPolicy = RENDER_POLICIES_V2.glyphs;
+  const material = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#ffffff",
+        vertexColors: true,
+        transparent: glyphPolicy.transparent,
+        depthWrite: glyphPolicy.depthWrite,
+        depthTest: glyphPolicy.depthTest,
+        side: glyphPolicy.side,
+        toneMapped: false,
+      }),
+    [glyphPolicy.depthTest, glyphPolicy.depthWrite, glyphPolicy.side, glyphPolicy.transparent],
+  );
 
   // Template geometry — only rebuilt when maxDim changes
   const templateGeometry = useArrowTemplate(maxDim);
+
+  useEffect(() => {
+    return () => {
+      material.dispose();
+    };
+  }, [material]);
 
   // Instance data (positions, rotations, colors) — depends on field data
   const { count, instancePositions, quaternions, scales, colors } = useMemo(() => {
@@ -210,7 +230,9 @@ export function FemArrows({
     const effectiveNodeMask =
       activeNodeMask && activeNodeMask.length === meshData.nNodes
         ? activeNodeMask
-        : meshData.activeMask && meshData.activeMask.length === meshData.nNodes
+        : meshData.quantityDomain === "magnetic_only" &&
+            meshData.activeMask &&
+            meshData.activeMask.length === meshData.nNodes
           ? meshData.activeMask
           : null;
     if (meshData.quantityDomain === "magnetic_only" && !effectiveNodeMask) {
@@ -337,56 +359,54 @@ export function FemArrows({
     );
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.frustumCulled = false;
-  }, [count]);
+    mesh.renderOrder = glyphPolicy.renderOrder;
+    material.needsUpdate = true;
+  }, [count, glyphPolicy.renderOrder, material]);
 
   // Apply instance matrices
   useEffect(() => {
     const mesh = meshRef.current;
     if (!mesh || count === 0) return;
 
-    const dummy = new THREE.Object3D();
     const instanceColor = mesh.instanceColor;
-    const colorArray = instanceColor?.array as Float32Array | undefined;
+    if (!instanceColor) return;
+    const colorArray = instanceColor.array as Float32Array;
+    const matrixArray = mesh.instanceMatrix.array as Float32Array;
+    const dummy = new THREE.Object3D();
     for (let i = 0; i < count; i++) {
-      dummy.position.set(instancePositions[i][0], instancePositions[i][1], instancePositions[i][2]);
-      dummy.quaternion.set(quaternions[i * 4], quaternions[i * 4 + 1], quaternions[i * 4 + 2], quaternions[i * 4 + 3]);
+      dummy.position.set(
+        instancePositions[i][0],
+        instancePositions[i][1],
+        instancePositions[i][2],
+      );
+      dummy.quaternion.set(
+        quaternions[i * 4],
+        quaternions[i * 4 + 1],
+        quaternions[i * 4 + 2],
+        quaternions[i * 4 + 3],
+      );
       dummy.scale.set(scales[i * 3], scales[i * 3 + 1], scales[i * 3 + 2]);
       dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-      if (colorArray) {
-        colorArray[i * 3] = colors[i * 3];
-        colorArray[i * 3 + 1] = colors[i * 3 + 1];
-        colorArray[i * 3 + 2] = colors[i * 3 + 2];
-      }
+      dummy.matrix.toArray(matrixArray, i * 16);
+      colorArray[i * 3] = colors[i * 3];
+      colorArray[i * 3 + 1] = colors[i * 3 + 1];
+      colorArray[i * 3 + 2] = colors[i * 3 + 2];
     }
     mesh.count = count;
     mesh.instanceMatrix.needsUpdate = true;
-    if (instanceColor) {
-      instanceColor.needsUpdate = true;
-    }
+    instanceColor.needsUpdate = true;
+    material.needsUpdate = true;
     invalidate();
-  }, [colors, count, instancePositions, quaternions, scales, invalidate]);
+  }, [colors, count, instancePositions, invalidate, material, quaternions, scales]);
 
   if (!visible || count === 0) return null;
-
-  const glyphPolicy = RENDER_POLICIES_V2.glyphs;
 
   return (
     <instancedMesh
       ref={meshRef}
-      args={[templateGeometry!, undefined, count]}
+      args={[templateGeometry!, material, Math.max(count, 1)]}
       frustumCulled={false}
       renderOrder={glyphPolicy.renderOrder}
-    >
-      <meshBasicMaterial
-        color="#ffffff"
-        vertexColors
-        transparent={glyphPolicy.transparent}
-        depthWrite={glyphPolicy.depthWrite}
-        depthTest={glyphPolicy.depthTest}
-        side={glyphPolicy.side}
-        toneMapped={false}
-      />
-    </instancedMesh>
+    />
   );
 }

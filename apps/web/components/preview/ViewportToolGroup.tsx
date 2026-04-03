@@ -5,9 +5,10 @@ export interface ViewportToolGroupProps {
   children: ReactNode;
   label?: string;
   className?: string;
+  compact?: boolean;
 }
 
-export function ViewportToolGroup({ children, label, className }: ViewportToolGroupProps) {
+export function ViewportToolGroup({ children, label, className, compact = false }: ViewportToolGroupProps) {
   return (
     <div
       className={cn(
@@ -15,7 +16,7 @@ export function ViewportToolGroup({ children, label, className }: ViewportToolGr
         className
       )}
     >
-      {label && (
+      {label && !compact && (
         <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground/80 px-1.5 select-none">
           {label}
         </span>

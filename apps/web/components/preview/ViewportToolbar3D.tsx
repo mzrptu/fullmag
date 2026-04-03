@@ -6,13 +6,22 @@ interface ViewportToolbar3DProps {
   className?: string;
   sideChildren?: ReactNode;
   bottomChildren?: ReactNode;
+  compact?: boolean;
 }
 
-export function ViewportToolbar3D({ children, className, sideChildren, bottomChildren }: ViewportToolbar3DProps) {
+export function ViewportToolbar3D({
+  children,
+  className,
+  sideChildren,
+  bottomChildren,
+  compact = false,
+}: ViewportToolbar3DProps) {
   return (
     <div className={cn("absolute inset-0 pointer-events-none z-10 flex flex-col", className)}>
-      <div className="p-2 flex items-start justify-between">
-        <div className="flex flex-wrap items-center gap-1.5">{children}</div>
+      <div className={cn("p-2 flex items-start justify-between", compact && "gap-2")}>
+        <div className={cn("flex flex-wrap items-center", compact ? "gap-1" : "gap-1.5")}>
+          {children}
+        </div>
         {sideChildren && <div className="flex flex-col items-end gap-1.5">{sideChildren}</div>}
       </div>
       <div className="mt-auto p-2 pointer-events-none">

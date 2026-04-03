@@ -68,6 +68,7 @@ export interface FemViewportToolbarProps {
   quantityId?: string;
   quantityOptions?: Array<{ id: string; shortLabel: string; available: boolean }>;
   onQuantityChange?: (id: string) => void;
+  compact?: boolean;
 }
 
 const RENDER_OPTIONS: { value: RenderMode; icon: React.ReactNode; label: string; title: string }[] = [
@@ -140,6 +141,7 @@ export function FemViewportToolbar({
   quantityId,
   quantityOptions = [],
   onQuantityChange,
+  compact = false,
 }: FemViewportToolbarProps) {
   const activeSurfaceColorOpt = COLOR_OPTIONS.find((o) => o.value === surfaceColorField);
   const activeArrowColorOpt = COLOR_OPTIONS.find((o) => o.value === arrowColorField);
@@ -148,6 +150,7 @@ export function FemViewportToolbar({
 
   return (
     <ViewportToolbar3D
+      compact={compact}
       sideChildren={
         visiblePartsCount !== undefined && totalPartsCount !== undefined ? (
           <div className="flex flex-col items-end gap-1.5">
@@ -161,18 +164,18 @@ export function FemViewportToolbar({
       {/* ── Quantity selector (when simulation has multiple quantities) ── */}
       {availableQuantities.length > 0 && (
         <>
-          <ViewportToolGroup label="Quantity">
+          <ViewportToolGroup label="Quantity" compact={compact}>
             <div className="relative">
               <ViewportIconAction
                 icon={<Layers size={14} />}
-                label={activeQuantity?.shortLabel ?? "Qty"}
+                label={compact ? undefined : activeQuantity?.shortLabel ?? "Qty"}
                 showCaret
                 active={openPopover === "quantity"}
                 onClick={() => onOpenPopoverChange(openPopover === "quantity" ? null : "quantity")}
                 title="Preview Quantity"
               />
               {openPopover === "quantity" && (
-                <ViewportPopoverPanel title="Quantity">
+                <ViewportPopoverPanel title="Quantity" preferredHorizontal="right">
                   <div className="grid grid-cols-2 gap-1 w-[220px]">
                     {availableQuantities.map((opt) => (
                       <ViewportIconAction
@@ -191,12 +194,12 @@ export function FemViewportToolbar({
               )}
             </div>
           </ViewportToolGroup>
-          <ViewportToolSeparator />
+          {!compact ? <ViewportToolSeparator /> : null}
         </>
       )}
 
       {/* ── Render mode ── */}
-      <ViewportToolGroup label="Render">
+      <ViewportToolGroup label="Render" compact={compact}>
         {RENDER_OPTIONS.map((opt) => (
           <ViewportIconAction
             key={opt.value}
@@ -208,24 +211,26 @@ export function FemViewportToolbar({
         ))}
       </ViewportToolGroup>
 
-      <ViewportToolSeparator />
+      {!compact ? <ViewportToolSeparator /> : null}
 
       {/* ── Color field ── */}
-      <ViewportToolGroup label="Color">
+      <ViewportToolGroup label="Color" compact={compact}>
         <div className="relative">
           <ViewportIconAction
             icon={<Palette size={14} />}
             label={
               labeledMode
                 ? `${activeSurfaceColorOpt?.fullLabel ?? "Surface"} / ${activeArrowColorOpt?.fullLabel ?? "Arrows"}`
-                : `${activeSurfaceColorOpt?.label ?? "Surf"} / ${activeArrowColorOpt?.label ?? "Arr"}`
+                : compact
+                  ? undefined
+                  : `${activeSurfaceColorOpt?.label ?? "Surf"} / ${activeArrowColorOpt?.label ?? "Arr"}`
             }
             showCaret
             onClick={() => onOpenPopoverChange(openPopover === "color" ? null : "color")}
             title="Surface and Arrow Colors"
           />
           {openPopover === "color" && (
-            <ViewportPopoverPanel title="Color Modes">
+            <ViewportPopoverPanel title="Color Modes" preferredHorizontal="right">
               <div className="flex w-[260px] flex-col gap-3">
                 <ViewportPopoverRow label="Surface">
                   <div className="grid grid-cols-2 gap-1">
@@ -263,9 +268,9 @@ export function FemViewportToolbar({
         </div>
       </ViewportToolGroup>
 
-      <ViewportToolSeparator />
+      {!compact ? <ViewportToolSeparator /> : null}
 
-      <ViewportToolGroup>
+      <ViewportToolGroup compact={compact}>
         <ViewportStatusChip color="default">
           Surf {activeSurfaceColorOpt?.label ?? "—"}
         </ViewportStatusChip>
@@ -274,16 +279,16 @@ export function FemViewportToolbar({
         </ViewportStatusChip>
       </ViewportToolGroup>
 
-      <ViewportToolSeparator />
+      {!compact ? <ViewportToolSeparator /> : null}
 
       {hasField && (
         <ViewportStatusChip color="cyan">{fieldLabel ?? "M"}</ViewportStatusChip>
       )}
 
-      <ViewportToolSeparator />
+      {!compact ? <ViewportToolSeparator /> : null}
 
       {/* ── Tools group ── */}
-      <ViewportToolGroup>
+      <ViewportToolGroup compact={compact}>
         {/* Clip */}
         <div className="relative">
           <ViewportIconAction
@@ -298,7 +303,7 @@ export function FemViewportToolbar({
             title="Clip Plane"
           />
           {openPopover === "clip" && (
-            <ViewportPopoverPanel title="Clip Plane">
+            <ViewportPopoverPanel title="Clip Plane" preferredHorizontal="right">
               <ViewportPopoverRow label="Axis">
                 <div className="flex gap-1">
                   {(["x", "y", "z"] as ClipAxis[]).map((axis) => (
@@ -335,7 +340,7 @@ export function FemViewportToolbar({
             title="Display Options"
           />
           {openPopover === "display" && (
-            <ViewportPopoverPanel title="Display">
+            <ViewportPopoverPanel title="Display" preferredHorizontal="right">
               <ViewportPopoverRow label="Opacity">
                 <input
                   type="range"
@@ -398,7 +403,7 @@ export function FemViewportToolbar({
             title="Vectors"
           />
           {openPopover === "vectors" && arrowsVisible && (
-            <ViewportPopoverPanel title="Vectors">
+            <ViewportPopoverPanel title="Vectors" preferredHorizontal="right">
               <ViewportPopoverRow label="Density">
                 <input
                   type="range"
@@ -424,7 +429,7 @@ export function FemViewportToolbar({
             title="Camera"
           />
           {openPopover === "camera" && (
-            <ViewportPopoverPanel title="Camera / View">
+            <ViewportPopoverPanel title="Camera / View" preferredHorizontal="right">
               <ViewportPopoverRow label="Proj">
                 <button
                   className="text-[0.65rem] font-semibold uppercase px-2 py-1 rounded transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary text-muted-foreground"
@@ -486,7 +491,7 @@ export function FemViewportToolbar({
             title="Panels"
           />
           {openPopover === "panels" && (
-            <ViewportPopoverPanel title="Panels">
+            <ViewportPopoverPanel title="Panels" preferredHorizontal="right">
               <ViewportIconAction
                 label="Legend"
                 active={legendOpen}
@@ -506,7 +511,7 @@ export function FemViewportToolbar({
           )}
         </div>
 
-        <ViewportToolSeparator />
+        {!compact ? <ViewportToolSeparator /> : null}
 
         {/* Screenshot */}
         <ViewportIconAction

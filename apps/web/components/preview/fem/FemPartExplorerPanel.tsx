@@ -47,6 +47,7 @@ interface FemPartExplorerPanelProps {
   onEntityFocus?: (id: string | null) => void;
   onPatchPart: (partId: string, patch: Partial<MeshEntityViewState>) => void;
   onRoleVisibility: (role: FemMeshPart["role"], visible: boolean) => void;
+  className?: string;
 }
 
 /* ── Part detail card ── */
@@ -304,13 +305,14 @@ export function FemPartExplorerPanel({
   onEntityFocus,
   onPatchPart,
   onRoleVisibility,
+  className,
 }: FemPartExplorerPanelProps) {
   const headerLabel = inspectedMeshPart
     ? "Selected submesh"
     : "Mesh parts";
 
   return (
-    <div className="absolute right-3 top-20 z-20 w-[264px] max-h-[calc(100%-7rem)] overflow-hidden rounded-2xl border border-border/30 bg-background/88 shadow-xl backdrop-blur-md">
+    <div className={cn("w-[264px] max-h-[calc(100%-7rem)] overflow-hidden rounded-2xl border border-border/30 bg-background/88 shadow-xl backdrop-blur-md", className)}>
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border/25 px-3 py-2.5">
         <div>

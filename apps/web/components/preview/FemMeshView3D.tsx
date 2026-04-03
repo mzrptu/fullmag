@@ -29,6 +29,7 @@ import { FemContextMenu, FemHoverTooltip } from "./fem/FemContextMenu";
 import { FemRefineToolbar, FemSelectionHUD } from "./fem/FemSelectionHUD";
 import ScientificViewportShell from "./shared/ScientificViewportShell";
 import type { ViewportQualityProfileId } from "./shared/viewportQualityProfiles";
+import { ViewportOverlayManager, ViewportOverlaySlot } from "./ViewportOverlayManager";
 
 const AIR_OBJECT_SEGMENT_ID = "__air__";
 
@@ -843,6 +844,36 @@ function FemMeshView3DInner({
     visibleLayers,
     visibleMagneticIds,
   ]);
+  const fullDomainArrowNodeMask = useMemo(() => {
+    if (meshData.quantityDomain !== "full_domain") {
+      return null;
+    }
+    if (!hasMeshParts) {
+      return new Array<boolean>(meshData.nNodes).fill(true);
+    }
+    if (visibleLayers.length === 0) {
+      return new Array<boolean>(meshData.nNodes).fill(false);
+    }
+    const combined = new Array<boolean>(meshData.nNodes).fill(false);
+    let sawExplicitMask = false;
+    for (const layer of visibleLayers) {
+      const nodeMask = layer.nodeMask;
+      if (!nodeMask) {
+        continue;
+      }
+      sawExplicitMask = true;
+      for (let index = 0; index < nodeMask.length; index += 1) {
+        combined[index] = combined[index] || nodeMask[index];
+      }
+    }
+    return sawExplicitMask ? combined : new Array<boolean>(meshData.nNodes).fill(true);
+  }, [hasMeshParts, meshData.nNodes, meshData.quantityDomain, visibleLayers]);
+  const arrowActiveNodeMask =
+    meshData.quantityDomain === "full_domain"
+      ? fullDomainArrowNodeMask
+      : magneticArrowNodeMask;
+  const arrowBoundaryFaceIndices =
+    meshData.quantityDomain === "full_domain" ? null : magneticBoundaryFaceIndices;
   const hasMagneticDisplayContent = useMemo(() => {
     if (missingExactScopeSegment) {
       return false;
@@ -1193,9 +1224,86 @@ function FemMeshView3DInner({
     const ids = meshParts.filter((part) => part.role === role).map((part) => part.id);
     onMeshPartViewStatePatch(ids, { visible });
   }, [meshParts, onMeshPartViewStatePatch]);
+  const effectiveShowOrientationLegend =
+    showOrientationLegend ||
+    legendField === "orientation" ||
+    arrowField === "orientation";
   return (
     <div className="relative flex flex-1 w-[100%] h-[100%] min-w-0 min-h-0 bg-background overflow-hidden rounded-md fem-canvas-container">
       <ScientificViewportShell
+        toolbar={
+          toolbarMode !== "hidden" ? (
+            <FemViewportToolbar
+              compact={hasMeshParts && meshParts.length > 0 && meshParts.length > 3}
+              renderMode={toolbarRenderMode}
+              surfaceColorField={toolbarColorField}
+              arrowColorField={arrowField}
+              projection={cameraProjection}
+              navigation={navigationMode}
+              qualityProfile={qualityProfile}
+              clipEnabled={clipEnabled}
+              clipAxis={clipAxis}
+              clipPos={clipPos}
+              arrowsVisible={showArrows}
+              arrowDensity={arrowDensity}
+              opacity={toolbarOpacity}
+              shrinkFactor={shrinkFactor}
+              showShrink={meshData.elements.length >= 4}
+              labeledMode={labeledMode}
+              legendOpen={legendOpen}
+              partExplorerOpen={partExplorerOpen}
+              visiblePartsCount={hasMeshParts ? visibleLayers.length : undefined}
+              totalPartsCount={hasMeshParts ? meshParts.length : undefined}
+              hasField={!missingMagneticMask}
+              fieldLabel={fieldLabel}
+              openPopover={openPopover}
+              onOpenPopoverChange={(id) => setOpenPopover(id as typeof openPopover)}
+              onRenderModeChange={applyToolbarRenderMode}
+              onSurfaceColorFieldChange={applyToolbarColorField}
+              onArrowColorFieldChange={setArrowColorField}
+              onProjectionChange={setCameraProjection}
+              onNavigationChange={setNavigationMode}
+              onQualityProfileChange={setQualityProfile}
+              onClipEnabledChange={(v) => {
+                onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v);
+              }}
+              onClipAxisChange={(a) => {
+                onClipAxisChange ? onClipAxisChange(a) : setInternalClipAxis(a);
+              }}
+              onClipPosChange={(v) => {
+                onClipPosChange ? onClipPosChange(v) : setInternalClipPos(v);
+              }}
+              onArrowsVisibleChange={(v) => {
+                onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v);
+              }}
+              onArrowDensityChange={setArrowDensity}
+              onOpacityChange={applyToolbarOpacity}
+              onShrinkFactorChange={(v) => {
+                onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v);
+              }}
+              onLabeledModeChange={setLabeledMode}
+              onToggleLegend={() => setLegendOpen((prev) => !prev)}
+              onTogglePartExplorer={() => setPartExplorerOpen((prev) => !prev)}
+              onCameraPreset={setCameraPreset}
+              onCapture={takeScreenshot}
+              quantityId={quantityId}
+              quantityOptions={prominentQuantityOptions}
+              onQuantityChange={onQuantityChange}
+            />
+          ) : null
+        }
+        hud={
+          <FemSelectionHUD
+            nNodes={meshData.nNodes}
+            nElements={meshData.nElements}
+            nFaces={meshData.boundaryFaces.length / 3}
+            clipEnabled={clipEnabled}
+            clipAxis={clipAxis}
+            clipPos={clipPos}
+            selectedFacesCount={selectedFaces.length}
+            legendOpen={legendOpen}
+          />
+        }
         projection={cameraProjection}
         navigation={navigationMode}
         qualityProfile={qualityProfile}
@@ -1204,13 +1312,9 @@ function FemMeshView3DInner({
         controlsRef={controlsRef}
         onViewCubeRotate={handleViewCubeRotate}
         onResetView={() => setCameraPreset("reset")}
-        showOrientationSphere={
-          showOrientationLegend ||
-          toolbarColorField === "orientation" ||
-          arrowField === "orientation"
-        }
+        showOrientationSphere={effectiveShowOrientationLegend}
         orientationSphereAxisConvention="identity"
-        orientationSpherePositionClassName="top-[188px] right-3"
+        orientationSpherePositionClassName="top-[118px] right-3"
         onPointerMissed={() => setSelectedFaces([])}
         onCanvasContextMenu={(e) => e.preventDefault()}
         onCanvasCreated={({ gl }) => {
@@ -1243,7 +1347,8 @@ function FemMeshView3DInner({
             effectiveShowArrows={effectiveShowArrows}
             arrowField={arrowField}
             arrowDensity={arrowDensity}
-            magneticArrowNodeMask={magneticArrowNodeMask}
+            arrowActiveNodeMask={arrowActiveNodeMask}
+            arrowBoundaryFaceIndices={arrowBoundaryFaceIndices}
             selectedFaces={selectedFaces}
             antennaOverlays={antennaOverlays}
             focusedEntityId={focusedEntityId}
@@ -1261,123 +1366,70 @@ function FemMeshView3DInner({
           />
         ) : null}
       </ScientificViewportShell>
-      {missingExactScopeSegment && selectedObjectId ? (
-        <div className="pointer-events-none absolute inset-x-4 top-16 z-20 rounded-xl border border-rose-400/25 bg-background/85 px-4 py-3 text-sm text-rose-200 shadow-lg backdrop-blur-md">
-          Object mesh segmentation unavailable for shared-domain FEM: `{selectedObjectId}`
-        </div>
-      ) : null}
-      {missingMagneticMask ? (
-        <div className="pointer-events-none absolute inset-x-4 top-16 z-20 rounded-xl border border-amber-400/25 bg-background/85 px-4 py-3 text-sm text-amber-100 shadow-lg backdrop-blur-md">
-          Magnetic-region preview mask unavailable for quantity `{fieldLabel ?? "m"}`.
-        </div>
-      ) : null}
-
-      {/* ─── Toolbar ────────────────────────────────── */}
-      {toolbarMode !== "hidden" && (
-        <FemViewportToolbar
-          renderMode={toolbarRenderMode}
-          surfaceColorField={toolbarColorField}
-          arrowColorField={arrowField}
-          projection={cameraProjection}
-          navigation={navigationMode}
-          qualityProfile={qualityProfile}
-          clipEnabled={clipEnabled}
-          clipAxis={clipAxis}
-          clipPos={clipPos}
-          arrowsVisible={showArrows}
-          arrowDensity={arrowDensity}
-          opacity={toolbarOpacity}
-          shrinkFactor={shrinkFactor}
-          showShrink={meshData.elements.length >= 4}
-          labeledMode={labeledMode}
-          legendOpen={legendOpen}
-          partExplorerOpen={partExplorerOpen}
-          visiblePartsCount={hasMeshParts ? visibleLayers.length : undefined}
-          totalPartsCount={hasMeshParts ? meshParts.length : undefined}
-          hasField={!missingMagneticMask}
-          fieldLabel={fieldLabel}
-          openPopover={openPopover}
-          onOpenPopoverChange={(id) => setOpenPopover(id as typeof openPopover)}
-          onRenderModeChange={applyToolbarRenderMode}
-          onSurfaceColorFieldChange={applyToolbarColorField}
-          onArrowColorFieldChange={setArrowColorField}
-          onProjectionChange={setCameraProjection}
-          onNavigationChange={setNavigationMode}
-          onQualityProfileChange={setQualityProfile}
-          onClipEnabledChange={(v) => {
-            onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v);
-          }}
-          onClipAxisChange={(a) => {
-            onClipAxisChange ? onClipAxisChange(a) : setInternalClipAxis(a);
-          }}
-          onClipPosChange={(v) => {
-            onClipPosChange ? onClipPosChange(v) : setInternalClipPos(v);
-          }}
-          onArrowsVisibleChange={(v) => {
-            onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v);
-          }}
-          onArrowDensityChange={setArrowDensity}
-          onOpacityChange={applyToolbarOpacity}
-          onShrinkFactorChange={(v) => {
-            onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v);
-          }}
-          onLabeledModeChange={setLabeledMode}
-          onToggleLegend={() => setLegendOpen((prev) => !prev)}
-          onTogglePartExplorer={() => setPartExplorerOpen((prev) => !prev)}
-          onCameraPreset={setCameraPreset}
-          onCapture={takeScreenshot}
-          quantityId={quantityId}
-          quantityOptions={prominentQuantityOptions}
-          onQuantityChange={onQuantityChange}
-        />
-      )}
-      {legendOpen && (
-        <FieldLegend
-          colorLabel={colorLegendLabel(legendField, fieldLabel)}
-          lengthLabel={
-            effectiveShowArrows
-              ? arrowField === "orientation"
-                ? "vector magnitude, arrow color = orientation"
-                : `vector magnitude, arrow color = ${colorLegendLabel(arrowField, fieldLabel)}`
-              : undefined
-          }
-          min={legendField === "none" ? undefined : fieldMagnitudeStats?.min}
-          max={legendField === "none" ? undefined : fieldMagnitudeStats?.max}
-          mean={legendField === "none" ? undefined : fieldMagnitudeStats?.mean}
-          gradient={colorLegendGradient(legendField)}
-        />
-      )}
-
-      {hasMeshParts && partExplorerOpen && (
-        <FemPartExplorerPanel
-          meshParts={meshParts}
-          meshEntityViewState={meshEntityViewState}
-          partQualityById={partQualityById}
-          partExplorerGroups={partExplorerGroups}
-          roleVisibilitySummary={roleVisibilitySummary}
-          inspectedMeshPart={inspectedMeshPart}
-          inspectedPartQuality={inspectedPartQuality}
-          selectedEntityId={selectedEntityId}
-          focusedEntityId={focusedEntityId}
-          visiblePartsCount={visibleLayers.length}
-          onClose={() => setPartExplorerOpen(false)}
-          onPartSelect={handlePartSelect}
-          onEntityFocus={onEntityFocus}
-          onPatchPart={patchSinglePart}
-          onRoleVisibility={handleRoleVisibility}
-        />
-      )}
-
-      <FemSelectionHUD
-        nNodes={meshData.nNodes}
-        nElements={meshData.nElements}
-        nFaces={meshData.boundaryFaces.length / 3}
-        clipEnabled={clipEnabled}
-        clipAxis={clipAxis}
-        clipPos={clipPos}
-        selectedFacesCount={selectedFaces.length}
-        legendOpen={legendOpen}
-      />
+      <ViewportOverlayManager>
+        {({ mode }) => (
+          <>
+            {missingExactScopeSegment && selectedObjectId ? (
+              <ViewportOverlaySlot anchor="top-left" className="max-w-[min(56rem,calc(100%-7rem))]">
+                <div className="pointer-events-none rounded-xl border border-rose-400/25 bg-background/85 px-4 py-3 text-sm text-rose-200 shadow-lg backdrop-blur-md">
+                  Object mesh segmentation unavailable for shared-domain FEM: `{selectedObjectId}`
+                </div>
+              </ViewportOverlaySlot>
+            ) : null}
+            {missingMagneticMask ? (
+              <ViewportOverlaySlot anchor="top-left" className="top-16 max-w-[min(56rem,calc(100%-7rem))]">
+                <div className="pointer-events-none rounded-xl border border-amber-400/25 bg-background/85 px-4 py-3 text-sm text-amber-100 shadow-lg backdrop-blur-md">
+                  Magnetic-region preview mask unavailable for quantity `{fieldLabel ?? "m"}`.
+                </div>
+              </ViewportOverlaySlot>
+            ) : null}
+            {legendOpen ? (
+              <ViewportOverlaySlot anchor="bottom-left">
+                <FieldLegend
+                  compact={mode !== "full"}
+                  className="pointer-events-none z-10"
+                  colorLabel={colorLegendLabel(legendField, fieldLabel)}
+                  lengthLabel={
+                    effectiveShowArrows
+                      ? arrowField === "orientation"
+                        ? "vector magnitude, arrow color = orientation"
+                        : `vector magnitude, arrow color = ${colorLegendLabel(arrowField, fieldLabel)}`
+                      : undefined
+                  }
+                  min={legendField === "none" ? undefined : fieldMagnitudeStats?.min}
+                  max={legendField === "none" ? undefined : fieldMagnitudeStats?.max}
+                  mean={legendField === "none" ? undefined : fieldMagnitudeStats?.mean}
+                  gradient={colorLegendGradient(legendField)}
+                />
+              </ViewportOverlaySlot>
+            ) : null}
+            {hasMeshParts && partExplorerOpen ? (
+              <ViewportOverlaySlot
+                anchor="top-right"
+                className={mode === "icon" ? "top-20 w-[224px]" : "top-20"}
+              >
+                <FemPartExplorerPanel
+                  meshParts={meshParts}
+                  meshEntityViewState={meshEntityViewState}
+                  partQualityById={partQualityById}
+                  partExplorerGroups={partExplorerGroups}
+                  roleVisibilitySummary={roleVisibilitySummary}
+                  inspectedMeshPart={inspectedMeshPart}
+                  inspectedPartQuality={inspectedPartQuality}
+                  selectedEntityId={selectedEntityId}
+                  focusedEntityId={focusedEntityId}
+                  visiblePartsCount={visibleLayers.length}
+                  onClose={() => setPartExplorerOpen(false)}
+                  onPartSelect={handlePartSelect}
+                  onEntityFocus={onEntityFocus}
+                  onPatchPart={patchSinglePart}
+                  onRoleVisibility={handleRoleVisibility}
+                />
+              </ViewportOverlaySlot>
+            ) : null}
+          </>
+        )}
+      </ViewportOverlayManager>
 
       {onRefine ? (
         <FemRefineToolbar

@@ -25,7 +25,10 @@ interface HslSphereProps {
     controls: any;
   } | null>;
   axisConvention?: "identity" | "swapYZ";
-  positionClassName?: string;
+  anchorClassName?: string;
+  size?: number;
+  compact?: boolean;
+  className?: string;
 }
 
 /* ── Constants ─────────────────────────────────────────────── */
@@ -84,10 +87,17 @@ function CameraSync({
 export default function HslSphere({
   sceneRef,
   axisConvention = "identity",
-  positionClassName = "bottom-4 left-4",
+  anchorClassName = "bottom-4 left-4",
+  size = SIZE,
+  compact = false,
+  className = "",
 }: HslSphereProps) {
+  const sphereSize = compact ? Math.round(size * 0.82) : size;
   return (
-    <div className={`pointer-events-none absolute z-10 h-[110px] w-[110px] ${positionClassName}`}>
+    <div
+      className={`pointer-events-none absolute z-10 ${anchorClassName} ${className}`}
+      style={{ width: sphereSize, height: sphereSize }}
+    >
       <Canvas
         orthographic
         camera={{
@@ -102,13 +112,17 @@ export default function HslSphere({
         gl={{ alpha: true, antialias: true }}
         dpr={Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)}
         style={{
-          width: SIZE,
-          height: SIZE,
+          width: sphereSize,
+          height: sphereSize,
           borderRadius: "50%",
           overflow: "hidden",
         }}
       >
-        <HslSphereScene mainCameraRef={sceneRef} axisConvention={axisConvention} />
+        <HslSphereScene
+          mainCameraRef={sceneRef}
+          axisConvention={axisConvention}
+          compact={compact}
+        />
       </Canvas>
     </div>
   );
@@ -119,9 +133,11 @@ export default function HslSphere({
 function HslSphereScene({
   mainCameraRef,
   axisConvention,
+  compact,
 }: {
   mainCameraRef: React.MutableRefObject<{ camera: THREE.Camera } | null>;
   axisConvention: "identity" | "swapYZ";
+  compact: boolean;
 }) {
   const sphereGeo = useMemo(() => {
     const geo = new THREE.SphereGeometry(SPHERE_RADIUS, SEGMENTS, SEGMENTS);
@@ -156,12 +172,16 @@ function HslSphereScene({
       <mesh geometry={sphereGeo} material={sphereMat} />
 
       {/* Axis labels — visual XYZ reference for the active viewport convention */}
-      <AxisLabel text="X" color="#e65050" position={[LABEL_DIST, 0, 0]} />
-      <AxisLabel text="X" color="#e65050" position={[-LABEL_DIST, 0, 0]} />
-      <AxisLabel text="Z" color="#5090e6" position={[0, LABEL_DIST, 0]} />
-      <AxisLabel text="Z" color="#5090e6" position={[0, -LABEL_DIST, 0]} />
-      <AxisLabel text="Y" color="#50c850" position={[0, 0, LABEL_DIST]} />
-      <AxisLabel text="Y" color="#50c850" position={[0, 0, -LABEL_DIST]} />
+      {!compact ? (
+        <>
+          <AxisLabel text="X" color="#e65050" position={[LABEL_DIST, 0, 0]} />
+          <AxisLabel text="X" color="#e65050" position={[-LABEL_DIST, 0, 0]} />
+          <AxisLabel text="Z" color="#5090e6" position={[0, LABEL_DIST, 0]} />
+          <AxisLabel text="Z" color="#5090e6" position={[0, -LABEL_DIST, 0]} />
+          <AxisLabel text="Y" color="#50c850" position={[0, 0, LABEL_DIST]} />
+          <AxisLabel text="Y" color="#50c850" position={[0, 0, -LABEL_DIST]} />
+        </>
+      ) : null}
 
       {/* Thin axis lines through sphere */}
       <Line

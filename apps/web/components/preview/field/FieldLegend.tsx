@@ -15,6 +15,8 @@ interface FieldLegendProps {
   mean?: number;
   /** Colormap gradient CSS string, e.g. "linear-gradient(to right, blue, white, red)" */
   gradient?: string;
+  className?: string;
+  compact?: boolean;
 }
 
 function formatSI(v: number): string {
@@ -42,9 +44,17 @@ export function FieldLegend({
   max,
   mean,
   gradient = "linear-gradient(to right, #3b82f6, #ffffff, #ef4444)",
+  className,
+  compact = false,
 }: FieldLegendProps) {
   return (
-    <div className="absolute bottom-3 left-3 z-10 p-2 rounded-lg bg-slate-800/90 border border-slate-500/20 backdrop-blur-sm space-y-1.5 max-w-[220px]">
+    <div
+      className={[
+        "rounded-lg bg-slate-800/90 border border-slate-500/20 backdrop-blur-sm",
+        compact ? "p-1.5 space-y-1 max-w-[180px]" : "p-2 space-y-1.5 max-w-[220px]",
+        className ?? "absolute bottom-3 left-3 z-10",
+      ].join(" ")}
+    >
       {/* Color bar */}
       <div className="space-y-0.5">
         <div
@@ -60,7 +70,7 @@ export function FieldLegend({
       </div>
 
       {/* Labels */}
-      <div className="text-[10px] text-slate-300 space-y-0.5">
+      <div className={compact ? "text-[9px] text-slate-300 space-y-0.5" : "text-[10px] text-slate-300 space-y-0.5"}>
         <div>
           <span className="text-slate-400">Color: </span>
           {colorLabel}

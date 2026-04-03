@@ -614,8 +614,13 @@ pub(crate) fn plan_fem(
     let resolved_demag_realization = if enable_demag {
         match demag_realization.as_deref() {
             Some("transfer_grid") => Some("transfer_grid".to_string()),
-            Some("poisson_airbox") => Some("poisson_airbox".to_string()),
-            // auto or unset: detect air-box elements
+            Some("poisson_airbox" | "airbox_dirichlet") => {
+                Some("poisson_airbox".to_string())
+            }
+            Some("airbox_robin") => Some("airbox_robin".to_string()),
+            // auto or unset: choose shared-domain Poisson when the mesh already
+            // contains an explicit air region; otherwise fall back to the
+            // transfer-grid FFT path for magnetic-only meshes.
             _ => {
                 let has_air_elements = mesh.element_markers.iter().any(|&m| m == 0);
                 if has_air_elements {

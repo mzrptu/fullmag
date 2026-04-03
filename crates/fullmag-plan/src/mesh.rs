@@ -846,8 +846,8 @@ pub(crate) fn build_air_box_config(
     }
 
     let bc_kind = match resolved_demag_realization {
-        Some("poisson_airbox") | Some("airbox_dirichlet") => Some("dirichlet"),
-        Some("airbox_robin") => Some("robin"),
+        Some("airbox_dirichlet") => Some("dirichlet"),
+        Some("poisson_airbox") | Some("airbox_robin") => Some("robin"),
         _ => None,
     }?;
 

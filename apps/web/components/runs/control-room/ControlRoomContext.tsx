@@ -336,7 +336,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const preview = state?.preview ?? null;
   const spatialPreview = preview?.kind === "spatial" ? preview : null;
   const globalScalarPreview = preview?.kind === "global_scalar" ? preview : null;
-  const femMesh = state?.fem_mesh ?? null;
+  const femMesh = state?.fem_mesh ?? liveState?.fem_mesh ?? null;
   const remoteSceneDocument = state?.scene_document ?? null;
   const meshConfigSignature = useMemo(
     () => buildMeshConfigurationSignature(sceneDocumentDraft ?? remoteSceneDocument),

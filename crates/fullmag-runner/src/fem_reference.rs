@@ -144,15 +144,17 @@ pub(crate) fn build_problem_and_state(
         per_node_field: initial_antenna_field,
         magnetoelastic: None,
     };
-    let mesh_has_air = plan.mesh.element_markers.iter().any(|marker| *marker == 0);
     let resolved_demag_realization = if !plan.enable_demag {
         None
     } else {
         match plan.demag_realization.as_deref() {
             Some("transfer_grid") => Some("transfer_grid"),
-            Some("poisson_airbox" | "airbox_dirichlet") => Some("airbox_dirichlet"),
-            Some("airbox_robin") => Some("airbox_robin"),
-            _ if mesh_has_air => Some("airbox_dirichlet"),
+            Some("airbox_dirichlet") => Some("airbox_dirichlet"),
+            // poisson_airbox uses Robin BC by default — Robin ∂φ/∂n + βφ = 0
+            // approximates far-field dipole decay and is much more accurate
+            // than Dirichlet φ=0 when the airbox boundary is close to the
+            // magnetic body.
+            Some("poisson_airbox" | "airbox_robin") => Some("airbox_robin"),
             _ => Some("transfer_grid"),
         }
     };
@@ -191,17 +193,15 @@ pub(crate) fn build_problem_and_state(
 }
 
 pub(crate) fn execution_provenance(plan: &FemPlanIR) -> ExecutionProvenance {
-    let mesh_has_air = plan.mesh.element_markers.iter().any(|marker| *marker == 0);
     let demag_operator_kind = if !plan.enable_demag {
         None
     } else {
         match plan.demag_realization.as_deref() {
             Some("transfer_grid") => Some("fem_transfer_grid_tensor_fft_newell".to_string()),
-            Some("poisson_airbox" | "airbox_dirichlet") => {
-                Some("fem_airbox_dirichlet".to_string())
+            Some("airbox_dirichlet") => Some("fem_airbox_dirichlet".to_string()),
+            Some("poisson_airbox" | "airbox_robin") => {
+                Some("fem_airbox_robin".to_string())
             }
-            Some("airbox_robin") => Some("fem_airbox_robin".to_string()),
-            _ if mesh_has_air => Some("fem_airbox_dirichlet".to_string()),
             _ => Some("fem_transfer_grid_tensor_fft_newell".to_string()),
         }
     };
@@ -301,6 +301,7 @@ fn execute_reference_fem_impl(
         let ant = antenna_field_at(&problem, state.magnetization().len());
         Some(observe_state(&problem, &state, &ant)?.total_energy)
     };
+    let pure_damping_relax = llg_overdamped_uses_pure_damping(plan.relaxation.as_ref());
     let mut last_preview_revision: Option<u64> = None;
     let mut cancelled = false;
     let mut current_observables = {
@@ -562,7 +563,7 @@ fn execute_reference_fem_impl(
                     previous_total_energy,
                     plan.gyromagnetic_ratio,
                     plan.material.damping,
-                    false,
+                    pure_damping_relax,
                 )
         });
         previous_total_energy = Some(latest_stats.e_total);
