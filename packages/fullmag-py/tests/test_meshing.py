@@ -21,6 +21,7 @@ from fullmag.meshing.asset_pipeline import (
     _build_object_bulk_fields,
     _build_transition_fields,
     _mesh_options_from_runtime_metadata,
+    _resolve_effective_shared_domain_targets,
     _shared_domain_local_size_fields,
     _study_universe_airbox_options,
     realize_fdm_grid_asset,
@@ -448,6 +449,56 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertEqual(bulk_field["GeometryName"], "left")
         self.assertAlmostEqual(bulk_field["VIn"], 8e-9)
         self.assertGreater(float(bulk_field["VOut"]), 1e21)
+
+    def test_component_aware_field_stack_matches_builder_name_to_geom_alias(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left_geom")
+
+        mesh_options = _mesh_options_from_runtime_metadata(
+            {
+                "per_geometry": [
+                    {
+                        "geometry": "left",
+                        "mode": "custom",
+                        "hmax": "5e-9",
+                    }
+                ]
+            },
+            geometries=[left],
+            default_hmax=20e-9,
+            component_aware=True,
+        )
+
+        kinds = [field["kind"] for field in mesh_options.size_fields]
+        self.assertEqual(
+            kinds,
+            ["ComponentVolumeConstant", "InterfaceShellThreshold", "TransitionShellThreshold"],
+        )
+        self.assertEqual(mesh_options.size_fields[0]["params"]["GeometryName"], "left_geom")
+        self.assertAlmostEqual(mesh_options.size_fields[0]["params"]["VIn"], 5e-9)
+
+    def test_effective_shared_domain_targets_match_builder_name_to_geom_alias(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left_geom")
+
+        _airbox_target, effective_targets = _resolve_effective_shared_domain_targets(
+            [left],
+            fm.FEM(order=1, hmax=20e-9),
+            airbox=None,
+            mesh_workflow={
+                "per_geometry": [
+                    {
+                        "geometry": "left",
+                        "mode": "custom",
+                        "hmax": "5e-9",
+                    }
+                ]
+            },
+            per_object_recipes=None,
+        )
+
+        self.assertAlmostEqual(effective_targets["left_geom"]["hmax"], 5e-9)
+        self.assertAlmostEqual(effective_targets["left_geom"]["interface_hmax"], 3e-9)
+        self.assertAlmostEqual(effective_targets["left_geom"]["transition_distance"], 15e-9)
+        self.assertEqual(effective_targets["left_geom"]["source"], "local_override")
 
     def test_apply_mesh_options_falls_back_from_mmg3d_when_size_fields_are_active(self) -> None:
         class _FakeOptionsApi:

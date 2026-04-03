@@ -18,6 +18,7 @@ fn mesh_parts_from_shared_domain_produces_air_and_magnetic() {
         element_markers: vec![1, 0],
         boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
         boundary_markers: vec![1, 99],
+                per_domain_quality: std::collections::HashMap::new(),
     };
     let object_segments = vec![
         fullmag_ir::FemObjectSegmentIR {
@@ -69,6 +70,7 @@ fn mesh_parts_from_merged_magnetic_has_no_air() {
         element_markers: vec![1],
         boundary_faces: vec![[0, 1, 2]],
         boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
     };
     let object_segments = vec![fullmag_ir::FemObjectSegmentIR {
         object_id: "flower".to_string(),
@@ -108,6 +110,7 @@ fn mesh_parts_bounds_are_correct() {
         element_markers: vec![1],
         boundary_faces: vec![[0, 1, 2]],
         boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
     };
     let object_segments = vec![fullmag_ir::FemObjectSegmentIR {
         object_id: "sample".to_string(),
@@ -145,6 +148,7 @@ fn analyze_detects_interface_between_touching_markers() {
         element_markers: vec![1, 2],
         boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
         boundary_markers: vec![10, 20],
+                per_domain_quality: std::collections::HashMap::new(),
     };
     let analysis = crate::mesh::analyze_shared_domain_mesh(
         &mesh,
@@ -194,6 +198,7 @@ fn reorder_shared_domain_mesh_materializes_interface_and_outer_boundary_parts() 
             [1, 2, 4],
         ],
         boundary_markers: vec![10, 10, 10, 99, 99, 99],
+                per_domain_quality: std::collections::HashMap::new(),
     };
 
     let (_reordered, _segments, parts) = crate::mesh::reorder_shared_domain_mesh(
@@ -243,6 +248,7 @@ fn analyze_classifies_air_nodes() {
         element_markers: vec![1, 0],
         boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
         boundary_markers: vec![10, 99],
+                per_domain_quality: std::collections::HashMap::new(),
     };
     let analysis = crate::mesh::analyze_shared_domain_mesh(
         &mesh,
@@ -272,6 +278,7 @@ fn validate_rejects_shared_nodes_for_now() {
         element_markers: vec![1, 2],
         boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
         boundary_markers: vec![10, 20],
+                per_domain_quality: std::collections::HashMap::new(),
     };
     let analysis = crate::mesh::analyze_shared_domain_mesh(
         &mesh,
@@ -308,6 +315,7 @@ fn validate_accepts_shared_nodes_when_solver_supports_conformal() {
         element_markers: vec![1, 2],
         boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
         boundary_markers: vec![10, 20],
+                per_domain_quality: std::collections::HashMap::new(),
     };
     let analysis = crate::mesh::analyze_shared_domain_mesh(
         &mesh,
@@ -343,6 +351,7 @@ fn pack_duplicates_shared_interface_nodes_per_region() {
         element_markers: vec![1, 2],
         boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
         boundary_markers: vec![10, 20],
+                per_domain_quality: std::collections::HashMap::new(),
     };
     let region_markers = vec![
         fullmag_ir::FemDomainRegionMarkerIR {
@@ -397,6 +406,7 @@ fn pack_produces_same_result_as_before() {
         element_markers: vec![1, 2, 0],
         boundary_faces: vec![[0, 1, 2], [4, 5, 6], [8, 9, 10]],
         boundary_markers: vec![10, 20, 99],
+                per_domain_quality: std::collections::HashMap::new(),
     };
     let region_markers = vec![
         fullmag_ir::FemDomainRegionMarkerIR {
@@ -536,6 +546,7 @@ fn fem_backend_with_mesh_asset_plans_successfully() {
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -596,6 +607,7 @@ fn fem_plan_serializes_mesh_parts() {
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -664,6 +676,7 @@ fn fem_backend_with_air_elements_lowers_study_universe_to_air_box_config() {
                 element_markers: vec![1, 0],
                 boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
                 boundary_markers: vec![1, 99],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -738,6 +751,7 @@ fn fem_backend_without_air_elements_keeps_universe_as_provenance_note() {
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -812,6 +826,7 @@ fn fem_backend_rejects_requested_shared_domain_without_air_elements() {
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -821,7 +836,8 @@ fn fem_backend_rejects_requested_shared_domain_without_air_elements() {
     assert!(error
         .reasons
         .iter()
-        .any(|reason| reason.contains("shared-domain FEM was requested")));
+        .any(|reason| reason.contains("shared-domain FEM")
+            || reason.contains("study.build_domain_mesh()")));
 }
 
 #[test]
@@ -875,6 +891,7 @@ fn fem_backend_populates_domain_frame_and_domain_mesh_mode() {
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -963,6 +980,7 @@ fn fem_backend_prefers_domain_frame_declared_universe_over_legacy_study_universe
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -1125,6 +1143,7 @@ fn fem_backend_multibody_merges_disjoint_mesh_assets() {
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
             fullmag_ir::FemMeshAssetIR {
@@ -1142,6 +1161,7 @@ fn fem_backend_multibody_merges_disjoint_mesh_assets() {
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
         ],
@@ -1244,6 +1264,7 @@ fn fem_backend_multibody_rejects_incompatible_material_law() {
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
             fullmag_ir::FemMeshAssetIR {
@@ -1261,6 +1282,7 @@ fn fem_backend_multibody_rejects_incompatible_material_law() {
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
         ],
@@ -1341,6 +1363,7 @@ fn fem_plan_heterogeneous_materials_populates_region_materials_for_cuda() {
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
             fullmag_ir::FemMeshAssetIR {
@@ -1358,6 +1381,7 @@ fn fem_plan_heterogeneous_materials_populates_region_materials_for_cuda() {
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
         ],
@@ -1420,6 +1444,7 @@ fn fem_plan_conformal_shared_domain_duplicates_interface_nodes_for_cuda() {
                 element_markers: vec![1, 2],
                 boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
                 boundary_markers: vec![10, 20],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
             region_markers: vec![
                 fullmag_ir::FemDomainRegionMarkerIR {
@@ -1966,6 +1991,7 @@ fn fem_eigen_backend_with_mesh_asset_plans_successfully() {
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -2056,6 +2082,7 @@ fn fem_eigen_accepts_shared_domain_mesh_with_air_when_transfer_grid_is_used() {
                 element_markers: vec![1, 0],
                 boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
                 boundary_markers: vec![10, 99],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
             region_markers: vec![fullmag_ir::FemDomainRegionMarkerIR {
                 geometry_name: "strip".to_string(),
@@ -2179,6 +2206,7 @@ fn fem_plan_fails_when_shared_domain_requested_but_no_domain_mesh_asset() {
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -2253,11 +2281,12 @@ fn fem_plan_succeeds_when_shared_domain_has_domain_mesh_asset() {
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         // Provide the shared domain mesh asset
         fem_domain_mesh_asset: Some(fullmag_ir::FemDomainMeshAssetIR {
-            mesh: fullmag_ir::MeshIR {
+            mesh: Some(fullmag_ir::MeshIR {
                 mesh_name: "shared_domain".to_string(),
                 nodes: vec![
                     [0.0, 0.0, 0.0],
@@ -2273,15 +2302,15 @@ fn fem_plan_succeeds_when_shared_domain_has_domain_mesh_asset() {
                 element_markers: vec![1, 0],
                 boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
                 boundary_markers: vec![1, 99],
-            },
+                per_domain_quality: std::collections::HashMap::new(),
+            }),
             region_markers: vec![
                 fullmag_ir::FemDomainRegionMarkerIR {
                     marker: 1,
                     geometry_name: "strip".to_string(),
-                    role: "magnetic_object".to_string(),
                 },
             ],
-            mesh_provenance: None,
+            mesh_source: None,
         }),
     });
 

@@ -414,8 +414,33 @@ def _parse_per_geometry_overrides(
         raw_name = entry.get("geometry") or entry.get("geometry_name")
         if not isinstance(raw_name, str) or not raw_name.strip():
             continue
-        result[raw_name.strip()] = entry
+        for alias in _geometry_name_aliases(raw_name):
+            result.setdefault(alias, entry)
     return result
+
+
+def _geometry_name_aliases(name: str) -> tuple[str, ...]:
+    resolved = name.strip()
+    if not resolved:
+        return tuple()
+    aliases = [resolved]
+    if resolved.endswith("_geom") and len(resolved) > len("_geom"):
+        aliases.append(resolved[: -len("_geom")])
+    else:
+        aliases.append(f"{resolved}_geom")
+    return tuple(dict.fromkeys(aliases))
+
+
+def _lookup_geometry_name_alias(
+    mapping: Mapping[str, object] | None,
+    geometry_name: str,
+) -> object | None:
+    if not mapping:
+        return None
+    for alias in _geometry_name_aliases(geometry_name):
+        if alias in mapping:
+            return mapping[alias]
+    return None
 
 
 def _build_object_bulk_fields(
@@ -429,7 +454,7 @@ def _build_object_bulk_fields(
     """Build per-object bulk refinement fields."""
     fields: list[dict[str, object]] = []
     for geometry in geometries:
-        entry = override_by_name.get(geometry.geometry_name)
+        entry = _lookup_geometry_name_alias(override_by_name, geometry.geometry_name)
         bulk_hmax = _coerce_positive_float(
             entry.get("bulk_hmax") or entry.get("hmax") if entry else None
         ) or default_hmax
@@ -489,7 +514,7 @@ def _build_interface_fields(
     """Build interface refinement fields around each object."""
     fields: list[dict[str, object]] = []
     for geometry in geometries:
-        entry = override_by_name.get(geometry.geometry_name)
+        entry = _lookup_geometry_name_alias(override_by_name, geometry.geometry_name)
         bulk_hmax = _coerce_positive_float(
             entry.get("bulk_hmax") or entry.get("hmax") if entry else None
         ) or default_hmax
@@ -565,7 +590,7 @@ def _build_transition_fields(
     """Build transition zone fields from fine object region to coarse airbox."""
     fields: list[dict[str, object]] = []
     for geometry in geometries:
-        entry = override_by_name.get(geometry.geometry_name)
+        entry = _lookup_geometry_name_alias(override_by_name, geometry.geometry_name)
         bulk_hmax = _coerce_positive_float(
             entry.get("bulk_hmax") or entry.get("hmax") if entry else None
         ) or default_hmax
@@ -725,7 +750,7 @@ def _resolve_per_object_mesh_options(
     """
     extra_fields: list[dict[str, object]] = []
     for geometry in geometries:
-        recipe = per_object_recipes.get(geometry.geometry_name)
+        recipe = _lookup_geometry_name_alias(per_object_recipes, geometry.geometry_name)
         if recipe is None:
             continue
         if bounds_by_name is not None:
@@ -1095,16 +1120,18 @@ def _resolve_requested_partition_hmaxs(
                     continue
                 override_hmax = _coerce_positive_float(entry.get("hmax"))
                 if override_hmax is not None:
-                    override_by_name[raw_name.strip()] = override_hmax
+                    for alias in _geometry_name_aliases(raw_name):
+                        override_by_name.setdefault(alias, override_hmax)
 
     if per_object_recipes:
         for geometry_name, recipe in per_object_recipes.items():
             if recipe.hmax is not None and float(recipe.hmax) > 0.0:
-                override_by_name[geometry_name] = float(recipe.hmax)
+                for alias in _geometry_name_aliases(geometry_name):
+                    override_by_name.setdefault(alias, float(recipe.hmax))
 
     object_hmax_by_geometry: dict[str, float | None] = {}
     for geometry in geometries:
-        requested = override_by_name.get(geometry.geometry_name)
+        requested = _lookup_geometry_name_alias(override_by_name, geometry.geometry_name)
         if requested is None:
             requested = default_object_hmax
         if requested is None and (airbox is None or airbox.hmax is None):
@@ -1146,7 +1173,8 @@ def _resolve_effective_shared_domain_targets(
                     continue
                 raw_name = entry.get("geometry") or entry.get("geometry_name")
                 if isinstance(raw_name, str) and raw_name.strip():
-                    workflow_by_name[raw_name.strip()] = entry
+                    for alias in _geometry_name_aliases(raw_name):
+                        workflow_by_name.setdefault(alias, entry)
 
     effective_airbox_target = {
         "hmax": requested_airbox_hmax,
@@ -1164,8 +1192,12 @@ def _resolve_effective_shared_domain_targets(
     default_hmax = float(hints.hmax) if hints.hmax is not None else None
     effective_per_object_targets: dict[str, dict[str, float | int | str | None]] = {}
     for geometry in geometries:
-        workflow_entry = workflow_by_name.get(geometry.geometry_name)
-        recipe = per_object_recipes.get(geometry.geometry_name) if per_object_recipes else None
+        workflow_entry = _lookup_geometry_name_alias(workflow_by_name, geometry.geometry_name)
+        recipe = (
+            _lookup_geometry_name_alias(per_object_recipes, geometry.geometry_name)
+            if per_object_recipes
+            else None
+        )
         bulk_hmax = requested_hmax_by_geometry.get(geometry.geometry_name)
         interface_hmax = (
             _coerce_positive_float(workflow_entry.get("interface_hmax"))
