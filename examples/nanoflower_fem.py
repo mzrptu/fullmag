@@ -35,14 +35,14 @@ study.object_mesh_defaults(
     per_element_quality=False,
 )
 body.mesh(
-    hmax=2e-08,
+    hmax=1e-08,
     order=1,
     algorithm_2d=6,
     algorithm_3d=7,
     size_factor=1,
     size_from_curvature=0,
     smoothing_steps=1,
-    optimize_iterations=1,
+    optimize_iterations=3,
     narrow_regions=0,
     compute_quality=True,
     per_element_quality=True,

@@ -652,6 +652,9 @@ export function resolveViewportScope(
   return null;
 }
 
+export const EMPTY_SCALAR_ROWS: any[] = [];
+export const EMPTY_ENGINE_LOG: any[] = [];
+
 export function Section({
   title,
   badge,

@@ -14,7 +14,7 @@ interface TopBarProps {
 
 export function TopBar({ breadcrumb, onMobileMenuToggle, actions }: TopBarProps) {
   return (
-    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between border-b border-border/60 bg-gradient-to-r from-card/80 to-background/50 px-4 backdrop-blur-2xl shadow-[0_4px_24px_rgba(0,0,0,0.2)]">
+    <header className="sticky top-0 z-30 flex h-topbar shrink-0 items-center justify-between border-b border-border/60 bg-gradient-to-r from-card/80 to-background/50 px-4 backdrop-blur-2xl shadow-glass">
       <div className="flex items-center gap-4">
         <button
           className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted md:hidden transition-colors"

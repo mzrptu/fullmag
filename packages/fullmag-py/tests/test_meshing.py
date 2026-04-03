@@ -315,22 +315,21 @@ class MeshScaffoldTests(unittest.TestCase):
         )
 
         self.assertEqual(len(fields), 4)
-        self.assertEqual(fields[0]["kind"], "Box")
-        self.assertEqual(fields[1]["kind"], "Box")
-        self.assertAlmostEqual(fields[0]["params"]["VIn"], 4.8e-9)
-        self.assertAlmostEqual(fields[0]["params"]["VOut"], 8e-9)
-        self.assertAlmostEqual(fields[1]["params"]["VIn"], 8e-9)
-        self.assertAlmostEqual(fields[1]["params"]["VOut"], 20e-9)
-        self.assertAlmostEqual(fields[2]["params"]["VIn"], 12e-9)
-        self.assertAlmostEqual(fields[2]["params"]["VOut"], 20e-9)
-        self.assertAlmostEqual(fields[3]["params"]["VIn"], 20e-9)
-        self.assertAlmostEqual(fields[3]["params"]["VOut"], 20e-9)
-        self.assertLess(fields[0]["params"]["XMin"], -1.0)
-        self.assertGreater(fields[0]["params"]["XMax"], 1.0)
-        self.assertLess(fields[1]["params"]["XMin"], fields[0]["params"]["XMin"])
-        self.assertGreater(fields[1]["params"]["XMax"], fields[0]["params"]["XMax"])
-        self.assertLess(fields[3]["params"]["XMin"], -2.0)
-        self.assertGreater(fields[3]["params"]["XMax"], 2.0)
+        self.assertEqual(fields[0]["kind"], "BoundsSurfaceThreshold")
+        self.assertEqual(fields[1]["kind"], "BoundsSurfaceThreshold")
+        self.assertAlmostEqual(fields[0]["params"]["SizeMin"], 4.8e-9)
+        self.assertAlmostEqual(fields[0]["params"]["SizeMax"], 8e-9)
+        self.assertAlmostEqual(fields[1]["params"]["SizeMin"], 8e-9)
+        self.assertAlmostEqual(fields[1]["params"]["SizeMax"], 20e-9)
+        self.assertAlmostEqual(fields[2]["params"]["SizeMin"], 12e-9)
+        self.assertAlmostEqual(fields[2]["params"]["SizeMax"], 20e-9)
+        self.assertAlmostEqual(fields[3]["params"]["SizeMin"], 20e-9)
+        self.assertAlmostEqual(fields[3]["params"]["SizeMax"], 20e-9)
+        self.assertEqual(fields[0]["params"]["BoundsMin"], [-1.0, -1.0, -1.0])
+        self.assertEqual(fields[0]["params"]["BoundsMax"], [1.0, 1.0, 1.0])
+        self.assertGreater(fields[1]["params"]["DistMax"], fields[0]["params"]["DistMax"])
+        self.assertEqual(fields[3]["params"]["BoundsMin"], [-2.0, -1.0, -1.0])
+        self.assertEqual(fields[3]["params"]["BoundsMax"], [2.0, 1.0, 1.0])
 
     def test_apply_mesh_options_falls_back_from_mmg3d_when_size_fields_are_active(self) -> None:
         class _FakeOptionsApi:
@@ -903,6 +902,16 @@ class MeshScaffoldTests(unittest.TestCase):
         )
 
         class _FakeSurface:
+            vertices = np.asarray(
+                [
+                    [-0.5, -0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, -0.5, 0.5],
+                ],
+                dtype=np.float64,
+            )
+
             def copy(self) -> "_FakeSurface":
                 return self
 
@@ -981,6 +990,16 @@ class MeshScaffoldTests(unittest.TestCase):
         )
 
         class _FakeSurface:
+            vertices = np.asarray(
+                [
+                    [-0.5, -0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, -0.5, 0.5],
+                ],
+                dtype=np.float64,
+            )
+
             def copy(self) -> "_FakeSurface":
                 return self
 
@@ -1019,6 +1038,9 @@ class MeshScaffoldTests(unittest.TestCase):
         output = stderr.getvalue()
         self.assertIn("Total mesh: 3 tetrahedra, 12 nodes, 3 boundary faces", output)
         self.assertIn("Mesh part airbox: 1 tetrahedra, 4 nodes", output)
+        self.assertIn("requested maximum element size:", output)
+        self.assertIn("characteristic size:", output)
+        self.assertIn("edge span:", output)
         self.assertIn("Mesh part left: 1 tetrahedra, 4 nodes", output)
         self.assertIn("Mesh part right", output)
         self.assertIn("1 tetrahedra, 4 nodes", output)

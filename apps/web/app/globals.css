@@ -42,6 +42,10 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* Shadow tokens */
+  --shadow-glass: var(--shadow-glass);
+  --shadow-glass-side: var(--shadow-glass-side);
 }
 
 @layer base {
@@ -118,6 +122,10 @@
     --z-popout: 1000;
     --z-modal: 2000;
     --z-toast: 3000;
+
+    /* Shadows */
+    --shadow-glass: 0 4px 24px rgba(0, 0, 0, 0.2);
+    --shadow-glass-side: 4px 0 24px rgba(0, 0, 0, 0.2);
   }
 }
 

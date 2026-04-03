@@ -1643,6 +1643,30 @@ def _apply_mesh_options(
                 f"stretching={bl_stretching:.2f})"
             )
 
+    # When a background size field is active, disable competing Gmsh size
+    # sources so the field is the authoritative sizing control.  Without these,
+    # characteristic lengths embedded in GEO points (e.g. the h_outer value
+    # baked into every airbox corner point by _add_airbox_geo) propagate via
+    # MeshSizeFromPoints and MeshSizeExtendFromBoundary across the whole
+    # volume, completely overriding per-geometry Box fields and making local
+    # refinement settings have no visible effect on the final mesh.
+    has_active_fields = bool(extra_field_ids) or bool(opts.size_fields)
+    if has_active_fields:
+        gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+        # After classifySurfaces+createGeometry the original STL triangulation is
+        # embedded in the model as a 2D mesh.  When generate(3) is called, Gmsh
+        # detects the existing surface mesh and reuses it (only generating new 3D
+        # interior elements constrained by that coarse surface).  The background
+        # Box field therefore never controls the surface element size, making
+        # per-geometry hmax settings have no visible effect.
+        #
+        # Clearing the mesh here removes the embedded STL triangulation while
+        # keeping the GEO topology (points, curves, surfaces, volumes, physical
+        # groups) completely intact.  generate(3) then meshes curves, surfaces
+        # *and* volumes from scratch using the active background field.
+        gmsh.model.mesh.clear()
+
     if opts.size_fields:
         emit_progress("Gmsh: configuring mesh size fields")
         _configure_mesh_size_fields(gmsh, opts.size_fields, hscale, extra_field_ids)
@@ -1886,6 +1910,63 @@ def _add_boundary_layer_field(
     return fid
 
 
+def _match_surfaces_within_bounds(
+    gmsh: Any,
+    bounds_min: Sequence[float],
+    bounds_max: Sequence[float],
+    *,
+    padding: float = 0.0,
+) -> list[int]:
+    target_min = np.asarray(bounds_min, dtype=np.float64) - float(padding)
+    target_max = np.asarray(bounds_max, dtype=np.float64) + float(padding)
+    matched: list[int] = []
+    for _dim, surf_tag in gmsh.model.getEntities(2):
+        bb = np.asarray(gmsh.model.getBoundingBox(2, surf_tag), dtype=np.float64)
+        surf_min = bb[:3]
+        surf_max = bb[3:]
+        if np.all(surf_min >= target_min) and np.all(surf_max <= target_max):
+            matched.append(int(surf_tag))
+    return matched
+
+
+def _add_bounds_surface_threshold_field(
+    gmsh: Any,
+    *,
+    bounds_min: Sequence[float],
+    bounds_max: Sequence[float],
+    size_min: float,
+    size_max: float,
+    dist_min: float,
+    dist_max: float,
+    sampling: int = 20,
+    match_padding: float = 0.0,
+    hscale: float = 1.0,
+) -> int | None:
+    scaled_bounds_min = [float(v) * hscale for v in bounds_min]
+    scaled_bounds_max = [float(v) * hscale for v in bounds_max]
+    scaled_padding = float(match_padding) * hscale
+    surf_tags = _match_surfaces_within_bounds(
+        gmsh,
+        scaled_bounds_min,
+        scaled_bounds_max,
+        padding=scaled_padding,
+    )
+    if not surf_tags:
+        return None
+
+    f_dist = gmsh.model.mesh.field.add("Distance")
+    gmsh.model.mesh.field.setNumbers(f_dist, "SurfacesList", surf_tags)
+    gmsh.model.mesh.field.setNumber(f_dist, "Sampling", int(max(2, sampling)))
+
+    f_thresh = gmsh.model.mesh.field.add("Threshold")
+    gmsh.model.mesh.field.setNumber(f_thresh, "InField", f_dist)
+    gmsh.model.mesh.field.setNumber(f_thresh, "SizeMin", float(size_min) * hscale)
+    gmsh.model.mesh.field.setNumber(f_thresh, "SizeMax", float(size_max) * hscale)
+    gmsh.model.mesh.field.setNumber(f_thresh, "DistMin", float(dist_min) * hscale)
+    gmsh.model.mesh.field.setNumber(f_thresh, "DistMax", float(dist_max) * hscale)
+    return f_thresh
+
+
 def _configure_mesh_size_fields(
     gmsh: Any,
     fields: list[dict[str, Any]],
@@ -1912,6 +1993,29 @@ def _configure_mesh_size_fields(
     field_ids = []
     for config in fields:
         kind = config["kind"]
+        if kind == "BoundsSurfaceThreshold":
+            params = config.get("params", {})
+            if not isinstance(params, dict):
+                continue
+            bounds_min = params.get("BoundsMin")
+            bounds_max = params.get("BoundsMax")
+            if not isinstance(bounds_min, list) or not isinstance(bounds_max, list):
+                continue
+            fid = _add_bounds_surface_threshold_field(
+                gmsh,
+                bounds_min=bounds_min,
+                bounds_max=bounds_max,
+                size_min=float(params.get("SizeMin")),
+                size_max=float(params.get("SizeMax")),
+                dist_min=float(params.get("DistMin", 0.0)),
+                dist_max=float(params.get("DistMax", 0.0)),
+                sampling=int(params.get("Sampling", 20)),
+                match_padding=float(params.get("MatchPadding", 0.0)),
+                hscale=hscale,
+            )
+            if fid is not None:
+                field_ids.append(fid)
+            continue
         fid = gmsh.model.mesh.field.add(kind)
         for key, value in config.get("params", {}).items():
             if isinstance(value, str):

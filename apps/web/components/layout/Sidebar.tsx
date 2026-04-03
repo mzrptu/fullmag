@@ -37,7 +37,7 @@ export function Sidebar({ items, collapsed, mobileOpen, onCloseMobile, onToggleC
       
       <aside 
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border/60 bg-gradient-to-b from-card/80 to-background/50 backdrop-blur-2xl transition-all duration-300 md:relative md:translate-x-0 h-full shadow-[4px_0_24px_rgba(0,0,0,0.2)]",
+          "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border/60 bg-gradient-to-b from-card/80 to-background/50 backdrop-blur-2xl transition-all duration-300 md:relative md:translate-x-0 h-full shadow-glass-side",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
           collapsed ? "w-sidebar-collapsed" : "w-sidebar"
         )}

@@ -347,7 +347,7 @@ export default function MeshPanel() {
           <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 backdrop-blur-sm px-2.5 py-2 transition-colors hover:bg-background/60">
             <div className="flex items-center gap-1.5 text-muted-foreground">
               <Ruler size={11} />
-              <span className="text-[0.6rem] font-medium uppercase tracking-wider">hmax</span>
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider">Maximum Element Size</span>
             </div>
             <span className="font-mono text-xs font-semibold text-foreground/90">{meshHmax != null ? fmtSI(meshHmax, "m") : "—"}</span>
           </div>

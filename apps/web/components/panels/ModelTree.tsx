@@ -35,10 +35,7 @@ interface ModelTreeProps {
   className?: string;
 }
 
-/* ── Constants for tree geometry ────────────────────────────────────── */
-
-const TREE_INDENT = 14;     /* px per depth-level indent column */
-const NODE_HEIGHT = 30;     /* nominal row height in px */
+/* ── Constants for tree geometry are now defined in globals.css ── */
 
 /* ── Tree Node ─────────────────────────────────────────────────────── */
 
@@ -89,8 +86,7 @@ function TreeNode({
     <div className="flex flex-col">
       {/* ── Node row: [guides column] [interactive content] ── */}
       <div
-        className="flex items-stretch cursor-pointer group"
-        style={{ minHeight: `${NODE_HEIGHT}px` }}
+        className="flex items-stretch cursor-pointer group min-h-tree-row"
         onClick={handleClick}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(e, node.id, node.label); }}
         role="treeitem"
@@ -100,8 +96,7 @@ function TreeNode({
         {parentGuides.map((showLine, idx) => (
           <div
             key={`g-${idx}`}
-            className="shrink-0 flex justify-center"
-            style={{ width: `${TREE_INDENT}px` }}
+            className="shrink-0 flex justify-center w-tree-indent"
           >
             {showLine && (
               <div className="w-px h-full bg-border/50" />
@@ -112,8 +107,7 @@ function TreeNode({
         {/* Own branch connector: vertical ↓ + horizontal → */}
         {depth > 0 && (
           <div
-            className="shrink-0 relative"
-            style={{ width: `${TREE_INDENT}px` }}
+            className="shrink-0 relative w-tree-indent"
           >
             {/* Vertical segment: top → center (last child) or top → bottom */}
             <div

@@ -339,7 +339,6 @@ def _shared_domain_local_size_fields(
         override_by_name[raw_name.strip()] = entry
 
     fields: list[dict[str, object]] = []
-    sentinel_outside = default_hmax  # Use global hmax as outside-box fallback; 1e18 crashed MMG3D
     for geometry in geometries:
         if bounds_by_name is not None:
             bounds_pair = bounds_by_name.get(geometry.geometry_name)
@@ -356,40 +355,35 @@ def _shared_domain_local_size_fields(
         extent = np.asarray(bounds_max, dtype=np.float64) - np.asarray(bounds_min, dtype=np.float64)
         min_extent = max(float(np.min(extent)), target_hmax)
         interface_h = min(target_hmax, default_hmax) * 0.6
-        interface_pad = max(target_hmax * 0.5, min_extent * 0.05)
-        transition_pad = max(target_hmax * 2.5, min_extent * 0.15)
-        # Use a two-stage refinement policy:
-        # 1. a tight inner box that keeps the magnetic body itself dense
-        # 2. a broader transition halo that relaxes towards the coarse airbox
-        # This avoids the previous behaviour where the halo scaled with the
-        # coarse global hmax and spilled across most of the air domain.
+        interface_pad = max(target_hmax * 0.75, min_extent * 0.05)
+        transition_pad = max(target_hmax * 3.0, min_extent * 0.18)
         fields.append(
             {
-                "kind": "Box",
+                "kind": "BoundsSurfaceThreshold",
                 "params": {
-                    "VIn": float(interface_h),
-                    "VOut": float(target_hmax),
-                    "XMin": float(bounds_min[0] - interface_pad),
-                    "XMax": float(bounds_max[0] + interface_pad),
-                    "YMin": float(bounds_min[1] - interface_pad),
-                    "YMax": float(bounds_max[1] + interface_pad),
-                    "ZMin": float(bounds_min[2] - interface_pad),
-                    "ZMax": float(bounds_max[2] + interface_pad),
+                    "BoundsMin": [float(v) for v in bounds_min],
+                    "BoundsMax": [float(v) for v in bounds_max],
+                    "SizeMin": float(interface_h),
+                    "SizeMax": float(target_hmax),
+                    "DistMin": 0.0,
+                    "DistMax": float(interface_pad),
+                    "MatchPadding": float(interface_pad),
+                    "Sampling": 30,
                 },
             }
         )
         fields.append(
             {
-                "kind": "Box",
+                "kind": "BoundsSurfaceThreshold",
                 "params": {
-                    "VIn": float(target_hmax),
-                    "VOut": float(sentinel_outside),
-                    "XMin": float(bounds_min[0] - transition_pad),
-                    "XMax": float(bounds_max[0] + transition_pad),
-                    "YMin": float(bounds_min[1] - transition_pad),
-                    "YMax": float(bounds_max[1] + transition_pad),
-                    "ZMin": float(bounds_min[2] - transition_pad),
-                    "ZMax": float(bounds_max[2] + transition_pad),
+                    "BoundsMin": [float(v) for v in bounds_min],
+                    "BoundsMax": [float(v) for v in bounds_max],
+                    "SizeMin": float(target_hmax),
+                    "SizeMax": float(default_hmax),
+                    "DistMin": 0.0,
+                    "DistMax": float(transition_pad),
+                    "MatchPadding": float(transition_pad),
+                    "Sampling": 30,
                 },
             }
         )
@@ -407,10 +401,9 @@ def _resolve_per_object_mesh_options(
     """Build size-field overrides from per-object mesh recipes.
 
     For each geometry that has an associated :class:`PerObjectMeshRecipe`, a
-    Box size field is injected centred around the object's bounding box.  The
-    element size inside the box is taken from ``recipe.hmax`` (or the global
-    ``default_hmax`` when not set) and the size field boundary tolerance is
-    scaled by ``assembly_policy.interface_hmax_factor``.
+    surface-driven threshold field is injected around the object's recovered
+    STL surfaces. This keeps refinement attached to the real body boundary
+    instead of flooding the whole bounding box volume.
     """
     extra_fields: list[dict[str, object]] = []
     for geometry in geometries:
@@ -433,35 +426,35 @@ def _resolve_per_object_mesh_options(
         # The interface factor controls how tightly the refined region tracks
         # the object boundary.  Values < 1 mean finer elements at interfaces.
         interface_h = target_hmax * assembly_policy.interface_hmax_factor
-        interface_pad = max(interface_h * 1.0, min_extent * 0.05)
-        transition_pad = max(target_hmax * 2.5, min_extent * 0.15)
+        interface_pad = max(interface_h * 1.5, min_extent * 0.05)
+        transition_pad = max(target_hmax * 3.0, min_extent * 0.18)
         extra_fields.append(
             {
-                "kind": "Box",
+                "kind": "BoundsSurfaceThreshold",
                 "params": {
-                    "VIn": float(interface_h),
-                    "VOut": float(target_hmax),
-                    "XMin": float(bounds_min[0] - interface_pad),
-                    "XMax": float(bounds_max[0] + interface_pad),
-                    "YMin": float(bounds_min[1] - interface_pad),
-                    "YMax": float(bounds_max[1] + interface_pad),
-                    "ZMin": float(bounds_min[2] - interface_pad),
-                    "ZMax": float(bounds_max[2] + interface_pad),
+                    "BoundsMin": [float(v) for v in bounds_min],
+                    "BoundsMax": [float(v) for v in bounds_max],
+                    "SizeMin": float(interface_h),
+                    "SizeMax": float(target_hmax),
+                    "DistMin": 0.0,
+                    "DistMax": float(interface_pad),
+                    "MatchPadding": float(interface_pad),
+                    "Sampling": 30,
                 },
             }
         )
         extra_fields.append(
             {
-                "kind": "Box",
+                "kind": "BoundsSurfaceThreshold",
                 "params": {
-                    "VIn": float(target_hmax),
-                    "VOut": float(default_hmax),
-                    "XMin": float(bounds_min[0] - transition_pad),
-                    "XMax": float(bounds_max[0] + transition_pad),
-                    "YMin": float(bounds_min[1] - transition_pad),
-                    "YMax": float(bounds_max[1] + transition_pad),
-                    "ZMin": float(bounds_min[2] - transition_pad),
-                    "ZMax": float(bounds_max[2] + transition_pad),
+                    "BoundsMin": [float(v) for v in bounds_min],
+                    "BoundsMax": [float(v) for v in bounds_max],
+                    "SizeMin": float(target_hmax),
+                    "SizeMax": float(default_hmax),
+                    "DistMin": 0.0,
+                    "DistMax": float(transition_pad),
+                    "MatchPadding": float(transition_pad),
+                    "Sampling": 30,
                 },
             }
         )
@@ -694,15 +687,125 @@ def _count_nodes_for_element_mask(mesh: MeshData, element_mask: np.ndarray) -> i
     return int(np.unique(mesh.elements[element_mask].reshape(-1)).size)
 
 
+def _format_length_m(value: float) -> str:
+    abs_value = abs(float(value))
+    if abs_value == 0.0:
+        return "0 m"
+    if abs_value >= 1e-3:
+        return f"{value * 1e3:.3f} mm"
+    if abs_value >= 1e-6:
+        return f"{value * 1e6:.3f} um"
+    if abs_value >= 1e-9:
+        return f"{value * 1e9:.3f} nm"
+    if abs_value >= 1e-12:
+        return f"{value * 1e12:.3f} pm"
+    return f"{value:.3e} m"
+
+
+def _element_metric_summary_for_mask(
+    mesh: MeshData,
+    element_mask: np.ndarray,
+) -> dict[str, tuple[float, float]] | None:
+    if mesh.elements.size == 0 or not np.any(element_mask):
+        return None
+    points = np.asarray(mesh.nodes[mesh.elements[element_mask]], dtype=np.float64)
+    edge_pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    edge_lengths = [
+        np.linalg.norm(points[:, start] - points[:, end], axis=1)
+        for start, end in edge_pairs
+    ]
+    if not edge_lengths:
+        return None
+    edge_span = np.concatenate(edge_lengths)
+    if edge_span.size == 0:
+        return None
+    p0 = points[:, 0]
+    p1 = points[:, 1]
+    p2 = points[:, 2]
+    p3 = points[:, 3]
+    triple = np.einsum("ij,ij->i", p1 - p0, np.cross(p2 - p0, p3 - p0))
+    volumes = np.abs(triple) / 6.0
+    positive_volumes = volumes[volumes > 0.0]
+    if positive_volumes.size == 0:
+        return {
+            "edge_span": (float(np.min(edge_span)), float(np.max(edge_span))),
+        }
+    # Regular-tetra equivalent edge length: V = a^3 / (6 * sqrt(2))
+    characteristic = np.cbrt(positive_volumes * 6.0 * math.sqrt(2.0))
+    return {
+        "characteristic_size": (
+            float(np.min(characteristic)),
+            float(np.max(characteristic)),
+        ),
+        "edge_span": (
+            float(np.min(edge_span)),
+            float(np.max(edge_span)),
+        ),
+    }
+
+
 def _display_mesh_partition_name(name: str) -> str:
     if name.endswith("_geom") and len(name) > len("_geom"):
         return name[: -len("_geom")]
     return name
 
 
+def _resolve_requested_partition_hmaxs(
+    geometries: list[Geometry],
+    hints: FEM,
+    *,
+    airbox: AirboxOptions | None,
+    mesh_workflow: Mapping[str, object] | None,
+    per_object_recipes: dict[str, PerObjectMeshRecipe] | None,
+) -> tuple[float | None, dict[str, float | None]]:
+    requested_airbox_hmax = (
+        float(airbox.hmax)
+        if airbox is not None and airbox.hmax is not None and float(airbox.hmax) > 0.0
+        else (float(hints.hmax) if hints.hmax is not None else None)
+    )
+
+    default_object_hmax: float | None = None
+    if isinstance(mesh_workflow, Mapping):
+        default_mesh = mesh_workflow.get("default_mesh")
+        if isinstance(default_mesh, Mapping):
+            default_object_hmax = _coerce_positive_float(default_mesh.get("hmax"))
+
+    override_by_name: dict[str, float] = {}
+    if isinstance(mesh_workflow, Mapping):
+        per_geometry = mesh_workflow.get("per_geometry")
+        if isinstance(per_geometry, list):
+            for entry in per_geometry:
+                if not isinstance(entry, Mapping):
+                    continue
+                raw_name = entry.get("geometry") or entry.get("geometry_name")
+                if not isinstance(raw_name, str) or not raw_name.strip():
+                    continue
+                override_hmax = _coerce_positive_float(entry.get("hmax"))
+                if override_hmax is not None:
+                    override_by_name[raw_name.strip()] = override_hmax
+
+    if per_object_recipes:
+        for geometry_name, recipe in per_object_recipes.items():
+            if recipe.hmax is not None and float(recipe.hmax) > 0.0:
+                override_by_name[geometry_name] = float(recipe.hmax)
+
+    object_hmax_by_geometry: dict[str, float | None] = {}
+    for geometry in geometries:
+        requested = override_by_name.get(geometry.geometry_name)
+        if requested is None:
+            requested = default_object_hmax
+        if requested is None and (airbox is None or airbox.hmax is None):
+            requested = float(hints.hmax) if hints.hmax is not None else None
+        object_hmax_by_geometry[geometry.geometry_name] = requested
+    return requested_airbox_hmax, object_hmax_by_geometry
+
+
 def _emit_shared_domain_mesh_summary(
     mesh: MeshData,
     region_markers: list[dict[str, object]],
+    *,
+    requested_airbox_hmax: float | None = None,
+    requested_hmax_by_geometry: Mapping[str, float | None] | None = None,
 ) -> None:
     emit_progress(
         "Total mesh: "
@@ -713,10 +816,34 @@ def _emit_shared_domain_mesh_summary(
     element_markers = np.asarray(mesh.element_markers, dtype=np.int32)
     air_mask = element_markers == 0
     if np.any(air_mask):
+        air_metrics = _element_metric_summary_for_mask(mesh, air_mask)
+        air_size_suffix = ""
+        parts: list[str] = []
+        if requested_airbox_hmax is not None:
+            parts.append(
+                "requested maximum element size: "
+                f"{_format_length_m(requested_airbox_hmax)}"
+            )
+        if air_metrics is not None:
+            characteristic = air_metrics.get("characteristic_size")
+            edge_span = air_metrics.get("edge_span")
+            if characteristic is not None:
+                parts.append(
+                    "characteristic size: "
+                    f"{_format_length_m(characteristic[0])} -> {_format_length_m(characteristic[1])}"
+                )
+            if edge_span is not None:
+                parts.append(
+                    "edge span: "
+                    f"{_format_length_m(edge_span[0])} -> {_format_length_m(edge_span[1])}"
+                )
+            if parts:
+                air_size_suffix = ", " + ", ".join(parts)
         emit_progress(
             "Mesh part airbox: "
             f"{int(np.count_nonzero(air_mask))} tetrahedra, "
             f"{_count_nodes_for_element_mask(mesh, air_mask)} nodes"
+            f"{air_size_suffix}"
         )
 
     for entry in region_markers:
@@ -726,10 +853,39 @@ def _emit_shared_domain_mesh_summary(
             continue
         part_mask = element_markers == int(marker)
         part_label = _display_mesh_partition_name(geometry_name)
+        part_metrics = _element_metric_summary_for_mask(mesh, part_mask)
+        part_size_suffix = ""
+        parts: list[str] = []
+        requested_hmax = (
+            requested_hmax_by_geometry.get(geometry_name)
+            if requested_hmax_by_geometry is not None
+            else None
+        )
+        if requested_hmax is not None:
+            parts.append(
+                "requested maximum element size: "
+                f"{_format_length_m(requested_hmax)}"
+            )
+        if part_metrics is not None:
+            characteristic = part_metrics.get("characteristic_size")
+            edge_span = part_metrics.get("edge_span")
+            if characteristic is not None:
+                parts.append(
+                    "characteristic size: "
+                    f"{_format_length_m(characteristic[0])} -> {_format_length_m(characteristic[1])}"
+                )
+            if edge_span is not None:
+                parts.append(
+                    "edge span: "
+                    f"{_format_length_m(edge_span[0])} -> {_format_length_m(edge_span[1])}"
+                )
+            if parts:
+                part_size_suffix = ", " + ", ".join(parts)
         emit_progress(
             f"Mesh part {part_label}: "
             f"{int(np.count_nonzero(part_mask))} tetrahedra, "
             f"{_count_nodes_for_element_mask(mesh, part_mask)} nodes"
+            f"{part_size_suffix}"
         )
 
 
@@ -876,7 +1032,19 @@ def realize_fem_domain_mesh_asset(
         quality=mesh.quality,
         per_domain_quality=mesh.per_domain_quality,
     )
-    _emit_shared_domain_mesh_summary(classified_mesh, region_markers)
+    requested_airbox_hmax, requested_hmax_by_geometry = _resolve_requested_partition_hmaxs(
+        geometries,
+        hints,
+        airbox=airbox,
+        mesh_workflow=mesh_workflow,
+        per_object_recipes=per_object_recipes,
+    )
+    _emit_shared_domain_mesh_summary(
+        classified_mesh,
+        region_markers,
+        requested_airbox_hmax=requested_airbox_hmax,
+        requested_hmax_by_geometry=requested_hmax_by_geometry,
+    )
     return classified_mesh, region_markers
 
 
