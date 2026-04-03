@@ -31,6 +31,7 @@ import type {
   DomainFrameState,
   FemMeshPart,
   MeshCommandTarget,
+  MeshEntityViewState,
   MeshEntityViewStateMap,
   ModelBuilderGraphV2,
   SceneDocument,
@@ -192,6 +193,15 @@ function serializeMeshEntityViewStateForScene(
     };
   }
   return next;
+}
+
+function defaultMeshPartViewState(part: FemMeshPart): MeshEntityViewState {
+  return {
+    visible: part.role !== "air",
+    renderMode: part.role === "air" ? "wireframe" : "surface+edges",
+    opacity: part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
+    colorField: part.role === "magnetic_object" ? "orientation" : "none",
+  };
 }
 
 function samePersistedMeshEntityViewState(
@@ -2433,12 +2443,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setMeshEntityViewState((prev) => {
       const next: MeshEntityViewStateMap = {};
       for (const part of meshParts) {
-        next[part.id] = prev[part.id] ?? {
-          visible: part.role !== "air",
-          renderMode: part.role === "air" ? "wireframe" : "surface+edges",
-          opacity: part.role === "air" ? 28 : 100,
-          colorField: "none",
-        };
+        next[part.id] = prev[part.id] ?? defaultMeshPartViewState(part);
       }
       return next;
     });

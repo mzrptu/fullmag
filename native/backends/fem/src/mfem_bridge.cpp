@@ -2551,6 +2551,18 @@ bool context_initialize_poisson(Context &ctx, std::string &error) {
             if (ctx.poisson_boundary_marker >= 1 &&
                 ctx.poisson_boundary_marker <= mesh->bdr_attributes.Max()) {
                 bdr_marker[ctx.poisson_boundary_marker - 1] = 1;
+            } else {
+                // F-11 fix: error instead of silently assembling empty boundary.
+                error = "Robin BC: poisson_boundary_marker=" +
+                        std::to_string(ctx.poisson_boundary_marker) +
+                        " not found in mesh bdr_attributes (max=" +
+                        std::to_string(mesh->bdr_attributes.Max()) +
+                        "). Check air_box_config boundary markers.";
+                delete poisson_bilinear;
+                delete potential_fes;
+                delete potential_fec;
+                delete gf_potential;
+                return false;
             }
             bdr_mass->AddBoundaryIntegrator(
                 new mfem::MassIntegrator(), bdr_marker);
@@ -2567,11 +2579,22 @@ bool context_initialize_poisson(Context &ctx, std::string &error) {
             // ── Dirichlet BC path (default): u = 0 on Γ_out ──
             ctx.poisson_ess_tdof_list.clear();
             if (ctx.poisson_boundary_marker > 0) {
+                if (ctx.poisson_boundary_marker > mesh->bdr_attributes.Max()) {
+                    // F-11 fix: error when boundary marker not found.
+                    error = "Dirichlet BC: poisson_boundary_marker=" +
+                            std::to_string(ctx.poisson_boundary_marker) +
+                            " exceeds mesh bdr_attributes.Max()=" +
+                            std::to_string(mesh->bdr_attributes.Max()) +
+                            ". Check air_box_config boundary markers.";
+                    delete poisson_bilinear;
+                    delete potential_fes;
+                    delete potential_fec;
+                    delete gf_potential;
+                    return false;
+                }
                 mfem::Array<int> bdr_attr_is_ess(mesh->bdr_attributes.Max());
                 bdr_attr_is_ess = 0;
-                if (ctx.poisson_boundary_marker <= mesh->bdr_attributes.Max()) {
-                    bdr_attr_is_ess[ctx.poisson_boundary_marker - 1] = 1;
-                }
+                bdr_attr_is_ess[ctx.poisson_boundary_marker - 1] = 1;
                 mfem::Array<int> ess_tdof;
                 potential_fes->GetEssentialTrueDofs(bdr_attr_is_ess, ess_tdof);
                 ctx.poisson_ess_tdof_list.assign(
@@ -2580,6 +2603,11 @@ bool context_initialize_poisson(Context &ctx, std::string &error) {
             }
 
             if (ctx.poisson_ess_tdof_list.empty()) {
+                // F-11 fix: warn instead of silently pinning DOF 0.
+                fprintf(stderr,
+                        "warning: Dirichlet BC for Poisson — no boundary DOFs found for marker=%d; "
+                        "pinning DOF 0 as fallback. This may produce incorrect demag results.\n",
+                        ctx.poisson_boundary_marker);
                 ctx.poisson_ess_tdof_list.push_back(0);
             }
 

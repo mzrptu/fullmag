@@ -53,7 +53,17 @@ pub(crate) fn select_observables<'a>(
         "H_ant" => observables.antenna_field.as_slice(),
         "H_ext" => observables.external_field.as_slice(),
         "H_eff" => observables.effective_field.as_slice(),
-        _ => observables.magnetization.as_slice(),
+        "m" => observables.magnetization.as_slice(),
+        other => {
+            // F-13 fix: warn that the requested quantity is not available from
+            // the CPU reference engine and fall back to magnetization.
+            eprintln!(
+                "warning: preview quantity '{}' is not supported by the CPU reference engine — \
+                 returning magnetization instead",
+                other
+            );
+            observables.magnetization.as_slice()
+        }
     }
 }
 

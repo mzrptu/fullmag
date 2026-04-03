@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useEffect } from "react";
+import React, { useMemo, useRef, useEffect, useLayoutEffect } from "react";
 import * as THREE from "three";
 import { useThree } from "@react-three/fiber";
 import { FemMeshData, FemColorField } from "../FemMeshView3D";
@@ -347,35 +347,44 @@ export function FemArrows({
 
     return { count: resultCount, instancePositions: positions, quaternions: quaternionsList, scales: scalesList, colors: colorsList };
   }, [meshData, field, arrowDensity, center, visible, lengthMode, activeNodeMask, boundaryFaceIndices]);
+  const capacity = Math.max(count, 1);
+  const instanceColorAttribute = useMemo(() => {
+    const attribute = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    attribute.setUsage(THREE.DynamicDrawUsage);
+    return attribute;
+  }, [capacity]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const mesh = meshRef.current;
-    if (!mesh || count === 0) {
+    if (!mesh) {
       return;
     }
-    if (!mesh.instanceColor || mesh.instanceColor.count < Math.max(count, 1)) {
-      mesh.instanceColor = new THREE.InstancedBufferAttribute(
-        new Float32Array(Math.max(count, 1) * 3),
-        3,
-      );
-    }
+    mesh.instanceColor = instanceColorAttribute;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     mesh.frustumCulled = false;
     mesh.renderOrder = glyphPolicy.renderOrder;
+    mesh.count = count;
+    mesh.instanceColor.needsUpdate = true;
     material.needsUpdate = true;
-  }, [count, glyphPolicy.renderOrder, material]);
+    invalidate();
+  }, [count, glyphPolicy.renderOrder, instanceColorAttribute, invalidate, material]);
 
-  // Apply instance matrices
-  useEffect(() => {
+  // Apply instance matrices and per-instance colors using the same low-level
+  // buffer path that already works reliably in FDM preview rendering.
+  useLayoutEffect(() => {
     const mesh = meshRef.current;
-    if (!mesh || count === 0) return;
+    if (!mesh) return;
 
-    const instanceColor = mesh.instanceColor;
+    const instanceColor = mesh.instanceColor ?? instanceColorAttribute;
     if (!instanceColor) return;
+    const colorArray = instanceColor.array as Float32Array;
+    const matrixArray = mesh.instanceMatrix.array as Float32Array;
+
     const dummy = new THREE.Object3D();
-    const color = new THREE.Color();
-    for (let i = 0; i < count; i++) {
+    let matrixOffset = 0;
+    let colorOffset = 0;
+
+    for (let i = 0; i < count; i += 1) {
       dummy.position.set(
         instancePositions[i][0],
         instancePositions[i][1],
@@ -389,29 +398,41 @@ export function FemArrows({
       );
       dummy.scale.set(scales[i * 3], scales[i * 3 + 1], scales[i * 3 + 2]);
       dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-      color.setRGB(
-        colors[i * 3],
-        colors[i * 3 + 1],
-        colors[i * 3 + 2],
-      );
-      mesh.setColorAt(i, color);
+      dummy.matrix.toArray(matrixArray, matrixOffset);
+      matrixOffset += 16;
+
+      colorArray[colorOffset] = colors[i * 3];
+      colorArray[colorOffset + 1] = colors[i * 3 + 1];
+      colorArray[colorOffset + 2] = colors[i * 3 + 2];
+      colorOffset += 3;
     }
+
     mesh.count = count;
     mesh.instanceMatrix.needsUpdate = true;
     instanceColor.needsUpdate = true;
     material.needsUpdate = true;
     invalidate();
-  }, [colors, count, instancePositions, invalidate, material, quaternions, scales]);
+  }, [
+    colors,
+    count,
+    instanceColorAttribute,
+    instancePositions,
+    invalidate,
+    material,
+    quaternions,
+    scales,
+  ]);
 
   if (!visible || count === 0) return null;
 
   return (
     <instancedMesh
       ref={meshRef}
-      args={[templateGeometry!, material, Math.max(count, 1)]}
+      args={[templateGeometry!, material, capacity]}
       frustumCulled={false}
       renderOrder={glyphPolicy.renderOrder}
-    />
+    >
+      <primitive attach="instanceColor" object={instanceColorAttribute} />
+    </instancedMesh>
   );
 }

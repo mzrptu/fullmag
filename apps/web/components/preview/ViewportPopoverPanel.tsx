@@ -7,6 +7,9 @@ import {
   useRef,
   useState,
   useEffect,
+  cloneElement,
+  isValidElement,
+  Children,
 } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
@@ -14,18 +17,21 @@ import { cn } from "@/lib/utils";
 // ─── types ────────────────────────────────────────────────────────────────────
 
 export interface ViewportPopoverPanelProps {
-  /** The button/icon that triggered this popover. Used to compute anchor position. */
+  /**
+   * Ref to the trigger element (button/icon) used to calculate anchor position.
+   * Either pass anchorRef OR wrap trigger + panel together in ViewportPopoverTrigger.
+   */
   anchorRef: RefObject<HTMLElement | null>;
   children: ReactNode;
   title?: ReactNode;
   className?: string;
-  /** Which horizontal edge of the *anchor* to align against first. Default "left". */
+  /** Which horizontal edge of the anchor to align against first. Default "left". */
   preferredHorizontal?: "left" | "right";
   /** Open below or above the anchor first. Default "bottom". */
   preferredVertical?: "bottom" | "top";
 }
 
-// ─── component ────────────────────────────────────────────────────────────────
+// ─── main panel (portal + fixed positioning) ──────────────────────────────────
 
 export function ViewportPopoverPanel({
   anchorRef,
@@ -36,10 +42,14 @@ export function ViewportPopoverPanel({
   preferredVertical = "bottom",
 }: ViewportPopoverPanelProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const [style, setStyle] = useState<React.CSSProperties>({ visibility: "hidden", position: "fixed" });
+  const [style, setStyle] = useState<React.CSSProperties>({
+    visibility: "hidden",
+    position: "fixed",
+    top: 0,
+    left: 0,
+  });
   const [mounted, setMounted] = useState(false);
 
-  // Wait for client‐side mount before portal is used.
   useEffect(() => setMounted(true), []);
 
   useLayoutEffect(() => {
@@ -54,55 +64,32 @@ export function ViewportPopoverPanel({
       const pRect = panel.getBoundingClientRect();
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      const GAP = 6; // px between anchor and panel
-      const MARGIN = 8; // min distance from viewport edges
+      const GAP = 6;
+      const MARGIN = 8;
 
-      // ── Vertical ────────────────────────────────────────────────────────────
+      // ── Vertical ──────────────────────────────────────────────────────────
       let top: number;
       if (preferredVertical === "bottom") {
         const candidate = aRect.bottom + GAP;
-        if (candidate + pRect.height > vh - MARGIN) {
-          // Not enough room below → open above
-          top = aRect.top - GAP - pRect.height;
-        } else {
-          top = candidate;
-        }
+        top = candidate + pRect.height > vh - MARGIN ? aRect.top - GAP - pRect.height : candidate;
       } else {
         const candidate = aRect.top - GAP - pRect.height;
-        if (candidate < MARGIN) {
-          // Not enough room above → open below
-          top = aRect.bottom + GAP;
-        } else {
-          top = candidate;
-        }
+        top = candidate < MARGIN ? aRect.bottom + GAP : candidate;
       }
       top = Math.max(MARGIN, Math.min(top, vh - pRect.height - MARGIN));
 
-      // ── Horizontal ──────────────────────────────────────────────────────────
+      // ── Horizontal ────────────────────────────────────────────────────────
       let left: number;
       if (preferredHorizontal === "left") {
-        // Align panel's LEFT edge to anchor's LEFT edge
         left = aRect.left;
-        if (left + pRect.width > vw - MARGIN) {
-          // Overflows right → align panel's RIGHT edge to anchor's RIGHT edge
-          left = aRect.right - pRect.width;
-        }
+        if (left + pRect.width > vw - MARGIN) left = aRect.right - pRect.width;
       } else {
-        // Align panel's RIGHT edge to anchor's RIGHT edge
         left = aRect.right - pRect.width;
-        if (left < MARGIN) {
-          // Overflows left → align panel's LEFT edge to anchor's LEFT edge
-          left = aRect.left;
-        }
+        if (left < MARGIN) left = aRect.left;
       }
       left = Math.max(MARGIN, Math.min(left, vw - pRect.width - MARGIN));
 
-      setStyle({
-        position: "fixed",
-        top,
-        left,
-        visibility: "visible",
-      });
+      setStyle({ position: "fixed", top, left, visibility: "visible" });
     }
 
     reposition();
@@ -136,6 +123,50 @@ export function ViewportPopoverPanel({
       {children}
     </div>,
     document.body,
+  );
+}
+
+// ─── convenience wrapper ──────────────────────────────────────────────────────
+/**
+ * Wraps a trigger element and its popover panel together.
+ * The trigger MUST be the first child; the panel (ViewportPopoverPanel without anchorRef) MUST be
+ * the second child.
+ *
+ * Usage:
+ *   <ViewportPopoverTrigger preferredHorizontal="left">
+ *     <ViewportIconAction ... />
+ *     {open && <ViewportPopoverPanel title="...">...</ViewportPopoverPanel>}
+ *   </ViewportPopoverTrigger>
+ */
+export interface ViewportPopoverTriggerProps {
+  children: ReactNode;
+  className?: string;
+  preferredHorizontal?: "left" | "right";
+  preferredVertical?: "bottom" | "top";
+}
+
+export function ViewportPopoverTrigger({
+  children,
+  className,
+  preferredHorizontal = "left",
+  preferredVertical = "bottom",
+}: ViewportPopoverTriggerProps) {
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const array = Children.toArray(children);
+  const trigger = array[0];
+  const panel = array[1];
+
+  return (
+    <div ref={triggerRef} className={cn("relative inline-flex", className)}>
+      {trigger}
+      {panel && isValidElement<ViewportPopoverPanelProps>(panel)
+        ? cloneElement(panel, {
+            anchorRef: triggerRef as RefObject<HTMLElement | null>,
+            preferredHorizontal: panel.props.preferredHorizontal ?? preferredHorizontal,
+            preferredVertical: panel.props.preferredVertical ?? preferredVertical,
+          })
+        : null}
+    </div>
   );
 }
 

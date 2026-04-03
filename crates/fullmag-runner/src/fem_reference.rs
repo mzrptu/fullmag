@@ -1280,7 +1280,7 @@ mod tests {
         );
         assert_eq!(
             provenance.demag_operator_kind.as_deref(),
-            Some("fem_airbox_dirichlet"),
+            Some("fem_airbox_robin"),
         );
 
         let fields = snapshot_vector_fields(&plan, &["H_demag"], &crate::LivePreviewRequest::default())

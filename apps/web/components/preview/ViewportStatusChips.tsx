@@ -19,7 +19,7 @@ export function ViewportStatusChip({ children, active, color = "default", classN
         color === "amber" && "border-amber-400/30 bg-amber-500/10 text-amber-300",
         color === "rose" && "border-rose-400/30 bg-rose-500/10 text-rose-300",
         color === "cyan" && "border-cyan-400/30 bg-cyan-500/10 text-cyan-300",
-        active && "border-white/20 bg-white/10 text-white",
+        active && "border-primary/45 bg-primary/18 text-primary",
         className
       )}
     >

@@ -29,7 +29,7 @@ import {
 import { ViewportToolbar3D } from "./ViewportToolbar3D";
 import { ViewportToolGroup, ViewportToolSeparator } from "./ViewportToolGroup";
 import { ViewportIconAction } from "./ViewportIconAction";
-import { ViewportPopoverPanel, ViewportPopoverRow } from "./ViewportPopoverPanel";
+import { ViewportPopoverPanel, ViewportPopoverRow, ViewportPopoverTrigger } from "./ViewportPopoverPanel";
 import { ViewportStatusChip } from "./ViewportStatusChips";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -621,6 +621,8 @@ function MagnetizationView3DInner({
   // In isolate mode, keep voxels at full opacity to avoid transparent instanced mesh
   // sorting artifacts. The overlay boxes already hide non-selected objects visually.
   const sceneOpacityMultiplier = 1;
+  const toolbarOptionClassName =
+    "appearance-none border border-transparent bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors hover:bg-muted/40 hover:text-foreground data-[active=true]:border-primary/45 data-[active=true]:bg-primary/18 data-[active=true]:text-primary";
 
   return (
     <div className="relative flex flex-col h-full">
@@ -649,26 +651,27 @@ function MagnetizationView3DInner({
         {/* Color field (only voxel) */}
         {settings.renderMode === "voxel" && (
           <ViewportToolGroup label="Color">
-            <div className="relative">
+            <ViewportPopoverTrigger preferredHorizontal="left">
               <ViewportIconAction
                 icon={<Palette size={14} />}
                 label={settings.voxelColorMode === "orientation" ? "ORI" : settings.voxelColorMode.toUpperCase()}
+                active={openPopover === "color"}
                 showCaret
                 onClick={() => setOpenPopover(prev => prev === "color" ? null : "color")}
                 title="Color Field"
               />
               {openPopover === "color" && (
-                <ViewportPopoverPanel title="Color Mode">
+                <ViewportPopoverPanel anchorRef={{ current: null }} title="Color Mode">
                    <ViewportPopoverRow label="Field">
                     {(["orientation", "x", "y", "z"] as VoxelColorMode[]).map(v => (
-                       <button key={v} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={settings.voxelColorMode === v} onClick={() => { update({ voxelColorMode: v }); setOpenPopover(null); }}>
+                       <button key={v} className={toolbarOptionClassName} data-active={settings.voxelColorMode === v} onClick={() => { update({ voxelColorMode: v }); setOpenPopover(null); }}>
                          {v === "orientation" ? "ORI" : v.toUpperCase()}
                        </button>
                     ))}
                   </ViewportPopoverRow>
                 </ViewportPopoverPanel>
               )}
-            </div>
+            </ViewportPopoverTrigger>
           </ViewportToolGroup>
         )}
 
@@ -680,7 +683,7 @@ function MagnetizationView3DInner({
 
         <ViewportToolGroup>
           {/* Display settings Popover */}
-          <div className="relative">
+          <ViewportPopoverTrigger preferredHorizontal="left">
             <ViewportIconAction
               icon={<Eye size={14} />}
               showCaret
@@ -689,10 +692,10 @@ function MagnetizationView3DInner({
               title="Display Options"
             />
             {openPopover === "display" && (
-              <ViewportPopoverPanel title="Display & Quality">
+              <ViewportPopoverPanel anchorRef={{ current: null }} title="Display & Quality">
                 <ViewportPopoverRow label="Quality">
                    {(["low", "high", "ultra"] as QualityLevel[]).map(v => (
-                       <button key={v} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={settings.quality === v} onClick={() => update({ quality: v })}>
+                       <button key={v} className={toolbarOptionClassName} data-active={settings.quality === v} onClick={() => update({ quality: v })}>
                          {v}
                        </button>
                     ))}
@@ -714,7 +717,7 @@ function MagnetizationView3DInner({
                     </ViewportPopoverRow>
                     <ViewportPopoverRow label="Sampling">
                        {(["1", "2", "4"]).map(v => (
-                         <button key={v} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={String(settings.sampling) === v} onClick={() => update({ sampling: parseInt(v, 10) as VoxelSampling })}>
+                         <button key={v} className={toolbarOptionClassName} data-active={String(settings.sampling) === v} onClick={() => update({ sampling: parseInt(v, 10) as VoxelSampling })}>
                            {v}X
                          </button>
                        ))}
@@ -723,11 +726,11 @@ function MagnetizationView3DInner({
                 )}
               </ViewportPopoverPanel>
             )}
-          </div>
+          </ViewportPopoverTrigger>
 
           {/* Topography */}
           {!geometryMode && (
-            <div className="relative">
+            <ViewportPopoverTrigger preferredHorizontal="left">
               <ViewportIconAction
                 icon={<Mountain size={14} />}
                 showCaret
@@ -736,9 +739,9 @@ function MagnetizationView3DInner({
                 title="Topography"
               />
               {openPopover === "topo" && (
-                <ViewportPopoverPanel title="Topography">
+                <ViewportPopoverPanel anchorRef={{ current: null }} title="Topography">
                    <ViewportPopoverRow label="Enable">
-                      <button className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={settings.topoEnabled} onClick={() => update({ topoEnabled: !settings.topoEnabled })}>
+                      <button className={toolbarOptionClassName} data-active={settings.topoEnabled} onClick={() => update({ topoEnabled: !settings.topoEnabled })}>
                         {settings.topoEnabled ? "ON" : "OFF"}
                       </button>
                    </ViewportPopoverRow>
@@ -746,7 +749,7 @@ function MagnetizationView3DInner({
                      <>
                         <ViewportPopoverRow label="Display">
                           {(["x", "y", "z"] as TopoComponent[]).map(v => (
-                            <button key={v} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={settings.topoComponent === v} onClick={() => update({ topoComponent: v })}>
+                            <button key={v} className={toolbarOptionClassName} data-active={settings.topoComponent === v} onClick={() => update({ topoComponent: v })}>
                               m{v.toUpperCase()}
                             </button>
                           ))}
@@ -758,11 +761,11 @@ function MagnetizationView3DInner({
                    )}
                 </ViewportPopoverPanel>
               )}
-            </div>
+            </ViewportPopoverTrigger>
           )}
 
           {/* Camera Info */}
-          <div className="relative">
+          <ViewportPopoverTrigger preferredHorizontal="left">
             <ViewportIconAction
               icon={<Video size={14} />}
               showCaret
@@ -771,7 +774,7 @@ function MagnetizationView3DInner({
               title="Camera"
             />
             {openPopover === "camera" && (
-              <ViewportPopoverPanel title="Camera Presets">
+              <ViewportPopoverPanel anchorRef={{ current: null }} title="Camera Presets">
                 <div className="grid grid-cols-2 gap-1 px-1">
                   {cameraPresets.map(p => (
                     <button key={p.label} className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { p.fn(); setOpenPopover(null); }}>{p.label}</button>
@@ -780,7 +783,7 @@ function MagnetizationView3DInner({
                 </div>
               </ViewportPopoverPanel>
             )}
-          </div>
+          </ViewportPopoverTrigger>
 
           <ViewportToolSeparator />
 

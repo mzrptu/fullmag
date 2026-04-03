@@ -556,13 +556,53 @@ pub(crate) fn execute_fem<'a>(
     artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
     match engine {
-        FemEngine::CpuReference => fem_reference::execute_reference_fem(
-            plan,
-            until_seconds,
-            outputs,
-            live,
-            artifact_writer,
-        ),
+        FemEngine::CpuReference => {
+            // F-04 fix: warn when the plan contains terms unsupported by the
+            // CPU reference engine so the user knows physics may differ.
+            let mut unsupported = Vec::new();
+            if plan.material.uniaxial_anisotropy.is_some()
+                || plan.material.uniaxial_anisotropy_k2.is_some()
+                || plan.material.ku_field.is_some()
+                || plan.material.ku2_field.is_some()
+            {
+                unsupported.push("uniaxial_anisotropy");
+            }
+            if plan.material.cubic_anisotropy_kc1.is_some()
+                || plan.material.cubic_anisotropy_kc2.is_some()
+                || plan.material.cubic_anisotropy_kc3.is_some()
+            {
+                unsupported.push("cubic_anisotropy");
+            }
+            if plan.interfacial_dmi.is_some() || plan.dind_field.is_some() {
+                unsupported.push("interfacial_dmi");
+            }
+            if plan.bulk_dmi.is_some() || plan.dbulk_field.is_some() {
+                unsupported.push("bulk_dmi");
+            }
+            if plan.magnetoelastic.is_some() {
+                unsupported.push("magnetoelastic");
+            }
+            if plan.has_oersted_cylinder {
+                unsupported.push("oersted");
+            }
+            if plan.temperature.map_or(false, |t| t > 0.0) {
+                unsupported.push("thermal");
+            }
+            if !unsupported.is_empty() {
+                eprintln!(
+                    "warning: CPU reference FEM engine does not support these plan terms: [{}]. \
+                     They will be IGNORED during this run. Use a native GPU backend for full physics.",
+                    unsupported.join(", ")
+                );
+            }
+            fem_reference::execute_reference_fem(
+                plan,
+                until_seconds,
+                outputs,
+                live,
+                artifact_writer,
+            )
+        }
         FemEngine::NativeGpu => {
             if let Some(min_nodes) = should_fallback_to_cpu_for_small_fem_gpu(plan) {
                 eprintln!(

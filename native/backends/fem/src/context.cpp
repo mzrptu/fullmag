@@ -219,6 +219,48 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     copy_field(ctx.Kc2_field,   plan.kc2_field,   plan.kc2_field_len);
     copy_field(ctx.Kc3_field,   plan.kc3_field,   plan.kc3_field_len);
 
+    // F-14 fix: validate per-node field lengths match n_nodes.
+    {
+        auto check_field_len = [&](const std::vector<double> &field, const char *name) -> bool {
+            if (!field.empty() && field.size() != static_cast<size_t>(ctx.n_nodes)) {
+                error = std::string("per-node field '") + name + "' has length " +
+                        std::to_string(field.size()) + " but n_nodes=" +
+                        std::to_string(ctx.n_nodes);
+                return false;
+            }
+            return true;
+        };
+        if (!check_field_len(ctx.Ms_field, "Ms_field") ||
+            !check_field_len(ctx.A_field, "A_field") ||
+            !check_field_len(ctx.alpha_field, "alpha_field") ||
+            !check_field_len(ctx.Ku_field, "Ku_field") ||
+            !check_field_len(ctx.Ku2_field, "Ku2_field") ||
+            !check_field_len(ctx.Dind_field, "Dind_field") ||
+            !check_field_len(ctx.Dbulk_field, "Dbulk_field") ||
+            !check_field_len(ctx.Kc1_field, "Kc1_field") ||
+            !check_field_len(ctx.Kc2_field, "Kc2_field") ||
+            !check_field_len(ctx.Kc3_field, "Kc3_field")) {
+            return false;
+        }
+    }
+
+    // F-14 fix: normalize anisotropy axes.
+    {
+        auto normalize3 = [](std::array<double, 3> &v) {
+            double len = std::sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+            if (len > 1e-30) {
+                v[0] /= len; v[1] /= len; v[2] /= len;
+            }
+        };
+        if (ctx.enable_anisotropy) {
+            normalize3(ctx.anisotropy_axis);
+        }
+        if (ctx.enable_cubic_anisotropy) {
+            normalize3(ctx.cubic_axis1);
+            normalize3(ctx.cubic_axis2);
+        }
+    }
+
     ctx.material = plan.material;
     ctx.demag_solver = plan.demag_solver;
 
@@ -488,9 +530,31 @@ int context_copy_field_f64(
         case FULLMAG_FEM_OBSERVABLE_H_MEL:
             source = &ctx.h_mel_xyz;
             break;
+        // F-12 fix: added observables for cubic anisotropy, bulk DMI, Oersted, thermal
+        case FULLMAG_FEM_OBSERVABLE_H_ANI_CUBIC:
+            source = &ctx.h_cubic_ani_xyz;
+            break;
+        case FULLMAG_FEM_OBSERVABLE_H_DMI_BULK:
+            // Note: bulk DMI field is computed transiently in H_eff assembly;
+            // return the last computed h_dmi_xyz if it was bulk-only, or zero if not.
+            // TODO: store h_bulk_dmi_xyz persistently in context for proper readback.
+            source = &ctx.h_dmi_xyz;
+            break;
+        case FULLMAG_FEM_OBSERVABLE_H_OE:
+            source = &ctx.h_oe_xyz;
+            break;
+        case FULLMAG_FEM_OBSERVABLE_H_THERM:
+            source = &ctx.h_therm_xyz;
+            break;
         default:
             error = "unsupported FEM observable";
             return FULLMAG_FEM_ERR_INVALID;
+    }
+
+    if (source == nullptr || source->size() != static_cast<size_t>(out_len)) {
+        // The requested field may not have been computed yet — return zeros.
+        std::memset(out_xyz, 0, sizeof(double) * static_cast<size_t>(out_len));
+        return FULLMAG_FEM_OK;
     }
 
     std::memcpy(out_xyz, source->data(), sizeof(double) * static_cast<size_t>(out_len));

@@ -24,6 +24,7 @@ import {
 } from "./shared";
 import { useControlRoom } from "./ControlRoomContext";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
+import type { FemMeshPart, MeshEntityViewState } from "../../../lib/session/types";
 
 function domainFrameSourceLabel(source: string | null): string {
   switch (source) {
@@ -53,6 +54,15 @@ function visibleVolumeLabel(
     return "Full Effective Domain";
   }
   return `Clipped ${clipAxis.toUpperCase()} @${Math.round(clipPos)}%`;
+}
+
+function defaultMeshPartViewState(part: FemMeshPart): MeshEntityViewState {
+  return {
+    visible: part.role !== "air",
+    renderMode: part.role === "air" ? "wireframe" : "surface+edges",
+    opacity: part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
+    colorField: part.role === "magnetic_object" ? "orientation" : "none",
+  };
 }
 
 function ViewportChip({
@@ -433,10 +443,12 @@ export function ViewportCanvasArea() {
         let changed = false;
         const next = { ...prev };
         for (const partId of partIds) {
-          const current = next[partId];
+          const part = ctx.meshParts.find((candidate) => candidate.id === partId);
+          const current = next[partId] ?? (part ? defaultMeshPartViewState(part) : null);
           if (!current) continue;
           const updated = { ...current, ...patch };
           if (
+            !next[partId] ||
             updated.visible !== current.visible ||
             updated.renderMode !== current.renderMode ||
             updated.opacity !== current.opacity ||

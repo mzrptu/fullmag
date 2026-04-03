@@ -46,6 +46,11 @@ typedef enum {
     FULLMAG_FEM_OBSERVABLE_H_ANI = 6,
     FULLMAG_FEM_OBSERVABLE_H_DMI = 7,
     FULLMAG_FEM_OBSERVABLE_H_MEL = 8,
+    // F-12: added observables for cubic anisotropy, bulk DMI, Oersted, thermal
+    FULLMAG_FEM_OBSERVABLE_H_ANI_CUBIC = 9,
+    FULLMAG_FEM_OBSERVABLE_H_DMI_BULK = 10,
+    FULLMAG_FEM_OBSERVABLE_H_OE = 11,
+    FULLMAG_FEM_OBSERVABLE_H_THERM = 12,
 } fullmag_fem_observable;
 
 typedef enum {

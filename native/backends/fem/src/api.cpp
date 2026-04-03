@@ -263,7 +263,9 @@ int fullmag_fem_backend_upload_strain(
     ctx.mel_strain_voigt.assign(strain_voigt, strain_voigt + static_cast<size_t>(len));
     // Recompute H_mel with new strain
     if (ctx.enable_magnetoelastic) {
+#if FULLMAG_HAS_MFEM_STACK
         fullmag::fem::compute_magnetoelastic_field(ctx, ctx.m_xyz);
+#endif
     }
     return FULLMAG_FEM_OK;
 }
