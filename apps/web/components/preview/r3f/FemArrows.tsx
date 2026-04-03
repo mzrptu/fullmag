@@ -4,6 +4,7 @@ import { useThree } from "@react-three/fiber";
 import { FemMeshData, FemColorField } from "../FemMeshView3D";
 import { divergingColor, magnitudeColor } from "./colorUtils";
 import { applyMagnetizationHsl } from "../magnetizationColor";
+import { RENDER_POLICIES_V2 } from "../shared/renderPolicyV2";
 
 export type ArrowLengthMode = "constant" | "magnitude" | "sqrt" | "log";
 
@@ -325,31 +326,67 @@ export function FemArrows({
     return { count: resultCount, instancePositions: positions, quaternions: quaternionsList, scales: scalesList, colors: colorsList };
   }, [meshData, field, arrowDensity, center, visible, lengthMode, activeNodeMask, boundaryFaceIndices]);
 
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh || count === 0) {
+      return;
+    }
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(
+      new Float32Array(Math.max(count, 1) * 3),
+      3,
+    );
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+  }, [count]);
+
   // Apply instance matrices
   useEffect(() => {
-    if (!meshRef.current || count === 0) return;
+    const mesh = meshRef.current;
+    if (!mesh || count === 0) return;
 
     const dummy = new THREE.Object3D();
+    const instanceColor = mesh.instanceColor;
+    const colorArray = instanceColor?.array as Float32Array | undefined;
     for (let i = 0; i < count; i++) {
       dummy.position.set(instancePositions[i][0], instancePositions[i][1], instancePositions[i][2]);
       dummy.quaternion.set(quaternions[i * 4], quaternions[i * 4 + 1], quaternions[i * 4 + 2], quaternions[i * 4 + 3]);
       dummy.scale.set(scales[i * 3], scales[i * 3 + 1], scales[i * 3 + 2]);
       dummy.updateMatrix();
-      meshRef.current.setMatrixAt(i, dummy.matrix);
+      mesh.setMatrixAt(i, dummy.matrix);
+      if (colorArray) {
+        colorArray[i * 3] = colors[i * 3];
+        colorArray[i * 3 + 1] = colors[i * 3 + 1];
+        colorArray[i * 3 + 2] = colors[i * 3 + 2];
+      }
     }
-    meshRef.current.instanceMatrix.needsUpdate = true;
-    if (meshRef.current.instanceColor) {
-      meshRef.current.instanceColor.needsUpdate = true;
+    mesh.count = count;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (instanceColor) {
+      instanceColor.needsUpdate = true;
     }
     invalidate();
-  }, [count, instancePositions, quaternions, scales, invalidate]);
+  }, [colors, count, instancePositions, quaternions, scales, invalidate]);
 
   if (!visible || count === 0) return null;
 
+  const glyphPolicy = RENDER_POLICIES_V2.glyphs;
+
   return (
-    <instancedMesh ref={meshRef} args={[templateGeometry!, undefined, count]} frustumCulled={false}>
-      <meshPhongMaterial shininess={60} />
-      <instancedBufferAttribute attach="instanceColor" args={[colors!, 3]} />
+    <instancedMesh
+      ref={meshRef}
+      args={[templateGeometry!, undefined, count]}
+      frustumCulled={false}
+      renderOrder={glyphPolicy.renderOrder}
+    >
+      <meshBasicMaterial
+        color="#ffffff"
+        vertexColors
+        transparent={glyphPolicy.transparent}
+        depthWrite={glyphPolicy.depthWrite}
+        depthTest={glyphPolicy.depthTest}
+        side={glyphPolicy.side}
+        toneMapped={false}
+      />
     </instancedMesh>
   );
 }

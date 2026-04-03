@@ -123,6 +123,10 @@ pub(crate) fn resolve_fdm_engine(problem: &ProblemIR) -> Result<FdmEngine, RunEr
 /// Resolve which FEM engine to use based on environment and availability.
 pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunError> {
     if !problem.current_modules.is_empty() {
+        eprintln!(
+            "warning: FEM engine falling back to CPU reference — \
+             native FEM GPU does not support active current_modules (fallback_reason=current_modules_force_cpu)"
+        );
         return Ok(FemEngine::CpuReference);
     }
     apply_runtime_gpu_index(problem, "fem");
@@ -161,13 +165,17 @@ pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunEr
                 if env_override {
                     Err(RunError {
                         message: format!(
-                            "FULLMAG_FEM_EXECUTION=gpu requested native FEM GPU execution, but the current native backend supports fe_order=1 only (requested order={})",
+                            "FULLMAG_FEM_EXECUTION=gpu requested native FEM GPU execution, \
+                             but the current native backend supports fe_order=1 only \
+                             (requested order={}, fallback_reason=fem_gpu_fe_order_unsupported)",
                             fe_order
                         ),
                     })
                 } else {
                     eprintln!(
-                        "warning: native FEM GPU backend currently supports fe_order=1 only; falling back to CPU for requested FEM order={}",
+                        "warning: native FEM GPU backend currently supports fe_order=1 only; \
+                         falling back to CPU for requested fe_order={} \
+                         (fallback_reason=fem_gpu_fe_order_unsupported)",
                         fe_order
                     );
                     Ok(FemEngine::CpuReference)
@@ -182,8 +190,15 @@ pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunEr
             } else {
                 if native_fem::is_gpu_available() && fe_order != 1 {
                     eprintln!(
-                        "warning: native FEM GPU backend currently supports fe_order=1 only; falling back to CPU for requested FEM order={}",
+                        "warning: native FEM GPU backend currently supports fe_order=1 only; \
+                         falling back to CPU for requested fe_order={} \
+                         (fallback_reason=fem_gpu_fe_order_unsupported)",
                         fe_order
+                    );
+                } else if !native_fem::is_gpu_available() {
+                    eprintln!(
+                        "info: native FEM GPU backend is not available — using CPU reference engine \
+                         (fallback_reason=native_fem_gpu_unavailable)"
                     );
                 }
                 Ok(FemEngine::CpuReference)
@@ -551,7 +566,11 @@ pub(crate) fn execute_fem<'a>(
         FemEngine::NativeGpu => {
             if let Some(min_nodes) = should_fallback_to_cpu_for_small_fem_gpu(plan) {
                 eprintln!(
-                    "warning: FEM plan has {} nodes, below FULLMAG_FEM_GPU_MIN_NODES={} — falling back to CPU reference engine (set FULLMAG_FEM_EXECUTION=gpu to force GPU or FULLMAG_FEM_GPU_MIN_NODES=0 to disable this policy)",
+                    "warning: FEM plan has {} nodes, below FULLMAG_FEM_GPU_MIN_NODES={} — \
+                     falling back to CPU reference engine \
+                     (fallback_reason=fem_gpu_small_mesh_policy; \
+                     set FULLMAG_FEM_EXECUTION=gpu to force GPU or \
+                     FULLMAG_FEM_GPU_MIN_NODES=0 to disable this policy)",
                     plan.mesh.nodes.len(),
                     min_nodes
                 );

@@ -27,7 +27,7 @@ body.mesh(hmax=20e-09, order=1, algorithm_2d=1, algorithm_3d=1, size_factor=1, s
 study.build_domain_mesh()
 
 
-study.b_ext(0.1, theta=0, phi=0)  # 0.1 T along +z
+# study.b_ext(0.001, theta=0, phi=0)  # 0.1 T along +z
 # ── Solver ──────────────────────────────────────────────────
 # study.solver(dt=1e-15, g=2.115)
 study.solver(max_error=1e-6, integrator="rk45", g=2.115)

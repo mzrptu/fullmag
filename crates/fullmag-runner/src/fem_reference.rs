@@ -293,6 +293,7 @@ fn execute_reference_fem_impl(
             &mut field_schedules,
             &mut steps,
             &mut artifacts,
+            None,
         )?;
     }
 
@@ -385,6 +386,15 @@ fn execute_reference_fem_impl(
 
         if !default_scalar_trace || !field_schedules.is_empty() {
             let ant = antenna_field_at(&problem, state.magnetization().len());
+            // Pre-compute observables when live mode is active so the live block can
+            // reuse them below without a second observe_state() call per step.
+            let step_observables: Option<StateObservables> = if live.is_some() {
+                let obs = observe_state(&problem, &state, &ant)?;
+                current_observables = obs.clone();
+                Some(obs)
+            } else {
+                None
+            };
             record_due_outputs(
                 &problem,
                 &state,
@@ -396,10 +406,82 @@ fn execute_reference_fem_impl(
                 &mut field_schedules,
                 &mut steps,
                 &mut artifacts,
+                step_observables.as_ref(),
             )?;
-        }
-
-        if let Some(live) = live.as_mut() {
+            if let Some(live) = live.as_mut() {
+                // Reuse already-computed observables from above — no extra observe_state call.
+                let observables = step_observables
+                    .as_ref()
+                    .expect("observables computed for live mode");
+                current_observables = observables.clone();
+                let emit_every = live.field_every_n.max(1);
+                let display_selection = live.display_selection.map(|get| get());
+                let preview_due = display_selection
+                    .as_ref()
+                    .map(|selection| {
+                        display_refresh_due(last_preview_revision, selection, step_count)
+                    })
+                    .unwrap_or(false);
+                let preview_targets_global_scalar = display_selection
+                    .as_ref()
+                    .is_some_and(display_is_global_scalar);
+                let magnetization =
+                    if live.display_selection.is_none() && step_count % emit_every == 0 {
+                        Some(flatten_vectors(&observables.magnetization))
+                    } else {
+                        None
+                    };
+                let preview_field = if preview_due && !preview_targets_global_scalar {
+                    let selection = display_selection.as_ref().expect("checked preview_due");
+                    let request = selection.preview_request();
+                    Some(build_mesh_preview_field_with_active_mask(
+                        &request,
+                        select_observables(observables, &request.quantity),
+                        mesh_quantity_active_mask(&request.quantity, &plan.mesh),
+                    ))
+                } else {
+                    None
+                };
+                let due_scalar_row = scalar_row_due(&scalar_schedules, state.time_seconds)
+                    || (preview_due && preview_targets_global_scalar);
+                let mut update_stats = make_step_stats(
+                    step_count,
+                    state.time_seconds,
+                    dt_step,
+                    wall_elapsed,
+                    observables,
+                );
+                if due_scalar_row || scalar_outputs_request_average_m(&scalar_schedules) {
+                    apply_average_m_to_step_stats(&mut update_stats, &observables.magnetization);
+                }
+                let action = (live.on_step)(StepUpdate {
+                    stats: update_stats,
+                    grid: live.grid,
+                    fem_mesh: if step_count <= 1 {
+                        Some(crate::types::FemMeshPayload::from(plan))
+                    } else {
+                        None
+                    },
+                    magnetization,
+                    preview_field,
+                    cached_preview_fields: None,
+                    scalar_row_due: due_scalar_row,
+                    finished: false,
+                });
+                if preview_due {
+                    last_preview_revision = Some(
+                        display_selection
+                            .as_ref()
+                            .expect("checked preview_due")
+                            .revision,
+                    );
+                }
+                if action == StepAction::Stop {
+                    cancelled = true;
+                }
+            }
+        } else if let Some(live) = live.as_mut() {
+            // No scheduled outputs, but live mode is active: compute observables once.
             let ant = antenna_field_at(&problem, state.magnetization().len());
             let observables = observe_state(&problem, &state, &ant)?;
             current_observables = observables.clone();
@@ -533,6 +615,7 @@ fn record_due_outputs(
     field_schedules: &mut [OutputSchedule],
     steps: &mut Vec<StepStats>,
     artifacts: &mut ArtifactRecorder,
+    precomputed_observables: Option<&StateObservables>,
 ) -> Result<(), RunError> {
     let scalar_due = scalar_schedules
         .iter()
@@ -547,7 +630,15 @@ fn record_due_outputs(
         return Ok(());
     }
 
-    let observables = observe_state(problem, state, antenna_field)?;
+    // Reuse pre-computed observables (from live block) to avoid a redundant observe call.
+    let owned;
+    let observables = match precomputed_observables {
+        Some(obs) => obs,
+        None => {
+            owned = observe_state(problem, state, antenna_field)?;
+            &owned
+        }
+    };
 
     if scalar_due {
         let stats = make_step_stats(

@@ -554,6 +554,13 @@ export function ViewportCanvasArea() {
       <FemMeshView3D
         topologyKey={ctx.femTopologyKey ?? undefined}
         meshData={ctx.femMeshData}
+        quantityId={ctx.requestedPreviewQuantity}
+        quantityOptions={ctx.previewQuantityOptions.map((option) => ({
+          id: option.value,
+          shortLabel: option.label,
+          label: option.label,
+          available: !option.disabled,
+        }))}
         colorField="none"
         toolbarMode="visible" // Mesh workspace should show tools!
         renderMode={ctx.meshRenderMode}
@@ -590,6 +597,7 @@ export function ViewportCanvasArea() {
         worldCenter={ctx.worldCenter}
         onEntitySelect={ctx.setSelectedEntityId}
         onEntityFocus={ctx.setFocusedEntityId}
+        onQuantityChange={ctx.requestPreviewQuantity}
       />
     );
   } else if (ctx.effectiveViewMode === "3D" && ctx.femMeshData) {
@@ -598,6 +606,13 @@ export function ViewportCanvasArea() {
         topologyKey={ctx.femTopologyKey ?? undefined}
         meshData={ctx.femMeshData}
         fieldLabel={ctx.quantityDescriptor?.label ?? ctx.selectedQuantity}
+        quantityId={ctx.requestedPreviewQuantity}
+        quantityOptions={ctx.previewQuantityOptions.map((option) => ({
+          id: option.value,
+          shortLabel: option.label,
+          label: option.label,
+          available: !option.disabled,
+        }))}
         colorField={ctx.femColorField}
         showOrientationLegend={ctx.femMagnetization3DActive}
         renderMode={ctx.meshRenderMode}
@@ -633,6 +648,7 @@ export function ViewportCanvasArea() {
         onAntennaTranslate={ctx.applyAntennaTranslation}
         worldExtent={ctx.worldExtent}
         worldCenter={ctx.worldCenter}
+        onQuantityChange={ctx.requestPreviewQuantity}
       />
     );
   } else if (ctx.effectiveViewMode === "2D" && ctx.femMeshData) {

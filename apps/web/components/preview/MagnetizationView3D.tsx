@@ -879,7 +879,7 @@ function MagnetizationView3DInner({
         onRotate={handleViewCubeRotate}
         onReset={resetCamera}
       />
-      {!geometryMode ? <HslSphere sceneRef={viewCubeSceneRef} /> : null}
+      {!geometryMode ? <HslSphere sceneRef={viewCubeSceneRef} axisConvention="swapYZ" /> : null}
     </div>
   );
 }

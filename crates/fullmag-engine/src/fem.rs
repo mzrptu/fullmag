@@ -4,6 +4,8 @@ use crate::{
     Result, StepReport, TimeIntegrator, Vector3, MU0,
 };
 use fullmag_ir::MeshIR;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use std::collections::BTreeSet;
 use std::f64::consts::PI;
 
@@ -323,12 +325,26 @@ impl FemLlgProblem {
     fn heun_step(&self, state: &mut FemLlgState, dt: f64) -> Result<StepReport> {
         let initial = state.magnetization.clone();
         let k1 = self.llg_rhs_from_vectors(&initial)?;
+        #[cfg(feature = "parallel")]
+        let predicted = initial
+            .par_iter()
+            .zip(k1.par_iter())
+            .map(|(m, rhs)| normalized(add(*m, scale(*rhs, dt))))
+            .collect::<Result<Vec<_>>>()?;
+        #[cfg(not(feature = "parallel"))]
         let predicted = initial
             .iter()
             .zip(k1.iter())
             .map(|(m, rhs)| normalized(add(*m, scale(*rhs, dt))))
             .collect::<Result<Vec<_>>>()?;
         let k2 = self.llg_rhs_from_vectors(&predicted)?;
+        #[cfg(feature = "parallel")]
+        let corrected = initial
+            .par_iter()
+            .zip(k1.par_iter().zip(k2.par_iter()))
+            .map(|(m, (rhs1, rhs2))| normalized(add(*m, scale(add(*rhs1, *rhs2), 0.5 * dt))))
+            .collect::<Result<Vec<_>>>()?;
+        #[cfg(not(feature = "parallel"))]
         let corrected = initial
             .iter()
             .zip(k1.iter().zip(k2.iter()))
@@ -363,43 +379,79 @@ impl FemLlgProblem {
 
         let k1 = self.llg_rhs_from_vectors(&m0)?;
 
-        let delta: Vec<Vector3> = (0..n).map(|i| scale(k1[i], 0.5 * dt)).collect();
+        #[cfg(feature = "parallel")]
+        let m1: Vec<Vector3> = m0
+            .par_iter()
+            .zip(k1.par_iter())
+            .map(|(m, k)| normalized(add(*m, scale(*k, 0.5 * dt))))
+            .collect::<Result<Vec<_>>>()?;
+        #[cfg(not(feature = "parallel"))]
         let m1: Vec<Vector3> = m0
             .iter()
-            .zip(delta.iter())
-            .map(|(m, d)| normalized(add(*m, *d)))
+            .zip(k1.iter())
+            .map(|(m, k)| normalized(add(*m, scale(*k, 0.5 * dt))))
             .collect::<Result<Vec<_>>>()?;
         let k2 = self.llg_rhs_from_vectors(&m1)?;
 
-        let delta: Vec<Vector3> = (0..n).map(|i| scale(k2[i], 0.5 * dt)).collect();
+        #[cfg(feature = "parallel")]
+        let m2: Vec<Vector3> = m0
+            .par_iter()
+            .zip(k2.par_iter())
+            .map(|(m, k)| normalized(add(*m, scale(*k, 0.5 * dt))))
+            .collect::<Result<Vec<_>>>()?;
+        #[cfg(not(feature = "parallel"))]
         let m2: Vec<Vector3> = m0
             .iter()
-            .zip(delta.iter())
-            .map(|(m, d)| normalized(add(*m, *d)))
+            .zip(k2.iter())
+            .map(|(m, k)| normalized(add(*m, scale(*k, 0.5 * dt))))
             .collect::<Result<Vec<_>>>()?;
         let k3 = self.llg_rhs_from_vectors(&m2)?;
 
-        let delta: Vec<Vector3> = (0..n).map(|i| scale(k3[i], dt)).collect();
+        #[cfg(feature = "parallel")]
+        let m3: Vec<Vector3> = m0
+            .par_iter()
+            .zip(k3.par_iter())
+            .map(|(m, k)| normalized(add(*m, scale(*k, dt))))
+            .collect::<Result<Vec<_>>>()?;
+        #[cfg(not(feature = "parallel"))]
         let m3: Vec<Vector3> = m0
             .iter()
-            .zip(delta.iter())
-            .map(|(m, d)| normalized(add(*m, *d)))
+            .zip(k3.iter())
+            .map(|(m, k)| normalized(add(*m, scale(*k, dt))))
             .collect::<Result<Vec<_>>>()?;
         let k4 = self.llg_rhs_from_vectors(&m3)?;
 
-        let delta: Vec<Vector3> = (0..n)
-            .map(|i| {
-                scale(
-                    add(add(k1[i], scale(k2[i], 2.0)), add(scale(k3[i], 2.0), k4[i])),
-                    dt / 6.0,
-                )
-            })
-            .collect();
-        state.magnetization = m0
-            .iter()
-            .zip(delta.iter())
-            .map(|(m, d)| normalized(add(*m, *d)))
-            .collect::<Result<Vec<_>>>()?;
+        #[cfg(feature = "parallel")]
+        {
+            state.magnetization = m0
+                .par_iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    let delta = scale(
+                        add(add(k1[i], scale(k2[i], 2.0)), add(scale(k3[i], 2.0), k4[i])),
+                        dt / 6.0,
+                    );
+                    normalized(add(*m, delta))
+                })
+                .collect::<Result<Vec<_>>>()?;
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let delta: Vec<Vector3> = (0..n)
+                .map(|i| {
+                    scale(
+                        add(add(k1[i], scale(k2[i], 2.0)), add(scale(k3[i], 2.0), k4[i])),
+                        dt / 6.0,
+                    )
+                })
+                .collect();
+            state.magnetization = m0
+                .iter()
+                .zip(delta.iter())
+                .map(|(m, d)| normalized(add(*m, *d)))
+                .collect::<Result<Vec<_>>>()?;
+        }
+        let _ = n; // suppress unused warning in parallel path
         state.time_seconds += dt;
 
         let observables = self.observe_vectors(state.magnetization())?;
@@ -787,20 +839,39 @@ impl FemLlgProblem {
     // Error norm helper for adaptive FEM solvers
     // -----------------------------------------------------------------------
     fn max_error_norm_fem(weighted_stages: &[(&Vec<Vector3>, f64)], dt: f64, n: usize) -> f64 {
-        let mut max_err = 0.0f64;
-        for i in 0..n {
-            let mut err = [0.0, 0.0, 0.0];
-            for &(k, w) in weighted_stages {
-                err[0] += w * k[i][0];
-                err[1] += w * k[i][1];
-                err[2] += w * k[i][2];
+        #[cfg(feature = "parallel")]
+        return (0..n)
+            .into_par_iter()
+            .map(|i| {
+                let mut err = [0.0, 0.0, 0.0];
+                for &(k, w) in weighted_stages {
+                    err[0] += w * k[i][0];
+                    err[1] += w * k[i][1];
+                    err[2] += w * k[i][2];
+                }
+                err[0] *= dt;
+                err[1] *= dt;
+                err[2] *= dt;
+                norm(err)
+            })
+            .reduce(|| 0.0, f64::max);
+        #[cfg(not(feature = "parallel"))]
+        {
+            let mut max_err = 0.0f64;
+            for i in 0..n {
+                let mut err = [0.0, 0.0, 0.0];
+                for &(k, w) in weighted_stages {
+                    err[0] += w * k[i][0];
+                    err[1] += w * k[i][1];
+                    err[2] += w * k[i][2];
+                }
+                err[0] *= dt;
+                err[1] *= dt;
+                err[2] *= dt;
+                max_err = max_err.max(norm(err));
             }
-            err[0] *= dt;
-            err[1] *= dt;
-            err[2] *= dt;
-            max_err = max_err.max(norm(err));
+            max_err
         }
-        max_err
     }
 
     fn ensure_state_matches_topology(&self, state: &FemLlgState) -> Result<()> {
@@ -824,17 +895,40 @@ impl FemLlgProblem {
             (vec![[0.0, 0.0, 0.0]; self.topology.n_nodes], 0.0)
         };
         let external_field = self.external_field_vectors();
+        #[cfg(feature = "parallel")]
+        let effective_field = exchange_field
+            .par_iter()
+            .zip(demag_field.par_iter())
+            .zip(external_field.par_iter())
+            .map(|((h_ex, h_demag), h_ext)| add(add(*h_ex, *h_demag), *h_ext))
+            .collect::<Vec<_>>();
+        #[cfg(not(feature = "parallel"))]
         let effective_field = exchange_field
             .iter()
             .zip(demag_field.iter())
             .zip(external_field.iter())
             .map(|((h_ex, h_demag), h_ext)| add(add(*h_ex, *h_demag), *h_ext))
             .collect::<Vec<_>>();
+        let magnetic_node_volumes = &self.topology.magnetic_node_volumes;
+        #[cfg(feature = "parallel")]
+        let rhs = magnetization
+            .par_iter()
+            .zip(effective_field.par_iter())
+            .enumerate()
+            .map(|(node, (m, h))| {
+                if magnetic_node_volumes[node] > 0.0 {
+                    self.llg_rhs_from_field(*m, *h)
+                } else {
+                    [0.0, 0.0, 0.0]
+                }
+            })
+            .collect::<Vec<_>>();
+        #[cfg(not(feature = "parallel"))]
         let rhs = magnetization
             .iter()
             .enumerate()
             .map(|(node, m)| {
-                if self.topology.magnetic_node_volumes[node] > 0.0 {
+                if magnetic_node_volumes[node] > 0.0 {
                     self.llg_rhs_from_field(*m, effective_field[node])
                 } else {
                     [0.0, 0.0, 0.0]
@@ -874,33 +968,85 @@ impl FemLlgProblem {
     fn exchange_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
         let coeff =
             2.0 * self.material.exchange_stiffness / (MU0 * self.material.saturation_magnetisation);
-        let mut field = vec![[0.0, 0.0, 0.0]; self.topology.n_nodes];
 
-        for (element_index, (element, stiffness)) in self
-            .topology
-            .elements
-            .iter()
-            .zip(self.topology.element_stiffness.iter())
-            .enumerate()
-        {
-            if !self.topology.magnetic_element_mask[element_index] {
-                continue;
-            }
-            let local_m = [
-                magnetization[element[0] as usize],
-                magnetization[element[1] as usize],
-                magnetization[element[2] as usize],
-                magnetization[element[3] as usize],
-            ];
-            for i in 0..4 {
-                let mut contribution = [0.0, 0.0, 0.0];
-                for j in 0..4 {
-                    contribution = add(contribution, scale(local_m[j], stiffness[i][j]));
+        #[cfg(feature = "parallel")]
+        let mut field = {
+            let n_nodes = self.topology.n_nodes;
+            let elements = &self.topology.elements;
+            let element_stiffness = &self.topology.element_stiffness;
+            let magnetic_element_mask = &self.topology.magnetic_element_mask;
+
+            // Parallel element assembly: each thread accumulates into a local buffer,
+            // then local buffers are merged with elementwise summation.
+            (0..elements.len())
+                .into_par_iter()
+                .fold(
+                    || vec![[0.0, 0.0, 0.0]; n_nodes],
+                    |mut local_field, element_index| {
+                        if magnetic_element_mask[element_index] {
+                            let element = &elements[element_index];
+                            let stiffness = &element_stiffness[element_index];
+                            let local_m = [
+                                magnetization[element[0] as usize],
+                                magnetization[element[1] as usize],
+                                magnetization[element[2] as usize],
+                                magnetization[element[3] as usize],
+                            ];
+                            for i in 0..4 {
+                                let mut contribution = [0.0, 0.0, 0.0];
+                                for j in 0..4 {
+                                    contribution =
+                                        add(contribution, scale(local_m[j], stiffness[i][j]));
+                                }
+                                let node = element[i] as usize;
+                                local_field[node] =
+                                    add(local_field[node], scale(contribution, -coeff));
+                            }
+                        }
+                        local_field
+                    },
+                )
+                .reduce(
+                    || vec![[0.0, 0.0, 0.0]; n_nodes],
+                    |mut acc, partial| {
+                        for (a, b) in acc.iter_mut().zip(partial.iter()) {
+                            *a = add(*a, *b);
+                        }
+                        acc
+                    },
+                )
+        };
+
+        #[cfg(not(feature = "parallel"))]
+        let mut field = {
+            let mut field = vec![[0.0, 0.0, 0.0]; self.topology.n_nodes];
+            for (element_index, (element, stiffness)) in self
+                .topology
+                .elements
+                .iter()
+                .zip(self.topology.element_stiffness.iter())
+                .enumerate()
+            {
+                if !self.topology.magnetic_element_mask[element_index] {
+                    continue;
                 }
-                let node = element[i] as usize;
-                field[node] = add(field[node], scale(contribution, -coeff));
+                let local_m = [
+                    magnetization[element[0] as usize],
+                    magnetization[element[1] as usize],
+                    magnetization[element[2] as usize],
+                    magnetization[element[3] as usize],
+                ];
+                for i in 0..4 {
+                    let mut contribution = [0.0, 0.0, 0.0];
+                    for j in 0..4 {
+                        contribution = add(contribution, scale(local_m[j], stiffness[i][j]));
+                    }
+                    let node = element[i] as usize;
+                    field[node] = add(field[node], scale(contribution, -coeff));
+                }
             }
-        }
+            field
+        };
 
         for (index, value) in field.iter_mut().enumerate() {
             let lumped_mass = self.topology.magnetic_node_volumes[index];
@@ -913,40 +1059,78 @@ impl FemLlgProblem {
     }
 
     fn exchange_energy_from_vectors(&self, magnetization: &[Vector3]) -> f64 {
-        let mut energy = 0.0;
-        for (element_index, (element, stiffness)) in self
-            .topology
-            .elements
-            .iter()
-            .zip(self.topology.element_stiffness.iter())
-            .enumerate()
-        {
-            if !self.topology.magnetic_element_mask[element_index] {
-                continue;
-            }
-            let local_m = [
-                magnetization[element[0] as usize],
-                magnetization[element[1] as usize],
-                magnetization[element[2] as usize],
-                magnetization[element[3] as usize],
-            ];
-            for component in 0..3 {
-                let local_values = [
-                    local_m[0][component],
-                    local_m[1][component],
-                    local_m[2][component],
-                    local_m[3][component],
+        let exchange_stiffness = self.material.exchange_stiffness;
+        #[cfg(feature = "parallel")]
+        let energy: f64 = (0..self.topology.elements.len())
+            .into_par_iter()
+            .map(|element_index| {
+                if !self.topology.magnetic_element_mask[element_index] {
+                    return 0.0;
+                }
+                let element = &self.topology.elements[element_index];
+                let stiffness = &self.topology.element_stiffness[element_index];
+                let local_m = [
+                    magnetization[element[0] as usize],
+                    magnetization[element[1] as usize],
+                    magnetization[element[2] as usize],
+                    magnetization[element[3] as usize],
                 ];
-                for i in 0..4 {
-                    for j in 0..4 {
-                        energy += self.material.exchange_stiffness
-                            * local_values[i]
-                            * stiffness[i][j]
-                            * local_values[j];
+                let mut elem_energy = 0.0;
+                for component in 0..3 {
+                    let local_values = [
+                        local_m[0][component],
+                        local_m[1][component],
+                        local_m[2][component],
+                        local_m[3][component],
+                    ];
+                    for i in 0..4 {
+                        for j in 0..4 {
+                            elem_energy +=
+                                exchange_stiffness * local_values[i] * stiffness[i][j] * local_values[j];
+                        }
+                    }
+                }
+                elem_energy
+            })
+            .sum();
+        #[cfg(not(feature = "parallel"))]
+        let energy = {
+            let mut energy = 0.0;
+            for (element_index, (element, stiffness)) in self
+                .topology
+                .elements
+                .iter()
+                .zip(self.topology.element_stiffness.iter())
+                .enumerate()
+            {
+                if !self.topology.magnetic_element_mask[element_index] {
+                    continue;
+                }
+                let local_m = [
+                    magnetization[element[0] as usize],
+                    magnetization[element[1] as usize],
+                    magnetization[element[2] as usize],
+                    magnetization[element[3] as usize],
+                ];
+                for component in 0..3 {
+                    let local_values = [
+                        local_m[0][component],
+                        local_m[1][component],
+                        local_m[2][component],
+                        local_m[3][component],
+                    ];
+                    for i in 0..4 {
+                        for j in 0..4 {
+                            energy += exchange_stiffness
+                                * local_values[i]
+                                * stiffness[i][j]
+                                * local_values[j];
+                        }
                     }
                 }
             }
-        }
+            energy
+        };
         energy
     }
 
@@ -1143,16 +1327,33 @@ impl FemLlgProblem {
 
     fn external_field_vectors(&self) -> Vec<Vector3> {
         let external = self.terms.external_field.unwrap_or([0.0, 0.0, 0.0]);
+        let per_node_field = self.terms.per_node_field.as_deref();
+        #[cfg(feature = "parallel")]
+        return self
+            .topology
+            .magnetic_node_volumes
+            .par_iter()
+            .enumerate()
+            .map(|(i, volume)| {
+                if *volume > 0.0 {
+                    let h_ant = per_node_field
+                        .and_then(|f| f.get(i))
+                        .copied()
+                        .unwrap_or([0.0, 0.0, 0.0]);
+                    add(external, h_ant)
+                } else {
+                    [0.0, 0.0, 0.0]
+                }
+            })
+            .collect();
+        #[cfg(not(feature = "parallel"))]
         self.topology
             .magnetic_node_volumes
             .iter()
             .enumerate()
             .map(|(i, volume)| {
                 if *volume > 0.0 {
-                    let h_ant = self
-                        .terms
-                        .per_node_field
-                        .as_ref()
+                    let h_ant = per_node_field
                         .and_then(|f| f.get(i))
                         .copied()
                         .unwrap_or([0.0, 0.0, 0.0]);
@@ -1169,13 +1370,20 @@ impl FemLlgProblem {
         magnetization: &[Vector3],
         external_field: &[Vector3],
     ) -> f64 {
+        let ms = self.material.saturation_magnetisation;
+        #[cfg(feature = "parallel")]
+        return magnetization
+            .par_iter()
+            .zip(external_field.par_iter())
+            .zip(self.topology.magnetic_node_volumes.par_iter())
+            .map(|((m, h), node_volume)| -MU0 * ms * dot(*m, *h) * node_volume)
+            .sum();
+        #[cfg(not(feature = "parallel"))]
         magnetization
             .iter()
             .zip(external_field.iter())
             .zip(self.topology.magnetic_node_volumes.iter())
-            .map(|((m, h), node_volume)| {
-                -MU0 * self.material.saturation_magnetisation * dot(*m, *h) * node_volume
-            })
+            .map(|((m, h), node_volume)| -MU0 * ms * dot(*m, *h) * node_volume)
             .sum()
     }
 
@@ -1194,6 +1402,14 @@ impl FemLlgProblem {
             (vec![[0.0, 0.0, 0.0]; self.topology.n_nodes], 0.0)
         };
         let external_field = self.external_field_vectors();
+        #[cfg(feature = "parallel")]
+        return Ok(exchange_field
+            .par_iter()
+            .zip(demag_field.par_iter())
+            .zip(external_field.par_iter())
+            .map(|((h_ex, h_demag), h_ext)| add(add(*h_ex, *h_demag), *h_ext))
+            .collect());
+        #[cfg(not(feature = "parallel"))]
         Ok(exchange_field
             .iter()
             .zip(demag_field.iter())
@@ -1204,11 +1420,26 @@ impl FemLlgProblem {
 
     fn llg_rhs_from_vectors(&self, magnetization: &[Vector3]) -> Result<Vec<Vector3>> {
         let effective_field = self.effective_field_from_vectors(magnetization)?;
+        let magnetic_node_volumes = &self.topology.magnetic_node_volumes;
+        #[cfg(feature = "parallel")]
+        return Ok(magnetization
+            .par_iter()
+            .zip(effective_field.par_iter())
+            .enumerate()
+            .map(|(node, (m, h))| {
+                if magnetic_node_volumes[node] > 0.0 {
+                    self.llg_rhs_from_field(*m, *h)
+                } else {
+                    [0.0, 0.0, 0.0]
+                }
+            })
+            .collect());
+        #[cfg(not(feature = "parallel"))]
         Ok(magnetization
             .iter()
             .enumerate()
             .map(|(node, m)| {
-                if self.topology.magnetic_node_volumes[node] > 0.0 {
+                if magnetic_node_volumes[node] > 0.0 {
                     self.llg_rhs_from_field(*m, effective_field[node])
                 } else {
                     [0.0, 0.0, 0.0]

@@ -7,11 +7,11 @@
  * viewport camera. The sphere surface uses the exact same magnetizationHSL
  * colour mapping as arrow/voxel rendering.
  *
- * Axis labels (X / Y / Z) protrude from the sphere following the simulation
- * coordinate convention (sim-Z → scene-Y, sim-Y → scene-Z).
+ * Axis labels (X / Y / Z) protrude from the sphere following the active
+ * viewport convention. FEM uses identity axes; FDM swaps Y/Z.
  */
 
-import { useRef, useMemo, useEffect } from "react";
+import { useRef, useMemo } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Text, Billboard, Line } from "@react-three/drei";
@@ -24,6 +24,8 @@ interface HslSphereProps {
     camera: THREE.PerspectiveCamera | THREE.Camera;
     controls: any;
   } | null>;
+  axisConvention?: "identity" | "swapYZ";
+  positionClassName?: string;
 }
 
 /* ── Constants ─────────────────────────────────────────────── */
@@ -32,29 +34,6 @@ const SIZE = 110;
 const SPHERE_RADIUS = 0.9;
 const SEGMENTS = 64;
 const LABEL_DIST = 1.18;
-
-/* ── Vertex-coloured sphere geometry (memoized) ───────────── */
-
-function useColoredSphereGeometry() {
-  return useMemo(() => {
-    const geo = new THREE.SphereGeometry(SPHERE_RADIUS, SEGMENTS, SEGMENTS);
-    const posAttr = geo.attributes.position;
-    const colors = new Float32Array(posAttr.count * 3);
-    const _v = new THREE.Vector3();
-
-    for (let i = 0; i < posAttr.count; i++) {
-      _v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).normalize();
-      // Simulation convention: world (x, y, z) → sim (x, z, y)
-      const c = magnetizationHslColor(_v.x, _v.z, _v.y);
-      colors[i * 3] = c.r;
-      colors[i * 3 + 1] = c.g;
-      colors[i * 3 + 2] = c.b;
-    }
-
-    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    return geo;
-  }, []);
-}
 
 /* ── Axis label component ─────────────────────────────────── */
 
@@ -102,9 +81,13 @@ function CameraSync({
 
 /* ── Component ─────────────────────────────────────────────── */
 
-export default function HslSphere({ sceneRef }: HslSphereProps) {
+export default function HslSphere({
+  sceneRef,
+  axisConvention = "identity",
+  positionClassName = "bottom-4 left-4",
+}: HslSphereProps) {
   return (
-    <div className="pointer-events-none absolute bottom-4 left-4 z-10 h-[110px] w-[110px]">
+    <div className={`pointer-events-none absolute z-10 h-[110px] w-[110px] ${positionClassName}`}>
       <Canvas
         orthographic
         camera={{
@@ -125,7 +108,7 @@ export default function HslSphere({ sceneRef }: HslSphereProps) {
           overflow: "hidden",
         }}
       >
-        <HslSphereScene mainCameraRef={sceneRef} />
+        <HslSphereScene mainCameraRef={sceneRef} axisConvention={axisConvention} />
       </Canvas>
     </div>
   );
@@ -135,10 +118,31 @@ export default function HslSphere({ sceneRef }: HslSphereProps) {
 
 function HslSphereScene({
   mainCameraRef,
+  axisConvention,
 }: {
   mainCameraRef: React.MutableRefObject<{ camera: THREE.Camera } | null>;
+  axisConvention: "identity" | "swapYZ";
 }) {
-  const sphereGeo = useColoredSphereGeometry();
+  const sphereGeo = useMemo(() => {
+    const geo = new THREE.SphereGeometry(SPHERE_RADIUS, SEGMENTS, SEGMENTS);
+    const posAttr = geo.attributes.position;
+    const colors = new Float32Array(posAttr.count * 3);
+    const v = new THREE.Vector3();
+
+    for (let i = 0; i < posAttr.count; i++) {
+      v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).normalize();
+      const c =
+        axisConvention === "swapYZ"
+          ? magnetizationHslColor(v.x, v.z, v.y)
+          : magnetizationHslColor(v.x, v.y, v.z);
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
+
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    return geo;
+  }, [axisConvention]);
   const sphereMat = useMemo(
     () => new THREE.MeshBasicMaterial({ vertexColors: true }),
     [],
@@ -151,7 +155,7 @@ function HslSphereScene({
       {/* Vertex-coloured sphere */}
       <mesh geometry={sphereGeo} material={sphereMat} />
 
-      {/* Axis labels — sim convention: scene-Y=sim-Z, scene-Z=sim-Y */}
+      {/* Axis labels — visual XYZ reference for the active viewport convention */}
       <AxisLabel text="X" color="#e65050" position={[LABEL_DIST, 0, 0]} />
       <AxisLabel text="X" color="#e65050" position={[-LABEL_DIST, 0, 0]} />
       <AxisLabel text="Z" color="#5090e6" position={[0, LABEL_DIST, 0]} />

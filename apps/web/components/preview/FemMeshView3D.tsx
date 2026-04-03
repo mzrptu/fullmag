@@ -2,22 +2,9 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
 import * as THREE from "three";
-import { Canvas, useThree } from "@react-three/fiber";
-import {
-  OrbitControls,
-  OrthographicCamera,
-  PerspectiveCamera,
-  PivotControls,
-  TrackballControls,
-} from "@react-three/drei";
-import HslSphere from "./HslSphere";
-import ViewCube from "./ViewCube";
+import { useThree } from "@react-three/fiber";
 import { cn } from "@/lib/utils";
-import { FemGeometry } from "./r3f/FemGeometry";
-import { FemArrows } from "./r3f/FemArrows";
-import { FemHighlightView } from "./r3f/FemHighlightView";
 import { rotateCameraAroundTarget, setCameraPresetAroundTarget, focusCameraOnBounds, fitCameraToBounds } from "./camera/cameraHelpers";
-import SceneAxes3D from "./r3f/SceneAxes3D";
 import { computeFaceAspectRatios } from "./r3f/colorUtils";
 import type {
   FemLiveMeshObjectSegment,
@@ -33,25 +20,15 @@ import type {
   ObjectViewMode,
 } from "../runs/control-room/shared";
 import { FieldLegend } from "./field/FieldLegend";
-import {
-  Box,
-  Grid2X2,
-  Grid3X3,
-  Grip,
-  Palette,
-  Scissors,
-  Eye,
-  ArrowUpRight,
-  Video,
-  Camera,
-  Image as ImageIcon,
-  Layers,
-} from "lucide-react";
-import { ViewportToolbar3D } from "./ViewportToolbar3D";
-import { ViewportToolGroup, ViewportToolSeparator } from "./ViewportToolGroup";
-import { ViewportIconAction } from "./ViewportIconAction";
-import { ViewportPopoverPanel, ViewportPopoverRow } from "./ViewportPopoverPanel";
-import { ViewportStatusChip } from "./ViewportStatusChips";
+import { combineMeshQualityStats } from "./fem/femQualityUtils";
+import { partMeshTint, partEdgeTint, colorLegendGradient, colorLegendLabel } from "./fem/femColorUtils";
+import { FemViewportToolbar } from "./fem/FemViewportToolbar";
+import { FemPartExplorerPanel } from "./fem/FemPartExplorerPanel";
+import { FemViewportScene } from "./fem/FemViewportScene";
+import { FemContextMenu, FemHoverTooltip } from "./fem/FemContextMenu";
+import { FemRefineToolbar, FemSelectionHUD } from "./fem/FemSelectionHUD";
+import ScientificViewportShell from "./shared/ScientificViewportShell";
+import type { ViewportQualityProfileId } from "./shared/viewportQualityProfiles";
 
 const AIR_OBJECT_SEGMENT_ID = "__air__";
 
@@ -81,6 +58,13 @@ interface Props {
   meshData: FemMeshData;
   colorField?: FemColorField;
   fieldLabel?: string;
+  quantityId?: string;
+  quantityOptions?: Array<{
+    id: string;
+    shortLabel: string;
+    label?: string;
+    available: boolean;
+  }>;
   showWireframe?: boolean;
   topologyKey?: string;
   toolbarMode?: "visible" | "hidden";
@@ -127,6 +111,7 @@ interface Props {
   onAntennaTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
   onEntitySelect?: (id: string | null) => void;
   onEntityFocus?: (id: string | null) => void;
+  onQuantityChange?: (quantityId: string) => void;
 }
 
 interface RenderLayer {
@@ -153,57 +138,20 @@ interface PartQualitySummary {
   stats: MeshQualityStats | null;
 }
 
+function defaultMeshEntityViewState(part: FemMeshPart): MeshEntityViewState {
+  return {
+    visible: part.role !== "air",
+    renderMode: part.role === "air" ? "wireframe" : "surface+edges",
+    opacity:
+      part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
+    colorField: part.role === "magnetic_object" ? "orientation" : "none",
+  };
+}
+
 function uniqueSortedMarkers(markers: readonly number[]): number[] {
   return Array.from(new Set(markers.filter((value) => Number.isFinite(value) && value >= 0))).sort(
     (left, right) => left - right,
   );
-}
-
-function combineMeshQualityStats(statsList: readonly MeshQualityStats[]): MeshQualityStats | null {
-  if (statsList.length === 0) {
-    return null;
-  }
-  if (statsList.length === 1) {
-    return statsList[0] ?? null;
-  }
-  const totalElements = statsList.reduce((sum, entry) => sum + Math.max(0, entry.n_elements), 0);
-  const weight = (value: (entry: MeshQualityStats) => number) =>
-    totalElements > 0
-      ? statsList.reduce(
-          (sum, entry) => sum + value(entry) * Math.max(0, entry.n_elements),
-          0,
-        ) / totalElements
-      : statsList.reduce((sum, entry) => sum + value(entry), 0) / statsList.length;
-  const combineHistogram = (
-    extractor: (entry: MeshQualityStats) => number[] | undefined,
-  ): number[] | undefined => {
-    const base = extractor(statsList[0]);
-    if (!base || base.length === 0) {
-      return undefined;
-    }
-    if (!statsList.every((entry) => (extractor(entry)?.length ?? 0) === base.length)) {
-      return undefined;
-    }
-    return base.map((_, index) =>
-      statsList.reduce((sum, entry) => sum + (extractor(entry)?.[index] ?? 0), 0),
-    );
-  };
-  return {
-    n_elements: totalElements,
-    sicn_min: Math.min(...statsList.map((entry) => entry.sicn_min)),
-    sicn_max: Math.max(...statsList.map((entry) => entry.sicn_max)),
-    sicn_mean: weight((entry) => entry.sicn_mean),
-    sicn_p5: Math.min(...statsList.map((entry) => entry.sicn_p5)),
-    sicn_histogram: combineHistogram((entry) => entry.sicn_histogram),
-    gamma_min: Math.min(...statsList.map((entry) => entry.gamma_min)),
-    gamma_mean: weight((entry) => entry.gamma_mean),
-    gamma_histogram: combineHistogram((entry) => entry.gamma_histogram),
-    volume_min: Math.min(...statsList.map((entry) => entry.volume_min)),
-    volume_max: Math.max(...statsList.map((entry) => entry.volume_max)),
-    volume_mean: weight((entry) => entry.volume_mean),
-    volume_std: weight((entry) => entry.volume_std),
-    avg_quality: weight((entry) => entry.avg_quality),
-  };
 }
 
 function markersForPart(
@@ -219,32 +167,6 @@ function markersForPart(
     return [];
   }
   return uniqueSortedMarkers(elementMarkers.slice(start, end));
-}
-
-function qualityToneClass(stats: MeshQualityStats | null): string {
-  if (!stats) {
-    return "border-border/25 bg-background/45 text-muted-foreground";
-  }
-  if (stats.sicn_p5 >= 0.3 && stats.gamma_min >= 0.1) {
-    return "border-emerald-400/25 bg-emerald-500/12 text-emerald-100";
-  }
-  if (stats.sicn_p5 >= 0.1 && stats.gamma_min >= 0.03) {
-    return "border-amber-400/25 bg-amber-500/12 text-amber-100";
-  }
-  return "border-rose-400/25 bg-rose-500/12 text-rose-100";
-}
-
-function qualityLabel(stats: MeshQualityStats | null): string {
-  if (!stats) {
-    return "No quality";
-  }
-  if (stats.sicn_p5 >= 0.3 && stats.gamma_min >= 0.1) {
-    return "Good";
-  }
-  if (stats.sicn_p5 >= 0.1 && stats.gamma_min >= 0.03) {
-    return "Fair";
-  }
-  return "Needs review";
 }
 
 function collectSegmentBoundaryFaceIndices(
@@ -504,127 +426,6 @@ const COLOR_OPTIONS: { value: FemColorField; label: string; labeledLabel: string
   { value: "none", label: "—", labeledLabel: "None" },
 ];
 
-const OBJECT_MESH_PALETTE = [
-  "#e76f51",
-  "#f4a261",
-  "#e9c46a",
-  "#90be6d",
-  "#43aa8b",
-  "#4d908e",
-  "#577590",
-  "#277da1",
-] as const;
-
-function hashString(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 33 + value.charCodeAt(index)) >>> 0;
-  }
-  return hash;
-}
-
-function partRoleTint(role: FemMeshPart["role"]): string {
-  switch (role) {
-    case "air":
-      return "#67e8f9";
-    case "interface":
-      return "#f59e0b";
-    case "outer_boundary":
-      return "#c084fc";
-    case "magnetic_object":
-    default:
-      return "#60a5fa";
-  }
-}
-
-function colorToHex(color: THREE.Color): string {
-  return `#${color.getHexString()}`;
-}
-
-function objectTint(objectId: string | null | undefined): string {
-  if (!objectId) {
-    return "#60a5fa";
-  }
-  const hash = hashString(objectId);
-  const color = new THREE.Color(OBJECT_MESH_PALETTE[hash % OBJECT_MESH_PALETTE.length]);
-  const variant = Math.floor(hash / OBJECT_MESH_PALETTE.length) % 3;
-  if (variant === 1) {
-    color.offsetHSL(0.018, 0.04, 0.045);
-  } else if (variant === 2) {
-    color.offsetHSL(-0.02, 0.02, -0.035);
-  }
-  return colorToHex(color);
-}
-
-function partMeshTint(part: FemMeshPart): string {
-  if (part.role === "air") {
-    return partRoleTint(part.role);
-  }
-  const color = new THREE.Color(
-    part.object_id ? objectTint(part.object_id) : partRoleTint(part.role),
-  );
-  if (part.role === "interface") {
-    color.lerp(new THREE.Color("#f59e0b"), 0.3);
-  } else if (part.role === "outer_boundary") {
-    color.lerp(new THREE.Color("#f8fafc"), 0.38);
-  }
-  return colorToHex(color);
-}
-
-function partEdgeTint(part: FemMeshPart, isSelected: boolean, isDimmed: boolean): string {
-  const color = new THREE.Color(partMeshTint(part));
-  if (part.role === "air") {
-    color.lerp(new THREE.Color("#e0f2fe"), 0.35);
-  } else {
-    color.lerp(new THREE.Color("#0f172a"), isDimmed ? 0.22 : 0.1);
-  }
-  if (isSelected) {
-    color.lerp(new THREE.Color("#ffffff"), 0.55);
-  }
-  return colorToHex(color);
-}
-
-function colorLegendGradient(field: FemColorField): string {
-  switch (field) {
-    case "x":
-    case "y":
-    case "z":
-      return "linear-gradient(to right, #3b82f6, #f8fafc, #ef4444)";
-    case "magnitude":
-      return "linear-gradient(to right, #0f172a, #2563eb, #7dd3fc, #f8fafc)";
-    case "quality":
-    case "sicn":
-      return "linear-gradient(to right, #f97316, #facc15, #22c55e)";
-    case "orientation":
-      return "linear-gradient(to right, #ef4444, #f59e0b, #22c55e, #06b6d4, #8b5cf6)";
-    case "none":
-    default:
-      return "linear-gradient(to right, #334155, #64748b)";
-  }
-}
-
-function colorLegendLabel(field: FemColorField, fieldLabel?: string): string {
-  switch (field) {
-    case "orientation":
-      return fieldLabel ? `${fieldLabel} orientation` : "orientation";
-    case "x":
-      return `${fieldLabel ?? "field"} x-component`;
-    case "y":
-      return `${fieldLabel ?? "field"} y-component`;
-    case "z":
-      return `${fieldLabel ?? "field"} z-component`;
-    case "magnitude":
-      return `${fieldLabel ?? "field"} magnitude`;
-    case "quality":
-      return "face aspect ratio";
-    case "sicn":
-      return "surface inverse condition number";
-    case "none":
-    default:
-      return "object / part tint";
-  }
-}
-
 /* ── Global R3F Logic Components ───────────────────────────────────── */
 
 function FemClipPlanes({ enabled, axis, posPercentage, geomSize }: { enabled: boolean; axis: ClipAxis; posPercentage: number; geomSize: [number, number, number] }) {
@@ -654,174 +455,14 @@ function CameraAutoFit({ maxDim, generation }: { maxDim: number; generation: num
   return null;
 }
 
-function ViewportCamera({
-  projection,
-}: {
-  projection: CameraProjection;
-}) {
-  if (projection === "orthographic") {
-    return (
-      <OrthographicCamera
-        makeDefault
-        position={[3, 2.4, 3]}
-        near={0.0001}
-        far={10000}
-        zoom={80}
-      />
-    );
-  }
-  return (
-    <PerspectiveCamera
-      makeDefault
-      position={[3, 2.4, 3]}
-      fov={45}
-      near={0.0001}
-      far={10000}
-    />
-  );
-}
-
-function SyncedControls({ 
-  controlsRefObject,
-  viewCubeBridgeRef,
-  navigationMode,
-}: { 
-  controlsRefObject: any,
-  viewCubeBridgeRef: any,
-  navigationMode: NavigationMode,
-}) {
-  const { camera } = useThree();
-  useEffect(() => {
-    viewCubeBridgeRef.current = { camera, controls: controlsRefObject.current };
-  }, [camera, controlsRefObject, viewCubeBridgeRef]);
-  if (navigationMode === "cad") {
-    return (
-      <OrbitControls
-        ref={controlsRefObject}
-        enableDamping
-        dampingFactor={0.08}
-        rotateSpeed={0.85}
-        zoomSpeed={0.85}
-        panSpeed={0.9}
-        screenSpacePanning
-        target={[0, 0, 0]}
-      />
-    );
-  }
-  return (
-    <TrackballControls
-      ref={controlsRefObject}
-      rotateSpeed={3}
-      zoomSpeed={1.2}
-      panSpeed={0.8}
-      target={[0, 0, 0]}
-    />
-  );
-}
-
-function antennaOverlayColors(role: AntennaOverlay["conductors"][number]["role"], selected: boolean) {
-  if (role === "ground") {
-    return selected
-      ? { fill: "#67e8f9", wire: "#a5f3fc" }
-      : { fill: "#0ea5e9", wire: "#67e8f9" };
-  }
-  return selected
-    ? { fill: "#fb923c", wire: "#fdba74" }
-    : { fill: "#f97316", wire: "#fb923c" };
-}
-
-function AntennaOverlayMeshes({
-  overlays,
-  geomCenter,
-  selectedAntennaId,
-  onAntennaTranslate,
-}: {
-  overlays: AntennaOverlay[];
-  geomCenter: THREE.Vector3;
-  selectedAntennaId?: string | null;
-  onAntennaTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
-}) {
-  const groupRef = useRef<THREE.Group>(null);
-  
-  return (
-    <group>
-      {overlays.map((overlay) => {
-        const selected = selectedAntennaId === overlay.id;
-        const conductors = overlay.conductors.map((conductor) => {
-          const size = [
-            conductor.boundsMax[0] - conductor.boundsMin[0],
-            conductor.boundsMax[1] - conductor.boundsMin[1],
-            conductor.boundsMax[2] - conductor.boundsMin[2],
-          ] as const;
-          if (size.some((value) => value <= 0)) {
-            return null;
-          }
-          const center = [
-            0.5 * (conductor.boundsMin[0] + conductor.boundsMax[0]) - geomCenter.x,
-            0.5 * (conductor.boundsMin[1] + conductor.boundsMax[1]) - geomCenter.y,
-            0.5 * (conductor.boundsMin[2] + conductor.boundsMax[2]) - geomCenter.z,
-          ] as const;
-          const colors = antennaOverlayColors(conductor.role, selected);
-          return (
-            <group key={conductor.id}>
-              <mesh position={center} renderOrder={8}>
-                <boxGeometry args={size} />
-                <meshStandardMaterial
-                  color={colors.fill}
-                  emissive={colors.fill}
-                  emissiveIntensity={selected ? 0.35 : 0.18}
-                  transparent
-                  opacity={selected ? 0.34 : 0.16}
-                  depthWrite={false}
-                />
-              </mesh>
-              <mesh position={center} renderOrder={9}>
-                <boxGeometry args={size} />
-                <meshBasicMaterial
-                  color={colors.wire}
-                  wireframe
-                  transparent
-                  opacity={selected ? 0.95 : 0.72}
-                  depthWrite={false}
-                />
-              </mesh>
-            </group>
-          );
-        });
-
-        if (selected && onAntennaTranslate) {
-          return (
-            <PivotControls
-              key={overlay.id}
-              depthTest={false}
-              lineWidth={2}
-              axisColors={["#f87171", "#4ade80", "#60a5fa"]}
-              scale={75}
-              fixed={true}
-              onDragEnd={() => {
-                if (groupRef.current) {
-                  const p = groupRef.current.position;
-                  onAntennaTranslate(overlay.id, p.x, p.y, p.z);
-                  groupRef.current.position.set(0, 0, 0);
-                }
-              }}
-            >
-              <group ref={groupRef}>{conductors}</group>
-            </PivotControls>
-          );
-        }
-        return <group key={overlay.id}>{conductors}</group>;
-      })}
-    </group>
-  );
-}
-
 /* ── Component ─────────────────────────────────────────────────────── */
 
 function FemMeshView3DInner({
   meshData,
-  colorField = "z",
+  colorField = "orientation",
   fieldLabel,
+  quantityId,
+  quantityOptions = [],
   toolbarMode = "visible",
   renderMode: controlledRenderMode,
   opacity: controlledOpacity,
@@ -864,9 +505,11 @@ function FemMeshView3DInner({
   onAntennaTranslate,
   onEntitySelect,
   onEntityFocus,
+  onQuantityChange,
 }: Props) {
   const [internalRenderMode, setInternalRenderMode] = useState<RenderMode>("surface");
   const [field, setField] = useState<FemColorField>(colorField);
+  const [arrowColorField, setArrowColorField] = useState<FemColorField>(colorField);
   const [internalOpacity, setInternalOpacity] = useState(100);
   const [internalClipEnabled, setInternalClipEnabled] = useState(false);
   const [internalClipAxis, setInternalClipAxis] = useState<ClipAxis>("x");
@@ -880,7 +523,8 @@ function FemMeshView3DInner({
   const [partExplorerOpen, setPartExplorerOpen] = useState(true);
   const [legendOpen, setLegendOpen] = useState(true);
   const [labeledMode, setLabeledMode] = useState(false);
-  const [openPopover, setOpenPopover] = useState<"color" | "clip" | "display" | "vectors" | "camera" | "panels" | null>(null);
+  const [openPopover, setOpenPopover] = useState<"quantity" | "color" | "clip" | "display" | "vectors" | "camera" | "panels" | null>(null);
+  const [qualityProfile, setQualityProfile] = useState<ViewportQualityProfileId>("interactive");
   
   const [hoveredFace, setHoveredFace] = useState<{ idx: number; x: number; y: number } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; faceIdx: number } | null>(null);
@@ -940,18 +584,7 @@ function FemMeshView3DInner({
       ?? null;
     const hasSelection = Boolean(selectedAirPartId || selectedObjectIdForHighlight || preferredCameraPartId);
     for (const part of meshParts) {
-      const defaultViewState: MeshEntityViewState = {
-        visible: true,
-        renderMode:
-          part.role === "air"
-            ? "wireframe"
-            : part.role === "outer_boundary"
-              ? "surface+edges"
-              : "surface+edges",
-        opacity:
-          part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
-        colorField: "none",
-      };
+      const defaultViewState = defaultMeshEntityViewState(part);
       const baseViewState = meshEntityViewState[part.id] ?? defaultViewState;
       const isSelected =
         selectedAirPartId != null
@@ -1092,7 +725,9 @@ function FemMeshView3DInner({
         if (parts.length === 0) {
           continue;
         }
-        const visible = parts.filter((part) => meshEntityViewState[part.id]?.visible ?? true).length;
+        const visible = parts.filter(
+          (part) => meshEntityViewState[part.id]?.visible ?? defaultMeshEntityViewState(part).visible,
+        ).length;
         summary.push({ role, label, total: parts.length, visible });
       }
       return summary;
@@ -1294,10 +929,12 @@ function FemMeshView3DInner({
     const values = Array.from(new Set(targetLayers.map((layer) => layer.viewState.colorField)));
     return values[0] ?? field;
   }, [field, hasMeshParts, toolbarColorPartIds, visibleLayers]);
+  const prominentQuantityOptions = useMemo(
+    () => quantityOptions.filter((option) => option.available),
+    [quantityOptions],
+  );
   const effectiveOpacity = opacity;
-  const arrowField = hasMeshParts
-    ? (visibleLayers.find((layer) => layer.isMagnetic)?.viewState.colorField ?? field)
-    : field;
+  const arrowField = arrowColorField;
   const legendField = hasMeshParts
     ? (visibleLayers.find((layer) => layer.isSelected)?.viewState.colorField
       ?? visibleLayers.find((layer) => layer.isMagnetic)?.viewState.colorField
@@ -1350,6 +987,7 @@ function FemMeshView3DInner({
   }, [legendField, meshData.fieldData, meshData.nNodes, qualityPerFace]);
 
   useEffect(() => { setField(colorField); }, [colorField]);
+  useEffect(() => { setArrowColorField(colorField); }, [colorField]);
   useEffect(() => {
     setSelectedFaces([]); setHoveredFace(null); setCtxMenu(null);
     faceARsRef.current = null;
@@ -1557,120 +1195,72 @@ function FemMeshView3DInner({
   }, [meshParts, onMeshPartViewStatePatch]);
   return (
     <div className="relative flex flex-1 w-[100%] h-[100%] min-w-0 min-h-0 bg-background overflow-hidden rounded-md fem-canvas-container">
-      <Canvas
-        gl={{ antialias: true, preserveDrawingBuffer: true, localClippingEnabled: true }}
+      <ScientificViewportShell
+        projection={cameraProjection}
+        navigation={navigationMode}
+        qualityProfile={qualityProfile}
+        target={[0, 0, 0]}
+        bridgeRef={viewCubeSceneRef}
+        controlsRef={controlsRef}
+        onViewCubeRotate={handleViewCubeRotate}
+        onResetView={() => setCameraPreset("reset")}
+        showOrientationSphere={
+          showOrientationLegend ||
+          toolbarColorField === "orientation" ||
+          arrowField === "orientation"
+        }
+        orientationSphereAxisConvention="identity"
+        orientationSpherePositionClassName="top-[188px] right-3"
         onPointerMissed={() => setSelectedFaces([])}
-        onContextMenu={(e) => e.preventDefault()}
-        onCreated={({ gl }) => { canvasRef.current = gl.domElement; }}
+        onCanvasContextMenu={(e) => e.preventDefault()}
+        onCanvasCreated={({ gl }) => {
+          canvasRef.current = gl.domElement;
+        }}
       >
-        <ViewportCamera projection={cameraProjection} />
-        <color attach="background" args={[0x1e1e2e]} /> {/* Catppuccin Mocha Base */}
-        <ambientLight intensity={0.4} />
-        <directionalLight position={[1, 2, 3]} intensity={0.9} />
-        <directionalLight position={[-1, -1, -2]} intensity={0.3} color={0x6688cc} />
-        
-        <CameraAutoFit maxDim={sceneMaxDim} generation={cameraFitGeneration} />
-
-        <FemClipPlanes enabled={clipEnabled} axis={clipAxis} posPercentage={clipPos} geomSize={geomSize} />
-        
         {!missingExactScopeSegment ? (
-          <>
-            {hasMeshParts
-              ? visibleLayers.map((layer) => (
-                  <FemGeometry
-                    key={layer.part.id}
-                    meshData={meshData}
-                    field={layer.viewState.colorField}
-                    renderMode={layer.viewState.renderMode}
-                    opacity={layer.viewState.opacity}
-                    customBoundaryFaces={layer.surfaceFaces}
-                    displayBoundaryFaceIndices={layer.boundaryFaceIndices}
-                    displayElementIndices={layer.elementIndices}
-                    qualityPerFace={qualityPerFace}
-                    shrinkFactor={shrinkFactor}
-                    clipEnabled={clipEnabled}
-                    clipAxis={clipAxis}
-                    clipPos={clipPos}
-                    uniformColor={layer.meshColor}
-                    edgeColor={layer.edgeColor}
-                    highlight={layer.isSelected}
-                    globalCenter={dynamicGeomCenter}
-                    onFaceClick={handleFaceClick}
-                    onFaceHover={handleFaceHover}
-                    onFaceUnhover={handleFaceUnhover}
-                    onFaceContextMenu={handleFaceContextMenu}
-                  />
-                ))
-              : null}
-            {!hasMeshParts && shouldRenderAirGeometry ? (
-              <FemGeometry
-                meshData={meshData}
-                field={"none"}
-                renderMode={renderMode}
-                opacity={airSegmentOpacity}
-                displayBoundaryFaceIndices={airBoundaryFaceIndices}
-                displayElementIndices={airElementIndices}
-                qualityPerFace={qualityPerFace}
-                shrinkFactor={shrinkFactor}
-                clipEnabled={clipEnabled}
-                clipAxis={clipAxis}
-                clipPos={clipPos}
-                globalCenter={dynamicGeomCenter}
-                onFaceClick={handleFaceClick}
-                onFaceHover={handleFaceHover}
-                onFaceUnhover={handleFaceUnhover}
-                onFaceContextMenu={handleFaceContextMenu}
-              />
-            ) : null}
-            {!hasMeshParts && shouldRenderMagneticGeometry ? (
-              <FemGeometry
-                meshData={meshData}
-                field={field}
-                renderMode={renderMode}
-                opacity={effectiveOpacity}
-                displayBoundaryFaceIndices={magneticBoundaryFaceIndices}
-                displayElementIndices={magneticElementIndices}
-                qualityPerFace={qualityPerFace}
-                shrinkFactor={shrinkFactor}
-                clipEnabled={clipEnabled}
-                clipAxis={clipAxis}
-                clipPos={clipPos}
-                globalCenter={dynamicGeomCenter}
-                onFaceClick={handleFaceClick}
-                onFaceHover={handleFaceHover}
-                onFaceUnhover={handleFaceUnhover}
-                onFaceContextMenu={handleFaceContextMenu}
-              />
-            ) : null}
-            <FemArrows
-              meshData={meshData}
-              field={arrowField}
-              arrowDensity={arrowDensity}
-              center={dynamicGeomCenter}
-              maxDim={dynamicMaxDim}
-              visible={effectiveShowArrows}
-              activeNodeMask={magneticArrowNodeMask}
-              boundaryFaceIndices={magneticBoundaryFaceIndices}
-            />
-            <FemHighlightView meshData={meshData} selectedFaces={selectedFaces} center={dynamicGeomCenter} />
-          </>
-        ) : null}
-        {antennaOverlays.length > 0 && !partFocused ? (
-          <AntennaOverlayMeshes
-            overlays={antennaOverlays}
-            geomCenter={dynamicGeomCenter}
+          <FemViewportScene
+            meshData={meshData}
+            hasMeshParts={hasMeshParts}
+            visibleLayers={visibleLayers}
+            shouldRenderAirGeometry={shouldRenderAirGeometry}
+            airBoundaryFaceIndices={airBoundaryFaceIndices}
+            airElementIndices={airElementIndices}
+            airSegmentOpacity={airSegmentOpacity}
+            shouldRenderMagneticGeometry={shouldRenderMagneticGeometry}
+            field={field}
+            renderMode={renderMode}
+            effectiveOpacity={effectiveOpacity}
+            magneticBoundaryFaceIndices={magneticBoundaryFaceIndices}
+            magneticElementIndices={magneticElementIndices}
+            qualityPerFace={qualityPerFace}
+            shrinkFactor={shrinkFactor}
+            clipEnabled={clipEnabled}
+            clipAxis={clipAxis}
+            clipPos={clipPos}
+            dynamicGeomCenter={dynamicGeomCenter}
+            dynamicGeomSize={dynamicGeomSize}
+            dynamicMaxDim={dynamicMaxDim}
+            effectiveShowArrows={effectiveShowArrows}
+            arrowField={arrowField}
+            arrowDensity={arrowDensity}
+            magneticArrowNodeMask={magneticArrowNodeMask}
+            selectedFaces={selectedFaces}
+            antennaOverlays={antennaOverlays}
+            focusedEntityId={focusedEntityId}
             selectedAntennaId={selectedAntennaId}
             onAntennaTranslate={onAntennaTranslate}
+            axesWorldExtent={axesWorldExtent}
+            axesCenter={axesCenter}
+            onFaceClick={handleFaceClick}
+            onFaceHover={handleFaceHover}
+            onFaceUnhover={handleFaceUnhover}
+            onFaceContextMenu={handleFaceContextMenu}
+            cameraFitGeneration={cameraFitGeneration}
+            CameraAutoFit={CameraAutoFit}
+            FemClipPlanes={FemClipPlanes}
           />
         ) : null}
-        <SceneAxes3D worldExtent={axesWorldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
-        
-        <SyncedControls
-          controlsRefObject={controlsRef}
-          viewCubeBridgeRef={viewCubeSceneRef}
-          navigationMode={navigationMode}
-        />
-      </Canvas>
+      </ScientificViewportShell>
       {missingExactScopeSegment && selectedObjectId ? (
         <div className="pointer-events-none absolute inset-x-4 top-16 z-20 rounded-xl border border-rose-400/25 bg-background/85 px-4 py-3 text-sm text-rose-200 shadow-lg backdrop-blur-md">
           Object mesh segmentation unavailable for shared-domain FEM: `{selectedObjectId}`
@@ -1684,223 +1274,73 @@ function FemMeshView3DInner({
 
       {/* ─── Toolbar ────────────────────────────────── */}
       {toolbarMode !== "hidden" && (
-        <ViewportToolbar3D
-          sideChildren={
-            <div className="flex flex-col items-end gap-1.5">
-              {hasMeshParts && (
-                <ViewportStatusChip color="default">
-                  {visibleLayers.length}/{meshParts.length} parts
-                </ViewportStatusChip>
-              )}
-            </div>
-          }
-        >
-          {/* Render */}
-          <ViewportToolGroup label="Render">
-            <ViewportIconAction
-              icon={<Box size={14} />}
-              active={toolbarRenderMode === "surface"}
-              onClick={() => applyToolbarRenderMode("surface")}
-              title="Surface"
-            />
-            <ViewportIconAction
-              icon={<Grid3X3 size={14} />}
-              active={toolbarRenderMode === "surface+edges"}
-              onClick={() => applyToolbarRenderMode("surface+edges")}
-              title="Surface + Edges"
-            />
-            <ViewportIconAction
-              icon={<Grid2X2 size={14} />}
-              active={toolbarRenderMode === "wireframe"}
-              onClick={() => applyToolbarRenderMode("wireframe")}
-              title="Wireframe"
-            />
-            <ViewportIconAction
-              icon={<Grip size={14} />}
-              active={toolbarRenderMode === "points"}
-              onClick={() => applyToolbarRenderMode("points")}
-              title="Points"
-            />
-          </ViewportToolGroup>
-
-          <ViewportToolSeparator />
-
-          {/* Color */}
-          <ViewportToolGroup label="Color">
-            <div className="relative">
-              <ViewportIconAction
-                icon={<Palette size={14} />}
-                label={labeledMode ? COLOR_OPTIONS.find(o => o.value === toolbarColorField)?.labeledLabel : COLOR_OPTIONS.find(o => o.value === toolbarColorField)?.label}
-                showCaret
-                onClick={() => setOpenPopover(prev => prev === "color" ? null : "color")}
-                title="Color Field"
-              />
-              {openPopover === "color" && (
-                <ViewportPopoverPanel title="Color Mode">
-                  <div className="grid grid-cols-2 gap-1 w-[200px]">
-                    {COLOR_OPTIONS.map((opt) => (
-                      <ViewportIconAction
-                        key={opt.value}
-                        active={toolbarColorField === opt.value}
-                        onClick={() => { applyToolbarColorField(opt.value); setOpenPopover(null); }}
-                        label={opt.labeledLabel}
-                        className="justify-start px-2 py-1.5"
-                      />
-                    ))}
-                  </div>
-                </ViewportPopoverPanel>
-              )}
-            </div>
-          </ViewportToolGroup>
-
-          <ViewportToolSeparator />
-
-          <ViewportStatusChip color={missingMagneticMask ? "amber" : "cyan"}>
-            {fieldLabel ?? "M"}
-          </ViewportStatusChip>
-
-          <ViewportToolSeparator />
-
-          <ViewportToolGroup>
-            {/* Clip */}
-            <div className="relative">
-              <ViewportIconAction
-                icon={<Scissors size={14} />}
-                active={clipEnabled}
-                showCaret
-                onClick={() => { const v = !clipEnabled; onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v); if (v) setOpenPopover("clip"); else setOpenPopover(null); }}
-                title="Clip Plane"
-              />
-              {openPopover === "clip" && clipEnabled && (
-                <ViewportPopoverPanel title="Clip settings">
-                  <ViewportPopoverRow label="Axis">
-                    {(["x","y","z"] as ClipAxis[]).map(a => (
-                      <button key={a} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={clipAxis === a} onClick={() => onClipAxisChange ? onClipAxisChange(a) : setInternalClipAxis(a)}>{a.toUpperCase()}</button>
-                    ))}
-                  </ViewportPopoverRow>
-                  <ViewportPopoverRow label="Pos">
-                     <input type="range" className="flex-1 h-[3px] accent-primary" min={0} max={100} value={clipPos} onChange={(e) => { const v = Number(e.target.value); onClipPosChange ? onClipPosChange(v) : setInternalClipPos(v); }} />
-                  </ViewportPopoverRow>
-                </ViewportPopoverPanel>
-              )}
-            </div>
-
-            {/* Display */}
-            <div className="relative">
-              <ViewportIconAction
-                icon={<Eye size={14} />}
-                showCaret
-                active={openPopover === "display"}
-                onClick={() => setOpenPopover(prev => prev === "display" ? null : "display")}
-                title="Display Options"
-              />
-              {openPopover === "display" && (
-                <ViewportPopoverPanel title="Display">
-                  <ViewportPopoverRow label="Opacity">
-                    <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={10} max={100} value={toolbarOpacity} onChange={(e) => { const v = Number(e.target.value); applyToolbarOpacity(v); }} />
-                  </ViewportPopoverRow>
-                  {meshData.elements.length >= 4 && (
-                    <ViewportPopoverRow label="Shrink">
-                      <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={10} max={100} value={Math.round(shrinkFactor * 100)} onChange={(e) => { const v = Number(e.target.value) / 100; onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v); }} />
-                    </ViewportPopoverRow>
-                  )}
-                  <ViewportPopoverRow label="Labels">
-                    <button className="text-[0.65rem] font-semibold text-muted-foreground hover:text-foreground bg-transparent border border-border/30 rounded px-2 py-0.5" onClick={() => setLabeledMode(prev => !prev)}>{labeledMode ? "Hide Labels" : "Show Labels"}</button>
-                  </ViewportPopoverRow>
-                </ViewportPopoverPanel>
-              )}
-            </div>
-
-            {/* Arrows/Vectors */}
-            <div className="relative">
-              <ViewportIconAction
-                icon={<ArrowUpRight size={14} />}
-                active={showArrows}
-                showCaret
-                onClick={() => { const v = !showArrows; onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v); if (v) setOpenPopover("vectors"); else setOpenPopover(null); }}
-                title="Vectors"
-              />
-              {openPopover === "vectors" && showArrows && (
-                <ViewportPopoverPanel title="Vectors">
-                  <ViewportPopoverRow label="Density">
-                    <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={200} max={3000} step={100} value={arrowDensity} onChange={(e) => setArrowDensity(Number(e.target.value))} />
-                  </ViewportPopoverRow>
-                </ViewportPopoverPanel>
-              )}
-            </div>
-
-            {/* Camera Info */}
-            <div className="relative">
-              <ViewportIconAction
-                icon={<Video size={14} />}
-                showCaret
-                active={openPopover === "camera"}
-                onClick={() => setOpenPopover(prev => prev === "camera" ? null : "camera")}
-                title="Camera"
-              />
-              {openPopover === "camera" && (
-                <ViewportPopoverPanel title="Camera / View">
-                  <ViewportPopoverRow label="Proj">
-                    <button className="text-[0.65rem] font-semibold uppercase px-2 py-1 rounded transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={cameraProjection === "perspective"} onClick={() => setCameraProjection("perspective")}>Persp</button>
-                    <button className="text-[0.65rem] font-semibold uppercase px-2 py-1 rounded transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={cameraProjection === "orthographic"} onClick={() => setCameraProjection("orthographic")}>Ortho</button>
-                  </ViewportPopoverRow>
-                  <ViewportPopoverRow label="Nav">
-                    <button className="text-[0.65rem] font-semibold uppercase px-2 py-1 rounded transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={navigationMode === "trackball"} onClick={() => setNavigationMode("trackball")}>Trackball</button>
-                    <button className="text-[0.65rem] font-semibold uppercase px-2 py-1 rounded transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={navigationMode === "cad"} onClick={() => setNavigationMode("cad")}>CAD</button>
-                  </ViewportPopoverRow>
-                  <div className="h-px bg-border/20 my-1"/>
-                  <div className="grid grid-cols-2 gap-1 px-1">
-                    {(["reset", "front", "top", "right"] as const).map(view => (
-                      <button key={view} className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { setCameraPreset(view); setOpenPopover(null); }}>{view === "reset" ? "Reset" : view}</button>
-                    ))}
-                  </div>
-                </ViewportPopoverPanel>
-              )}
-            </div>
-
-            {/* Panels Menu */}
-            <div className="relative">
-              <ViewportIconAction
-                icon={<Layers size={14} />}
-                showCaret
-                active={openPopover === "panels"}
-                onClick={() => setOpenPopover(prev => prev === "panels" ? null : "panels")}
-                title="Panels"
-              />
-              {openPopover === "panels" && (
-                <ViewportPopoverPanel title="Panels">
-                  <ViewportIconAction
-                    label="Legend"
-                    active={legendOpen}
-                    onClick={() => { setLegendOpen(prev => !prev); }}
-                    className="justify-start w-full py-1.5"
-                  />
-                  <ViewportIconAction
-                    label={partExplorerOpen ? "Hide Parts" : "Show Parts"}
-                    active={partExplorerOpen}
-                    onClick={() => { setPartExplorerOpen(prev => !prev); setOpenPopover(null); }}
-                    className="justify-start w-full py-1.5"
-                  />
-                </ViewportPopoverPanel>
-              )}
-            </div>
-
-            <ViewportToolSeparator />
-
-            {/* Capture */}
-            <ViewportIconAction
-              icon={<Camera size={14} />}
-              onClick={takeScreenshot}
-              title="Screenshot"
-            />
-          </ViewportToolGroup>
-        </ViewportToolbar3D>
+        <FemViewportToolbar
+          renderMode={toolbarRenderMode}
+          surfaceColorField={toolbarColorField}
+          arrowColorField={arrowField}
+          projection={cameraProjection}
+          navigation={navigationMode}
+          qualityProfile={qualityProfile}
+          clipEnabled={clipEnabled}
+          clipAxis={clipAxis}
+          clipPos={clipPos}
+          arrowsVisible={showArrows}
+          arrowDensity={arrowDensity}
+          opacity={toolbarOpacity}
+          shrinkFactor={shrinkFactor}
+          showShrink={meshData.elements.length >= 4}
+          labeledMode={labeledMode}
+          legendOpen={legendOpen}
+          partExplorerOpen={partExplorerOpen}
+          visiblePartsCount={hasMeshParts ? visibleLayers.length : undefined}
+          totalPartsCount={hasMeshParts ? meshParts.length : undefined}
+          hasField={!missingMagneticMask}
+          fieldLabel={fieldLabel}
+          openPopover={openPopover}
+          onOpenPopoverChange={(id) => setOpenPopover(id as typeof openPopover)}
+          onRenderModeChange={applyToolbarRenderMode}
+          onSurfaceColorFieldChange={applyToolbarColorField}
+          onArrowColorFieldChange={setArrowColorField}
+          onProjectionChange={setCameraProjection}
+          onNavigationChange={setNavigationMode}
+          onQualityProfileChange={setQualityProfile}
+          onClipEnabledChange={(v) => {
+            onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v);
+          }}
+          onClipAxisChange={(a) => {
+            onClipAxisChange ? onClipAxisChange(a) : setInternalClipAxis(a);
+          }}
+          onClipPosChange={(v) => {
+            onClipPosChange ? onClipPosChange(v) : setInternalClipPos(v);
+          }}
+          onArrowsVisibleChange={(v) => {
+            onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v);
+          }}
+          onArrowDensityChange={setArrowDensity}
+          onOpacityChange={applyToolbarOpacity}
+          onShrinkFactorChange={(v) => {
+            onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v);
+          }}
+          onLabeledModeChange={setLabeledMode}
+          onToggleLegend={() => setLegendOpen((prev) => !prev)}
+          onTogglePartExplorer={() => setPartExplorerOpen((prev) => !prev)}
+          onCameraPreset={setCameraPreset}
+          onCapture={takeScreenshot}
+          quantityId={quantityId}
+          quantityOptions={prominentQuantityOptions}
+          onQuantityChange={onQuantityChange}
+        />
       )}
-
       {legendOpen && (
         <FieldLegend
           colorLabel={colorLegendLabel(legendField, fieldLabel)}
-          lengthLabel={effectiveShowArrows ? "vector magnitude" : undefined}
+          lengthLabel={
+            effectiveShowArrows
+              ? arrowField === "orientation"
+                ? "vector magnitude, arrow color = orientation"
+                : `vector magnitude, arrow color = ${colorLegendLabel(arrowField, fieldLabel)}`
+              : undefined
+          }
           min={legendField === "none" ? undefined : fieldMagnitudeStats?.min}
           max={legendField === "none" ? undefined : fieldMagnitudeStats?.max}
           mean={legendField === "none" ? undefined : fieldMagnitudeStats?.mean}
@@ -1909,271 +1349,75 @@ function FemMeshView3DInner({
       )}
 
       {hasMeshParts && partExplorerOpen && (
-        <div className="absolute right-3 top-20 z-20 w-[264px] max-h-[calc(100%-7rem)] overflow-hidden rounded-2xl border border-border/30 bg-background/88 shadow-xl backdrop-blur-md">
-          <div className="flex items-center justify-between border-b border-border/25 px-3 py-2.5">
-            <div>
-              <p className="text-[0.62rem] font-semibold tracking-[0.12em] text-muted-foreground">
-                {selectedMeshPart
-                  ? "Selected submesh"
-                  : inspectedMeshPart
-                    ? "Isolated submesh"
-                    : "Mesh parts"}
-              </p>
-              <p className="text-[0.78rem] font-medium text-foreground">
-                {visibleLayers.length}/{meshParts.length} visible parts
-              </p>
-            </div>
-            <button
-              type="button"
-              className="rounded-md px-2 py-1 text-[0.65rem] font-semibold text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-              onClick={() => setPartExplorerOpen(false)}
-            >
-              Hide
-            </button>
-          </div>
-          <div className="border-b border-border/20 px-3 py-2.5">
-            <div className="flex flex-wrap gap-1.5">
-              {roleVisibilitySummary.map((entry) => (
-                <button
-                  key={entry.role}
-                  type="button"
-                  className="rounded-full border border-border/25 px-2.5 py-1 text-[0.62rem] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                  onClick={() => handleRoleVisibility(entry.role, entry.visible !== entry.total)}
-                >
-                  {entry.label} {entry.visible}/{entry.total}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="max-h-[calc(100%-7.5rem)] overflow-y-auto px-3 py-3">
-            {inspectedMeshPart ? (
-              <div className="mb-3 rounded-2xl border border-primary/18 bg-primary/6 p-3">
-                <div className="flex items-start gap-3">
-                  <button
-                    type="button"
-                    className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-white/15"
-                    style={{ backgroundColor: partMeshTint(inspectedMeshPart) }}
-                    onClick={() => patchSinglePart(inspectedMeshPart.id, { visible: !(meshEntityViewState[inspectedMeshPart.id]?.visible ?? true) })}
-                    title={(meshEntityViewState[inspectedMeshPart.id]?.visible ?? true) ? "Hide part" : "Show part"}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[0.78rem] font-semibold text-foreground">
-                      {inspectedMeshPart.label || inspectedMeshPart.id}
-                    </div>
-                    <div className="mt-1 text-[0.64rem] text-muted-foreground">
-                      {inspectedMeshPart.role.replaceAll("_", " ")}
-                      {inspectedMeshPart.object_id ? ` · ${inspectedMeshPart.object_id}` : ""}
-                    </div>
-                    <div className="mt-2 grid grid-cols-3 gap-2 text-[0.66rem]">
-                      <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
-                        <div className="text-muted-foreground">Tetra</div>
-                        <div className="mt-1 font-mono text-foreground">
-                          {inspectedMeshPart.element_count.toLocaleString()}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
-                        <div className="text-muted-foreground">Nodes</div>
-                        <div className="mt-1 font-mono text-foreground">
-                          {inspectedMeshPart.node_count.toLocaleString()}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
-                        <div className="text-muted-foreground">Faces</div>
-                        <div className="mt-1 font-mono text-foreground">
-                          {inspectedMeshPart.boundary_face_count.toLocaleString()}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <span
-                        className={cn(
-                          "rounded-full border px-2 py-0.5 text-[0.58rem] font-semibold uppercase tracking-[0.14em]",
-                          qualityToneClass(inspectedPartQuality?.stats ?? null),
-                        )}
-                      >
-                        {qualityLabel(inspectedPartQuality?.stats ?? null)}
-                      </span>
-                      {inspectedPartQuality?.markers.length ? (
-                        <span className="rounded-full border border-border/20 bg-background/35 px-2 py-0.5 text-[0.58rem] font-mono text-muted-foreground">
-                          markers {inspectedPartQuality.markers.join(", ")}
-                        </span>
-                      ) : null}
-                      {inspectedPartQuality?.domainCount ? (
-                        <span className="rounded-full border border-border/20 bg-background/35 px-2 py-0.5 text-[0.58rem] font-mono text-muted-foreground">
-                          {inspectedPartQuality.domainCount} quality domain{inspectedPartQuality.domainCount === 1 ? "" : "s"}
-                        </span>
-                      ) : null}
-                    </div>
-                    {inspectedPartQuality?.stats ? (
-                      <div className="mt-2 grid grid-cols-2 gap-2 text-[0.64rem]">
-                        <div className="rounded-xl border border-emerald-400/12 bg-emerald-500/5 px-2.5 py-2">
-                          <div className="text-muted-foreground">Avg quality</div>
-                          <div className="mt-1 font-mono text-foreground">
-                            {inspectedPartQuality.stats.avg_quality.toFixed(3)}
-                          </div>
-                        </div>
-                        <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
-                          <div className="text-muted-foreground">SICN p5</div>
-                          <div className="mt-1 font-mono text-foreground">
-                            {inspectedPartQuality.stats.sicn_p5.toFixed(3)}
-                          </div>
-                        </div>
-                        <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
-                          <div className="text-muted-foreground">SICN mean</div>
-                          <div className="mt-1 font-mono text-foreground">
-                            {inspectedPartQuality.stats.sicn_mean.toFixed(3)}
-                          </div>
-                        </div>
-                        <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
-                          <div className="text-muted-foreground">Gamma min</div>
-                          <div className="mt-1 font-mono text-foreground">
-                            {inspectedPartQuality.stats.gamma_min.toFixed(3)}
-                          </div>
-                        </div>
-                      </div>
-                    ) : inspectedMeshPart.element_count > 0 ? (
-                      <div className="mt-2 rounded-xl border border-border/18 bg-background/30 px-2.5 py-2 text-[0.62rem] text-muted-foreground">
-                        Quality metrics are not available for this submesh yet. Enable quality extraction before rebuilding to inspect SICN and gamma here.
-                      </div>
-                    ) : (
-                      <div className="mt-2 rounded-xl border border-border/18 bg-background/30 px-2.5 py-2 text-[0.62rem] text-muted-foreground">
-                        This part is surface-only, so volume tetrahedron quality metrics do not apply.
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    className={cn(
-                      "rounded-lg border px-2 py-1 text-[0.62rem] font-semibold transition-colors",
-                      focusedEntityId === inspectedMeshPart.id
-                        ? "border-cyan-400/30 bg-cyan-500/12 text-cyan-200"
-                        : "border-border/20 text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                    )}
-                    onClick={() => onEntityFocus?.(inspectedMeshPart.id)}
-                  >
-                    Focus
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            {partExplorerGroups.map((group) => (
-              <div key={group.label} className="mb-3">
-                <div className="px-1 pb-1.5 text-[0.64rem] font-semibold text-muted-foreground">
-                  {group.label}
-                </div>
-                <div className="space-y-1">
-                  {group.parts.map((part) => {
-                    const viewState = meshEntityViewState[part.id];
-                    const isSelected = selectedEntityId === part.id;
-                    const tint = partMeshTint(part);
-                    const partQuality = partQualityById.get(part.id) ?? null;
-                    return (
-                      <div
-                        key={part.id}
-                        className={cn(
-                          "rounded-xl border px-2.5 py-2 transition-colors",
-                          isSelected
-                            ? "border-primary/28 bg-primary/8"
-                            : "border-border/18 bg-background/28 hover:bg-background/40",
-                        )}
-                      >
-                        <div className="flex items-start gap-2.5">
-                          <button
-                            type="button"
-                            className="mt-0.5 h-3 w-3 shrink-0 rounded-full border border-white/15"
-                            style={{ backgroundColor: tint }}
-                            onClick={() => patchSinglePart(part.id, { visible: !(viewState?.visible ?? true) })}
-                            title={(viewState?.visible ?? true) ? "Hide part" : "Show part"}
-                          />
-                          <button
-                            type="button"
-                            className="min-w-0 flex-1 text-left"
-                            onClick={() => handlePartSelect(part.id)}
-                          >
-                            <div className="truncate text-[0.72rem] font-medium text-foreground">
-                              {part.label || part.id}
-                            </div>
-                            <div className="mt-0.5 flex flex-wrap gap-2 text-[0.6rem] font-mono text-muted-foreground">
-                              <span>{part.element_count.toLocaleString()} el</span>
-                              <span>{part.node_count.toLocaleString()} n</span>
-                              {partQuality?.stats ? (
-                                <span>SICN p5 {partQuality.stats.sicn_p5.toFixed(2)}</span>
-                              ) : null}
-                              {part.object_id && <span>{part.object_id}</span>}
-                            </div>
-                          </button>
-                          {isSelected ? (
-                            <button
-                              type="button"
-                              className={cn(
-                                "rounded-md border px-2 py-1 text-[0.6rem] font-semibold transition-colors",
-                                focusedEntityId === part.id
-                                  ? "border-cyan-400/30 bg-cyan-500/12 text-cyan-200"
-                                  : "border-border/20 text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                              )}
-                              onClick={() => onEntityFocus?.(part.id)}
-                            >
-                              Focus
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <FemPartExplorerPanel
+          meshParts={meshParts}
+          meshEntityViewState={meshEntityViewState}
+          partQualityById={partQualityById}
+          partExplorerGroups={partExplorerGroups}
+          roleVisibilitySummary={roleVisibilitySummary}
+          inspectedMeshPart={inspectedMeshPart}
+          inspectedPartQuality={inspectedPartQuality}
+          selectedEntityId={selectedEntityId}
+          focusedEntityId={focusedEntityId}
+          visiblePartsCount={visibleLayers.length}
+          onClose={() => setPartExplorerOpen(false)}
+          onPartSelect={handlePartSelect}
+          onEntityFocus={onEntityFocus}
+          onPatchPart={patchSinglePart}
+          onRoleVisibility={handleRoleVisibility}
+        />
       )}
 
-      <div
-        className={cn(
-          "absolute bottom-3 text-[0.65rem] text-slate-300 font-mono pointer-events-none flex items-baseline gap-3 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-md border border-slate-500/30 shadow-md z-20",
-          legendOpen ? "left-[240px]" : "left-3",
-        )}
-      >
-        <span>{meshData.nNodes.toLocaleString()} nodes</span><span className="w-[3px] h-[3px] rounded-full bg-slate-500/50" />
-        <span>{meshData.nElements.toLocaleString()} tets</span><span className="w-[3px] h-[3px] rounded-full bg-slate-500/50" />
-        <span>{(meshData.boundaryFaces.length / 3).toLocaleString()} faces</span>
-        {clipEnabled && <><span className="w-[3px] h-[3px] rounded-full bg-slate-500/50" /><span className="text-amber-500">clip {clipAxis.toUpperCase()} @ {clipPos}%</span></>}
-        {selectedFaces.length > 0 && <><span className="w-[3px] h-[3px] rounded-full bg-slate-500/50" /><span className="text-blue-400">{selectedFaces.length} selected</span></>}
-      </div>
+      <FemSelectionHUD
+        nNodes={meshData.nNodes}
+        nElements={meshData.nElements}
+        nFaces={meshData.boundaryFaces.length / 3}
+        clipEnabled={clipEnabled}
+        clipAxis={clipAxis}
+        clipPos={clipPos}
+        selectedFacesCount={selectedFaces.length}
+        legendOpen={legendOpen}
+      />
 
-      {/* ── Lasso refine floating toolbar ── */}
-      {selectedFaces.length > 0 && onRefine && (
-        <div className="absolute bottom-12 left-1/2 -translate-x-1/2 flex items-center gap-2 p-2 rounded-lg bg-slate-900/90 backdrop-blur-md border border-slate-500/30 shadow-xl z-30 pointer-events-auto">
-          <span className="text-[0.65rem] font-mono text-slate-400 px-1">{selectedFaces.length} faces</span>
-          <div className="w-px h-4 bg-slate-500/30" />
-          <button className="text-[0.65rem] font-semibold uppercase tracking-widest text-emerald-400 hover:text-emerald-300 px-2 py-1 rounded hover:bg-emerald-500/10 transition-colors" onClick={() => { onRefine(selectedFaces, 0.5); setSelectedFaces([]); }}>Refine ×2</button>
-          <button className="text-[0.65rem] font-semibold uppercase tracking-widest text-emerald-400 hover:text-emerald-300 px-2 py-1 rounded hover:bg-emerald-500/10 transition-colors" onClick={() => { onRefine(selectedFaces, 0.25); setSelectedFaces([]); }}>Refine ×4</button>
-          <button className="text-[0.65rem] font-semibold uppercase tracking-widest text-amber-400 hover:text-amber-300 px-2 py-1 rounded hover:bg-amber-500/10 transition-colors" onClick={() => { onRefine(selectedFaces, 2.0); setSelectedFaces([]); }}>Coarsen ×2</button>
-          <div className="w-px h-4 bg-slate-500/30" />
-          <button className="text-[0.65rem] font-semibold uppercase tracking-widest text-slate-400 hover:text-slate-200 px-2 py-1 rounded hover:bg-slate-500/10 transition-colors" onClick={() => setSelectedFaces([])}>Clear</button>
-        </div>
-      )}
+      {onRefine ? (
+        <FemRefineToolbar
+          selectedFacesCount={selectedFaces.length}
+          onRefine={(factor) => {
+            onRefine(selectedFaces, factor);
+            setSelectedFaces([]);
+          }}
+          onCoarsen={(factor) => {
+            onRefine(selectedFaces, factor);
+            setSelectedFaces([]);
+          }}
+          onClear={() => setSelectedFaces([])}
+        />
+      ) : null}
 
-      <ViewCube sceneRef={viewCubeSceneRef} onRotate={handleViewCubeRotate} />
-      {showOrientationLegend && <HslSphere sceneRef={viewCubeSceneRef} />}
+      <FemHoverTooltip hoveredFace={hoveredFace} hoveredFaceInfo={hoveredFaceInfo} />
 
-      {hoveredFaceInfo && hoveredFace && (
-        <div style={{ left: hoveredFace.x + 14, top: hoveredFace.y - 8 }} className="absolute z-40 px-2.5 py-1 rounded-md bg-slate-900/90 border border-slate-500/20 text-[0.68rem] font-mono text-slate-200/85 pointer-events-none whitespace-nowrap shadow-md">
-          face #{hoveredFaceInfo.faceIdx} · AR {hoveredFaceInfo.ar.toFixed(2)}
-          {hoveredFaceInfo.sicn != null && ` · SICN ${hoveredFaceInfo.sicn.toFixed(3)}`}
-        </div>
-      )}
-
-      {ctxMenu && (
-        <div style={{ left: ctxMenu.x, top: ctxMenu.y }} className="absolute z-50 min-w-[180px] py-1 rounded-lg bg-gradient-to-b from-slate-800/95 to-slate-900/95 border border-slate-500/20 shadow-xl backdrop-blur-md" onClick={(e) => e.stopPropagation()}>
-          <button className="flex items-center gap-2 w-full px-3.5 py-1.5 text-[0.73rem] text-slate-200 text-left hover:bg-slate-500/15" onClick={() => { setSelectedFaces([ctxMenu.faceIdx]); setCtxMenu(null); }}><span className="text-xs w-4">🔍</span> Inspect face #{ctxMenu.faceIdx}</button>
-          <button className="flex items-center gap-2 w-full px-3.5 py-1.5 text-[0.73rem] text-slate-200 text-left hover:bg-slate-500/15" onClick={() => { applyToolbarColorField("quality"); setCtxMenu(null); }}><span className="text-xs w-4">📊</span> Show quality (AR)</button>
-          <div className="h-px mx-2.5 my-1 bg-slate-500/15" />
-          <button className="flex items-center gap-2 w-full px-3.5 py-1.5 text-[0.73rem] text-slate-200 text-left hover:bg-slate-500/15" onClick={() => { const v = !clipEnabled; onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v); setCtxMenu(null); }}><span className="text-xs w-4">✂️</span> {clipEnabled ? "Disable clip" : "Enable clip"}</button>
-          {selectedFaces.length > 0 && (
-            <button className="flex items-center gap-2 w-full px-3.5 py-1.5 text-[0.73rem] text-slate-200 text-left hover:bg-slate-500/15 border-t border-slate-500/15 mt-1 pt-1.5" onClick={() => { setSelectedFaces([]); setCtxMenu(null); }}><span className="text-xs w-4 text-center opacity-70">✕</span> Clear selection</button>
-          )}
-        </div>
-      )}
+      <FemContextMenu
+        ctxMenu={ctxMenu}
+        clipEnabled={clipEnabled}
+        selectedFacesCount={selectedFaces.length}
+        onInspectFace={(faceIdx) => {
+          setSelectedFaces([faceIdx]);
+          setCtxMenu(null);
+        }}
+        onShowQuality={() => {
+          applyToolbarColorField("quality");
+          setCtxMenu(null);
+        }}
+        onToggleClip={() => {
+          const next = !clipEnabled;
+          onClipEnabledChange ? onClipEnabledChange(next) : setInternalClipEnabled(next);
+          setCtxMenu(null);
+        }}
+        onClearSelection={() => {
+          setSelectedFaces([]);
+          setCtxMenu(null);
+        }}
+      />
     </div>
   );
 }

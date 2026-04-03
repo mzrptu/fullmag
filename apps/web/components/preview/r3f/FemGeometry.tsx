@@ -4,6 +4,7 @@ import { useThree } from "@react-three/fiber";
 import { FemMeshData, FemColorField, RenderMode } from "../FemMeshView3D";
 import { computeFaceAspectRatios, qualityColor, sicnQualityColor, divergingColor, magnitudeColor } from "./colorUtils";
 import { applyMagnetizationHsl } from "../magnetizationColor";
+import { RENDER_POLICIES_V2 } from "../shared/renderPolicyV2";
 
 interface FemGeometryProps {
   meshData: FemMeshData;
@@ -605,6 +606,15 @@ export function FemGeometry({
 
   const isTransparent = opacity < 100;
   const opacityVal = opacity / 100;
+  const surfacePolicy =
+    highlight
+      ? RENDER_POLICIES_V2.selectionShell
+      : isTransparent
+        ? RENDER_POLICIES_V2.contextSurface
+        : RENDER_POLICIES_V2.solidSurface;
+  const edgePolicy = RENDER_POLICIES_V2.featureEdges;
+  const hiddenEdgePolicy = RENDER_POLICIES_V2.hiddenEdges;
+  const pointPolicy = RENDER_POLICIES_V2.points;
   const remapFaceIndex = useCallback((faceIndex: number | null | undefined) => {
     if (faceIndex == null) {
       return faceIndex ?? null;
@@ -656,45 +666,92 @@ export function FemGeometry({
       {showSurface && (
         <mesh 
           geometry={geometry}
-          renderOrder={highlight ? 8 : 0}
+          renderOrder={surfacePolicy.renderOrder}
           onClick={handleMappedFaceClick}
           onPointerOver={handleMappedFaceHover}
           onPointerOut={onFaceUnhover}
           onContextMenu={handleMappedFaceContextMenu}
         >
-          <meshPhongMaterial
+          <meshStandardMaterial
             vertexColors
-            side={isTransparent ? THREE.DoubleSide : THREE.FrontSide}
+            side={surfacePolicy.side}
             flatShading={false}
-            shininess={highlight ? 72 : 40}
+            roughness={highlight ? 0.34 : 0.52}
+            metalness={highlight ? 0.08 : 0.03}
             emissive={highlight ? resolvedHighlightEmissive : "#000000"}
-            emissiveIntensity={highlight ? 0.38 : 0}
-            transparent={isTransparent}
+            emissiveIntensity={highlight ? 0.34 : 0.02}
+            transparent={surfacePolicy.transparent}
             opacity={opacityVal}
-            depthWrite={!isTransparent}
+            depthWrite={surfacePolicy.depthWrite}
+            depthTest={surfacePolicy.depthTest}
+            polygonOffset={surfacePolicy.polygonOffset}
+            polygonOffsetFactor={surfacePolicy.polygonOffsetFactor}
+            polygonOffsetUnits={surfacePolicy.polygonOffsetUnits}
           />
         </mesh>
       )}
       
       {showWire && (
-        <lineSegments geometry={edgesGeometry} renderOrder={highlight ? 9 : 1}>
-          <lineBasicMaterial color={resolvedEdgeColor} opacity={highlight ? 0.95 : 0.58} transparent />
-        </lineSegments>
+        <>
+          <lineSegments geometry={edgesGeometry} renderOrder={hiddenEdgePolicy.renderOrder}>
+            <lineBasicMaterial
+              color={resolvedEdgeColor}
+              opacity={highlight ? 0.22 : 0.12}
+              transparent={hiddenEdgePolicy.transparent}
+              depthWrite={hiddenEdgePolicy.depthWrite}
+              depthTest={hiddenEdgePolicy.depthTest}
+            />
+          </lineSegments>
+          <lineSegments geometry={edgesGeometry} renderOrder={edgePolicy.renderOrder}>
+            <lineBasicMaterial
+              color={resolvedEdgeColor}
+              opacity={highlight ? 0.95 : 0.58}
+              transparent={edgePolicy.transparent}
+              depthWrite={edgePolicy.depthWrite}
+              depthTest={edgePolicy.depthTest}
+            />
+          </lineSegments>
+        </>
       )}
 
       {showVolumeWire && (tetraEdgesGeometry ?? edgesGeometry) && (
-        <lineSegments geometry={tetraEdgesGeometry ?? edgesGeometry} renderOrder={highlight ? 9 : 1}>
-          <lineBasicMaterial color={resolvedEdgeColor} opacity={highlight ? 0.72 : 0.32} transparent />
-        </lineSegments>
+        <>
+          <lineSegments
+            geometry={tetraEdgesGeometry ?? edgesGeometry}
+            renderOrder={hiddenEdgePolicy.renderOrder}
+          >
+            <lineBasicMaterial
+              color={resolvedEdgeColor}
+              opacity={highlight ? 0.16 : 0.09}
+              transparent={hiddenEdgePolicy.transparent}
+              depthWrite={hiddenEdgePolicy.depthWrite}
+              depthTest={hiddenEdgePolicy.depthTest}
+            />
+          </lineSegments>
+          <lineSegments
+            geometry={tetraEdgesGeometry ?? edgesGeometry}
+            renderOrder={edgePolicy.renderOrder}
+          >
+            <lineBasicMaterial
+              color={resolvedEdgeColor}
+              opacity={highlight ? 0.72 : 0.32}
+              transparent={edgePolicy.transparent}
+              depthWrite={edgePolicy.depthWrite}
+              depthTest={edgePolicy.depthTest}
+            />
+          </lineSegments>
+        </>
       )}
 
       {showPoints && (
-        <points geometry={pointsGeometry}>
+        <points geometry={pointsGeometry} renderOrder={pointPolicy.renderOrder}>
           <pointsMaterial 
             vertexColors 
             size={maxDim * 0.008 * (highlight ? 1.15 : 1)}
             sizeAttenuation 
-            transparent={isTransparent}
+            transparent={pointPolicy.transparent}
+            depthWrite={pointPolicy.depthWrite}
+            depthTest={pointPolicy.depthTest}
             opacity={opacityVal} 
           />
         </points>

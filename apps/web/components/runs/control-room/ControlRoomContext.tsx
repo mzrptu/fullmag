@@ -2327,7 +2327,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const visibleMeshPartIds = useMemo(
     () =>
       meshParts
-        .filter((part) => meshEntityViewState[part.id]?.visible ?? true)
+        .filter((part) => meshEntityViewState[part.id]?.visible ?? part.role !== "air")
         .map((part) => part.id),
     [meshEntityViewState, meshParts],
   );

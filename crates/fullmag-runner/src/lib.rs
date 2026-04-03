@@ -917,7 +917,7 @@ fn configured_cpu_threads(problem: &ProblemIR) -> usize {
 
 fn default_cpu_threads() -> usize {
     std::thread::available_parallelism()
-        .map(|parallelism| parallelism.get().saturating_sub(1).max(1))
+        .map(|parallelism| parallelism.get())
         .unwrap_or(1)
 }
 
@@ -1074,9 +1074,9 @@ mod tests {
     }
 
     #[test]
-    fn default_cpu_threads_uses_max_minus_one_with_floor_one() {
+    fn default_cpu_threads_uses_all_available() {
         let expected = std::thread::available_parallelism()
-            .map(|parallelism| parallelism.get().saturating_sub(1).max(1))
+            .map(|parallelism| parallelism.get())
             .unwrap_or(1);
         assert_eq!(default_cpu_threads(), expected);
     }
