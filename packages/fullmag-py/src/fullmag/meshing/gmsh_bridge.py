@@ -1415,6 +1415,204 @@ def _mesh_stl_surface(
         gmsh.finalize()
 
 
+# ---------------------------------------------------------------------------
+# Component-aware shared-domain mesh generation (Commit 1)
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class ComponentDescriptor:
+    """Description of a single geometry component for shared-domain meshing."""
+
+    geometry_name: str
+    stl_path: Path
+    bounds_min: tuple[float, float, float]
+    bounds_max: tuple[float, float, float]
+
+
+@dataclass(frozen=True, slots=True)
+class SharedDomainMeshResult:
+    """Result of component-aware shared-domain mesh generation.
+
+    Carries the final ``MeshData`` along with stable mappings from each
+    geometry component to Gmsh volume/surface tags established *before*
+    tetrahedralization, eliminating the need for post-hoc bbox heuristics.
+    """
+
+    mesh: MeshData
+    component_volume_tags: dict[str, list[int]]
+    component_surface_tags: dict[str, list[int]]
+    interface_surface_tags: list[int]
+    outer_boundary_surface_tags: list[int]
+
+
+def _build_stl_volume_model_for_component(
+    gmsh: Any,
+    path: Path,
+) -> tuple[list[int], list[int]]:
+    """Import a single-component STL and create GEO volume(s).
+
+    Similar to ``_build_stl_volume_model`` but designed for use in a
+    multi-component workflow where each component is imported separately.
+    """
+    from collections import defaultdict
+
+    gmsh.merge(str(path))
+    angle = 40.0 * math.pi / 180.0
+    gmsh.model.mesh.classifySurfaces(
+        angle,
+        boundary=True,
+        forReparametrization=True,
+        curveAngle=math.pi,
+    )
+    gmsh.model.mesh.createGeometry()
+    surfaces = gmsh.model.getEntities(2)
+    if not surfaces:
+        raise ValueError(f"failed to recover closed surfaces from STL: {path}")
+    surface_tags = [tag for _, tag in surfaces]
+
+    edge_to_surfs: dict[int, set[int]] = defaultdict(set)
+    for _, stag in surfaces:
+        edges = gmsh.model.getBoundary([(2, stag)], oriented=False)
+        for _, etag in edges:
+            edge_to_surfs[abs(etag)].add(stag)
+
+    parent: dict[int, int] = {t: t for t in surface_tags}
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def _union(a: int, b: int) -> None:
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for _edge_tag, stags in edge_to_surfs.items():
+        tags_list = list(stags)
+        for i in range(1, len(tags_list)):
+            _union(tags_list[0], tags_list[i])
+
+    components: dict[int, list[int]] = defaultdict(list)
+    for t in surface_tags:
+        components[_find(t)].append(t)
+
+    volume_tags: list[int] = []
+    if len(components) == 1:
+        sl = gmsh.model.geo.addSurfaceLoop(surface_tags)
+        volume_tags.append(gmsh.model.geo.addVolume([sl]))
+    else:
+        for _root, comp_surfs in components.items():
+            sl = gmsh.model.geo.addSurfaceLoop(comp_surfs)
+            volume_tags.append(gmsh.model.geo.addVolume([sl]))
+
+    gmsh.model.geo.synchronize()
+    return volume_tags, surface_tags
+
+
+def generate_shared_domain_mesh_from_components(
+    components: list[ComponentDescriptor],
+    *,
+    hmax: float,
+    order: int = 1,
+    airbox: AirboxOptions | None = None,
+    options: MeshOptions | None = None,
+) -> SharedDomainMeshResult:
+    """Generate a shared-domain FEM mesh with per-component identity preserved.
+
+    Instead of concatenating all geometries into one anonymous STL file, each
+    component is imported as a separate set of GEO entities.  The resulting
+    volume → geometry_name mapping is established *before* mesh generation,
+    giving downstream code a stable identity without bbox/centroid heuristics.
+    """
+    if not components:
+        raise ValueError("at least one component is required")
+
+    opts = options or MeshOptions()
+    gmsh = _import_gmsh()
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    try:
+        _configure_gmsh_threads(gmsh)
+        gmsh.model.add("shared_domain_components")
+
+        all_body_vols: list[int] = []
+        all_body_surfs: list[int] = []
+        component_volume_tags: dict[str, list[int]] = {}
+        component_surface_tags: dict[str, list[int]] = {}
+
+        for comp in components:
+            # Record existing entities before merge so we can detect new ones
+            existing_surfs = {tag for _, tag in gmsh.model.getEntities(2)}
+            existing_vols = {tag for _, tag in gmsh.model.getEntities(3)}
+
+            comp_vols, comp_surfs = _build_stl_volume_model_for_component(
+                gmsh, comp.stl_path,
+            )
+
+            # Isolate tags actually created for this component
+            new_surfs = [t for t in comp_surfs if t not in existing_surfs]
+            new_vols = [t for t in comp_vols if t not in existing_vols]
+
+            component_volume_tags[comp.geometry_name] = new_vols
+            component_surface_tags[comp.geometry_name] = new_surfs
+            all_body_vols.extend(new_vols)
+            all_body_surfs.extend(new_surfs)
+
+            emit_progress(
+                f"Component '{comp.geometry_name}': "
+                f"{len(new_vols)} volume(s), {len(new_surfs)} surface(s)"
+            )
+
+        has_airbox = airbox is not None
+        airbox_field_ids: list[int] = []
+        interface_surface_tags: list[int] = list(all_body_surfs)
+        outer_boundary_surface_tags: list[int] = []
+
+        if has_airbox:
+            emit_progress("Gmsh: adding airbox domain around components")
+            airbox_field = _add_airbox_geo(
+                gmsh, all_body_vols, all_body_surfs, airbox, hmax,
+            )
+            if airbox_field is not None:
+                airbox_field_ids.append(airbox_field)
+            # The airbox creates 6 outer boundary surfaces — collect them
+            for _, phys_tag in gmsh.model.getPhysicalGroups(dim=2):
+                if phys_tag == airbox.boundary_marker:
+                    entities = gmsh.model.getEntitiesForPhysicalGroup(2, phys_tag)
+                    outer_boundary_surface_tags = list(entities)
+                    break
+
+        emit_progress("Gmsh: generating 3D tetrahedral mesh (component-aware)")
+        _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
+        _apply_post_mesh_options(gmsh, opts)
+        quality, per_domain_quality = (
+            _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
+        )
+        mesh = _extract_mesh_data(
+            gmsh,
+            quality=quality,
+            has_physical_groups=has_airbox,
+            per_domain_quality=per_domain_quality,
+        )
+        emit_progress(
+            f"Gmsh: component-aware mesh ready — "
+            f"{mesh.n_nodes} nodes, {mesh.n_elements} elements, "
+            f"{mesh.n_boundary_faces} boundary faces"
+        )
+        return SharedDomainMeshResult(
+            mesh=mesh,
+            component_volume_tags=component_volume_tags,
+            component_surface_tags=component_surface_tags,
+            interface_surface_tags=interface_surface_tags,
+            outer_boundary_surface_tags=outer_boundary_surface_tags,
+        )
+    finally:
+        gmsh.finalize()
+
+
 def _read_mesh_file(path: Path) -> MeshData:
     meshio = _import_meshio()
     mesh = meshio.read(path)

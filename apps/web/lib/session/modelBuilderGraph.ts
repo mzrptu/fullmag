@@ -1,5 +1,6 @@
 import type { SetStateAction } from "react";
 import type {
+  MeshBuildIntent,
   ModelBuilderGraphCurrentModulesNode,
   ModelBuilderGraphObjectNode,
   ModelBuilderGraphV2,
@@ -361,5 +362,46 @@ export function resolveSelectedObjectIdFromModelBuilderGraph(
   if ((nodeId === "geometry" || nodeId === "objects") && graph.objects.items.length === 1) {
     return graph.objects.items[0]?.name ?? null;
   }
+  return null;
+}
+
+/**
+ * Map a model-tree node ID to a MeshBuildIntent so the UI can dispatch
+ * the correct mesh rebuild scope when the user clicks "Build Selected".
+ */
+export function resolveMeshBuildIntentFromNodeId(
+  nodeId: string | null | undefined,
+  graph: ModelBuilderGraphV2 | null | undefined,
+): MeshBuildIntent | null {
+  if (!graph || !nodeId) {
+    return null;
+  }
+
+  // Universe-level airbox node
+  if (nodeId === "universe-airbox" || nodeId.startsWith("universe-airbox-")) {
+    return { mode: "selected", target: { kind: "airbox" } };
+  }
+
+  // Universe-level mesh node → full study domain rebuild
+  if (nodeId === "universe-mesh" || nodeId.startsWith("universe-mesh-")) {
+    return { mode: "all", target: { kind: "study_domain" } };
+  }
+
+  // Top-level mesh node → full study domain rebuild
+  if (nodeId === "mesh" || nodeId.startsWith("mesh-")) {
+    return { mode: "all", target: { kind: "study_domain" } };
+  }
+
+  // Per-object mesh node → object_mesh for that object
+  for (const objectNode of graph.objects.items) {
+    const meshPrefix = objectNode.tree.mesh;
+    if (
+      nodeId === meshPrefix ||
+      nodeId.startsWith(`${meshPrefix}-`)
+    ) {
+      return { mode: "selected", target: { kind: "object_mesh", object_id: objectNode.name } };
+    }
+  }
+
   return null;
 }

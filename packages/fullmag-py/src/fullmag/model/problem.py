@@ -10,7 +10,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Sequence
 
-from fullmag._progress import emit_progress
+from fullmag._progress import emit_progress, emit_progress_event
 from fullmag._validation import ensure_unique_names, require_non_empty
 from fullmag.model.antenna import AntennaFieldSource, SpinWaveExcitationAnalysis
 from fullmag.model.discretization import DiscretizationHints, FEM
@@ -226,6 +226,7 @@ def build_geometry_assets_for_request(
         from fullmag._core import validate_mesh_ir
         from fullmag.model.geometry import ImportedGeometry
         from fullmag.meshing import realize_fem_domain_mesh_asset, realize_fem_mesh_asset
+        from fullmag.meshing.asset_pipeline import realize_fem_domain_mesh_asset_from_components
         from fullmag.meshing.gmsh_bridge import MeshData
 
         fem_mesh_cache_dir = _fem_mesh_cache_dir()
@@ -313,7 +314,7 @@ def build_geometry_assets_for_request(
                 "region_markers": explicit_domain_region_markers,
             }
         elif study_universe is not None:
-            domain_mesh, region_markers = realize_fem_domain_mesh_asset(
+            domain_mesh, region_markers = realize_fem_domain_mesh_asset_from_components(
                 list(geometries),
                 discretization.fem,
                 study_universe=study_universe,

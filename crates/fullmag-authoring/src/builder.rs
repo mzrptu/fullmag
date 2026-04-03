@@ -126,6 +126,11 @@ pub struct ScriptBuilderUniverseState {
     pub padding: Option<[f64; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub airbox_hmax: Option<f64>,
+    // --- Commit 3: first-class mesh semantics ---
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub airbox_hmin: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub airbox_growth_rate: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -249,6 +254,19 @@ pub struct ScriptBuilderPerGeometryMeshState {
     pub compute_quality: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub per_element_quality: Option<bool>,
+    // --- Commit 3: first-class mesh semantics ---
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bulk_hmax: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bulk_hmin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interface_hmax: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interface_thickness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition_distance: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition_growth: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub size_fields: Vec<ScriptBuilderMeshSizeFieldState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

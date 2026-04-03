@@ -2735,6 +2735,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     requestedPreviewXChosenSize, requestedPreviewYChosenSize, requestedPreviewAutoScale,
     requestedPreviewMaxPoints, previewEveryNOptions, previewMaxPointOptions,
     previewIsStale, previewIsBootstrapStale,
+    selectedVectors, fieldStats,
     setViewMode, setComponent, setPlane, setSliceIndex, setSelectedQuantity,
     setConsoleCollapsed, setSidebarCollapsed,
     updatePreview, handleViewModeChange, handleCapture, handleExport, requestPreviewQuantity,
@@ -2751,6 +2752,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     requestedPreviewXChosenSize, requestedPreviewYChosenSize, requestedPreviewAutoScale,
     requestedPreviewMaxPoints, previewEveryNOptions, previewMaxPointOptions,
     previewIsStale, previewIsBootstrapStale,
+    selectedVectors, fieldStats,
     updatePreview, handleViewModeChange, handleCapture, handleExport, requestPreviewQuantity,
   ]);
 

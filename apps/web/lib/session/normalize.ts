@@ -131,6 +131,15 @@ export function normalizeMeshCommandTarget(raw: unknown): MeshCommandTarget | nu
   if (kind === "adaptive_followup") {
     return { kind: "adaptive_followup" };
   }
+  if (kind === "airbox") {
+    return { kind: "airbox" };
+  }
+  if (kind === "object_mesh") {
+    const objectId = (raw as { object_id?: unknown }).object_id;
+    if (typeof objectId === "string" && objectId) {
+      return { kind: "object_mesh", object_id: objectId };
+    }
+  }
   return null;
 }
 
@@ -571,6 +580,14 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
               raw.universe.airbox_hmax != null
                 ? Number(raw.universe.airbox_hmax)
                 : null,
+            airbox_hmin:
+              raw.universe.airbox_hmin != null
+                ? Number(raw.universe.airbox_hmin)
+                : null,
+            airbox_growth_rate:
+              raw.universe.airbox_growth_rate != null
+                ? Number(raw.universe.airbox_growth_rate)
+                : null,
           }
         : null,
     domain_frame: normalizeDomainFrame(raw.domain_frame),
@@ -649,6 +666,15 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
             optimize_iterations: geo.mesh.optimize_iterations != null ? Number(geo.mesh.optimize_iterations) : null,
             compute_quality: typeof geo.mesh.compute_quality === "boolean" ? geo.mesh.compute_quality : null,
             per_element_quality: typeof geo.mesh.per_element_quality === "boolean" ? geo.mesh.per_element_quality : null,
+            bulk_hmax: typeof geo.mesh.bulk_hmax === "string" ? geo.mesh.bulk_hmax : null,
+            bulk_hmin: typeof geo.mesh.bulk_hmin === "string" ? geo.mesh.bulk_hmin : null,
+            interface_hmax: typeof geo.mesh.interface_hmax === "string" ? geo.mesh.interface_hmax : null,
+            interface_thickness: typeof geo.mesh.interface_thickness === "string" ? geo.mesh.interface_thickness : null,
+            transition_distance: typeof geo.mesh.transition_distance === "string" ? geo.mesh.transition_distance : null,
+            transition_growth: geo.mesh.transition_growth != null ? Number(geo.mesh.transition_growth) : null,
+            boundary_layer_count: geo.mesh.boundary_layer_count != null ? Number(geo.mesh.boundary_layer_count) : null,
+            boundary_layer_thickness: typeof geo.mesh.boundary_layer_thickness === "string" ? geo.mesh.boundary_layer_thickness : null,
+            boundary_layer_stretching: geo.mesh.boundary_layer_stretching != null ? Number(geo.mesh.boundary_layer_stretching) : null,
             size_fields: Array.isArray(geo.mesh.size_fields)
               ? geo.mesh.size_fields.map((field: any) => ({
                   kind: String(field?.kind ?? ""),
@@ -861,6 +887,14 @@ function normalizeSceneDocument(raw: any): SceneDocument | null {
             airbox_hmax:
               raw.universe.airbox_hmax != null
                 ? Number(raw.universe.airbox_hmax)
+                : null,
+            airbox_hmin:
+              raw.universe.airbox_hmin != null
+                ? Number(raw.universe.airbox_hmin)
+                : null,
+            airbox_growth_rate:
+              raw.universe.airbox_growth_rate != null
+                ? Number(raw.universe.airbox_growth_rate)
                 : null,
           }
         : null,
@@ -1088,7 +1122,9 @@ function normalizeMeshWorkspace(raw: any): MeshWorkspaceState | null {
           status:
             phase?.status === "active" ||
             phase?.status === "done" ||
-            phase?.status === "warning"
+            phase?.status === "warning" ||
+            phase?.status === "queued" ||
+            phase?.status === "failed"
               ? phase.status
               : "idle",
           detail: typeof phase?.detail === "string" ? phase.detail : null,
@@ -1142,7 +1178,39 @@ function normalizeMeshWorkspace(raw: any): MeshWorkspaceState | null {
               : null,
         }))
       : [],
+    active_build: normalizeMeshBuildIntent(raw.active_build),
+    effective_per_object_targets:
+      raw.effective_per_object_targets && typeof raw.effective_per_object_targets === "object"
+        ? raw.effective_per_object_targets
+        : null,
+    last_build_summary:
+      raw.last_build_summary && typeof raw.last_build_summary === "object"
+        ? raw.last_build_summary
+        : null,
+    last_build_error:
+      typeof raw.last_build_error === "string" ? raw.last_build_error : null,
   };
+}
+
+function normalizeMeshBuildIntent(raw: unknown): import("./types").MeshBuildIntent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const mode = r.mode;
+  const target = r.target;
+  if (!target || typeof target !== "object") return null;
+  const t = target as Record<string, unknown>;
+  const kind = t.kind;
+  if (mode === "all" && kind === "study_domain") {
+    return { mode: "all", target: { kind: "study_domain" } };
+  }
+  if (mode === "selected") {
+    if (kind === "study_domain") return { mode: "selected", target: { kind: "study_domain" } };
+    if (kind === "airbox") return { mode: "selected", target: { kind: "airbox" } };
+    if (kind === "object_mesh" && typeof t.object_id === "string") {
+      return { mode: "selected", target: { kind: "object_mesh", object_id: t.object_id } };
+    }
+  }
+  return null;
 }
 
 /* ── Top-level normalizer ── */

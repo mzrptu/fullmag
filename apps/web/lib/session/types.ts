@@ -295,7 +295,15 @@ export interface RuntimeStatusState {
 
 export type MeshCommandTarget =
   | { kind: "study_domain" }
-  | { kind: "adaptive_followup" };
+  | { kind: "adaptive_followup" }
+  | { kind: "airbox" }
+  | { kind: "object_mesh"; object_id: string };
+
+export type MeshBuildIntent =
+  | { mode: "all"; target: { kind: "study_domain" } }
+  | { mode: "selected"; target: { kind: "study_domain" } }
+  | { mode: "selected"; target: { kind: "airbox" } }
+  | { mode: "selected"; target: { kind: "object_mesh"; object_id: string } };
 
 export interface CommandStatus {
   session_id: string;
@@ -360,6 +368,8 @@ export interface ScriptBuilderUniverseState {
   center: [number, number, number] | null;
   padding: [number, number, number] | null;
   airbox_hmax: number | null;
+  airbox_hmin: number | null;
+  airbox_growth_rate: number | null;
 }
 
 export interface DomainFrameDeclaredUniverseState {
@@ -435,6 +445,13 @@ export interface ScriptBuilderPerGeometryMeshEntry {
   optimize_iterations: number | null;
   compute_quality: boolean | null;
   per_element_quality: boolean | null;
+  // First-class mesh semantics (Commit 3)
+  bulk_hmax: string | null;
+  bulk_hmin: string | null;
+  interface_hmax: string | null;
+  interface_thickness: string | null;
+  transition_distance: string | null;
+  transition_growth: number | null;
   // Boundary layer extrusion
   boundary_layer_count: number | null;
   boundary_layer_thickness: string | null;   // SI metres as string (matches hmax/hmin pattern)
@@ -720,7 +737,7 @@ export interface MeshQualitySummaryState {
 export interface MeshPipelinePhaseState {
   id: string;
   label: string;
-  status: "idle" | "active" | "done" | "warning";
+  status: "idle" | "active" | "done" | "warning" | "queued" | "failed";
   detail: string | null;
 }
 
@@ -762,6 +779,11 @@ export interface MeshWorkspaceState {
   mesh_capabilities: MeshCapabilitiesState | null;
   mesh_adaptivity_state: MeshAdaptivityState | null;
   mesh_history: MeshHistoryEntryState[];
+  // Commit 4: build contract extensions
+  active_build: MeshBuildIntent | null;
+  effective_per_object_targets: Record<string, { hmax: number; interface_hmax: number | null; transition_distance: number | null }> | null;
+  last_build_summary: Record<string, unknown> | null;
+  last_build_error: string | null;
 }
 
 export interface SessionState {
