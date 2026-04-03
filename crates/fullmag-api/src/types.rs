@@ -21,6 +21,8 @@ pub(crate) type CurrentDisplaySelection = DisplaySelectionState;
 pub(crate) enum MeshCommandTarget {
     StudyDomain,
     AdaptiveFollowup,
+    Airbox,
+    ObjectMesh { object_id: String },
 }
 
 #[derive(Debug, Clone)]

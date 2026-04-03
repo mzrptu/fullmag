@@ -1,7 +1,13 @@
 "use client";
 
 import type { EngineLogEntry } from "../../../lib/useSessionStream";
-import type { SceneDocument } from "../../../lib/session/types";
+import type {
+  MeshBuildIntent,
+  MeshWorkspaceState,
+  ModelBuilderGraphV2,
+  SceneDocument,
+} from "../../../lib/session/types";
+import { resolveMeshBuildIntentFromNodeId } from "../../../lib/session/modelBuilderGraph";
 import type { MeshQualityData, MeshOptionsState } from "../../panels/MeshSettingsPanel";
 import type { RenderMode } from "../../preview/FemMeshView3D";
 import type { FemDockTab, ViewportMode } from "./shared";
@@ -41,6 +47,7 @@ export interface MeshBuildDialogIntent {
   targetLabel: string;
   title: string;
   contextLabel: string | null;
+  buildIntent: MeshBuildIntent;
 }
 
 export interface MeshBuildStage {
@@ -218,9 +225,10 @@ export function meshBuildIntentForNode(args: {
   mode: "selected" | "all";
   nodeId: string | null | undefined;
   sceneDocument: SceneDocument | null;
+  modelBuilderGraph: ModelBuilderGraphV2 | null;
   hasSharedAirboxDomain: boolean;
 }): MeshBuildDialogIntent {
-  const { mode, nodeId, sceneDocument, hasSharedAirboxDomain } = args;
+  const { mode, nodeId, sceneDocument, modelBuilderGraph, hasSharedAirboxDomain } = args;
   if (mode === "all") {
     return {
       mode,
@@ -228,36 +236,29 @@ export function meshBuildIntentForNode(args: {
       targetLabel: hasSharedAirboxDomain ? "study domain mesh" : "FEM mesh",
       title: "Build All",
       contextLabel: null,
+      buildIntent: { mode: "all", target: { kind: "study_domain" } },
     };
   }
 
-  if (nodeId && nodeId.startsWith("geo-") && nodeId.endsWith("-mesh")) {
-    const objectName = resolveObjectNameFromNodeId(nodeId, sceneDocument?.objects ?? []);
-    return {
-      mode,
-      targetNodeId: nodeId,
-      targetLabel: hasSharedAirboxDomain ? "study domain mesh" : "FEM mesh",
-      title: "Build Selected",
-      contextLabel: objectName ?? "selected object",
-    };
+  const buildIntent =
+    resolveMeshBuildIntentFromNodeId(nodeId, modelBuilderGraph)
+    ?? { mode: "selected", target: { kind: "study_domain" } as const };
+  let contextLabel: string | null = null;
+  if (buildIntent.target.kind === "object_mesh") {
+    contextLabel =
+      resolveObjectNameFromNodeId(nodeId ?? undefined, sceneDocument?.objects ?? [])
+      ?? buildIntent.target.object_id
+      ?? "selected object";
+  } else if (buildIntent.target.kind === "airbox") {
+    contextLabel = "airbox";
   }
-
-  if (nodeId === "universe-airbox" || nodeId?.startsWith("universe-airbox")) {
-    return {
-      mode,
-      targetNodeId: nodeId ?? "universe-airbox-mesh",
-      targetLabel: hasSharedAirboxDomain ? "study domain mesh" : "FEM mesh",
-      title: "Build Selected",
-      contextLabel: "airbox",
-    };
-  }
-
   return {
     mode,
     targetNodeId: nodeId ?? (hasSharedAirboxDomain ? "mesh" : "universe-mesh"),
     targetLabel: hasSharedAirboxDomain ? "study domain mesh" : "FEM mesh",
     title: "Build Selected",
-    contextLabel: null,
+    contextLabel,
+    buildIntent,
   };
 }
 
@@ -304,6 +305,7 @@ function stageStatus(
 }
 
 export function buildMeshBuildStages(args: {
+  meshWorkspace: MeshWorkspaceState | null;
   workspaceStatus: string;
   meshGenerating: boolean;
   scriptSyncBusy: boolean;
@@ -313,6 +315,7 @@ export function buildMeshBuildStages(args: {
   engineLog: EngineLogEntry[];
 }): MeshBuildStage[] {
   const {
+    meshWorkspace,
     workspaceStatus,
     meshGenerating,
     scriptSyncBusy,
@@ -321,6 +324,35 @@ export function buildMeshBuildStages(args: {
     commandMessage,
     engineLog,
   } = args;
+  if (
+    meshWorkspace?.mesh_pipeline_status?.length &&
+    (
+      meshWorkspace.active_build != null ||
+      meshWorkspace.last_build_summary != null ||
+      meshWorkspace.last_build_error != null ||
+      meshWorkspace.mesh_pipeline_status.some((phase) => phase.id === "queued")
+    )
+  ) {
+    return meshWorkspace.mesh_pipeline_status.map((phase) => ({
+      id:
+        phase.id === "queued" ||
+        phase.id === "materializing" ||
+        phase.id === "preparing_domain" ||
+        phase.id === "meshing" ||
+        phase.id === "postprocessing" ||
+        phase.id === "ready"
+          ? phase.id
+          : "queued",
+      label: phase.label,
+      status:
+        phase.status === "queued"
+          ? "active"
+          : phase.status === "failed"
+            ? "warning"
+            : phase.status,
+      detail: phase.detail,
+    }));
+  }
   const latestMessage = engineLog.length > 0 ? engineLog[engineLog.length - 1]?.message ?? null : null;
   const lower = (latestMessage ?? commandMessage ?? latestActivityDetail ?? "").toLowerCase();
   const failed =

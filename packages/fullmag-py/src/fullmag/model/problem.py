@@ -226,7 +226,9 @@ def build_geometry_assets_for_request(
         from fullmag._core import validate_mesh_ir
         from fullmag.model.geometry import ImportedGeometry
         from fullmag.meshing import realize_fem_domain_mesh_asset, realize_fem_mesh_asset
-        from fullmag.meshing.asset_pipeline import realize_fem_domain_mesh_asset_from_components
+        from fullmag.meshing.asset_pipeline import (
+            realize_fem_domain_mesh_asset_from_components_with_report,
+        )
         from fullmag.meshing.gmsh_bridge import MeshData
 
         fem_mesh_cache_dir = _fem_mesh_cache_dir()
@@ -314,11 +316,13 @@ def build_geometry_assets_for_request(
                 "region_markers": explicit_domain_region_markers,
             }
         elif study_universe is not None:
-            domain_mesh, region_markers = realize_fem_domain_mesh_asset_from_components(
+            domain_mesh, region_markers, _build_report = (
+                realize_fem_domain_mesh_asset_from_components_with_report(
                 list(geometries),
                 discretization.fem,
                 study_universe=study_universe,
                 mesh_workflow=mesh_workflow,
+                )
             )
             domain_mesh_ir = domain_mesh.to_ir("study_domain")
             is_valid = validate_mesh_ir(domain_mesh_ir)
@@ -331,34 +335,6 @@ def build_geometry_assets_for_request(
                 "mesh": domain_mesh_ir,
                 "region_markers": region_markers,
             }
-            # Commit 4: structured build summary for frontend consumption
-            per_object_targets = {}
-            for rm in region_markers:
-                gname = rm.get("geometry_name")
-                if isinstance(gname, str):
-                    per_object_targets[gname] = {
-                        "marker": rm.get("marker"),
-                    }
-            field_kinds_used = []
-            if mesh_workflow and isinstance(mesh_workflow.get("mesh_options"), dict):
-                for sf in mesh_workflow["mesh_options"].get("size_fields", []):
-                    if isinstance(sf, dict) and "kind" in sf:
-                        kind = sf["kind"]
-                        if kind not in field_kinds_used:
-                            field_kinds_used.append(kind)
-            emit_progress_event({
-                "kind": "mesh_build_summary",
-                "shared_domain_build_mode": "component_aware",
-                "n_nodes": domain_mesh.n_nodes,
-                "n_elements": domain_mesh.n_elements,
-                "n_boundary_faces": domain_mesh.n_boundary_faces,
-                "effective_airbox_target": {
-                    "hmax": float(discretization.fem.hmax) if discretization.fem.hmax else None,
-                },
-                "effective_per_object_targets": per_object_targets,
-                "used_size_field_kinds": field_kinds_used,
-                "fallbacks_triggered": [],
-            })
 
     if (
         not assets["fdm_grid_assets"]

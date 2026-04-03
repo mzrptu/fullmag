@@ -327,7 +327,7 @@ export interface ModelContextValue {
   setSelectedEntityId: (id: string | null) => void;
   setFocusedEntityId: (id: string | null) => void;
   requestFocusObject: (objectId: string) => void;
-  handleStudyDomainMeshGenerate: () => Promise<void>;
+  handleStudyDomainMeshGenerate: (meshReason?: string) => Promise<void>;
   handleAirboxMeshGenerate: () => Promise<void>;
   handleObjectMeshOverrideRebuild: (objectId?: string | null) => Promise<void>;
   handleLassoRefine: (faceIndices: number[], factor: number) => Promise<void>;

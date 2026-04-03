@@ -1044,6 +1044,14 @@ function normalizeDomainFrame(raw: any) {
               raw.declared_universe.airbox_hmax != null
                 ? Number(raw.declared_universe.airbox_hmax)
                 : null,
+            airbox_hmin:
+              raw.declared_universe.airbox_hmin != null
+                ? Number(raw.declared_universe.airbox_hmin)
+                : null,
+            airbox_growth_rate:
+              raw.declared_universe.airbox_growth_rate != null
+                ? Number(raw.declared_universe.airbox_growth_rate)
+                : null,
           }
         : null,
     object_bounds_min: normalizeVec3(raw.object_bounds_min),
@@ -1178,10 +1186,48 @@ function normalizeMeshWorkspace(raw: any): MeshWorkspaceState | null {
               : null,
         }))
       : [],
+    effective_airbox_target:
+      raw.effective_airbox_target && typeof raw.effective_airbox_target === "object"
+        ? {
+            hmax:
+              raw.effective_airbox_target.hmax != null
+                ? Number(raw.effective_airbox_target.hmax)
+                : null,
+            hmin:
+              raw.effective_airbox_target.hmin != null
+                ? Number(raw.effective_airbox_target.hmin)
+                : null,
+            growth_rate:
+              raw.effective_airbox_target.growth_rate != null
+                ? Number(raw.effective_airbox_target.growth_rate)
+                : null,
+          }
+        : null,
     active_build: normalizeMeshBuildIntent(raw.active_build),
     effective_per_object_targets:
       raw.effective_per_object_targets && typeof raw.effective_per_object_targets === "object"
-        ? raw.effective_per_object_targets
+        ? Object.fromEntries(
+            Object.entries(raw.effective_per_object_targets).map(([geometryName, entry]) => {
+              const target = entry && typeof entry === "object"
+                ? entry as Record<string, unknown>
+                : {};
+              return [
+                geometryName,
+                {
+                  marker:
+                    target.marker != null ? Number(target.marker) : null,
+                  hmax:
+                    target.hmax != null ? Number(target.hmax) : null,
+                  interface_hmax:
+                    target.interface_hmax != null ? Number(target.interface_hmax) : null,
+                  transition_distance:
+                    target.transition_distance != null ? Number(target.transition_distance) : null,
+                  source:
+                    typeof target.source === "string" ? target.source : null,
+                },
+              ];
+            }),
+          )
         : null,
     last_build_summary:
       raw.last_build_summary && typeof raw.last_build_summary === "object"

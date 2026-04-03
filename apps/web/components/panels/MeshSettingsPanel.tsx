@@ -34,6 +34,12 @@ export interface MeshOptionsState {
   perElementQuality: boolean;
   refinementZones: SizeFieldSpec[]; // lasso refinement zones
 
+  // Interface & transition (COMSOL-like region controls)
+  interfaceHMax: string;        // SI metres — element size at mag-air interface
+  interfaceThickness: string;   // SI metres — shell thickness for interface refinement
+  transitionDistance: string;    // SI metres — distance over which sizing grades to airbox
+  transitionGrowth: string;     // growth rate within transition zone ("" = default 1.5)
+
   // Adaptive Mesh (AFEM)
   adaptiveEnabled: boolean;
   adaptivePolicy: string;
@@ -121,6 +127,10 @@ export const DEFAULT_MESH_OPTIONS: MeshOptionsState = {
   computeQuality: false,
   perElementQuality: false,
   refinementZones: [],
+  interfaceHMax: "",
+  interfaceThickness: "",
+  transitionDistance: "",
+  transitionGrowth: "",
   adaptiveEnabled: false,
   adaptivePolicy: "auto",
   adaptiveTheta: 0.3,
@@ -542,6 +552,70 @@ export default function MeshSettingsPanel({
         ) : null}
       </Section>
 
+      {/* ── Interface & Transition (COMSOL-like region controls) ── */}
+      <Section
+        title="Interface & Transition"
+        eyebrow="Region sizing"
+        meta={<span className="text-[0.62rem] font-mono text-muted-foreground">UI in nm</span>}
+      >
+        <FieldRow
+          label="Interface max element size (nm)"
+          hint="Target element size near the magnetic–air interface shell."
+          control={(
+            <Input
+              className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              placeholder="auto"
+              value={metersTextToNanometersInput(options.interfaceHMax)}
+              onChange={(e) => set({ interfaceHMax: nanometersInputToMetersText(e.target.value) })}
+              disabled={disabled}
+            />
+          )}
+        />
+        <FieldRow
+          label="Interface thickness (nm)"
+          hint="Width of the refinement shell around the interface."
+          control={(
+            <Input
+              className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              placeholder="auto"
+              value={metersTextToNanometersInput(options.interfaceThickness)}
+              onChange={(e) => set({ interfaceThickness: nanometersInputToMetersText(e.target.value) })}
+              disabled={disabled}
+            />
+          )}
+        />
+        <FieldRow
+          label="Transition distance (nm)"
+          hint="Distance over which element size grades from object bulk to airbox."
+          control={(
+            <Input
+              className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              placeholder="auto"
+              value={metersTextToNanometersInput(options.transitionDistance)}
+              onChange={(e) => set({ transitionDistance: nanometersInputToMetersText(e.target.value) })}
+              disabled={disabled}
+            />
+          )}
+        />
+        <FieldRow
+          label="Transition growth rate"
+          hint="Growth rate within the transition zone (1.0–3.0)."
+          control={(
+            <Input
+              className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              placeholder="1.5"
+              value={options.transitionGrowth}
+              onChange={(e) => set({ transitionGrowth: e.target.value })}
+              disabled={disabled}
+            />
+          )}
+        />
+      </Section>
+
       {/* ── Optimization ── */}
       {showAdvanced && (
         <Section title="Optimization" eyebrow="Advanced">
@@ -835,12 +909,15 @@ export default function MeshSettingsPanel({
         </Section>
       )}
 
-      {/* ── Generate button ── */}
+      {/* ── Generate button (secondary — primary build is from ribbon) ── */}
       {onGenerate && (
-        <Section title="Build" eyebrow="Action">
+        <Section title="Quick build" eyebrow="Action">
+          <div className="text-[0.62rem] leading-4 text-muted-foreground/60 mb-1">
+            Use the ribbon &quot;Build Selected&quot; / &quot;Build All&quot; for targeted builds. This button always rebuilds the full study domain.
+          </div>
           <Button
-            className="h-9 w-full text-sm font-semibold transition-all duration-300"
-            variant="default"
+            className="h-8 w-full text-xs font-medium transition-all duration-300"
+            variant="outline"
             onClick={onGenerate}
             disabled={(generateDisabled ?? disabled) || generating}
           >

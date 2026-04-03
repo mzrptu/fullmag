@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import math
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -37,6 +38,15 @@ from .surface_assets import _geometry_to_trimesh, _import_trimesh, build_surface
 from .voxelization import VoxelMaskData, voxelize_geometry
 
 _NO_OP_FIELD_SIZE = 1.0e22
+
+
+@dataclass(frozen=True, slots=True)
+class SharedDomainBuildReport:
+    build_mode: str
+    fallbacks_triggered: list[str]
+    effective_airbox_target: dict[str, float | None]
+    effective_per_object_targets: dict[str, dict[str, float | int | str | None]]
+    used_size_field_kinds: list[str]
 
 
 def _surface_preview_to_mesh_data(preview: dict[str, object]) -> MeshData:
@@ -1103,6 +1113,125 @@ def _resolve_requested_partition_hmaxs(
     return requested_airbox_hmax, object_hmax_by_geometry
 
 
+def _unique_size_field_kinds(size_fields: list[dict[str, object]]) -> list[str]:
+    kinds: list[str] = []
+    for field in size_fields:
+        kind = field.get("kind")
+        if isinstance(kind, str) and kind not in kinds:
+            kinds.append(kind)
+    return kinds
+
+
+def _resolve_effective_shared_domain_targets(
+    geometries: list[Geometry],
+    hints: FEM,
+    *,
+    airbox: AirboxOptions | None,
+    mesh_workflow: Mapping[str, object] | None,
+    per_object_recipes: dict[str, PerObjectMeshRecipe] | None,
+) -> tuple[dict[str, float | None], dict[str, dict[str, float | int | str | None]]]:
+    requested_airbox_hmax, requested_hmax_by_geometry = _resolve_requested_partition_hmaxs(
+        geometries,
+        hints,
+        airbox=airbox,
+        mesh_workflow=mesh_workflow,
+        per_object_recipes=per_object_recipes,
+    )
+    workflow_by_name: dict[str, Mapping[str, object]] = {}
+    if isinstance(mesh_workflow, Mapping):
+        per_geometry = mesh_workflow.get("per_geometry")
+        if isinstance(per_geometry, list):
+            for entry in per_geometry:
+                if not isinstance(entry, Mapping):
+                    continue
+                raw_name = entry.get("geometry") or entry.get("geometry_name")
+                if isinstance(raw_name, str) and raw_name.strip():
+                    workflow_by_name[raw_name.strip()] = entry
+
+    effective_airbox_target = {
+        "hmax": requested_airbox_hmax,
+        "hmin": (
+            _coerce_positive_float(getattr(airbox, "hmin", None))
+            if airbox is not None and getattr(airbox, "hmin", None) is not None
+            else None
+        ),
+        "growth_rate": (
+            float(getattr(airbox, "grading_ratio", None))
+            if airbox is not None and getattr(airbox, "grading_ratio", None) is not None
+            else None
+        ),
+    }
+    default_hmax = float(hints.hmax) if hints.hmax is not None else None
+    effective_per_object_targets: dict[str, dict[str, float | int | str | None]] = {}
+    for geometry in geometries:
+        workflow_entry = workflow_by_name.get(geometry.geometry_name)
+        recipe = per_object_recipes.get(geometry.geometry_name) if per_object_recipes else None
+        bulk_hmax = requested_hmax_by_geometry.get(geometry.geometry_name)
+        interface_hmax = (
+            _coerce_positive_float(workflow_entry.get("interface_hmax"))
+            if workflow_entry is not None
+            else None
+        )
+        if interface_hmax is None and bulk_hmax is not None and default_hmax is not None and bulk_hmax < default_hmax:
+            interface_hmax = bulk_hmax * 0.6
+        transition_distance = (
+            _coerce_positive_float(workflow_entry.get("transition_distance"))
+            if workflow_entry is not None
+            else None
+        )
+        if transition_distance is None and bulk_hmax is not None and default_hmax is not None and bulk_hmax < default_hmax:
+            transition_distance = bulk_hmax * 3.0
+        source = "study_default"
+        if recipe is not None:
+            source = "recipe_override"
+        elif workflow_entry is not None:
+            mode = workflow_entry.get("mode")
+            source = "local_override" if mode == "custom" else "study_default"
+        effective_per_object_targets[geometry.geometry_name] = {
+            "marker": None,
+            "hmax": bulk_hmax,
+            "interface_hmax": interface_hmax,
+            "transition_distance": transition_distance,
+            "source": source,
+        }
+    return effective_airbox_target, effective_per_object_targets
+
+
+def _build_shared_domain_build_report(
+    geometries: list[Geometry],
+    hints: FEM,
+    *,
+    airbox: AirboxOptions | None,
+    mesh_workflow: Mapping[str, object] | None,
+    per_object_recipes: dict[str, PerObjectMeshRecipe] | None,
+    size_fields: list[dict[str, object]],
+    region_markers: list[dict[str, object]],
+    build_mode: str,
+    fallbacks_triggered: list[str],
+) -> SharedDomainBuildReport:
+    effective_airbox_target, effective_per_object_targets = _resolve_effective_shared_domain_targets(
+        geometries,
+        hints,
+        airbox=airbox,
+        mesh_workflow=mesh_workflow,
+        per_object_recipes=per_object_recipes,
+    )
+    for region in region_markers:
+        geometry_name = region.get("geometry_name")
+        marker = region.get("marker")
+        if isinstance(geometry_name, str) and geometry_name in effective_per_object_targets:
+            effective_per_object_targets[geometry_name]["marker"] = (
+                int(marker) if isinstance(marker, (int, np.integer)) else None
+            )
+    return SharedDomainBuildReport(
+        build_mode=build_mode,
+        fallbacks_triggered=list(fallbacks_triggered),
+        effective_airbox_target=effective_airbox_target,
+        effective_per_object_targets=effective_per_object_targets,
+        used_size_field_kinds=_unique_size_field_kinds(size_fields),
+    )
+
+
 def _emit_shared_domain_mesh_summary(
     mesh: MeshData,
     region_markers: list[dict[str, object]],
@@ -1351,7 +1480,7 @@ def realize_fem_domain_mesh_asset(
     return classified_mesh, region_markers
 
 
-def realize_fem_domain_mesh_asset_from_components(
+def _realize_fem_domain_mesh_asset_from_components_impl(
     geometries: list[Geometry],
     hints: FEM,
     *,
@@ -1359,7 +1488,7 @@ def realize_fem_domain_mesh_asset_from_components(
     mesh_workflow: Mapping[str, object] | None = None,
     per_object_recipes: dict[str, PerObjectMeshRecipe] | None = None,
     assembly_policy: SharedMeshAssemblyPolicy | None = None,
-) -> tuple[MeshData, list[dict[str, object]]]:
+) -> tuple[MeshData, list[dict[str, object]], SharedDomainBuildReport]:
     """Component-aware shared FEM domain mesh with stable geometry identity.
 
     Instead of concatenating all component STLs into a single anonymous file,
@@ -1422,6 +1551,32 @@ def realize_fem_domain_mesh_asset_from_components(
                 existing = list(mesh_options.size_fields)
                 from dataclasses import replace as _dc_replace
                 mesh_options = _dc_replace(mesh_options, size_fields=recipe_fields + existing)
+        effective_airbox_target, effective_per_object_targets = _resolve_effective_shared_domain_targets(
+            geometries,
+            hints,
+            airbox=airbox,
+            mesh_workflow=mesh_workflow,
+            per_object_recipes=per_object_recipes,
+        )
+        used_size_field_kinds = _unique_size_field_kinds(list(mesh_options.size_fields))
+        emit_progress_event(
+            {
+                "kind": "mesh_build_started",
+                "shared_domain_build_mode": "component_aware",
+                "effective_airbox_target": effective_airbox_target,
+                "effective_per_object_targets": effective_per_object_targets,
+                "used_size_field_kinds": used_size_field_kinds,
+                "fallbacks_triggered": [],
+                "message": "Preparing shared-domain mesh inputs",
+            }
+        )
+        emit_progress_event(
+            {
+                "kind": "mesh_build_phase",
+                "phase": "preparing_domain",
+                "message": "Preparing shared-domain inputs and mesh size fields",
+            }
+        )
         if mesh_options.size_fields:
             emit_progress(
                 f"Shared-domain local sizing active ({len(mesh_options.size_fields)} size fields)"
@@ -1436,36 +1591,68 @@ def realize_fem_domain_mesh_asset_from_components(
                 effective_hmax = float(vin)
 
         result: SharedDomainMeshResult | None = None
+        build_mode = "component_aware"
+        fallbacks_triggered: list[str] = []
         try:
-            result = generate_shared_domain_mesh_from_components(
-                component_descriptors,
-                hmax=effective_hmax,
-                order=hints.order,
-                airbox=airbox,
-                options=mesh_options,
+            emit_progress_event(
+                {
+                    "kind": "mesh_build_phase",
+                    "phase": "meshing",
+                    "message": "Generating component-aware 3D tetrahedral mesh",
+                }
             )
-            mesh = result.mesh
-            emit_progress(
-                f"Component-aware mesh: geometry→volume mapping established for "
-                f"{len(result.component_volume_tags)} components"
+            try:
+                result = generate_shared_domain_mesh_from_components(
+                    component_descriptors,
+                    hmax=effective_hmax,
+                    order=hints.order,
+                    airbox=airbox,
+                    options=mesh_options,
+                )
+                mesh = result.mesh
+                emit_progress(
+                    f"Component-aware mesh: geometry→volume mapping established for "
+                    f"{len(result.component_volume_tags)} components"
+                )
+            except Exception as exc:
+                build_mode = "concatenated_stl_fallback"
+                fallbacks_triggered.append("component_aware_import_failed")
+                emit_progress(
+                    f"Component-aware mesh failed ({exc!r}), falling back to concatenated STL"
+                )
+                component_meshes = [_geometry_to_trimesh(g, trimesh).copy() for g in geometries]
+                combined_surface = trimesh.util.concatenate(component_meshes)
+                surface_path = Path(tmp_dir) / "shared_domain_surface.stl"
+                combined_surface.export(surface_path)
+                from .gmsh_bridge import generate_mesh_from_file
+                mesh = generate_mesh_from_file(
+                    surface_path,
+                    hmax=effective_hmax,
+                    order=hints.order,
+                    airbox=airbox,
+                    options=mesh_options,
+                )
+            emit_progress_event(
+                {
+                    "kind": "mesh_build_phase",
+                    "phase": "postprocessing",
+                    "message": "Classifying the shared-domain mesh and finalizing region markers",
+                }
             )
         except Exception as exc:
-            emit_progress(
-                f"Component-aware mesh failed ({exc!r}), falling back to concatenated STL"
+            emit_progress_event(
+                {
+                    "kind": "mesh_build_failed",
+                    "shared_domain_build_mode": build_mode,
+                    "effective_airbox_target": effective_airbox_target,
+                    "effective_per_object_targets": effective_per_object_targets,
+                    "used_size_field_kinds": used_size_field_kinds,
+                    "fallbacks_triggered": fallbacks_triggered,
+                    "error": str(exc),
+                    "message": "Shared-domain mesh build failed",
+                }
             )
-            # Fall back to concatenated approach
-            component_meshes = [_geometry_to_trimesh(g, trimesh).copy() for g in geometries]
-            combined_surface = trimesh.util.concatenate(component_meshes)
-            surface_path = Path(tmp_dir) / "shared_domain_surface.stl"
-            combined_surface.export(surface_path)
-            from .gmsh_bridge import generate_mesh_from_file
-            mesh = generate_mesh_from_file(
-                surface_path,
-                hmax=effective_hmax,
-                order=hints.order,
-                airbox=airbox,
-                options=mesh_options,
-            )
+            raise
 
     # Classify elements back to geometries
     source_markers = np.asarray(mesh.element_markers, dtype=np.int32)
@@ -1539,7 +1726,71 @@ def realize_fem_domain_mesh_asset_from_components(
         requested_airbox_hmax=requested_airbox_hmax,
         requested_hmax_by_geometry=requested_hmax_by_geometry,
     )
-    return classified_mesh, region_markers
+    report = _build_shared_domain_build_report(
+        geometries,
+        hints,
+        airbox=airbox,
+        mesh_workflow=mesh_workflow,
+        per_object_recipes=per_object_recipes,
+        size_fields=list(mesh_options.size_fields),
+        region_markers=region_markers,
+        build_mode=build_mode,
+        fallbacks_triggered=fallbacks_triggered,
+    )
+    emit_progress_event(
+        {
+            "kind": "mesh_build_summary",
+            "shared_domain_build_mode": report.build_mode,
+            "n_nodes": classified_mesh.n_nodes,
+            "n_elements": classified_mesh.n_elements,
+            "n_boundary_faces": classified_mesh.n_boundary_faces,
+            "effective_airbox_target": report.effective_airbox_target,
+            "effective_per_object_targets": report.effective_per_object_targets,
+            "used_size_field_kinds": report.used_size_field_kinds,
+            "fallbacks_triggered": report.fallbacks_triggered,
+            "message": "Shared-domain mesh build finished",
+        }
+    )
+    return classified_mesh, region_markers, report
+
+
+def realize_fem_domain_mesh_asset_from_components(
+    geometries: list[Geometry],
+    hints: FEM,
+    *,
+    study_universe: Mapping[str, object] | None = None,
+    mesh_workflow: Mapping[str, object] | None = None,
+    per_object_recipes: dict[str, PerObjectMeshRecipe] | None = None,
+    assembly_policy: SharedMeshAssemblyPolicy | None = None,
+) -> tuple[MeshData, list[dict[str, object]]]:
+    mesh, region_markers, _report = _realize_fem_domain_mesh_asset_from_components_impl(
+        geometries,
+        hints,
+        study_universe=study_universe,
+        mesh_workflow=mesh_workflow,
+        per_object_recipes=per_object_recipes,
+        assembly_policy=assembly_policy,
+    )
+    return mesh, region_markers
+
+
+def realize_fem_domain_mesh_asset_from_components_with_report(
+    geometries: list[Geometry],
+    hints: FEM,
+    *,
+    study_universe: Mapping[str, object] | None = None,
+    mesh_workflow: Mapping[str, object] | None = None,
+    per_object_recipes: dict[str, PerObjectMeshRecipe] | None = None,
+    assembly_policy: SharedMeshAssemblyPolicy | None = None,
+) -> tuple[MeshData, list[dict[str, object]], SharedDomainBuildReport]:
+    return _realize_fem_domain_mesh_asset_from_components_impl(
+        geometries,
+        hints,
+        study_universe=study_universe,
+        mesh_workflow=mesh_workflow,
+        per_object_recipes=per_object_recipes,
+        assembly_policy=assembly_policy,
+    )
 
 
 def realize_fdm_grid_asset(

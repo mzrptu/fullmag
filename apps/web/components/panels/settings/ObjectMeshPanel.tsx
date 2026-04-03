@@ -72,6 +72,12 @@ function createInheritedMeshState(): ScriptBuilderPerGeometryMeshEntry {
     optimize_iterations: null,
     compute_quality: null,
     per_element_quality: null,
+    bulk_hmax: null,
+    bulk_hmin: null,
+    interface_hmax: null,
+    interface_thickness: null,
+    transition_distance: null,
+    transition_growth: null,
     boundary_layer_count: null,
     boundary_layer_thickness: null,
     boundary_layer_stretching: null,
@@ -153,6 +159,12 @@ function buildCustomMeshState(
     optimize_iterations: options.optimize.trim().length > 0 ? options.optimizeIters : 1,
     compute_quality: options.computeQuality,
     per_element_quality: options.perElementQuality,
+    bulk_hmax: current?.bulk_hmax ?? null,
+    bulk_hmin: current?.bulk_hmin ?? null,
+    interface_hmax: current?.interface_hmax ?? null,
+    interface_thickness: current?.interface_thickness ?? null,
+    transition_distance: current?.transition_distance ?? null,
+    transition_growth: current?.transition_growth ?? null,
     boundary_layer_count: extras.boundaryLayerCount ?? current?.boundary_layer_count ?? null,
     boundary_layer_thickness: extras.boundaryLayerThickness ?? current?.boundary_layer_thickness ?? null,
     boundary_layer_stretching: extras.boundaryLayerStretching ?? current?.boundary_layer_stretching ?? null,
@@ -325,12 +337,15 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
     "Auto / Object defaults",
   );
 
-  function getPhaseStyle(status: "idle" | "active" | "done" | "warning") {
+  function getPhaseStyle(status: "idle" | "active" | "done" | "warning" | "queued" | "failed") {
     switch (status) {
       case "done":
         return { css: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300", icon: <CheckCircle2 size={13} className="text-emerald-400" /> };
       case "active":
         return { css: "border-primary/40 bg-primary/10 text-primary shadow-[0_0_12px_rgba(59,130,246,0.15)]", icon: <Loader2 size={13} className="animate-spin text-primary" /> };
+      case "queued":
+        return { css: "border-sky-500/30 bg-sky-500/10 text-sky-200", icon: <CircleDashed size={13} className="text-sky-300" /> };
+      case "failed":
       case "warning":
         return { css: "border-amber-500/30 bg-amber-500/10 text-amber-300", icon: <AlertTriangle size={13} className="text-amber-400" /> };
       default:

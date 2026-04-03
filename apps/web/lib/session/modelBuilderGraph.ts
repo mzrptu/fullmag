@@ -384,12 +384,12 @@ export function resolveMeshBuildIntentFromNodeId(
 
   // Universe-level mesh node → full study domain rebuild
   if (nodeId === "universe-mesh" || nodeId.startsWith("universe-mesh-")) {
-    return { mode: "all", target: { kind: "study_domain" } };
+    return { mode: "selected", target: { kind: "study_domain" } };
   }
 
   // Top-level mesh node → full study domain rebuild
   if (nodeId === "mesh" || nodeId.startsWith("mesh-")) {
-    return { mode: "all", target: { kind: "study_domain" } };
+    return { mode: "selected", target: { kind: "study_domain" } };
   }
 
   // Per-object mesh node → object_mesh for that object

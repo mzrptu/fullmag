@@ -15,6 +15,11 @@ import numpy as np
 import fullmag as fm
 from fullmag import _core as fullmag_core
 from fullmag.meshing.asset_pipeline import (
+    SharedDomainBuildReport,
+    _build_field_stack,
+    _build_interface_fields,
+    _build_object_bulk_fields,
+    _build_transition_fields,
     _mesh_options_from_runtime_metadata,
     _shared_domain_local_size_fields,
     _study_universe_airbox_options,
@@ -362,8 +367,26 @@ class MeshScaffoldTests(unittest.TestCase):
             return_value=_FakeLibC(),
         ), patch.object(
             remesh_cli_module,
-            "realize_fem_domain_mesh_asset_from_components",
-            return_value=(mesh, [{"geometry_name": "left", "marker": 1}]),
+            "realize_fem_domain_mesh_asset_from_components_with_report",
+            return_value=(
+                mesh,
+                [{"geometry_name": "left", "marker": 1}],
+                SharedDomainBuildReport(
+                    build_mode="component_aware",
+                    fallbacks_triggered=[],
+                    effective_airbox_target={"hmax": 20e-9, "hmin": None, "growth_rate": None},
+                    effective_per_object_targets={
+                        "left": {
+                            "marker": 1,
+                            "hmax": 20e-9,
+                            "interface_hmax": None,
+                            "transition_distance": None,
+                            "source": "study_default",
+                        }
+                    },
+                    used_size_field_kinds=[],
+                ),
+            ),
         ) as component_call:
             remesh_cli_module.main()
 
@@ -1338,6 +1361,207 @@ class SizeFieldDataTests(unittest.TestCase):
                 node_coords=np.array([[0, 0, 0], [1, 0, 0]]),
                 h_values=np.array([0.1, -0.5]),
             )
+
+
+# ---------------------------------------------------------------------------
+# Commit 7 — acceptance tests for COMSOL-like mesh field stack
+# ---------------------------------------------------------------------------
+
+class FieldStackAcceptanceTests(unittest.TestCase):
+    """Tests validating per-object, interface, and transition field builders."""
+
+    def test_object_bulk_field_emitted_when_hmax_finer_than_default(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        right = fm.Box(3.0, 2.0, 2.0, name="right")
+        fields = _build_object_bulk_fields(
+            [left, right],
+            default_hmax=20e-9,
+            override_by_name={
+                "left": {"bulk_hmax": "8e-9"},
+                "right": {"bulk_hmax": "25e-9"},  # coarser than default — skip
+            },
+        )
+        self.assertEqual(len(fields), 1)
+        self.assertEqual(fields[0]["kind"], "Box")
+        self.assertAlmostEqual(fields[0]["params"]["VIn"], 8e-9)
+
+    def test_object_bulk_field_component_aware_uses_component_kind(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        fields = _build_object_bulk_fields(
+            [left],
+            default_hmax=20e-9,
+            override_by_name={"left": {"bulk_hmax": "5e-9"}},
+            component_aware=True,
+        )
+        self.assertEqual(len(fields), 1)
+        self.assertEqual(fields[0]["kind"], "ComponentVolumeConstant")
+        self.assertEqual(fields[0]["params"]["GeometryName"], "left")
+        self.assertAlmostEqual(fields[0]["params"]["VIn"], 5e-9)
+
+    def test_interface_field_defaults_to_sixty_percent_of_bulk(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        fields = _build_interface_fields(
+            [left],
+            default_hmax=20e-9,
+            override_by_name={"left": {"bulk_hmax": "10e-9"}},
+        )
+        self.assertEqual(len(fields), 1)
+        self.assertEqual(fields[0]["kind"], "BoundsSurfaceThreshold")
+        self.assertAlmostEqual(fields[0]["params"]["SizeMin"], 10e-9 * 0.6)
+
+    def test_interface_field_explicit_params_override_defaults(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        fields = _build_interface_fields(
+            [left],
+            default_hmax=20e-9,
+            override_by_name={
+                "left": {
+                    "bulk_hmax": "10e-9",
+                    "interface_hmax": "3e-9",
+                    "interface_thickness": "15e-9",
+                },
+            },
+        )
+        self.assertEqual(len(fields), 1)
+        self.assertAlmostEqual(fields[0]["params"]["SizeMin"], 3e-9)
+        self.assertAlmostEqual(fields[0]["params"]["DistMax"], 15e-9)
+
+    def test_interface_field_component_aware_uses_shell_kind(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        fields = _build_interface_fields(
+            [left],
+            default_hmax=20e-9,
+            override_by_name={"left": {"bulk_hmax": "8e-9", "interface_hmax": "4e-9"}},
+            component_aware=True,
+        )
+        self.assertEqual(len(fields), 1)
+        self.assertEqual(fields[0]["kind"], "InterfaceShellThreshold")
+        self.assertEqual(fields[0]["params"]["GeometryName"], "left")
+        self.assertAlmostEqual(fields[0]["params"]["SizeMin"], 4e-9)
+
+    def test_transition_field_defaults_to_three_times_bulk(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        fields = _build_transition_fields(
+            [left],
+            default_hmax=20e-9,
+            override_by_name={"left": {"bulk_hmax": "10e-9"}},
+        )
+        self.assertEqual(len(fields), 1)
+        self.assertEqual(fields[0]["kind"], "BoundsSurfaceThreshold")
+        self.assertAlmostEqual(fields[0]["params"]["DistMax"], 10e-9 * 3.0)
+        self.assertAlmostEqual(fields[0]["params"]["SizeMin"], 10e-9)
+
+    def test_transition_field_explicit_distance_overrides_default(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        fields = _build_transition_fields(
+            [left],
+            default_hmax=20e-9,
+            override_by_name={
+                "left": {
+                    "bulk_hmax": "10e-9",
+                    "transition_distance": "50e-9",
+                },
+            },
+        )
+        self.assertEqual(len(fields), 1)
+        self.assertAlmostEqual(fields[0]["params"]["DistMax"], 50e-9)
+
+    def test_transition_field_component_aware_uses_shell_kind(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        fields = _build_transition_fields(
+            [left],
+            default_hmax=20e-9,
+            override_by_name={"left": {"bulk_hmax": "8e-9"}},
+            component_aware=True,
+        )
+        self.assertEqual(len(fields), 1)
+        self.assertEqual(fields[0]["kind"], "TransitionShellThreshold")
+        self.assertEqual(fields[0]["params"]["GeometryName"], "left")
+
+    def test_field_stack_combines_all_layers(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        right = fm.Box(3.0, 2.0, 2.0, name="right")
+        fields = _build_field_stack(
+            [left, right],
+            default_hmax=20e-9,
+            per_geometry=[
+                {
+                    "geometry": "left",
+                    "bulk_hmax": "8e-9",
+                    "interface_hmax": "4e-9",
+                    "interface_thickness": "12e-9",
+                    "transition_distance": "24e-9",
+                },
+                {"geometry": "right", "bulk_hmax": "6e-9"},
+            ],
+        )
+        kinds = [f["kind"] for f in fields]
+        # Both objects contribute bulk + interface + transition
+        self.assertIn("Box", kinds)
+        self.assertIn("BoundsSurfaceThreshold", kinds)
+        # Expect at least 2 bulk, 2 interface, 2 transition
+        self.assertGreaterEqual(len(fields), 6)
+
+    def test_field_stack_component_aware_kinds(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        fields = _build_field_stack(
+            [left],
+            default_hmax=20e-9,
+            per_geometry=[
+                {
+                    "geometry": "left",
+                    "bulk_hmax": "8e-9",
+                    "interface_hmax": "4e-9",
+                    "transition_distance": "30e-9",
+                },
+            ],
+            component_aware=True,
+        )
+        kinds = [f["kind"] for f in fields]
+        self.assertIn("ComponentVolumeConstant", kinds)
+        self.assertIn("InterfaceShellThreshold", kinds)
+        self.assertIn("TransitionShellThreshold", kinds)
+
+    def test_field_stack_no_fields_when_coarser_than_default(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        fields = _build_field_stack(
+            [left],
+            default_hmax=5e-9,
+            per_geometry=[{"geometry": "left", "bulk_hmax": "10e-9"}],
+        )
+        self.assertEqual(len(fields), 0)
+
+    def test_two_objects_different_bulk_hmax_produce_distinct_fields(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        right = fm.Box(3.0, 2.0, 2.0, name="right")
+        fields = _build_object_bulk_fields(
+            [left, right],
+            default_hmax=20e-9,
+            override_by_name={
+                "left": {"bulk_hmax": "5e-9"},
+                "right": {"bulk_hmax": "10e-9"},
+            },
+        )
+        self.assertEqual(len(fields), 2)
+        vin_values = {f["params"]["VIn"] for f in fields}
+        self.assertIn(5e-9, vin_values)
+        self.assertIn(10e-9, vin_values)
+
+    def test_fallback_box_path_diagnostic_on_stderr(self) -> None:
+        """Verify that when Box fields are used, the field stack reports them."""
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with patch.dict(os.environ, {"FULLMAG_PROGRESS": "1"}, clear=False):
+                fields = _build_field_stack(
+                    [left],
+                    default_hmax=20e-9,
+                    per_geometry=[{"geometry": "left", "bulk_hmax": "8e-9"}],
+                )
+        output = stderr.getvalue()
+        self.assertGreater(len(fields), 0)
+        self.assertIn("Field stack:", output)
+        self.assertIn("bulk=", output)
 
 
 if __name__ == "__main__":

@@ -143,7 +143,37 @@ pub(crate) fn parse_python_progress_event(message: &str) -> PythonProgressEvent 
             },
             _ => PythonProgressEvent::Message(trimmed.to_string()),
         },
-        _ => PythonProgressEvent::Message(trimmed.to_string()),
+        _ => {
+            let mut payload = serde_json::Map::new();
+            payload.insert(
+                "kind".to_string(),
+                serde_json::Value::String(envelope.kind.clone()),
+            );
+            if let Some(geometry_name) = envelope.geometry_name {
+                payload.insert(
+                    "geometry_name".to_string(),
+                    serde_json::Value::String(geometry_name),
+                );
+            }
+            if let Some(message) = envelope.message {
+                payload.insert(
+                    "message".to_string(),
+                    serde_json::Value::String(message),
+                );
+            }
+            if let Some(fem_mesh) = envelope.fem_mesh {
+                if let Ok(value) = serde_json::to_value(fem_mesh) {
+                    payload.insert("fem_mesh".to_string(), value);
+                }
+            }
+            for (key, value) in envelope.extra {
+                payload.insert(key, value);
+            }
+            PythonProgressEvent::Structured {
+                kind: envelope.kind,
+                payload: serde_json::Value::Object(payload),
+            }
+        }
     }
 }
 

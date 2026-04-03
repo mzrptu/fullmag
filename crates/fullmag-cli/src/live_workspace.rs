@@ -365,6 +365,140 @@ pub(crate) fn merge_cached_preview_fields_from_update(
     }
 }
 
+fn mesh_build_stage_status(
+    stage_id: &str,
+    active_phase: Option<&str>,
+    failed: bool,
+) -> &'static str {
+    let rank = |phase: &str| match phase {
+        "queued" => 0,
+        "materializing" => 1,
+        "preparing_domain" => 2,
+        "meshing" => 3,
+        "postprocessing" => 4,
+        "ready" => 5,
+        _ => 0,
+    };
+    let current_rank = active_phase.map(rank).unwrap_or(0);
+    let stage_rank = rank(stage_id);
+    if failed && stage_rank == current_rank {
+        return "warning";
+    }
+    if stage_rank < current_rank {
+        return "done";
+    }
+    if stage_rank == current_rank {
+        return if failed { "warning" } else { "active" };
+    }
+    "idle"
+}
+
+fn mesh_build_pipeline_status_json(
+    active_phase: Option<&str>,
+    failed: bool,
+    failure_detail: Option<&str>,
+) -> serde_json::Value {
+    let phase_details = [
+        (
+            "queued",
+            "Queued",
+            "Build request accepted and waiting for the next mesh pipeline step.",
+        ),
+        (
+            "materializing",
+            "Materializing Script",
+            "Syncing the active scene back to canonical Python before remeshing.",
+        ),
+        (
+            "preparing_domain",
+            "Preparing Shared Domain",
+            "Computing airbox/domain inputs, local sizing fields and the conformal FEM domain setup.",
+        ),
+        (
+            "meshing",
+            "Meshing",
+            "Generating the tetrahedral mesh for the active shared domain.",
+        ),
+        (
+            "postprocessing",
+            "Post-Processing",
+            "Collecting mesh quality, markers and runtime-ready mesh metadata.",
+        ),
+        (
+            "ready",
+            "Ready",
+            "Mesh build completed and the viewport can now inspect the updated domain mesh.",
+        ),
+    ];
+    serde_json::Value::Array(
+        phase_details
+            .iter()
+            .map(|(id, label, detail)| {
+                let status = mesh_build_stage_status(id, active_phase, failed);
+                let resolved_detail = if failed && Some(*id) == active_phase {
+                    failure_detail.unwrap_or("Mesh build failed before completion.")
+                } else {
+                    *detail
+                };
+                serde_json::json!({
+                    "id": id,
+                    "label": label,
+                    "status": status,
+                    "detail": resolved_detail,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn upsert_mesh_build_overlay(
+    state: &mut LocalLiveWorkspaceState,
+    active_build: Option<serde_json::Value>,
+    effective_airbox_target: Option<serde_json::Value>,
+    effective_per_object_targets: Option<serde_json::Value>,
+    last_build_summary: Option<serde_json::Value>,
+    last_build_error: Option<String>,
+    active_phase: Option<&str>,
+    failed: bool,
+) {
+    let workspace = state
+        .mesh_workspace
+        .get_or_insert_with(|| serde_json::json!({}));
+    if !workspace.is_object() {
+        *workspace = serde_json::json!({});
+    }
+    let obj = workspace
+        .as_object_mut()
+        .expect("mesh workspace should be an object after initialization");
+    obj.insert(
+        "active_build".to_string(),
+        active_build.unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "effective_airbox_target".to_string(),
+        effective_airbox_target.unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "effective_per_object_targets".to_string(),
+        effective_per_object_targets.unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "last_build_summary".to_string(),
+        last_build_summary.unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "last_build_error".to_string(),
+        last_build_error
+            .clone()
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "mesh_pipeline_status".to_string(),
+        mesh_build_pipeline_status_json(active_phase, failed, last_build_error.as_deref()),
+    );
+}
+
 pub(crate) fn apply_python_progress_event(
     live_workspace: &LocalLiveWorkspace,
     event: PythonProgressEvent,
@@ -389,6 +523,109 @@ pub(crate) fn apply_python_progress_event(
                         "info",
                         format!("Surface preview ready for '{}'", geometry_name),
                     );
+                }
+            });
+        }
+        PythonProgressEvent::Structured { kind, payload } => {
+            live_workspace.update(|state| {
+                let message = payload
+                    .get("message")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string());
+                let existing_active_build = state
+                    .mesh_workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.get("active_build"))
+                    .cloned()
+                    .filter(|value| !value.is_null());
+                let existing_airbox_target = state
+                    .mesh_workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.get("effective_airbox_target"))
+                    .cloned()
+                    .filter(|value| !value.is_null());
+                let existing_object_targets = state
+                    .mesh_workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.get("effective_per_object_targets"))
+                    .cloned()
+                    .filter(|value| !value.is_null());
+                match kind.as_str() {
+                    "mesh_build_started" => {
+                        upsert_mesh_build_overlay(
+                            state,
+                            existing_active_build,
+                            payload
+                                .get("effective_airbox_target")
+                                .cloned()
+                                .or(existing_airbox_target),
+                            payload
+                                .get("effective_per_object_targets")
+                                .cloned()
+                                .or(existing_object_targets),
+                            None,
+                            None,
+                            Some("queued"),
+                            false,
+                        );
+                    }
+                    "mesh_build_phase" => {
+                        let phase = payload
+                            .get("phase")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("queued");
+                        upsert_mesh_build_overlay(
+                            state,
+                            existing_active_build,
+                            existing_airbox_target,
+                            existing_object_targets,
+                            None,
+                            None,
+                            Some(phase),
+                            false,
+                        );
+                    }
+                    "mesh_build_summary" => {
+                        upsert_mesh_build_overlay(
+                            state,
+                            None,
+                            payload.get("effective_airbox_target").cloned(),
+                            payload
+                                .get("effective_per_object_targets")
+                                .cloned(),
+                            Some(payload.clone()),
+                            None,
+                            Some("ready"),
+                            false,
+                        );
+                    }
+                    "mesh_build_failed" => {
+                        let error_text = payload
+                            .get("error")
+                            .and_then(|value| value.as_str())
+                            .map(|value| value.to_string())
+                            .or_else(|| message.clone())
+                            .unwrap_or_else(|| "Mesh build failed".to_string());
+                        upsert_mesh_build_overlay(
+                            state,
+                            None,
+                            payload.get("effective_airbox_target").cloned(),
+                            payload
+                                .get("effective_per_object_targets")
+                                .cloned(),
+                            Some(payload.clone()),
+                            Some(error_text),
+                            payload
+                                .get("phase")
+                                .and_then(|value| value.as_str())
+                                .or(Some("postprocessing")),
+                            true,
+                        );
+                    }
+                    _ => {}
+                }
+                if let Some(message) = message {
+                    push_engine_log(&mut state.engine_log, "info", message);
                 }
             });
         }

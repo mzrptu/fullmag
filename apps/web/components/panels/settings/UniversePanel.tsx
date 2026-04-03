@@ -100,6 +100,8 @@ export default function UniversePanel() {
       center: declared.center ?? null,
       padding: declared.padding ?? null,
       airbox_hmax: declared.airbox_hmax ?? null,
+      airbox_hmin: declared.airbox_hmin ?? null,
+      airbox_growth_rate: declared.airbox_growth_rate ?? null,
     };
   }, [ctx.domainFrame?.declared_universe]);
   const builderUniverse = useMemo<ScriptBuilderUniverseState | null>(() => {
@@ -154,6 +156,8 @@ export default function UniversePanel() {
         center: null,
         padding: null,
         airbox_hmax: null,
+        airbox_hmin: null,
+        airbox_growth_rate: null,
       };
       ctx.setScriptBuilderUniverse((prev) => updater(prev ?? seed));
     },

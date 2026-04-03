@@ -1154,6 +1154,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
             center: scriptBuilderUniverse.center,
             padding: scriptBuilderUniverse.padding,
             airbox_hmax: scriptBuilderUniverse.airbox_hmax,
+            airbox_hmin: scriptBuilderUniverse.airbox_hmin,
+            airbox_growth_rate: scriptBuilderUniverse.airbox_growth_rate,
           }
         : null,
       object_bounds_min: builderObjectBounds?.boundsMin ?? null,
@@ -1622,14 +1624,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const meshGenGenerationRef = useRef<string | null>(null);
   const femGenerationIdRef = useRef<string | null>(null);
 
-  const handleStudyDomainMeshGenerate = useCallback(async () => {
+  const handleStudyDomainMeshGenerate = useCallback(async (meshReason = "manual_ui_rebuild_selected") => {
     setMeshGenerating(true);
     meshGenTopologyRef.current = femTopologyKeyRef.current;
     meshGenGenerationRef.current = femGenerationIdRef.current;
     pendingMeshConfigSignatureRef.current = meshConfigSignatureRef.current;
     try {
       await enqueueStudyDomainRemesh(
-        "manual_ui_rebuild",
+        meshReason,
         buildMeshOptionsPayload(meshOptions),
       );
     } catch (err) {

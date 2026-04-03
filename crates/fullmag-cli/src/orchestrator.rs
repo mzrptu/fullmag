@@ -300,6 +300,183 @@ fn current_mesh_workspace(
     ))
 }
 
+#[derive(Debug, Clone, Default)]
+struct CurrentMeshBuildOverlay {
+    active_build: Option<serde_json::Value>,
+    effective_airbox_target: Option<serde_json::Value>,
+    effective_per_object_targets: Option<serde_json::Value>,
+    last_build_summary: Option<serde_json::Value>,
+    last_build_error: Option<String>,
+    active_phase: Option<String>,
+    failed: bool,
+}
+
+fn mesh_build_intent_json(
+    mesh_target: &MeshCommandTarget,
+    mesh_reason: &str,
+) -> serde_json::Value {
+    match mesh_target {
+        MeshCommandTarget::StudyDomain => serde_json::json!({
+            "mode": if mesh_reason.contains("_all") { "all" } else { "selected" },
+            "target": { "kind": "study_domain" },
+        }),
+        MeshCommandTarget::Airbox => serde_json::json!({
+            "mode": "selected",
+            "target": { "kind": "airbox" },
+        }),
+        MeshCommandTarget::ObjectMesh { object_id } => serde_json::json!({
+            "mode": "selected",
+            "target": { "kind": "object_mesh", "object_id": object_id },
+        }),
+        MeshCommandTarget::AdaptiveFollowup => serde_json::json!({
+            "mode": "selected",
+            "target": { "kind": "adaptive_followup" },
+        }),
+    }
+}
+
+fn mesh_build_stage_status(
+    stage_id: &str,
+    active_phase: Option<&str>,
+    failed: bool,
+) -> &'static str {
+    let rank = |phase: &str| match phase {
+        "queued" => 0,
+        "materializing" => 1,
+        "preparing_domain" => 2,
+        "meshing" => 3,
+        "postprocessing" => 4,
+        "ready" => 5,
+        _ => 0,
+    };
+    let current_rank = active_phase.map(rank).unwrap_or(0);
+    let stage_rank = rank(stage_id);
+    if failed && stage_rank == current_rank {
+        return "warning";
+    }
+    if stage_rank < current_rank {
+        return "done";
+    }
+    if stage_rank == current_rank {
+        return if failed { "warning" } else { "active" };
+    }
+    "idle"
+}
+
+fn mesh_build_pipeline_status_json(
+    active_phase: Option<&str>,
+    failed: bool,
+    failure_detail: Option<&str>,
+) -> serde_json::Value {
+    let phase_details = [
+        (
+            "queued",
+            "Queued",
+            "Build request accepted and waiting for the next mesh pipeline step.",
+        ),
+        (
+            "materializing",
+            "Materializing Script",
+            "Syncing the active scene back to canonical Python before remeshing.",
+        ),
+        (
+            "preparing_domain",
+            "Preparing Shared Domain",
+            "Computing airbox/domain inputs, local sizing fields and the conformal FEM domain setup.",
+        ),
+        (
+            "meshing",
+            "Meshing",
+            "Generating the tetrahedral mesh for the active shared domain.",
+        ),
+        (
+            "postprocessing",
+            "Post-Processing",
+            "Collecting mesh quality, markers and runtime-ready mesh metadata.",
+        ),
+        (
+            "ready",
+            "Ready",
+            "Mesh build completed and the viewport can now inspect the updated domain mesh.",
+        ),
+    ];
+    serde_json::Value::Array(
+        phase_details
+            .iter()
+            .map(|(id, label, detail)| {
+                let status = mesh_build_stage_status(id, active_phase, failed);
+                let resolved_detail = if failed && Some(*id) == active_phase {
+                    failure_detail.unwrap_or("Mesh build failed before completion.")
+                } else {
+                    *detail
+                };
+                serde_json::json!({
+                    "id": id,
+                    "label": label,
+                    "status": status,
+                    "detail": resolved_detail,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn overlay_mesh_workspace(
+    mesh_workspace: &mut serde_json::Value,
+    overlay: &CurrentMeshBuildOverlay,
+) {
+    if !mesh_workspace.is_object() {
+        *mesh_workspace = serde_json::json!({});
+    }
+    let obj = mesh_workspace
+        .as_object_mut()
+        .expect("mesh workspace should be an object after initialization");
+    obj.insert(
+        "active_build".to_string(),
+        overlay
+            .active_build
+            .clone()
+            .unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "effective_airbox_target".to_string(),
+        overlay
+            .effective_airbox_target
+            .clone()
+            .unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "effective_per_object_targets".to_string(),
+        overlay
+            .effective_per_object_targets
+            .clone()
+            .unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "last_build_summary".to_string(),
+        overlay
+            .last_build_summary
+            .clone()
+            .unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "last_build_error".to_string(),
+        overlay
+            .last_build_error
+            .as_ref()
+            .map(|value| serde_json::Value::String(value.clone()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "mesh_pipeline_status".to_string(),
+        mesh_build_pipeline_status_json(
+            overlay.active_phase.as_deref(),
+            overlay.failed,
+            overlay.last_build_error.as_deref(),
+        ),
+    );
+}
+
 #[derive(Debug, Clone)]
 struct AdaptiveMeshSettings {
     enabled: bool,
@@ -434,9 +611,9 @@ fn execute_manual_interactive_remesh(
         .mesh_target
         .as_ref()
         .ok_or_else(|| anyhow!("remesh command is missing mesh_target"))?;
-    if !matches!(mesh_target, MeshCommandTarget::StudyDomain) {
+    if matches!(mesh_target, MeshCommandTarget::AdaptiveFollowup) {
         bail!(
-            "interactive remesh currently supports only mesh_target=study_domain, got {:?}",
+            "interactive remesh does not accept mesh_target=adaptive_followup, got {:?}",
             mesh_target
         );
     }
@@ -448,15 +625,21 @@ fn execute_manual_interactive_remesh(
         .mesh_reason
         .as_deref()
         .unwrap_or("manual_ui_rebuild");
+    let mesh_target_label = match mesh_target {
+        MeshCommandTarget::StudyDomain => "study_domain".to_string(),
+        MeshCommandTarget::AdaptiveFollowup => "adaptive_followup".to_string(),
+        MeshCommandTarget::Airbox => "airbox".to_string(),
+        MeshCommandTarget::ObjectMesh { object_id } => format!("object_mesh:{object_id}"),
+    };
     eprintln!(
-        "[fullmag] remesh requested with target=study_domain reason={} options: {}",
-        mesh_reason, opts
+        "[fullmag] remesh requested with target={} reason={} options: {}",
+        mesh_target_label, mesh_reason, opts
     );
     live_workspace.push_log(
         "info",
         format!(
-            "Remesh requested — target=study_domain · reason={} · options: {}",
-            mesh_reason, opts
+            "Remesh requested — target={} · reason={} · options: {}",
+            mesh_target_label, mesh_reason, opts
         ),
     );
     if mesh_reason == "airbox_parameter_changed" {
@@ -569,11 +752,33 @@ fn execute_manual_interactive_remesh(
                 hmax, plan.fe_order
             ),
         );
+        let build_overlay = Arc::new(Mutex::new(CurrentMeshBuildOverlay {
+            active_build: Some(mesh_build_intent_json(mesh_target, mesh_reason)),
+            effective_airbox_target: None,
+            effective_per_object_targets: None,
+            last_build_summary: None,
+            last_build_error: None,
+            active_phase: Some("queued".to_string()),
+            failed: false,
+        }));
+        live_workspace.update(|state| {
+            let mut workspace = state
+                .mesh_workspace
+                .clone()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let overlay = build_overlay
+                .lock()
+                .expect("mesh build overlay mutex poisoned")
+                .clone();
+            overlay_mesh_workspace(&mut workspace, &overlay);
+            state.mesh_workspace = Some(workspace);
+        });
         let mesh_start = std::time::Instant::now();
         let remesh_progress_stage = Arc::new(Mutex::new(None::<u8>));
         let remesh_progress_callback = Some({
             let live_workspace = live_workspace.clone();
             let remesh_progress_stage = Arc::clone(&remesh_progress_stage);
+            let build_overlay = Arc::clone(&build_overlay);
             Arc::new(move |event: PythonProgressEvent| {
                 let terminal_update = match &event {
                     PythonProgressEvent::Message(message) => {
@@ -592,6 +797,28 @@ fn execute_manual_interactive_remesh(
                                     None
                                 } else {
                                     *guard = Some(stage.percent);
+                                    let next_phase = if stage.percent >= 92 {
+                                        "postprocessing"
+                                    } else if stage.percent >= 75 {
+                                        "meshing"
+                                    } else if stage.percent >= 15 {
+                                        "preparing_domain"
+                                    } else {
+                                        "queued"
+                                    };
+                                    if let Ok(mut overlay) = build_overlay.lock() {
+                                        overlay.active_phase = Some(next_phase.to_string());
+                                        overlay.failed = false;
+                                        let overlay_snapshot = overlay.clone();
+                                        live_workspace.update(|state| {
+                                            let mut workspace = state
+                                                .mesh_workspace
+                                                .clone()
+                                                .unwrap_or_else(|| serde_json::json!({}));
+                                            overlay_mesh_workspace(&mut workspace, &overlay_snapshot);
+                                            state.mesh_workspace = Some(workspace);
+                                        });
+                                    }
                                     Some(format!(
                                         "[fullmag] remesh {:02}% - {}",
                                         stage.percent, stage.label
@@ -603,6 +830,10 @@ fn execute_manual_interactive_remesh(
                         }
                     }
                     PythonProgressEvent::FemSurfacePreview { .. } => None,
+                    PythonProgressEvent::Structured { payload, .. } => payload
+                        .get("message")
+                        .and_then(|value| value.as_str())
+                        .map(|message| format!("[fullmag] remesh info - {}", message)),
                 };
                 apply_python_progress_event(&live_workspace, event);
                 if let Some(line) = terminal_update {
@@ -727,7 +958,7 @@ fn execute_manual_interactive_remesh(
                         "gamma_min": quality.gamma_min,
                         "avg_quality": quality.avg_quality,
                     })),
-                    "mesh_target": "study_domain",
+                    "mesh_target": mesh_target_label.clone(),
                     "mesh_reason": mesh_reason,
                     "mesh_provenance": remesh_result.mesh_provenance,
                     "size_field_stats": remesh_result.size_field_stats,
@@ -735,7 +966,7 @@ fn execute_manual_interactive_remesh(
 
                 live_workspace.update(|state| {
                     state.live_state.latest_step.fem_mesh = Some(live_mesh_payload);
-                    state.mesh_workspace = Some(current_fem_mesh_workspace(
+                    let mut workspace = current_fem_mesh_workspace(
                         problem,
                         &new_mesh,
                         remeshed_mesh_source.as_deref(),
@@ -746,7 +977,55 @@ fn execute_manual_interactive_remesh(
                         current_adaptive_runtime_state.as_ref(),
                         current_mesh_quality.as_ref(),
                         current_mesh_history,
-                    ));
+                    );
+                    let provenance = remesh_result
+                        .mesh_provenance
+                        .as_ref()
+                        .and_then(|value| value.as_object());
+                    let summary = serde_json::json!({
+                        "kind": "mesh_build_summary",
+                        "mesh_target": mesh_target_label.clone(),
+                        "mesh_reason": mesh_reason,
+                        "shared_domain_build_mode": provenance
+                            .and_then(|value| value.get("shared_domain_build_mode"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                        "effective_airbox_target": provenance
+                            .and_then(|value| value.get("effective_airbox_target"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                        "effective_per_object_targets": provenance
+                            .and_then(|value| value.get("effective_per_object_targets"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                        "used_size_field_kinds": provenance
+                            .and_then(|value| value.get("used_size_field_kinds"))
+                            .cloned()
+                            .unwrap_or_else(|| serde_json::json!([])),
+                        "fallbacks_triggered": provenance
+                            .and_then(|value| value.get("fallbacks_triggered"))
+                            .cloned()
+                            .unwrap_or_else(|| serde_json::json!([])),
+                        "n_nodes": node_count,
+                        "n_elements": elem_count,
+                        "n_boundary_faces": face_count,
+                    });
+                    if let Ok(mut overlay) = build_overlay.lock() {
+                        overlay.active_build = None;
+                        overlay.effective_airbox_target = provenance
+                            .and_then(|value| value.get("effective_airbox_target"))
+                            .cloned();
+                        overlay.effective_per_object_targets = provenance
+                            .and_then(|value| value.get("effective_per_object_targets"))
+                            .cloned();
+                        overlay.last_build_summary = Some(summary);
+                        overlay.last_build_error = None;
+                        overlay.active_phase = Some("ready".to_string());
+                        overlay.failed = false;
+                        let overlay_snapshot = overlay.clone();
+                        overlay_mesh_workspace(&mut workspace, &overlay_snapshot);
+                    }
+                    state.mesh_workspace = Some(workspace);
                 });
             }
             Err(error) => {
@@ -757,6 +1036,26 @@ fn execute_manual_interactive_remesh(
                     error
                 );
                 live_workspace.push_log("error", format!("Remesh failed: {}", error));
+                if let Ok(mut overlay) = build_overlay.lock() {
+                    overlay.active_build = None;
+                    overlay.last_build_error = Some(error.to_string());
+                    overlay.active_phase = Some(
+                        overlay
+                            .active_phase
+                            .clone()
+                            .unwrap_or_else(|| "meshing".to_string()),
+                    );
+                    overlay.failed = true;
+                    let overlay_snapshot = overlay.clone();
+                    live_workspace.update(|state| {
+                        let mut workspace = state
+                            .mesh_workspace
+                            .clone()
+                            .unwrap_or_else(|| serde_json::json!({}));
+                        overlay_mesh_workspace(&mut workspace, &overlay_snapshot);
+                        state.mesh_workspace = Some(workspace);
+                    });
+                }
             }
         }
     } else {
@@ -1474,6 +1773,10 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             .as_ref()
                             .map(|text| format!("[fullmag] materialize - {}", text))
                     }
+                    PythonProgressEvent::Structured { payload, .. } => payload
+                        .get("message")
+                        .and_then(|value| value.as_str())
+                        .map(|message| format!("[fullmag] materialize - {}", message)),
                 };
                 apply_python_progress_event(&live_workspace, event);
                 if let Some(line) = terminal_line {

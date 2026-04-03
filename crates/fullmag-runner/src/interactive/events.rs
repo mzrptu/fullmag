@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub enum MeshCommandTargetEvent {
     StudyDomain,
     AdaptiveFollowup,
+    Airbox,
+    ObjectMesh { object_id: String },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

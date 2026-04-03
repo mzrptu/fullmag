@@ -535,8 +535,8 @@ export function buildFullmagModelTree(opts: {
       status: opts.meshStatus ?? "pending",
       defaultOpen: false,
       children: [
-        { id: "mesh-view", label: "Domain Inspector", icon: "👁" },
-        { id: "mesh-size", label: "Object Defaults", icon: "📏" },
+        { id: "mesh-view", label: "Inspector", icon: "👁" },
+        { id: "mesh-size", label: "Size", icon: "📏" },
         { id: "mesh-quality", label: "Quality", icon: "📊" },
         { id: "mesh-pipeline", label: "Pipeline", icon: "🧭" },
       ],
@@ -759,7 +759,7 @@ function _buildUniverseChildren(opts: {
         { id: "universe-mesh-view", label: "Inspector", icon: "👁" },
         {
           id: "universe-mesh-size",
-          label: opts.meshFeOrder != null ? `Object Defaults · P${opts.meshFeOrder}` : "Object Defaults",
+          label: opts.meshFeOrder != null ? `Size · P${opts.meshFeOrder}` : "Size",
           icon: "📏",
         },
         { id: "universe-mesh-quality", label: "Quality", icon: "📊" },

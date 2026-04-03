@@ -378,6 +378,8 @@ export interface DomainFrameDeclaredUniverseState {
   center: [number, number, number] | null;
   padding: [number, number, number] | null;
   airbox_hmax: number | null;
+  airbox_hmin: number | null;
+  airbox_growth_rate: number | null;
 }
 
 export interface DomainFrameState {
@@ -772,6 +774,20 @@ export interface MeshHistoryEntryState {
   size_field_stats?: Record<string, unknown> | null;
 }
 
+export interface MeshEffectiveAirboxTargetState {
+  hmax: number | null;
+  hmin: number | null;
+  growth_rate: number | null;
+}
+
+export interface MeshEffectiveObjectTargetState {
+  marker: number | null;
+  hmax: number | null;
+  interface_hmax: number | null;
+  transition_distance: number | null;
+  source: string | null;
+}
+
 export interface MeshWorkspaceState {
   mesh_summary: MeshSummaryState | null;
   mesh_quality_summary: MeshQualitySummaryState | null;
@@ -781,7 +797,8 @@ export interface MeshWorkspaceState {
   mesh_history: MeshHistoryEntryState[];
   // Commit 4: build contract extensions
   active_build: MeshBuildIntent | null;
-  effective_per_object_targets: Record<string, { hmax: number; interface_hmax: number | null; transition_distance: number | null }> | null;
+  effective_airbox_target: MeshEffectiveAirboxTargetState | null;
+  effective_per_object_targets: Record<string, MeshEffectiveObjectTargetState> | null;
   last_build_summary: Record<string, unknown> | null;
   last_build_error: string | null;
 }

@@ -67,8 +67,25 @@ export default function MeshBuildModal({
     return null;
   }
 
-  const hasError = Boolean(errorMessage || errorDetails);
+  const buildSummary = meshWorkspace?.last_build_summary ?? null;
+  const structuredTargets = meshWorkspace?.effective_per_object_targets ?? null;
+  const effectiveAirboxTarget = meshWorkspace?.effective_airbox_target ?? null;
+  const effectiveErrorMessage = errorMessage ?? meshWorkspace?.last_build_error ?? null;
+  const hasError = Boolean(effectiveErrorMessage || errorDetails);
   const meshSummary = meshWorkspace?.mesh_summary ?? null;
+  const summaryBuildMode =
+    buildSummary && typeof buildSummary.shared_domain_build_mode === "string"
+      ? buildSummary.shared_domain_build_mode
+      : null;
+  const summaryFieldKinds =
+    buildSummary && Array.isArray(buildSummary.used_size_field_kinds)
+      ? buildSummary.used_size_field_kinds.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  const summaryFallbacks =
+    buildSummary && Array.isArray(buildSummary.fallbacks_triggered)
+      ? buildSummary.fallbacks_triggered.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  const recentHistory = meshWorkspace?.mesh_history?.slice().reverse().slice(0, 4) ?? [];
   const modalLog = engineLog
     .filter((entry) => {
       const lower = entry.message.toLowerCase();
@@ -140,8 +157,8 @@ export default function MeshBuildModal({
                     timestampUnixMs: Date.now(),
                     level: "error",
                     title: "Operation interrupted by backend error",
-                    summary: errorMessage ?? "Mesh build failed",
-                    details: errorMessage ?? "Mesh build failed",
+                    summary: effectiveErrorMessage ?? "Mesh build failed",
+                    details: effectiveErrorMessage ?? "Mesh build failed",
                     traceback: null,
                   }
                 }
@@ -221,13 +238,32 @@ export default function MeshBuildModal({
             </div>
           </div>
 
-          <div className="grid min-h-0 grid-rows-[auto_auto_1fr]">
+          <div className="grid min-h-0 grid-rows-[auto_auto_auto_1fr]">
             <div className="border-b border-white/8 px-6 py-4">
               <div className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
                 Effective mesh targets
               </div>
               <div className="mt-3 grid gap-2">
-                {effectiveTargets.length > 0 ? effectiveTargets.map((target) => (
+                {structuredTargets && Object.keys(structuredTargets).length > 0 ? Object.entries(structuredTargets).map(([geometryName, target]) => (
+                  <div key={geometryName} className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate font-mono text-sm text-white">{geometryName}</span>
+                      <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[0.6rem] uppercase tracking-[0.14em] text-slate-400">
+                        {target.source ?? "backend"}
+                      </span>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[0.72rem] text-slate-300/78">
+                      <span>Bulk hmax</span>
+                      <span className="text-right font-mono text-white">
+                        {target.hmax != null ? fmtSI(target.hmax, "m") : "auto"}
+                      </span>
+                      <span>Interface hmax</span>
+                      <span className="text-right font-mono text-white">
+                        {target.interface_hmax != null ? fmtSI(target.interface_hmax, "m") : "—"}
+                      </span>
+                    </div>
+                  </div>
+                )) : effectiveTargets.length > 0 ? effectiveTargets.map((target) => (
                   <div key={target.geometryName} className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5">
                     <div className="flex items-center justify-between gap-3">
                       <span className="truncate font-mono text-sm text-white">{target.geometryName}</span>
@@ -258,10 +294,51 @@ export default function MeshBuildModal({
               <div className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
                 Last built mesh summary
               </div>
-              <div className="mt-2 text-sm leading-relaxed text-slate-300/80">
-                {meshSummary
-                  ? `${meshSummary.mesh_name} · ${meshSummary.source_kind} · hmax ${fmtSI(meshSummary.hmax, "m")}`
-                  : "Mesh summary will appear here as soon as the first build finishes."}
+              <div className="mt-2 grid gap-1.5 text-sm leading-relaxed text-slate-300/80">
+                <div>
+                  {meshSummary
+                    ? `${meshSummary.mesh_name} · ${meshSummary.source_kind} · hmax ${fmtSI(meshSummary.hmax, "m")}`
+                    : "Mesh summary will appear here as soon as the first build finishes."}
+                </div>
+                {summaryBuildMode ? (
+                  <div>Build mode: <span className="font-mono text-white">{summaryBuildMode}</span></div>
+                ) : null}
+                {effectiveAirboxTarget?.hmax != null ? (
+                  <div>Airbox hmax: <span className="font-mono text-white">{fmtSI(effectiveAirboxTarget.hmax, "m")}</span></div>
+                ) : null}
+                {summaryFieldKinds.length > 0 ? (
+                  <div>Size fields: <span className="font-mono text-white">{summaryFieldKinds.join(", ")}</span></div>
+                ) : null}
+                {summaryFallbacks.length > 0 ? (
+                  <div>Fallbacks: <span className="font-mono text-amber-300">{summaryFallbacks.join(", ")}</span></div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="border-b border-white/8 px-6 py-4">
+              <div className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                Recent builds
+              </div>
+              <div className="mt-3 grid gap-2">
+                {recentHistory.length > 0 ? recentHistory.map((entry, index) => (
+                  <div key={`${entry.mesh_name}-${entry.node_count}-${index}`} className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5 text-[0.74rem] text-slate-300/80">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate font-mono text-sm text-white">
+                        {entry.mesh_name || "mesh"}
+                      </span>
+                      <span className="text-[0.62rem] uppercase tracking-[0.14em] text-slate-400">
+                        {entry.generation_mode ?? entry.kind ?? "manual"}
+                      </span>
+                    </div>
+                    <div className="mt-1">
+                      {entry.node_count.toLocaleString()} nodes · {entry.element_count.toLocaleString()} tetra · {entry.boundary_face_count.toLocaleString()} faces
+                    </div>
+                  </div>
+                )) : (
+                  <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-3 text-sm text-slate-400">
+                    Build history will appear here after the first completed remesh.
+                  </div>
+                )}
               </div>
             </div>
 

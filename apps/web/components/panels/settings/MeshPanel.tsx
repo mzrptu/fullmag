@@ -35,12 +35,15 @@ import { Button } from "../../ui/button";
 
 import { SidebarSection } from "./primitives";
 
-function getPhaseStyle(status: "idle" | "active" | "done" | "warning") {
+function getPhaseStyle(status: "idle" | "active" | "done" | "warning" | "queued" | "failed") {
   switch (status) {
     case "done":
       return { css: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300", icon: <CheckCircle2 size={13} className="text-emerald-400" /> };
     case "active":
       return { css: "border-primary/40 bg-primary/10 text-primary shadow-[0_0_12px_rgba(59,130,246,0.15)]", icon: <Loader2 size={13} className="animate-spin text-primary" /> };
+    case "queued":
+      return { css: "border-sky-500/30 bg-sky-500/10 text-sky-200", icon: <CircleDashed size={13} className="text-sky-300" /> };
+    case "failed":
     case "warning":
       return { css: "border-amber-500/30 bg-amber-500/10 text-amber-300", icon: <AlertTriangle size={13} className="text-amber-400" /> };
     default:

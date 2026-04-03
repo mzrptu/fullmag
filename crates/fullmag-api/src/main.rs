@@ -1793,6 +1793,10 @@ fn mesh_command_target_event(target: &MeshCommandTarget) -> MeshCommandTargetEve
     match target {
         MeshCommandTarget::StudyDomain => MeshCommandTargetEvent::StudyDomain,
         MeshCommandTarget::AdaptiveFollowup => MeshCommandTargetEvent::AdaptiveFollowup,
+        MeshCommandTarget::Airbox => MeshCommandTargetEvent::Airbox,
+        MeshCommandTarget::ObjectMesh { object_id } => MeshCommandTargetEvent::ObjectMesh {
+            object_id: object_id.clone(),
+        },
     }
 }
 

@@ -22,7 +22,8 @@ import numpy as np
 
 from fullmag._progress import emit_progress
 from fullmag.meshing.asset_pipeline import (
-    realize_fem_domain_mesh_asset_from_components,
+    SharedDomainBuildReport,
+    realize_fem_domain_mesh_asset_from_components_with_report,
 )
 from fullmag.meshing.gmsh_bridge import (
     MeshOptions,
@@ -258,6 +259,7 @@ def main() -> None:
             )
         )
         region_markers = None
+        shared_domain_report: SharedDomainBuildReport | None = None
 
         # Redirect the real stdout fd to /dev/null during mesh generation —
         # C libraries like MMG3D print progress banners directly to fd 1,
@@ -303,11 +305,13 @@ def main() -> None:
                         else []
                     ),
                 }
-                mesh_data, region_markers = realize_fem_domain_mesh_asset_from_components(
+                mesh_data, region_markers, shared_domain_report = (
+                    realize_fem_domain_mesh_asset_from_components_with_report(
                     geometries,
                     FEM(order=int(order), hmax=float(hmax)),
                     study_universe=declared_universe,
                     mesh_workflow=mesh_workflow,
+                    )
                 )
             elif mode == "manual_remesh":
                 mesh_data = generate_mesh(geometry, hmax=hmax, order=order, options=mesh_opts)
@@ -350,6 +354,31 @@ def main() -> None:
                 "order": int(order),
                 "hmax": float(hmax),
                 "mesh_options": mesh_opts_dict,
+                "shared_domain_build_mode": (
+                    shared_domain_report.build_mode
+                    if shared_domain_report is not None
+                    else None
+                ),
+                "fallbacks_triggered": (
+                    shared_domain_report.fallbacks_triggered
+                    if shared_domain_report is not None
+                    else []
+                ),
+                "effective_airbox_target": (
+                    shared_domain_report.effective_airbox_target
+                    if shared_domain_report is not None
+                    else None
+                ),
+                "effective_per_object_targets": (
+                    shared_domain_report.effective_per_object_targets
+                    if shared_domain_report is not None
+                    else None
+                ),
+                "used_size_field_kinds": (
+                    shared_domain_report.used_size_field_kinds
+                    if shared_domain_report is not None
+                    else []
+                ),
             },
             size_field_stats=size_field_stats,
             region_markers=region_markers,

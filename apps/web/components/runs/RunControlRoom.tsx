@@ -142,9 +142,10 @@ function ControlRoomShell() {
         mode: "selected",
         nodeId: ctx.selectedSidebarNodeId,
         sceneDocument: ctx.sceneDocument,
+        modelBuilderGraph: ctx.modelBuilderGraph,
         hasSharedAirboxDomain,
       }),
-    [ctx.sceneDocument, ctx.selectedSidebarNodeId, hasSharedAirboxDomain],
+    [ctx.modelBuilderGraph, ctx.sceneDocument, ctx.selectedSidebarNodeId, hasSharedAirboxDomain],
   );
   const effectiveMeshTargets = useMemo(
     () =>
@@ -157,6 +158,7 @@ function ControlRoomShell() {
   const meshBuildStages = useMemo(
     () =>
       buildMeshBuildStages({
+        meshWorkspace: ctx.meshWorkspace,
         workspaceStatus: ctx.workspaceStatus,
         meshGenerating: ctx.meshGenerating,
         scriptSyncBusy: ctx.scriptSyncBusy,
@@ -170,6 +172,7 @@ function ControlRoomShell() {
       ctx.activity.label,
       ctx.commandMessage,
       ctx.engineLog,
+      ctx.meshWorkspace,
       ctx.meshGenerating,
       ctx.scriptSyncBusy,
       ctx.workspaceStatus,
@@ -228,22 +231,24 @@ function ControlRoomShell() {
       mode: "selected",
       nodeId: ctx.selectedSidebarNodeId,
       sceneDocument: ctx.sceneDocument,
+      modelBuilderGraph: ctx.modelBuilderGraph,
       hasSharedAirboxDomain,
     });
     ensureMeshBuildModal(intent);
     try {
-      const nodeId = intent.targetNodeId;
-      if (nodeId && nodeId.startsWith("geo-") && nodeId.endsWith("-mesh")) {
-        const objectId = resolveSelectedObjectId(nodeId, ctx.sceneDocument ?? ctx.modelBuilderGraph);
-        await ctx.handleObjectMeshOverrideRebuild(objectId);
-        return;
+      switch (intent.buildIntent.target.kind) {
+        case "object_mesh":
+          await ctx.handleObjectMeshOverrideRebuild(intent.buildIntent.target.object_id);
+          return;
+        case "airbox":
+          await syncIfPossible();
+          await ctx.handleAirboxMeshGenerate();
+          return;
+        case "study_domain":
+          await syncIfPossible();
+          await ctx.handleStudyDomainMeshGenerate("manual_ui_rebuild_selected");
+          return;
       }
-      await syncIfPossible();
-      if (nodeId === "universe-airbox" || nodeId?.startsWith("universe-airbox")) {
-        await ctx.handleAirboxMeshGenerate();
-        return;
-      }
-      await ctx.handleStudyDomainMeshGenerate();
     } catch (error) {
       setMeshBuildError(error instanceof Error ? error.message : "Mesh build failed");
     }
@@ -254,12 +259,13 @@ function ControlRoomShell() {
       mode: "all",
       nodeId: ctx.selectedSidebarNodeId,
       sceneDocument: ctx.sceneDocument,
+      modelBuilderGraph: ctx.modelBuilderGraph,
       hasSharedAirboxDomain,
     });
     ensureMeshBuildModal(intent);
     try {
       await syncIfPossible();
-      await ctx.handleStudyDomainMeshGenerate();
+      await ctx.handleStudyDomainMeshGenerate("manual_ui_rebuild_all");
     } catch (error) {
       setMeshBuildError(error instanceof Error ? error.message : "Mesh build failed");
     }

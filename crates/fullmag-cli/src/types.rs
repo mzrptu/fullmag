@@ -8,6 +8,8 @@ use std::sync::Arc;
 pub(crate) enum MeshCommandTarget {
     StudyDomain,
     AdaptiveFollowup,
+    Airbox,
+    ObjectMesh { object_id: String },
 }
 
 #[derive(Debug, Serialize)]
@@ -307,6 +309,10 @@ pub(crate) enum PythonProgressEvent {
         fem_mesh: fullmag_runner::FemMeshPayload,
         message: Option<String>,
     },
+    Structured {
+        kind: String,
+        payload: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -318,6 +324,8 @@ pub(crate) struct PythonProgressEnvelope {
     pub fem_mesh: Option<fullmag_runner::FemMeshPayload>,
     #[serde(default)]
     pub message: Option<String>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 pub(crate) type PythonProgressCallback = Arc<dyn Fn(PythonProgressEvent) + Send + Sync + 'static>;
