@@ -886,9 +886,7 @@ function FemMeshView3DInner({
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; faceIdx: number } | null>(null);
   const [selectedFaces, setSelectedFaces] = useState<number[]>([]);
   
-  const [geomCenter, setGeomCenter] = useState<THREE.Vector3>(new THREE.Vector3());
-  const [maxDim, setMaxDim] = useState<number>(0);
-  const [geomSize, setGeomSize] = useState<[number, number, number]>([1, 1, 1]);
+
   const [cameraFitGeneration, setCameraFitGeneration] = useState(0);
 
   const controlsRef = useRef<any>(null);
@@ -1396,52 +1394,74 @@ function FemMeshView3DInner({
     return () => window.removeEventListener("click", dismiss);
   }, [ctxMenu]);
 
-  const lastFittedGeomRef = useRef<string | null>(null);
-  const partFocused = hasMeshParts && visibleLayers.length <= 1;
-  const axesWorldExtent = useMemo<[number, number, number]>(() => {
-    if (partFocused) {
-      return geomSize;
-    }
-    if (
-      worldExtent &&
-      worldExtent.every((component) => Number.isFinite(component) && component > 0)
-    ) {
-      return worldExtent;
-    }
-    return geomSize;
-  }, [geomSize, partFocused, worldExtent]);
-  const axesCenter = useMemo<[number, number, number]>(() => {
-    if (partFocused) {
-      return [0, 0, 0];
-    }
-    if (
-      worldCenter &&
-      worldCenter.every((component) => Number.isFinite(component))
-    ) {
-      return [
-        worldCenter[0] - geomCenter.x,
-        worldCenter[1] - geomCenter.y,
-        worldCenter[2] - geomCenter.z,
-      ];
-    }
-    return [0, 0, 0];
-  }, [geomCenter.x, geomCenter.y, geomCenter.z, partFocused, worldCenter]);
-  const sceneMaxDim = useMemo(
-    () => Math.max(maxDim, axesWorldExtent[0], axesWorldExtent[1], axesWorldExtent[2]),
-    [axesWorldExtent, maxDim],
-  );
-
-  const handleGeometryCenter = useCallback((c: THREE.Vector3, m: number, s: THREE.Vector3) => {
-    setGeomCenter(c); setMaxDim(m); setGeomSize([s.x, s.y, s.z]);
+  const { dynamicGeomCenter, dynamicGeomSize, dynamicMaxDim } = useMemo(() => {
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
     
-    // Create a stable signature based on the bounding box dimensions and center, rounded to 4 decimals.
-    // This ensures that remeshing the EXACT SAME physical geometry does not reset the camera.
+    const tryAddFaceIndices = (indices: readonly number[] | null) => {
+      if (!indices || indices.length === 0) return;
+      const count = Math.floor(meshData.boundaryFaces.length / 3);
+      for (const idx of indices) {
+        if (!Number.isInteger(idx) || idx < 0 || idx >= count) continue;
+        const base = idx * 3;
+        const faceNodes = [meshData.boundaryFaces[base], meshData.boundaryFaces[base+1], meshData.boundaryFaces[base+2]];
+        for (const ni of faceNodes) {
+           const nBase = ni * 3;
+           const px = meshData.nodes[nBase], py = meshData.nodes[nBase+1], pz = meshData.nodes[nBase+2];
+           if (px < minX) minX = px; if (px > maxX) maxX = px;
+           if (py < minY) minY = py; if (py > maxY) maxY = py;
+           if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
+        }
+      }
+    };
+
+    if (hasMeshParts) {
+      for (const layer of visibleLayers) {
+        if (layer.surfaceFaces && layer.surfaceFaces.length > 0) {
+           for (const face of layer.surfaceFaces) {
+             for (let i = 0; i < 3; i++) {
+               const nBase = face[i] * 3;
+               const px = meshData.nodes[nBase], py = meshData.nodes[nBase+1], pz = meshData.nodes[nBase+2];
+               if (px < minX) minX = px; if (px > maxX) maxX = px;
+               if (py < minY) minY = py; if (py > maxY) maxY = py;
+               if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
+             }
+           }
+        } else {
+           tryAddFaceIndices(layer.boundaryFaceIndices);
+        }
+      }
+    } else {
+      if (shouldRenderAirGeometry) tryAddFaceIndices(airBoundaryFaceIndices);
+      if (shouldRenderMagneticGeometry) tryAddFaceIndices(magneticBoundaryFaceIndices);
+    }
+    
+    if (minX === Infinity) {
+      minX = 0; maxX = 1; minY = 0; maxY = 1; minZ = 0; maxZ = 1;
+    }
+    const sx = maxX - minX, sy = maxY - minY, sz = maxZ - minZ;
+    return {
+      dynamicGeomCenter: new THREE.Vector3((minX + maxX)/2, (minY + maxY)/2, (minZ + maxZ)/2),
+      dynamicGeomSize: [sx, sy, sz] as [number, number, number],
+      dynamicMaxDim: Math.max(sx, sy, sz)
+    };
+  }, [hasMeshParts, visibleLayers, shouldRenderAirGeometry, shouldRenderMagneticGeometry, airBoundaryFaceIndices, magneticBoundaryFaceIndices, meshData]);
+
+  const lastFittedGeomRef = useRef<string | null>(null);
+  
+  useEffect(() => {
+    const m = dynamicMaxDim;
+    const c = dynamicGeomCenter;
     const sig = `${m.toFixed(4)}_${c.x.toFixed(4)}_${c.y.toFixed(4)}_${c.z.toFixed(4)}`;
     if (lastFittedGeomRef.current !== sig) {
       lastFittedGeomRef.current = sig;
       setCameraFitGeneration((g) => g + 1);
     }
-  }, []);
+  }, [dynamicMaxDim, dynamicGeomCenter]);
+
+  const axesWorldExtent = dynamicGeomSize;
+  const axesCenter = [0, 0, 0] as [number, number, number];
+  const sceneMaxDim = dynamicMaxDim;
 
   const setCameraPreset = useCallback((view: "reset" | "front" | "top" | "right") => {
     const bridge = viewCubeSceneRef.current;
@@ -1455,17 +1475,17 @@ function FemMeshView3DInner({
     if (!overlay || !bridge?.camera || !bridge?.controls) return;
     focusCameraOnBounds(bridge.camera, bridge.controls, {
       min: [
-        overlay.boundsMin[0] - geomCenter.x,
-        overlay.boundsMin[1] - geomCenter.y,
-        overlay.boundsMin[2] - geomCenter.z,
+        overlay.boundsMin[0] - dynamicGeomCenter.x,
+        overlay.boundsMin[1] - dynamicGeomCenter.y,
+        overlay.boundsMin[2] - dynamicGeomCenter.z,
       ],
       max: [
-        overlay.boundsMax[0] - geomCenter.x,
-        overlay.boundsMax[1] - geomCenter.y,
-        overlay.boundsMax[2] - geomCenter.z,
+        overlay.boundsMax[0] - dynamicGeomCenter.x,
+        overlay.boundsMax[1] - dynamicGeomCenter.y,
+        overlay.boundsMax[2] - dynamicGeomCenter.z,
       ],
     }, { fallbackMinRadius: sceneMaxDim * 0.05 });
-  }, [geomCenter, objectOverlays, sceneMaxDim]);
+  }, [dynamicGeomCenter, objectOverlays, sceneMaxDim]);
 
   useEffect(() => {
     if (!focusObjectRequest) {
@@ -1574,7 +1594,7 @@ function FemMeshView3DInner({
                     uniformColor={layer.meshColor}
                     edgeColor={layer.edgeColor}
                     highlight={layer.isSelected}
-                    onGeometryCenter={layer.isPrimaryForCamera ? handleGeometryCenter : undefined}
+                    globalCenter={dynamicGeomCenter}
                     onFaceClick={handleFaceClick}
                     onFaceHover={handleFaceHover}
                     onFaceUnhover={handleFaceUnhover}
@@ -1595,7 +1615,7 @@ function FemMeshView3DInner({
                 clipEnabled={clipEnabled}
                 clipAxis={clipAxis}
                 clipPos={clipPos}
-                onGeometryCenter={handleGeometryCenter}
+                globalCenter={dynamicGeomCenter}
                 onFaceClick={handleFaceClick}
                 onFaceHover={handleFaceHover}
                 onFaceUnhover={handleFaceUnhover}
@@ -1615,7 +1635,7 @@ function FemMeshView3DInner({
                 clipEnabled={clipEnabled}
                 clipAxis={clipAxis}
                 clipPos={clipPos}
-                onGeometryCenter={!shouldRenderAirGeometry ? handleGeometryCenter : undefined}
+                globalCenter={dynamicGeomCenter}
                 onFaceClick={handleFaceClick}
                 onFaceHover={handleFaceHover}
                 onFaceUnhover={handleFaceUnhover}
@@ -1626,19 +1646,19 @@ function FemMeshView3DInner({
               meshData={meshData}
               field={arrowField}
               arrowDensity={arrowDensity}
-              center={geomCenter}
-              maxDim={maxDim}
+              center={dynamicGeomCenter}
+              maxDim={dynamicMaxDim}
               visible={effectiveShowArrows}
               activeNodeMask={magneticArrowNodeMask}
               boundaryFaceIndices={magneticBoundaryFaceIndices}
             />
-            <FemHighlightView meshData={meshData} selectedFaces={selectedFaces} center={geomCenter} />
+            <FemHighlightView meshData={meshData} selectedFaces={selectedFaces} center={dynamicGeomCenter} />
           </>
         ) : null}
         {antennaOverlays.length > 0 && !partFocused ? (
           <AntennaOverlayMeshes
             overlays={antennaOverlays}
-            geomCenter={geomCenter}
+            geomCenter={dynamicGeomCenter}
             selectedAntennaId={selectedAntennaId}
             onAntennaTranslate={onAntennaTranslate}
           />

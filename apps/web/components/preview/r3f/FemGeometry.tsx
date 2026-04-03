@@ -21,6 +21,7 @@ interface FemGeometryProps {
   clipEnabled?: boolean;
   clipAxis?: "x" | "y" | "z";
   clipPos?: number;
+  globalCenter?: THREE.Vector3;
   onGeometryCenter?: (center: THREE.Vector3, maxDim: number, size: THREE.Vector3) => void;
   onFaceClick?: (e: any) => void;
   onFaceHover?: (e: any) => void;
@@ -181,6 +182,7 @@ export function FemGeometry({
   clipEnabled,
   clipAxis,
   clipPos,
+  globalCenter,
   onGeometryCenter,
   onFaceClick,
   onFaceHover,
@@ -283,8 +285,11 @@ export function FemGeometry({
     const ms = Math.max(size.x, size.y, size.z);
     
     // Center positions
+    const subX = globalCenter ? globalCenter.x : cX;
+    const subY = globalCenter ? globalCenter.y : cY;
+    const subZ = globalCenter ? globalCenter.z : cZ;
     for (let i = 0; i < nNodes * 3; i += 3) {
-      positions[i] -= cX; positions[i + 1] -= cY; positions[i + 2] -= cZ;
+      positions[i] -= subX; positions[i + 1] -= subY; positions[i + 2] -= subZ;
     }
 
     const isVolumetric = elements.length >= 4;
@@ -479,7 +484,7 @@ export function FemGeometry({
       edgesGeometry: edgesGeom,
       tetraEdgesGeometry: tetraWireGeom,
       pointsGeometry: ptsGeom,
-      center: new THREE.Vector3(cX, cY, cZ),
+      center: globalCenter ?? new THREE.Vector3(cX, cY, cZ),
       maxDim: ms,
       geoSize: size,
       vertexMap: vMap,
@@ -494,6 +499,7 @@ export function FemGeometry({
     clipPos,
     displayBoundaryFaceIndices,
     displayElementIndices,
+    globalCenter,
     invalidate,
     meshData,
     shrinkFactor,

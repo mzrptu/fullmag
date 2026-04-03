@@ -100,9 +100,9 @@ function resolveVoxelTopography(baseZ: number, baseDepth: number, signedDisplace
 
 function createArrowGeometry(segments: number): THREE.BufferGeometry {
   const shaft = new THREE.CylinderGeometry(0.05, 0.05, 0.55, segments);
-  shaft.translate(0, -0.06, 0);
+  shaft.translate(0, 0.275, 0); // Position base of shaft at Y=0
   const head = new THREE.ConeGeometry(0.2, 0.4, segments);
-  head.translate(0, 0.4, 0);
+  head.translate(0, 0.55 + 0.2, 0); // Position head exactly at the end of the shaft
   const merged = mergeGeometries([shaft, head]);
   if (!merged) throw new Error("failed to merge arrow geometry");
   merged.computeVertexNormals();

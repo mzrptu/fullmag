@@ -34,13 +34,13 @@ function useArrowTemplate(maxDim: number) {
 
     const shaft = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLen, 6);
     shaft.rotateX(Math.PI / 2);
-    // Center the shaft
-    shaft.translate(0, 0, shaftLen / 2 - arrowLen / 2);
+    // Position base of shaft exactly at Z=0
+    shaft.translate(0, 0, shaftLen / 2);
     
     const head = new THREE.ConeGeometry(headRadius, headLen, 6);
     head.rotateX(Math.PI / 2);
-    // Position head precisely at the end of the centered shaft
-    head.translate(0, 0, shaftLen + headLen / 2 - arrowLen / 2);
+    // Position head precisely at the end of the shaft
+    head.translate(0, 0, shaftLen + headLen / 2);
 
     const shaftPos = shaft.getAttribute("position") as THREE.BufferAttribute;
     const headPos = head.getAttribute("position") as THREE.BufferAttribute;
