@@ -102,6 +102,19 @@ export {
 export function materializationProgressFromMessage(message: string | null): number {
   if (!message) return 6;
   const lower = message.toLowerCase();
+  const gmshPercent = message.match(/\[\s*(\d{1,3})%\]/);
+  if (gmshPercent) {
+    const localPercent = Math.max(0, Math.min(100, Number(gmshPercent[1])));
+    if (lower.includes("meshing curve") || lower.includes("meshing 1d")) {
+      return 45 + localPercent * 0.08;
+    }
+    if (lower.includes("meshing surface") || lower.includes("meshing 2d")) {
+      return 55 + localPercent * 0.12;
+    }
+    if (lower.includes("meshing volume") || lower.includes("meshing 3d")) {
+      return 70 + localPercent * 0.2;
+    }
+  }
   if (lower.includes("control room bootstrap verified")) return 8;
   if (lower.includes("loading python script")) return 14;
   if (lower.includes("building problemir")) return 22;
@@ -112,6 +125,10 @@ export function materializationProgressFromMessage(message: string | null): numb
   if (lower.includes("classifying stl surfaces")) return 70;
   if (lower.includes("creating geometry from classified surfaces")) return 80;
   if (lower.includes("generating 3d tetrahedral mesh")) return 90;
+  if (lower.includes("tetrahedrizing")) return 92;
+  if (lower.includes("reconstructing mesh")) return 93;
+  if (lower.includes("refinement terminated")) return 94;
+  if (lower.includes("optimizing mesh")) return 95;
   if (lower.includes("mesh ready") || lower.includes("fem mesh ready")) return 96;
   if (lower.includes("script materialized")) return 100;
   return 12;

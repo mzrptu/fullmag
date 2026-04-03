@@ -313,7 +313,6 @@ def build_geometry_assets_for_request(
                 "region_markers": explicit_domain_region_markers,
             }
         elif study_universe is not None:
-            emit_progress("Preparing shared FEM domain mesh asset")
             domain_mesh, region_markers = realize_fem_domain_mesh_asset(
                 list(geometries),
                 discretization.fem,

@@ -235,27 +235,41 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
     }
     if (nodeId === "universe-mesh-size" || nodeId === "universe-mesh-quality") {
       return (
-        <MeshSettingsPanel
-          options={ctx.meshOptions}
-          onChange={ctx.setMeshOptions}
-          quality={ctx.meshQualityData}
-          nodeCount={ctx.effectiveFemMesh?.nodes.length}
-          disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
-          waitMode={ctx.isWaitingForCompute}
-        />
+        <>
+          <SidebarSection title="Object Mesh Defaults" defaultOpen={true}>
+            <div className="rounded-lg border border-border/35 bg-background/40 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+              These settings define shared object defaults for the next study-domain remesh. They do not create a third standalone mesh, and airbox sizing is still configured separately under Universe → Airbox.
+            </div>
+          </SidebarSection>
+          <MeshSettingsPanel
+            options={ctx.meshOptions}
+            onChange={ctx.setMeshOptions}
+            quality={ctx.meshQualityData}
+            nodeCount={ctx.effectiveFemMesh?.nodes.length}
+            disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
+            waitMode={ctx.isWaitingForCompute}
+          />
+        </>
       );
     }
     if (nodeId === "universe" || nodeId.startsWith("universe-")) return <UniversePanel />;
     if (nodeId === "mesh-size" || nodeId === "mesh-algorithm" || nodeId === "mesh-quality") {
       return (
-        <MeshSettingsPanel
-          options={ctx.meshOptions}
-          onChange={ctx.setMeshOptions}
-          quality={ctx.meshQualityData}
-          nodeCount={ctx.effectiveFemMesh?.nodes.length}
-          disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
-          waitMode={ctx.isWaitingForCompute}
-        />
+        <>
+          <SidebarSection title="Object Mesh Defaults" defaultOpen={true}>
+            <div className="rounded-lg border border-border/35 bg-background/40 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
+              These controls set shared object defaults for the final study-domain remesh. Use Universe → Airbox for air-region sizing and object nodes for local overrides.
+            </div>
+          </SidebarSection>
+          <MeshSettingsPanel
+            options={ctx.meshOptions}
+            onChange={ctx.setMeshOptions}
+            quality={ctx.meshQualityData}
+            nodeCount={ctx.effectiveFemMesh?.nodes.length}
+            disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
+            waitMode={ctx.isWaitingForCompute}
+          />
+        </>
       );
     }
     if (nodeId === "mesh" || nodeId.startsWith("mesh-")) {

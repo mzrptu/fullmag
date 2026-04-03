@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
+import threading
+import time
 from typing import Any
 import math
 
@@ -924,6 +927,7 @@ def generate_box_mesh(
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
+        _configure_gmsh_threads(gmsh)
         gmsh.model.add("fullmag_box")
         sx, sy, sz = size
         gmsh.model.occ.addBox(-sx / 2.0, -sy / 2.0, -sz / 2.0, sx, sy, sz)
@@ -939,7 +943,8 @@ def generate_box_mesh(
                 airbox_field_ids.append(airbox_field)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
         _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
-        gmsh.model.mesh.generate(3)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox, per_domain_quality=_pdq)
@@ -967,6 +972,7 @@ def generate_cylinder_mesh(
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
+        _configure_gmsh_threads(gmsh)
         gmsh.model.add("fullmag_cylinder")
         gmsh.model.occ.addCylinder(0.0, 0.0, -height / 2.0, 0.0, 0.0, height, radius)
         gmsh.model.occ.synchronize()
@@ -981,7 +987,8 @@ def generate_cylinder_mesh(
                 airbox_field_ids.append(airbox_field)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
         _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
-        gmsh.model.mesh.generate(3)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox, per_domain_quality=_pdq)
@@ -1011,6 +1018,7 @@ def generate_difference_mesh(
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
+        _configure_gmsh_threads(gmsh)
         gmsh.model.add("fullmag_difference")
         base_tags = _add_geometry_to_occ(gmsh, geometry.base, scale=SCALE)
         tool_tags = _add_geometry_to_occ(gmsh, geometry.tool, scale=SCALE)
@@ -1018,7 +1026,8 @@ def generate_difference_mesh(
         gmsh.model.occ.synchronize()
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
         _apply_mesh_options(gmsh, hmax * SCALE, order, opts, hscale=SCALE)
-        gmsh.model.mesh.generate(3)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _extract_mesh_data(gmsh, quality=quality, per_domain_quality=_pdq)
@@ -1057,6 +1066,7 @@ def _generate_csg_mesh(
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
+        _configure_gmsh_threads(gmsh)
         gmsh.model.add("fullmag_csg")
         mag_tags = _add_geometry_to_occ(gmsh, geometry, scale=SCALE)
         gmsh.model.occ.synchronize()
@@ -1078,7 +1088,8 @@ def _generate_csg_mesh(
             hscale=SCALE,
             preexisting_field_ids=airbox_field_ids,
         )
-        gmsh.model.mesh.generate(3)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox, per_domain_quality=_pdq)
@@ -1249,6 +1260,7 @@ def _mesh_cad_file(
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
+        _configure_gmsh_threads(gmsh)
         gmsh.model.add(path.stem)
         emit_progress("Gmsh: importing CAD shapes")
         gmsh.model.occ.importShapes(str(path))
@@ -1263,7 +1275,8 @@ def _mesh_cad_file(
                 airbox_field_ids.append(airbox_field)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
         _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
-        gmsh.model.mesh.generate(3)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _scale_mesh_nodes(
@@ -1374,6 +1387,7 @@ def _mesh_stl_surface(
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
+        _configure_gmsh_threads(gmsh)
         gmsh.model.add(path.stem)
         body_vols, body_surfs = _build_stl_volume_model(gmsh, path)
         has_airbox = airbox is not None
@@ -1385,7 +1399,8 @@ def _mesh_stl_surface(
                 airbox_field_ids.append(airbox_field)
         emit_progress("Gmsh: generating 3D tetrahedral mesh")
         _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
-        gmsh.model.mesh.generate(3)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _scale_mesh_nodes(
@@ -1636,6 +1651,146 @@ def _apply_mesh_options(
         emit_progress("Gmsh: configuring mesh size fields")
         _configure_mesh_size_fields(gmsh, [], hscale, extra_field_ids)
 
+
+def _resolve_gmsh_thread_count(requested_threads: int | None = None) -> int:
+    env_value = os.environ.get("FULLMAG_GMSH_THREADS")
+    if env_value:
+        try:
+            parsed = int(env_value)
+            if parsed >= 1:
+                return parsed
+        except ValueError:
+            pass
+    if requested_threads is not None and requested_threads >= 1:
+        return requested_threads
+    cpu_total = os.cpu_count() or 1
+    return max(1, cpu_total)
+
+
+def _configure_gmsh_threads(gmsh: Any, requested_threads: int | None = None) -> int:
+    thread_count = _resolve_gmsh_thread_count(requested_threads)
+    gmsh.option.setNumber("General.NumThreads", thread_count)
+    gmsh.option.setNumber("Mesh.MaxNumThreads1D", thread_count)
+    gmsh.option.setNumber("Mesh.MaxNumThreads2D", thread_count)
+    gmsh.option.setNumber("Mesh.MaxNumThreads3D", thread_count)
+    emit_progress(f"Gmsh: multithreading enabled ({thread_count} threads)")
+    return thread_count
+
+
+def _normalize_gmsh_log_line(message: str) -> str | None:
+    text = message.strip()
+    if not text:
+        return None
+    if text.startswith("Info: "):
+        text = text[len("Info: ") :].strip()
+    elif text.startswith("Progress: "):
+        text = text[len("Progress: ") :].strip()
+
+    lower = text.lower()
+    if not text:
+        return None
+    if lower.startswith("meshing curve "):
+        return None
+    if lower.startswith("meshing surface ") and "[" not in text:
+        return None
+    if lower.startswith("optimizing volume "):
+        return None
+    if lower.startswith("0.00 < quality <") or lower.startswith("0.10 < quality <"):
+        return None
+    if lower.startswith("0.20 < quality <") or lower.startswith("0.30 < quality <"):
+        return None
+    if lower.startswith("0.40 < quality <") or lower.startswith("0.50 < quality <"):
+        return None
+    if lower.startswith("0.60 < quality <") or lower.startswith("0.70 < quality <"):
+        return None
+    if lower.startswith("0.80 < quality <") or lower.startswith("0.90 < quality <"):
+        return None
+    if lower.startswith("progress:"):
+        return None
+    if "[" in text and "%" in text:
+        return f"Gmsh: {text}"
+    if (
+        "tetrahedrizing" in lower
+        or "reconstructing mesh" in lower
+        or "creating surface mesh" in lower
+        or "identifying boundary edges" in lower
+        or "recovering boundary" in lower
+        or "3d meshing" in lower
+        or "refinement terminated" in lower
+        or lower.startswith("it. ")
+        or "done tetrahedrizing" in lower
+        or "done reconstructing mesh" in lower
+        or "done meshing 3d" in lower
+        or "optimizing mesh" in lower
+        or "optimization starts" in lower
+        or "edge swaps" in lower
+        or "no ill-shaped tets" in lower
+    ):
+        return f"Gmsh: {text}"
+    return None
+
+
+class _GmshProgressLogger:
+    def __init__(
+        self,
+        gmsh: Any,
+        poll_interval_s: float = 0.2,
+        heartbeat_interval_s: float = 5.0,
+    ) -> None:
+        self._gmsh = gmsh
+        self._poll_interval_s = poll_interval_s
+        self._heartbeat_interval_s = heartbeat_interval_s
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._seen_count = 0
+        self._started_at = 0.0
+        self._last_emit_at = 0.0
+
+    def __enter__(self) -> "_GmshProgressLogger":
+        self._gmsh.logger.start()
+        now = time.monotonic()
+        self._started_at = now
+        self._last_emit_at = now
+        self._thread = threading.Thread(target=self._poll, name="fullmag-gmsh-progress", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(0.5, self._poll_interval_s * 4))
+        self._flush()
+        try:
+            self._gmsh.logger.stop()
+        except Exception:
+            pass
+
+    def _poll(self) -> None:
+        while not self._stop.wait(self._poll_interval_s):
+            emitted = self._flush()
+            now = time.monotonic()
+            if not emitted and now - self._last_emit_at >= self._heartbeat_interval_s:
+                elapsed = now - self._started_at
+                emit_progress(f"Gmsh: meshing in progress ({elapsed:.1f}s elapsed)")
+                self._last_emit_at = now
+
+    def _flush(self) -> bool:
+        try:
+            messages = self._gmsh.logger.get()
+        except Exception:
+            return False
+        if self._seen_count > len(messages):
+            self._seen_count = 0
+        new_messages = messages[self._seen_count :]
+        self._seen_count = len(messages)
+        emitted_any = False
+        for message in new_messages:
+            normalized = _normalize_gmsh_log_line(message)
+            if normalized:
+                emit_progress(normalized)
+                emitted_any = True
+                self._last_emit_at = time.monotonic()
+        return emitted_any
 
 def _apply_post_mesh_options(gmsh: Any, opts: MeshOptions) -> None:
     """Apply post-generation options (optimization passes)."""
@@ -2017,6 +2172,7 @@ def _remesh_box(
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
+        _configure_gmsh_threads(gmsh)
         gmsh.model.add("fullmag_box_afem")
         emit_progress("AFEM: building OCC box geometry")
         sx, sy, sz = geometry.size
@@ -2026,7 +2182,8 @@ def _remesh_box(
         _apply_mesh_options(gmsh, hmax, order, opts)
         _apply_postview_background_mesh(gmsh, sf)
         emit_progress("AFEM: generating adaptive 3D mesh")
-        gmsh.model.mesh.generate(3)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _extract_mesh_data(gmsh, quality=quality, per_domain_quality=_pdq)
@@ -2050,6 +2207,7 @@ def _remesh_cylinder(
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
+        _configure_gmsh_threads(gmsh)
         gmsh.model.add("fullmag_cylinder_afem")
         emit_progress("AFEM: building OCC cylinder geometry")
         gmsh.model.occ.addCylinder(
@@ -2062,7 +2220,8 @@ def _remesh_cylinder(
         _apply_mesh_options(gmsh, hmax, order, opts)
         _apply_postview_background_mesh(gmsh, sf)
         emit_progress("AFEM: generating adaptive 3D mesh")
-        gmsh.model.mesh.generate(3)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _extract_mesh_data(gmsh, quality=quality, per_domain_quality=_pdq)
@@ -2086,6 +2245,7 @@ def _remesh_csg(
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
+        _configure_gmsh_threads(gmsh)
         gmsh.model.add("fullmag_csg_afem")
         emit_progress("AFEM: building OCC geometry")
         _add_geometry_to_occ(gmsh, geometry, scale=SCALE)
@@ -2094,7 +2254,8 @@ def _remesh_csg(
         _apply_mesh_options(gmsh, hmax * SCALE, order, opts, hscale=SCALE)
         _apply_postview_background_mesh(gmsh, sf, coord_scale=SCALE)
         emit_progress("AFEM: generating adaptive 3D mesh")
-        gmsh.model.mesh.generate(3)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _extract_mesh_data(gmsh, quality=quality, per_domain_quality=_pdq)
@@ -2130,6 +2291,7 @@ def _remesh_imported(
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
+        _configure_gmsh_threads(gmsh)
         gmsh.model.add(path.stem + "_afem")
         if suffix in {".step", ".stp", ".iges", ".igs"}:
             emit_progress("AFEM: importing CAD shapes")
@@ -2149,7 +2311,8 @@ def _remesh_imported(
         inv_scale = 1.0 / float(np.max(scale_xyz[scale_xyz > 0]))
         _apply_postview_background_mesh(gmsh, sf, coord_scale=inv_scale)
         emit_progress("AFEM: generating adaptive 3D mesh")
-        gmsh.model.mesh.generate(3)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
         quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _scale_mesh_nodes(_extract_mesh_data(gmsh, quality=quality, per_domain_quality=_pdq), scale_xyz)
@@ -2206,6 +2369,7 @@ def add_air_box(
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
+        _configure_gmsh_threads(gmsh)
         gmsh.model.add("fullmag_airbox")
 
         # ── Create magnetic volume via Gmsh OCC ──
@@ -2322,7 +2486,8 @@ def add_air_box(
 
         # ── Generate ──
         emit_progress("Gmsh: generating air-box 3D mesh")
-        gmsh.model.mesh.generate(3)
+        with _GmshProgressLogger(gmsh):
+            gmsh.model.mesh.generate(3)
         quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
 
         # ── Extract mesh data ──

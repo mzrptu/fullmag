@@ -834,7 +834,7 @@ def _render_study_mesh_workflow(
     global_kwargs = _render_mesh_kwargs(global_mesh, source_root=source_root)
     global_build_requested = bool(global_mesh.get("build_requested", False))
     if global_kwargs:
-        lines.append(f"study.mesh({', '.join(global_kwargs)})")
+        lines.append(f"study.object_mesh_defaults({', '.join(global_kwargs)})")
 
     for magnet_name, mesh_config in _study_geometry_mesh_configs(problem, overrides):
         if _mesh_mode(mesh_config.get("mode")) != "custom":

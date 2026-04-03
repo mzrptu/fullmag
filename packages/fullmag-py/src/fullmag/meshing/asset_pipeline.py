@@ -324,6 +324,7 @@ def _shared_domain_local_size_fields(
     *,
     default_hmax: float,
     per_geometry: object,
+    bounds_by_name: dict[str, tuple] | None = None,
 ) -> list[dict[str, object]]:
     if not isinstance(per_geometry, list):
         return []
@@ -340,29 +341,55 @@ def _shared_domain_local_size_fields(
     fields: list[dict[str, object]] = []
     sentinel_outside = default_hmax  # Use global hmax as outside-box fallback; 1e18 crashed MMG3D
     for geometry in geometries:
-        bounds = geometry_bounds(geometry, source_root=None)
-        if bounds is None:
+        if bounds_by_name is not None:
+            bounds_pair = bounds_by_name.get(geometry.geometry_name)
+            if bounds_pair is None:
+                continue
+            bounds_min, bounds_max = bounds_pair
+        else:
+            bounds_min, bounds_max = geometry_bounds(geometry, source_root=None)
+        # geometry_bounds returns (None, None) when file cannot be found — skip
+        if bounds_min is None or bounds_max is None:
             continue
-        bounds_min, bounds_max = bounds
         entry = override_by_name.get(geometry.geometry_name)
         target_hmax = _coerce_positive_float(entry.get("hmax") if entry else None) or default_hmax
-        # Expand the local field by a few element widths around the object.
-        # The previous 1e-6 multiplier made the box effectively flush with the
-        # geometry bounds, so local overrides barely influenced the final
-        # shared-domain tetrahedral mesh.
-        pad = max(target_hmax, default_hmax) * 2.5
+        extent = np.asarray(bounds_max, dtype=np.float64) - np.asarray(bounds_min, dtype=np.float64)
+        min_extent = max(float(np.min(extent)), target_hmax)
+        interface_h = min(target_hmax, default_hmax) * 0.6
+        interface_pad = max(target_hmax * 0.5, min_extent * 0.05)
+        transition_pad = max(target_hmax * 2.5, min_extent * 0.15)
+        # Use a two-stage refinement policy:
+        # 1. a tight inner box that keeps the magnetic body itself dense
+        # 2. a broader transition halo that relaxes towards the coarse airbox
+        # This avoids the previous behaviour where the halo scaled with the
+        # coarse global hmax and spilled across most of the air domain.
+        fields.append(
+            {
+                "kind": "Box",
+                "params": {
+                    "VIn": float(interface_h),
+                    "VOut": float(target_hmax),
+                    "XMin": float(bounds_min[0] - interface_pad),
+                    "XMax": float(bounds_max[0] + interface_pad),
+                    "YMin": float(bounds_min[1] - interface_pad),
+                    "YMax": float(bounds_max[1] + interface_pad),
+                    "ZMin": float(bounds_min[2] - interface_pad),
+                    "ZMax": float(bounds_max[2] + interface_pad),
+                },
+            }
+        )
         fields.append(
             {
                 "kind": "Box",
                 "params": {
                     "VIn": float(target_hmax),
                     "VOut": float(sentinel_outside),
-                    "XMin": float(bounds_min[0] - pad),
-                    "XMax": float(bounds_max[0] + pad),
-                    "YMin": float(bounds_min[1] - pad),
-                    "YMax": float(bounds_max[1] + pad),
-                    "ZMin": float(bounds_min[2] - pad),
-                    "ZMax": float(bounds_max[2] + pad),
+                    "XMin": float(bounds_min[0] - transition_pad),
+                    "XMax": float(bounds_max[0] + transition_pad),
+                    "YMin": float(bounds_min[1] - transition_pad),
+                    "YMax": float(bounds_max[1] + transition_pad),
+                    "ZMin": float(bounds_min[2] - transition_pad),
+                    "ZMax": float(bounds_max[2] + transition_pad),
                 },
             }
         )
@@ -375,6 +402,7 @@ def _resolve_per_object_mesh_options(
     assembly_policy: SharedMeshAssemblyPolicy,
     *,
     default_hmax: float,
+    bounds_by_name: dict[str, tuple] | None = None,
 ) -> list[dict[str, object]]:
     """Build size-field overrides from per-object mesh recipes.
 
@@ -389,27 +417,51 @@ def _resolve_per_object_mesh_options(
         recipe = per_object_recipes.get(geometry.geometry_name)
         if recipe is None:
             continue
-        bounds = geometry_bounds(geometry, source_root=None)
-        if bounds is None:
+        if bounds_by_name is not None:
+            bounds_pair = bounds_by_name.get(geometry.geometry_name)
+            if bounds_pair is None:
+                continue
+            bounds_min, bounds_max = bounds_pair
+        else:
+            bounds_min, bounds_max = geometry_bounds(geometry, source_root=None)
+        # geometry_bounds returns (None, None) when file cannot be found — skip
+        if bounds_min is None or bounds_max is None:
             continue
-        bounds_min, bounds_max = bounds
         target_hmax = recipe.hmax if recipe.hmax is not None else default_hmax
+        extent = np.asarray(bounds_max, dtype=np.float64) - np.asarray(bounds_min, dtype=np.float64)
+        min_extent = max(float(np.min(extent)), target_hmax)
         # The interface factor controls how tightly the refined region tracks
         # the object boundary.  Values < 1 mean finer elements at interfaces.
         interface_h = target_hmax * assembly_policy.interface_hmax_factor
-        pad = max(target_hmax, interface_h) * 2.5
+        interface_pad = max(interface_h * 1.0, min_extent * 0.05)
+        transition_pad = max(target_hmax * 2.5, min_extent * 0.15)
+        extra_fields.append(
+            {
+                "kind": "Box",
+                "params": {
+                    "VIn": float(interface_h),
+                    "VOut": float(target_hmax),
+                    "XMin": float(bounds_min[0] - interface_pad),
+                    "XMax": float(bounds_max[0] + interface_pad),
+                    "YMin": float(bounds_min[1] - interface_pad),
+                    "YMax": float(bounds_max[1] + interface_pad),
+                    "ZMin": float(bounds_min[2] - interface_pad),
+                    "ZMax": float(bounds_max[2] + interface_pad),
+                },
+            }
+        )
         extra_fields.append(
             {
                 "kind": "Box",
                 "params": {
                     "VIn": float(target_hmax),
                     "VOut": float(default_hmax),
-                    "XMin": float(bounds_min[0] - pad),
-                    "XMax": float(bounds_max[0] + pad),
-                    "YMin": float(bounds_min[1] - pad),
-                    "YMax": float(bounds_max[1] + pad),
-                    "ZMin": float(bounds_min[2] - pad),
-                    "ZMax": float(bounds_max[2] + pad),
+                    "XMin": float(bounds_min[0] - transition_pad),
+                    "XMax": float(bounds_max[0] + transition_pad),
+                    "YMin": float(bounds_min[1] - transition_pad),
+                    "YMax": float(bounds_max[1] + transition_pad),
+                    "ZMin": float(bounds_min[2] - transition_pad),
+                    "ZMax": float(bounds_max[2] + transition_pad),
                 },
             }
         )
@@ -425,6 +477,7 @@ def _mesh_options_from_runtime_metadata(
     *,
     geometries: list[Geometry],
     default_hmax: float,
+    bounds_by_name: dict[str, tuple] | None = None,
 ) -> MeshOptions:
     raw_mesh_options = (
         mesh_workflow.get("mesh_options")
@@ -443,6 +496,7 @@ def _mesh_options_from_runtime_metadata(
             geometries,
             default_hmax=default_hmax,
             per_geometry=mesh_workflow.get("per_geometry") if isinstance(mesh_workflow, Mapping) else None,
+            bounds_by_name=bounds_by_name,
         )
     )
     optimize = raw_mesh_options.get("optimize")
@@ -634,6 +688,51 @@ def _match_geometry_bounds_to_source_markers(
     return marker_mapping
 
 
+def _count_nodes_for_element_mask(mesh: MeshData, element_mask: np.ndarray) -> int:
+    if mesh.elements.size == 0 or not np.any(element_mask):
+        return 0
+    return int(np.unique(mesh.elements[element_mask].reshape(-1)).size)
+
+
+def _display_mesh_partition_name(name: str) -> str:
+    if name.endswith("_geom") and len(name) > len("_geom"):
+        return name[: -len("_geom")]
+    return name
+
+
+def _emit_shared_domain_mesh_summary(
+    mesh: MeshData,
+    region_markers: list[dict[str, object]],
+) -> None:
+    emit_progress(
+        "Total mesh: "
+        f"{mesh.elements.shape[0]} tetrahedra, {mesh.nodes.shape[0]} nodes, "
+        f"{mesh.boundary_faces.shape[0]} boundary faces"
+    )
+
+    element_markers = np.asarray(mesh.element_markers, dtype=np.int32)
+    air_mask = element_markers == 0
+    if np.any(air_mask):
+        emit_progress(
+            "Mesh part airbox: "
+            f"{int(np.count_nonzero(air_mask))} tetrahedra, "
+            f"{_count_nodes_for_element_mask(mesh, air_mask)} nodes"
+        )
+
+    for entry in region_markers:
+        geometry_name = entry.get("geometry_name")
+        marker = entry.get("marker")
+        if not isinstance(geometry_name, str) or not isinstance(marker, int):
+            continue
+        part_mask = element_markers == int(marker)
+        part_label = _display_mesh_partition_name(geometry_name)
+        emit_progress(
+            f"Mesh part {part_label}: "
+            f"{int(np.count_nonzero(part_mask))} tetrahedra, "
+            f"{_count_nodes_for_element_mask(mesh, part_mask)} nodes"
+        )
+
+
 def realize_fem_domain_mesh_asset(
     geometries: list[Geometry],
     hints: FEM,
@@ -659,6 +758,17 @@ def realize_fem_domain_mesh_asset(
         component_mesh = _geometry_to_trimesh(geometry, trimesh)
         component_meshes.append(component_mesh.copy())
 
+    # Compute bounds directly from already-loaded, scaled component meshes (SI coords).
+    # This is more reliable than geometry_bounds(source_root=None) which may fail to
+    # locate ImportedGeometry STL files when the subprocess CWD differs from the script dir.
+    bounds_by_name: dict[str, tuple] = {}
+    for geometry, comp_mesh in zip(geometries, component_meshes):
+        verts = np.asarray(comp_mesh.vertices)
+        bounds_by_name[geometry.geometry_name] = (
+            tuple(float(v) for v in verts.min(axis=0)),
+            tuple(float(v) for v in verts.max(axis=0)),
+        )
+
     combined_surface = trimesh.util.concatenate(component_meshes)
     with tempfile.TemporaryDirectory(prefix="fullmag-fem-domain-") as tmp_dir:
         surface_path = Path(tmp_dir) / "shared_domain_surface.stl"
@@ -668,6 +778,7 @@ def realize_fem_domain_mesh_asset(
             mesh_workflow,
             geometries=geometries,
             default_hmax=float(hints.hmax),
+            bounds_by_name=bounds_by_name,
         )
         # Overlay per-object recipe size fields on top of the workflow fields.
         if per_object_recipes:
@@ -677,6 +788,7 @@ def realize_fem_domain_mesh_asset(
                 per_object_recipes,
                 _policy,
                 default_hmax=float(hints.hmax),
+                bounds_by_name=bounds_by_name,
             )
             if recipe_fields:
                 # Prepend recipe fields so they take priority over generic workflow fields.
@@ -691,9 +803,19 @@ def realize_fem_domain_mesh_asset(
             emit_progress(
                 f"Shared-domain local sizing active ({len(mesh_options.size_fields)} size fields)"
             )
+        # Raise the Gmsh CharacteristicLengthMax to the maximum of all intended element sizes
+        # so coarser per-geometry overrides (VIn > hints.hmax) are not silently clamped.
+        # The airbox hmax takes natural precedence as the coarsest intended size.
+        effective_hmax = float(hints.hmax)
+        if airbox is not None and airbox.hmax is not None and float(airbox.hmax) > effective_hmax:
+            effective_hmax = float(airbox.hmax)
+        for field in mesh_options.size_fields:
+            vin = field.get("params", {}).get("VIn") if isinstance(field.get("params"), dict) else None
+            if isinstance(vin, (int, float)) and float(vin) > effective_hmax:
+                effective_hmax = float(vin)
         mesh = generate_mesh_from_file(
             surface_path,
-            hmax=hints.hmax,
+            hmax=effective_hmax,
             order=hints.order,
             airbox=airbox,
             options=mesh_options,
@@ -754,6 +876,7 @@ def realize_fem_domain_mesh_asset(
         quality=mesh.quality,
         per_domain_quality=mesh.per_domain_quality,
     )
+    _emit_shared_domain_mesh_summary(classified_mesh, region_markers)
     return classified_mesh, region_markers
 
 

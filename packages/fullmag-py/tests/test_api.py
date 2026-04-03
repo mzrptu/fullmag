@@ -383,7 +383,9 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(workflow["build_target"], "domain")
 
         rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn("study.object_mesh_defaults(hmax=8e-09, order=2)", rewritten)
         self.assertIn("study.build_domain_mesh()", rewritten)
+        self.assertNotIn("study.mesh(", rewritten)
         self.assertNotIn("study.build_mesh()", rewritten)
 
     def test_study_build_domain_mesh_alias_builds_explicit_assets(self) -> None:
@@ -409,10 +411,189 @@ class ProblemApiTests(unittest.TestCase):
             with patch("fullmag.world.build_geometry_assets_for_request", return_value=None) as mocked:
                 loaded = fm.load_problem_from_script(path)
 
-        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual(mocked.call_count, 0)
         workflow = loaded.problem.runtime_metadata["mesh_workflow"]
         self.assertTrue(workflow["build_requested"])
         self.assertEqual(workflow["build_target"], "domain")
+        with patch(
+            "fullmag.model.problem.build_geometry_assets_for_request",
+            return_value=None,
+        ) as materialize_mock:
+            loaded.to_ir(
+                requested_backend=None,
+                execution_mode=None,
+                execution_precision=None,
+            )
+        self.assertEqual(materialize_mock.call_count, 1)
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn("study.object_mesh_defaults(hmax=8e-09, order=2)", rewritten)
+        self.assertNotIn("study.mesh(", rewritten)
+
+    def test_multiple_study_build_domain_mesh_calls_materialize_once_from_final_state(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("shared_domain_final_state")
+        study.engine("fem")
+        study.universe(mode="auto", padding=(10e-9, 10e-9, 10e-9), airbox_hmax=25e-9)
+        body = study.geometry(fm.Box(20e-9, 20e-9, 10e-9), name="body")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        body.mesh(hmax=8e-9, order=1)
+        study.build_domain_mesh()
+        body.mesh(hmax=4e-9, order=2)
+        study.build_domain_mesh()
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "study_build_domain_mesh_final_state.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with patch("fullmag.world.build_geometry_assets_for_request", return_value=None) as mocked:
+                loaded = fm.load_problem_from_script(path)
+
+        self.assertEqual(mocked.call_count, 0)
+        workflow = loaded.problem.runtime_metadata["mesh_workflow"]
+        self.assertTrue(workflow["build_requested"])
+        self.assertEqual(workflow["build_target"], "domain")
+        self.assertEqual(workflow["per_geometry"][0]["hmax"], 4e-9)
+        self.assertEqual(workflow["per_geometry"][0]["order"], 2)
+
+        with patch(
+            "fullmag.model.problem.build_geometry_assets_for_request",
+            return_value=None,
+        ) as materialize_mock:
+            loaded.to_ir(
+                requested_backend=None,
+                execution_mode=None,
+                execution_precision=None,
+            )
+
+        self.assertEqual(materialize_mock.call_count, 1)
+        materialize_workflow = materialize_mock.call_args.kwargs["mesh_workflow"]
+        self.assertEqual(materialize_workflow["per_geometry"][0]["hmax"], 4e-9)
+        self.assertEqual(materialize_workflow["per_geometry"][0]["order"], 2)
+
+    def test_study_build_domain_mesh_uses_airbox_hmax_as_shared_domain_default(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("shared_domain_airbox_default")
+        study.engine("fem")
+        study.universe(mode="auto", padding=(10e-9, 10e-9, 10e-9))
+        study.airbox(hmax=80e-9)
+        body = study.geometry(fm.Box(20e-9, 20e-9, 10e-9), name="body")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        body.mesh(hmax=25e-9, order=1)
+        study.build_domain_mesh()
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "study_build_domain_mesh_airbox_default.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+
+        workflow = loaded.problem.runtime_metadata["mesh_workflow"]
+        self.assertEqual(workflow["fem"]["hmax"], 80e-9)
+        self.assertEqual(workflow["per_geometry"][0]["hmax"], 25e-9)
+
+    def test_study_build_domain_mesh_requires_explicit_airbox_hmax(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("shared_domain_missing_airbox_hmax")
+        study.engine("fem")
+        study.universe(mode="auto", padding=(10e-9, 10e-9, 10e-9))
+        left = study.geometry(fm.Box(20e-9, 20e-9, 10e-9), name="left")
+        left.Ms = 800e3
+        left.Aex = 13e-12
+        left.alpha = 0.1
+        left.m = fm.uniform(1, 0, 0)
+        right = study.geometry(fm.Box(20e-9, 20e-9, 10e-9).translate((30e-9, 0, 0)), name="right")
+        right.Ms = 800e3
+        right.Aex = 13e-12
+        right.alpha = 0.1
+        right.m = fm.uniform(1, 0, 0)
+        left.mesh(hmax=25e-9, order=1)
+        right.mesh(hmax=40e-9, order=1)
+        study.build_domain_mesh()
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "study_build_domain_mesh_missing_airbox_hmax.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "explicit airbox mesh size"):
+                fm.load_problem_from_script(path, lightweight_assets=True)
+
+    def test_study_build_domain_mesh_requires_object_hmax_coverage(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("shared_domain_missing_object_hmax")
+        study.engine("fem")
+        study.universe(mode="auto", padding=(10e-9, 10e-9, 10e-9))
+        study.airbox(hmax=80e-9)
+        left = study.geometry(fm.Box(20e-9, 20e-9, 10e-9), name="left")
+        left.Ms = 800e3
+        left.Aex = 13e-12
+        left.alpha = 0.1
+        left.m = fm.uniform(1, 0, 0)
+        right = study.geometry(fm.Box(20e-9, 20e-9, 10e-9).translate((30e-9, 0, 0)), name="right")
+        right.Ms = 800e3
+        right.Aex = 13e-12
+        right.alpha = 0.1
+        right.m = fm.uniform(1, 0, 0)
+        left.mesh(hmax=25e-9, order=1)
+        study.build_domain_mesh()
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "study_build_domain_mesh_missing_object_hmax.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Missing hmax for: 'right'"):
+                fm.load_problem_from_script(path, lightweight_assets=True)
+
+    def test_study_build_domain_mesh_accepts_default_object_hmax_with_partial_overrides(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("shared_domain_default_object_hmax")
+        study.engine("fem")
+        study.universe(mode="auto", padding=(10e-9, 10e-9, 10e-9))
+        study.airbox(hmax=80e-9)
+        study.object_mesh_defaults(hmax=40e-9, order=1)
+        left = study.geometry(fm.Box(20e-9, 20e-9, 10e-9), name="left")
+        left.Ms = 800e3
+        left.Aex = 13e-12
+        left.alpha = 0.1
+        left.m = fm.uniform(1, 0, 0)
+        right = study.geometry(fm.Box(20e-9, 20e-9, 10e-9).translate((30e-9, 0, 0)), name="right")
+        right.Ms = 800e3
+        right.Aex = 13e-12
+        right.alpha = 0.1
+        right.m = fm.uniform(1, 0, 0)
+        left.mesh(hmax=25e-9, order=1)
+        study.build_domain_mesh()
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "study_build_domain_mesh_default_object_hmax.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+
+        workflow = loaded.problem.runtime_metadata["mesh_workflow"]
+        self.assertEqual(workflow["fem"]["hmax"], 80e-9)
+        self.assertEqual(workflow["default_mesh"]["hmax"], 40e-9)
 
     def test_study_domain_mesh_attaches_explicit_shared_domain_asset(self) -> None:
         script = """
@@ -1688,17 +1869,27 @@ class ProblemApiTests(unittest.TestCase):
             with patch("fullmag.world.build_geometry_assets_for_request", return_value=None) as mocked:
                 loaded = fm.load_problem_from_script(path)
 
-        self.assertEqual(mocked.call_count, 1)
-        self.assertEqual(mocked.call_args.kwargs["requested_backend"], fm.BackendTarget.FEM)
-        fem = mocked.call_args.kwargs["discretization"].fem
-        self.assertIsNotNone(fem)
-        self.assertEqual(fem.order, 2)
-        self.assertEqual(fem.hmax, 4e-9)
+        self.assertEqual(mocked.call_count, 0)
         workflow = loaded.problem.runtime_metadata["mesh_workflow"]
         self.assertTrue(workflow["explicit_mesh_api"])
         self.assertTrue(workflow["build_requested"])
         self.assertEqual(workflow["fem"]["order"], 2)
         self.assertEqual(workflow["fem"]["hmax"], 4e-9)
+        with patch(
+            "fullmag.model.problem.build_geometry_assets_for_request",
+            return_value=None,
+        ) as materialize_mock:
+            loaded.to_ir(
+                requested_backend=None,
+                execution_mode=None,
+                execution_precision=None,
+            )
+        self.assertEqual(materialize_mock.call_count, 1)
+        self.assertEqual(materialize_mock.call_args.kwargs["requested_backend"], fm.BackendTarget.FEM)
+        fem = materialize_mock.call_args.kwargs["discretization"].fem
+        self.assertIsNotNone(fem)
+        self.assertEqual(fem.order, 2)
+        self.assertEqual(fem.hmax, 4e-9)
 
     def test_flat_geometry_mesh_api_rejects_conflicting_per_geometry_mesh_settings(self) -> None:
         script = """
@@ -1794,7 +1985,8 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(mesh_by_name["b"]["order"], 2)
 
         rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
-        self.assertIn('study.mesh(hmax=2.5e-08, order=1)', rewritten)
+        self.assertIn('study.object_mesh_defaults(hmax=2.5e-08, order=1)', rewritten)
+        self.assertNotIn("study.mesh(", rewritten)
         self.assertNotIn("a.mesh(", rewritten)
         self.assertIn("b.mesh(hmax=2e-08, order=2)", rewritten)
 
@@ -1826,6 +2018,7 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(draft["geometries"][0]["mesh"]["hmax"], "4e-09")
 
         rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertNotIn("study.object_mesh_defaults(", rewritten)
         self.assertNotIn("study.mesh(", rewritten)
         self.assertIn("a.mesh(hmax=4e-09, order=1)", rewritten)
 
@@ -1892,7 +2085,8 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(mesh_entry["operations"][0]["kind"], "smooth")
 
         rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
-        self.assertIn("study.mesh(hmax=2.5e-08, growth_rate=1.8, narrow_regions=2)", rewritten)
+        self.assertIn("study.object_mesh_defaults(hmax=2.5e-08, growth_rate=1.8, narrow_regions=2)", rewritten)
+        self.assertNotIn("study.mesh(", rewritten)
         self.assertIn("body.mesh(hmax=2e-08, hmin=5e-09, order=2", rewritten)
         self.assertIn("algorithm_2d=5", rewritten)
         self.assertIn("algorithm_3d=10", rewritten)
@@ -1953,19 +2147,28 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(mesh_options["narrow_region_resolution"], 0.7)
         self.assertEqual(workflow["per_geometry"][0]["size_preset"], "fine")
 
-        draft = export_builder_draft(loaded)
-        self.assertEqual(draft["mesh"]["calibrate_for"], "general_physics")
-        self.assertEqual(draft["mesh"]["size_preset"], "finer")
-        self.assertEqual(draft["mesh"]["curvature_factor"], "0.4")
-        self.assertEqual(draft["mesh"]["narrow_region_resolution"], "0.7")
-        self.assertEqual(draft["geometries"][0]["mesh"]["size_preset"], "fine")
-        self.assertEqual(draft["geometries"][0]["mesh"]["curvature_factor"], "0.5")
-
         rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
-        self.assertIn('calibrate_for="general_physics"', rewritten)
-        self.assertIn('size_preset="finer"', rewritten)
-        self.assertIn("curvature_factor=0.4", rewritten)
-        self.assertIn("narrow_region_resolution=0.7", rewritten)
+        self.assertIn('study.object_mesh_defaults(hmax=2.5e-08, calibrate_for="general_physics", size_preset="finer", curvature_factor=0.4, narrow_region_resolution=0.7)', rewritten)
+        self.assertIn('body.mesh(hmax=2e-08, calibrate_for="general_physics", size_preset="fine", curvature_factor=0.5, narrow_region_resolution=0.6)', rewritten)
+        self.assertNotIn("study.mesh(", rewritten)
+
+    def test_object_mesh_defaults_alias_matches_legacy_study_mesh_behavior(self) -> None:
+        fm.reset()
+        study = fm.study("object_mesh_defaults_alias")
+        study.engine("fem")
+        study.object_mesh_defaults(hmax=12e-9, order=2, growth_rate=1.6)
+
+        body = study.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="body")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+
+        problem = flat_world._build_problem()
+        workflow = problem.runtime_metadata["mesh_workflow"]
+        self.assertEqual(workflow["default_mesh"]["hmax"], 12e-9)
+        self.assertEqual(workflow["default_mesh"]["order"], 2)
+        self.assertEqual(workflow["mesh_options"]["growth_rate"], 1.6)
 
     def test_builder_draft_exports_geometry_bounds_for_translated_box(self) -> None:
         script = """

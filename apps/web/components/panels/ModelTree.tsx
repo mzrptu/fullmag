@@ -531,7 +531,7 @@ export function buildFullmagModelTree(opts: {
   if (opts.domainMeshMode === "shared_domain_mesh_with_air") {
     studyChildren.push({
       id: "mesh",
-      label: "Mesh",
+      label: "Study Domain Mesh",
       icon: "◫",
       badge: opts.meshElements
         ? `${opts.meshElements.toLocaleString()} el`
@@ -542,7 +542,7 @@ export function buildFullmagModelTree(opts: {
       defaultOpen: false,
       children: [
         { id: "mesh-view", label: "Domain Inspector", icon: "👁" },
-        { id: "mesh-size", label: "Size", icon: "📏" },
+        { id: "mesh-size", label: "Object Defaults", icon: "📏" },
         { id: "mesh-quality", label: "Quality", icon: "📊" },
         { id: "mesh-pipeline", label: "Pipeline", icon: "🧭" },
       ],
@@ -738,7 +738,7 @@ function _buildUniverseChildren(opts: {
       children: [
         {
           id: "universe-airbox-mesh",
-          label: "Mesh",
+          label: "Sizing",
           icon: "◫",
         },
       ],
@@ -753,7 +753,7 @@ function _buildUniverseChildren(opts: {
   if (opts.domainMeshMode !== "shared_domain_mesh_with_air") {
     children.push({
       id: "universe-mesh",
-      label: "Mesh",
+      label: "Domain Mesh",
       icon: "◫",
       badge: opts.meshElements
         ? `${opts.meshElements.toLocaleString()} el`
@@ -765,7 +765,7 @@ function _buildUniverseChildren(opts: {
         { id: "universe-mesh-view", label: "Inspector", icon: "👁" },
         {
           id: "universe-mesh-size",
-          label: opts.meshFeOrder != null ? `Size · P${opts.meshFeOrder}` : "Size",
+          label: opts.meshFeOrder != null ? `Object Defaults · P${opts.meshFeOrder}` : "Object Defaults",
           icon: "📏",
         },
         { id: "universe-mesh-quality", label: "Quality", icon: "📊" },
@@ -797,28 +797,28 @@ function _buildGeometryNode(
 
   const meshNode: TreeNodeData = {
     id: `${geoId}-mesh`,
-    label: "Object Mesh",
+    label: "Mesh",
     icon: "◫",
     status: geo.mesh?.mode === "custom" ? "ready" : "pending",
     badge:
       geo.mesh?.mode === "custom"
-        ? (geo.mesh.order ? `P${geo.mesh.order}` : "custom")
-        : "defaults",
+        ? (geo.mesh.order ? `override · P${geo.mesh.order}` : "override")
+        : "inherits",
     children: [
       {
         id: `${geoId}-mesh-mode`,
         label:
           geo.mesh?.mode === "custom"
             ? "Mode: local override"
-            : "Mode: inherit object mesh defaults",
+            : "Mode: inherit shared object defaults",
         icon: "⇆",
       },
       {
         id: `${geoId}-mesh-hmax`,
         label:
           geo.mesh?.mode === "custom" && geo.mesh.hmax
-            ? `hmax = ${geo.mesh.hmax}`
-            : "hmax from object mesh defaults",
+            ? `Maximum element size: ${geo.mesh.hmax}`
+            : "Maximum element size from object defaults",
         icon: "📏",
       },
       ...(geo.mesh?.mode === "custom" && geo.mesh.source
@@ -872,23 +872,23 @@ function _buildObjectNode(objectNode: {
     status: geo.mesh?.mode === "custom" ? "ready" : "pending",
     badge:
       geo.mesh?.mode === "custom"
-        ? (geo.mesh.order ? `P${geo.mesh.order}` : "custom")
-        : "defaults",
+        ? (geo.mesh.order ? `override · P${geo.mesh.order}` : "override")
+        : "inherits",
     children: [
       {
         id: `${meshId}-mode`,
         label:
           geo.mesh?.mode === "custom"
             ? "Mode: local override"
-            : "Mode: inherit object mesh defaults",
+            : "Mode: inherit shared object defaults",
         icon: "⇆",
       },
       {
         id: `${meshId}-hmax`,
         label:
           geo.mesh?.mode === "custom" && geo.mesh.hmax
-            ? `hmax = ${geo.mesh.hmax}`
-            : "hmax from object mesh defaults",
+            ? `Maximum element size: ${geo.mesh.hmax}`
+            : "Maximum element size from object defaults",
         icon: "📏",
       },
       ...(geo.mesh?.mode === "custom" && geo.mesh.source

@@ -577,6 +577,9 @@ fn execute_manual_interactive_remesh(
             Arc::new(move |event: PythonProgressEvent| {
                 let terminal_update = match &event {
                     PythonProgressEvent::Message(message) => {
+                        if message.trim_start().starts_with("json:") {
+                            None
+                        } else {
                         match map_remesh_progress_message(message) {
                             Some(stage) => {
                                 let mut guard = remesh_progress_stage
@@ -596,6 +599,7 @@ fn execute_manual_interactive_remesh(
                                 }
                             }
                             None => Some(format!("[fullmag] remesh info - {}", message)),
+                        }
                         }
                     }
                     PythonProgressEvent::FemSurfacePreview { .. } => None,
@@ -1460,7 +1464,21 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         Some({
             let live_workspace = live_workspace.clone();
             Arc::new(move |event: PythonProgressEvent| {
+                let terminal_line = match &event {
+                    PythonProgressEvent::Message(message) => (!message
+                        .trim_start()
+                        .starts_with("json:"))
+                    .then(|| format!("[fullmag] materialize - {}", message)),
+                    PythonProgressEvent::FemSurfacePreview { message, .. } => {
+                        message
+                            .as_ref()
+                            .map(|text| format!("[fullmag] materialize - {}", text))
+                    }
+                };
                 apply_python_progress_event(&live_workspace, event);
+                if let Some(line) = terminal_line {
+                    eprintln!("{}", line);
+                }
             })
         }),
     ) {

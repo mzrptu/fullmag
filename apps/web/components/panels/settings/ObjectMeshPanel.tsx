@@ -307,11 +307,11 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
   const viewportModes: ViewportMode[] = ["Mesh", "3D", "2D"];
   const effectiveHmaxDisplay = formatMeshSetting(
     mesh.mode === "custom" ? mesh.hmax : model.meshOptions.hmax,
-    "Auto / Study default",
+    "Auto / Object defaults",
   );
   const effectiveHminDisplay = formatMeshSetting(
     mesh.mode === "custom" ? mesh.hmin : model.meshOptions.hmin,
-    "Auto / Study default",
+    "Auto / Object defaults",
   );
 
   function getPhaseStyle(status: "idle" | "active" | "done" | "warning") {
@@ -331,9 +331,9 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
   if (!geo) {
     return (
       <div className="flex flex-col gap-0 border-t border-border/20">
-        <SidebarSection title="Object Mesh" defaultOpen={true}>
+        <SidebarSection title="Object Mesh Override" defaultOpen={true}>
           <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-xs text-muted-foreground">
-            Select an object mesh node to edit its local mesh workflow.
+            Select an object mesh node to edit its local override or inspect how it inherits the shared object defaults.
           </div>
         </SidebarSection>
       </div>
@@ -343,11 +343,11 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
   /* ── Main render ── */
   return (
     <div className="flex flex-col pt-4 px-2">
-      <SidebarSection title="Object Mesh" defaultOpen={true}>
+      <SidebarSection title="Object Mesh Override" defaultOpen={true}>
         <div className="flex flex-col gap-5">
           <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2.5">
             <div className="text-[0.62rem] font-bold uppercase tracking-widest text-muted-foreground">
-              Object Mesh Configuration
+              Local Object Override
             </div>
             <div className="mt-1 flex items-center justify-between gap-3">
               <span className="font-mono text-xs text-foreground">{geo.name}</span>
@@ -417,12 +417,12 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                     { label: "Object Defaults", value: "inherit" },
                     { label: "Local Override", value: "custom" },
                   ]}
-                  tooltip="Whether this object inherits the study's default object mesh settings or uses a custom local override."
+                  tooltip="Whether this object inherits the shared object defaults for the study-domain mesh or uses a custom local override."
                 />
 
                 {mesh.mode === "inherit" && (
                   <div className="rounded-lg border border-border/40 bg-card/30 px-3 py-2 text-xs text-muted-foreground">
-                    This object currently inherits the study-level object mesh defaults.
+                    This object currently inherits the shared object defaults for the study-domain rebuild.
                     Switch to custom mode to edit a local override for the next domain rebuild.
                   </div>
                 )}
@@ -601,7 +601,7 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                     <thead>
                       <tr className="border-b border-border/30 bg-muted/20">
                         <th className="px-2 py-1.5 text-left font-semibold text-muted-foreground uppercase tracking-widest text-[0.6rem]">Parameter</th>
-                        <th className="px-2 py-1.5 text-right font-semibold text-muted-foreground uppercase tracking-widest text-[0.6rem]">Study default</th>
+                        <th className="px-2 py-1.5 text-right font-semibold text-muted-foreground uppercase tracking-widest text-[0.6rem]">Object defaults</th>
                         <th className="px-2 py-1.5 text-right font-semibold text-muted-foreground uppercase tracking-widest text-[0.6rem]">Object override</th>
                         <th className="px-2 py-1.5 text-right font-semibold text-primary/80 uppercase tracking-widest text-[0.6rem]">Effective</th>
                       </tr>
@@ -663,10 +663,10 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <MetricField label="Mode" value={mesh.mode === "custom" ? "Local Override" : "Inherited Defaults"} />
-                  <MetricField label="Mesh Scope" value={sharedDomainMesh ? "Shared Domain" : "Object Mesh"} />
+                  <MetricField label="Build Target" value={sharedDomainMesh ? "Study Domain Mesh" : "Object Mesh"} />
                 </div>
                 <div className="rounded-lg border border-border/35 bg-background/40 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
-                  Effective values merge the study&apos;s object mesh defaults with this object&apos;s local override. If the mode is <code className="font-mono text-foreground/80">inherit</code>, every field above comes from the study-level defaults.
+                  Effective values merge the shared object defaults with this object&apos;s local override. If the mode is <code className="font-mono text-foreground/80">inherit</code>, every field above comes from the shared defaults rather than a separate third mesh.
                 </div>
               </div>
             </TabsContent>
@@ -984,7 +984,7 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                 <div className="flex flex-col gap-3">
                   <div className="rounded-lg border border-border/35 bg-background/40 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
                     {sharedDomainMesh
-                      ? "Use Build Selected in the Mesh ribbon to sync this override, rebuild the shared-domain study mesh and open the build modal."
+                      ? "Use Build Selected in the Mesh ribbon to sync this override, rebuild the study-domain mesh and open the build modal."
                       : "Use Build Selected in the Mesh ribbon to rebuild the active FEM mesh workflow from this object context."}
                   </div>
                   {ctx.meshConfigDirty && (

@@ -6,6 +6,8 @@ from .asset_pipeline import (
     realize_fem_mesh_asset,
 )
 from .gmsh_bridge import (
+    MESH_SIZE_CALIBRATIONS,
+    MESH_SIZE_PRESETS,
     AirboxOptions,
     MeshData,
     MeshOptions,
@@ -19,12 +21,15 @@ from .gmsh_bridge import (
     generate_mesh,
     generate_mesh_from_file,
     remesh_with_size_field,
+    resolve_mesh_size_controls,
 )
 from .quality import MeshValidationReport, validate_mesh
 from .surface_assets import SurfaceAsset, export_geometry_to_stl, load_surface_asset
 from .voxelization import VoxelMaskData, voxelize_geometry
 
 __all__ = [
+    "MESH_SIZE_CALIBRATIONS",
+    "MESH_SIZE_PRESETS",
     "AirboxOptions",
     "MeshData",
     "MeshOptions",
@@ -35,8 +40,10 @@ __all__ = [
     "VoxelMaskData",
     "add_air_box",
     "export_geometry_to_stl",
+    "extract_per_domain_quality",
     "generate_box_mesh",
     "generate_cylinder_mesh",
+    "generate_difference_mesh",
     "generate_mesh",
     "generate_mesh_from_file",
     "load_surface_asset",
@@ -44,6 +51,7 @@ __all__ = [
     "realize_fem_domain_mesh_asset",
     "realize_fem_mesh_asset",
     "remesh_with_size_field",
+    "resolve_mesh_size_controls",
     "validate_mesh",
     "voxelize_geometry",
 ]

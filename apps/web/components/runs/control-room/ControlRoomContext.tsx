@@ -1028,7 +1028,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const activity = useMemo<ActivityInfo>(() => {
     if (workspaceStatus === "materializing_script") {
       const pv = materializationProgressFromMessage(latestEngineMessage);
-      const isLong = (latestEngineMessage ?? "").toLowerCase().includes("generating 3d tetrahedral mesh");
+      const lowerMessage = (latestEngineMessage ?? "").toLowerCase();
+      const hasGmshPercent = /\[\s*\d{1,3}%\]/.test(latestEngineMessage ?? "");
+      const isLong = lowerMessage.includes("generating 3d tetrahedral mesh") && !hasGmshPercent;
       return { label: isFemBackend ? "Materializing FEM workspace" : "Materializing workspace",
                detail: latestEngineMessage ?? "Preparing geometry import and execution plan",
                progressMode: isLong ? "indeterminate" : "determinate", progressValue: pv };

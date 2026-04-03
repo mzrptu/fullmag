@@ -153,6 +153,10 @@ pub(crate) fn map_remesh_progress_message(message: &str) -> Option<RemeshTermina
         return None;
     }
 
+    if let Some(progress) = parse_gmsh_inline_progress(message) {
+        return Some(progress);
+    }
+
     if lower.contains("remesh: accepted") || lower.contains("request queued") {
         return Some(RemeshTerminalProgress {
             percent: 5,
@@ -227,6 +231,30 @@ pub(crate) fn map_remesh_progress_message(message: &str) -> Option<RemeshTermina
     }
 
     None
+}
+
+fn parse_gmsh_inline_progress(message: &str) -> Option<RemeshTerminalProgress> {
+    let trimmed = message.trim();
+    let start = trimmed.find('[')?;
+    let end = trimmed[start..].find("%]")?;
+    let raw_percent = trimmed[start + 1..start + end].trim().parse::<u8>().ok()?;
+    let lower = trimmed.to_ascii_lowercase();
+
+    let (base, span, label) = if lower.contains("meshing curve") || lower.contains("meshing 1d") {
+        (10u8, 12u8, "meshing curves")
+    } else if lower.contains("meshing surface") || lower.contains("meshing 2d") {
+        (22u8, 18u8, "meshing surfaces")
+    } else if lower.contains("meshing volume") || lower.contains("meshing 3d") {
+        (55u8, 25u8, "meshing 3D volume")
+    } else {
+        return None;
+    };
+
+    let scaled = base.saturating_add(((u16::from(raw_percent) * u16::from(span)) / 100) as u8);
+    Some(RemeshTerminalProgress {
+        percent: scaled.min(99),
+        label,
+    })
 }
 
 fn filter_non_progress_stderr(stderr_text: &str) -> String {
@@ -693,6 +721,20 @@ mod tests {
             Some(RemeshTerminalProgress {
                 percent: 100,
                 label: "mesh ready",
+            })
+        );
+        assert_eq!(
+            map_remesh_progress_message("Gmsh: [ 40%] Meshing surface 3 (Plane, Frontal-Delaunay)"),
+            Some(RemeshTerminalProgress {
+                percent: 29,
+                label: "meshing surfaces",
+            })
+        );
+        assert_eq!(
+            map_remesh_progress_message("Gmsh: [ 70%] Meshing curve 9 (Line)"),
+            Some(RemeshTerminalProgress {
+                percent: 18,
+                label: "meshing curves",
             })
         );
     }

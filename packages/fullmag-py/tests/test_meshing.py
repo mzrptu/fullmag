@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,8 +27,11 @@ from fullmag.meshing.gmsh_bridge import (
     MeshData,
     MeshOptions,
     SizeFieldData,
+    _configure_gmsh_threads,
     _apply_mesh_options,
     _extract_gmsh_connectivity,
+    _normalize_gmsh_log_line,
+    _resolve_gmsh_thread_count,
     resolve_mesh_size_controls,
 )
 from fullmag.meshing.remesh_cli import _geometry_from_ir, _mesh_result_payload, _size_field_from_dict
@@ -308,16 +314,23 @@ class MeshScaffoldTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(len(fields), 2)
+        self.assertEqual(len(fields), 4)
         self.assertEqual(fields[0]["kind"], "Box")
-        self.assertAlmostEqual(fields[0]["params"]["VIn"], 8e-9)
-        self.assertAlmostEqual(fields[1]["params"]["VIn"], 20e-9)
-        self.assertAlmostEqual(fields[0]["params"]["VOut"], 20e-9)
+        self.assertEqual(fields[1]["kind"], "Box")
+        self.assertAlmostEqual(fields[0]["params"]["VIn"], 4.8e-9)
+        self.assertAlmostEqual(fields[0]["params"]["VOut"], 8e-9)
+        self.assertAlmostEqual(fields[1]["params"]["VIn"], 8e-9)
         self.assertAlmostEqual(fields[1]["params"]["VOut"], 20e-9)
+        self.assertAlmostEqual(fields[2]["params"]["VIn"], 12e-9)
+        self.assertAlmostEqual(fields[2]["params"]["VOut"], 20e-9)
+        self.assertAlmostEqual(fields[3]["params"]["VIn"], 20e-9)
+        self.assertAlmostEqual(fields[3]["params"]["VOut"], 20e-9)
         self.assertLess(fields[0]["params"]["XMin"], -1.0)
         self.assertGreater(fields[0]["params"]["XMax"], 1.0)
-        self.assertLess(fields[1]["params"]["XMin"], -2.0)
-        self.assertGreater(fields[1]["params"]["XMax"], 2.0)
+        self.assertLess(fields[1]["params"]["XMin"], fields[0]["params"]["XMin"])
+        self.assertGreater(fields[1]["params"]["XMax"], fields[0]["params"]["XMax"])
+        self.assertLess(fields[3]["params"]["XMin"], -2.0)
+        self.assertGreater(fields[3]["params"]["XMax"], 2.0)
 
     def test_apply_mesh_options_falls_back_from_mmg3d_when_size_fields_are_active(self) -> None:
         class _FakeOptionsApi:
@@ -931,6 +944,119 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertEqual(region_markers[0], {"geometry_name": "left", "marker": 1})
         self.assertEqual(region_markers[1]["marker"], 2)
         self.assertIn("right", region_markers[1]["geometry_name"])
+
+    def test_realize_fem_domain_mesh_asset_emits_partition_summary(self) -> None:
+        left = fm.Box(size=(1.0, 1.0, 1.0), name="left")
+        right = fm.Box(size=(1.0, 1.0, 1.0), name="right").translate((2.0, 0.0, 0.0))
+
+        shared_domain_mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [-0.5, -0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, -0.5, 0.5],
+                    [1.5, -0.5, -0.5],
+                    [2.5, -0.5, -0.5],
+                    [1.5, 0.5, -0.5],
+                    [1.5, -0.5, 0.5],
+                    [-2.0, -2.0, -2.0],
+                    [4.0, -2.0, -2.0],
+                    [-2.0, 2.0, -2.0],
+                    [-2.0, -2.0, 2.0],
+                ],
+                dtype=np.float64,
+            ),
+            elements=np.asarray(
+                [
+                    [0, 1, 2, 3],
+                    [4, 5, 6, 7],
+                    [8, 9, 10, 11],
+                ],
+                dtype=np.int32,
+            ),
+            element_markers=np.asarray([1, 2, 3], dtype=np.int32),
+            boundary_faces=np.asarray([[0, 1, 2], [4, 5, 6], [8, 9, 10]], dtype=np.int32),
+            boundary_markers=np.asarray([10, 10, 99], dtype=np.int32),
+        )
+
+        class _FakeSurface:
+            def copy(self) -> "_FakeSurface":
+                return self
+
+            def export(self, _path: Path) -> None:
+                return None
+
+        fake_trimesh = type(
+            "FakeTrimesh",
+            (),
+            {
+                "util": type(
+                    "Util",
+                    (),
+                    {"concatenate": staticmethod(lambda meshes: _FakeSurface())},
+                )
+            },
+        )
+
+        stderr = io.StringIO()
+        with patch.dict(os.environ, {"FULLMAG_PROGRESS": "1"}, clear=False), contextlib.redirect_stderr(stderr), patch(
+            "fullmag.meshing.asset_pipeline._import_trimesh",
+            return_value=fake_trimesh,
+        ), patch(
+            "fullmag.meshing.asset_pipeline._geometry_to_trimesh",
+            return_value=_FakeSurface(),
+        ), patch(
+            "fullmag.meshing.asset_pipeline.generate_mesh_from_file",
+            return_value=shared_domain_mesh,
+        ):
+            realize_fem_domain_mesh_asset(
+                [left, right],
+                fm.FEM(order=1, hmax=0.1),
+                study_universe={"mode": "manual", "size": [8.0, 8.0, 8.0], "center": [0.0, 0.0, 0.0]},
+            )
+
+        output = stderr.getvalue()
+        self.assertIn("Total mesh: 3 tetrahedra, 12 nodes, 3 boundary faces", output)
+        self.assertIn("Mesh part airbox: 1 tetrahedra, 4 nodes", output)
+        self.assertIn("Mesh part left: 1 tetrahedra, 4 nodes", output)
+        self.assertIn("Mesh part right", output)
+        self.assertIn("1 tetrahedra, 4 nodes", output)
+
+    def test_normalize_gmsh_log_line_keeps_useful_progress(self) -> None:
+        self.assertEqual(
+            _normalize_gmsh_log_line("Info: [ 40%] Meshing surface 3 (Plane, Frontal-Delaunay)"),
+            "Gmsh: [ 40%] Meshing surface 3 (Plane, Frontal-Delaunay)",
+        )
+        self.assertEqual(
+            _normalize_gmsh_log_line("Info: Tetrahedrizing 737 nodes..."),
+            "Gmsh: Tetrahedrizing 737 nodes...",
+        )
+        self.assertIsNone(_normalize_gmsh_log_line("Info: Meshing curve 3 (Line)"))
+
+    def test_resolve_gmsh_thread_count_prefers_env_override(self) -> None:
+        with patch.dict(os.environ, {"FULLMAG_GMSH_THREADS": "6"}, clear=False):
+            self.assertEqual(_resolve_gmsh_thread_count(2), 6)
+
+    def test_configure_gmsh_threads_sets_parallel_options(self) -> None:
+        class _FakeOption:
+            def __init__(self) -> None:
+                self.values: dict[str, float] = {}
+
+            def setNumber(self, name: str, value: float) -> None:
+                self.values[name] = value
+
+        class _FakeGmsh:
+            def __init__(self) -> None:
+                self.option = _FakeOption()
+
+        fake = _FakeGmsh()
+        actual = _configure_gmsh_threads(fake, requested_threads=4)
+        self.assertEqual(actual, 4)
+        self.assertEqual(fake.option.values["General.NumThreads"], 4)
+        self.assertEqual(fake.option.values["Mesh.MaxNumThreads1D"], 4)
+        self.assertEqual(fake.option.values["Mesh.MaxNumThreads2D"], 4)
+        self.assertEqual(fake.option.values["Mesh.MaxNumThreads3D"], 4)
 
 
 class SizeFieldDataTests(unittest.TestCase):

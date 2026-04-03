@@ -504,7 +504,7 @@ class GeometryMeshHandle:
 
     def build(self) -> "GeometryMeshHandle":
         self._owner._mesh_spec.build_requested = True
-        if _capture_enabled and _capture_skip_geometry_assets:
+        if _capture_enabled:
             return self
         _build_explicit_mesh_assets()
         return self
@@ -670,7 +670,7 @@ def _estimate_auto_hmax() -> float:
 
     Uses ``l_ex = sqrt(2A / (mu0 * Ms^2))`` — the fundamental length scale
     below which exchange dominates.  Returns ``min(l_ex)`` across all magnets
-    that have both ``Ms`` and ``Aex`` set, or ``5e-9`` as a safe fallback.
+    that have both ``Ms`` and ``Aex`` set.
     """
     l_ex_values: list[float] = []
     for handle in _state._magnets:
@@ -684,8 +684,10 @@ def _estimate_auto_hmax() -> float:
             f"using hmax = {chosen*1e9:.2f} nm"
         )
         return chosen
-    emit_progress("hmax='auto': no materials set yet, falling back to 5 nm")
-    return 5e-9
+    raise ValueError(
+        "hmax='auto' requires at least one magnetic geometry with explicit Ms and Aex. "
+        "Fullmag no longer applies an implicit fallback mesh size."
+    )
 
 
 def _normalize_domain_region_markers(
@@ -852,7 +854,54 @@ class StudyBuilder:
         compute_quality: bool | None = None,
         per_element_quality: bool | None = None,
     ) -> "StudyBuilder":
-        mesh(
+        object_mesh_defaults(
+            hmax=hmax,
+            hmin=hmin,
+            order=order,
+            source=source,
+            calibrate_for=calibrate_for,
+            size_preset=size_preset,
+            algorithm_2d=algorithm_2d,
+            algorithm_3d=algorithm_3d,
+            optimize=optimize,
+            optimize_iterations=optimize_iterations,
+            smoothing_steps=smoothing_steps,
+            size_factor=size_factor,
+            size_from_curvature=size_from_curvature,
+            curvature_factor=curvature_factor,
+            growth_rate=growth_rate,
+            narrow_regions=narrow_regions,
+            narrow_region_resolution=narrow_region_resolution,
+            compute_quality=compute_quality,
+            per_element_quality=per_element_quality,
+        )
+        return self
+
+    def object_mesh_defaults(
+        self,
+        *,
+        hmax: float | str | None = None,
+        hmin: float | None = None,
+        order: int | None = None,
+        source: str | None = None,
+        calibrate_for: str | None = None,
+        size_preset: str | None = None,
+        algorithm_2d: int | None = None,
+        algorithm_3d: int | None = None,
+        optimize: str | None = None,
+        optimize_iterations: int | None = None,
+        smoothing_steps: int | None = None,
+        size_factor: float | None = None,
+        size_from_curvature: int | None = None,
+        curvature_factor: float | None = None,
+        growth_rate: float | None = None,
+        narrow_regions: int | None = None,
+        narrow_region_resolution: float | None = None,
+        compute_quality: bool | None = None,
+        per_element_quality: bool | None = None,
+    ) -> "StudyBuilder":
+        """Configure shared default mesher settings for magnetic objects in this study."""
+        object_mesh_defaults(
             hmax=hmax,
             hmin=hmin,
             order=order,
@@ -1134,7 +1183,7 @@ def boundary_correction(mode: str) -> None:
     _state._boundary_correction = mode
 
 
-def mesh(
+def object_mesh_defaults(
     *,
     hmax: float | str | None = None,
     hmin: float | None = None,
@@ -1156,7 +1205,7 @@ def mesh(
     compute_quality: bool | None = None,
     per_element_quality: bool | None = None,
 ) -> None:
-    """Configure the default explicit FEM mesh workflow for the flat API."""
+    """Configure shared default mesher settings for magnetic objects in the flat API."""
     if hmax is not None:
         if isinstance(hmax, str) and hmax != "auto":
             raise ValueError(f"hmax must be a positive float or \"auto\", got {hmax!r}")
@@ -1202,26 +1251,72 @@ def mesh(
         _state._default_mesh_spec.per_element_quality = per_element_quality
 
 
+def mesh(
+    *,
+    hmax: float | str | None = None,
+    hmin: float | None = None,
+    order: int | None = None,
+    source: str | None = None,
+    calibrate_for: str | None = None,
+    size_preset: str | None = None,
+    algorithm_2d: int | None = None,
+    algorithm_3d: int | None = None,
+    optimize: str | None = None,
+    optimize_iterations: int | None = None,
+    smoothing_steps: int | None = None,
+    size_factor: float | None = None,
+    size_from_curvature: int | None = None,
+    curvature_factor: float | None = None,
+    growth_rate: float | None = None,
+    narrow_regions: int | None = None,
+    narrow_region_resolution: float | None = None,
+    compute_quality: bool | None = None,
+    per_element_quality: bool | None = None,
+) -> None:
+    """Compatibility alias for ``object_mesh_defaults(...)``."""
+    object_mesh_defaults(
+        hmax=hmax,
+        hmin=hmin,
+        order=order,
+        source=source,
+        calibrate_for=calibrate_for,
+        size_preset=size_preset,
+        algorithm_2d=algorithm_2d,
+        algorithm_3d=algorithm_3d,
+        optimize=optimize,
+        optimize_iterations=optimize_iterations,
+        smoothing_steps=smoothing_steps,
+        size_factor=size_factor,
+        size_from_curvature=size_from_curvature,
+        curvature_factor=curvature_factor,
+        growth_rate=growth_rate,
+        narrow_regions=narrow_regions,
+        narrow_region_resolution=narrow_region_resolution,
+        compute_quality=compute_quality,
+        per_element_quality=per_element_quality,
+    )
+
+
 def hmax(val: float | str) -> None:
-    """Compatibility alias for ``fm.mesh(hmax=...)``."""
-    mesh(hmax=val)
+    """Compatibility alias for ``fm.object_mesh_defaults(hmax=...)``."""
+    object_mesh_defaults(hmax=val)
 
 
 def fem_order(order: int) -> None:
-    """Compatibility alias for ``fm.mesh(order=...)``."""
-    mesh(order=order)
+    """Compatibility alias for ``fm.object_mesh_defaults(order=...)``."""
+    object_mesh_defaults(order=order)
 
 
 def build_mesh() -> None:
     """Materialize the shared FEM mesh asset for the current flat-script model."""
     _state._default_mesh_spec.build_requested = True
-    if _capture_enabled and _capture_skip_geometry_assets:
+    if _capture_enabled:
         return
     _build_explicit_mesh_assets()
 
 
 def build_domain_mesh() -> None:
-    """Materialize the shared-domain FEM mesh asset for the current study/universe."""
+    """Materialize one shared-domain FEM mesh from the current airbox, object defaults and object overrides."""
     build_mesh()
 
 
@@ -1332,19 +1427,27 @@ def _collect_flat_geometries() -> list[object]:
 def _resolve_flat_fem_hint() -> FEM | None:
     s = _state
 
+    def _explicit_object_hmaxs() -> list[float | str]:
+        values: list[float | str] = []
+        for handle in s._magnets:
+            if handle._mesh_spec.hmax is not None:
+                values.append(handle._mesh_spec.hmax)
+        return values
+
     explicit_specs = [handle._mesh_spec for handle in s._magnets if handle._mesh_spec.is_configured()]
     build_requested = any(handle._mesh_spec.build_requested for handle in s._magnets)
     operation_specs = [handle._mesh_spec for handle in s._magnets if handle._mesh_spec.operations]
     default_spec = s._default_mesh_spec
     study_surface = s._api_surface == "study"
+    explicit_domain_mesh = s._domain_mesh_source is not None
     default_mesh_declared = (
         default_spec.is_configured()
         or bool(default_spec.operations)
         or bool(default_spec.size_fields)
     )
 
-    if study_surface and default_mesh_declared:
-        candidate_specs = [default_spec]
+    if study_surface:
+        candidate_specs = [default_spec] if default_mesh_declared else []
     else:
         candidate_specs = explicit_specs or ([default_spec] if default_spec.is_configured() else [])
     if operation_specs and not candidate_specs:
@@ -1378,18 +1481,59 @@ def _resolve_flat_fem_hint() -> FEM | None:
                     "Use one shared mesh configuration for all geometries in this script."
                 )
 
-    resolved_hmax = shared_hmax
-    if resolved_hmax is None:
-        if s._backend == "fem":
-            if s._cell is not None:
-                resolved_hmax = min(s._cell)
-            else:
-                resolved_hmax = 5e-9
-        elif shared_source is not None:
-            resolved_hmax = 5e-9
+    generated_shared_domain = (
+        study_surface
+        and s._study_universe is not None
+        and not explicit_domain_mesh
+        and shared_source is None
+    )
 
-    if resolved_hmax is None:
-        return None
+    resolved_hmax = shared_hmax
+    if generated_shared_domain:
+        airbox_hmax = s._study_universe.airbox_hmax
+        if airbox_hmax is None:
+            raise ValueError(
+                "Generated shared-domain FEM mesh requires an explicit airbox mesh size. "
+                "Set study.airbox(hmax=...) or study.universe(..., airbox_hmax=...)."
+            )
+        missing_object_hmax = [
+            handle._name for handle in s._magnets if handle._mesh_spec.hmax is None
+        ] if default_spec.hmax is None else []
+        if missing_object_hmax:
+            missing_names = ", ".join(repr(name) for name in missing_object_hmax)
+            raise ValueError(
+                "Generated shared-domain FEM mesh requires an explicit object mesh hmax for every "
+                "magnetic geometry unless study.object_mesh_defaults(hmax=...) is set. "
+                f"Missing hmax for: {missing_names}."
+            )
+        resolved_hmax = float(airbox_hmax)
+        emit_progress(
+            "Using explicit airbox_hmax as the shared-domain base mesh size "
+            f"({resolved_hmax * 1e9:.2f} nm)"
+        )
+    elif resolved_hmax is None and study_surface:
+        explicit_hmaxs = _explicit_object_hmaxs()
+        if explicit_hmaxs:
+            if all(isinstance(value, (int, float)) for value in explicit_hmaxs):
+                resolved_hmax = max(float(value) for value in explicit_hmaxs)
+                emit_progress(
+                    "Using the coarsest explicit object hmax as the mesh base size "
+                    f"({resolved_hmax * 1e9:.2f} nm)"
+                )
+            elif len(set(explicit_hmaxs)) == 1 and explicit_hmaxs[0] == "auto":
+                resolved_hmax = "auto"
+
+    if resolved_hmax is None and (shared_source is not None or explicit_domain_mesh):
+        # A prebuilt mesh source does not need a generator-side hmax, but the
+        # current FEM hint contract still requires one numeric placeholder.
+        resolved_hmax = 5e-9
+
+    if resolved_hmax is None and shared_source is None:
+        raise ValueError(
+            "No explicit FEM mesh hmax configured. Fullmag no longer applies implicit mesh-size "
+            "defaults. Set study.airbox(hmax=...) for shared-domain FEM and either "
+            "study.object_mesh_defaults(hmax=...) or <body>.mesh(hmax=...)."
+        )
 
     # Resolve "auto" sentinel → exchange-length-based float
     if resolved_hmax == "auto":
@@ -1570,7 +1714,7 @@ def _build_explicit_mesh_assets() -> None:
     fem_hint = _resolve_flat_fem_hint()
     if fem_hint is None:
         raise ValueError(
-            "No FEM mesh configuration available. Set fm.mesh(...), call body.mesh(...), "
+            "No FEM mesh configuration available. Set fm.object_mesh_defaults(...), call body.mesh(...), "
             "or choose the FEM backend before build_mesh()."
         )
 

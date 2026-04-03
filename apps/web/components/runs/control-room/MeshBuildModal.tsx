@@ -98,7 +98,7 @@ export default function MeshBuildModal({
                 </div>
               ) : null}
               <div className="mt-1 text-sm text-slate-300/75">
-                One shared-domain FEM mesh is rebuilt from the current object overrides, study defaults and airbox settings. The viewport keeps showing the last built mesh until this rebuild finishes.
+                One shared-domain FEM mesh is rebuilt from the current object overrides, shared object defaults and airbox settings. The viewport keeps showing the last built mesh until this rebuild finishes.
               </div>
             </div>
             <div className="flex items-center gap-2">

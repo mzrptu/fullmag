@@ -39,10 +39,10 @@ export function Sidebar({ items, collapsed, mobileOpen, onCloseMobile, onToggleC
         className={cn(
           "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border/60 bg-gradient-to-b from-card/80 to-background/50 backdrop-blur-2xl transition-all duration-300 md:relative md:translate-x-0 h-full shadow-[4px_0_24px_rgba(0,0,0,0.2)]",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
-          collapsed ? "w-[4.5rem]" : "w-64"
+          collapsed ? "w-sidebar-collapsed" : "w-sidebar"
         )}
       >
-        <div className="flex h-16 items-center border-b border-border/60 px-4 shrink-0 justify-between">
+        <div className="flex h-topbar items-center border-b border-border/60 px-4 shrink-0 justify-between">
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary font-bold shadow-inner border border-primary/20">
               F

@@ -31,6 +31,13 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
+  --spacing-sidebar: var(--sidebar-width);
+  --spacing-sidebar-collapsed: var(--sidebar-collapsed);
+  --spacing-topbar: var(--topbar-height);
+  --spacing-tree-indent: var(--tree-indent);
+  --spacing-tree-row: var(--tree-node-height);
+
+  /* Radius tokens */
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -81,10 +88,14 @@
     --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', 'Menlo', monospace;
     
     /* Layout Constants */
-    --sidebar-width: 240px;
-    --sidebar-collapsed: 64px;
-    --topbar-height: 56px;
-    --footer-height: 48px;
+    --sidebar-width: 16rem;      /* synchronized with w-64 */
+    --sidebar-collapsed: 4.5rem;  /* synchronized with w-[4.5rem] */
+    --topbar-height: 3.5rem;      /* synchronized with h-14 */
+    --footer-height: 3rem;
+    
+    /* Tree Geometry Constants */
+    --tree-indent: 0.875rem;      /* 14px */
+    --tree-node-height: 1.875rem; /* 30px */
     
     /* Status Colors */
     --status-running: 142.1 76.2% 36.3%; /* Green */

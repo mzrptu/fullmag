@@ -135,10 +135,16 @@ export default function MeshPanel() {
 
   return (
     <div className="flex flex-col pt-4 px-2">
+      <SidebarSection title="Mesh Semantics" defaultOpen={true}>
+        <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-3 py-3 text-[0.74rem] leading-relaxed text-cyan-100/90">
+          This section shows the realized study-domain mesh. The size controls here are shared object defaults for future remeshes, not a third standalone mesh. Airbox sizing stays under Universe → Airbox.
+        </div>
+      </SidebarSection>
+
       {meshConfigDirty && (
         <SidebarSection title="Mesh Status" defaultOpen={true}>
           <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-3 text-[0.74rem] leading-relaxed text-amber-100/90">
-            The viewport is still showing the last built mesh. You changed mesh or airbox parameters, so the realized 3D topology will refresh only after `Build Selected` or `Build All`.
+            The viewport is still showing the last built mesh. You changed object-default, object-override or airbox parameters, so the realized 3D topology will refresh only after `Build Selected` or `Build All`.
           </div>
         </SidebarSection>
       )}
