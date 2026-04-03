@@ -37,8 +37,8 @@ interface ModelTreeProps {
 
 /* ── Constants for tree geometry ────────────────────────────────────── */
 
-const TREE_INDENT = 16;     /* px per depth-level indent column */
-const NODE_HEIGHT = 28;     /* nominal row height in px */
+const TREE_INDENT = 14;     /* px per depth-level indent column */
+const NODE_HEIGHT = 30;     /* nominal row height in px */
 
 /* ── Tree Node ─────────────────────────────────────────────────────── */
 
@@ -131,10 +131,10 @@ function TreeNode({
         {/* ─── RIGHT: Interactive content (overflow-clipped) ─── */}
         <div
           className={cn(
-            "flex-1 flex items-center gap-0.5 pr-2 rounded-md transition-all duration-150 overflow-hidden relative min-w-0",
+            "flex-1 flex items-center gap-1 pr-2 rounded-md transition-all duration-150 overflow-hidden relative min-w-0",
             isActive
-              ? "bg-primary/10 text-primary border border-primary/20 shadow-[0_0_12px_rgba(137,180,250,0.06)]"
-              : "hover:bg-card/40 text-foreground/90 hover:text-foreground border border-transparent"
+              ? "bg-primary/8 text-primary border border-primary/15"
+              : "hover:bg-muted/25 text-foreground/90 hover:text-foreground border border-transparent"
           )}
         >
           {/* Active indicator bar */}
@@ -160,7 +160,7 @@ function TreeNode({
           {/* Icon */}
           {node.icon && (
             <span className={cn(
-              "flex h-4 w-4 shrink-0 items-center justify-center text-[0.7rem]",
+              "flex h-4 w-4 shrink-0 items-center justify-center text-[0.72rem]",
               isActive ? "opacity-100" : "opacity-55 group-hover:opacity-75"
             )}>
               {node.icon}
@@ -169,7 +169,7 @@ function TreeNode({
 
           {/* Label */}
           <span className={cn(
-            "flex-1 truncate text-[0.78rem] pl-0.5",
+            "flex-1 truncate text-[0.77rem] pl-0.5",
             isActive ? "font-semibold" : "font-medium"
           )}>
             {node.label}
@@ -179,7 +179,7 @@ function TreeNode({
           {node.status && (
             <span
               className={cn(
-                "h-1.5 w-1.5 shrink-0 rounded-full ml-1",
+                "h-1.5 w-1.5 shrink-0 rounded-full ml-1 opacity-85",
                 node.status === "ready" ? "bg-emerald-500/80" :
                 node.status === "active" ? "bg-primary animate-pulse" :
                 node.status === "error" ? "bg-destructive" :
@@ -191,10 +191,10 @@ function TreeNode({
           {/* Badge */}
           {node.badge && (
             <span className={cn(
-              "shrink-0 rounded px-1.5 py-[1px] text-[0.55rem] font-semibold font-mono ml-1",
+              "shrink-0 rounded px-1.5 py-[1px] text-[0.55rem] font-medium font-mono ml-1 opacity-80",
               isActive
-                ? "bg-primary/12 text-primary border border-primary/15"
-                : "bg-muted/50 text-muted-foreground/70 border border-border/20"
+                ? "bg-primary/10 text-primary border border-primary/10"
+                : "bg-background/45 text-muted-foreground/70 border border-border/10"
             )}>
               {node.badge}
             </span>
@@ -542,6 +542,7 @@ export function buildFullmagModelTree(opts: {
       defaultOpen: false,
       children: [
         { id: "mesh-view", label: "Domain Inspector", icon: "👁" },
+        { id: "mesh-size", label: "Size", icon: "📏" },
         { id: "mesh-quality", label: "Quality", icon: "📊" },
         { id: "mesh-pipeline", label: "Pipeline", icon: "🧭" },
       ],
@@ -752,7 +753,7 @@ function _buildUniverseChildren(opts: {
   if (opts.domainMeshMode !== "shared_domain_mesh_with_air") {
     children.push({
       id: "universe-mesh",
-      label: "FEM Mesh",
+      label: "Mesh",
       icon: "◫",
       badge: opts.meshElements
         ? `${opts.meshElements.toLocaleString()} el`
@@ -761,10 +762,10 @@ function _buildUniverseChildren(opts: {
           : "—",
       status: opts.meshStatus ?? "pending",
       children: [
-        { id: "universe-mesh-view", label: "Inspect View", icon: "👁" },
+        { id: "universe-mesh-view", label: "Inspector", icon: "👁" },
         {
           id: "universe-mesh-size",
-          label: opts.meshFeOrder != null ? `Order: P${opts.meshFeOrder}` : "Size",
+          label: opts.meshFeOrder != null ? `Size · P${opts.meshFeOrder}` : "Size",
           icon: "📏",
         },
         { id: "universe-mesh-quality", label: "Quality", icon: "📊" },
@@ -866,7 +867,7 @@ function _buildObjectNode(objectNode: {
   const geometryChildren = _buildGeometryParamChildren(geometryId, geo);
   const meshNode: TreeNodeData = {
     id: meshId,
-    label: "Object Mesh",
+    label: "Mesh",
     icon: "◫",
     status: geo.mesh?.mode === "custom" ? "ready" : "pending",
     badge:

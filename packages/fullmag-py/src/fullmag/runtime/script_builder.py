@@ -817,11 +817,6 @@ def _render_study_mesh_workflow(
     global_build_requested = bool(global_mesh.get("build_requested", False))
     if global_kwargs:
         lines.append(f"study.mesh({', '.join(global_kwargs)})")
-    explicit_domain_mesh_call = _render_domain_mesh_call("study", global_mesh, source_root=source_root)
-    if explicit_domain_mesh_call:
-        lines.append(explicit_domain_mesh_call)
-    elif global_build_requested:
-        lines.append(_mesh_build_call("study", global_mesh))
 
     for magnet_name, mesh_config in _study_geometry_mesh_configs(problem, overrides):
         if _mesh_mode(mesh_config.get("mode")) != "custom":
@@ -836,6 +831,12 @@ def _render_study_mesh_workflow(
         lines.extend(_render_mesh_operations(target_var, mesh_config))
         if bool(mesh_config.get("build_requested", False)):
             lines.append(f"{target_var}.mesh.build()")
+
+    explicit_domain_mesh_call = _render_domain_mesh_call("study", global_mesh, source_root=source_root)
+    if explicit_domain_mesh_call:
+        lines.append(explicit_domain_mesh_call)
+    elif global_build_requested:
+        lines.append(_mesh_build_call("study", global_mesh))
 
     if not lines:
         return []

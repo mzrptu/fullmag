@@ -14,6 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     gnupg \
+    libgl1 \
+    libglu1-mesa \
+    libxcursor1 \
+    libxft2 \
+    libxinerama1 \
     pkg-config \
     python3 \
     python3-dev \

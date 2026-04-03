@@ -205,6 +205,7 @@ class MeshData:
     boundary_faces: NDArray[np.int32]
     boundary_markers: NDArray[np.int32]
     quality: MeshQualityReport | None = None
+    per_domain_quality: dict[int, MeshQualityReport] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "nodes", np.asarray(self.nodes, dtype=np.float64))
@@ -213,9 +214,6 @@ class MeshData:
         object.__setattr__(self, "boundary_faces", np.asarray(self.boundary_faces, dtype=np.int32))
         object.__setattr__(self, "boundary_markers", np.asarray(self.boundary_markers, dtype=np.int32))
         self.validate()
-
-    @property
-    def n_nodes(self) -> int:
         return int(self.nodes.shape[0])
 
     @property
@@ -374,7 +372,7 @@ class MeshData:
         )
 
     def to_ir(self, mesh_name: str) -> dict[str, object]:
-        return {
+        ir: dict[str, object] = {
             "mesh_name": mesh_name,
             "nodes": self.nodes.tolist(),
             "elements": self.elements.tolist(),
@@ -382,6 +380,27 @@ class MeshData:
             "boundary_faces": self.boundary_faces.tolist(),
             "boundary_markers": self.boundary_markers.tolist(),
         }
+        if self.per_domain_quality is not None:
+            ir["per_domain_quality"] = {
+                str(marker): {
+                    "n_elements": q.n_elements,
+                    "sicn_min": q.sicn_min,
+                    "sicn_max": q.sicn_max,
+                    "sicn_mean": q.sicn_mean,
+                    "sicn_p5": q.sicn_p5,
+                    "sicn_histogram": q.sicn_histogram,
+                    "gamma_min": q.gamma_min,
+                    "gamma_mean": q.gamma_mean,
+                    "gamma_histogram": q.gamma_histogram,
+                    "volume_min": q.volume_min,
+                    "volume_max": q.volume_max,
+                    "volume_mean": q.volume_mean,
+                    "volume_std": q.volume_std,
+                    "avg_quality": q.avg_quality,
+                }
+                for marker, q in self.per_domain_quality.items()
+            }
+        return ir
 
 
 def _add_airbox_geo(
@@ -769,8 +788,8 @@ def generate_box_mesh(
         _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
-        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox)
+        quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
+        mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox, per_domain_quality=_pdq)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -811,8 +830,8 @@ def generate_cylinder_mesh(
         _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
-        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox)
+        quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
+        mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox, per_domain_quality=_pdq)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -848,8 +867,8 @@ def generate_difference_mesh(
         _apply_mesh_options(gmsh, hmax * SCALE, order, opts, hscale=SCALE)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
-        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _extract_mesh_data(gmsh, quality=quality)
+        quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
+        mesh = _extract_mesh_data(gmsh, quality=quality, per_domain_quality=_pdq)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -861,6 +880,7 @@ def generate_difference_mesh(
             boundary_faces=mesh.boundary_faces,
             boundary_markers=mesh.boundary_markers,
             quality=quality,
+            per_domain_quality=_pdq,
         )
     finally:  # pragma: no branch
         gmsh.finalize()
@@ -907,8 +927,8 @@ def _generate_csg_mesh(
         )
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
-        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox)
+        quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
+        mesh = _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox, per_domain_quality=_pdq)
         emit_progress(
             f"Gmsh: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements, {mesh.n_boundary_faces} boundary faces"
         )
@@ -919,6 +939,7 @@ def _generate_csg_mesh(
             boundary_faces=mesh.boundary_faces,
             boundary_markers=mesh.boundary_markers,
             quality=quality,
+            per_domain_quality=_pdq,
         )
     finally:  # pragma: no branch
         gmsh.finalize()
@@ -1091,9 +1112,9 @@ def _mesh_cad_file(
         _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
-        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
+        quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _scale_mesh_nodes(
-            _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox),
+            _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox, per_domain_quality=_pdq),
             scale_xyz,
         )
         emit_progress(
@@ -1213,9 +1234,9 @@ def _mesh_stl_surface(
         _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
-        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
+        quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
         mesh = _scale_mesh_nodes(
-            _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox),
+            _extract_mesh_data(gmsh, quality=quality, has_physical_groups=has_airbox, per_domain_quality=_pdq),
             scale_xyz,
         )
         emit_progress(
@@ -1287,6 +1308,7 @@ def _extract_mesh_data(
     gmsh: Any,
     quality: MeshQualityReport | None = None,
     has_physical_groups: bool = False,
+    per_domain_quality: dict[int, MeshQualityReport] | None = None,
 ) -> MeshData:
     emit_progress("Gmsh: extracting mesh data")
     node_tags, coords, _ = gmsh.model.mesh.getNodes()
@@ -1370,6 +1392,7 @@ def _extract_mesh_data(
         boundary_faces=boundary_faces,
         boundary_markers=boundary_markers,
         quality=quality,
+        per_domain_quality=per_domain_quality,
     )
 
 
@@ -1533,9 +1556,56 @@ def _configure_mesh_size_fields(
             gmsh.model.mesh.field.setAsBackgroundMesh(field_ids[0])
 
 
+def extract_per_domain_quality(
+    element_markers: NDArray[np.int32],
+    sicn_values: NDArray[np.float64],
+    gamma_values: NDArray[np.float64],
+    volume_values: NDArray[np.float64],
+) -> dict[int, MeshQualityReport]:
+    """Compute quality metrics grouped per domain (element marker).
+
+    Args:
+        element_markers: Per-element domain marker array.
+        sicn_values: Per-element SICN quality values.
+        gamma_values: Per-element gamma quality values.
+        volume_values: Per-element volume values.
+
+    Returns:
+        Mapping from marker integer to :class:`MeshQualityReport`.
+    """
+    result: dict[int, MeshQualityReport] = {}
+    for marker in np.unique(element_markers):
+        mask = element_markers == marker
+        s = sicn_values[mask]
+        g = gamma_values[mask]
+        v = volume_values[mask]
+        if s.size == 0:
+            continue
+        sicn_hist, _ = np.histogram(s, bins=20, range=(-1.0, 1.0))
+        gamma_hist, _ = np.histogram(g, bins=20, range=(0.0, 1.0))
+        result[int(marker)] = MeshQualityReport(
+            n_elements=int(mask.sum()),
+            sicn_min=float(np.min(s)),
+            sicn_max=float(np.max(s)),
+            sicn_mean=float(np.mean(s)),
+            sicn_p5=float(np.percentile(s, 5)),
+            sicn_histogram=sicn_hist.tolist(),
+            gamma_min=float(np.min(g)),
+            gamma_mean=float(np.mean(g)),
+            gamma_histogram=gamma_hist.tolist(),
+            volume_min=float(np.min(v)),
+            volume_max=float(np.max(v)),
+            volume_mean=float(np.mean(v)),
+            volume_std=float(np.std(v)),
+            avg_quality=float(np.mean(s)),
+        )
+    return result
+
+
 def _extract_quality_metrics(
     gmsh: Any,
     opts: MeshOptions,
+    element_markers: NDArray[np.int32] | None = None,
 ) -> MeshQualityReport:
     """Extract per-element quality metrics from the current Gmsh mesh."""
     emit_progress("Gmsh: extracting quality metrics")
@@ -1582,6 +1652,15 @@ def _extract_quality_metrics(
         avg_quality=float(avg_q),
         element_sicn=sicn.tolist() if opts.per_element_quality else None,
         element_gamma=gamma.tolist() if opts.per_element_quality else None,
+    ), (
+        extract_per_domain_quality(
+            np.asarray(element_markers, dtype=np.int32),
+            sicn,
+            gamma,
+            vols,
+        )
+        if element_markers is not None and len(element_markers) == len(all_tags)
+        else None
     )
 
 
@@ -1723,8 +1802,8 @@ def _remesh_box(
         emit_progress("AFEM: generating adaptive 3D mesh")
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
-        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _extract_mesh_data(gmsh, quality=quality)
+        quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
+        mesh = _extract_mesh_data(gmsh, quality=quality, per_domain_quality=_pdq)
         emit_progress(
             f"AFEM: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements"
         )
@@ -1759,8 +1838,8 @@ def _remesh_cylinder(
         emit_progress("AFEM: generating adaptive 3D mesh")
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
-        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _extract_mesh_data(gmsh, quality=quality)
+        quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
+        mesh = _extract_mesh_data(gmsh, quality=quality, per_domain_quality=_pdq)
         emit_progress(
             f"AFEM: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements"
         )
@@ -1791,8 +1870,8 @@ def _remesh_csg(
         emit_progress("AFEM: generating adaptive 3D mesh")
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
-        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _extract_mesh_data(gmsh, quality=quality)
+        quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
+        mesh = _extract_mesh_data(gmsh, quality=quality, per_domain_quality=_pdq)
         emit_progress(
             f"AFEM: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements"
         )
@@ -1803,6 +1882,7 @@ def _remesh_csg(
             boundary_faces=mesh.boundary_faces,
             boundary_markers=mesh.boundary_markers,
             quality=quality,
+            per_domain_quality=_pdq,
         )
     finally:
         gmsh.finalize()
@@ -1845,8 +1925,8 @@ def _remesh_imported(
         emit_progress("AFEM: generating adaptive 3D mesh")
         gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
-        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
-        mesh = _scale_mesh_nodes(_extract_mesh_data(gmsh, quality=quality), scale_xyz)
+        quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
+        mesh = _scale_mesh_nodes(_extract_mesh_data(gmsh, quality=quality, per_domain_quality=_pdq), scale_xyz)
         emit_progress(
             f"AFEM: mesh ready — {mesh.n_nodes} nodes, {mesh.n_elements} elements"
         )
@@ -2017,7 +2097,7 @@ def add_air_box(
         # ── Generate ──
         emit_progress("Gmsh: generating air-box 3D mesh")
         gmsh.model.mesh.generate(3)
-        quality = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else None
+        quality, _pdq = _extract_quality_metrics(gmsh, opts) if opts.compute_quality else (None, None)
 
         # ── Extract mesh data ──
         mesh = _extract_airbox_mesh_data(gmsh, mag_volumes, air_volumes, boundary_marker, quality)
@@ -2138,4 +2218,5 @@ def _extract_airbox_mesh_data(
         boundary_faces=boundary_faces,
         boundary_markers=boundary_markers_arr,
         quality=quality,
+        per_domain_quality=_pdq,
     )

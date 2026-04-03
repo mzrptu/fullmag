@@ -132,18 +132,18 @@ export default function TopHeader(props: TopHeaderProps) {
     ?? (props.interactiveEnabled ? "Interactive simulation controls" : "Interactive controls are unavailable for this session");
 
   return (
-    <div className="flex h-11 w-full shrink-0 items-center justify-between border-b border-white/5 bg-background/60 px-3 text-sm font-medium backdrop-blur-xl shadow-sm z-[60] relative">
-      <div className="flex items-center gap-4">
-        <span className="flex items-center gap-2 whitespace-nowrap pr-2">
+    <div className="flex h-10 w-full shrink-0 items-center justify-between border-b border-white/5 bg-background/70 px-3 text-sm font-medium backdrop-blur-xl z-[60] relative">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex items-center gap-2 whitespace-nowrap pr-1">
           <FullmagLogo size={22} className="opacity-90 drop-shadow-sm" />
-          <span className="text-[0.82rem] font-semibold tracking-tight text-foreground/90">{props.problemName}</span>
+          <span className="text-[0.8rem] font-semibold tracking-tight text-foreground/90">{props.problemName}</span>
         </span>
 
-        <div className="flex items-center gap-0.5 border-l border-white/5 pl-4">
+        <div className="hidden items-center gap-0.5 border-l border-white/5 pl-3 lg:flex">
           {menus.map((menu) => (
             <DropdownMenu.Root key={menu.label}>
               <DropdownMenu.Trigger asChild>
-                <button className="px-2.5 py-1 text-[0.75rem] font-medium text-muted-foreground outline-none cursor-default rounded transition-colors hover:bg-muted/50 hover:text-foreground data-[state=open]:bg-muted/50 data-[state=open]:text-foreground">
+                <button className="px-2 py-1 text-[0.72rem] font-medium text-muted-foreground outline-none cursor-default rounded transition-colors hover:bg-muted/40 hover:text-foreground data-[state=open]:bg-muted/40 data-[state=open]:text-foreground">
                   {menu.label}
                 </button>
               </DropdownMenu.Trigger>
@@ -175,13 +175,13 @@ export default function TopHeader(props: TopHeaderProps) {
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 border-r border-border/60 pr-4 h-5">
-          <span className="text-[0.65rem] font-medium tracking-wider text-muted-foreground uppercase mr-1">
+      <div className="flex items-center gap-2">
+        <div className="hidden items-center gap-2 border-r border-border/40 pr-3 h-5 md:flex">
+          <span className="text-[0.62rem] font-medium tracking-wider text-muted-foreground uppercase mr-1">
             {props.backend} {props.runtimeEngine ? `· ${props.runtimeEngine}` : ""}
           </span>
           <span className={cn(
-            "flex items-center gap-1.5 text-[0.65rem] font-medium tracking-wider uppercase",
+            "flex items-center gap-1.5 text-[0.62rem] font-medium tracking-wider uppercase",
             props.connection === "connected" ? "text-emerald-500" :
             props.connection === "connecting" ? "text-amber-500" : "text-rose-500"
           )}>
@@ -196,7 +196,7 @@ export default function TopHeader(props: TopHeaderProps) {
         {props.commandMessage && (
           <div
             className={cn(
-              "max-w-[16rem] truncate rounded-full border px-2.5 py-0.5 text-[0.65rem] font-medium tracking-wider uppercase",
+              "hidden max-w-[12rem] truncate rounded-full border px-2 py-0.5 text-[0.58rem] font-medium tracking-wider uppercase xl:block",
               props.commandBusy
                 ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
                 : "border-sky-500/30 bg-sky-500/10 text-sky-300",
@@ -213,7 +213,7 @@ export default function TopHeader(props: TopHeaderProps) {
               key={control.id}
               type="button"
               className={cn(
-                "flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[0.7rem] font-semibold tracking-wide transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                "flex items-center justify-center gap-1 rounded-md px-2 py-1 text-[0.68rem] font-semibold tracking-wide transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                 control.tone === "run" ? "text-emerald-500 hover:bg-emerald-500/15" :
                 control.tone === "relax" ? "text-amber-500 hover:bg-amber-500/15" :
                 control.tone === "pause" ? "text-blue-500 hover:bg-blue-500/15" :

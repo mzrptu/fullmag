@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Input } from "../ui/input";
@@ -243,6 +243,72 @@ function drawHistogram(
   ctx.fillText(xLabel, pad.left + plotW / 2, h - 2);
 }
 
+function Section({
+  title,
+  eyebrow,
+  meta,
+  children,
+}: {
+  title: string;
+  eyebrow?: string;
+  meta?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-border/30 bg-background/35 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+      <div className="mb-3 flex items-start justify-between gap-3 border-b border-border/20 pb-2.5">
+        <div className="min-w-0">
+          {eyebrow ? (
+            <p className="text-[0.62rem] font-semibold tracking-[0.12em] text-muted-foreground">
+              {eyebrow}
+            </p>
+          ) : null}
+          <h3 className="text-[0.86rem] font-semibold text-foreground">{title}</h3>
+        </div>
+        {meta ? <div className="shrink-0">{meta}</div> : null}
+      </div>
+      <div className="flex flex-col gap-2.5">{children}</div>
+    </section>
+  );
+}
+
+function FieldRow({
+  label,
+  hint,
+  control,
+}: {
+  label: string;
+  hint?: string;
+  control: ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_140px] items-center gap-3 rounded-xl border border-border/18 bg-background/25 px-3 py-2">
+      <div className="min-w-0">
+        <div className="text-[0.73rem] font-medium text-foreground">{label}</div>
+        {hint ? <div className="mt-0.5 text-[0.64rem] text-muted-foreground">{hint}</div> : null}
+      </div>
+      <div className="min-w-0">{control}</div>
+    </div>
+  );
+}
+
+function StatTile({
+  label,
+  value,
+}: {
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-border/18 bg-background/25 px-3 py-2">
+      <div className="text-[0.62rem] font-semibold tracking-[0.08em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 font-mono text-[0.76rem] text-foreground">{value}</div>
+    </div>
+  );
+}
+
 /* ── Component ─────────────────────────────────────────────────────── */
 
 export default function MeshSettingsPanel({
@@ -302,36 +368,43 @@ export default function MeshSettingsPanel({
   }, [quality?.gammaHistogram]);
 
   return (
-    <div className="flex flex-col gap-2 p-3">
+    <div className="flex flex-col gap-3 p-3">
       {/* ── Basic / Advanced Toggle ── */}
-      <div className="flex items-center justify-between px-0.5 pb-1 border-b border-border/20">
-        <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Settings</span>
+      <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/25 bg-background/25 px-3 py-2.5">
+        <div>
+          <div className="text-[0.62rem] font-semibold tracking-[0.12em] text-muted-foreground">
+            Mesh settings
+          </div>
+          <div className="text-[0.78rem] font-medium text-foreground">
+            Adjust inputs first, then rebuild to update the realized mesh.
+          </div>
+        </div>
         <button
           type="button"
-          className="flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-muted/50 transition-colors"
+          className="rounded-lg border border-border/25 px-2.5 py-1.5 text-[0.68rem] font-semibold text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
           onClick={() => setShowAdvanced((v) => !v)}
         >
-          {showAdvanced ? "▲ Basic" : "▼ Advanced"}
+          {showAdvanced ? "Basic view" : "Advanced view"}
         </button>
       </div>
 
       {/* ── Algorithm Selection ── */}
       {showAdvanced && (
-      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
-        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
-          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Algorithm</span>
-          <span className="text-[0.65rem] font-mono text-muted-foreground/70 bg-muted px-1.5 py-0.5 rounded">Gmsh</span>
-        </div>
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">2D surface</span>
-            <div className="flex-1 max-w-[140px]">
+        <Section
+          title="Mesher"
+          eyebrow="Advanced"
+          meta={<span className="rounded-md bg-muted/40 px-2 py-1 text-[0.62rem] font-mono text-muted-foreground">Gmsh</span>}
+        >
+          <FieldRow
+            label="Surface algorithm"
+            hint="Controls STL/classified surface triangulation."
+            control={(
               <Select
                 value={String(options.algorithm2d)}
                 onValueChange={(val) => set({ algorithm2d: Number(val) })}
                 disabled={disabled}
               >
-                <SelectTrigger className="h-7 w-full border-border/50 bg-card text-xs">
+                <SelectTrigger className="h-8 w-full border-border/35 bg-background/70 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -340,17 +413,18 @@ export default function MeshSettingsPanel({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">3D volume</span>
-            <div className="flex-1 max-w-[140px]">
+            )}
+          />
+          <FieldRow
+            label="Volume algorithm"
+            hint="Controls tetrahedral filling of the final shared domain."
+            control={(
               <Select
                 value={String(options.algorithm3d)}
                 onValueChange={(val) => set({ algorithm3d: Number(val) })}
                 disabled={disabled}
               >
-                <SelectTrigger className="h-7 w-full border-border/50 bg-card text-xs">
+                <SelectTrigger className="h-8 w-full border-border/35 bg-background/70 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -359,54 +433,101 @@ export default function MeshSettingsPanel({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-          </div>
-        </div>
-      </div>
+            )}
+          />
+        </Section>
       )}
 
       {/* ── Size Control ── */}
-      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
-        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
-          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Element Size</span>
+      <Section
+        title="Element size"
+        eyebrow="Basic"
+        meta={<span className="text-[0.62rem] font-mono text-muted-foreground">SI metres</span>}
+      >
+        <div className="rounded-xl border border-sky-500/20 bg-sky-500/8 px-3 py-2 text-[0.68rem] leading-5 text-sky-100/90">
+          These values shape the next rebuild. The viewport keeps showing the last built mesh until the remesh finishes.
         </div>
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-              hmax
-              <span className="text-[0.55rem] text-muted-foreground/40">(primary)</span>
-            </span>
-            <div className="flex-1 max-w-[140px]">
+        <FieldRow
+          label="Maximum element size"
+          hint="Upper bound for the local target size."
+          control={(
+            <Input
+              className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              placeholder="auto"
+              value={options.hmax}
+              onChange={(e) => set({ hmax: e.target.value })}
+              disabled={disabled}
+            />
+          )}
+        />
+        <FieldRow
+          label="Minimum element size"
+          hint="Lower bound used when local refinement gets very fine."
+          control={(
+            <Input
+              className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              placeholder="auto"
+              value={options.hmin}
+              onChange={(e) => set({ hmin: e.target.value })}
+              disabled={disabled}
+            />
+          )}
+        />
+        <FieldRow
+          label="Curvature factor"
+          hint="Refines curved regions when geometry detail requires it."
+          control={(
+            <Input
+              className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="number"
+              step="1"
+              min="0"
+              max="100"
+              value={options.sizeFromCurvature}
+              onChange={(e) => set({ sizeFromCurvature: Number(e.target.value) || 0 })}
+              disabled={disabled}
+            />
+          )}
+        />
+        <FieldRow
+          label="Maximum growth rate"
+          hint="Limits how quickly elements can grow away from refined zones."
+          control={(
+            <Input
+              className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="text"
+              placeholder="1.8"
+              value={options.growthRate}
+              onChange={(e) => set({ growthRate: e.target.value })}
+              disabled={disabled}
+            />
+          )}
+        />
+        <FieldRow
+          label="Narrow region resolution"
+          hint="Minimum target density in tight gaps and channels."
+          control={(
+            <Input
+              className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
+              type="number"
+              step="1"
+              min="0"
+              max="10"
+              value={options.narrowRegions}
+              onChange={(e) => set({ narrowRegions: Number(e.target.value) || 0 })}
+              disabled={disabled}
+            />
+          )}
+        />
+        {showAdvanced ? (
+          <FieldRow
+            label="Global size factor"
+            hint="Applies a global multiplier on top of local sizing rules."
+            control={(
               <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
-                type="text"
-                placeholder="auto"
-                value={options.hmax}
-                onChange={(e) => set({ hmax: e.target.value })}
-                disabled={disabled}
-              />
-            </div>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">hmin</span>
-            <div className="flex-1 max-w-[140px]">
-              <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
-                type="text"
-                placeholder="auto"
-                value={options.hmin}
-                onChange={(e) => set({ hmin: e.target.value })}
-                disabled={disabled}
-              />
-            </div>
-          </div>
-          {showAdvanced && (
-            <>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Size factor</span>
-            <div className="flex-1 max-w-[140px]">
-              <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
                 type="number"
                 step="0.1"
                 min="0.1"
@@ -415,78 +536,24 @@ export default function MeshSettingsPanel({
                 onChange={(e) => set({ sizeFactor: Number(e.target.value) || 1 })}
                 disabled={disabled}
               />
-            </div>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">From curvature</span>
-            <div className="flex-1 max-w-[140px]">
-              <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
-                type="number"
-                step="1"
-                min="0"
-                max="100"
-                value={options.sizeFromCurvature}
-                onChange={(e) => set({ sizeFromCurvature: Number(e.target.value) || 0 })}
-                disabled={disabled}
-              />
-            </div>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-              Growth rate
-              <span className="text-[0.55rem] text-muted-foreground/40">(SmoothRatio)</span>
-            </span>
-            <div className="flex-1 max-w-[140px]">
-              <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
-                type="text"
-                placeholder="1.8"
-                value={options.growthRate}
-                onChange={(e) => set({ growthRate: e.target.value })}
-                disabled={disabled}
-              />
-            </div>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-              Narrow regions
-              <span className="text-[0.55rem] text-muted-foreground/40">(0 = off)</span>
-            </span>
-            <div className="flex-1 max-w-[140px]">
-              <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
-                type="number"
-                step="1"
-                min="0"
-                max="10"
-                value={options.narrowRegions}
-                onChange={(e) => set({ narrowRegions: Number(e.target.value) || 0 })}
-                disabled={disabled}
-              />
-            </div>
-          </div>
-            </>
-          )}
-        </div>
-      </div>
+            )}
+          />
+        ) : null}
+      </Section>
 
       {/* ── Optimization ── */}
       {showAdvanced && (
-      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
-        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
-          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Optimization</span>
-        </div>
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Method</span>
-            <div className="flex-1 max-w-[140px]">
+        <Section title="Optimization" eyebrow="Advanced">
+          <FieldRow
+            label="Method"
+            hint="Optional quality pass after tetrahedral generation."
+            control={(
               <Select
                 value={options.optimize || "none"}
                 onValueChange={(val) => set({ optimize: val === "none" ? "" : val })}
                 disabled={disabled}
               >
-                <SelectTrigger className="h-7 w-full border-border/50 bg-card text-xs">
+                <SelectTrigger className="h-8 w-full border-border/35 bg-background/70 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -495,14 +562,15 @@ export default function MeshSettingsPanel({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-          </div>
-          {options.optimize !== "" && (
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Iterations</span>
-              <div className="flex-1 max-w-[140px]">
+            )}
+          />
+          {options.optimize !== "" ? (
+            <FieldRow
+              label="Iterations"
+              hint="Number of passes for the selected optimizer."
+              control={(
                 <Input
-                  className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                  className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
                   type="number"
                   step="1"
                   min="1"
@@ -511,14 +579,15 @@ export default function MeshSettingsPanel({
                   onChange={(e) => set({ optimizeIters: Number(e.target.value) || 1 })}
                   disabled={disabled}
                 />
-              </div>
-            </div>
-          )}
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Smoothing</span>
-            <div className="flex-1 max-w-[140px]">
+              )}
+            />
+          ) : null}
+          <FieldRow
+            label="Smoothing steps"
+            hint="Post-process smoothing for noisy tetrahedra."
+            control={(
               <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
                 type="number"
                 step="1"
                 min="0"
@@ -527,22 +596,21 @@ export default function MeshSettingsPanel({
                 onChange={(e) => set({ smoothingSteps: Number(e.target.value) || 0 })}
                 disabled={disabled}
               />
-            </div>
-          </div>
-        </div>
-      </div>
+            )}
+          />
+        </Section>
       )}
 
       {/* ── Quality ── */}
-      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
-        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
-          <span className="text-xs font-bold uppercase tracking-widest text-foreground">Quality Analysis</span>
-          {qualityRating && (
-            <span className={cn("text-[0.65rem] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded text-white", qualityRating.cls === "good" ? "bg-emerald-600" : qualityRating.cls === "fair" ? "bg-amber-600" : "bg-destructive")}>
-              {qualityRating.label}
-            </span>
-          )}
-        </div>
+      <Section
+        title="Quality analysis"
+        eyebrow="Diagnostics"
+        meta={qualityRating ? (
+          <span className={cn("rounded-md px-2 py-1 text-[0.62rem] font-semibold text-white", qualityRating.cls === "good" ? "bg-emerald-600" : qualityRating.cls === "fair" ? "bg-amber-600" : "bg-destructive")}>
+            {qualityRating.label}
+          </span>
+        ) : undefined}
+      >
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between py-1">
             <span className="text-xs font-medium text-foreground">Extract quality metrics</span>
@@ -567,44 +635,18 @@ export default function MeshSettingsPanel({
 
           {quality && (
             <>
-              <div className="grid grid-cols-2 gap-2 mt-2 p-2 bg-black/10 rounded-md border border-border/20">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">Elements</span>
-                  <span className="font-mono text-xs text-foreground">{quality.nElements.toLocaleString()}</span>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">SICN min</span>
-                  <span className="font-mono text-xs text-foreground">{quality.sicnMin.toFixed(3)}</span>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">SICN mean</span>
-                  <span className="font-mono text-xs text-foreground">{quality.sicnMean.toFixed(3)}</span>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">SICN p5</span>
-                  <span className="font-mono text-xs text-foreground">{quality.sicnP5.toFixed(3)}</span>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">γ min</span>
-                  <span className="font-mono text-xs text-foreground">{quality.gammaMin.toFixed(3)}</span>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">γ mean</span>
-                  <span className="font-mono text-xs text-foreground">{quality.gammaMean.toFixed(3)}</span>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">Avg ICN</span>
-                  <span className="font-mono text-xs text-foreground">{quality.avgQuality.toFixed(3)}</span>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">Vol σ/μ</span>
-                  <span className="font-mono text-xs text-foreground">
-                    {quality.volumeMean > 0
-                      ? (quality.volumeStd / quality.volumeMean).toFixed(2)
-                      : "—"
-                    }
-                  </span>
-                </div>
+              <div className="grid grid-cols-2 gap-2">
+                <StatTile label="Elements" value={quality.nElements.toLocaleString()} />
+                <StatTile label="SICN min" value={quality.sicnMin.toFixed(3)} />
+                <StatTile label="SICN mean" value={quality.sicnMean.toFixed(3)} />
+                <StatTile label="SICN p5" value={quality.sicnP5.toFixed(3)} />
+                <StatTile label="γ min" value={quality.gammaMin.toFixed(3)} />
+                <StatTile label="γ mean" value={quality.gammaMean.toFixed(3)} />
+                <StatTile label="Average ICN" value={quality.avgQuality.toFixed(3)} />
+                <StatTile
+                  label="Volume σ/μ"
+                  value={quality.volumeMean > 0 ? (quality.volumeStd / quality.volumeMean).toFixed(2) : "—"}
+                />
               </div>
 
               {/* SICN Histogram */}
@@ -625,29 +667,28 @@ export default function MeshSettingsPanel({
             </>
           )}
         </div>
-      </div>
+      </Section>
       {/* ── Solver Compatibility ── */}
       {nodeCount != null && nodeCount > 0 && (
-        <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
-          <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
-            <span className="text-xs font-bold uppercase tracking-widest text-foreground">Solver Compatibility</span>
-          </div>
-          <div className="grid grid-cols-[92px_1fr] gap-2 items-center">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Nodes</span>
-            <span className="font-mono text-xs text-foreground">{nodeCount.toLocaleString()}</span>
-          </div>
-          <div className="grid grid-cols-[92px_1fr] gap-2 items-center">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Est. RAM</span>
-            <span className={cn("font-mono text-xs",
-              nodeCount > 50000 ? "text-destructive font-bold" :
-              nodeCount > 10000 ? "text-amber-500" : "text-emerald-500")}>
-              {((nodeCount * nodeCount * 24) / 1e9).toFixed(1)} GB
-              {nodeCount > 50000 && " ⛔ too large"}
-              {nodeCount > 10000 && nodeCount <= 50000 && " ⚠️ large"}
-            </span>
+        <Section title="Solver compatibility" eyebrow="Diagnostics">
+          <div className="grid grid-cols-2 gap-2">
+            <StatTile label="Nodes" value={nodeCount.toLocaleString()} />
+            <StatTile
+              label="Estimated RAM"
+              value={(
+                <span
+                  className={cn(
+                    nodeCount > 50000 ? "text-destructive font-semibold" :
+                    nodeCount > 10000 ? "text-amber-400" : "text-emerald-400",
+                  )}
+                >
+                  {((nodeCount * nodeCount * 24) / 1e9).toFixed(1)} GB
+                </span>
+              )}
+            />
           </div>
           {nodeCount > 10000 && (
-            <div className={cn("mt-1 p-2 rounded-md text-xs",
+            <div className={cn("rounded-xl p-2 text-xs",
               nodeCount > 50000
                 ? "bg-destructive/10 border border-destructive/30 text-destructive"
                 : "bg-amber-500/10 border border-amber-500/30 text-amber-500")}>
@@ -656,33 +697,34 @@ export default function MeshSettingsPanel({
                 : "Large mesh — may be slow. Target <10,000 nodes for CPU reference solver."}
             </div>
           )}
-        </div>
+        </Section>
       )}
       {/* ── Adaptive Mesh (AFEM) ── */}
       {showAdvanced && showAdaptiveSection && (
-      <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
-        <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
-          <span className="text-xs font-bold uppercase tracking-widest text-foreground flex items-center gap-1.5 justify-between w-full">
-            <span>Adaptive Mesh (AFEM)</span>
-            <Switch
-              className="data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted/80 h-[18px] w-8"
-              checked={options.adaptiveEnabled}
-              onCheckedChange={(checked) => set({ adaptiveEnabled: checked })}
-              disabled={disabled}
-            />
-          </span>
-        </div>
+      <Section
+        title="Adaptive mesh"
+        eyebrow="Advanced"
+        meta={(
+          <Switch
+            className="data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted/80 h-[18px] w-8"
+            checked={options.adaptiveEnabled}
+            onCheckedChange={(checked) => set({ adaptiveEnabled: checked })}
+            disabled={disabled}
+          />
+        )}
+      >
         {options.adaptiveEnabled && (
           <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">Policy</span>
-              <div className="flex-1 max-w-[140px]">
+            <FieldRow
+              label="Policy"
+              hint="Use manual remeshes or let adaptive refinement run in the solve loop."
+              control={(
                 <Select
                   value={options.adaptivePolicy}
                   onValueChange={(val) => set({ adaptivePolicy: val })}
                   disabled={disabled}
                 >
-                  <SelectTrigger className="h-7 w-full border-border/50 bg-card text-xs">
+                  <SelectTrigger className="h-8 w-full border-border/35 bg-background/70 text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -690,14 +732,14 @@ export default function MeshSettingsPanel({
                     <SelectItem value="auto">Auto (solve loop)</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-            </div>
+              )}
+            />
             
             <div className="grid grid-cols-2 gap-2">
               <div className="flex flex-col gap-1">
-                <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground ml-1">Theta (θ)</span>
+                <span className="ml-1 text-[0.65rem] font-medium text-muted-foreground">Theta (θ)</span>
                 <Input
-                  className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                  className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
                   type="number" step="0.05" min="0.01" max="1"
                   value={options.adaptiveTheta}
                   onChange={(e) => set({ adaptiveTheta: Number(e.target.value) || 0.3 })}
@@ -717,9 +759,9 @@ export default function MeshSettingsPanel({
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="flex flex-col gap-1">
-                <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground ml-1">Min. Edge (m)</span>
+                <span className="ml-1 text-[0.65rem] font-medium text-muted-foreground">Min. edge (m)</span>
                 <Input
-                  className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                  className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
                   placeholder="e.g. 5e-9"
                   value={options.adaptiveHMin}
                   onChange={(e) => set({ adaptiveHMin: e.target.value })}
@@ -727,9 +769,9 @@ export default function MeshSettingsPanel({
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground ml-1">Max. Edge (m)</span>
+                <span className="ml-1 text-[0.65rem] font-medium text-muted-foreground">Max. edge (m)</span>
                 <Input
-                  className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                  className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
                   placeholder="e.g. 30e-9"
                   value={options.adaptiveHMax}
                   onChange={(e) => set({ adaptiveHMax: e.target.value })}
@@ -738,9 +780,9 @@ export default function MeshSettingsPanel({
               </div>
             </div>
             <div className="flex flex-col gap-1 mt-1">
-              <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground ml-1">Error Tolerance</span>
+              <span className="ml-1 text-[0.65rem] font-medium text-muted-foreground">Error tolerance</span>
               <Input
-                className="h-7 w-full border-border/50 bg-card px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50 focus-visible:ring-1"
+                className="h-8 w-full border-border/35 bg-background/70 px-2 py-1 text-xs font-mono text-right placeholder:text-muted-foreground/30 disabled:opacity-50"
                 placeholder="e.g. 1e-3"
                 value={options.adaptiveErrorTolerance}
                 onChange={(e) => set({ adaptiveErrorTolerance: e.target.value })}
@@ -749,33 +791,38 @@ export default function MeshSettingsPanel({
             </div>
           </div>
         )}
-      </div>
+      </Section>
       )}
 
       {/* ── Refinement Zones (lasso) ── */}
       {showAdvanced && options.refinementZones.length > 0 && (
-        <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm">
-          <div className="flex items-center justify-between gap-2 border-b border-border/20 pb-2 mb-1">
-            <span className="text-xs font-bold uppercase tracking-widest text-foreground">
-              Refinement Zones
-              <span className="ml-1.5 text-[0.6rem] font-mono text-muted-foreground">({options.refinementZones.length})</span>
-            </span>
+        <Section
+          title="Refinement zones"
+          eyebrow="Advanced"
+          meta={(
             <button
-              className="text-[0.65rem] font-semibold uppercase tracking-widest text-destructive/80 hover:text-destructive px-1.5 py-0.5 rounded hover:bg-destructive/10 transition-colors"
+              className="rounded-md px-2 py-1 text-[0.65rem] font-semibold text-destructive/80 transition-colors hover:bg-destructive/10 hover:text-destructive"
               onClick={() => set({ refinementZones: [] })}
               disabled={disabled}
             >
               Clear all
             </button>
+          )}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-foreground">
+              Refinement Zones
+              <span className="ml-1.5 text-[0.68rem] font-mono text-muted-foreground">({options.refinementZones.length})</span>
+            </span>
           </div>
           <div className="flex flex-col gap-1">
             {options.refinementZones.map((zone, i) => (
-              <div key={i} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-muted/20 border border-border/20">
-                <span className="text-[0.65rem] font-mono text-muted-foreground">
+              <div key={i} className="flex items-center justify-between gap-2 rounded-xl border border-border/18 bg-background/25 px-3 py-2">
+                <span className="text-[0.68rem] font-mono text-muted-foreground">
                   {zone.kind} #{i + 1} — VIn={typeof zone.params.VIn === "number" ? zone.params.VIn.toExponential(1) : "?"}
                 </span>
                 <button
-                  className="text-[0.6rem] text-destructive/60 hover:text-destructive"
+                  className="text-[0.65rem] text-destructive/60 hover:text-destructive"
                   onClick={() => set({ refinementZones: options.refinementZones.filter((_, j) => j !== i) })}
                   disabled={disabled}
                 >
@@ -784,14 +831,14 @@ export default function MeshSettingsPanel({
               </div>
             ))}
           </div>
-        </div>
+        </Section>
       )}
 
       {/* ── Generate button ── */}
       {onGenerate && (
-        <div className="flex flex-col gap-3 p-3 rounded-lg border border-border/40 bg-card/20 shadow-sm transition-all duration-300">
+        <Section title="Build" eyebrow="Action">
           <Button
-            className="w-full h-8 text-sm font-semibold transition-all duration-300 relative overflow-hidden"
+            className="h-9 w-full text-sm font-semibold transition-all duration-300"
             variant="default"
             onClick={onGenerate}
             disabled={(generateDisabled ?? disabled) || generating}
@@ -809,19 +856,19 @@ export default function MeshSettingsPanel({
           {generating && (
             <div className="flex flex-col gap-2 pt-1 animate-in fade-in slide-in-from-top-2 duration-300">
               <div className="flex items-center justify-between px-1">
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-emerald-500 flex items-center gap-1.5">
+                <span className="flex items-center gap-1.5 text-[0.65rem] font-semibold text-emerald-400">
                   <span className="relative flex h-1.5 w-1.5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
                   </span>
-                  TX: REMESH
+                  Remesh request sent
                 </span>
-                <span className="text-[0.65rem] font-bold uppercase tracking-widest text-amber-500 flex items-center gap-1.5">
+                <span className="flex items-center gap-1.5 text-[0.65rem] font-semibold text-amber-400">
                   <span className="relative flex h-1.5 w-1.5">
                     <span className="animate-ping delay-150 absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
                   </span>
-                  RX: AWAITING
+                  Waiting for backend
                 </span>
               </div>
               
@@ -831,14 +878,14 @@ export default function MeshSettingsPanel({
               </div>
               
               <div className="flex items-center justify-between px-1 mt-0.5 opacity-60">
-                <span className="text-[0.6rem] font-mono text-muted-foreground uppercase tracking-wider">Backend computing</span>
-                <span className="text-[0.6rem] font-mono text-muted-foreground uppercase tracking-wider tabular-nums flex items-center gap-1">
+                <span className="text-[0.62rem] font-mono text-muted-foreground">Backend computing</span>
+                <span className="flex items-center gap-1 text-[0.62rem] font-mono tabular-nums text-muted-foreground">
                   <ArrowRightLeft className="w-2.5 h-2.5" /> active
                 </span>
               </div>
             </div>
           )}
-        </div>
+        </Section>
       )}
     </div>
   );

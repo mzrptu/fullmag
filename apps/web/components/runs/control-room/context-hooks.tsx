@@ -257,6 +257,9 @@ export interface ModelContextValue {
   meshFaceDetail: ReturnType<typeof computeMeshFaceDetail>;
   meshQualitySummary: MeshQualitySummary | null;
   meshWorkspace: MeshWorkspaceState | null;
+  meshConfigDirty: boolean;
+  meshConfigSignature: string | null;
+  lastBuiltMeshConfigSignature: string | null;
   meshName: string | null;
   meshSource: string | null;
   meshExtent: [number, number, number] | null;

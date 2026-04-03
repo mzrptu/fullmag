@@ -346,7 +346,11 @@ def _shared_domain_local_size_fields(
         bounds_min, bounds_max = bounds
         entry = override_by_name.get(geometry.geometry_name)
         target_hmax = _coerce_positive_float(entry.get("hmax") if entry else None) or default_hmax
-        pad = max(target_hmax, default_hmax) * 1.0e-6
+        # Expand the local field by a few element widths around the object.
+        # The previous 1e-6 multiplier made the box effectively flush with the
+        # geometry bounds, so local overrides barely influenced the final
+        # shared-domain tetrahedral mesh.
+        pad = max(target_hmax, default_hmax) * 2.5
         fields.append(
             {
                 "kind": "Box",

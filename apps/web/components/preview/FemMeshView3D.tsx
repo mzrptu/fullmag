@@ -846,6 +846,31 @@ function FemMeshView3DInner({
     ].filter((group) => group.parts.length > 0),
     [meshParts],
   );
+  const selectedMeshPart = useMemo(
+    () => meshParts.find((part) => part.id === selectedEntityId) ?? null,
+    [meshParts, selectedEntityId],
+  );
+  const roleVisibilitySummary = useMemo(
+    () =>
+      (
+        [
+          ["air", "Air"],
+          ["magnetic_object", "Objects"],
+          ["interface", "Interfaces"],
+          ["outer_boundary", "Boundary"],
+        ] as const
+      )
+        .map(([role, label]) => {
+          const parts = meshParts.filter((part) => part.role === role);
+          if (parts.length === 0) {
+            return null;
+          }
+          const visible = parts.filter((part) => meshEntityViewState[part.id]?.visible ?? true).length;
+          return { role, label, total: parts.length, visible };
+        })
+        .filter((entry): entry is { role: FemMeshPart["role"]; label: string; total: number; visible: number } => Boolean(entry)),
+    [meshEntityViewState, meshParts],
+  );
   const missingMagneticMask =
     meshData.quantityDomain === "magnetic_only" &&
     (!meshData.activeMask || meshData.activeMask.length !== meshData.nNodes);
@@ -1522,76 +1547,107 @@ function FemMeshView3DInner({
       )}
 
       {hasMeshParts && partExplorerOpen && (
-        <div className="absolute right-3 top-20 z-20 w-[280px] max-h-[calc(100%-7rem)] overflow-hidden rounded-2xl border border-border/40 bg-background/82 shadow-xl backdrop-blur-md">
-          <div className="flex items-center justify-between border-b border-border/30 px-3 py-2">
+        <div className="absolute right-3 top-20 z-20 w-[264px] max-h-[calc(100%-7rem)] overflow-hidden rounded-2xl border border-border/30 bg-background/88 shadow-xl backdrop-blur-md">
+          <div className="flex items-center justify-between border-b border-border/25 px-3 py-2.5">
             <div>
-              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Part Explorer
+              <p className="text-[0.62rem] font-semibold tracking-[0.12em] text-muted-foreground">
+                {selectedMeshPart ? "Selected part" : "Mesh parts"}
               </p>
-              <p className="text-[0.72rem] font-medium text-foreground">
+              <p className="text-[0.78rem] font-medium text-foreground">
                 {visibleLayers.length}/{meshParts.length} visible parts
               </p>
             </div>
             <button
               type="button"
-              className="rounded-md px-2 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+              className="rounded-md px-2 py-1 text-[0.65rem] font-semibold text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
               onClick={() => setPartExplorerOpen(false)}
             >
               Hide
             </button>
           </div>
-          <div className="border-b border-border/20 px-3 py-2">
+          <div className="border-b border-border/20 px-3 py-2.5">
             <div className="flex flex-wrap gap-1.5">
-              {(
-                [
-                  ["air", "Air"],
-                  ["magnetic_object", "Objects"],
-                  ["interface", "Interfaces"],
-                  ["outer_boundary", "Boundary"],
-                ] as const
-              ).map(([role, label]) => {
-                const roleParts = meshParts.filter((part) => part.role === role);
-                if (roleParts.length === 0) {
-                  return null;
-                }
-                const visibleCount = roleParts.filter(
-                  (part) => meshEntityViewState[part.id]?.visible ?? true,
-                ).length;
-                return (
-                  <button
-                    key={role}
-                    type="button"
-                    className="rounded-full border border-border/30 px-2.5 py-1 text-[0.6rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:bg-muted/50"
-                    onClick={() => handleRoleVisibility(role, visibleCount !== roleParts.length)}
-                  >
-                    {label} {visibleCount}/{roleParts.length}
-                  </button>
-                );
-              })}
+              {roleVisibilitySummary.map((entry) => (
+                <button
+                  key={entry.role}
+                  type="button"
+                  className="rounded-full border border-border/25 px-2.5 py-1 text-[0.62rem] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                  onClick={() => handleRoleVisibility(entry.role, entry.visible !== entry.total)}
+                >
+                  {entry.label} {entry.visible}/{entry.total}
+                </button>
+              ))}
             </div>
           </div>
-          <div className="max-h-[calc(100%-7.5rem)] overflow-y-auto px-2 py-2">
+          <div className="max-h-[calc(100%-7.5rem)] overflow-y-auto px-3 py-3">
+            {selectedMeshPart ? (
+              <div className="mb-3 rounded-2xl border border-primary/18 bg-primary/6 p-3">
+                <div className="flex items-start gap-3">
+                  <button
+                    type="button"
+                    className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-white/15"
+                    style={{ backgroundColor: partRoleTint(selectedMeshPart.role) }}
+                    onClick={() => patchSinglePart(selectedMeshPart.id, { visible: !(meshEntityViewState[selectedMeshPart.id]?.visible ?? true) })}
+                    title={(meshEntityViewState[selectedMeshPart.id]?.visible ?? true) ? "Hide part" : "Show part"}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[0.78rem] font-semibold text-foreground">
+                      {selectedMeshPart.label || selectedMeshPart.id}
+                    </div>
+                    <div className="mt-1 text-[0.64rem] text-muted-foreground">
+                      {selectedMeshPart.role.replaceAll("_", " ")}
+                      {selectedMeshPart.object_id ? ` · ${selectedMeshPart.object_id}` : ""}
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[0.66rem]">
+                      <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
+                        <div className="text-muted-foreground">Elements</div>
+                        <div className="mt-1 font-mono text-foreground">
+                          {selectedMeshPart.element_count.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
+                        <div className="text-muted-foreground">Nodes</div>
+                        <div className="mt-1 font-mono text-foreground">
+                          {selectedMeshPart.node_count.toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={cn(
+                      "rounded-lg border px-2 py-1 text-[0.62rem] font-semibold transition-colors",
+                      focusedEntityId === selectedMeshPart.id
+                        ? "border-cyan-400/30 bg-cyan-500/12 text-cyan-200"
+                        : "border-border/20 text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                    )}
+                    onClick={() => onEntityFocus?.(selectedMeshPart.id)}
+                  >
+                    Focus
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {partExplorerGroups.map((group) => (
               <div key={group.label} className="mb-3">
-                <div className="px-1 pb-1 text-[0.6rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                <div className="px-1 pb-1.5 text-[0.64rem] font-semibold text-muted-foreground">
                   {group.label}
                 </div>
                 <div className="space-y-1">
                   {group.parts.map((part) => {
                     const viewState = meshEntityViewState[part.id];
                     const isSelected = selectedEntityId === part.id;
-                    const isFocused = focusedEntityId === part.id;
                     return (
                       <div
                         key={part.id}
                         className={cn(
-                          "rounded-xl border px-2 py-2 transition-colors",
+                          "rounded-xl border px-2.5 py-2 transition-colors",
                           isSelected
-                            ? "border-primary/40 bg-primary/8"
-                            : "border-border/20 bg-background/35",
+                            ? "border-primary/28 bg-primary/8"
+                            : "border-border/18 bg-background/28 hover:bg-background/40",
                         )}
                       >
-                        <div className="flex items-start gap-2">
+                        <div className="flex items-start gap-2.5">
                           <button
                             type="button"
                             className="mt-0.5 h-3 w-3 shrink-0 rounded-full border border-white/15"
@@ -1613,18 +1669,20 @@ function FemMeshView3DInner({
                               {part.object_id && <span>{part.object_id}</span>}
                             </div>
                           </button>
-                          <button
-                            type="button"
-                            className={cn(
-                              "rounded-md px-2 py-1 text-[0.58rem] font-semibold uppercase tracking-[0.12em] transition-colors",
-                              isFocused
-                                ? "bg-cyan-500/15 text-cyan-200"
-                                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                            )}
-                            onClick={() => onEntityFocus?.(part.id)}
-                          >
-                            Focus
-                          </button>
+                          {isSelected ? (
+                            <button
+                              type="button"
+                              className={cn(
+                                "rounded-md border px-2 py-1 text-[0.6rem] font-semibold transition-colors",
+                                focusedEntityId === part.id
+                                  ? "border-cyan-400/30 bg-cyan-500/12 text-cyan-200"
+                                  : "border-border/20 text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                              )}
+                              onClick={() => onEntityFocus?.(part.id)}
+                            >
+                              Focus
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     );

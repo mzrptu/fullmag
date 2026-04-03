@@ -1,10 +1,12 @@
 "use client";
 
 import type { EngineLogEntry } from "../../../lib/useSessionStream";
+import type { SceneDocument } from "../../../lib/session/types";
 import type { MeshQualityData, MeshOptionsState } from "../../panels/MeshSettingsPanel";
 import type { RenderMode } from "../../preview/FemMeshView3D";
 import type { FemDockTab, ViewportMode } from "./shared";
 import { type LucideIcon, Grid3x3, Box, Scissors, Activity, Zap } from "lucide-react";
+import { resolveObjectNameFromNodeId } from "../../panels/settings/objectSelection";
 
 export type MeshWorkspacePresetId =
   | "inspect-surface"
@@ -31,6 +33,37 @@ export interface MeshPipelinePhaseStatus {
   label: string;
   status: "idle" | "active" | "done" | "warning";
   detail: string | null;
+}
+
+export interface MeshBuildDialogIntent {
+  mode: "selected" | "all";
+  targetNodeId: string | null;
+  targetLabel: string;
+  title: string;
+  contextLabel: string | null;
+}
+
+export interface MeshBuildStage {
+  id:
+    | "queued"
+    | "materializing"
+    | "preparing_domain"
+    | "meshing"
+    | "postprocessing"
+    | "ready"
+    | "failed";
+  label: string;
+  status: "idle" | "active" | "done" | "warning";
+  detail: string | null;
+}
+
+export interface EffectiveMeshTarget {
+  geometryName: string;
+  source: "study_default" | "local_override";
+  hmax: number | null;
+  hmin: number | null;
+  algorithm2d: number | null;
+  algorithm3d: number | null;
 }
 
 export const MESH_WORKSPACE_PRESETS: MeshWorkspacePreset[] = [
@@ -163,6 +196,289 @@ export function meshWorkspaceNodeToPreset(nodeId: string): MeshWorkspacePresetId
     default:
       return null;
   }
+}
+
+export function isMeshNodeId(nodeId: string | null | undefined): boolean {
+  if (!nodeId) {
+    return false;
+  }
+  return (
+    nodeId === "universe-airbox" ||
+    nodeId.startsWith("universe-airbox") ||
+    nodeId === "universe-boundary" ||
+    nodeId === "universe-mesh" ||
+    nodeId.startsWith("universe-mesh-") ||
+    nodeId === "mesh" ||
+    nodeId.startsWith("mesh-") ||
+    (nodeId.startsWith("geo-") && nodeId.endsWith("-mesh"))
+  );
+}
+
+export function meshBuildIntentForNode(args: {
+  mode: "selected" | "all";
+  nodeId: string | null | undefined;
+  sceneDocument: SceneDocument | null;
+  hasSharedAirboxDomain: boolean;
+}): MeshBuildDialogIntent {
+  const { mode, nodeId, sceneDocument, hasSharedAirboxDomain } = args;
+  if (mode === "all") {
+    return {
+      mode,
+      targetNodeId: nodeId ?? null,
+      targetLabel: hasSharedAirboxDomain ? "study domain mesh" : "FEM mesh",
+      title: "Build All",
+      contextLabel: null,
+    };
+  }
+
+  if (nodeId && nodeId.startsWith("geo-") && nodeId.endsWith("-mesh")) {
+    const objectName = resolveObjectNameFromNodeId(nodeId, sceneDocument?.objects ?? []);
+    return {
+      mode,
+      targetNodeId: nodeId,
+      targetLabel: hasSharedAirboxDomain ? "study domain mesh" : "FEM mesh",
+      title: "Build Selected",
+      contextLabel: objectName ?? "selected object",
+    };
+  }
+
+  if (nodeId === "universe-airbox" || nodeId?.startsWith("universe-airbox")) {
+    return {
+      mode,
+      targetNodeId: nodeId ?? "universe-airbox-mesh",
+      targetLabel: hasSharedAirboxDomain ? "study domain mesh" : "FEM mesh",
+      title: "Build Selected",
+      contextLabel: "airbox",
+    };
+  }
+
+  return {
+    mode,
+    targetNodeId: nodeId ?? (hasSharedAirboxDomain ? "mesh" : "universe-mesh"),
+    targetLabel: hasSharedAirboxDomain ? "study domain mesh" : "FEM mesh",
+    title: "Build Selected",
+    contextLabel: null,
+  };
+}
+
+export function buildMeshConfigurationSignature(
+  sceneDocument: SceneDocument | null,
+): string | null {
+  if (!sceneDocument) {
+    return null;
+  }
+  return JSON.stringify({
+    revision: sceneDocument.revision,
+    universe: sceneDocument.universe,
+    study_mesh_defaults: sceneDocument.study.mesh_defaults,
+    objects: sceneDocument.objects.map((object) => ({
+      id: object.id,
+      name: object.name,
+      geometry: object.geometry,
+      transform: object.transform,
+      region_name: object.region_name,
+      mesh_override: object.mesh_override,
+    })),
+  });
+}
+
+function stageStatus(
+  stageIndex: number,
+  activeStage: number,
+  failed: boolean,
+  ready: boolean,
+): MeshBuildStage["status"] {
+  if (failed && stageIndex === activeStage) {
+    return "warning";
+  }
+  if (ready && stageIndex <= activeStage) {
+    return "done";
+  }
+  if (stageIndex < activeStage) {
+    return "done";
+  }
+  if (stageIndex === activeStage) {
+    return failed ? "warning" : "active";
+  }
+  return "idle";
+}
+
+export function buildMeshBuildStages(args: {
+  workspaceStatus: string;
+  meshGenerating: boolean;
+  scriptSyncBusy: boolean;
+  latestActivityLabel: string | null;
+  latestActivityDetail: string | null;
+  commandMessage: string | null;
+  engineLog: EngineLogEntry[];
+}): MeshBuildStage[] {
+  const {
+    workspaceStatus,
+    meshGenerating,
+    scriptSyncBusy,
+    latestActivityLabel,
+    latestActivityDetail,
+    commandMessage,
+    engineLog,
+  } = args;
+  const latestMessage = engineLog.length > 0 ? engineLog[engineLog.length - 1]?.message ?? null : null;
+  const lower = (latestMessage ?? commandMessage ?? latestActivityDetail ?? "").toLowerCase();
+  const failed =
+    workspaceStatus === "failed" ||
+    lower.includes("failed") ||
+    lower.includes("error") ||
+    lower.includes("rejected");
+  const ready =
+    !meshGenerating &&
+    !scriptSyncBusy &&
+    (lower.includes("mesh ready") ||
+      lower.includes("remesh complete") ||
+      lower.includes("script materialized") ||
+      lower.includes("interactive workspace ready"));
+
+  let activeStage = 0;
+  if (scriptSyncBusy || lower.includes("script_sync") || lower.includes("loading python script")) {
+    activeStage = 1;
+  }
+  if (
+    lower.includes("building explicit fem mesh asset") ||
+    lower.includes("preparing shared fem domain mesh asset") ||
+    lower.includes("shared-domain local sizing active") ||
+    lower.includes("adding airbox domain") ||
+    lower.includes("building problemir")
+  ) {
+    activeStage = 2;
+  }
+  if (
+    lower.includes("meshing stl surface") ||
+    lower.includes("importing stl surface") ||
+    lower.includes("classifying stl surfaces") ||
+    lower.includes("creating geometry from classified surfaces") ||
+    lower.includes("generating 3d tetrahedral mesh")
+  ) {
+    activeStage = 3;
+  }
+  if (
+    lower.includes("extracting quality metrics") ||
+    lower.includes("quality") ||
+    lower.includes("post-process") ||
+    lower.includes("pipeline")
+  ) {
+    activeStage = 4;
+  }
+  if (ready) {
+    activeStage = 5;
+  }
+  if (!meshGenerating && !scriptSyncBusy && !ready && !failed) {
+    activeStage = 0;
+  }
+
+  return [
+    {
+      id: failed ? "failed" : "queued",
+      label: failed ? "Failed" : "Queued",
+      status: failed ? "warning" : stageStatus(0, activeStage, failed, ready),
+      detail:
+        failed
+          ? (latestMessage ?? commandMessage ?? latestActivityDetail ?? "Mesh build failed before completion.")
+          : (commandMessage ?? "Build request accepted and waiting for the next mesh pipeline step."),
+    },
+    {
+      id: "materializing",
+      label: "Materializing Script",
+      status: stageStatus(1, activeStage, failed, ready),
+      detail:
+        scriptSyncBusy
+          ? "Syncing the active scene back to canonical Python before remeshing."
+          : "Preparing the script and runtime scene for the next shared-domain remesh.",
+    },
+    {
+      id: "preparing_domain",
+      label: "Preparing Shared Domain",
+      status: stageStatus(2, activeStage, failed, ready),
+      detail:
+        lower.includes("shared-domain")
+          ? (latestMessage ?? latestActivityDetail)
+          : "Computing airbox/domain inputs, local sizing fields and the conformal FEM domain setup.",
+    },
+    {
+      id: "meshing",
+      label: "Meshing",
+      status: stageStatus(3, activeStage, failed, ready),
+      detail:
+        lower.includes("gmsh")
+          ? (latestMessage ?? latestActivityDetail)
+          : "Generating the tetrahedral mesh for the active shared domain.",
+    },
+    {
+      id: "postprocessing",
+      label: "Post-Processing",
+      status: stageStatus(4, activeStage, failed, ready),
+      detail:
+        latestActivityLabel === "Materializing"
+          ? latestActivityDetail
+          : "Collecting mesh quality, markers and runtime-ready mesh metadata.",
+    },
+    {
+      id: "ready",
+      label: failed ? "Ready" : "Ready",
+      status: stageStatus(5, activeStage, failed, ready),
+      detail:
+        ready
+          ? (latestMessage ?? "Mesh build completed and the viewport can now inspect the updated domain mesh.")
+          : "Waiting for the next finished mesh generation.",
+    },
+  ];
+}
+
+export function deriveMeshBuildProgressValue(
+  stages: MeshBuildStage[],
+  fallbackValue: number | null | undefined,
+): number {
+  if (typeof fallbackValue === "number" && Number.isFinite(fallbackValue)) {
+    return Math.max(0, Math.min(100, fallbackValue));
+  }
+  const weightById: Record<MeshBuildStage["id"], number> = {
+    queued: 6,
+    materializing: 22,
+    preparing_domain: 45,
+    meshing: 72,
+    postprocessing: 88,
+    ready: 100,
+    failed: 100,
+  };
+  let active = 0;
+  for (const stage of stages) {
+    if (stage.status === "done" || stage.status === "warning" || stage.status === "active") {
+      active = Math.max(active, weightById[stage.id]);
+    }
+  }
+  return active;
+}
+
+export function deriveEffectiveMeshTargets(args: {
+  sceneDocument: SceneDocument | null;
+  meshOptions: MeshOptionsState;
+}): EffectiveMeshTarget[] {
+  const { sceneDocument, meshOptions } = args;
+  return (sceneDocument?.objects ?? []).map((object) => {
+    const override = object.mesh_override;
+    const isCustom = override?.mode === "custom";
+    const inheritedHmax = meshOptions.hmax.trim().length > 0 ? Number(meshOptions.hmax) : null;
+    const inheritedHmin = meshOptions.hmin.trim().length > 0 ? Number(meshOptions.hmin) : null;
+    const overrideHmax =
+      isCustom && override?.hmax && override.hmax.trim().length > 0 ? Number(override.hmax) : null;
+    const overrideHmin =
+      isCustom && override?.hmin && override.hmin.trim().length > 0 ? Number(override.hmin) : null;
+    return {
+      geometryName: object.name,
+      source: isCustom ? "local_override" : "study_default",
+      hmax: Number.isFinite(overrideHmax ?? NaN) ? overrideHmax : inheritedHmax,
+      hmin: Number.isFinite(overrideHmin ?? NaN) ? overrideHmin : inheritedHmin,
+      algorithm2d: isCustom ? (override?.algorithm_2d ?? meshOptions.algorithm2d) : meshOptions.algorithm2d,
+      algorithm3d: isCustom ? (override?.algorithm_3d ?? meshOptions.algorithm3d) : meshOptions.algorithm3d,
+    };
+  });
 }
 
 function lastMatchingLog(

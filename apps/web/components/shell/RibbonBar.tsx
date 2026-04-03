@@ -83,7 +83,15 @@ interface RibbonBarProps {
   onAddAntenna?: (kind: "MicrostripAntenna" | "CPWAntenna") => void;
   onSelectModelNode?: (nodeId: string) => void;
   meshGenerating?: boolean;
-  onGenerateStudyMesh?: () => void;
+  meshConfigDirty?: boolean;
+  meshTargetLabel?: string | null;
+  onBuildMeshSelected?: () => void;
+  onBuildMeshAll?: () => void;
+  onOpenMeshInspector?: () => void;
+  onOpenMeshQuality?: () => void;
+  onOpenMeshSizeSettings?: () => void;
+  onOpenMeshMethodSettings?: () => void;
+  onOpenMeshPipeline?: () => void;
   selectedObjectId?: string | null;
   onRequestObjectFocus?: (objectId: string) => void;
   hasSharedAirboxDomain?: boolean;
@@ -196,49 +204,115 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
 function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
   return [
     {
-      id: "mesh-gen", title: "Generate",
+      id: "mesh-build", title: "Build",
       actions: [
         {
-          id: "generate",
+          id: "build-selected",
           icon: <RefreshCw size={20} className={cn(p.meshGenerating && "animate-spin")} />,
-          label: p.meshGenerating ? "Working..." : "Generate",
-          tooltip: "Re-generate mesh",
+          label: p.meshGenerating ? "Building..." : "Build Selected",
+          tooltip: p.meshTargetLabel ? `Build ${p.meshTargetLabel}` : "Build the selected mesh target",
           accent: true,
           disabled: !p.isFemBackend || p.meshGenerating,
-          action: () => {
-            p.onSelectModelNode?.(p.hasSharedAirboxDomain ? "universe-airbox-mesh" : "universe-mesh");
-            p.onGenerateStudyMesh?.();
-          },
+          action: p.onBuildMeshSelected,
         },
-        { id: "import", icon: <FileText size={20} />, label: "Import", tooltip: "Import mesh file", disabled: true, iconColor: "text-sky-400" },
-      ],
-    },
-    {
-      id: "mesh-quality", title: "Quality",
-      actions: [
         {
-          id: "quality",
-          icon: <ListChecks size={20} />,
-          label: "Quality",
-          tooltip: "View mesh quality metrics",
-          action: () => {
-            p.onSelectModelNode?.(p.hasSharedAirboxDomain ? "mesh-quality" : "universe-mesh-quality");
-            p.onViewChange?.("Mesh");
-          },
+          id: "build-all",
+          icon: <Zap size={20} />,
+          label: "Build All",
+          tooltip: "Rebuild the full shared-domain study mesh",
+          disabled: !p.isFemBackend || p.meshGenerating,
+          action: p.onBuildMeshAll,
+          iconColor: "text-cyan-400",
+        },
+        {
+          id: "statistics",
+          icon: <BarChart3 size={20} />,
+          label: "Statistics",
+          tooltip: "Open mesh quality and statistics",
+          disabled: !p.isFemBackend,
+          action: p.onOpenMeshQuality,
           iconColor: "text-emerald-400",
         },
-        { id: "refine", icon: <Ruler size={20} />, label: "Refine", tooltip: "Adaptive mesh refinement", disabled: true, iconColor: "text-purple-400" },
       ],
     },
     {
-      id: "mesh-export", title: "Export",
+      id: "mesh-size", title: "Size",
       actions: [
-        { id: "export-vtk", icon: <Download size={20} />, label: "VTK", tooltip: "Export VTK mesh", action: p.onExport, iconColor: "text-blue-400" },
-        { id: "save-state", icon: <Save size={20} />, label: "State", tooltip: "Download magnetization state (JSON)", action: p.onStateExport, iconColor: "text-emerald-400" },
-        { id: "snapshot", icon: <Camera size={20} />, label: "Capture", tooltip: "Take viewport screenshot", action: p.onCapture, iconColor: "text-violet-400" },
+        {
+          id: "size-controls",
+          icon: <Ruler size={20} />,
+          label: "Element Size",
+          tooltip: "Open maximum, minimum and growth controls",
+          disabled: !p.isFemBackend,
+          action: p.onOpenMeshSizeSettings,
+          iconColor: "text-amber-400",
+        },
+        {
+          id: "narrow-region",
+          icon: <Columns2 size={20} />,
+          label: "Transitions",
+          tooltip: "Open growth-rate and narrow-region controls",
+          disabled: !p.isFemBackend,
+          action: p.onOpenMeshSizeSettings,
+          iconColor: "text-fuchsia-400",
+        },
       ],
     },
-    buildViewGroup(p),
+    {
+      id: "mesh-method", title: "Method",
+      actions: [
+        {
+          id: "method-volume",
+          icon: <Hexagon size={20} />,
+          label: "Mesher",
+          tooltip: "Open tetrahedral mesher algorithm controls",
+          disabled: !p.isFemBackend,
+          action: p.onOpenMeshMethodSettings,
+          iconColor: "text-indigo-400",
+        },
+        {
+          id: "method-optimize",
+          icon: <ListChecks size={20} />,
+          label: "Quality",
+          tooltip: "Open mesh quality optimization controls",
+          disabled: !p.isFemBackend,
+          action: p.onOpenMeshQuality,
+          iconColor: "text-emerald-400",
+        },
+      ],
+    },
+    {
+      id: "mesh-view", title: "View",
+      actions: [
+        {
+          id: "mesh-inspector",
+          icon: <Eye size={20} />,
+          label: "Inspector",
+          tooltip: "Open the mesh inspector viewport",
+          disabled: !p.isFemBackend,
+          action: p.onOpenMeshInspector,
+          iconColor: "text-cyan-400",
+        },
+        {
+          id: "mesh-focus",
+          icon: <Grid3X3 size={20} />,
+          label: "Workspace",
+          tooltip: "Open the mesh workspace",
+          disabled: !p.isFemBackend,
+          action: () => p.onViewChange?.("Mesh"),
+          iconColor: "text-fuchsia-400",
+        },
+        {
+          id: "mesh-pipeline",
+          icon: <ListChecks size={20} />,
+          label: "Pipeline",
+          tooltip: "Open mesh pipeline diagnostics",
+          disabled: !p.isFemBackend,
+          action: p.onOpenMeshPipeline,
+          iconColor: "text-orange-400",
+        },
+      ],
+    },
   ];
 }
 
@@ -393,7 +467,7 @@ const RibbonActionTrigger = React.forwardRef<
       ref={ref}
       {...props}
       className={cn(
-        "flex min-h-[56px] min-w-[60px] flex-col items-center justify-center gap-1.5 rounded-md border p-1 transition-all",
+        "flex min-h-[52px] min-w-[58px] flex-col items-center justify-center gap-1 rounded-md border p-1 transition-all",
         action.active
           ? "border-primary/20 bg-primary/10 text-primary shadow-inner"
           : action.accent
@@ -420,7 +494,7 @@ const RibbonActionTrigger = React.forwardRef<
       </span>
       <span
         className={cn(
-          "text-[0.65rem] font-medium leading-none",
+          "text-[0.62rem] font-medium leading-none text-center",
           action.accent
             ? "text-primary-foreground"
             : action.active
@@ -479,9 +553,9 @@ export default function RibbonBar(props: RibbonBarProps) {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex flex-col w-full bg-card/20 border-b border-border/20 backdrop-blur-xl shadow-sm shrink-0 z-30">
+      <div className="flex flex-col w-full bg-card/10 border-b border-border/15 backdrop-blur-xl shrink-0 z-30">
         {/* ── Tab row ── */}
-        <div className="flex px-3 pt-2 gap-1 border-b border-border/20">
+        <div className="flex px-3 pt-2 gap-1 border-b border-border/10">
           {TABS.map((tab) => (
             <button
               key={tab}
@@ -496,7 +570,7 @@ export default function RibbonBar(props: RibbonBarProps) {
                 }
               }}
               className={cn(
-                "px-5 py-2 min-w-[80px] text-[0.82rem] font-medium transition-colors rounded-t-lg border-b-2 font-sans cursor-pointer hover:bg-muted/30",
+                "px-4 py-2 min-w-[72px] text-[0.78rem] font-medium transition-colors rounded-t-lg border-b-2 font-sans cursor-pointer hover:bg-muted/30",
                 tab === activeTab 
                   ? "border-primary bg-primary/10 text-primary" 
                   : "border-transparent text-muted-foreground hover:text-foreground"
@@ -505,10 +579,40 @@ export default function RibbonBar(props: RibbonBarProps) {
               {tab}
             </button>
           ))}
+          {activeTab === "Mesh" && (
+            <div className="ml-auto mb-2 flex items-center gap-2 pl-4">
+              <span className="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground/80">
+                Mesh Status
+              </span>
+              <span
+                className={cn(
+                  "rounded-md border px-2 py-1 text-[0.68rem] font-medium",
+                  props.meshGenerating
+                    ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-200"
+                    : props.meshConfigDirty
+                      ? "border-amber-400/30 bg-amber-400/10 text-amber-200"
+                      : "border-emerald-400/25 bg-emerald-400/10 text-emerald-200",
+                )}
+              >
+                {props.meshGenerating
+                  ? "Building"
+                  : props.meshConfigDirty
+                    ? "Out of date"
+                    : "Up to date"}
+              </span>
+              <span className="text-[0.7rem] text-muted-foreground">
+                {props.meshGenerating
+                  ? "The build modal is streaming live meshing progress."
+                  : props.meshConfigDirty
+                    ? "Viewport shows the last built mesh until you rebuild."
+                    : "Viewport reflects the latest built mesh."}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* ── Actions row ── */}
-        <div className="flex items-stretch overflow-x-auto scrollbar-none py-2 px-2 gap-1 min-h-[96px]">
+        <div className="flex items-stretch overflow-x-auto scrollbar-none py-2 px-2 gap-1 min-h-[88px]">
           {groups.map((group, gi) => (
             <div key={group.id} className="flex items-stretch shrink-0">
               {gi > 0 && <div className="w-px bg-border/40 mx-2 self-stretch my-3 shadow-[1px_0_0_hsla(0,0%,100%,0.02)]" />}

@@ -226,11 +226,6 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
   useEffect(() => {
     setActiveTab(objectMeshTabFromNodeId(nodeId));
   }, [nodeId]);
-  const canBuildOverride = !ctx.meshGenerating && (ctx.awaitingCommand || ctx.isWaitingForCompute);
-  const handleBuildOverride = useCallback(() => {
-    void ctx.handleObjectMeshOverrideRebuild(sceneObject?.id ?? geo?.name ?? null);
-  }, [ctx, geo?.name, sceneObject?.id]);
-
   /* ── Mesh workspace data from context ── */
   const {
     effectiveFemMesh,
@@ -300,6 +295,14 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
   }, [geo?.bounds_min, geo?.bounds_max, meshBoundsMin, meshBoundsMax]);
 
   const viewportModes: ViewportMode[] = ["Mesh", "3D", "2D"];
+  const effectiveHmaxDisplay = formatMeshSetting(
+    mesh.mode === "custom" ? mesh.hmax : model.meshOptions.hmax,
+    "Auto / Study default",
+  );
+  const effectiveHminDisplay = formatMeshSetting(
+    mesh.mode === "custom" ? mesh.hmin : model.meshOptions.hmin,
+    "Auto / Study default",
+  );
 
   function getPhaseStyle(status: "idle" | "active" | "done" | "warning") {
     switch (status) {
@@ -345,12 +348,12 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col gap-3">
-            <TabsList className="grid h-auto grid-cols-5">
-              <TabsTrigger value="override">Override</TabsTrigger>
-              <TabsTrigger value="effective">Effective</TabsTrigger>
-              <TabsTrigger value="view">View</TabsTrigger>
-              <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
-              <TabsTrigger value="build">Build</TabsTrigger>
+            <TabsList className="grid h-auto grid-cols-5 gap-1 rounded-xl bg-background/45 p-1">
+              <TabsTrigger className="min-h-[36px] text-[0.7rem] font-semibold normal-case tracking-normal" value="override">Override</TabsTrigger>
+              <TabsTrigger className="min-h-[36px] text-[0.7rem] font-semibold normal-case tracking-normal" value="effective">Effective</TabsTrigger>
+              <TabsTrigger className="min-h-[36px] text-[0.7rem] font-semibold normal-case tracking-normal" value="view">View</TabsTrigger>
+              <TabsTrigger className="min-h-[36px] text-[0.7rem] font-semibold normal-case tracking-normal" value="diagnostics">Diagnostics</TabsTrigger>
+              <TabsTrigger className="min-h-[36px] text-[0.7rem] font-semibold normal-case tracking-normal" value="build">Build</TabsTrigger>
             </TabsList>
 
             <TabsContent value="override" className="mt-0">
@@ -837,29 +840,59 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                 <div className="flex flex-col gap-3">
                   <div className="rounded-lg border border-border/35 bg-background/40 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
                     {sharedDomainMesh
-                      ? "Applying this override rebuilds the full shared-domain mesh for air plus magnetic bodies."
-                      : "Applying this override rebuilds the realized FEM mesh for the selected object workflow."}
+                      ? "Use Build Selected in the Mesh ribbon to sync this override, rebuild the shared-domain study mesh and open the build modal."
+                      : "Use Build Selected in the Mesh ribbon to rebuild the active FEM mesh workflow from this object context."}
                   </div>
-                  <Button
-                    className="w-full"
-                    type="button"
-                    disabled={ctx.meshGenerating || ctx.scriptSyncBusy || !canBuildOverride}
-                    onClick={handleBuildOverride}
-                  >
-                    {ctx.meshGenerating || ctx.scriptSyncBusy ? (
-                      <span className="flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        {ctx.scriptSyncBusy
-                          ? "Syncing Script..."
-                          : (sharedDomainMesh ? "Rebuilding Domain Mesh..." : "Building Mesh...")}
-                      </span>
-                    ) : (
-                      sharedDomainMesh ? "Apply Override + Rebuild Domain Mesh" : "Build Mesh"
-                    )}
-                  </Button>
+                  {ctx.meshConfigDirty && (
+                    <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-[0.72rem] leading-relaxed text-amber-100/90">
+                      This override is newer than the currently realized mesh. The 3D viewport still shows the last built mesh until you rebuild the study-domain mesh.
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2">
+                      <div className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                        Effective max size
+                      </div>
+                      <div className="mt-1 font-mono text-xs text-foreground">{effectiveHmaxDisplay}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2">
+                      <div className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                        Effective min size
+                      </div>
+                      <div className="mt-1 font-mono text-xs text-foreground">{effectiveHminDisplay}</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2">
+                      <div className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                        Last build nodes
+                      </div>
+                      <div className="mt-1 font-mono text-xs text-foreground">
+                        {meshWorkspace?.mesh_summary?.node_count?.toLocaleString() ?? "—"}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2">
+                      <div className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                        Elements
+                      </div>
+                      <div className="mt-1 font-mono text-xs text-foreground">
+                        {meshWorkspace?.mesh_summary?.element_count?.toLocaleString() ?? "—"}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2">
+                      <div className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                        Boundary faces
+                      </div>
+                      <div className="mt-1 font-mono text-xs text-foreground">
+                        {meshWorkspace?.mesh_summary?.boundary_face_count?.toLocaleString() ?? "—"}
+                      </div>
+                    </div>
+                  </div>
                   <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
-                    {ctx.scriptSyncMessage
-                      ?? "The build action syncs the current scene document back to canonical Python, then queues a remesh with the latest local override."}
+                    {ctx.meshGenerating || ctx.scriptSyncBusy
+                      ? "Mesh build is currently active in the ribbon modal. You can keep editing overrides here or send the build to background from the dialog."
+                      : (ctx.scriptSyncMessage
+                        ?? "Ribbon-driven mesh build will sync the current scene document back to canonical Python, then queue a remesh with the latest local override.")}
                   </div>
                 </div>
               </SidebarSection>

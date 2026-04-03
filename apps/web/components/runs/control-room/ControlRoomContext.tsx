@@ -113,6 +113,7 @@ import {
 } from "./helpers";
 import {
   MESH_WORKSPACE_PRESETS,
+  buildMeshConfigurationSignature,
   deriveMeshWorkspacePreset,
   type MeshWorkspacePresetId,
 } from "./meshWorkspace";
@@ -282,9 +283,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [meshOptionsState, setMeshOptionsState] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
   const [meshQualityData, setMeshQualityData] = useState<MeshQualityData | null>(null);
   const [meshGenerating, setMeshGenerating] = useState(false);
+  const [lastBuiltMeshConfigSignature, setLastBuiltMeshConfigSignature] = useState<string | null>(null);
   const [frontendTraceLog, setFrontendTraceLog] = useState<EngineLogEntry[]>([]);
   const femTopologyKeyRef = useRef<string | null>(null);
   const femMeshDataRef = useRef<FemMeshData | null>(null);
+  const meshConfigSignatureRef = useRef<string | null>(null);
+  const pendingMeshConfigSignatureRef = useRef<string | null>(null);
   const lastLoggedCommandStatusRef = useRef<string | null>(null);
   const [solverSettingsState, setSolverSettingsState] =
     useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
@@ -321,6 +325,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const globalScalarPreview = preview?.kind === "global_scalar" ? preview : null;
   const femMesh = state?.fem_mesh ?? null;
   const remoteSceneDocument = state?.scene_document ?? null;
+  const meshConfigSignature = useMemo(
+    () => buildMeshConfigurationSignature(sceneDocumentDraft ?? remoteSceneDocument),
+    [remoteSceneDocument, sceneDocumentDraft],
+  );
+  meshConfigSignatureRef.current = meshConfigSignature;
   const scriptBuilder = state?.script_builder ?? null;
   const remoteModelBuilderGraph = state?.model_builder_graph ?? null;
   const scriptInitialState = scriptBuilder?.initial_state ?? null;
@@ -736,6 +745,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     builderHydratedSessionRef.current = null;
     lastBuilderPushSignatureRef.current = null;
+    pendingMeshConfigSignatureRef.current = null;
+    setLastBuiltMeshConfigSignature(null);
     setSolverSettingsHydrated(false);
     setModelBuilderGraph(null);
     setSceneDocumentDraft(null);
@@ -795,6 +806,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         ...serializeModelBuilderGraphV2(incomingGraph),
       });
     setSceneDocumentDraft(hydratedScene);
+    setLastBuiltMeshConfigSignature(buildMeshConfigurationSignature(hydratedScene));
+    pendingMeshConfigSignatureRef.current = null;
     setSelectedObjectId(hydratedScene.editor.selected_object_id);
     setObjectViewMode(normalizePersistedObjectViewMode(hydratedScene.editor.object_view_mode));
     setAirMeshVisible(hydratedScene.editor.air_mesh_visible ?? true);
@@ -1589,6 +1602,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setMeshGenerating(true);
     meshGenTopologyRef.current = femTopologyKeyRef.current;
     meshGenGenerationRef.current = femGenerationIdRef.current;
+    pendingMeshConfigSignatureRef.current = meshConfigSignatureRef.current;
     try {
       await enqueueStudyDomainRemesh(
         "manual_ui_rebuild",
@@ -1599,6 +1613,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       setMeshGenerating(false);
       meshGenTopologyRef.current = null;
       meshGenGenerationRef.current = null;
+      pendingMeshConfigSignatureRef.current = null;
     }
   }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshOptions]);
 
@@ -1606,6 +1621,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setMeshGenerating(true);
     meshGenTopologyRef.current = femTopologyKeyRef.current;
     meshGenGenerationRef.current = femGenerationIdRef.current;
+    pendingMeshConfigSignatureRef.current = meshConfigSignatureRef.current;
     try {
       await enqueueStudyDomainRemesh(
         "airbox_parameter_changed",
@@ -1618,6 +1634,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       setMeshGenerating(false);
       meshGenTopologyRef.current = null;
       meshGenGenerationRef.current = null;
+      pendingMeshConfigSignatureRef.current = null;
     }
   }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshOptions]);
 
@@ -1626,6 +1643,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       setMeshGenerating(true);
       meshGenTopologyRef.current = femTopologyKeyRef.current;
       meshGenGenerationRef.current = femGenerationIdRef.current;
+      pendingMeshConfigSignatureRef.current = meshConfigSignatureRef.current;
       try {
         const scriptPath = session?.script_path ?? null;
         if (!scriptPath) {
@@ -1663,6 +1681,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         setMeshGenerating(false);
         meshGenTopologyRef.current = null;
         meshGenGenerationRef.current = null;
+        pendingMeshConfigSignatureRef.current = null;
       } finally {
         setScriptSyncBusy(false);
       }
@@ -1713,6 +1732,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setMeshGenerating(true);
     meshGenTopologyRef.current = femTopologyKeyRef.current;
     meshGenGenerationRef.current = femGenerationIdRef.current;
+    pendingMeshConfigSignatureRef.current = meshConfigSignatureRef.current;
     try {
       await enqueueStudyDomainRemesh(
         "lasso_refine",
@@ -1723,6 +1743,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       setMeshGenerating(false);
       meshGenTopologyRef.current = null;
       meshGenGenerationRef.current = null;
+      pendingMeshConfigSignatureRef.current = null;
     }
   }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshHmax, meshOptions]);
 
@@ -2514,8 +2535,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         "success",
         `RX: REMESH mesh ready — ${nodeCount.toLocaleString()} nodes · ${elementCount.toLocaleString()} tetrahedra`,
       );
+      setLastBuiltMeshConfigSignature(
+        pendingMeshConfigSignatureRef.current ?? meshConfigSignatureRef.current,
+      );
       meshGenTopologyRef.current = null;
       meshGenGenerationRef.current = null;
+      pendingMeshConfigSignatureRef.current = null;
       setMeshGenerating(false);
     }
   }, [appendFrontendTrace, effectiveFemMesh, femTopologyKey, meshGenerating, meshSummary]);
@@ -2530,6 +2555,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     ) {
       meshGenTopologyRef.current = null;
       meshGenGenerationRef.current = null;
+      pendingMeshConfigSignatureRef.current = null;
       setMeshGenerating(false);
     }
   }, [meshGenerating, commandStatus]);
@@ -2551,6 +2577,13 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const meshWorkspacePreset = useMemo(
     () => deriveMeshWorkspacePreset({ viewMode: effectiveViewMode, femDockTab, meshRenderMode }),
     [effectiveViewMode, femDockTab, meshRenderMode],
+  );
+  const meshConfigDirty = useMemo(
+    () =>
+      meshConfigSignature != null &&
+      lastBuiltMeshConfigSignature != null &&
+      meshConfigSignature !== lastBuiltMeshConfigSignature,
+    [lastBuiltMeshConfigSignature, meshConfigSignature],
   );
   const meshFaceDetail = useMemo(
     () => computeMeshFaceDetail(effectiveFemMesh, meshSelection.primaryFaceIndex),
@@ -2734,6 +2767,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
     femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
     meshFaceDetail, meshQualitySummary, meshWorkspace,
+    meshConfigDirty, meshConfigSignature, lastBuiltMeshConfigSignature,
     meshName: effectiveFemMesh?.mesh_name ?? meshSummary?.mesh_name ?? liveMeshName ?? meshName,
     meshSource: meshSummary?.mesh_source ?? meshSource,
     meshExtent: meshSummary?.mesh_extent ?? meshExtent,
@@ -2775,6 +2809,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
     femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
     meshFaceDetail, meshQualitySummary, meshWorkspace,
+    meshConfigDirty, meshConfigSignature, lastBuiltMeshConfigSignature,
     meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder, liveMeshName,
     domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
 import EngineConsole from "../panels/EngineConsole";
 import TopHeader from "../shell/TopHeader";
@@ -24,6 +24,14 @@ import {
   fmtStepValue,
 } from "./control-room/shared";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
+import MeshBuildModal from "./control-room/MeshBuildModal";
+import {
+  buildMeshBuildStages,
+  deriveEffectiveMeshTargets,
+  deriveMeshBuildProgressValue,
+  meshBuildIntentForNode,
+  meshWorkspaceNodeToDockTab,
+} from "./control-room/meshWorkspace";
 
 function nextAntennaName(
   prefix: string,
@@ -82,6 +90,9 @@ function makeRibbonAntenna(
 function ControlRoomShell() {
   const ctx = useControlRoom();
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
+  const [meshBuildDialogOpen, setMeshBuildDialogOpen] = useState(false);
+  const [meshBuildIntent, setMeshBuildIntent] = useState<ReturnType<typeof meshBuildIntentForNode> | null>(null);
+  const [meshBuildError, setMeshBuildError] = useState<string | null>(null);
   const selectedAntennaName = useMemo(
     () =>
       resolveAntennaNodeName(
@@ -119,6 +130,162 @@ function ControlRoomShell() {
     ctx.setSelectedObjectId(null);
     maybePreviewAntennaField();
   };
+
+  const hasSharedAirboxDomain =
+    ctx.effectiveFemMesh?.domain_mesh_mode === "shared_domain_mesh_with_air";
+  const activeMeshIntent = useMemo(
+    () =>
+      meshBuildIntentForNode({
+        mode: "selected",
+        nodeId: ctx.selectedSidebarNodeId,
+        sceneDocument: ctx.sceneDocument,
+        hasSharedAirboxDomain,
+      }),
+    [ctx.sceneDocument, ctx.selectedSidebarNodeId, hasSharedAirboxDomain],
+  );
+  const effectiveMeshTargets = useMemo(
+    () =>
+      deriveEffectiveMeshTargets({
+        sceneDocument: ctx.sceneDocument,
+        meshOptions: ctx.meshOptions,
+      }),
+    [ctx.meshOptions, ctx.sceneDocument],
+  );
+  const meshBuildStages = useMemo(
+    () =>
+      buildMeshBuildStages({
+        workspaceStatus: ctx.workspaceStatus,
+        meshGenerating: ctx.meshGenerating,
+        scriptSyncBusy: ctx.scriptSyncBusy,
+        latestActivityLabel: ctx.activity.label ?? null,
+        latestActivityDetail: ctx.activity.detail ?? null,
+        commandMessage: ctx.commandMessage,
+        engineLog: ctx.engineLog,
+      }),
+    [
+      ctx.activity.detail,
+      ctx.activity.label,
+      ctx.commandMessage,
+      ctx.engineLog,
+      ctx.meshGenerating,
+      ctx.scriptSyncBusy,
+      ctx.workspaceStatus,
+    ],
+  );
+  const meshBuildProgress = useMemo(
+    () =>
+      deriveMeshBuildProgressValue(
+        meshBuildStages,
+        ctx.activity.progressMode === "determinate" ? ctx.activity.progressValue : null,
+      ),
+    [ctx.activity.progressMode, ctx.activity.progressValue, meshBuildStages],
+  );
+
+  const ensureMeshBuildModal = useCallback((intent: ReturnType<typeof meshBuildIntentForNode>) => {
+    setMeshBuildError(null);
+    setMeshBuildIntent(intent);
+    setMeshBuildDialogOpen(true);
+  }, []);
+
+  const syncIfPossible = useCallback(async () => {
+    if (!ctx.sessionFooter.scriptPath || ctx.scriptSyncBusy) {
+      return;
+    }
+    await ctx.syncScriptBuilder();
+  }, [ctx]);
+
+  const openMeshNode = useCallback((nodeId: string) => {
+    handleSelectModelNode(nodeId);
+    const dockTab = meshWorkspaceNodeToDockTab(nodeId);
+    if (dockTab) {
+      ctx.openFemMeshWorkspace(dockTab);
+    }
+  }, [ctx]);
+
+  const handleBuildMeshSelected = useCallback(async () => {
+    const intent = meshBuildIntentForNode({
+      mode: "selected",
+      nodeId: ctx.selectedSidebarNodeId,
+      sceneDocument: ctx.sceneDocument,
+      hasSharedAirboxDomain,
+    });
+    ensureMeshBuildModal(intent);
+    try {
+      const nodeId = intent.targetNodeId;
+      if (nodeId && nodeId.startsWith("geo-") && nodeId.endsWith("-mesh")) {
+        const objectId = resolveSelectedObjectId(nodeId, ctx.sceneDocument ?? ctx.modelBuilderGraph);
+        await ctx.handleObjectMeshOverrideRebuild(objectId);
+        return;
+      }
+      await syncIfPossible();
+      if (nodeId === "universe-airbox" || nodeId?.startsWith("universe-airbox")) {
+        await ctx.handleAirboxMeshGenerate();
+        return;
+      }
+      await ctx.handleStudyDomainMeshGenerate();
+    } catch (error) {
+      setMeshBuildError(error instanceof Error ? error.message : "Mesh build failed");
+    }
+  }, [ctx, ensureMeshBuildModal, hasSharedAirboxDomain, syncIfPossible]);
+
+  const handleBuildMeshAll = useCallback(async () => {
+    const intent = meshBuildIntentForNode({
+      mode: "all",
+      nodeId: ctx.selectedSidebarNodeId,
+      sceneDocument: ctx.sceneDocument,
+      hasSharedAirboxDomain,
+    });
+    ensureMeshBuildModal(intent);
+    try {
+      await syncIfPossible();
+      await ctx.handleStudyDomainMeshGenerate();
+    } catch (error) {
+      setMeshBuildError(error instanceof Error ? error.message : "Mesh build failed");
+    }
+  }, [ctx, ensureMeshBuildModal, hasSharedAirboxDomain, syncIfPossible]);
+
+  const handleOpenMeshInspector = useCallback(() => {
+    openMeshNode(hasSharedAirboxDomain ? "mesh-view" : "universe-mesh-view");
+    ctx.handleViewModeChange("Mesh");
+  }, [ctx, hasSharedAirboxDomain, openMeshNode]);
+
+  const handleOpenMeshQuality = useCallback(() => {
+    openMeshNode(hasSharedAirboxDomain ? "mesh-quality" : "universe-mesh-quality");
+    ctx.handleViewModeChange("Mesh");
+  }, [ctx, hasSharedAirboxDomain, openMeshNode]);
+
+  const handleOpenMeshSize = useCallback(() => {
+    if (ctx.selectedSidebarNodeId?.startsWith("geo-") && ctx.selectedSidebarNodeId.endsWith("-mesh")) {
+      handleSelectModelNode(ctx.selectedSidebarNodeId);
+      ctx.openFemMeshWorkspace("mesher");
+      ctx.handleViewModeChange("Mesh");
+      return;
+    }
+    openMeshNode(hasSharedAirboxDomain ? "universe-airbox-mesh" : "universe-mesh-size");
+    ctx.handleViewModeChange("Mesh");
+  }, [ctx, handleSelectModelNode, hasSharedAirboxDomain, openMeshNode]);
+
+  const handleOpenMeshMethod = useCallback(() => {
+    openMeshNode(hasSharedAirboxDomain ? "mesh-pipeline" : "universe-mesh-size");
+    ctx.openFemMeshWorkspace("mesher");
+    ctx.handleViewModeChange("Mesh");
+  }, [ctx, hasSharedAirboxDomain, openMeshNode]);
+
+  const handleOpenMeshPipeline = useCallback(() => {
+    openMeshNode(hasSharedAirboxDomain ? "mesh-pipeline" : "universe-mesh-pipeline");
+    ctx.handleViewModeChange("Mesh");
+  }, [ctx, hasSharedAirboxDomain, openMeshNode]);
+
+  const handleBackgroundMeshBuild = useCallback(() => {
+    setMeshBuildDialogOpen(false);
+  }, []);
+
+  const handleCloseMeshBuildDialog = useCallback(() => {
+    setMeshBuildDialogOpen(false);
+    if (!ctx.meshGenerating && !ctx.scriptSyncBusy) {
+      setMeshBuildError(null);
+    }
+  }, [ctx.meshGenerating, ctx.scriptSyncBusy]);
 
   /* ── Loading state ── */
   if (!ctx.session) {
@@ -229,10 +396,18 @@ function ControlRoomShell() {
         onAddAntenna={handleAddAntenna}
         onSelectModelNode={handleSelectModelNode}
         meshGenerating={ctx.meshGenerating}
-        onGenerateStudyMesh={ctx.handleStudyDomainMeshGenerate}
+        meshConfigDirty={ctx.meshConfigDirty}
+        meshTargetLabel={activeMeshIntent.targetLabel}
+        onBuildMeshSelected={() => void handleBuildMeshSelected()}
+        onBuildMeshAll={() => void handleBuildMeshAll()}
+        onOpenMeshInspector={handleOpenMeshInspector}
+        onOpenMeshQuality={handleOpenMeshQuality}
+        onOpenMeshSizeSettings={handleOpenMeshSize}
+        onOpenMeshMethodSettings={handleOpenMeshMethod}
+        onOpenMeshPipeline={handleOpenMeshPipeline}
         selectedObjectId={ctx.selectedObjectId}
         onRequestObjectFocus={ctx.requestFocusObject}
-        hasSharedAirboxDomain={ctx.effectiveFemMesh?.domain_mesh_mode === "shared_domain_mesh_with_air"}
+        hasSharedAirboxDomain={hasSharedAirboxDomain}
         canSyncScriptBuilder={Boolean(ctx.sessionFooter.scriptPath)}
         scriptSyncBusy={ctx.scriptSyncBusy}
         onSyncScriptBuilder={() => void ctx.syncScriptBuilder()}
@@ -273,7 +448,7 @@ function ControlRoomShell() {
               defaultSize={PANEL_SIZES.viewportDefault}
               minSize={PANEL_SIZES.viewportMin}
             >
-                <div className="flex flex-row h-full min-h-0 min-w-0 overflow-hidden bg-background flex-1 relative ring-1 ring-inset ring-white/5">
+                <div className="flex flex-row h-full min-h-0 min-w-0 overflow-hidden bg-background flex-1 relative">
                   <div className="flex flex-col flex-1 min-w-0 min-h-0">
                     <ViewportBar />
                     {previewNotices}
@@ -292,7 +467,7 @@ function ControlRoomShell() {
               collapsible
               collapsedSize="3%"
             >
-              <div className="flex flex-col h-full bg-card/50 backdrop-blur-xl isolate overflow-hidden relative z-40 border-t border-border/60 shadow-[0_-8px_30px_rgba(0,0,0,0.3)]">
+              <div className="flex flex-col h-full bg-card/35 isolate overflow-hidden relative z-40 border-t border-border/30">
                 <EngineConsole
                   session={ctx.session ?? null}
                   run={ctx.run ?? null}
@@ -348,6 +523,20 @@ function ControlRoomShell() {
           : ctx.totalCells && ctx.totalCells > 0
             ? `${ctx.totalCells.toLocaleString()} cells`
             : undefined}
+      />
+
+      <MeshBuildModal
+        open={meshBuildDialogOpen}
+        generating={ctx.meshGenerating || ctx.scriptSyncBusy}
+        intent={meshBuildIntent}
+        stages={meshBuildStages}
+        progressValue={meshBuildProgress}
+        engineLog={ctx.engineLog}
+        meshWorkspace={ctx.meshWorkspace}
+        effectiveTargets={effectiveMeshTargets}
+        errorMessage={meshBuildError}
+        onBackground={handleBackgroundMeshBuild}
+        onClose={handleCloseMeshBuildDialog}
       />
     </div>
   );

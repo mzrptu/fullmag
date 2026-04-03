@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Literal, Sequence
 
 from fullmag._validation import as_vector3, require_positive
 
@@ -259,4 +259,158 @@ class DiscretizationHints:
             "fdm": self.fdm.to_ir() if self.fdm else None,
             "fem": self.fem.to_ir() if self.fem else None,
             "hybrid": self.hybrid.to_ir() if self.hybrid else None,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Per-object mesh recipe — fine-grained control per ferromagnet
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class MeshOperation:
+    """A single named operation in an object's mesh sequence.
+
+    Mirrors COMSOL 'meshing sequence' operations.  Only ``kind`` is
+    required; ``params`` is forwarded verbatim to the mesher backend.
+
+    Supported kinds:
+        ``"free_tetrahedral"`` – unstructured tetrahedral fill (default)
+        ``"boundary_layers"``  – prismatic boundary-layer extrusion
+        ``"refine"``           – uniform h-refinement pass
+        ``"adapt"``            – AFEM adaptive refinement
+        ``"swept"``            – structured sweep along a path
+        ``"size_field"``       – inject an extra Gmsh size field
+    """
+
+    kind: Literal[
+        "free_tetrahedral",
+        "boundary_layers",
+        "refine",
+        "adapt",
+        "swept",
+        "size_field",
+    ]
+    params: dict[str, Any] = field(default_factory=dict)
+    enabled: bool = True
+
+    def to_ir(self) -> dict[str, Any]:
+        return {"kind": self.kind, "params": dict(self.params), "enabled": self.enabled}
+
+
+@dataclass(frozen=True, slots=True)
+class PerObjectMeshRecipe:
+    """Full mesh recipe for a single ferromagnetic object.
+
+    All fields default to ``None`` which means *inherit from the global*
+    :class:`~fullmag.model.discretization.FEM` defaults.  Only non-``None``
+    values override the study-level settings.
+
+    Example::
+
+        recipe = fm.PerObjectMeshRecipe(
+            hmax=4e-9,
+            size_from_curvature=20,
+            boundary_layer_count=3,
+            boundary_layer_thickness=2e-9,
+            boundary_layer_stretching=1.4,
+            optimize="Netgen",
+            compute_quality=True,
+        )
+    """
+
+    # ── element size ──
+    hmax: float | None = None
+    hmin: float | None = None
+
+    # ── element order / source ──
+    order: int | None = None
+    source: str | None = None          # path to a pre-built mesh file
+
+    # ── algorithms ──
+    algorithm_2d: int | None = None
+    algorithm_3d: int | None = None
+
+    # ── size controls ──
+    size_factor: float | None = None
+    size_from_curvature: int | None = None
+    growth_rate: float | None = None
+
+    # ── topology controls ──
+    narrow_regions: int | None = None
+    smoothing_steps: int | None = None
+
+    # ── optimisation ──
+    optimize: str | None = None
+    optimize_iters: int | None = None
+
+    # ── boundary layers ──
+    boundary_layer_count: int | None = None
+    boundary_layer_thickness: float | None = None   # SI metres
+    boundary_layer_stretching: float | None = None  # growth ratio (1.0–2.0)
+
+    # ── quality assessment ──
+    compute_quality: bool = False
+    per_element_quality: bool = False
+
+    # ── extra size fields (appended to global list) ──
+    size_fields: list[dict[str, Any]] = field(default_factory=list)
+
+    # ── operation sequence (COMSOL-like) ──
+    operations: list[MeshOperation] = field(default_factory=list)
+
+    def to_ir(self) -> dict[str, Any]:
+        return {
+            "hmax": self.hmax,
+            "hmin": self.hmin,
+            "order": self.order,
+            "source": self.source,
+            "algorithm_2d": self.algorithm_2d,
+            "algorithm_3d": self.algorithm_3d,
+            "size_factor": self.size_factor,
+            "size_from_curvature": self.size_from_curvature,
+            "growth_rate": self.growth_rate,
+            "narrow_regions": self.narrow_regions,
+            "smoothing_steps": self.smoothing_steps,
+            "optimize": self.optimize,
+            "optimize_iters": self.optimize_iters,
+            "boundary_layer_count": self.boundary_layer_count,
+            "boundary_layer_thickness": self.boundary_layer_thickness,
+            "boundary_layer_stretching": self.boundary_layer_stretching,
+            "compute_quality": self.compute_quality,
+            "per_element_quality": self.per_element_quality,
+            "size_fields": list(self.size_fields),
+            "operations": [op.to_ir() for op in self.operations],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Shared-domain mesh assembly policy
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class SharedMeshAssemblyPolicy:
+    """Controls how per-object recipes are assembled into one shared-domain mesh.
+
+    Attributes:
+        interface_hmax_factor: Size factor at domain interfaces relative to
+            the local object hmax (< 1 = finer at boundaries).
+        enforce_conforming: Require a conforming mesh (shared vertices at
+            domain boundaries) via OCC ``fragment``.
+        airbox_hmax_factor: Element size in the airbox as a multiple of the
+            global hmax.  Larger = coarser airbox.
+    """
+
+    interface_hmax_factor: float = 0.5
+    enforce_conforming: bool = True
+    airbox_hmax_factor: float = 3.0
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.interface_hmax_factor <= 1.0:
+            raise ValueError("interface_hmax_factor must be in (0, 1]")
+        if self.airbox_hmax_factor <= 0.0:
+            raise ValueError("airbox_hmax_factor must be positive")
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "interface_hmax_factor": self.interface_hmax_factor,
+            "enforce_conforming": self.enforce_conforming,
+            "airbox_hmax_factor": self.airbox_hmax_factor,
         }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRightLeft, GitCommitHorizontal, Layers, Loader2, MemoryStick, Triangle } from "lucide-react";
+import { GitCommitHorizontal, Layers, MemoryStick, Triangle } from "lucide-react";
 
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
 import type { ScriptBuilderUniverseState } from "../../../lib/session/types";
@@ -196,36 +196,7 @@ export default function UniversePanel() {
   useEffect(() => {
     setActiveTab(universeTabFromNodeId(selectedNodeId));
   }, [selectedNodeId]);
-  const canRebuildAirbox = !ctx.meshGenerating && !ctx.scriptSyncBusy && (ctx.awaitingCommand || ctx.isWaitingForCompute);
-  const handleAirboxRebuild = useCallback(async () => {
-    if (editable && builderUniverse) {
-      await ctx.syncScriptBuilder();
-    }
-    await ctx.handleAirboxMeshGenerate();
-  }, [builderUniverse, ctx, editable]);
   const remeshStatus = ctx.commandStatus?.command_kind === "remesh" ? ctx.commandStatus : null;
-  const remeshRxLabel = remeshStatus
-    ? (remeshStatus.state === "completed"
-      ? `COMPLETED${remeshStatus.completion_state ? ` (${remeshStatus.completion_state})` : ""}`
-      : remeshStatus.state.toUpperCase())
-    : (ctx.meshGenerating ? "AWAITING" : "IDLE");
-  const remeshStatusToneClass = remeshStatus?.state === "rejected"
-    || remeshStatus?.completion_state === "error"
-    || remeshStatus?.completion_state === "failed"
-    ? "text-destructive"
-    : remeshStatus?.state === "acknowledged"
-      ? "text-amber-500"
-      : ctx.meshGenerating
-        ? "text-amber-500"
-        : "text-emerald-500";
-  const remeshDetail = ctx.commandMessage
-    ?? remeshStatus?.reason
-    ?? (ctx.meshGenerating
-      ? "Backend accepted the request and is rebuilding the conformal airbox/domain mesh."
-      : "Sync the script and rebuild to refresh the shared-domain airbox mesh.");
-  const progressValue = ctx.activity.progressMode === "determinate"
-    ? ctx.activity.progressValue ?? 0
-    : (ctx.meshGenerating ? (remeshStatus?.state === "acknowledged" ? 58 : 28) : 100);
   const meshSummary = ctx.meshWorkspace?.mesh_summary ?? null;
   const qualitySummary = ctx.meshWorkspace?.mesh_quality_summary ?? null;
   const payloadRamEstimate = formatBytes(
@@ -338,12 +309,12 @@ export default function UniversePanel() {
 
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col gap-3 pt-4 px-2">
-      <TabsList className="grid h-auto grid-cols-5">
-        <TabsTrigger value="general">General</TabsTrigger>
-        <TabsTrigger value="airbox" disabled={!ctx.isFemBackend}>Airbox</TabsTrigger>
-        <TabsTrigger value="view" disabled={!ctx.isFemBackend}>View</TabsTrigger>
-        <TabsTrigger value="boundary" disabled={!ctx.isFemBackend}>Boundary</TabsTrigger>
-        <TabsTrigger value="build" disabled={!ctx.isFemBackend}>Build & Log</TabsTrigger>
+      <TabsList className="grid h-auto grid-cols-5 gap-1 rounded-xl bg-background/45 p-1">
+        <TabsTrigger className="min-h-[36px] text-[0.7rem] font-semibold normal-case tracking-normal" value="general">General</TabsTrigger>
+        <TabsTrigger className="min-h-[36px] text-[0.7rem] font-semibold normal-case tracking-normal" value="airbox" disabled={!ctx.isFemBackend}>Airbox</TabsTrigger>
+        <TabsTrigger className="min-h-[36px] text-[0.7rem] font-semibold normal-case tracking-normal" value="view" disabled={!ctx.isFemBackend}>View</TabsTrigger>
+        <TabsTrigger className="min-h-[36px] text-[0.7rem] font-semibold normal-case tracking-normal" value="boundary" disabled={!ctx.isFemBackend}>Boundary</TabsTrigger>
+        <TabsTrigger className="min-h-[36px] text-[0.7rem] font-semibold normal-case tracking-normal" value="build" disabled={!ctx.isFemBackend}>Build</TabsTrigger>
       </TabsList>
 
       <TabsContent value="general" className="mt-0">
@@ -744,73 +715,18 @@ export default function UniversePanel() {
                 </div>
               </div>
               <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-card/20 p-3 shadow-sm transition-all duration-300">
-                <Button
-                  className="relative h-8 w-full overflow-hidden text-sm font-semibold transition-all duration-300"
-                  type="button"
-                  variant="default"
-                  disabled={!canRebuildAirbox}
-                  onClick={() => void handleAirboxRebuild()}
-                >
-                  {ctx.meshGenerating || ctx.scriptSyncBusy ? (
-                    <span className="flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin text-primary-foreground/70" />
-                      {ctx.scriptSyncBusy ? "Syncing Script..." : "Generating Mesh..."}
-                    </span>
-                  ) : (
-                    "Build Mesh"
-                  )}
-                </Button>
-                <div className="flex flex-col gap-2 pt-1">
-                  <div className="flex items-center justify-between px-1">
-                    <span className="flex items-center gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest text-emerald-500">
-                      <span className="relative flex h-1.5 w-1.5">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                      </span>
-                      TX: REMESH
-                    </span>
-                    <span className={`flex items-center gap-1.5 text-[0.65rem] font-bold uppercase tracking-widest ${remeshStatusToneClass}`}>
-                      <span className="relative flex h-1.5 w-1.5">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-35" />
-                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
-                      </span>
-                      RX: {remeshRxLabel}
-                    </span>
-                  </div>
-                  <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
-                    {ctx.meshGenerating || ctx.scriptSyncBusy ? (
-                      ctx.activity.progressMode === "determinate" ? (
-                        <div
-                          className="absolute inset-y-0 left-0 rounded-full bg-primary transition-[width] duration-300"
-                          style={{ width: `${Math.max(6, Math.min(100, progressValue))}%` }}
-                        />
-                      ) : (
-                        <>
-                          <div className="absolute inset-y-0 w-1/3 animate-pulse rounded-full bg-primary opacity-80" />
-                          <div
-                            className="absolute inset-y-0 right-0 w-2/3 animate-pulse rounded-full bg-primary/30"
-                            style={{ animationDelay: "150ms" }}
-                          />
-                        </>
-                      )
-                    ) : (
-                      <div className="absolute inset-y-0 left-0 w-full rounded-full bg-emerald-500/70" />
-                    )}
-                  </div>
-                  <div className="mt-0.5 flex items-center justify-between px-1 opacity-70">
-                    <span className="text-[0.6rem] font-mono uppercase tracking-wider text-muted-foreground">
-                      {ctx.activity.label || "Backend mesh pipeline"}
-                    </span>
-                    <span className="flex items-center gap-1 text-[0.6rem] font-mono uppercase tracking-wider text-muted-foreground tabular-nums">
-                      <ArrowRightLeft className="h-2.5 w-2.5" />
-                      {ctx.activity.progressMode === "determinate"
-                        ? `${Math.round(progressValue)}%`
-                        : (ctx.meshGenerating || ctx.scriptSyncBusy ? "active" : "ready")}
-                    </span>
-                  </div>
+                <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2.5 text-[0.72rem] leading-relaxed text-cyan-100/90">
+                  Use the Mesh ribbon to launch `Build Selected` for the airbox or `Build All` for the full study-domain mesh. The build modal now owns progress, logs and pipeline feedback.
                 </div>
+                {ctx.meshConfigDirty && (
+                  <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-[0.72rem] leading-relaxed text-amber-100/90">
+                    Airbox or mesh settings changed after the last build. The 3D viewport still shows the last built mesh until you rebuild.
+                  </div>
+                )}
                 <div className="rounded-md border border-border/30 bg-background/35 px-2.5 py-2 text-[0.68rem] leading-relaxed text-muted-foreground">
-                  {remeshDetail}
+                  {ctx.commandMessage
+                    ?? remeshStatus?.reason
+                    ?? "Change airbox sizing here, then use the Mesh ribbon to sync the script, queue a study-domain remesh and follow the build in the modal."}
                   {qualitySummary
                     ? ` Current avg quality ${qualitySummary.avg_quality.toFixed(3)}.`
                     : ""}
@@ -829,7 +745,7 @@ export default function UniversePanel() {
               </div>
               <div className="text-[0.68rem] text-muted-foreground">
                 {ctx.scriptSyncMessage
-                  ?? "Change `airbox_hmax` here, then use `Build Mesh` to sync the script, queue a study-domain remesh and watch the shared-domain airbox status below."}
+                  ?? "Change airbox sizing here, then use `Build Selected` or `Build All` in the Mesh ribbon to sync the script, queue a study-domain remesh and follow the shared-domain status in the build modal."}
               </div>
             </div>
           </SidebarSection>

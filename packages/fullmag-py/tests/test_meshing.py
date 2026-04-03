@@ -82,6 +82,69 @@ class MeshScaffoldTests(unittest.TestCase):
             boundary_markers=np.asarray([7], dtype=np.int32),
         )
 
+    def _realize_two_nanoflower_shared_domain(
+        self,
+        *,
+        airbox_hmax: float,
+        default_hmax: float,
+        left_hmax: float | None = None,
+        right_hmax: float | None = None,
+    ) -> tuple[MeshData, list[dict[str, object]]]:
+        nanoflower = Path(__file__).resolve().parents[3] / "examples" / "nanoflower.stl"
+        left = fm.ImportedGeometry(
+            source=str(nanoflower),
+            name="nanoflower_left_geom",
+            units="nm",
+        )
+        right = fm.ImportedGeometry(
+            source=str(nanoflower),
+            name="nanoflower_right_geom",
+            units="nm",
+        ).translate((500e-9, 0.0, 0.0))
+
+        per_geometry: list[dict[str, object]] = []
+        if left_hmax is not None:
+            per_geometry.append(
+                {
+                    "geometry": left.geometry_name,
+                    "mode": "custom",
+                    "hmax": f"{left_hmax:.12g}",
+                }
+            )
+        if right_hmax is not None:
+            per_geometry.append(
+                {
+                    "geometry": right.geometry_name,
+                    "mode": "custom",
+                    "hmax": f"{right_hmax:.12g}",
+                }
+            )
+
+        return realize_fem_domain_mesh_asset(
+            [left, right],
+            fm.FEM(order=1, hmax=default_hmax),
+            study_universe={
+                "mode": "manual",
+                "size": [1.6e-6, 8.0e-7, 6.0e-7],
+                "center": [250e-9, 0.0, 0.0],
+                "airbox_hmax": airbox_hmax,
+            },
+            mesh_workflow={
+                "mesh_options": {
+                    "algorithm_2d": 6,
+                    "algorithm_3d": ALGO_3D_HXT,
+                    "size_factor": 1.0,
+                    "size_from_curvature": 0,
+                    "smoothing_steps": 1,
+                    "optimize_iterations": 1,
+                    "narrow_regions": 0,
+                    "compute_quality": False,
+                    "per_element_quality": False,
+                },
+                "per_geometry": per_geometry,
+            },
+        )
+
     def test_meshdata_roundtrip_npz(self) -> None:
         mesh = self._unit_tet_mesh()
 
@@ -249,6 +312,10 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertAlmostEqual(fields[1]["params"]["VIn"], 20e-9)
         self.assertAlmostEqual(fields[0]["params"]["VOut"], 20e-9)
         self.assertAlmostEqual(fields[1]["params"]["VOut"], 20e-9)
+        self.assertLess(fields[0]["params"]["XMin"], -1.0)
+        self.assertGreater(fields[0]["params"]["XMax"], 1.0)
+        self.assertLess(fields[1]["params"]["XMin"], -2.0)
+        self.assertGreater(fields[1]["params"]["XMax"], 2.0)
 
     def test_apply_mesh_options_falls_back_from_mmg3d_when_size_fields_are_active(self) -> None:
         class _FakeOptionsApi:
@@ -613,6 +680,27 @@ class MeshScaffoldTests(unittest.TestCase):
 
         self.assertEqual(voxels.shape, (23, 66, 66))
         self.assertGreater(voxels.active_cell_count, 0)
+
+    def test_two_nanoflower_shared_domain_hmax_changes_total_tetra_count(self) -> None:
+        coarse_mesh, coarse_markers = self._realize_two_nanoflower_shared_domain(
+            airbox_hmax=90e-9,
+            default_hmax=24e-9,
+        )
+        fine_object_mesh, fine_object_markers = self._realize_two_nanoflower_shared_domain(
+            airbox_hmax=90e-9,
+            default_hmax=24e-9,
+            left_hmax=8e-9,
+        )
+        fine_airbox_mesh, fine_airbox_markers = self._realize_two_nanoflower_shared_domain(
+            airbox_hmax=35e-9,
+            default_hmax=24e-9,
+        )
+
+        self.assertEqual(len(coarse_markers), 2)
+        self.assertEqual(len(fine_object_markers), 2)
+        self.assertEqual(len(fine_airbox_markers), 2)
+        self.assertGreater(fine_object_mesh.n_elements, coarse_mesh.n_elements)
+        self.assertGreater(fine_airbox_mesh.n_elements, coarse_mesh.n_elements)
 
     def test_realize_fem_mesh_asset_prefers_prebuilt_mesh_when_given(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

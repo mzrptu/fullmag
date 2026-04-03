@@ -399,7 +399,7 @@ export default function RunSidebar() {
   }, []);
 
   return (
-    <div className="flex w-full h-full border-l border-border/20 bg-gradient-to-b from-card/70 via-background/50 to-background/30 backdrop-blur-2xl shadow-[-8px_0_32px_rgba(0,0,0,0.4)] z-30">
+    <div className="flex w-full h-full border-l border-border/10 bg-background/80 z-30">
       <PanelGroup
         orientation="horizontal"
         className="flex w-full h-full"
@@ -415,33 +415,32 @@ export default function RunSidebar() {
           panelRef={treePanelRef}
           onResize={handleTreeResize}
         >
-          <section className="flex flex-col h-full bg-transparent border-r border-border/15">
+          <section className="flex flex-col h-full bg-background/55 border-r border-border/10">
             <button
               type="button"
-              className="flex items-center w-full px-3.5 py-2.5 text-left transition-all hover:bg-muted/20 border-b border-border/20 z-10 shrink-0 relative group"
+              className="flex items-center w-full px-3 py-2 text-left transition-all hover:bg-muted/20 border-b border-border/10 z-10 shrink-0 relative group"
               onClick={handleTreeToggle}
               aria-expanded={treeOpen}
             >
               <span className={cn("text-primary/60 mr-2 transition-transform duration-200 flex items-center justify-center w-4 h-4 text-[10px]", treeOpen && "rotate-90")}>▸</span>
-              <span className="text-[0.72rem] font-semibold tracking-wide text-foreground/90 group-hover:text-foreground transition-colors">Model Tree View</span>
+              <span className="text-[0.72rem] font-semibold tracking-wide text-foreground/90 group-hover:text-foreground transition-colors">Model</span>
               <span className="ml-auto flex items-center gap-2">
                 <span className="text-[0.58rem] font-mono font-bold tracking-tight text-primary-foreground bg-primary/80 px-1.5 py-0.5 rounded-sm shadow-sm">{cmd.isFemBackend ? "FEM" : "FDM"}</span>
-                <span className="text-muted-foreground/50 text-sm group-hover:text-muted-foreground transition-colors">⋮</span>
               </span>
             </button>
             {treeOpen && (
               <div className="flex-1 min-h-0 min-w-0 pr-1 overflow-hidden isolate relative">
                 <ScrollArea className="h-full w-full">
                   <div className="p-2 select-none space-y-2">
-                    <div className="space-y-2 rounded-xl border border-border/25 bg-card/35 p-2 backdrop-blur-sm">
+                    <div className="space-y-2 rounded-lg border border-border/15 bg-background/40 p-2">
                       <Input
                         value={treeQuery}
                         onChange={(event) => setTreeQuery(event.target.value)}
-                        placeholder="Search nodes, mesh parts, airbox..."
-                        className="h-8 bg-background/50 text-[0.78rem]"
+                        placeholder="Search tree…"
+                        className="h-9 bg-background/60 text-[0.78rem]"
                         aria-label="Search model tree"
                       />
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-wrap gap-1.5">
                         {(
                           [
                             ["all", "All"],
@@ -455,10 +454,10 @@ export default function RunSidebar() {
                             key={value}
                             type="button"
                             className={cn(
-                              "rounded-full border px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] transition-colors",
+                              "rounded-md border px-2.5 py-1 text-[0.68rem] font-medium transition-colors",
                               treeFilterScope === value
-                                ? "border-primary/40 bg-primary/15 text-primary"
-                                : "border-border/30 bg-background/40 text-muted-foreground hover:bg-muted/50",
+                                ? "border-primary/30 bg-primary/12 text-primary"
+                                : "border-border/20 bg-background/30 text-muted-foreground hover:bg-muted/40 hover:text-foreground",
                             )}
                             onClick={() => setTreeFilterScope(value)}
                           >
@@ -466,7 +465,7 @@ export default function RunSidebar() {
                           </button>
                         ))}
                       </div>
-                      <div className="flex items-center justify-between text-[0.63rem] font-mono text-muted-foreground">
+                      <div className="flex items-center justify-between text-[0.66rem] text-muted-foreground">
                         <span>
                           {filteredTreeNodeCount.toLocaleString()} visible node
                           {filteredTreeNodeCount === 1 ? "" : "s"}
@@ -474,7 +473,7 @@ export default function RunSidebar() {
                         {(treeQuery.length > 0 || treeFilterScope !== "all") && (
                           <button
                             type="button"
-                            className="rounded px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                            className="rounded px-1.5 py-0.5 text-[0.62rem] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
                             onClick={() => {
                               setTreeQuery("");
                               setTreeFilterScope("all");
@@ -511,18 +510,18 @@ export default function RunSidebar() {
           panelRef={inspectorPanelRef}
           onResize={handleInspectorResize}
         >
-          <section className="flex flex-col h-full bg-transparent">
+          <section className="flex flex-col h-full bg-background/35">
             <button
               type="button"
-              className="flex items-center w-full px-3.5 py-2.5 text-left transition-all hover:bg-muted/20 border-b border-border/20 z-10 shrink-0 relative group"
+              className="flex items-center w-full px-3 py-2 text-left transition-all hover:bg-muted/20 border-b border-border/10 z-10 shrink-0 relative group"
               onClick={handleInspectorToggle}
               aria-expanded={inspectorOpen}
             >
               <span className={cn("text-primary/60 mr-2 transition-transform duration-200 flex items-center justify-center w-4 h-4 text-[10px]", inspectorOpen && "rotate-90")}>▸</span>
               <span className="text-[0.72rem] font-semibold tracking-wide text-foreground/90 group-hover:text-foreground transition-colors">
-                Inspector
+                Properties
               </span>
-              <span className="ml-auto text-[0.58rem] font-mono tracking-tight text-muted-foreground bg-card/60 px-2 py-0.5 rounded-md border border-border/30 shadow-sm max-w-[140px] truncate">
+              <span className="ml-auto text-[0.62rem] font-medium tracking-tight text-muted-foreground bg-background/45 px-2 py-0.5 rounded-md border border-border/20 max-w-[140px] truncate">
                 {activeNodeLabel}
               </span>
             </button>

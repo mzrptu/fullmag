@@ -64,6 +64,7 @@ export default function MeshPanel() {
     setMeshSelection,
     meshWorkspacePreset,
     meshWorkspace,
+    meshConfigDirty,
     meshClipEnabled,
     setMeshClipEnabled,
     meshClipAxis,
@@ -134,6 +135,14 @@ export default function MeshPanel() {
 
   return (
     <div className="flex flex-col pt-4 px-2">
+      {meshConfigDirty && (
+        <SidebarSection title="Mesh Status" defaultOpen={true}>
+          <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-3 text-[0.74rem] leading-relaxed text-amber-100/90">
+            The viewport is still showing the last built mesh. You changed mesh or airbox parameters, so the realized 3D topology will refresh only after `Build Selected` or `Build All`.
+          </div>
+        </SidebarSection>
+      )}
+
       <SidebarSection title="Environment Overview" defaultOpen={true}>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">

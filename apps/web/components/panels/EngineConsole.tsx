@@ -67,13 +67,10 @@ function formatBytes(bytes: number): string {
 /* ── Component ─────────────────────────────────────────────── */
 
 const TABS: { value: ConsoleTab; label: string }[] = [
+  { value: "progress", label: "Progress" },
   { value: "live", label: "Live" },
   { value: "log", label: "Log" },
-  { value: "energy", label: "Energy" },
   { value: "charts", label: "Charts" },
-  { value: "table", label: "Table" },
-  { value: "progress", label: "Progress" },
-  { value: "perf", label: "Perf" },
 ];
 
 export default function EngineConsole({
@@ -94,7 +91,7 @@ export default function EngineConsole({
   meshWorkspace = null,
 }: EngineConsoleProps) {
   const convergenceThreshold = convergenceThresholdProp ?? DEFAULT_CONVERGENCE_THRESHOLD;
-  const [activeTab, setActiveTab] = useState<ConsoleTab>("live");
+  const [activeTab, setActiveTab] = useState<ConsoleTab>("progress");
   const [chartPreset, setChartPreset] = useState<ChartPreset>("energy");
   /* Note: we keep state manually for backwards compat; Radix Tabs controlled via value/onValueChange */
   const logContainerRef = useRef<HTMLDivElement>(null);
@@ -193,12 +190,12 @@ export default function EngineConsole({
             : undefined;
 
   return (
-    <div className="flex flex-col h-full bg-background/50 overflow-hidden isolate">
+    <div className="flex flex-col h-full bg-background/35 overflow-hidden isolate">
       {/* ─── Header Bar ──────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-background/50 backdrop-blur-md border-b border-white/5 shadow-sm">
-        <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground mr-auto">Engine Console</span>
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-background/45 border-b border-white/5">
+        <span className="text-[0.68rem] font-semibold tracking-wide text-muted-foreground mr-auto">Messages & Progress</span>
         <span className={cn("w-2 h-2 rounded-full shrink-0", (liveState?.finished || run?.status === "completed" ? "completed" : connection) === "completed" ? "bg-emerald-500 shadow-[0_0_6px_var(--status-completed)]" : connection === "connected" ? "bg-primary shadow-[0_0_6px_rgba(99,102,241,0.5)]" : connection === "connecting" ? "bg-amber-500 animate-pulse" : "bg-destructive")} />
-        <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span className="text-[0.65rem] font-medium tracking-wide text-muted-foreground">
           {liveState?.finished || run?.status === "completed"
             ? "Completed"
             : connection === "connected"
@@ -208,7 +205,7 @@ export default function EngineConsole({
             : "Offline"}
         </span>
         {session && (
-          <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground ml-auto">
+          <span className="text-[0.64rem] font-medium tracking-wide text-muted-foreground ml-auto">
             {session.problem_name} · {session.requested_backend.toUpperCase()}
           </span>
         )}
@@ -216,9 +213,9 @@ export default function EngineConsole({
 
       {/* ─── Radix Tabs ─────────────────────────────── */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ConsoleTab)} className="flex flex-col min-h-0 flex-1">
-        <TabsList className="flex gap-1 px-2 border-b border-white/5 bg-background/40 backdrop-blur-md">
+        <TabsList className="flex h-auto gap-1 px-2 py-1 border-b border-white/5 bg-background/30 rounded-none border-x-0 border-t-0">
           {TABS.map((tab) => (
-            <TabsTrigger key={tab.value} value={tab.value} className="text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary pb-2 pt-2.5 px-3 rounded-none bg-transparent shadow-none border-t-0 border-l-0 border-r-0">
+            <TabsTrigger key={tab.value} value={tab.value} className="min-h-[32px] rounded-md px-3 py-1 text-[0.7rem] font-medium normal-case tracking-normal text-muted-foreground data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-transparent">
               {tab.label}
             </TabsTrigger>
           ))}
