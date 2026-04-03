@@ -262,6 +262,20 @@ pub(crate) fn plan_fem(
                 reasons: vec![message],
             },
         )?;
+    // Commit 4: fail early when study_universe requires a shared domain mesh
+    // but no fem_domain_mesh_asset was provided.
+    if resolved_domain_mesh_asset.is_none()
+        && shared_domain_mesh_requested(problem, None)
+    {
+        return Err(PlanError {
+            reasons: vec![
+                "study_universe requires a shared-domain FEM mesh (fem_domain_mesh_asset), \
+                 but none was provided. Call study.build_domain_mesh() or \
+                 study.domain_mesh(...) before solving."
+                    .to_string(),
+            ],
+        });
+    }
     let mut merged_initial_magnetization = Vec::new();
     let mut mesh_parts = Vec::with_capacity(problem.magnets.len());
     let mut mesh_sources = Vec::with_capacity(problem.magnets.len());
@@ -838,6 +852,20 @@ pub(crate) fn plan_fem_eigen(
         resolve_fem_domain_mesh_asset(problem, false).map_err(|message| PlanError {
             reasons: vec![message],
         })?;
+    // Commit 4: fail early when study_universe requires a shared domain mesh
+    // but no fem_domain_mesh_asset was provided (eigen path).
+    if resolved_domain_mesh_asset.is_none()
+        && shared_domain_mesh_requested(problem, None)
+    {
+        return Err(PlanError {
+            reasons: vec![
+                "study_universe requires a shared-domain FEM mesh (fem_domain_mesh_asset), \
+                 but none was provided. Call study.build_domain_mesh() or \
+                 study.domain_mesh(...) before solving."
+                    .to_string(),
+            ],
+        });
+    }
     let mut merged_equilibrium = Vec::new();
     let mut mesh_parts = Vec::with_capacity(problem.magnets.len());
     let mut mesh_sources = Vec::with_capacity(problem.magnets.len());

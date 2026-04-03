@@ -21,7 +21,9 @@ from typing import Any
 import numpy as np
 
 from fullmag._progress import emit_progress
-from fullmag.meshing.asset_pipeline import realize_fem_domain_mesh_asset
+from fullmag.meshing.asset_pipeline import (
+    realize_fem_domain_mesh_asset_from_components,
+)
 from fullmag.meshing.gmsh_bridge import (
     MeshOptions,
     SizeFieldData,
@@ -301,7 +303,7 @@ def main() -> None:
                         else []
                     ),
                 }
-                mesh_data, region_markers = realize_fem_domain_mesh_asset(
+                mesh_data, region_markers = realize_fem_domain_mesh_asset_from_components(
                     geometries,
                     FEM(order=int(order), hmax=float(hmax)),
                     study_universe=declared_universe,

@@ -565,6 +565,8 @@ def _add_airbox_geo(
     body_surf_tags: list[int],
     airbox: AirboxOptions,
     hmax: float,
+    *,
+    component_volume_groups: dict[str, list[int]] | None = None,
 ) -> int | None:
     """Add an airbox around a GEO-kernel body using pure GEO primitives.
 
@@ -661,10 +663,16 @@ def _add_airbox_geo(
     gmsh.model.geo.synchronize()
 
     # 5 — physical groups (same convention as the OCC path)
-    for index, body_vol_tag in enumerate(body_vol_tags, start=1):
-        gmsh.model.addPhysicalGroup(3, [body_vol_tag], tag=index)
-        gmsh.model.setPhysicalName(3, index, f"magnetic_{index}")
-    air_tag = len(body_vol_tags) + 1
+    if component_volume_groups:
+        for index, (geometry_name, volume_tags) in enumerate(component_volume_groups.items(), start=1):
+            gmsh.model.addPhysicalGroup(3, list(volume_tags), tag=index)
+            gmsh.model.setPhysicalName(3, index, geometry_name)
+        air_tag = len(component_volume_groups) + 1
+    else:
+        for index, body_vol_tag in enumerate(body_vol_tags, start=1):
+            gmsh.model.addPhysicalGroup(3, [body_vol_tag], tag=index)
+            gmsh.model.setPhysicalName(3, index, f"magnetic_{index}")
+        air_tag = len(body_vol_tags) + 1
     gmsh.model.addPhysicalGroup(3, [air_vol], tag=air_tag)
     gmsh.model.setPhysicalName(3, air_tag, "air")
     gmsh.model.addPhysicalGroup(2, outer_surf_tags, tag=airbox.boundary_marker)
@@ -1438,6 +1446,7 @@ class SharedDomainMeshResult:
     """
 
     mesh: MeshData
+    component_marker_tags: dict[str, int]
     component_volume_tags: dict[str, list[int]]
     component_surface_tags: dict[str, list[int]]
     interface_surface_tags: list[int]
@@ -1538,10 +1547,11 @@ def generate_shared_domain_mesh_from_components(
 
         all_body_vols: list[int] = []
         all_body_surfs: list[int] = []
+        component_marker_tags: dict[str, int] = {}
         component_volume_tags: dict[str, list[int]] = {}
         component_surface_tags: dict[str, list[int]] = {}
 
-        for comp in components:
+        for component_index, comp in enumerate(components, start=1):
             # Record existing entities before merge so we can detect new ones
             existing_surfs = {tag for _, tag in gmsh.model.getEntities(2)}
             existing_vols = {tag for _, tag in gmsh.model.getEntities(3)}
@@ -1554,6 +1564,7 @@ def generate_shared_domain_mesh_from_components(
             new_surfs = [t for t in comp_surfs if t not in existing_surfs]
             new_vols = [t for t in comp_vols if t not in existing_vols]
 
+            component_marker_tags[comp.geometry_name] = component_index
             component_volume_tags[comp.geometry_name] = new_vols
             component_surface_tags[comp.geometry_name] = new_surfs
             all_body_vols.extend(new_vols)
@@ -1572,7 +1583,12 @@ def generate_shared_domain_mesh_from_components(
         if has_airbox:
             emit_progress("Gmsh: adding airbox domain around components")
             airbox_field = _add_airbox_geo(
-                gmsh, all_body_vols, all_body_surfs, airbox, hmax,
+                gmsh,
+                all_body_vols,
+                all_body_surfs,
+                airbox,
+                hmax,
+                component_volume_groups=component_volume_tags,
             )
             if airbox_field is not None:
                 airbox_field_ids.append(airbox_field)
@@ -1584,7 +1600,15 @@ def generate_shared_domain_mesh_from_components(
                     break
 
         emit_progress("Gmsh: generating 3D tetrahedral mesh (component-aware)")
-        _apply_mesh_options(gmsh, hmax, order, opts, preexisting_field_ids=airbox_field_ids)
+        _apply_mesh_options(
+            gmsh,
+            hmax,
+            order,
+            opts,
+            preexisting_field_ids=airbox_field_ids,
+            component_volume_tags=component_volume_tags,
+            component_surface_tags=component_surface_tags,
+        )
         with _GmshProgressLogger(gmsh):
             gmsh.model.mesh.generate(3)
         _apply_post_mesh_options(gmsh, opts)
@@ -1604,6 +1628,7 @@ def generate_shared_domain_mesh_from_components(
         )
         return SharedDomainMeshResult(
             mesh=mesh,
+            component_marker_tags=component_marker_tags,
             component_volume_tags=component_volume_tags,
             component_surface_tags=component_surface_tags,
             interface_surface_tags=interface_surface_tags,
@@ -1772,6 +1797,8 @@ def _apply_mesh_options(
     opts: MeshOptions,
     hscale: float = 1.0,
     preexisting_field_ids: list[int] | None = None,
+    component_volume_tags: dict[str, list[int]] | None = None,
+    component_surface_tags: dict[str, list[int]] | None = None,
 ) -> None:
     """Apply MeshOptions to the Gmsh context before mesh.generate()."""
     emit_progress("Gmsh: applying mesh options")
@@ -1855,11 +1882,25 @@ def _apply_mesh_options(
 
     if opts.size_fields:
         emit_progress("Gmsh: configuring mesh size fields")
-        _configure_mesh_size_fields(gmsh, opts.size_fields, hscale, extra_field_ids)
+        _configure_mesh_size_fields(
+            gmsh,
+            opts.size_fields,
+            hscale,
+            extra_field_ids,
+            component_volume_tags=component_volume_tags,
+            component_surface_tags=component_surface_tags,
+        )
     elif extra_field_ids:
         # No explicit size_fields but we have auto-generated fields (e.g. narrow regions)
         emit_progress("Gmsh: configuring mesh size fields")
-        _configure_mesh_size_fields(gmsh, [], hscale, extra_field_ids)
+        _configure_mesh_size_fields(
+            gmsh,
+            [],
+            hscale,
+            extra_field_ids,
+            component_volume_tags=component_volume_tags,
+            component_surface_tags=component_surface_tags,
+        )
 
 
 def _resolve_gmsh_thread_count(requested_threads: int | None = None) -> int:
@@ -2115,6 +2156,105 @@ def _match_surfaces_within_bounds(
     return matched
 
 
+def _component_surface_tags_for_geometry(
+    geometry_name: str,
+    component_surface_tags: dict[str, list[int]] | None,
+) -> list[int]:
+    if not component_surface_tags:
+        return []
+    return [int(tag) for tag in component_surface_tags.get(geometry_name, [])]
+
+
+def _component_volume_tags_for_geometry(
+    geometry_name: str,
+    component_volume_tags: dict[str, list[int]] | None,
+) -> list[int]:
+    if not component_volume_tags:
+        return []
+    return [int(tag) for tag in component_volume_tags.get(geometry_name, [])]
+
+
+def _add_surface_threshold_field(
+    gmsh: Any,
+    *,
+    surface_tags: Sequence[int],
+    size_min: float,
+    size_max: float,
+    dist_min: float,
+    dist_max: float,
+    sampling: int = 20,
+    hscale: float = 1.0,
+) -> int | None:
+    normalized_surface_tags = [int(tag) for tag in surface_tags]
+    if not normalized_surface_tags:
+        return None
+
+    f_dist = gmsh.model.mesh.field.add("Distance")
+    gmsh.model.mesh.field.setNumbers(f_dist, "SurfacesList", normalized_surface_tags)
+    gmsh.model.mesh.field.setNumber(f_dist, "Sampling", int(max(2, sampling)))
+
+    f_thresh = gmsh.model.mesh.field.add("Threshold")
+    gmsh.model.mesh.field.setNumber(f_thresh, "InField", f_dist)
+    gmsh.model.mesh.field.setNumber(f_thresh, "SizeMin", float(size_min) * hscale)
+    gmsh.model.mesh.field.setNumber(f_thresh, "SizeMax", float(size_max) * hscale)
+    gmsh.model.mesh.field.setNumber(f_thresh, "DistMin", float(dist_min) * hscale)
+    gmsh.model.mesh.field.setNumber(f_thresh, "DistMax", float(dist_max) * hscale)
+    return f_thresh
+
+
+def _add_component_surface_threshold_field(
+    gmsh: Any,
+    *,
+    geometry_name: str,
+    size_min: float,
+    size_max: float,
+    dist_min: float,
+    dist_max: float,
+    component_surface_tags: dict[str, list[int]] | None,
+    sampling: int = 20,
+    hscale: float = 1.0,
+) -> int | None:
+    surf_tags = _component_surface_tags_for_geometry(geometry_name, component_surface_tags)
+    if not surf_tags:
+        emit_progress(
+            f"Gmsh: warning - no recovered component surfaces for '{geometry_name}', skipping local surface threshold"
+        )
+        return None
+    return _add_surface_threshold_field(
+        gmsh,
+        surface_tags=surf_tags,
+        size_min=size_min,
+        size_max=size_max,
+        dist_min=dist_min,
+        dist_max=dist_max,
+        sampling=sampling,
+        hscale=hscale,
+    )
+
+
+def _add_component_volume_constant_field(
+    gmsh: Any,
+    *,
+    geometry_name: str,
+    vin: float,
+    vout: float,
+    component_volume_tags: dict[str, list[int]] | None,
+    hscale: float = 1.0,
+) -> int | None:
+    volume_tags = _component_volume_tags_for_geometry(geometry_name, component_volume_tags)
+    if not volume_tags:
+        emit_progress(
+            f"Gmsh: warning - no recovered component volumes for '{geometry_name}', skipping local bulk refinement"
+        )
+        return None
+
+    field_id = gmsh.model.mesh.field.add("Constant")
+    gmsh.model.mesh.field.setNumbers(field_id, "VolumesList", volume_tags)
+    gmsh.model.mesh.field.setNumber(field_id, "VIn", float(vin) * hscale)
+    gmsh.model.mesh.field.setNumber(field_id, "VOut", float(vout) * hscale)
+    return field_id
+
+
 def _add_bounds_surface_threshold_field(
     gmsh: Any,
     *,
@@ -2138,19 +2278,21 @@ def _add_bounds_surface_threshold_field(
         padding=scaled_padding,
     )
     if not surf_tags:
+        emit_progress(
+            "Gmsh: warning - bounds-based surface threshold matched no surfaces; skipping local refinement field"
+        )
         return None
 
-    f_dist = gmsh.model.mesh.field.add("Distance")
-    gmsh.model.mesh.field.setNumbers(f_dist, "SurfacesList", surf_tags)
-    gmsh.model.mesh.field.setNumber(f_dist, "Sampling", int(max(2, sampling)))
-
-    f_thresh = gmsh.model.mesh.field.add("Threshold")
-    gmsh.model.mesh.field.setNumber(f_thresh, "InField", f_dist)
-    gmsh.model.mesh.field.setNumber(f_thresh, "SizeMin", float(size_min) * hscale)
-    gmsh.model.mesh.field.setNumber(f_thresh, "SizeMax", float(size_max) * hscale)
-    gmsh.model.mesh.field.setNumber(f_thresh, "DistMin", float(dist_min) * hscale)
-    gmsh.model.mesh.field.setNumber(f_thresh, "DistMax", float(dist_max) * hscale)
-    return f_thresh
+    return _add_surface_threshold_field(
+        gmsh,
+        surface_tags=surf_tags,
+        size_min=size_min,
+        size_max=size_max,
+        dist_min=dist_min,
+        dist_max=dist_max,
+        sampling=sampling,
+        hscale=hscale,
+    )
 
 
 def _configure_mesh_size_fields(
@@ -2158,6 +2300,8 @@ def _configure_mesh_size_fields(
     fields: list[dict[str, Any]],
     hscale: float = 1.0,
     extra_field_ids: list[int] | None = None,
+    component_volume_tags: dict[str, list[int]] | None = None,
+    component_surface_tags: dict[str, list[int]] | None = None,
 ) -> None:
     """Configure Gmsh mesh size fields from JSON-serializable configs.
 
@@ -2179,10 +2323,45 @@ def _configure_mesh_size_fields(
     field_ids = []
     for config in fields:
         kind = config["kind"]
-        if kind == "BoundsSurfaceThreshold":
-            params = config.get("params", {})
-            if not isinstance(params, dict):
+        params = config.get("params", {})
+        if not isinstance(params, dict):
+            continue
+        if kind == "ComponentVolumeConstant":
+            geometry_name = params.get("GeometryName")
+            if not isinstance(geometry_name, str) or not geometry_name.strip():
+                emit_progress("Gmsh: warning - ComponentVolumeConstant is missing GeometryName; skipping")
                 continue
+            fid = _add_component_volume_constant_field(
+                gmsh,
+                geometry_name=geometry_name,
+                vin=float(params.get("VIn")),
+                vout=float(params.get("VOut", 1.0e22)),
+                component_volume_tags=component_volume_tags,
+                hscale=hscale,
+            )
+            if fid is not None:
+                field_ids.append(fid)
+            continue
+        if kind in {"SurfaceDistanceThreshold", "InterfaceShellThreshold", "TransitionShellThreshold"}:
+            geometry_name = params.get("GeometryName")
+            if not isinstance(geometry_name, str) or not geometry_name.strip():
+                emit_progress(f"Gmsh: warning - {kind} is missing GeometryName; skipping")
+                continue
+            fid = _add_component_surface_threshold_field(
+                gmsh,
+                geometry_name=geometry_name,
+                size_min=float(params.get("SizeMin")),
+                size_max=float(params.get("SizeMax", 1.0e22)),
+                dist_min=float(params.get("DistMin", 0.0)),
+                dist_max=float(params.get("DistMax", 0.0)),
+                component_surface_tags=component_surface_tags,
+                sampling=int(params.get("Sampling", 20)),
+                hscale=hscale,
+            )
+            if fid is not None:
+                field_ids.append(fid)
+            continue
+        if kind == "BoundsSurfaceThreshold":
             bounds_min = params.get("BoundsMin")
             bounds_max = params.get("BoundsMax")
             if not isinstance(bounds_min, list) or not isinstance(bounds_max, list):
@@ -2203,7 +2382,7 @@ def _configure_mesh_size_fields(
                 field_ids.append(fid)
             continue
         fid = gmsh.model.mesh.field.add(kind)
-        for key, value in config.get("params", {}).items():
+        for key, value in params.items():
             if isinstance(value, str):
                 gmsh.model.mesh.field.setString(fid, key, value)
             elif isinstance(value, list):

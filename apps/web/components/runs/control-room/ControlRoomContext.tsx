@@ -30,6 +30,7 @@ import type {
 import type {
   DomainFrameState,
   FemMeshPart,
+  MeshCommandTarget,
   MeshEntityViewStateMap,
   ModelBuilderGraphV2,
   SceneDocument,
@@ -1524,26 +1525,35 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     async (
       meshReason: string,
       meshOptionsPayload: Record<string, unknown>,
+      meshTarget: MeshCommandTarget = { kind: "study_domain" },
     ) => {
       setCommandPostInFlight(true);
       setCommandErrorMessage(null);
+      const targetKindLabel =
+        meshTarget.kind === "object_mesh"
+          ? `object_mesh:${meshTarget.object_id}`
+          : meshTarget.kind;
       const payload = {
         kind: "remesh",
-        mesh_target: { kind: "study_domain" },
+        mesh_target: meshTarget,
         mesh_reason: meshReason,
         mesh_options: meshOptionsPayload,
       };
       appendFrontendTrace("info", `TX: REMESH ${JSON.stringify(payload)}`);
       try {
-        await liveApi.queueStudyDomainRemesh(meshOptionsPayload, meshReason);
+        await liveApi.queueRemesh({
+          mesh_options: meshOptionsPayload,
+          mesh_target: meshTarget,
+          mesh_reason: meshReason,
+        });
         appendFrontendTrace(
           "system",
-          `RX: HTTP accepted REMESH target=study_domain reason=${meshReason}`,
+          `RX: HTTP accepted REMESH target=${targetKindLabel} reason=${meshReason}`,
         );
       } catch (e) {
         appendFrontendTrace(
           "error",
-          `RX: HTTP rejected REMESH target=study_domain — ${e instanceof Error ? e.message : "Failed to queue command"}`,
+          `RX: HTTP rejected REMESH target=${targetKindLabel} — ${e instanceof Error ? e.message : "Failed to queue command"}`,
         );
         setCommandErrorMessage(
           e instanceof Error ? e.message : "Failed to queue remesh command",
@@ -1640,6 +1650,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       await enqueueStudyDomainRemesh(
         "airbox_parameter_changed",
         buildMeshOptionsPayload(meshOptions),
+        { kind: "airbox" },
       );
     } catch (err) {
       setCommandErrorMessage(
@@ -1687,6 +1698,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         await enqueueStudyDomainRemesh(
           objectId ? `object_mesh_override_changed:${objectId}` : "object_mesh_override_changed",
           buildMeshOptionsPayload(meshOptions),
+          objectId ? { kind: "object_mesh", object_id: objectId } : { kind: "study_domain" },
         );
       } catch (err) {
         setCommandErrorMessage(

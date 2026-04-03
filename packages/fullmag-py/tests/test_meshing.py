@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -14,10 +15,12 @@ import numpy as np
 import fullmag as fm
 from fullmag import _core as fullmag_core
 from fullmag.meshing.asset_pipeline import (
+    _mesh_options_from_runtime_metadata,
     _shared_domain_local_size_fields,
     _study_universe_airbox_options,
     realize_fdm_grid_asset,
     realize_fem_domain_mesh_asset,
+    realize_fem_domain_mesh_asset_from_components,
     realize_fem_mesh_asset,
 )
 from fullmag.meshing.gmsh_bridge import (
@@ -26,6 +29,7 @@ from fullmag.meshing.gmsh_bridge import (
     MESH_SIZE_PRESETS,
     MeshData,
     MeshOptions,
+    SharedDomainMeshResult,
     SizeFieldData,
     _configure_gmsh_threads,
     _apply_mesh_options,
@@ -36,6 +40,7 @@ from fullmag.meshing.gmsh_bridge import (
 )
 from fullmag.meshing.remesh_cli import _geometry_from_ir, _mesh_result_payload, _size_field_from_dict
 from fullmag.meshing.remesh_cli import _describe_remesh_job
+from fullmag.meshing import remesh_cli as remesh_cli_module
 from fullmag.meshing.quality import validate_mesh
 from fullmag.meshing.surface_assets import export_geometry_to_stl
 from fullmag.meshing.voxelization import VoxelMaskData, voxelize_geometry
@@ -318,6 +323,55 @@ class MeshScaffoldTests(unittest.TestCase):
             "scope=shared_domain, body_hmax=2.000e-08, airbox_hmax=6.000e-08, local_object_overrides=1",
         )
 
+    def test_remesh_cli_shared_domain_manual_remesh_uses_component_aware_path(self) -> None:
+        mesh = self._unit_tet_mesh()
+        config = {
+            "mode": "shared_domain_manual_remesh",
+            "mesh_name": "study_domain",
+            "hmax": 20e-9,
+            "order": 1,
+            "mesh_options": {},
+            "declared_universe": {"mode": "manual", "size": [8.0, 8.0, 8.0], "center": [0.0, 0.0, 0.0]},
+            "geometries": [
+                {"kind": "box", "size": [1.0, 1.0, 1.0], "name": "left"},
+            ],
+        }
+        stdout = io.StringIO()
+
+        class _FakeLibC:
+            @staticmethod
+            def fflush(_stream: object) -> int:
+                return 0
+
+        with patch.object(remesh_cli_module.sys, "stdin", io.StringIO(json.dumps(config))), patch.object(
+            remesh_cli_module.sys, "stdout", stdout
+        ), patch.object(
+            remesh_cli_module, "emit_progress"
+        ), patch.object(
+            remesh_cli_module.os, "dup", return_value=101
+        ), patch.object(
+            remesh_cli_module.os, "open", return_value=102
+        ), patch.object(
+            remesh_cli_module.os, "dup2"
+        ), patch.object(
+            remesh_cli_module.os, "close"
+        ), patch.object(
+            remesh_cli_module.os, "fdopen", return_value=stdout
+        ), patch(
+            "ctypes.CDLL",
+            return_value=_FakeLibC(),
+        ), patch.object(
+            remesh_cli_module,
+            "realize_fem_domain_mesh_asset_from_components",
+            return_value=(mesh, [{"geometry_name": "left", "marker": 1}]),
+        ) as component_call:
+            remesh_cli_module.main()
+
+        component_call.assert_called_once()
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["generation_mode"], "shared_domain_manual_remesh")
+        self.assertEqual(payload["region_markers"][0]["geometry_name"], "left")
+
     def test_shared_domain_local_size_fields_follow_per_geometry_hmax(self) -> None:
         left = fm.Box(2.0, 2.0, 2.0, name="left")
         right = fm.Box(4.0, 2.0, 2.0, name="right")
@@ -341,6 +395,36 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertEqual(fields[0]["params"]["YMax"], 1.0)
         self.assertEqual(fields[0]["params"]["ZMin"], -1.0)
         self.assertEqual(fields[0]["params"]["ZMax"], 1.0)
+
+    def test_component_aware_field_stack_uses_component_scoped_fields(self) -> None:
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+
+        mesh_options = _mesh_options_from_runtime_metadata(
+            {
+                "per_geometry": [
+                    {
+                        "geometry": "left",
+                        "bulk_hmax": "8e-9",
+                        "interface_hmax": "4e-9",
+                        "interface_thickness": "12e-9",
+                        "transition_distance": "24e-9",
+                    }
+                ]
+            },
+            geometries=[left],
+            default_hmax=20e-9,
+            component_aware=True,
+        )
+
+        kinds = [field["kind"] for field in mesh_options.size_fields]
+        self.assertEqual(
+            kinds,
+            ["ComponentVolumeConstant", "InterfaceShellThreshold", "TransitionShellThreshold"],
+        )
+        bulk_field = mesh_options.size_fields[0]["params"]
+        self.assertEqual(bulk_field["GeometryName"], "left")
+        self.assertAlmostEqual(bulk_field["VIn"], 8e-9)
+        self.assertGreater(float(bulk_field["VOut"]), 1e21)
 
     def test_apply_mesh_options_falls_back_from_mmg3d_when_size_fields_are_active(self) -> None:
         class _FakeOptionsApi:
@@ -997,6 +1081,93 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertEqual(region_markers[0], {"geometry_name": "left", "marker": 1})
         self.assertEqual(region_markers[1]["marker"], 2)
         self.assertIn("right", region_markers[1]["geometry_name"])
+
+    def test_realize_fem_domain_mesh_asset_from_components_uses_component_markers(self) -> None:
+        left = fm.Box(size=(1.0, 1.0, 1.0), name="left")
+        right = fm.Box(size=(1.0, 1.0, 1.0), name="right").translate((2.0, 0.0, 0.0))
+
+        shared_domain_mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [-0.5, -0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, -0.5, 0.5],
+                    [1.5, -0.5, -0.5],
+                    [2.5, -0.5, -0.5],
+                    [1.5, 0.5, -0.5],
+                    [1.5, -0.5, 0.5],
+                    [-2.0, -2.0, -2.0],
+                    [4.0, -2.0, -2.0],
+                    [-2.0, 2.0, -2.0],
+                    [-2.0, -2.0, 2.0],
+                ],
+                dtype=np.float64,
+            ),
+            elements=np.asarray(
+                [
+                    [0, 1, 2, 3],
+                    [4, 5, 6, 7],
+                    [8, 9, 10, 11],
+                ],
+                dtype=np.int32,
+            ),
+            element_markers=np.asarray([1, 2, 3], dtype=np.int32),
+            boundary_faces=np.asarray([[0, 1, 2], [4, 5, 6], [8, 9, 10]], dtype=np.int32),
+            boundary_markers=np.asarray([10, 10, 99], dtype=np.int32),
+        )
+
+        class _FakeSurface:
+            vertices = np.asarray(
+                [
+                    [-0.5, -0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, -0.5, 0.5],
+                ],
+                dtype=np.float64,
+            )
+
+            def copy(self) -> "_FakeSurface":
+                return self
+
+            def export(self, _path: Path) -> None:
+                return None
+
+        fake_result = SharedDomainMeshResult(
+            mesh=shared_domain_mesh,
+            component_marker_tags={left.geometry_name: 1, right.geometry_name: 2},
+            component_volume_tags={left.geometry_name: [11], right.geometry_name: [12]},
+            component_surface_tags={left.geometry_name: [21], right.geometry_name: [22]},
+            interface_surface_tags=[21, 22],
+            outer_boundary_surface_tags=[31, 32, 33, 34, 35, 36],
+        )
+
+        with patch(
+            "fullmag.meshing.asset_pipeline._import_trimesh",
+            return_value=object(),
+        ), patch(
+            "fullmag.meshing.asset_pipeline._geometry_to_trimesh",
+            return_value=_FakeSurface(),
+        ), patch(
+            "fullmag.meshing.asset_pipeline.generate_shared_domain_mesh_from_components",
+            return_value=fake_result,
+        ), patch(
+            "fullmag.meshing.asset_pipeline._match_geometry_bounds_to_source_markers",
+            side_effect=AssertionError("bbox mapping should not run for component-aware path"),
+        ), patch(
+            "fullmag.meshing.asset_pipeline._contains_points_in_geometry",
+            side_effect=AssertionError("point containment fallback should not run"),
+        ):
+            mesh, region_markers = realize_fem_domain_mesh_asset_from_components(
+                [left, right],
+                fm.FEM(order=1, hmax=0.1),
+                study_universe={"mode": "manual", "size": [8.0, 8.0, 8.0], "center": [0.0, 0.0, 0.0]},
+            )
+
+        np.testing.assert_array_equal(mesh.element_markers, np.asarray([1, 2, 0], dtype=np.int32))
+        self.assertEqual(region_markers[0], {"geometry_name": left.geometry_name, "marker": 1})
+        self.assertEqual(region_markers[1], {"geometry_name": right.geometry_name, "marker": 2})
 
     def test_realize_fem_domain_mesh_asset_emits_partition_summary(self) -> None:
         left = fm.Box(size=(1.0, 1.0, 1.0), name="left")

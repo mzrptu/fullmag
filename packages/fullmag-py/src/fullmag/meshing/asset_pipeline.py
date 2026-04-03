@@ -36,6 +36,8 @@ from .gmsh_bridge import (
 from .surface_assets import _geometry_to_trimesh, _import_trimesh, build_surface_preview_payload
 from .voxelization import VoxelMaskData, voxelize_geometry
 
+_NO_OP_FIELD_SIZE = 1.0e22
+
 
 def _surface_preview_to_mesh_data(preview: dict[str, object]) -> MeshData:
     nodes = np.asarray(preview.get("nodes", []), dtype=np.float64)
@@ -412,14 +414,32 @@ def _build_object_bulk_fields(
     default_hmax: float,
     override_by_name: dict[str, Mapping[str, object]],
     bounds_by_name: dict[str, tuple] | None = None,
+    component_aware: bool = False,
 ) -> list[dict[str, object]]:
-    """Build Box fields for per-object bulk refinement.
-
-    These define the element size *inside* each magnetic body.  Box is used
-    because it works reliably for any geometry type, including discrete STL.
-    """
+    """Build per-object bulk refinement fields."""
     fields: list[dict[str, object]] = []
     for geometry in geometries:
+        entry = override_by_name.get(geometry.geometry_name)
+        bulk_hmax = _coerce_positive_float(
+            entry.get("bulk_hmax") or entry.get("hmax") if entry else None
+        ) or default_hmax
+
+        if bulk_hmax >= default_hmax:
+            continue
+
+        if component_aware:
+            fields.append(
+                {
+                    "kind": "ComponentVolumeConstant",
+                    "params": {
+                        "GeometryName": geometry.geometry_name,
+                        "VIn": float(bulk_hmax),
+                        "VOut": float(_NO_OP_FIELD_SIZE),
+                    },
+                }
+            )
+            continue
+
         if bounds_by_name is not None:
             bounds_pair = bounds_by_name.get(geometry.geometry_name)
             if bounds_pair is None:
@@ -430,19 +450,12 @@ def _build_object_bulk_fields(
         if bounds_min is None or bounds_max is None:
             continue
 
-        entry = override_by_name.get(geometry.geometry_name)
-        bulk_hmax = _coerce_positive_float(
-            entry.get("bulk_hmax") or entry.get("hmax") if entry else None
-        ) or default_hmax
-
-        if bulk_hmax >= default_hmax:
-            continue
         fields.append(
             {
                 "kind": "Box",
                 "params": {
                     "VIn": float(bulk_hmax),
-                    "VOut": float(default_hmax),
+                    "VOut": float(_NO_OP_FIELD_SIZE),
                     "XMin": float(bounds_min[0]),
                     "XMax": float(bounds_max[0]),
                     "YMin": float(bounds_min[1]),
@@ -461,25 +474,11 @@ def _build_interface_fields(
     default_hmax: float,
     override_by_name: dict[str, Mapping[str, object]],
     bounds_by_name: dict[str, tuple] | None = None,
+    component_aware: bool = False,
 ) -> list[dict[str, object]]:
-    """Build interface refinement fields around each object.
-
-    Uses BoundsSurfaceThreshold fields (Distance+Threshold from surfaces
-    matching the object's bounding box) to control the element size at
-    the magnetic–air interface.
-    """
+    """Build interface refinement fields around each object."""
     fields: list[dict[str, object]] = []
     for geometry in geometries:
-        if bounds_by_name is not None:
-            bounds_pair = bounds_by_name.get(geometry.geometry_name)
-            if bounds_pair is None:
-                continue
-            bounds_min, bounds_max = bounds_pair
-        else:
-            bounds_min, bounds_max = geometry_bounds(geometry, source_root=None)
-        if bounds_min is None or bounds_max is None:
-            continue
-
         entry = override_by_name.get(geometry.geometry_name)
         bulk_hmax = _coerce_positive_float(
             entry.get("bulk_hmax") or entry.get("hmax") if entry else None
@@ -501,6 +500,32 @@ def _build_interface_fields(
         if interface_hmax >= default_hmax:
             continue
 
+        if component_aware:
+            fields.append(
+                {
+                    "kind": "InterfaceShellThreshold",
+                    "params": {
+                        "GeometryName": geometry.geometry_name,
+                        "SizeMin": float(interface_hmax),
+                        "SizeMax": float(_NO_OP_FIELD_SIZE),
+                        "DistMin": 0.0,
+                        "DistMax": float(interface_thickness),
+                        "Sampling": 20,
+                    },
+                }
+            )
+            continue
+
+        if bounds_by_name is not None:
+            bounds_pair = bounds_by_name.get(geometry.geometry_name)
+            if bounds_pair is None:
+                continue
+            bounds_min, bounds_max = bounds_pair
+        else:
+            bounds_min, bounds_max = geometry_bounds(geometry, source_root=None)
+        if bounds_min is None or bounds_max is None:
+            continue
+
         fields.append(
             {
                 "kind": "BoundsSurfaceThreshold",
@@ -508,7 +533,7 @@ def _build_interface_fields(
                     "BoundsMin": list(bounds_min),
                     "BoundsMax": list(bounds_max),
                     "SizeMin": float(interface_hmax),
-                    "SizeMax": float(default_hmax),
+                    "SizeMax": float(_NO_OP_FIELD_SIZE),
                     "DistMin": 0.0,
                     "DistMax": float(interface_thickness),
                     "Sampling": 20,
@@ -525,24 +550,11 @@ def _build_transition_fields(
     default_hmax: float,
     override_by_name: dict[str, Mapping[str, object]],
     bounds_by_name: dict[str, tuple] | None = None,
+    component_aware: bool = False,
 ) -> list[dict[str, object]]:
-    """Build transition zone fields from fine object region to coarse airbox.
-
-    Uses BoundsSurfaceThreshold with a wider DistMax to smoothly grade from
-    the object's hmax to the airbox hmax.
-    """
+    """Build transition zone fields from fine object region to coarse airbox."""
     fields: list[dict[str, object]] = []
     for geometry in geometries:
-        if bounds_by_name is not None:
-            bounds_pair = bounds_by_name.get(geometry.geometry_name)
-            if bounds_pair is None:
-                continue
-            bounds_min, bounds_max = bounds_pair
-        else:
-            bounds_min, bounds_max = geometry_bounds(geometry, source_root=None)
-        if bounds_min is None or bounds_max is None:
-            continue
-
         entry = override_by_name.get(geometry.geometry_name)
         bulk_hmax = _coerce_positive_float(
             entry.get("bulk_hmax") or entry.get("hmax") if entry else None
@@ -558,6 +570,32 @@ def _build_transition_fields(
         if bulk_hmax >= default_hmax:
             continue
 
+        if component_aware:
+            fields.append(
+                {
+                    "kind": "TransitionShellThreshold",
+                    "params": {
+                        "GeometryName": geometry.geometry_name,
+                        "SizeMin": float(bulk_hmax),
+                        "SizeMax": float(_NO_OP_FIELD_SIZE),
+                        "DistMin": 0.0,
+                        "DistMax": float(transition_distance),
+                        "Sampling": 20,
+                    },
+                }
+            )
+            continue
+
+        if bounds_by_name is not None:
+            bounds_pair = bounds_by_name.get(geometry.geometry_name)
+            if bounds_pair is None:
+                continue
+            bounds_min, bounds_max = bounds_pair
+        else:
+            bounds_min, bounds_max = geometry_bounds(geometry, source_root=None)
+        if bounds_min is None or bounds_max is None:
+            continue
+
         fields.append(
             {
                 "kind": "BoundsSurfaceThreshold",
@@ -565,7 +603,7 @@ def _build_transition_fields(
                     "BoundsMin": list(bounds_min),
                     "BoundsMax": list(bounds_max),
                     "SizeMin": float(bulk_hmax),
-                    "SizeMax": float(default_hmax),
+                    "SizeMax": float(_NO_OP_FIELD_SIZE),
                     "DistMin": 0.0,
                     "DistMax": float(transition_distance),
                     "Sampling": 20,
@@ -601,6 +639,7 @@ def _build_field_stack(
     default_hmax: float,
     per_geometry: object,
     bounds_by_name: dict[str, tuple] | None = None,
+    component_aware: bool = False,
 ) -> list[dict[str, object]]:
     """Full field stack: bulk + interface + transition + manual hotspots.
 
@@ -616,6 +655,7 @@ def _build_field_stack(
         default_hmax=default_hmax,
         override_by_name=override_by_name,
         bounds_by_name=bounds_by_name,
+        component_aware=component_aware,
     )
 
     # Layer 2: Interface refinement (BoundsSurfaceThreshold)
@@ -624,6 +664,7 @@ def _build_field_stack(
         default_hmax=default_hmax,
         override_by_name=override_by_name,
         bounds_by_name=bounds_by_name,
+        component_aware=component_aware,
     )
     if interface_fields:
         fields.extend(interface_fields)
@@ -634,6 +675,7 @@ def _build_field_stack(
         default_hmax=default_hmax,
         override_by_name=override_by_name,
         bounds_by_name=bounds_by_name,
+        component_aware=component_aware,
     )
     if transition_fields:
         fields.extend(transition_fields)
@@ -662,6 +704,7 @@ def _resolve_per_object_mesh_options(
     *,
     default_hmax: float,
     bounds_by_name: dict[str, tuple] | None = None,
+    component_aware: bool = False,
 ) -> list[dict[str, object]]:
     """Build size-field overrides from per-object mesh recipes.
 
@@ -686,26 +729,36 @@ def _resolve_per_object_mesh_options(
         if bounds_min is None or bounds_max is None:
             continue
         target_hmax = recipe.hmax if recipe.hmax is not None else default_hmax
-        # Only emit a Box field when the per-object hmax is strictly finer than
-        # the domain default.  See _shared_domain_local_size_fields for rationale.
         if target_hmax >= default_hmax:
             extra_fields.extend(recipe.size_fields if recipe.size_fields else [])
             continue
-        extra_fields.append(
-            {
-                "kind": "Box",
-                "params": {
-                    "VIn": float(target_hmax),
-                    "VOut": float(default_hmax),
-                    "XMin": float(bounds_min[0]),
-                    "XMax": float(bounds_max[0]),
-                    "YMin": float(bounds_min[1]),
-                    "YMax": float(bounds_max[1]),
-                    "ZMin": float(bounds_min[2]),
-                    "ZMax": float(bounds_max[2]),
-                },
-            }
-        )
+        if component_aware:
+            extra_fields.append(
+                {
+                    "kind": "ComponentVolumeConstant",
+                    "params": {
+                        "GeometryName": geometry.geometry_name,
+                        "VIn": float(target_hmax),
+                        "VOut": float(_NO_OP_FIELD_SIZE),
+                    },
+                }
+            )
+        else:
+            extra_fields.append(
+                {
+                    "kind": "Box",
+                    "params": {
+                        "VIn": float(target_hmax),
+                        "VOut": float(_NO_OP_FIELD_SIZE),
+                        "XMin": float(bounds_min[0]),
+                        "XMax": float(bounds_max[0]),
+                        "YMin": float(bounds_min[1]),
+                        "YMax": float(bounds_max[1]),
+                        "ZMin": float(bounds_min[2]),
+                        "ZMax": float(bounds_max[2]),
+                    },
+                }
+            )
         # Inject any extra size fields declared directly on the recipe.
         for sf in recipe.size_fields:
             if isinstance(sf, dict):
@@ -719,6 +772,7 @@ def _mesh_options_from_runtime_metadata(
     geometries: list[Geometry],
     default_hmax: float,
     bounds_by_name: dict[str, tuple] | None = None,
+    component_aware: bool = False,
 ) -> MeshOptions:
     raw_mesh_options = (
         mesh_workflow.get("mesh_options")
@@ -738,6 +792,7 @@ def _mesh_options_from_runtime_metadata(
             default_hmax=default_hmax,
             per_geometry=mesh_workflow.get("per_geometry") if isinstance(mesh_workflow, Mapping) else None,
             bounds_by_name=bounds_by_name,
+            component_aware=component_aware,
         )
     )
     optimize = raw_mesh_options.get("optimize")
@@ -1351,6 +1406,7 @@ def realize_fem_domain_mesh_asset_from_components(
             geometries=geometries,
             default_hmax=float(hints.hmax),
             bounds_by_name=bounds_by_name,
+            component_aware=True,
         )
         if per_object_recipes:
             _policy = assembly_policy if assembly_policy is not None else SharedMeshAssemblyPolicy()
@@ -1360,6 +1416,7 @@ def realize_fem_domain_mesh_asset_from_components(
                 _policy,
                 default_hmax=float(hints.hmax),
                 bounds_by_name=bounds_by_name,
+                component_aware=True,
             )
             if recipe_fields:
                 existing = list(mesh_options.size_fields)
@@ -1378,6 +1435,7 @@ def realize_fem_domain_mesh_asset_from_components(
             if isinstance(vin, (int, float)) and float(vin) > effective_hmax:
                 effective_hmax = float(vin)
 
+        result: SharedDomainMeshResult | None = None
         try:
             result = generate_shared_domain_mesh_from_components(
                 component_descriptors,
@@ -1411,36 +1469,57 @@ def realize_fem_domain_mesh_asset_from_components(
 
     # Classify elements back to geometries
     source_markers = np.asarray(mesh.element_markers, dtype=np.int32)
-    marker_mapping = _match_geometry_bounds_to_source_markers(geometries, mesh)
     assigned_markers = np.zeros(mesh.n_elements, dtype=np.int32)
     region_markers: list[dict[str, object]] = []
-    if marker_mapping is not None:
+    if result is not None:
         for used_marker, geometry in enumerate(geometries, start=1):
-            source_marker = marker_mapping.get(geometry.geometry_name)
+            source_marker = result.component_marker_tags.get(geometry.geometry_name)
             if source_marker is None:
                 raise ValueError(
-                    f"shared FEM domain mesh classification could not map geometry "
-                    f"'{geometry.geometry_name}' to a source marker"
+                    f"component-aware shared FEM domain mesh is missing a marker for geometry "
+                    f"'{geometry.geometry_name}'"
                 )
             assigned_markers[source_markers == source_marker] = used_marker
             region_markers.append(
                 {"geometry_name": geometry.geometry_name, "marker": used_marker}
             )
     else:
-        element_centroids = mesh.nodes[mesh.elements].mean(axis=1)
-        used_marker = 1
-        for geometry in geometries:
-            inside = _contains_points_in_geometry(geometry, element_centroids)
-            overlap = inside & (assigned_markers != 0)
-            if np.any(overlap):
-                raise ValueError(
-                    f"shared FEM domain mesh classification overlapped for '{geometry.geometry_name}'"
+        marker_mapping = _match_geometry_bounds_to_source_markers(geometries, mesh)
+        if marker_mapping is not None:
+            for used_marker, geometry in enumerate(geometries, start=1):
+                source_marker = marker_mapping.get(geometry.geometry_name)
+                if source_marker is None:
+                    raise ValueError(
+                        f"shared FEM domain mesh classification could not map geometry "
+                        f"'{geometry.geometry_name}' to a source marker"
+                    )
+                assigned_markers[source_markers == source_marker] = used_marker
+                region_markers.append(
+                    {"geometry_name": geometry.geometry_name, "marker": used_marker}
                 )
-            assigned_markers[inside] = used_marker
-            region_markers.append(
-                {"geometry_name": geometry.geometry_name, "marker": used_marker}
+        else:
+            element_centroids = mesh.nodes[mesh.elements].mean(axis=1)
+            used_marker = 1
+            for geometry in geometries:
+                inside = _contains_points_in_geometry(geometry, element_centroids)
+                overlap = inside & (assigned_markers != 0)
+                if np.any(overlap):
+                    raise ValueError(
+                        f"shared FEM domain mesh classification overlapped for '{geometry.geometry_name}'"
+                    )
+                assigned_markers[inside] = used_marker
+                region_markers.append(
+                    {"geometry_name": geometry.geometry_name, "marker": used_marker}
+                )
+                used_marker += 1
+
+    if result is None and np.any(assigned_markers == 0):
+        magnetic_source_mask = source_markers == 1
+        if np.any(magnetic_source_mask & (assigned_markers == 0)):
+            raise ValueError(
+                "shared FEM domain mesh contains magnetic elements that could not be mapped "
+                "back to any geometry"
             )
-            used_marker += 1
 
     classified_mesh = MeshData(
         nodes=mesh.nodes,
