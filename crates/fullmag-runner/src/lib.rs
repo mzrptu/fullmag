@@ -1364,6 +1364,7 @@ mod tests {
             element_markers: vec![1, 0],
             boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
             boundary_markers: vec![1, 99],
+            per_domain_quality: std::collections::HashMap::new(),
         };
 
         let magnetization_mask = crate::preview::mesh_quantity_active_mask("m", &mesh)

@@ -508,7 +508,7 @@ fn analytic_magnetization(
     ])
 }
 
-fn build_structured_box_tet_mesh(box_size_m: [f64; 3], divisions: usize) -> MeshIR {
+pub(crate) fn build_structured_box_tet_mesh(box_size_m: [f64; 3], divisions: usize) -> MeshIR {
     let nx = divisions;
     let ny = divisions;
     let nz = divisions;

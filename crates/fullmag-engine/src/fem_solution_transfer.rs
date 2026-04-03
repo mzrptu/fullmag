@@ -407,6 +407,8 @@ mod tests {
             magnetic_node_volumes: vec![0.0; n_nodes],
             grad_phi: vec![[[0.0; 3]; 4]; n_elements],
             element_stiffness: vec![[[0.0; 4]; 4]; n_elements],
+            stiffness_system: vec![],
+            boundary_mass_system: vec![],
             demag_system: vec![],
             total_volume: 0.0,
             magnetic_total_volume: 0.0,

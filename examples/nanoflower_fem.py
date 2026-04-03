@@ -23,12 +23,23 @@ body.m = fm.random(seed=1)
 
 # Mesh
 study.object_mesh_defaults(algorithm_2d=6, algorithm_3d=1, size_factor=1, size_from_curvature=0, smoothing_steps=1, optimize_iterations=1, narrow_regions=0, compute_quality=False, per_element_quality=False)
-body.mesh(hmax=5e-09, order=1, algorithm_2d=1, algorithm_3d=1, size_factor=1, size_from_curvature=1, smoothing_steps=1, optimize_iterations=1, narrow_regions=1, compute_quality=True, per_element_quality=True)
+body.mesh(hmax=20e-09, order=1, algorithm_2d=1, algorithm_3d=1, size_factor=1, size_from_curvature=1, smoothing_steps=1, optimize_iterations=1, narrow_regions=1, compute_quality=True, per_element_quality=True)
 study.build_domain_mesh()
 
-# Solver
-study.solver(integrator="heun", dt=1e-15, gamma=233728.481992)
 
-# Outputs
-study.save("m", every=1e-12)
-study.save("E_total", every=1e-12)
+study.b_ext(0.1, theta=0, phi=0)  # 0.1 T along +z
+# ── Solver ──────────────────────────────────────────────────
+# study.solver(dt=1e-15, g=2.115)
+study.solver(max_error=1e-6, integrator="rk45", g=2.115)
+
+# ── Outputs ─────────────────────────────────────────────────
+# study.save("m", every=1e-13)
+study.tableautosave(1e-13)
+
+# ── Run ─────────────────────────────────────────────────────
+study.relax(
+    tol=1e-6,                       # torque tolerance (max_dm_dt)
+    max_steps=100_000,               # limit kroków
+    algorithm="llg_overdamped",     # algorytm relaksacji
+)
+study.run(1e-9)

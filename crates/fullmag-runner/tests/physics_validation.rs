@@ -639,6 +639,7 @@ fn cube_mesh(side_nm: f64) -> MeshIR {
         element_markers,
         boundary_faces,
         boundary_markers,
+        per_domain_quality: std::collections::HashMap::new(),
     }
 }
 

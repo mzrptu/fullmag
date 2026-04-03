@@ -17,6 +17,20 @@ import type {
   FocusObjectRequest,
   ObjectViewMode,
 } from "../runs/control-room/shared";
+import {
+  Box,
+  Palette,
+  Eye,
+  ArrowUpRight,
+  Video,
+  Camera,
+  Mountain,
+} from "lucide-react";
+import { ViewportToolbar3D } from "./ViewportToolbar3D";
+import { ViewportToolGroup, ViewportToolSeparator } from "./ViewportToolGroup";
+import { ViewportIconAction } from "./ViewportIconAction";
+import { ViewportPopoverPanel, ViewportPopoverRow } from "./ViewportPopoverPanel";
+import { ViewportStatusChip } from "./ViewportStatusChips";
 
 // ─── Types ──────────────────────────────────────────────────────────
 interface Props {
@@ -484,7 +498,7 @@ function MagnetizationView3DInner({
   onGeometryTranslate,
 }: Props) {
   const [settings, setSettings] = useState<Settings>(loadSettings);
-  const [expanded, setExpanded] = useState(false);
+  const [openPopover, setOpenPopover] = useState<"color" | "display" | "topo" | "camera" | null>(null);
   const [visibleCount, setVisibleCount] = useState(0);
   const deferredVectors = useDeferredValue(vectors);
   const deferredSettings = useDeferredValue(settings);
@@ -611,164 +625,174 @@ function MagnetizationView3DInner({
   return (
     <div className="relative flex flex-col h-full">
       {/* ── Settings toolbar overlay ──────────────────────── */}
-      <div className="absolute left-3 top-3 z-10 flex flex-col">
-        <button
-          className="w-8 h-8 flex items-center justify-center rounded-md bg-card/40 border border-border/50 text-muted-foreground text-base cursor-pointer backdrop-blur-md transition-all hover:bg-muted/50 hover:text-foreground"
-          onClick={() => setExpanded(!expanded)}
-          title="3D Controls"
-        >
-          ⚙
-        </button>
+      <ViewportToolbar3D>
+        {/* Render mode */}
+        {!geometryMode && (
+          <ViewportToolGroup label="Render">
+            <ViewportIconAction
+              icon={<ArrowUpRight size={14} />}
+              active={settings.renderMode === "glyph"}
+              onClick={() => update({ renderMode: "glyph" })}
+              title="Arrows"
+            />
+            <ViewportIconAction
+              icon={<Box size={14} />}
+              active={settings.renderMode === "voxel"}
+              onClick={() => update({ renderMode: "voxel" })}
+              title="Voxel"
+            />
+          </ViewportToolGroup>
+        )}
 
-        {expanded ? (
-          <div className="mt-2 p-3 min-w-[200px] max-w-[220px] max-h-[360px] overflow-y-auto flex flex-col gap-3 rounded-xl bg-card/60 border border-border/40 backdrop-blur-xl shadow-lg ring-1 ring-white/5 scrollbar-thin scrollbar-thumb-muted-foreground/30">
-            {!geometryMode ? (
-              <ControlGroup label="Render mode">
-                <SegmentedGroup
-                  options={[["glyph", "ARROWS"], ["voxel", "VOXEL"]]}
-                  value={settings.renderMode}
-                  onChange={(v) => update({ renderMode: v as RenderMode })}
-                  columns={2}
-                />
-              </ControlGroup>
-            ) : null}
+        <ViewportToolSeparator />
 
-            <ControlGroup label="Brightness" value={settings.brightness.toFixed(1)}>
-              <Slider
-                min={0.3}
-                max={3.0}
-                step={0.1}
-                value={settings.brightness}
-                onChange={(v) => update({ brightness: v })}
+        {/* Color field (only voxel) */}
+        {settings.renderMode === "voxel" && (
+          <ViewportToolGroup label="Color">
+            <div className="relative">
+              <ViewportIconAction
+                icon={<Palette size={14} />}
+                label={settings.voxelColorMode === "orientation" ? "ORI" : settings.voxelColorMode.toUpperCase()}
+                showCaret
+                onClick={() => setOpenPopover(prev => prev === "color" ? null : "color")}
+                title="Color Field"
               />
-            </ControlGroup>
+              {openPopover === "color" && (
+                <ViewportPopoverPanel title="Color Mode">
+                   <ViewportPopoverRow label="Field">
+                    {(["orientation", "x", "y", "z"] as VoxelColorMode[]).map(v => (
+                       <button key={v} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={settings.voxelColorMode === v} onClick={() => { update({ voxelColorMode: v }); setOpenPopover(null); }}>
+                         {v === "orientation" ? "ORI" : v.toUpperCase()}
+                       </button>
+                    ))}
+                  </ViewportPopoverRow>
+                </ViewportPopoverPanel>
+              )}
+            </div>
+          </ViewportToolGroup>
+        )}
 
-            <ControlGroup label="Quality">
-              <SegmentedGroup
-                options={[["low", "LOW"], ["high", "HIGH"], ["ultra", "ULTRA"]]}
-                value={settings.quality}
-                onChange={(v) => update({ quality: v as QualityLevel })}
-                columns={3}
-              />
-            </ControlGroup>
+        {settings.renderMode === "voxel" && <ViewportToolSeparator />}
 
-            {settings.renderMode === "voxel" ? (
-              <>
-                <ControlGroup label="Color by">
-                  <SegmentedGroup
-                    options={[["orientation", "ORI"], ["x", "X"], ["y", "Y"], ["z", "Z"]]}
-                    value={settings.voxelColorMode}
-                    onChange={(v) => update({ voxelColorMode: v as VoxelColorMode })}
-                    columns={4}
-                  />
-                </ControlGroup>
+        <ViewportStatusChip color="cyan">{fieldLabel ?? "M"}</ViewportStatusChip>
 
-                <ControlGroup label="Opacity" value={settings.voxelOpacity.toFixed(2)}>
-                  <Slider
-                    min={0.15}
-                    max={0.95}
-                    step={0.01}
-                    value={settings.voxelOpacity}
-                    onChange={(v) => update({ voxelOpacity: v })}
-                  />
-                </ControlGroup>
+        <ViewportToolSeparator />
 
-                <ControlGroup label="Spacing" value={`${Math.round(settings.voxelGap * 100)}%`}>
-                  <Slider
-                    min={0.02}
-                    max={0.42}
-                    step={0.01}
-                    value={settings.voxelGap}
-                    onChange={(v) => update({ voxelGap: v })}
-                  />
-                </ControlGroup>
-
-                <ControlGroup label="Min strength" value={settings.voxelThreshold.toFixed(2)}>
-                  <Slider
-                    min={0}
-                    max={0.95}
-                    step={0.01}
-                    value={settings.voxelThreshold}
-                    onChange={(v) => update({ voxelThreshold: v })}
-                  />
-                </ControlGroup>
-
-                <ControlGroup label="Sampling">
-                  <SegmentedGroup
-                    options={[["1", "1X"], ["2", "2X"], ["4", "4X"]]}
-                    value={String(settings.sampling)}
-                    onChange={(v) => update({ sampling: parseInt(v, 10) as VoxelSampling })}
-                    columns={3}
-                  />
-                </ControlGroup>
-              </>
-            ) : null}
-
-            {!geometryMode ? (
-              <>
-                <div className="h-px bg-border/50 my-0.5" />
-
-                <ControlGroup label="Topography">
-          <button
-                    className={cn("w-full py-1.5 text-[0.65rem] font-semibold tracking-wider text-muted-foreground bg-white/5 border border-border/50 rounded-md cursor-pointer transition-all hover:bg-primary/10 hover:border-primary/50 hover:text-foreground", settings.topoEnabled && "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:text-emerald-300")}
-                    onClick={() => update({ topoEnabled: !settings.topoEnabled })}
-                  >
-                    {settings.topoEnabled ? "⛰ ON" : "OFF"}
-                  </button>
-                </ControlGroup>
-
-                {settings.topoEnabled ? (
+        <ViewportToolGroup>
+          {/* Display settings Popover */}
+          <div className="relative">
+            <ViewportIconAction
+              icon={<Eye size={14} />}
+              showCaret
+              active={openPopover === "display"}
+              onClick={() => setOpenPopover(prev => prev === "display" ? null : "display")}
+              title="Display Options"
+            />
+            {openPopover === "display" && (
+              <ViewportPopoverPanel title="Display & Quality">
+                <ViewportPopoverRow label="Quality">
+                   {(["low", "high", "ultra"] as QualityLevel[]).map(v => (
+                       <button key={v} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={settings.quality === v} onClick={() => update({ quality: v })}>
+                         {v}
+                       </button>
+                    ))}
+                </ViewportPopoverRow>
+                <ViewportPopoverRow label="Brightness">
+                   <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.3} max={3.0} step={0.1} value={settings.brightness} onChange={(e) => update({ brightness: parseFloat(e.target.value) })} />
+                </ViewportPopoverRow>
+                {settings.renderMode === "voxel" && (
                   <>
-                    <ControlGroup label="Displace by">
-                      <SegmentedGroup
-                        options={[["x", "mX"], ["y", "mY"], ["z", "mZ"]]}
-                        value={settings.topoComponent}
-                        onChange={(v) => update({ topoComponent: v as TopoComponent })}
-                        columns={3}
-                      />
-                    </ControlGroup>
-
-                    <ControlGroup
-                      label="Amplitude"
-                      value={`${settings.topoMultiplier.toFixed(1)}×`}
-                    >
-                      <Slider
-                        min={0.5}
-                        max={50}
-                        step={0.5}
-                        value={settings.topoMultiplier}
-                        onChange={(v) => update({ topoMultiplier: v })}
-                      />
-                    </ControlGroup>
+                    <div className="h-px bg-border/20 my-1"/>
+                    <ViewportPopoverRow label="Opacity">
+                       <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.15} max={0.95} step={0.01} value={settings.voxelOpacity} onChange={(e) => update({ voxelOpacity: parseFloat(e.target.value) })} />
+                    </ViewportPopoverRow>
+                    <ViewportPopoverRow label="Spacing">
+                       <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.02} max={0.42} step={0.01} value={settings.voxelGap} onChange={(e) => update({ voxelGap: parseFloat(e.target.value) })} />
+                    </ViewportPopoverRow>
+                    <ViewportPopoverRow label="Min Str">
+                       <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0} max={0.95} step={0.01} value={settings.voxelThreshold} onChange={(e) => update({ voxelThreshold: parseFloat(e.target.value) })} />
+                    </ViewportPopoverRow>
+                    <ViewportPopoverRow label="Sampling">
+                       {(["1", "2", "4"]).map(v => (
+                         <button key={v} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={String(settings.sampling) === v} onClick={() => update({ sampling: parseInt(v, 10) as VoxelSampling })}>
+                           {v}X
+                         </button>
+                       ))}
+                    </ViewportPopoverRow>
                   </>
-                ) : null}
-              </>
-            ) : null}
-
-            <ControlGroup label="Camera">
-              <div className="grid grid-cols-4 rounded-md overflow-hidden border border-border/50 bg-white/5">
-                {cameraPresets.map((p) => (
-                  <button
-                    key={p.label}
-                    className="py-1.5 text-[0.65rem] font-semibold tracking-wider text-muted-foreground bg-transparent border-none cursor-pointer transition-colors border-r border-border/50 last:border-r-0 hover:bg-primary/10 hover:text-foreground"
-                    onClick={p.fn}
-                  >
-                    {p.label.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </ControlGroup>
-
-            <button className="w-full py-2 text-[0.65rem] font-semibold tracking-wider text-muted-foreground bg-white/5 border border-border/40 rounded-md cursor-pointer transition-all hover:bg-primary/10 hover:border-primary/50 hover:text-foreground" onClick={resetCamera}>
-              Reset Camera
-            </button>
-
-            <button className="w-full py-2 text-[0.65rem] font-semibold tracking-wider text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/30 rounded-md cursor-pointer transition-all hover:bg-emerald-500/20 hover:border-emerald-500/50 hover:text-emerald-300" onClick={captureSnapshot}>
-              📷 Snapshot
-            </button>
+                )}
+              </ViewportPopoverPanel>
+            )}
           </div>
-        ) : null}
-      </div>
+
+          {/* Topography */}
+          {!geometryMode && (
+            <div className="relative">
+              <ViewportIconAction
+                icon={<Mountain size={14} />}
+                showCaret
+                active={openPopover === "topo"}
+                onClick={() => setOpenPopover(prev => prev === "topo" ? null : "topo")}
+                title="Topography"
+              />
+              {openPopover === "topo" && (
+                <ViewportPopoverPanel title="Topography">
+                   <ViewportPopoverRow label="Enable">
+                      <button className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={settings.topoEnabled} onClick={() => update({ topoEnabled: !settings.topoEnabled })}>
+                        {settings.topoEnabled ? "ON" : "OFF"}
+                      </button>
+                   </ViewportPopoverRow>
+                   {settings.topoEnabled && (
+                     <>
+                        <ViewportPopoverRow label="Display">
+                          {(["x", "y", "z"] as TopoComponent[]).map(v => (
+                            <button key={v} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={settings.topoComponent === v} onClick={() => update({ topoComponent: v })}>
+                              m{v.toUpperCase()}
+                            </button>
+                          ))}
+                        </ViewportPopoverRow>
+                        <ViewportPopoverRow label="Amplitude">
+                           <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.5} max={50} step={0.5} value={settings.topoMultiplier} onChange={(e) => update({ topoMultiplier: parseFloat(e.target.value) })} />
+                        </ViewportPopoverRow>
+                     </>
+                   )}
+                </ViewportPopoverPanel>
+              )}
+            </div>
+          )}
+
+          {/* Camera Info */}
+          <div className="relative">
+            <ViewportIconAction
+              icon={<Video size={14} />}
+              showCaret
+              active={openPopover === "camera"}
+              onClick={() => setOpenPopover(prev => prev === "camera" ? null : "camera")}
+              title="Camera"
+            />
+            {openPopover === "camera" && (
+              <ViewportPopoverPanel title="Camera Presets">
+                <div className="grid grid-cols-2 gap-1 px-1">
+                  {cameraPresets.map(p => (
+                    <button key={p.label} className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { p.fn(); setOpenPopover(null); }}>{p.label}</button>
+                  ))}
+                  <button className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { resetCamera(); setOpenPopover(null); }}>Reset</button>
+                </div>
+              </ViewportPopoverPanel>
+            )}
+          </div>
+
+          <ViewportToolSeparator />
+
+          {/* Capture */}
+          <ViewportIconAction
+            icon={<Camera size={14} />}
+            onClick={captureSnapshot}
+            title="Snapshot"
+          />
+
+        </ViewportToolGroup>
+      </ViewportToolbar3D>
 
       {/* ── R3F Canvas ────────────────────────────────────── */}
       <Canvas
@@ -860,56 +884,6 @@ function MagnetizationView3DInner({
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// Toolbar sub-components (matching amumax Toolbar3D.svelte CSS)
-// ═══════════════════════════════════════════════════════════════════
-function ControlGroup({ label, value, children }: {
-  label: string; value?: string; children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-[3px]">
-      <div className="flex justify-between items-center text-[0.65rem] uppercase tracking-widest text-muted-foreground">
-        {label}
-        {value && <span className="font-semibold font-mono text-foreground">{value}</span>}
-      </div>
-      {children}
-    </div>
-  );
-}
 
-function SegmentedGroup({ options, value, onChange, columns }: {
-  options: [string, string][];
-  value: string;
-  onChange: (v: string) => void;
-  columns: number;
-}) {
-  return (
-    <div className={cn("grid rounded-md overflow-hidden border border-border/50 bg-white/5", columns === 2 ? "grid-cols-2" : columns === 3 ? "grid-cols-3" : "grid-cols-4")}>
-      {options.map(([k, label]) => (
-        <button
-          key={k}
-          className={cn("py-1.5 text-[0.65rem] font-medium tracking-wider text-muted-foreground bg-transparent border-none cursor-pointer transition-colors border-r border-border/50 last:border-r-0 hover:bg-primary/10 hover:text-foreground", value === k && "bg-primary/15 text-primary font-semibold")}
-          onClick={() => onChange(k)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function Slider({ min, max, step, value, onChange }: {
-  min: number; max: number; step: number; value: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <input
-      type="range"
-      className="w-full h-1 appearance-none bg-gradient-to-r from-teal-500/20 to-blue-500/20 rounded-full outline-none cursor-pointer border-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-background [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer"
-      min={min} max={max} step={step} value={value}
-      onChange={(e) => onChange(parseFloat(e.target.value))}
-    />
-  );
-}
 
 export default memo(MagnetizationView3DInner);

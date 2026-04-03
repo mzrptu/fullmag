@@ -137,19 +137,51 @@ pub(crate) fn build_problem_and_state(
     } else {
         Some(combined_antenna_field_at_time(plan, &per_unit_fields, 0.0))
     };
-    let problem = FemLlgProblem::with_terms_and_demag_transfer_grid(
-        topology,
-        material,
-        dynamics,
-        EffectiveFieldTerms {
-            exchange: plan.enable_exchange,
-            demag: plan.enable_demag,
-            external_field: plan.external_field,
-            per_node_field: initial_antenna_field,
-            magnetoelastic: None,
-        },
-        Some([plan.hmax, plan.hmax, plan.hmax]),
-    );
+    let terms = EffectiveFieldTerms {
+        exchange: plan.enable_exchange,
+        demag: plan.enable_demag,
+        external_field: plan.external_field,
+        per_node_field: initial_antenna_field,
+        magnetoelastic: None,
+    };
+    let mesh_has_air = plan.mesh.element_markers.iter().any(|marker| *marker == 0);
+    let resolved_demag_realization = if !plan.enable_demag {
+        None
+    } else {
+        match plan.demag_realization.as_deref() {
+            Some("transfer_grid") => Some("transfer_grid"),
+            Some("poisson_airbox" | "airbox_dirichlet") => Some("airbox_dirichlet"),
+            Some("airbox_robin") => Some("airbox_robin"),
+            _ if mesh_has_air => Some("airbox_dirichlet"),
+            _ => Some("transfer_grid"),
+        }
+    };
+    let problem = match resolved_demag_realization {
+        Some("transfer_grid") => FemLlgProblem::with_terms_and_demag_transfer_grid(
+            topology,
+            material,
+            dynamics,
+            terms,
+            Some([plan.hmax, plan.hmax, plan.hmax]),
+        ),
+        Some("airbox_robin") => FemLlgProblem::with_terms_and_demag_airbox(
+            topology,
+            material,
+            dynamics,
+            terms,
+            false,
+            plan.air_box_config.as_ref().and_then(|config| config.robin_beta_factor),
+        ),
+        Some("airbox_dirichlet") => FemLlgProblem::with_terms_and_demag_airbox(
+            topology,
+            material,
+            dynamics,
+            terms,
+            true,
+            None,
+        ),
+        _ => FemLlgProblem::with_terms(topology, material, dynamics, terms),
+    };
     let state = problem
         .new_state(plan.initial_magnetization.clone())
         .map_err(|e| RunError {
@@ -159,14 +191,24 @@ pub(crate) fn build_problem_and_state(
 }
 
 pub(crate) fn execution_provenance(plan: &FemPlanIR) -> ExecutionProvenance {
+    let mesh_has_air = plan.mesh.element_markers.iter().any(|marker| *marker == 0);
+    let demag_operator_kind = if !plan.enable_demag {
+        None
+    } else {
+        match plan.demag_realization.as_deref() {
+            Some("transfer_grid") => Some("fem_transfer_grid_tensor_fft_newell".to_string()),
+            Some("poisson_airbox" | "airbox_dirichlet") => {
+                Some("fem_airbox_dirichlet".to_string())
+            }
+            Some("airbox_robin") => Some("fem_airbox_robin".to_string()),
+            _ if mesh_has_air => Some("fem_airbox_dirichlet".to_string()),
+            _ => Some("fem_transfer_grid_tensor_fft_newell".to_string()),
+        }
+    };
     ExecutionProvenance {
         execution_engine: "cpu_reference_fem".to_string(),
         precision: "double".to_string(),
-        demag_operator_kind: if plan.enable_demag {
-            Some("fem_transfer_grid_tensor_fft_newell".to_string())
-        } else {
-            None
-        },
+        demag_operator_kind,
         fft_backend: None,
         device_name: None,
         compute_capability: None,
@@ -693,8 +735,8 @@ fn select_base_field(observables: &StateObservables, name: &str) -> Vec<[f64; 3]
 mod tests {
     use super::*;
     use fullmag_ir::{
-        ExchangeBoundaryCondition, ExecutionPrecision, FemPlanIR, IntegratorChoice, MaterialIR,
-        MeshIR, RelaxationAlgorithmIR, RelaxationControlIR,
+        AirBoxConfigIR, ExchangeBoundaryCondition, ExecutionPrecision, FemPlanIR,
+        IntegratorChoice, MaterialIR, MeshIR, RelaxationAlgorithmIR, RelaxationControlIR,
     };
 
     fn make_test_plan(enable_demag: bool) -> FemPlanIR {
@@ -713,6 +755,7 @@ mod tests {
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
+                per_domain_quality: std::collections::HashMap::new(),
             },
             object_segments: Vec::new(),
             mesh_parts: Vec::new(),
@@ -823,6 +866,7 @@ mod tests {
                     [1, 5, 6],
                 ],
                 boundary_markers: vec![1; 12],
+                per_domain_quality: std::collections::HashMap::new(),
             },
             object_segments: Vec::new(),
             mesh_parts: Vec::new(),
@@ -867,6 +911,181 @@ mod tests {
             relaxation: None,
             demag_realization: None,
             air_box_config: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
+            dind_field: None,
+            dbulk_field: None,
+            temperature: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
+            magnetoelastic: None,
+        }
+    }
+
+    fn structured_node_index(i: usize, j: usize, k: usize, divisions: usize) -> usize {
+        let stride = divisions + 1;
+        k * stride * stride + j * stride + i
+    }
+
+    fn collect_boundary_faces(elements: &[[u32; 4]]) -> Vec<[u32; 3]> {
+        let mut counts = std::collections::BTreeMap::<[u32; 3], usize>::new();
+        for element in elements {
+            let [a, b, c, d] = *element;
+            for mut face in [[a, b, c], [a, b, d], [a, c, d], [b, c, d]] {
+                face.sort_unstable();
+                *counts.entry(face).or_default() += 1;
+            }
+        }
+        counts
+            .into_iter()
+            .filter_map(|(face, count)| (count == 1).then_some(face))
+            .collect()
+    }
+
+    fn build_structured_shared_domain_airbox_mesh() -> MeshIR {
+        let box_size_m = [6.0, 6.0, 6.0];
+        let divisions = 3usize;
+        let dx = box_size_m[0] / divisions as f64;
+        let dy = box_size_m[1] / divisions as f64;
+        let dz = box_size_m[2] / divisions as f64;
+
+        let mut nodes = Vec::with_capacity((divisions + 1).pow(3));
+        for k in 0..=divisions {
+            let z = -0.5 * box_size_m[2] + k as f64 * dz;
+            for j in 0..=divisions {
+                let y = -0.5 * box_size_m[1] + j as f64 * dy;
+                for i in 0..=divisions {
+                    let x = -0.5 * box_size_m[0] + i as f64 * dx;
+                    nodes.push([x, y, z]);
+                }
+            }
+        }
+
+        let mut elements = Vec::with_capacity(divisions * divisions * divisions * 6);
+        for k in 0..divisions {
+            for j in 0..divisions {
+                for i in 0..divisions {
+                    let n0 = structured_node_index(i, j, k, divisions) as u32;
+                    let n1 = structured_node_index(i + 1, j, k, divisions) as u32;
+                    let n2 = structured_node_index(i + 1, j + 1, k, divisions) as u32;
+                    let n3 = structured_node_index(i, j + 1, k, divisions) as u32;
+                    let n4 = structured_node_index(i, j, k + 1, divisions) as u32;
+                    let n5 = structured_node_index(i + 1, j, k + 1, divisions) as u32;
+                    let n6 = structured_node_index(i + 1, j + 1, k + 1, divisions) as u32;
+                    let n7 = structured_node_index(i, j + 1, k + 1, divisions) as u32;
+                    elements.extend_from_slice(&[
+                        [n0, n1, n2, n6],
+                        [n0, n2, n3, n6],
+                        [n0, n3, n7, n6],
+                        [n0, n7, n4, n6],
+                        [n0, n4, n5, n6],
+                        [n0, n5, n1, n6],
+                    ]);
+                }
+            }
+        }
+
+        let mut element_markers = vec![0u32; elements.len()];
+        for (element_index, element) in elements.iter().enumerate() {
+            let centroid = element.iter().fold([0.0; 3], |acc, node| {
+                let coord = nodes[*node as usize];
+                [acc[0] + coord[0], acc[1] + coord[1], acc[2] + coord[2]]
+            });
+            let centroid = [
+                centroid[0] * 0.25,
+                centroid[1] * 0.25,
+                centroid[2] * 0.25,
+            ];
+            if centroid[0] < -1.0 && centroid[1] < -1.0 && centroid[2] < -1.0 {
+                element_markers[element_index] = 1;
+            }
+        }
+
+        let boundary_faces = collect_boundary_faces(&elements);
+        let boundary_markers = vec![99u32; boundary_faces.len()];
+        MeshIR {
+            mesh_name: "shared_domain_airbox_structured".to_string(),
+            nodes,
+            elements,
+            element_markers,
+            boundary_faces,
+            boundary_markers,
+            per_domain_quality: std::collections::HashMap::new(),
+        }
+    }
+
+    fn make_shared_domain_airbox_demag_plan() -> FemPlanIR {
+        let mesh = build_structured_shared_domain_airbox_mesh();
+        FemPlanIR {
+            mesh_name: mesh.mesh_name.clone(),
+            mesh_source: None,
+            mesh,
+            object_segments: Vec::new(),
+            mesh_parts: Vec::new(),
+            domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir,
+            domain_frame: None,
+            fe_order: 1,
+            hmax: 10e-9,
+            initial_magnetization: vec![[0.0, 0.0, 1.0]; 64],
+            material: MaterialIR {
+                name: "Py".to_string(),
+                saturation_magnetisation: 800e3,
+                exchange_stiffness: 13e-12,
+                damping: 0.5,
+                uniaxial_anisotropy: None,
+                anisotropy_axis: None,
+                uniaxial_anisotropy_k2: None,
+                cubic_anisotropy_kc1: None,
+                cubic_anisotropy_kc2: None,
+                cubic_anisotropy_kc3: None,
+                cubic_anisotropy_axis1: None,
+                cubic_anisotropy_axis2: None,
+                ms_field: None,
+                a_field: None,
+                alpha_field: None,
+                ku_field: None,
+                ku2_field: None,
+                kc1_field: None,
+                kc2_field: None,
+                kc3_field: None,
+            },
+            region_materials: Vec::new(),
+            enable_exchange: true,
+            enable_demag: true,
+            external_field: None,
+            current_modules: vec![],
+            gyromagnetic_ratio: 2.211e5,
+            precision: ExecutionPrecision::Double,
+            exchange_bc: ExchangeBoundaryCondition::Neumann,
+            integrator: IntegratorChoice::Heun,
+            fixed_timestep: Some(1e-13),
+            adaptive_timestep: None,
+            relaxation: None,
+            demag_realization: Some("poisson_airbox".to_string()),
+            air_box_config: Some(AirBoxConfigIR {
+                factor: 1.5,
+                grading: 1.0,
+                boundary_marker: 99,
+                bc_kind: Some("dirichlet".to_string()),
+                robin_beta_mode: None,
+                robin_beta_factor: None,
+                shape: Some("bbox".to_string()),
+            }),
             interfacial_dmi: None,
             bulk_dmi: None,
             dind_field: None,
@@ -954,6 +1173,32 @@ mod tests {
                 .any(|value| value.abs() > 0.0),
             "expected FEM cached H_eff preview to contain nonzero values"
         );
+    }
+
+    #[test]
+    fn fem_airbox_plan_uses_airbox_demag_operator_in_reference_runner() {
+        let plan = make_shared_domain_airbox_demag_plan();
+        let (problem, _state) = build_problem_and_state(&plan)
+            .expect("shared-domain FEM airbox problem should build in reference runner");
+        let provenance = execution_provenance(&plan);
+
+        assert!(
+            problem.demag_transfer_cell_size_hint.is_none(),
+            "shared-domain airbox FEM should not silently downgrade to transfer-grid in CPU reference runner",
+        );
+        assert_eq!(
+            provenance.demag_operator_kind.as_deref(),
+            Some("fem_airbox_dirichlet"),
+        );
+
+        let fields = snapshot_vector_fields(&plan, &["H_demag"], &crate::LivePreviewRequest::default())
+            .expect("shared-domain FEM demag preview should succeed");
+        let h_demag = fields
+            .iter()
+            .find(|field| field.quantity == "H_demag")
+            .expect("H_demag preview should be present");
+        assert_eq!(h_demag.quantity_domain, "full_domain");
+        assert_eq!(h_demag.vector_field_values.len(), plan.mesh.nodes.len() * 3);
     }
 
     #[test]

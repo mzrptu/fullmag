@@ -33,6 +33,25 @@ import type {
   ObjectViewMode,
 } from "../runs/control-room/shared";
 import { FieldLegend } from "./field/FieldLegend";
+import {
+  Box,
+  Grid2X2,
+  Grid3X3,
+  Grip,
+  Palette,
+  Scissors,
+  Eye,
+  ArrowUpRight,
+  Video,
+  Camera,
+  Image as ImageIcon,
+  Layers,
+} from "lucide-react";
+import { ViewportToolbar3D } from "./ViewportToolbar3D";
+import { ViewportToolGroup, ViewportToolSeparator } from "./ViewportToolGroup";
+import { ViewportIconAction } from "./ViewportIconAction";
+import { ViewportPopoverPanel, ViewportPopoverRow } from "./ViewportPopoverPanel";
+import { ViewportStatusChip } from "./ViewportStatusChips";
 
 const AIR_OBJECT_SEGMENT_ID = "__air__";
 
@@ -861,6 +880,7 @@ function FemMeshView3DInner({
   const [partExplorerOpen, setPartExplorerOpen] = useState(true);
   const [legendOpen, setLegendOpen] = useState(true);
   const [labeledMode, setLabeledMode] = useState(false);
+  const [openPopover, setOpenPopover] = useState<"color" | "clip" | "display" | "vectors" | "camera" | "panels" | null>(null);
   
   const [hoveredFace, setHoveredFace] = useState<{ idx: number; x: number; y: number } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; faceIdx: number } | null>(null);
@@ -1644,108 +1664,217 @@ function FemMeshView3DInner({
 
       {/* ─── Toolbar ────────────────────────────────── */}
       {toolbarMode !== "hidden" && (
-        <div className="absolute top-2 left-2 right-2 flex flex-wrap items-center gap-1 z-10 pointer-events-none [&>*]:pointer-events-auto">
-          {/* Render mode */}
-          <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-1 select-none">Render</span>
-            {RENDER_OPTIONS.map((opt) => (
-              <button key={opt.value} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors leading-[1.35] hover:bg-muted/50 hover:text-foreground data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={toolbarRenderMode === opt.value} title={opt.labeledLabel} onClick={() => applyToolbarRenderMode(opt.value)}>{labeledMode ? opt.labeledLabel : opt.label}</button>
-            ))}
-          </div>
-          {/* Color field */}
-          <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-1 select-none">Color</span>
-            {COLOR_OPTIONS.map((opt) => (
-              <button key={opt.value} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors leading-[1.35] hover:bg-muted/50 hover:text-foreground data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={toolbarColorField === opt.value} title={opt.labeledLabel} onClick={() => applyToolbarColorField(opt.value)}>{labeledMode ? opt.labeledLabel : opt.label}</button>
-            ))}
-          </div>
-          {/* Clip */}
-          <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50 relative">
-            <button className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors leading-[1.35] hover:bg-muted/50 hover:text-foreground data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={clipEnabled} onClick={() => { const v = !clipEnabled; onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v); if (v) setShowClipDrop(true); }}>✂ Clip</button>
-            {clipEnabled && <button className="appearance-none border-none bg-transparent text-muted-foreground font-semibold px-1.5 py-1 rounded cursor-pointer transition-colors leading-none text-base hover:bg-muted/50" onClick={() => setShowClipDrop((v) => !v)}>▾</button>}
-            {showClipDrop && clipEnabled && (
-              <div className="absolute top-[calc(100%+0.35rem)] left-0 min-w-[200px] p-2.5 rounded-md bg-popover/95 backdrop-blur-md border border-border/50 shadow-lg z-20 grid gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-[0.65rem] font-semibold text-muted-foreground min-w-[48px] uppercase tracking-widest">Axis</span>
-                  {(["x","y","z"] as ClipAxis[]).map(a => <button key={a} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-1.5 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={clipAxis === a} onClick={() => onClipAxisChange ? onClipAxisChange(a) : setInternalClipAxis(a)}>{a.toUpperCase()}</button>)}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[0.65rem] font-semibold text-muted-foreground min-w-[48px] uppercase tracking-widest">Pos</span>
-                  <input type="range" className="flex-1 h-[3px] accent-primary" min={0} max={100} value={clipPos} onChange={(e) => { const v = Number(e.target.value); onClipPosChange ? onClipPosChange(v) : setInternalClipPos(v); }} />
-                </div>
-                <button className="text-muted-foreground/70 text-[0.64rem] font-semibold uppercase tracking-widest hover:bg-muted/50" onClick={() => setShowClipDrop(false)}>Close</button>
-              </div>
-            )}
-          </div>
-          {/* Opacity */}
-          <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-1 select-none">Opac</span>
-            <input type="range" className="w-[50px] h-[3px] accent-primary" min={10} max={100} value={toolbarOpacity} onChange={(e) => { const v = Number(e.target.value); applyToolbarOpacity(v); }} />
-          </div>
-          {/* Shrink */}
-          {meshData.elements.length >= 4 && (
-            <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
-              <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground px-1 select-none" title="Shrink Elements">Shrink</span>
-              <input type="range" className="w-[50px] h-[3px] accent-primary" min={10} max={100} value={Math.round(shrinkFactor * 100)} onChange={(e) => { const v = Number(e.target.value) / 100; onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v); }} />
+        <ViewportToolbar3D
+          sideChildren={
+            <div className="flex flex-col items-end gap-1.5">
+              {hasMeshParts && (
+                <ViewportStatusChip color="default">
+                  {visibleLayers.length}/{meshParts.length} parts
+                </ViewportStatusChip>
+              )}
             </div>
-          )}
-          {/* Arrows */}
-          <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
-            <button className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={showArrows} onClick={() => { const v = !showArrows; onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v); }}>↗ Arrows</button>
-            {showArrows && <input type="range" className="w-[50px] h-[3px] accent-primary" min={200} max={3000} step={100} value={arrowDensity} onChange={(e) => setArrowDensity(Number(e.target.value))} />}
-          </div>
-          <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
-            <button
-              className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
-              data-active={cameraProjection === "orthographic"}
-              onClick={() =>
-                setCameraProjection((prev) =>
-                  prev === "perspective" ? "orthographic" : "perspective",
-                )
-              }
-            >
-              {cameraProjection === "orthographic" ? "Ortho" : "Persp"}
-            </button>
-            <button
-              className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary"
-              data-active={navigationMode === "cad"}
-              onClick={() =>
-                setNavigationMode((prev) => (prev === "trackball" ? "cad" : "trackball"))
-              }
-            >
-              {navigationMode === "cad" ? "CAD" : "Trackball"}
-            </button>
-          </div>
-          <div className="w-px h-[20px] bg-border/50 mx-0.5 shrink-0" />
-          <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
-            {(["reset", "front", "top", "right"] as const).map(view => (
-              <button key={view} className="text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 hover:bg-muted/50" onClick={() => setCameraPreset(view)}>{view === "reset" ? "⟲" : view[0].toUpperCase()}</button>
-            ))}
-          </div>
-          <div className="flex items-center gap-1 p-1 rounded bg-card/50 backdrop-blur-md border border-border/50">
-            <button
-              className="text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 hover:bg-muted/50"
-              onClick={() => setLegendOpen((prev) => !prev)}
-            >
-              Legend
-            </button>
-            <button
-              className="text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 hover:bg-muted/50"
-              onClick={() => setPartExplorerOpen((prev) => !prev)}
-            >
-              Parts
-            </button>
-            <button
-              className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary hover:bg-muted/50"
-              data-active={labeledMode}
-              onClick={() => setLabeledMode((prev) => !prev)}
-              title="Toggle compact / labeled toolbar"
-            >
-              {labeledMode ? "Compact" : "Labels"}
-            </button>
-            <button className="text-muted-foreground font-semibold px-1.5 py-1 hover:bg-muted/50" onClick={takeScreenshot} title="Screenshot">📷</button>
-          </div>
-        </div>
+          }
+        >
+          {/* Render */}
+          <ViewportToolGroup label="Render">
+            <ViewportIconAction
+              icon={<Box size={14} />}
+              active={toolbarRenderMode === "surface"}
+              onClick={() => applyToolbarRenderMode("surface")}
+              title="Surface"
+            />
+            <ViewportIconAction
+              icon={<Grid3X3 size={14} />}
+              active={toolbarRenderMode === "surface+edges"}
+              onClick={() => applyToolbarRenderMode("surface+edges")}
+              title="Surface + Edges"
+            />
+            <ViewportIconAction
+              icon={<Grid2X2 size={14} />}
+              active={toolbarRenderMode === "wireframe"}
+              onClick={() => applyToolbarRenderMode("wireframe")}
+              title="Wireframe"
+            />
+            <ViewportIconAction
+              icon={<Grip size={14} />}
+              active={toolbarRenderMode === "points"}
+              onClick={() => applyToolbarRenderMode("points")}
+              title="Points"
+            />
+          </ViewportToolGroup>
+
+          <ViewportToolSeparator />
+
+          {/* Color */}
+          <ViewportToolGroup label="Color">
+            <div className="relative">
+              <ViewportIconAction
+                icon={<Palette size={14} />}
+                label={labeledMode ? COLOR_OPTIONS.find(o => o.value === toolbarColorField)?.labeledLabel : COLOR_OPTIONS.find(o => o.value === toolbarColorField)?.label}
+                showCaret
+                onClick={() => setOpenPopover(prev => prev === "color" ? null : "color")}
+                title="Color Field"
+              />
+              {openPopover === "color" && (
+                <ViewportPopoverPanel title="Color Mode">
+                  <div className="grid grid-cols-2 gap-1 w-[200px]">
+                    {COLOR_OPTIONS.map((opt) => (
+                      <ViewportIconAction
+                        key={opt.value}
+                        active={toolbarColorField === opt.value}
+                        onClick={() => { applyToolbarColorField(opt.value); setOpenPopover(null); }}
+                        label={opt.labeledLabel}
+                        className="justify-start px-2 py-1.5"
+                      />
+                    ))}
+                  </div>
+                </ViewportPopoverPanel>
+              )}
+            </div>
+          </ViewportToolGroup>
+
+          <ViewportToolSeparator />
+
+          <ViewportStatusChip color={missingMagneticMask ? "amber" : "cyan"}>
+            {fieldLabel ?? "M"}
+          </ViewportStatusChip>
+
+          <ViewportToolSeparator />
+
+          <ViewportToolGroup>
+            {/* Clip */}
+            <div className="relative">
+              <ViewportIconAction
+                icon={<Scissors size={14} />}
+                active={clipEnabled}
+                showCaret
+                onClick={() => { const v = !clipEnabled; onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v); if (v) setOpenPopover("clip"); else setOpenPopover(null); }}
+                title="Clip Plane"
+              />
+              {openPopover === "clip" && clipEnabled && (
+                <ViewportPopoverPanel title="Clip settings">
+                  <ViewportPopoverRow label="Axis">
+                    {(["x","y","z"] as ClipAxis[]).map(a => (
+                      <button key={a} className="appearance-none border-none bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1 rounded cursor-pointer transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={clipAxis === a} onClick={() => onClipAxisChange ? onClipAxisChange(a) : setInternalClipAxis(a)}>{a.toUpperCase()}</button>
+                    ))}
+                  </ViewportPopoverRow>
+                  <ViewportPopoverRow label="Pos">
+                     <input type="range" className="flex-1 h-[3px] accent-primary" min={0} max={100} value={clipPos} onChange={(e) => { const v = Number(e.target.value); onClipPosChange ? onClipPosChange(v) : setInternalClipPos(v); }} />
+                  </ViewportPopoverRow>
+                </ViewportPopoverPanel>
+              )}
+            </div>
+
+            {/* Display */}
+            <div className="relative">
+              <ViewportIconAction
+                icon={<Eye size={14} />}
+                showCaret
+                active={openPopover === "display"}
+                onClick={() => setOpenPopover(prev => prev === "display" ? null : "display")}
+                title="Display Options"
+              />
+              {openPopover === "display" && (
+                <ViewportPopoverPanel title="Display">
+                  <ViewportPopoverRow label="Opacity">
+                    <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={10} max={100} value={toolbarOpacity} onChange={(e) => { const v = Number(e.target.value); applyToolbarOpacity(v); }} />
+                  </ViewportPopoverRow>
+                  {meshData.elements.length >= 4 && (
+                    <ViewportPopoverRow label="Shrink">
+                      <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={10} max={100} value={Math.round(shrinkFactor * 100)} onChange={(e) => { const v = Number(e.target.value) / 100; onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v); }} />
+                    </ViewportPopoverRow>
+                  )}
+                  <ViewportPopoverRow label="Labels">
+                    <button className="text-[0.65rem] font-semibold text-muted-foreground hover:text-foreground bg-transparent border border-border/30 rounded px-2 py-0.5" onClick={() => setLabeledMode(prev => !prev)}>{labeledMode ? "Hide Labels" : "Show Labels"}</button>
+                  </ViewportPopoverRow>
+                </ViewportPopoverPanel>
+              )}
+            </div>
+
+            {/* Arrows/Vectors */}
+            <div className="relative">
+              <ViewportIconAction
+                icon={<ArrowUpRight size={14} />}
+                active={showArrows}
+                showCaret
+                onClick={() => { const v = !showArrows; onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v); if (v) setOpenPopover("vectors"); else setOpenPopover(null); }}
+                title="Vectors"
+              />
+              {openPopover === "vectors" && showArrows && (
+                <ViewportPopoverPanel title="Vectors">
+                  <ViewportPopoverRow label="Density">
+                    <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={200} max={3000} step={100} value={arrowDensity} onChange={(e) => setArrowDensity(Number(e.target.value))} />
+                  </ViewportPopoverRow>
+                </ViewportPopoverPanel>
+              )}
+            </div>
+
+            {/* Camera Info */}
+            <div className="relative">
+              <ViewportIconAction
+                icon={<Video size={14} />}
+                showCaret
+                active={openPopover === "camera"}
+                onClick={() => setOpenPopover(prev => prev === "camera" ? null : "camera")}
+                title="Camera"
+              />
+              {openPopover === "camera" && (
+                <ViewportPopoverPanel title="Camera / View">
+                  <ViewportPopoverRow label="Proj">
+                    <button className="text-[0.65rem] font-semibold uppercase px-2 py-1 rounded transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={cameraProjection === "perspective"} onClick={() => setCameraProjection("perspective")}>Persp</button>
+                    <button className="text-[0.65rem] font-semibold uppercase px-2 py-1 rounded transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={cameraProjection === "orthographic"} onClick={() => setCameraProjection("orthographic")}>Ortho</button>
+                  </ViewportPopoverRow>
+                  <ViewportPopoverRow label="Nav">
+                    <button className="text-[0.65rem] font-semibold uppercase px-2 py-1 rounded transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={navigationMode === "trackball"} onClick={() => setNavigationMode("trackball")}>Trackball</button>
+                    <button className="text-[0.65rem] font-semibold uppercase px-2 py-1 rounded transition-colors data-[active=true]:bg-primary/20 data-[active=true]:text-primary" data-active={navigationMode === "cad"} onClick={() => setNavigationMode("cad")}>CAD</button>
+                  </ViewportPopoverRow>
+                  <div className="h-px bg-border/20 my-1"/>
+                  <div className="grid grid-cols-2 gap-1 px-1">
+                    {(["reset", "front", "top", "right"] as const).map(view => (
+                      <button key={view} className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { setCameraPreset(view); setOpenPopover(null); }}>{view === "reset" ? "Reset" : view}</button>
+                    ))}
+                  </div>
+                </ViewportPopoverPanel>
+              )}
+            </div>
+
+            {/* Panels Menu */}
+            <div className="relative">
+              <ViewportIconAction
+                icon={<Layers size={14} />}
+                showCaret
+                active={openPopover === "panels"}
+                onClick={() => setOpenPopover(prev => prev === "panels" ? null : "panels")}
+                title="Panels"
+              />
+              {openPopover === "panels" && (
+                <ViewportPopoverPanel title="Panels">
+                  <ViewportIconAction
+                    label="Legend"
+                    active={legendOpen}
+                    onClick={() => { setLegendOpen(prev => !prev); }}
+                    className="justify-start w-full py-1.5"
+                  />
+                  <ViewportIconAction
+                    label={partExplorerOpen ? "Hide Parts" : "Show Parts"}
+                    active={partExplorerOpen}
+                    onClick={() => { setPartExplorerOpen(prev => !prev); setOpenPopover(null); }}
+                    className="justify-start w-full py-1.5"
+                  />
+                </ViewportPopoverPanel>
+              )}
+            </div>
+
+            <ViewportToolSeparator />
+
+            {/* Capture */}
+            <ViewportIconAction
+              icon={<Camera size={14} />}
+              onClick={takeScreenshot}
+              title="Screenshot"
+            />
+          </ViewportToolGroup>
+        </ViewportToolbar3D>
       )}
 
       {legendOpen && (

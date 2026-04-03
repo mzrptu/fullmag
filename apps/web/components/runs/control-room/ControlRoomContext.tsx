@@ -278,7 +278,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [viewportScope, setViewportScope] = useState<ViewportScope>("universe");
   const [focusObjectRequest, setFocusObjectRequest] = useState<FocusObjectRequest | null>(null);
   const [objectViewMode, setObjectViewMode] = useState<ObjectViewMode>("context");
-  const [airMeshVisible, setAirMeshVisible] = useState(true);
+  const [airMeshVisible, setAirMeshVisible] = useState(false);
   const [airMeshOpacity, setAirMeshOpacity] = useState(DEFAULT_AIR_MESH_OPACITY);
   const [meshEntityViewState, setMeshEntityViewState] = useState<MeshEntityViewStateMap>({});
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
@@ -403,7 +403,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setViewportScope("universe");
     setFocusObjectRequest(null);
     setObjectViewMode("context");
-    setAirMeshVisible(true);
+    setAirMeshVisible(false);
     setAirMeshOpacity(DEFAULT_AIR_MESH_OPACITY);
     setMeshEntityViewState({});
     setSelectedEntityId(null);
@@ -823,7 +823,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     pendingMeshConfigSignatureRef.current = null;
     setSelectedObjectId(hydratedScene.editor.selected_object_id);
     setObjectViewMode(normalizePersistedObjectViewMode(hydratedScene.editor.object_view_mode));
-    setAirMeshVisible(hydratedScene.editor.air_mesh_visible ?? true);
+    setAirMeshVisible(hydratedScene.editor.air_mesh_visible ?? false);
     setAirMeshOpacity(
       typeof hydratedScene.editor.air_mesh_opacity === "number" &&
         Number.isFinite(hydratedScene.editor.air_mesh_opacity)
@@ -2434,7 +2434,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       const next: MeshEntityViewStateMap = {};
       for (const part of meshParts) {
         next[part.id] = prev[part.id] ?? {
-          visible: true,
+          visible: part.role !== "air",
           renderMode: part.role === "air" ? "wireframe" : "surface+edges",
           opacity: part.role === "air" ? 28 : 100,
           colorField: "none",
@@ -2489,49 +2489,27 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     if (!airPart) {
       return;
     }
-    const current = meshEntityViewState[airPart.id];
-    if (!current) {
-      return;
-    }
-    if (current.visible !== airMeshVisible || current.opacity !== airMeshOpacity) {
-      setMeshEntityViewState((prev) => {
-        const nextCurrent = prev[airPart.id];
-        if (!nextCurrent) {
-          return prev;
-        }
-        if (
-          nextCurrent.visible === airMeshVisible &&
-          nextCurrent.opacity === airMeshOpacity
-        ) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [airPart.id]: {
-            ...nextCurrent,
-            visible: airMeshVisible,
-            opacity: airMeshOpacity,
-          },
-        };
-      });
-    }
-  }, [airMeshOpacity, airMeshVisible, airPart, meshEntityViewState]);
-
-  useEffect(() => {
-    if (!airPart) {
-      return;
-    }
-    const current = meshEntityViewState[airPart.id];
-    if (!current) {
-      return;
-    }
-    if (airMeshVisible !== current.visible) {
-      setAirMeshVisible(current.visible);
-    }
-    if (airMeshOpacity !== current.opacity) {
-      setAirMeshOpacity(current.opacity);
-    }
-  }, [airMeshOpacity, airMeshVisible, airPart, meshEntityViewState]);
+    setMeshEntityViewState((prev) => {
+      const nextCurrent = prev[airPart.id];
+      if (!nextCurrent) {
+        return prev;
+      }
+      if (
+        nextCurrent.visible === airMeshVisible &&
+        nextCurrent.opacity === airMeshOpacity
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [airPart.id]: {
+          ...nextCurrent,
+          visible: airMeshVisible,
+          opacity: airMeshOpacity,
+        },
+      };
+    });
+  }, [airMeshOpacity, airMeshVisible, airPart]);
 
   // Keep femTopologyKeyRef in sync so study-domain remesh actions can snapshot the current key
   femTopologyKeyRef.current = femTopologyKey;

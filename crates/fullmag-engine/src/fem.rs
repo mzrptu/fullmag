@@ -20,6 +20,8 @@ pub struct MeshTopology {
     pub magnetic_node_volumes: Vec<f64>,
     pub grad_phi: Vec<[[f64; 3]; 4]>,
     pub element_stiffness: Vec<[[f64; 4]; 4]>,
+    pub stiffness_system: Vec<f64>,
+    pub boundary_mass_system: Vec<f64>,
     pub demag_system: Vec<f64>,
     pub total_volume: f64,
     pub magnetic_total_volume: f64,
@@ -125,7 +127,7 @@ impl MeshTopology {
         } else {
             1.0 / equivalent_radius.max(1e-30)
         };
-        let mut demag_system = global_stiffness;
+        let mut demag_system = global_stiffness.clone();
         if robin_beta > 0.0 {
             for (value, boundary) in demag_system.iter_mut().zip(boundary_mass.iter()) {
                 *value += robin_beta * *boundary;
@@ -147,6 +149,8 @@ impl MeshTopology {
             magnetic_node_volumes,
             grad_phi,
             element_stiffness,
+            stiffness_system: global_stiffness.clone(),
+            boundary_mass_system: boundary_mass,
             demag_system,
             n_nodes,
             n_elements,
@@ -214,6 +218,8 @@ pub struct FemLlgProblem {
     pub dynamics: LlgConfig,
     pub terms: EffectiveFieldTerms,
     pub demag_transfer_cell_size_hint: Option<[f64; 3]>,
+    demag_linear_system: Vec<f64>,
+    demag_dirichlet_boundary: bool,
 }
 
 impl FemLlgProblem {
@@ -223,7 +229,16 @@ impl FemLlgProblem {
         dynamics: LlgConfig,
         terms: EffectiveFieldTerms,
     ) -> Self {
-        Self::with_terms_and_demag_transfer_grid(topology, material, dynamics, terms, None)
+        let demag_linear_system = topology.demag_system.clone();
+        Self {
+            topology,
+            material,
+            dynamics,
+            terms,
+            demag_transfer_cell_size_hint: None,
+            demag_linear_system,
+            demag_dirichlet_boundary: false,
+        }
     }
 
     pub fn with_terms_and_demag_transfer_grid(
@@ -233,12 +248,42 @@ impl FemLlgProblem {
         terms: EffectiveFieldTerms,
         demag_transfer_cell_size_hint: Option<[f64; 3]>,
     ) -> Self {
+        let demag_linear_system = topology.demag_system.clone();
         Self {
             topology,
             material,
             dynamics,
             terms,
             demag_transfer_cell_size_hint,
+            demag_linear_system,
+            demag_dirichlet_boundary: false,
+        }
+    }
+
+    pub fn with_terms_and_demag_airbox(
+        topology: MeshTopology,
+        material: MaterialParameters,
+        dynamics: LlgConfig,
+        terms: EffectiveFieldTerms,
+        dirichlet_boundary: bool,
+        robin_beta_factor: Option<f64>,
+    ) -> Self {
+        let demag_linear_system = if dirichlet_boundary {
+            build_dirichlet_demag_system(&topology)
+        } else {
+            build_robin_demag_system(
+                &topology,
+                robin_beta_factor.map(|factor| factor * topology.robin_beta),
+            )
+        };
+        Self {
+            topology,
+            material,
+            dynamics,
+            terms,
+            demag_transfer_cell_size_hint: None,
+            demag_linear_system,
+            demag_dirichlet_boundary: dirichlet_boundary,
         }
     }
 
@@ -919,8 +964,15 @@ impl FemLlgProblem {
         &self,
         magnetization: &[Vector3],
     ) -> Result<(Vec<Vector3>, f64)> {
-        let rhs = self.demag_rhs_from_vectors(magnetization);
-        let potential = solve_dense_linear_system(&self.topology.demag_system, &rhs)?;
+        let mut rhs = self.demag_rhs_from_vectors(magnetization);
+        if self.demag_dirichlet_boundary {
+            for &node in &self.topology.boundary_nodes {
+                if let Some(value) = rhs.get_mut(node as usize) {
+                    *value = 0.0;
+                }
+            }
+        }
+        let potential = solve_dense_linear_system(&self.demag_linear_system, &rhs)?;
         let field = self.demag_field_from_potential(&potential);
         let energy = 0.5
             * MU0
@@ -1006,9 +1058,6 @@ impl FemLlgProblem {
 
         let mut node_demag_field = vec![[0.0, 0.0, 0.0]; self.topology.n_nodes];
         for (node_index, value) in node_demag_field.iter_mut().enumerate() {
-            if self.topology.magnetic_node_volumes[node_index] <= 0.0 {
-                continue;
-            }
             *value = sample_cell_centered_vector_field(
                 &cell_demag_field,
                 grid_desc.grid,
@@ -1063,9 +1112,6 @@ impl FemLlgProblem {
         let mut weights = vec![0.0; self.topology.n_nodes];
 
         for (element_index, element) in self.topology.elements.iter().enumerate() {
-            if !self.topology.magnetic_element_mask[element_index] {
-                continue;
-            }
             let gradients = self.topology.grad_phi[element_index];
             let mut grad_u = [0.0, 0.0, 0.0];
             for local_index in 0..4 {
@@ -1393,6 +1439,34 @@ fn inverse_transpose_3x3(columns: [[f64; 3]; 3], det: f64) -> [[f64; 3]; 3] {
     ]
 }
 
+fn build_robin_demag_system(topology: &MeshTopology, beta_override: Option<f64>) -> Vec<f64> {
+    let beta = beta_override.unwrap_or(topology.robin_beta);
+    let mut system = topology.stiffness_system.clone();
+    if beta > 0.0 {
+        for (value, boundary) in system.iter_mut().zip(topology.boundary_mass_system.iter()) {
+            *value += beta * *boundary;
+        }
+    }
+    system
+}
+
+fn build_dirichlet_demag_system(topology: &MeshTopology) -> Vec<f64> {
+    let mut system = topology.stiffness_system.clone();
+    if topology.boundary_nodes.is_empty() {
+        return system;
+    }
+    let n = topology.n_nodes;
+    for &node in &topology.boundary_nodes {
+        let node = node as usize;
+        for column in 0..n {
+            system[node * n + column] = 0.0;
+            system[column * n + node] = 0.0;
+        }
+        system[node * n + node] = 1.0;
+    }
+    system
+}
+
 fn magnetic_element_mask_from_markers(markers: &[u32]) -> Vec<bool> {
     let has_air = markers.iter().any(|&marker| marker == 0);
     let has_magnetic = markers.iter().any(|&marker| marker != 0);
@@ -1656,6 +1730,7 @@ mod tests {
             element_markers: vec![1],
             boundary_faces: vec![[0, 1, 2]],
             boundary_markers: vec![1],
+            per_domain_quality: std::collections::HashMap::new(),
         };
         let topology = MeshTopology::from_ir(&mesh).expect("unit tet topology");
         FemLlgProblem::with_terms(
@@ -1709,6 +1784,7 @@ mod tests {
                 [1, 5, 6],
             ],
             boundary_markers: vec![1; 12],
+            per_domain_quality: std::collections::HashMap::new(),
         };
         let topology = MeshTopology::from_ir(&mesh).expect("coarse box topology");
         FemLlgProblem::with_terms(
@@ -1762,6 +1838,7 @@ mod tests {
                 [1, 5, 6],
             ],
             boundary_markers: vec![1; 12],
+            per_domain_quality: std::collections::HashMap::new(),
         };
         let topology = MeshTopology::from_ir(&mesh).expect("coarse box topology");
         FemLlgProblem::with_terms_and_demag_transfer_grid(
@@ -1777,6 +1854,48 @@ mod tests {
             },
             Some([10e-9, 10e-9, 10e-9]),
         )
+    }
+
+    fn shared_domain_airbox_problem_dirichlet(demag: bool) -> (FemLlgProblem, usize) {
+        let mut mesh = crate::studies::build_structured_box_tet_mesh([6.0, 6.0, 6.0], 3);
+        for element_marker in &mut mesh.element_markers {
+            *element_marker = 0;
+        }
+        for (element_index, element) in mesh.elements.iter().enumerate() {
+            let centroid = element.iter().fold([0.0; 3], |acc, node| {
+                let coord = mesh.nodes[*node as usize];
+                [acc[0] + coord[0], acc[1] + coord[1], acc[2] + coord[2]]
+            });
+            let centroid = [
+                centroid[0] * 0.25,
+                centroid[1] * 0.25,
+                centroid[2] * 0.25,
+            ];
+            if centroid[0] < -1.0 && centroid[1] < -1.0 && centroid[2] < -1.0 {
+                mesh.element_markers[element_index] = 1;
+            }
+        }
+        let air_only_interior_node = mesh
+            .nodes
+            .iter()
+            .position(|node| *node == [1.0, 1.0, 1.0])
+            .expect("expected an interior air node");
+        let topology = MeshTopology::from_ir(&mesh).expect("shared-domain airbox topology");
+        let problem = FemLlgProblem::with_terms_and_demag_airbox(
+            topology,
+            MaterialParameters::new(800e3, 13e-12, 0.5).expect("material"),
+            LlgConfig::new(DEFAULT_GYROMAGNETIC_RATIO, TimeIntegrator::Heun).expect("llg"),
+            EffectiveFieldTerms {
+                exchange: true,
+                demag,
+                external_field: None,
+                per_node_field: None,
+                magnetoelastic: None,
+            },
+            true,
+            None,
+        );
+        (problem, air_only_interior_node)
     }
 
     #[test]
@@ -1928,6 +2047,22 @@ mod tests {
         assert!(
             fem_obs.max_demag_field_amplitude > 0.0,
             "transfer-grid FEM demag should produce nonzero field",
+        );
+    }
+
+    #[test]
+    fn shared_domain_airbox_demag_field_reaches_air_nodes() {
+        let (problem, air_only_node) = shared_domain_airbox_problem_dirichlet(true);
+        let state = problem
+            .new_state(vec![[0.0, 0.0, 1.0]; problem.topology.n_nodes])
+            .expect("state");
+        let observables = problem.observe(&state).expect("observables");
+
+        assert_eq!(problem.topology.magnetic_node_volumes[air_only_node], 0.0);
+        assert!(
+            norm(observables.demag_field[air_only_node]) > 1e-12,
+            "shared-domain FEM demag should remain nonzero in airbox nodes, got {:?}",
+            observables.demag_field[air_only_node]
         );
     }
 }

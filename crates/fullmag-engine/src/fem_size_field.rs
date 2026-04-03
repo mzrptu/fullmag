@@ -374,6 +374,7 @@ mod tests {
                 [1, 2, 4],
             ],
             boundary_markers: vec![1; 6],
+            per_domain_quality: std::collections::HashMap::new(),
         };
         let topo = MeshTopology::from_ir(&mesh).expect("topology");
         let faces = FaceTopology::build(
