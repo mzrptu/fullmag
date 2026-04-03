@@ -90,3 +90,12 @@ export interface MeshQualitySummary {
   good: number; fair: number; poor: number;
   count: number;
 }
+
+export interface BackendErrorInfo {
+  timestampUnixMs: number;
+  level: string;
+  title: string;
+  summary: string;
+  details: string;
+  traceback: string | null;
+}

@@ -105,6 +105,7 @@ import {
   downloadBase64File,
   extractSolverPlan,
   fileToBase64,
+  latestBackendErrorFromLog,
   meshOptionsFromBuilder,
   meshOptionsToBuilder,
   sameDisplaySelection,
@@ -119,6 +120,7 @@ import {
 } from "./meshWorkspace";
 export type {
   ActivityInfo,
+  BackendErrorInfo,
   FieldStats,
   MaterialSummary,
   MeshQualitySummary,
@@ -131,6 +133,7 @@ export type {
 } from "./types";
 import type {
   ActivityInfo,
+  BackendErrorInfo,
   FieldStats,
   MaterialSummary,
   MeshQualitySummary,
@@ -2689,6 +2692,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     scriptPath: session?.script_path ?? null,
     artifactDir: session?.artifact_dir ?? null,
   }), [session?.requested_backend, session?.script_path, session?.artifact_dir]);
+  const latestBackendError = useMemo<BackendErrorInfo | null>(
+    () => latestBackendErrorFromLog(engineLog ?? []),
+    [engineLog],
+  );
   const mergedEngineLog = useMemo<EngineLogEntry[]>(
     () => [...(engineLog ?? []), ...frontendTraceLog],
     [engineLog, frontendTraceLog],
@@ -2754,6 +2761,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     commandStatus, activeCommandKind, activeCommandState,
     canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,
     interactiveEnabled, interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage,
+    latestBackendError,
     scriptSyncBusy, scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, runUntilInput,
     setRunUntilInput, enqueueCommand, handleCompute, handleSimulationAction,
     handleStateExport, handleStateImport, syncScriptBuilder,
@@ -2764,6 +2772,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     commandStatus, activeCommandKind, activeCommandState,
     canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,
     interactiveEnabled, interactiveControlsEnabled, awaitingCommand, commandBusy, commandMessage,
+    latestBackendError,
     scriptSyncBusy, scriptSyncMessage, stateIoBusy, stateIoMessage, scriptInitialState, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, runUntilInput,
     enqueueCommand, handleCompute, handleSimulationAction,
     handleStateExport, handleStateImport, syncScriptBuilder,

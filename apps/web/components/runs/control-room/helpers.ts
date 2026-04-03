@@ -3,6 +3,7 @@
 
 import type {
   DisplaySelection,
+  EngineLogEntry,
   ScriptBuilderStageState,
   ScriptBuilderState,
   SessionManifest,
@@ -22,7 +23,7 @@ import { DEFAULT_SOLVER_SETTINGS } from "../../panels/SolverSettingsPanel";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import { DEFAULT_MESH_OPTIONS } from "../../panels/MeshSettingsPanel";
 import type { MeshOptionsState } from "../../panels/MeshSettingsPanel";
-import type { SolverPlanSummary, PreviewOption } from "./types";
+import type { BackendErrorInfo, SolverPlanSummary, PreviewOption } from "./types";
 
 /* ── Record / typing helpers ── */
 
@@ -83,6 +84,106 @@ export function commandKindLabel(kind: string | null | undefined): string {
     case "save_vtk": return "Export VTK";
     default: return kind && kind.trim().length > 0 ? kind : "Command";
   }
+}
+
+function compactSingleLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function parseEmbeddedJsonErrorPayload(
+  message: string,
+): { start: number; error: string | null; traceback: string | null } | null {
+  for (let index = message.indexOf("{"); index >= 0; index = message.indexOf("{", index + 1)) {
+    const candidate = message.slice(index).trim();
+    if (!candidate.includes('"error"') && !candidate.includes('"traceback"')) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(candidate) as { error?: unknown; traceback?: unknown };
+      if (parsed && typeof parsed === "object") {
+        return {
+          start: index,
+          error: asString(parsed.error),
+          traceback: asString(parsed.traceback),
+        };
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function parseBackendErrorMessage(
+  message: string,
+): Omit<BackendErrorInfo, "timestampUnixMs" | "level"> {
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return {
+      title: "Operation interrupted by backend error",
+      summary: "Backend error",
+      details: "Backend error",
+      traceback: null,
+    };
+  }
+
+  const embeddedPayload = parseEmbeddedJsonErrorPayload(trimmed);
+  if (embeddedPayload) {
+    const prefix = trimmed.slice(0, embeddedPayload.start).trim();
+    const prefixLine = compactSingleLine(prefix.split("\n").filter(Boolean).pop() ?? "");
+    const payloadError = compactSingleLine(embeddedPayload.error ?? "");
+    const summaryParts = [
+      prefixLine,
+      payloadError && !prefix.includes(payloadError) ? payloadError : "",
+    ].filter(Boolean);
+    return {
+      title: "Operation interrupted by backend error",
+      summary: summaryParts.length > 0 ? summaryParts.join(" — ") : (payloadError || "Backend error"),
+      details: [
+        prefix,
+        embeddedPayload.error && !prefix.includes(embeddedPayload.error) ? embeddedPayload.error : "",
+        embeddedPayload.traceback ?? "",
+      ].filter(Boolean).join("\n\n"),
+      traceback: embeddedPayload.traceback,
+    };
+  }
+
+  const tracebackMarker = "Traceback (most recent call last):";
+  const tracebackIndex = trimmed.indexOf(tracebackMarker);
+  if (tracebackIndex >= 0) {
+    const prefix = trimmed.slice(0, tracebackIndex).trim();
+    const traceback = trimmed.slice(tracebackIndex).trim();
+    return {
+      title: "Operation interrupted by backend error",
+      summary: compactSingleLine(prefix.split("\n").filter(Boolean).pop() ?? "Backend error"),
+      details: trimmed,
+      traceback,
+    };
+  }
+
+  return {
+    title: "Operation interrupted by backend error",
+    summary: compactSingleLine(trimmed.split("\n").find((line) => line.trim().length > 0) ?? "Backend error"),
+    details: trimmed,
+    traceback: null,
+  };
+}
+
+export function latestBackendErrorFromLog(
+  engineLog: EngineLogEntry[],
+): BackendErrorInfo | null {
+  for (let index = engineLog.length - 1; index >= 0; index -= 1) {
+    const entry = engineLog[index];
+    if (String(entry?.level ?? "").toLowerCase() !== "error") {
+      continue;
+    }
+    return {
+      timestampUnixMs: Number(entry.timestamp_unix_ms ?? 0),
+      level: String(entry.level ?? "error"),
+      ...parseBackendErrorMessage(String(entry.message ?? "")),
+    };
+  }
+  return null;
 }
 
 /* ── Script-builder ↔ settings conversion ── */

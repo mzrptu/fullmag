@@ -66,6 +66,7 @@ import type {
 import { computeMeshFaceDetail } from "./shared";
 import type {
   ActivityInfo,
+  BackendErrorInfo,
   FieldStats,
   MaterialSummary,
   MeshQualitySummary,
@@ -97,8 +98,6 @@ export interface TransportContextValue {
   dtSpark: number[];
   eTotalSpark: number[];
   preview: PreviewState | null;
-  selectedVectors: Float64Array | null;
-  fieldStats: FieldStats | null;
   hasSolverTelemetry: boolean;
 }
 
@@ -146,6 +145,8 @@ export interface ViewportContextValue {
   previewMaxPointOptions: number[];
   previewIsStale: boolean;
   previewIsBootstrapStale: boolean;
+  selectedVectors: Float64Array | null;
+  fieldStats: FieldStats | null;
   /* Actions */
   setViewMode: React.Dispatch<React.SetStateAction<ViewportMode>>;
   setComponent: React.Dispatch<React.SetStateAction<VectorComponent>>;
@@ -194,6 +195,7 @@ export interface CommandContextValue {
   awaitingCommand: boolean;
   commandBusy: boolean;
   commandMessage: string | null;
+  latestBackendError: BackendErrorInfo | null;
   scriptSyncBusy: boolean;
   scriptSyncMessage: string | null;
   stateIoBusy: boolean;

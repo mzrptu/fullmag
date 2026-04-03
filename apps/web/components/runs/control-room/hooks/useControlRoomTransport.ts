@@ -72,7 +72,7 @@ export function useControlRoomTransport(state: SessionState | null): TransportCo
   const dmDtSpark = useMemo(() => scalarRows.slice(-40).map((r: ScalarRow) => Math.log10(Math.max(r.max_dm_dt ?? 1e-15, 1e-15))), [scalarRows]);
   const dtSpark = useMemo(() => scalarRows.slice(-40).map((r: ScalarRow) => r.solver_dt ?? 0), [scalarRows]);
 
-  const fieldStats = useMemo(() => latestFields?.stats ?? null, [latestFields]);
+
 
   return {
     effectiveStep,
@@ -94,8 +94,6 @@ export function useControlRoomTransport(state: SessionState | null): TransportCo
     dtSpark,
     eTotalSpark,
     preview,
-    selectedVectors: latestFields?.values ?? null,
-    fieldStats,
     hasSolverTelemetry,
   };
 }

@@ -24,6 +24,7 @@ import {
   fmtStepValue,
 } from "./control-room/shared";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
+import BackendErrorNotice from "./control-room/BackendErrorNotice";
 import MeshBuildModal from "./control-room/MeshBuildModal";
 import {
   buildMeshBuildStages,
@@ -93,6 +94,8 @@ function ControlRoomShell() {
   const [meshBuildDialogOpen, setMeshBuildDialogOpen] = useState(false);
   const [meshBuildIntent, setMeshBuildIntent] = useState<ReturnType<typeof meshBuildIntentForNode> | null>(null);
   const [meshBuildError, setMeshBuildError] = useState<string | null>(null);
+  const [meshBuildOpenedAt, setMeshBuildOpenedAt] = useState<number | null>(null);
+  const [dismissedBackendErrorAt, setDismissedBackendErrorAt] = useState<number | null>(null);
   const selectedAntennaName = useMemo(
     () =>
       resolveAntennaNodeName(
@@ -180,10 +183,28 @@ function ControlRoomShell() {
       ),
     [ctx.activity.progressMode, ctx.activity.progressValue, meshBuildStages],
   );
+  const activeBackendError = useMemo(
+    () =>
+      ctx.latestBackendError &&
+      ctx.latestBackendError.timestampUnixMs !== dismissedBackendErrorAt
+        ? ctx.latestBackendError
+        : null,
+    [ctx.latestBackendError, dismissedBackendErrorAt],
+  );
+  const meshBuildBackendError = useMemo(
+    () =>
+      ctx.latestBackendError &&
+      meshBuildOpenedAt != null &&
+      ctx.latestBackendError.timestampUnixMs >= meshBuildOpenedAt
+        ? ctx.latestBackendError
+        : null,
+    [ctx.latestBackendError, meshBuildOpenedAt],
+  );
 
   const ensureMeshBuildModal = useCallback((intent: ReturnType<typeof meshBuildIntentForNode>) => {
     setMeshBuildError(null);
     setMeshBuildIntent(intent);
+    setMeshBuildOpenedAt(Date.now());
     setMeshBuildDialogOpen(true);
   }, []);
 
@@ -284,6 +305,7 @@ function ControlRoomShell() {
     setMeshBuildDialogOpen(false);
     if (!ctx.meshGenerating && !ctx.scriptSyncBusy) {
       setMeshBuildError(null);
+      setMeshBuildOpenedAt(null);
     }
   }, [ctx.meshGenerating, ctx.scriptSyncBusy]);
 
@@ -412,6 +434,14 @@ function ControlRoomShell() {
         scriptSyncBusy={ctx.scriptSyncBusy}
         onSyncScriptBuilder={() => void ctx.syncScriptBuilder()}
       />
+      {activeBackendError ? (
+        <div className="border-b border-rose-500/20 bg-rose-950/10 px-3 py-3">
+          <BackendErrorNotice
+            error={activeBackendError}
+            onDismiss={() => setDismissedBackendErrorAt(activeBackendError.timestampUnixMs)}
+          />
+        </div>
+      ) : null}
       <PanelGroup
         orientation="horizontal"
         className="flex flex-row flex-1 min-h-0 min-w-0 overflow-hidden"
@@ -535,6 +565,7 @@ function ControlRoomShell() {
         meshWorkspace={ctx.meshWorkspace}
         effectiveTargets={effectiveMeshTargets}
         errorMessage={meshBuildError}
+        errorDetails={meshBuildBackendError}
         onBackground={handleBackgroundMeshBuild}
         onClose={handleCloseMeshBuildDialog}
       />

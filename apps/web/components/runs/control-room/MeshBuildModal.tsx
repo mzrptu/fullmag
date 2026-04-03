@@ -5,8 +5,10 @@ import { CheckCircle2, Loader2, AlertTriangle, X, Minimize2, GitCommitHorizontal
 import type { EngineLogEntry, MeshWorkspaceState } from "../../../lib/useSessionStream";
 import { Button } from "../../ui/button";
 import { cn } from "@/lib/utils";
+import BackendErrorNotice from "./BackendErrorNotice";
 import { fmtSI } from "./shared";
 import type { EffectiveMeshTarget, MeshBuildDialogIntent, MeshBuildStage } from "./meshWorkspace";
+import type { BackendErrorInfo } from "./types";
 
 interface MeshBuildModalProps {
   open: boolean;
@@ -18,6 +20,7 @@ interface MeshBuildModalProps {
   meshWorkspace: MeshWorkspaceState | null;
   effectiveTargets: EffectiveMeshTarget[];
   errorMessage?: string | null;
+  errorDetails?: BackendErrorInfo | null;
   onClose: () => void;
   onBackground: () => void;
 }
@@ -56,6 +59,7 @@ export default function MeshBuildModal({
   meshWorkspace,
   effectiveTargets,
   errorMessage = null,
+  errorDetails = null,
   onClose,
   onBackground,
 }: MeshBuildModalProps) {
@@ -63,6 +67,7 @@ export default function MeshBuildModal({
     return null;
   }
 
+  const hasError = Boolean(errorMessage || errorDetails);
   const meshSummary = meshWorkspace?.mesh_summary ?? null;
   const modalLog = engineLog
     .filter((entry) => {
@@ -116,22 +121,33 @@ export default function MeshBuildModal({
           </div>
           <div className="mt-4">
             <div className="flex items-center justify-between text-[0.68rem] uppercase tracking-[0.18em] text-slate-400">
-              <span>{generating ? "Building mesh" : errorMessage ? "Build failed" : "Build finished"}</span>
+              <span>{generating ? "Building mesh" : hasError ? "Build failed" : "Build finished"}</span>
               <span>{Math.round(progressValue)}%</span>
             </div>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/8">
               <div
                 className={cn(
                   "h-full rounded-full transition-[width] duration-300",
-                  errorMessage ? "bg-amber-400" : "bg-cyan-400",
+                  hasError ? "bg-amber-400" : "bg-cyan-400",
                 )}
                 style={{ width: `${Math.max(4, Math.min(100, progressValue))}%` }}
               />
             </div>
-            {errorMessage ? (
-              <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-100/90">
-                {errorMessage}
-              </div>
+            {hasError ? (
+              <BackendErrorNotice
+                error={
+                  errorDetails ?? {
+                    timestampUnixMs: Date.now(),
+                    level: "error",
+                    title: "Operation interrupted by backend error",
+                    summary: errorMessage ?? "Mesh build failed",
+                    details: errorMessage ?? "Mesh build failed",
+                    traceback: null,
+                  }
+                }
+                compact
+                className="mt-3"
+              />
             ) : null}
           </div>
         </div>
