@@ -622,6 +622,56 @@ export default function MeshPanel() {
         </SidebarSection>
       ) : null}
 
+      {/* ── Per-object quality summary ── */}
+      {effectiveFemMesh?.per_domain_quality && Object.keys(effectiveFemMesh.per_domain_quality).length > 0 && (
+        <SidebarSection title="Per-Object Quality" defaultOpen={false}>
+          <div className="flex flex-col gap-2">
+            {Object.entries(effectiveFemMesh.per_domain_quality).map(([markerStr, q]) => {
+              const marker = Number(markerStr);
+              const part = effectiveFemMesh.mesh_parts?.find(
+                (p) => p.role === "magnetic_object",
+              );
+              const segment = effectiveFemMesh.object_segments?.find(
+                (s) => s.element_start <= marker && marker < s.element_start + s.element_count,
+              );
+              const label = segment?.object_id ?? part?.object_id ?? `Domain ${marker}`;
+              const sicnOk = q.sicn_p5 >= 0.1;
+              return (
+                <div key={markerStr} className="rounded-lg border border-border/35 bg-background/50 p-2.5">
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <span className="text-[0.72rem] font-semibold text-foreground/90">{label}</span>
+                    <span className={cn(
+                      "rounded-full px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-wider",
+                      sicnOk ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400",
+                    )}>
+                      {sicnOk ? "OK" : "WARN"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5 text-[0.68rem]">
+                    <div className="grid gap-0.5">
+                      <span className="font-medium uppercase tracking-wider text-muted-foreground">SICN p5</span>
+                      <span className="font-mono text-foreground/90">{q.sicn_p5.toFixed(3)}</span>
+                    </div>
+                    <div className="grid gap-0.5">
+                      <span className="font-medium uppercase tracking-wider text-muted-foreground">SICN mean</span>
+                      <span className="font-mono text-foreground/90">{q.sicn_mean.toFixed(3)}</span>
+                    </div>
+                    <div className="grid gap-0.5">
+                      <span className="font-medium uppercase tracking-wider text-muted-foreground">γ min</span>
+                      <span className="font-mono text-foreground/90">{q.gamma_min.toFixed(3)}</span>
+                    </div>
+                    <div className="grid gap-0.5">
+                      <span className="font-medium uppercase tracking-wider text-muted-foreground">Elems</span>
+                      <span className="font-mono text-foreground/90">{q.n_elements.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </SidebarSection>
+      )}
+
       {meshFaceDetail && (
         <SidebarSection title="Selection" defaultOpen={true}>
           <div className="mb-2 flex items-center justify-end">

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub const IR_VERSION: &str = "0.2.0";
 
@@ -719,6 +719,27 @@ pub struct FemHintsIR {
     pub mesh: Option<String>,
 }
 
+/// Per-domain element quality metrics, mirroring ``MeshQualityReport`` in Python.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MeshQualityIR {
+    pub n_elements: u32,
+    pub sicn_min: f64,
+    pub sicn_max: f64,
+    pub sicn_mean: f64,
+    pub sicn_p5: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sicn_histogram: Vec<u32>,
+    pub gamma_min: f64,
+    pub gamma_mean: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gamma_histogram: Vec<u32>,
+    pub volume_min: f64,
+    pub volume_max: f64,
+    pub volume_mean: f64,
+    pub volume_std: f64,
+    pub avg_quality: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MeshIR {
     pub mesh_name: String,
@@ -727,6 +748,8 @@ pub struct MeshIR {
     pub element_markers: Vec<u32>,
     pub boundary_faces: Vec<[u32; 3]>,
     pub boundary_markers: Vec<u32>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub per_domain_quality: HashMap<u32, MeshQualityIR>,
 }
 
 impl MeshIR {

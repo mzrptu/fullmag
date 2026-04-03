@@ -577,6 +577,8 @@ export function ViewportCanvasArea() {
         objectViewMode={ctx.objectViewMode}
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
         meshParts={ctx.meshParts}
+        elementMarkers={ctx.effectiveFemMesh?.element_markers ?? null}
+        perDomainQuality={ctx.effectiveFemMesh?.per_domain_quality ?? null}
         meshEntityViewState={ctx.meshEntityViewState}
         onMeshPartViewStatePatch={patchMeshPartViewState}
         visibleObjectIds={visibleObjectIds}
@@ -620,6 +622,8 @@ export function ViewportCanvasArea() {
         objectViewMode={ctx.objectViewMode}
         objectSegments={ctx.effectiveFemMesh?.object_segments ?? []}
         meshParts={ctx.meshParts}
+        elementMarkers={ctx.effectiveFemMesh?.element_markers ?? null}
+        perDomainQuality={ctx.effectiveFemMesh?.per_domain_quality ?? null}
         meshEntityViewState={ctx.meshEntityViewState}
         onMeshPartViewStatePatch={patchMeshPartViewState}
         visibleObjectIds={visibleObjectIds}

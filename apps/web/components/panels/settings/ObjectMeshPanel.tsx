@@ -24,6 +24,7 @@ import MeshSettingsPanel, {
   type MeshOptionsState,
   type SizeFieldSpec,
 } from "../MeshSettingsPanel";
+import MeshSequenceEditor from "./MeshSequenceEditor";
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
 import { useModel } from "../../runs/control-room/ControlRoomContext";
 import { fmtExp, fmtSI, type ViewportMode } from "../../runs/control-room/shared";
@@ -66,6 +67,9 @@ function createInheritedMeshState(): ScriptBuilderPerGeometryMeshEntry {
     optimize_iterations: null,
     compute_quality: null,
     per_element_quality: null,
+    boundary_layer_count: null,
+    boundary_layer_thickness: null,
+    boundary_layer_stretching: null,
     size_fields: [],
     operations: [],
     build_requested: false,
@@ -122,6 +126,9 @@ function buildCustomMeshState(
     order: number | null;
     source: string | null;
     buildRequested: boolean;
+    boundaryLayerCount?: number | null;
+    boundaryLayerThickness?: string | null;
+    boundaryLayerStretching?: number | null;
   },
 ): ScriptBuilderPerGeometryMeshEntry {
   return {
@@ -141,6 +148,9 @@ function buildCustomMeshState(
     optimize_iterations: options.optimize.trim().length > 0 ? options.optimizeIters : 1,
     compute_quality: options.computeQuality,
     per_element_quality: options.perElementQuality,
+    boundary_layer_count: extras.boundaryLayerCount ?? current?.boundary_layer_count ?? null,
+    boundary_layer_thickness: extras.boundaryLayerThickness ?? current?.boundary_layer_thickness ?? null,
+    boundary_layer_stretching: extras.boundaryLayerStretching ?? current?.boundary_layer_stretching ?? null,
     size_fields: options.refinementZones.map((field: SizeFieldSpec) => ({
       kind: field.kind,
       params: { ...field.params },
@@ -493,6 +503,94 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                   waitMode={ctx.isWaitingForCompute}
                   showAdaptiveSection={false}
                 />
+
+                {/* ── Boundary Layers ── */}
+                <div className="flex flex-col gap-2">
+                  <div className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground">
+                    Boundary Layers
+                  </div>
+                  <div className="rounded-lg border border-border/30 bg-background/40 p-3 text-[0.72rem] text-muted-foreground">
+                    Prismatic near-wall extrusion (Gmsh BoundaryLayer field). Leave blank to
+                    disable.
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <TextField
+                      label="Count"
+                      defaultValue={mesh.boundary_layer_count != null ? String(mesh.boundary_layer_count) : ""}
+                      onchange={(e) => {
+                        const raw = e.target.value.trim();
+                        updateGeo((cur) =>
+                          buildCustomMeshState(effectiveOptions, cur, {
+                            order: cur?.order ?? model.meshFeOrder ?? null,
+                            source: cur?.source ?? model.meshSource ?? null,
+                            buildRequested: cur?.build_requested ?? false,
+                            boundaryLayerCount: raw.length > 0 ? Math.max(1, Math.round(Number(raw) || 1)) : null,
+                          }),
+                        );
+                      }}
+                      mono
+                      disabled={mesh.mode !== "custom"}
+                      placeholder="0 = off"
+                      tooltip="Number of prismatic boundary-layer element rows near this object's walls."
+                    />
+                    <TextField
+                      label="Thickness (m)"
+                      defaultValue={mesh.boundary_layer_thickness ?? ""}
+                      onchange={(e) => {
+                        const raw = e.target.value.trim();
+                        updateGeo((cur) =>
+                          buildCustomMeshState(effectiveOptions, cur, {
+                            order: cur?.order ?? model.meshFeOrder ?? null,
+                            source: cur?.source ?? model.meshSource ?? null,
+                            buildRequested: cur?.build_requested ?? false,
+                            boundaryLayerThickness: raw.length > 0 ? raw : null,
+                          }),
+                        );
+                      }}
+                      mono
+                      disabled={mesh.mode !== "custom"}
+                      placeholder="2e-9"
+                      tooltip="Target first-layer thickness in SI metres."
+                    />
+                    <TextField
+                      label="Stretching"
+                      defaultValue={mesh.boundary_layer_stretching != null ? String(mesh.boundary_layer_stretching) : ""}
+                      onchange={(e) => {
+                        const raw = e.target.value.trim();
+                        updateGeo((cur) =>
+                          buildCustomMeshState(effectiveOptions, cur, {
+                            order: cur?.order ?? model.meshFeOrder ?? null,
+                            source: cur?.source ?? model.meshSource ?? null,
+                            buildRequested: cur?.build_requested ?? false,
+                            boundaryLayerStretching: raw.length > 0 ? Number(raw) || null : null,
+                          }),
+                        );
+                      }}
+                      mono
+                      disabled={mesh.mode !== "custom"}
+                      placeholder="1.2"
+                      tooltip="Layer growth ratio between successive boundary layer rows (1.0–2.0)."
+                    />
+                  </div>
+                </div>
+
+                {/* ── Operation Sequence ── */}
+                <div className="flex flex-col gap-2">
+                  <div className="text-[0.6rem] font-bold uppercase tracking-widest text-muted-foreground">
+                    Mesh Operations
+                  </div>
+                  <MeshSequenceEditor
+                    operations={mesh.operations}
+                    onChange={(ops) =>
+                      updateGeo((cur) => ({
+                        ...(cur ?? createInheritedMeshState()),
+                        mode: "custom",
+                        operations: ops,
+                      }))
+                    }
+                    disabled={mesh.mode !== "custom" || ctx.meshGenerating}
+                  />
+                </div>
               </div>
             </TabsContent>
 
@@ -833,6 +931,52 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
           </div>
         )}
               </SidebarSection>
+
+              {/* ── Per-domain quality ── */}
+              {effectiveFemMesh?.per_domain_quality && Object.keys(effectiveFemMesh.per_domain_quality).length > 0 && (
+                <SidebarSection title="Per-Object Quality" defaultOpen={false}>
+                  <div className="flex flex-col gap-2">
+                    {Object.entries(effectiveFemMesh.per_domain_quality).map(([markerStr, q]) => {
+                      const marker = Number(markerStr);
+                      // Try to resolve geometry name from mesh_parts
+                      const part = effectiveFemMesh.mesh_parts?.find(
+                        (p) => p.role === "magnetic_object" && Number(p.element_start) <= marker,
+                      );
+                      const label = part?.object_id ?? part?.geometry_id ?? `Domain ${marker}`;
+                      const sicnOk = q.sicn_p5 >= 0.1;
+                      return (
+                        <div key={markerStr} className="rounded-lg border border-border/35 bg-background/50 p-2.5">
+                          <div className="mb-1.5 flex items-center justify-between gap-2">
+                            <span className="text-[0.72rem] font-semibold text-foreground/90">{label}</span>
+                            <span className={cn(
+                              "rounded-full px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-wider",
+                              sicnOk
+                                ? "bg-emerald-500/15 text-emerald-400"
+                                : "bg-amber-500/15 text-amber-400",
+                            )}>
+                              {sicnOk ? "OK" : "WARN"}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1.5 text-[0.68rem]">
+                            <div className="grid gap-0.5">
+                              <span className="font-medium uppercase tracking-wider text-muted-foreground">SICN p5</span>
+                              <span className="font-mono text-foreground/90">{q.sicn_p5.toFixed(3)}</span>
+                            </div>
+                            <div className="grid gap-0.5">
+                              <span className="font-medium uppercase tracking-wider text-muted-foreground">SICN mean</span>
+                              <span className="font-mono text-foreground/90">{q.sicn_mean.toFixed(3)}</span>
+                            </div>
+                            <div className="grid gap-0.5">
+                              <span className="font-medium uppercase tracking-wider text-muted-foreground">Elements</span>
+                              <span className="font-mono text-foreground/90">{q.n_elements.toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </SidebarSection>
+              )}
             </TabsContent>
 
             <TabsContent value="build" className="mt-0">

@@ -1,4 +1,4 @@
-from .discretization import DiscretizationHints, FDM, FDMDemag, FDMGrid, FEM, Hybrid
+from .discretization import DiscretizationHints, FDM, FDMDemag, FDMGrid, FEM, Hybrid, MeshOperation, PerObjectMeshRecipe, SharedMeshAssemblyPolicy
 from .antenna import (
     AntennaFieldSource,
     CPWAntenna,
@@ -70,6 +70,9 @@ __all__ = [
     "DeviceTarget",
     "Difference",
     "DiscretizationHints",
+    "MeshOperation",
+    "PerObjectMeshRecipe",
+    "SharedMeshAssemblyPolicy",
     "Eigenmodes",
     "ElasticBody",
     "ElasticMaterial",

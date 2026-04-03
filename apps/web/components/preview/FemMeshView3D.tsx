@@ -22,6 +22,7 @@ import { computeFaceAspectRatios } from "./r3f/colorUtils";
 import type {
   FemLiveMeshObjectSegment,
   FemMeshPart,
+  MeshQualityStats,
   MeshEntityViewState,
   MeshEntityViewStateMap,
 } from "../../lib/session/types";
@@ -91,6 +92,8 @@ interface Props {
   objectViewMode?: ObjectViewMode;
   objectSegments?: FemLiveMeshObjectSegment[];
   meshParts?: FemMeshPart[];
+  elementMarkers?: number[] | null;
+  perDomainQuality?: Record<number, MeshQualityStats> | null;
   meshEntityViewState?: MeshEntityViewStateMap;
   onMeshPartViewStatePatch?: (
     partIds: string[],
@@ -122,6 +125,106 @@ interface RenderLayer {
 
 type CameraProjection = "perspective" | "orthographic";
 type NavigationMode = "trackball" | "cad";
+
+interface PartQualitySummary {
+  markers: number[];
+  domainCount: number;
+  stats: MeshQualityStats | null;
+}
+
+function uniqueSortedMarkers(markers: readonly number[]): number[] {
+  return Array.from(new Set(markers.filter((value) => Number.isFinite(value) && value >= 0))).sort(
+    (left, right) => left - right,
+  );
+}
+
+function combineMeshQualityStats(statsList: readonly MeshQualityStats[]): MeshQualityStats | null {
+  if (statsList.length === 0) {
+    return null;
+  }
+  if (statsList.length === 1) {
+    return statsList[0] ?? null;
+  }
+  const totalElements = statsList.reduce((sum, entry) => sum + Math.max(0, entry.n_elements), 0);
+  const weight = (value: (entry: MeshQualityStats) => number) =>
+    totalElements > 0
+      ? statsList.reduce(
+          (sum, entry) => sum + value(entry) * Math.max(0, entry.n_elements),
+          0,
+        ) / totalElements
+      : statsList.reduce((sum, entry) => sum + value(entry), 0) / statsList.length;
+  const combineHistogram = (
+    extractor: (entry: MeshQualityStats) => number[] | undefined,
+  ): number[] | undefined => {
+    const base = extractor(statsList[0]);
+    if (!base || base.length === 0) {
+      return undefined;
+    }
+    if (!statsList.every((entry) => (extractor(entry)?.length ?? 0) === base.length)) {
+      return undefined;
+    }
+    return base.map((_, index) =>
+      statsList.reduce((sum, entry) => sum + (extractor(entry)?.[index] ?? 0), 0),
+    );
+  };
+  return {
+    n_elements: totalElements,
+    sicn_min: Math.min(...statsList.map((entry) => entry.sicn_min)),
+    sicn_max: Math.max(...statsList.map((entry) => entry.sicn_max)),
+    sicn_mean: weight((entry) => entry.sicn_mean),
+    sicn_p5: Math.min(...statsList.map((entry) => entry.sicn_p5)),
+    sicn_histogram: combineHistogram((entry) => entry.sicn_histogram),
+    gamma_min: Math.min(...statsList.map((entry) => entry.gamma_min)),
+    gamma_mean: weight((entry) => entry.gamma_mean),
+    gamma_histogram: combineHistogram((entry) => entry.gamma_histogram),
+    volume_min: Math.min(...statsList.map((entry) => entry.volume_min)),
+    volume_max: Math.max(...statsList.map((entry) => entry.volume_max)),
+    volume_mean: weight((entry) => entry.volume_mean),
+    volume_std: weight((entry) => entry.volume_std),
+    avg_quality: weight((entry) => entry.avg_quality),
+  };
+}
+
+function markersForPart(
+  part: FemMeshPart,
+  elementMarkers: readonly number[] | null | undefined,
+): number[] {
+  if (!elementMarkers || elementMarkers.length === 0 || part.element_count <= 0) {
+    return [];
+  }
+  const start = Math.max(0, Math.trunc(part.element_start));
+  const end = Math.min(elementMarkers.length, start + Math.max(0, Math.trunc(part.element_count)));
+  if (start >= end) {
+    return [];
+  }
+  return uniqueSortedMarkers(elementMarkers.slice(start, end));
+}
+
+function qualityToneClass(stats: MeshQualityStats | null): string {
+  if (!stats) {
+    return "border-border/25 bg-background/45 text-muted-foreground";
+  }
+  if (stats.sicn_p5 >= 0.3 && stats.gamma_min >= 0.1) {
+    return "border-emerald-400/25 bg-emerald-500/12 text-emerald-100";
+  }
+  if (stats.sicn_p5 >= 0.1 && stats.gamma_min >= 0.03) {
+    return "border-amber-400/25 bg-amber-500/12 text-amber-100";
+  }
+  return "border-rose-400/25 bg-rose-500/12 text-rose-100";
+}
+
+function qualityLabel(stats: MeshQualityStats | null): string {
+  if (!stats) {
+    return "No quality";
+  }
+  if (stats.sicn_p5 >= 0.3 && stats.gamma_min >= 0.1) {
+    return "Good";
+  }
+  if (stats.sicn_p5 >= 0.1 && stats.gamma_min >= 0.03) {
+    return "Fair";
+  }
+  return "Needs review";
+}
 
 function collectSegmentBoundaryFaceIndices(
   objectSegments: readonly FemLiveMeshObjectSegment[],
@@ -661,6 +764,8 @@ function FemMeshView3DInner({
   objectViewMode = "context",
   objectSegments = [],
   meshParts = [],
+  elementMarkers = null,
+  perDomainQuality = null,
   meshEntityViewState = {},
   onMeshPartViewStatePatch,
   visibleObjectIds,
@@ -850,25 +955,61 @@ function FemMeshView3DInner({
     () => meshParts.find((part) => part.id === selectedEntityId) ?? null,
     [meshParts, selectedEntityId],
   );
+  const partQualityById = useMemo(() => {
+    const entries = new Map<string, PartQualitySummary>();
+    for (const part of meshParts) {
+      const markers = markersForPart(part, elementMarkers);
+      const qualityEntries = markers
+        .map((marker) => perDomainQuality?.[marker] ?? null)
+        .filter((entry): entry is MeshQualityStats => Boolean(entry));
+      entries.set(part.id, {
+        markers,
+        domainCount: qualityEntries.length,
+        stats: combineMeshQualityStats(qualityEntries),
+      });
+    }
+    return entries;
+  }, [elementMarkers, meshParts, perDomainQuality]);
+  const inspectedMeshPart = useMemo(() => {
+    if (selectedMeshPart) {
+      return selectedMeshPart;
+    }
+    if (objectViewMode === "isolate" && selectedObjectId) {
+      return (
+        meshParts.find(
+          (part) => part.role === "magnetic_object" && part.object_id === selectedObjectId,
+        ) ?? null
+      );
+    }
+    return null;
+  }, [meshParts, objectViewMode, selectedMeshPart, selectedObjectId]);
+  const inspectedPartQuality = useMemo(
+    () => (inspectedMeshPart ? partQualityById.get(inspectedMeshPart.id) ?? null : null),
+    [inspectedMeshPart, partQualityById],
+  );
   const roleVisibilitySummary = useMemo(
-    () =>
-      (
-        [
-          ["air", "Air"],
-          ["magnetic_object", "Objects"],
-          ["interface", "Interfaces"],
-          ["outer_boundary", "Boundary"],
-        ] as const
-      )
-        .map(([role, label]) => {
-          const parts = meshParts.filter((part) => part.role === role);
-          if (parts.length === 0) {
-            return null;
-          }
-          const visible = parts.filter((part) => meshEntityViewState[part.id]?.visible ?? true).length;
-          return { role, label, total: parts.length, visible };
-        })
-        .filter((entry): entry is { role: FemMeshPart["role"]; label: string; total: number; visible: number } => Boolean(entry)),
+    () => {
+      const summary: Array<{
+        role: FemMeshPart["role"];
+        label: string;
+        total: number;
+        visible: number;
+      }> = [];
+      for (const [role, label] of [
+        ["air", "Air"],
+        ["magnetic_object", "Objects"],
+        ["interface", "Interfaces"],
+        ["outer_boundary", "Boundary"],
+      ] as const) {
+        const parts = meshParts.filter((part) => part.role === role);
+        if (parts.length === 0) {
+          continue;
+        }
+        const visible = parts.filter((part) => meshEntityViewState[part.id]?.visible ?? true).length;
+        summary.push({ role, label, total: parts.length, visible });
+      }
+      return summary;
+    },
     [meshEntityViewState, meshParts],
   );
   const missingMagneticMask =
@@ -1551,7 +1692,11 @@ function FemMeshView3DInner({
           <div className="flex items-center justify-between border-b border-border/25 px-3 py-2.5">
             <div>
               <p className="text-[0.62rem] font-semibold tracking-[0.12em] text-muted-foreground">
-                {selectedMeshPart ? "Selected part" : "Mesh parts"}
+                {selectedMeshPart
+                  ? "Selected submesh"
+                  : inspectedMeshPart
+                    ? "Isolated submesh"
+                    : "Mesh parts"}
               </p>
               <p className="text-[0.78rem] font-medium text-foreground">
                 {visibleLayers.length}/{meshParts.length} visible parts
@@ -1580,48 +1725,110 @@ function FemMeshView3DInner({
             </div>
           </div>
           <div className="max-h-[calc(100%-7.5rem)] overflow-y-auto px-3 py-3">
-            {selectedMeshPart ? (
+            {inspectedMeshPart ? (
               <div className="mb-3 rounded-2xl border border-primary/18 bg-primary/6 p-3">
                 <div className="flex items-start gap-3">
                   <button
                     type="button"
                     className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-white/15"
-                    style={{ backgroundColor: partRoleTint(selectedMeshPart.role) }}
-                    onClick={() => patchSinglePart(selectedMeshPart.id, { visible: !(meshEntityViewState[selectedMeshPart.id]?.visible ?? true) })}
-                    title={(meshEntityViewState[selectedMeshPart.id]?.visible ?? true) ? "Hide part" : "Show part"}
+                    style={{ backgroundColor: partRoleTint(inspectedMeshPart.role) }}
+                    onClick={() => patchSinglePart(inspectedMeshPart.id, { visible: !(meshEntityViewState[inspectedMeshPart.id]?.visible ?? true) })}
+                    title={(meshEntityViewState[inspectedMeshPart.id]?.visible ?? true) ? "Hide part" : "Show part"}
                   />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[0.78rem] font-semibold text-foreground">
-                      {selectedMeshPart.label || selectedMeshPart.id}
+                      {inspectedMeshPart.label || inspectedMeshPart.id}
                     </div>
                     <div className="mt-1 text-[0.64rem] text-muted-foreground">
-                      {selectedMeshPart.role.replaceAll("_", " ")}
-                      {selectedMeshPart.object_id ? ` · ${selectedMeshPart.object_id}` : ""}
+                      {inspectedMeshPart.role.replaceAll("_", " ")}
+                      {inspectedMeshPart.object_id ? ` · ${inspectedMeshPart.object_id}` : ""}
                     </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-[0.66rem]">
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-[0.66rem]">
                       <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
-                        <div className="text-muted-foreground">Elements</div>
+                        <div className="text-muted-foreground">Tetra</div>
                         <div className="mt-1 font-mono text-foreground">
-                          {selectedMeshPart.element_count.toLocaleString()}
+                          {inspectedMeshPart.element_count.toLocaleString()}
                         </div>
                       </div>
                       <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
                         <div className="text-muted-foreground">Nodes</div>
                         <div className="mt-1 font-mono text-foreground">
-                          {selectedMeshPart.node_count.toLocaleString()}
+                          {inspectedMeshPart.node_count.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
+                        <div className="text-muted-foreground">Faces</div>
+                        <div className="mt-1 font-mono text-foreground">
+                          {inspectedMeshPart.boundary_face_count.toLocaleString()}
                         </div>
                       </div>
                     </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span
+                        className={cn(
+                          "rounded-full border px-2 py-0.5 text-[0.58rem] font-semibold uppercase tracking-[0.14em]",
+                          qualityToneClass(inspectedPartQuality?.stats ?? null),
+                        )}
+                      >
+                        {qualityLabel(inspectedPartQuality?.stats ?? null)}
+                      </span>
+                      {inspectedPartQuality?.markers.length ? (
+                        <span className="rounded-full border border-border/20 bg-background/35 px-2 py-0.5 text-[0.58rem] font-mono text-muted-foreground">
+                          markers {inspectedPartQuality.markers.join(", ")}
+                        </span>
+                      ) : null}
+                      {inspectedPartQuality?.domainCount ? (
+                        <span className="rounded-full border border-border/20 bg-background/35 px-2 py-0.5 text-[0.58rem] font-mono text-muted-foreground">
+                          {inspectedPartQuality.domainCount} quality domain{inspectedPartQuality.domainCount === 1 ? "" : "s"}
+                        </span>
+                      ) : null}
+                    </div>
+                    {inspectedPartQuality?.stats ? (
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-[0.64rem]">
+                        <div className="rounded-xl border border-emerald-400/12 bg-emerald-500/5 px-2.5 py-2">
+                          <div className="text-muted-foreground">Avg quality</div>
+                          <div className="mt-1 font-mono text-foreground">
+                            {inspectedPartQuality.stats.avg_quality.toFixed(3)}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
+                          <div className="text-muted-foreground">SICN p5</div>
+                          <div className="mt-1 font-mono text-foreground">
+                            {inspectedPartQuality.stats.sicn_p5.toFixed(3)}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
+                          <div className="text-muted-foreground">SICN mean</div>
+                          <div className="mt-1 font-mono text-foreground">
+                            {inspectedPartQuality.stats.sicn_mean.toFixed(3)}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-border/18 bg-background/30 px-2.5 py-2">
+                          <div className="text-muted-foreground">Gamma min</div>
+                          <div className="mt-1 font-mono text-foreground">
+                            {inspectedPartQuality.stats.gamma_min.toFixed(3)}
+                          </div>
+                        </div>
+                      </div>
+                    ) : inspectedMeshPart.element_count > 0 ? (
+                      <div className="mt-2 rounded-xl border border-border/18 bg-background/30 px-2.5 py-2 text-[0.62rem] text-muted-foreground">
+                        Quality metrics are not available for this submesh yet. Enable quality extraction before rebuilding to inspect SICN and gamma here.
+                      </div>
+                    ) : (
+                      <div className="mt-2 rounded-xl border border-border/18 bg-background/30 px-2.5 py-2 text-[0.62rem] text-muted-foreground">
+                        This part is surface-only, so volume tetrahedron quality metrics do not apply.
+                      </div>
+                    )}
                   </div>
                   <button
                     type="button"
                     className={cn(
                       "rounded-lg border px-2 py-1 text-[0.62rem] font-semibold transition-colors",
-                      focusedEntityId === selectedMeshPart.id
+                      focusedEntityId === inspectedMeshPart.id
                         ? "border-cyan-400/30 bg-cyan-500/12 text-cyan-200"
                         : "border-border/20 text-muted-foreground hover:bg-muted/50 hover:text-foreground",
                     )}
-                    onClick={() => onEntityFocus?.(selectedMeshPart.id)}
+                    onClick={() => onEntityFocus?.(inspectedMeshPart.id)}
                   >
                     Focus
                   </button>
@@ -1637,6 +1844,7 @@ function FemMeshView3DInner({
                   {group.parts.map((part) => {
                     const viewState = meshEntityViewState[part.id];
                     const isSelected = selectedEntityId === part.id;
+                    const partQuality = partQualityById.get(part.id) ?? null;
                     return (
                       <div
                         key={part.id}
@@ -1666,6 +1874,9 @@ function FemMeshView3DInner({
                             <div className="mt-0.5 flex flex-wrap gap-2 text-[0.6rem] font-mono text-muted-foreground">
                               <span>{part.element_count.toLocaleString()} el</span>
                               <span>{part.node_count.toLocaleString()} n</span>
+                              {partQuality?.stats ? (
+                                <span>SICN p5 {partQuality.stats.sicn_p5.toFixed(2)}</span>
+                              ) : null}
                               {part.object_id && <span>{part.object_id}</span>}
                             </div>
                           </button>

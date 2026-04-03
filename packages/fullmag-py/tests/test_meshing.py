@@ -20,11 +20,13 @@ from fullmag.meshing.asset_pipeline import (
 from fullmag.meshing.gmsh_bridge import (
     ALGO_3D_HXT,
     ALGO_3D_MMG3D,
+    MESH_SIZE_PRESETS,
     MeshData,
     MeshOptions,
     SizeFieldData,
     _apply_mesh_options,
     _extract_gmsh_connectivity,
+    resolve_mesh_size_controls,
 )
 from fullmag.meshing.remesh_cli import _geometry_from_ir, _mesh_result_payload, _size_field_from_dict
 from fullmag.meshing.remesh_cli import _describe_remesh_job
@@ -401,6 +403,82 @@ class MeshScaffoldTests(unittest.TestCase):
 
         self.assertEqual(geometry.geometry_name, "nanoflower_left_geom")
 
+    def test_resolve_mesh_size_controls_supports_comsol_like_presets(self) -> None:
+        resolved = resolve_mesh_size_controls(MeshOptions(size_preset="finer"))
+
+        self.assertIn("finer", MESH_SIZE_PRESETS)
+        self.assertEqual(resolved["calibrate_for"], "general_physics")
+        self.assertEqual(resolved["size_preset"], "finer")
+        self.assertAlmostEqual(float(resolved["resolved_growth_rate"]), 1.4, places=6)
+        self.assertEqual(int(resolved["resolved_size_from_curvature"]), 20)
+        self.assertEqual(int(resolved["resolved_narrow_regions"]), 5)
+
+    def test_apply_mesh_options_resolves_comsol_like_curvature_and_narrow_regions(self) -> None:
+        class _FakeOptionsApi:
+            def __init__(self) -> None:
+                self.values: dict[str, float] = {}
+
+            def setNumber(self, key: str, value: float) -> None:
+                self.values[key] = float(value)
+
+        class _FakeFieldApi:
+            def __init__(self) -> None:
+                self._next = 1
+                self.background: int | None = None
+
+            def add(self, _kind: str) -> int:
+                current = self._next
+                self._next += 1
+                return current
+
+            def setNumber(self, _field_id: int, _key: str, _value: float) -> None:
+                return None
+
+            def setNumbers(self, _field_id: int, _key: str, _values: object) -> None:
+                return None
+
+            def setString(self, _field_id: int, _key: str, _value: str) -> None:
+                return None
+
+            def setAsBackgroundMesh(self, field_id: int) -> None:
+                self.background = field_id
+
+        fake_field_api = _FakeFieldApi()
+        fake_gmsh = type(
+            "FakeGmsh",
+            (),
+            {
+                "option": _FakeOptionsApi(),
+                "model": type(
+                    "FakeModel",
+                    (),
+                    {
+                        "mesh": type("FakeMesh", (), {"field": fake_field_api})(),
+                        "getEntities": staticmethod(lambda dim: [(2, 1)] if dim == 2 else []),
+                    },
+                )(),
+            },
+        )()
+
+        _apply_mesh_options(
+            fake_gmsh,
+            hmax=20e-9,
+            order=1,
+            opts=MeshOptions(
+                size_preset="finer",
+                curvature_factor=0.4,
+                narrow_region_resolution=0.7,
+            ),
+        )
+
+        self.assertEqual(
+            fake_gmsh.option.values["Mesh.MeshSizeFromCurvature"],
+            20.0,
+        )
+        self.assertEqual(fake_gmsh.option.values["Mesh.SmoothRatio"], 1.4)
+        self.assertEqual(fake_gmsh.option.values["Mesh.Smoothing"], 5.0)
+        self.assertIsNotNone(fake_field_api.background)
+
     def test_meshdata_to_ir_has_canonical_shape(self) -> None:
         mesh = self._unit_tet_mesh()
 
@@ -683,17 +761,17 @@ class MeshScaffoldTests(unittest.TestCase):
 
     def test_two_nanoflower_shared_domain_hmax_changes_total_tetra_count(self) -> None:
         coarse_mesh, coarse_markers = self._realize_two_nanoflower_shared_domain(
-            airbox_hmax=90e-9,
-            default_hmax=24e-9,
+            airbox_hmax=120e-9,
+            default_hmax=120e-9,
         )
         fine_object_mesh, fine_object_markers = self._realize_two_nanoflower_shared_domain(
-            airbox_hmax=90e-9,
-            default_hmax=24e-9,
-            left_hmax=8e-9,
+            airbox_hmax=120e-9,
+            default_hmax=120e-9,
+            left_hmax=12e-9,
         )
         fine_airbox_mesh, fine_airbox_markers = self._realize_two_nanoflower_shared_domain(
             airbox_hmax=35e-9,
-            default_hmax=24e-9,
+            default_hmax=120e-9,
         )
 
         self.assertEqual(len(coarse_markers), 2)

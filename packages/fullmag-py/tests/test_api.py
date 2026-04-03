@@ -1909,6 +1909,64 @@ class ProblemApiTests(unittest.TestCase):
         self.assertIn("body.mesh.smooth(iterations=2)", rewritten)
         self.assertIn("body.mesh.build()", rewritten)
 
+    def test_study_mesh_builder_exports_comsol_like_size_semantics(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("comsol_size_semantics")
+        study.engine("fem")
+        study.mesh(
+            hmax=25e-9,
+            calibrate_for="general_physics",
+            size_preset="finer",
+            curvature_factor=0.4,
+            narrow_region_resolution=0.7,
+        )
+
+        body = study.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="body")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        body.mesh(
+            hmax=20e-9,
+            calibrate_for="general_physics",
+            size_preset="fine",
+            curvature_factor=0.5,
+            narrow_region_resolution=0.6,
+        )
+
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_comsol_size_semantics.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with patch("fullmag.world.build_geometry_assets_for_request", return_value=None):
+                loaded = fm.load_problem_from_script(path)
+
+        workflow = loaded.problem.runtime_metadata["mesh_workflow"]
+        mesh_options = workflow["mesh_options"]
+        self.assertEqual(mesh_options["calibrate_for"], "general_physics")
+        self.assertEqual(mesh_options["size_preset"], "finer")
+        self.assertEqual(mesh_options["curvature_factor"], 0.4)
+        self.assertEqual(mesh_options["narrow_region_resolution"], 0.7)
+        self.assertEqual(workflow["per_geometry"][0]["size_preset"], "fine")
+
+        draft = export_builder_draft(loaded)
+        self.assertEqual(draft["mesh"]["calibrate_for"], "general_physics")
+        self.assertEqual(draft["mesh"]["size_preset"], "finer")
+        self.assertEqual(draft["mesh"]["curvature_factor"], "0.4")
+        self.assertEqual(draft["mesh"]["narrow_region_resolution"], "0.7")
+        self.assertEqual(draft["geometries"][0]["mesh"]["size_preset"], "fine")
+        self.assertEqual(draft["geometries"][0]["mesh"]["curvature_factor"], "0.5")
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn('calibrate_for="general_physics"', rewritten)
+        self.assertIn('size_preset="finer"', rewritten)
+        self.assertIn("curvature_factor=0.4", rewritten)
+        self.assertIn("narrow_region_resolution=0.7", rewritten)
+
     def test_builder_draft_exports_geometry_bounds_for_translated_box(self) -> None:
         script = """
         import fullmag as fm

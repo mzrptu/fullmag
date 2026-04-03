@@ -68,6 +68,7 @@ export interface FemLiveMesh {
   domain_mesh_mode?: string | null;
   domain_frame?: DomainFrameState | null;
   generation_id?: string | null;
+  per_domain_quality?: Record<number, MeshQualityStats> | null;
 }
 
 export interface FemLiveMeshObjectSegment {
@@ -99,6 +100,29 @@ export interface FemMeshPart {
   surface_faces: [number, number, number][];
   bounds_min: [number, number, number] | null;
   bounds_max: [number, number, number] | null;
+}
+
+export interface MeshQualityStats {
+  n_elements: number;
+  sicn_min: number;
+  sicn_max: number;
+  sicn_mean: number;
+  sicn_p5: number;
+  sicn_histogram?: number[];
+  gamma_min: number;
+  gamma_mean: number;
+  gamma_histogram?: number[];
+  volume_min: number;
+  volume_max: number;
+  volume_mean: number;
+  volume_std: number;
+  avg_quality: number;
+}
+
+export interface PerObjectMeshReport {
+  geometry_name: string;
+  marker: number;
+  quality: MeshQualityStats | null;
 }
 
 export interface MeshEntityViewState {
@@ -411,9 +435,17 @@ export interface ScriptBuilderPerGeometryMeshEntry {
   optimize_iterations: number | null;
   compute_quality: boolean | null;
   per_element_quality: boolean | null;
+  // Boundary layer extrusion
+  boundary_layer_count: number | null;
+  boundary_layer_thickness: string | null;   // SI metres as string (matches hmax/hmin pattern)
+  boundary_layer_stretching: number | null;
   size_fields: ScriptBuilderMeshSizeFieldEntry[];
   operations: ScriptBuilderMeshOperationEntry[];
   build_requested: boolean;
+  // Last build diagnostics (read-only, set by backend)
+  last_build_n_elements?: number | null;
+  last_build_quality_sicn?: number | null;
+  last_build_status?: "ok" | "warning" | "error" | null;
 }
 
 export interface ScriptBuilderGeometryEntry {

@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process::{Command as ProcessCommand, Stdio};
 
 use anyhow::{anyhow, bail, Context, Result};
+use std::collections::HashMap;
 
 use crate::args::ScriptCli;
 use crate::control_room::repo_root;
@@ -10,6 +11,47 @@ use crate::types::{
     LoadedMagnetizationState, PythonProgressCallback, PythonProgressEnvelope, PythonProgressEvent,
     ScriptExecutionConfig,
 };
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub(crate) struct RemeshPerDomainQuality {
+    pub n_elements: u32,
+    pub sicn_min: f64,
+    pub sicn_max: f64,
+    pub sicn_mean: f64,
+    pub sicn_p5: f64,
+    #[serde(default)]
+    pub sicn_histogram: Vec<u32>,
+    pub gamma_min: f64,
+    pub gamma_mean: f64,
+    #[serde(default)]
+    pub gamma_histogram: Vec<u32>,
+    pub volume_min: f64,
+    pub volume_max: f64,
+    pub volume_mean: f64,
+    pub volume_std: f64,
+    pub avg_quality: f64,
+}
+
+impl From<RemeshPerDomainQuality> for fullmag_ir::MeshQualityIR {
+    fn from(q: RemeshPerDomainQuality) -> Self {
+        Self {
+            n_elements: q.n_elements,
+            sicn_min: q.sicn_min,
+            sicn_max: q.sicn_max,
+            sicn_mean: q.sicn_mean,
+            sicn_p5: q.sicn_p5,
+            sicn_histogram: q.sicn_histogram,
+            gamma_min: q.gamma_min,
+            gamma_mean: q.gamma_mean,
+            gamma_histogram: q.gamma_histogram,
+            volume_min: q.volume_min,
+            volume_max: q.volume_max,
+            volume_mean: q.volume_mean,
+            volume_std: q.volume_std,
+            avg_quality: q.avg_quality,
+        }
+    }
+}
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub(crate) struct RemeshQualitySummary {
@@ -49,10 +91,18 @@ pub(crate) struct RemeshCliResponse {
     pub size_field_stats: Option<serde_json::Value>,
     #[serde(default)]
     pub region_markers: Vec<fullmag_ir::FemDomainRegionMarkerIR>,
+    /// Per-domain element quality, keyed by domain marker string (from Python).
+    #[serde(default)]
+    pub per_domain_quality: HashMap<String, RemeshPerDomainQuality>,
 }
 
 impl RemeshCliResponse {
     pub(crate) fn into_mesh_ir(self) -> fullmag_ir::MeshIR {
+        let per_domain_quality = self
+            .per_domain_quality
+            .into_iter()
+            .filter_map(|(k, v)| k.parse::<u32>().ok().map(|marker| (marker, v.into())))
+            .collect();
         fullmag_ir::MeshIR {
             mesh_name: self.mesh_name,
             nodes: self.nodes,
@@ -60,6 +110,7 @@ impl RemeshCliResponse {
             element_markers: self.element_markers,
             boundary_faces: self.boundary_faces,
             boundary_markers: self.boundary_markers,
+            per_domain_quality,
         }
     }
 }

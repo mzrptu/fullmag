@@ -62,6 +62,39 @@ from fullmag.model.problem import (
 )
 from fullmag.model.discretization import FDM, FEM
 
+_MESH_SIZE_CALIBRATIONS = ("general_physics",)
+_MESH_SIZE_PRESET_ALIASES = {
+    "extra fine": "extra_fine",
+    "extrafine": "extra_fine",
+    "very_fine": "extra_fine",
+}
+_MESH_SIZE_PRESETS = ("coarse", "normal", "fine", "finer", "extra_fine")
+
+
+def _normalize_mesh_calibration(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    if not normalized:
+        return None
+    if normalized not in _MESH_SIZE_CALIBRATIONS:
+        raise ValueError(
+            f"calibrate_for must be one of {_MESH_SIZE_CALIBRATIONS!r}, got {value!r}"
+        )
+    return normalized
+
+
+def _normalize_mesh_preset(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower().replace("-", "_")
+    if not normalized:
+        return None
+    normalized = _MESH_SIZE_PRESET_ALIASES.get(normalized, normalized)
+    if normalized not in _MESH_SIZE_PRESETS:
+        raise ValueError(f"size_preset must be one of {_MESH_SIZE_PRESETS!r}, got {value!r}")
+    return normalized
+
 
 # ---------------------------------------------------------------------------
 # Magnet handle — returned by fm.geometry()
@@ -222,6 +255,8 @@ class _MeshSpecState:
     hmin: float | None = None
     order: int | None = None
     source: str | None = None
+    calibrate_for: str | None = None
+    size_preset: str | None = None
     build_requested: bool = False
     operations: list[_MeshOperationSpec] = field(default_factory=list)
     # Algorithm
@@ -234,8 +269,10 @@ class _MeshSpecState:
     # Size control
     size_factor: float = 1.0
     size_from_curvature: int = 0
+    curvature_factor: float | None = None
     growth_rate: float | None = None
     narrow_regions: int = 0
+    narrow_region_resolution: float | None = None
     size_fields: list[dict[str, object]] = field(default_factory=list)
     # Quality
     compute_quality: bool = False
@@ -247,6 +284,8 @@ class _MeshSpecState:
             or self.hmin is not None
             or self.order is not None
             or self.source is not None
+            or self.calibrate_for is not None
+            or self.size_preset is not None
             or self.algorithm_2d is not None
             or self.algorithm_3d is not None
             or self.optimize_method is not None
@@ -254,8 +293,10 @@ class _MeshSpecState:
             or self.smoothing_steps != 1
             or not math.isclose(self.size_factor, 1.0)
             or self.size_from_curvature != 0
+            or self.curvature_factor is not None
             or self.growth_rate is not None
             or self.narrow_regions != 0
+            or self.narrow_region_resolution is not None
             or self.compute_quality
             or self.per_element_quality
             or bool(self.size_fields)
@@ -285,6 +326,8 @@ class GeometryMeshHandle:
         hmin: float | None = None,
         order: int | None = None,
         source: str | None = None,
+        calibrate_for: str | None = None,
+        size_preset: str | None = None,
         algorithm_2d: int | None = None,
         algorithm_3d: int | None = None,
         optimize: str | None = None,
@@ -292,18 +335,23 @@ class GeometryMeshHandle:
         smoothing_steps: int | None = None,
         size_factor: float | None = None,
         size_from_curvature: int | None = None,
+        curvature_factor: float | None = None,
         growth_rate: float | None = None,
         narrow_regions: int | None = None,
+        narrow_region_resolution: float | None = None,
         compute_quality: bool | None = None,
         per_element_quality: bool | None = None,
     ) -> "GeometryMeshHandle":
         return self.configure(
             hmax=hmax, hmin=hmin, order=order, source=source,
+            calibrate_for=calibrate_for, size_preset=size_preset,
             algorithm_2d=algorithm_2d, algorithm_3d=algorithm_3d,
             optimize=optimize, optimize_iterations=optimize_iterations,
             smoothing_steps=smoothing_steps, size_factor=size_factor,
             size_from_curvature=size_from_curvature,
+            curvature_factor=curvature_factor,
             growth_rate=growth_rate, narrow_regions=narrow_regions,
+            narrow_region_resolution=narrow_region_resolution,
             compute_quality=compute_quality,
             per_element_quality=per_element_quality,
         )
@@ -315,6 +363,8 @@ class GeometryMeshHandle:
         hmin: float | None = None,
         order: int | None = None,
         source: str | None = None,
+        calibrate_for: str | None = None,
+        size_preset: str | None = None,
         algorithm_2d: int | None = None,
         algorithm_3d: int | None = None,
         optimize: str | None = None,
@@ -322,8 +372,10 @@ class GeometryMeshHandle:
         smoothing_steps: int | None = None,
         size_factor: float | None = None,
         size_from_curvature: int | None = None,
+        curvature_factor: float | None = None,
         growth_rate: float | None = None,
         narrow_regions: int | None = None,
+        narrow_region_resolution: float | None = None,
         compute_quality: bool | None = None,
         per_element_quality: bool | None = None,
     ) -> "GeometryMeshHandle":
@@ -340,6 +392,11 @@ class GeometryMeshHandle:
             The stored mesh topology remains first-order.
         source : str, optional
             Path to external mesh file.
+        calibrate_for : str, optional
+            High-level calibration profile. Currently ``"general_physics"``.
+        size_preset : str, optional
+            COMSOL-like size preset: ``"coarse"``, ``"normal"``, ``"fine"``,
+            ``"finer"``, or ``"extra_fine"``.
         algorithm_2d : int, optional
             Gmsh 2D meshing algorithm (1=MeshAdapt, 5=Delaunay, 6=Frontal).
         algorithm_3d : int, optional
@@ -354,10 +411,16 @@ class GeometryMeshHandle:
             Global mesh size scaling factor.
         size_from_curvature : int, optional
             Points per 2π curvature (0 = disabled).
+        curvature_factor : float, optional
+            COMSOL-like curvature refinement factor. Lower values mean stronger
+            curvature-based refinement when ``size_from_curvature`` is not set.
         growth_rate : float, optional
             Target growth ratio between neighboring elements (`Mesh.SmoothRatio`).
         narrow_regions : int, optional
             Minimum elements across narrow gaps (0 = disabled).
+        narrow_region_resolution : float, optional
+            COMSOL-like narrow-gap resolution strength. Higher values mean
+            stronger refinement when ``narrow_regions`` is not set.
         compute_quality : bool, optional
             Extract SICN/gamma quality metrics after meshing.
         per_element_quality : bool, optional
@@ -374,6 +437,10 @@ class GeometryMeshHandle:
             spec.order = order
         if source is not None:
             spec.source = source
+        if calibrate_for is not None:
+            spec.calibrate_for = _normalize_mesh_calibration(calibrate_for)
+        if size_preset is not None:
+            spec.size_preset = _normalize_mesh_preset(size_preset)
         if algorithm_2d is not None:
             spec.algorithm_2d = algorithm_2d
         if algorithm_3d is not None:
@@ -388,10 +455,14 @@ class GeometryMeshHandle:
             spec.size_factor = size_factor
         if size_from_curvature is not None:
             spec.size_from_curvature = size_from_curvature
+        if curvature_factor is not None:
+            spec.curvature_factor = float(curvature_factor)
         if growth_rate is not None:
             spec.growth_rate = growth_rate
         if narrow_regions is not None:
             spec.narrow_regions = narrow_regions
+        if narrow_region_resolution is not None:
+            spec.narrow_region_resolution = float(narrow_region_resolution)
         if compute_quality is not None:
             spec.compute_quality = compute_quality
         if per_element_quality is not None:
@@ -765,6 +836,8 @@ class StudyBuilder:
         hmin: float | None = None,
         order: int | None = None,
         source: str | None = None,
+        calibrate_for: str | None = None,
+        size_preset: str | None = None,
         algorithm_2d: int | None = None,
         algorithm_3d: int | None = None,
         optimize: str | None = None,
@@ -772,8 +845,10 @@ class StudyBuilder:
         smoothing_steps: int | None = None,
         size_factor: float | None = None,
         size_from_curvature: int | None = None,
+        curvature_factor: float | None = None,
         growth_rate: float | None = None,
         narrow_regions: int | None = None,
+        narrow_region_resolution: float | None = None,
         compute_quality: bool | None = None,
         per_element_quality: bool | None = None,
     ) -> "StudyBuilder":
@@ -782,6 +857,8 @@ class StudyBuilder:
             hmin=hmin,
             order=order,
             source=source,
+            calibrate_for=calibrate_for,
+            size_preset=size_preset,
             algorithm_2d=algorithm_2d,
             algorithm_3d=algorithm_3d,
             optimize=optimize,
@@ -789,8 +866,10 @@ class StudyBuilder:
             smoothing_steps=smoothing_steps,
             size_factor=size_factor,
             size_from_curvature=size_from_curvature,
+            curvature_factor=curvature_factor,
             growth_rate=growth_rate,
             narrow_regions=narrow_regions,
+            narrow_region_resolution=narrow_region_resolution,
             compute_quality=compute_quality,
             per_element_quality=per_element_quality,
         )
@@ -1061,6 +1140,8 @@ def mesh(
     hmin: float | None = None,
     order: int | None = None,
     source: str | None = None,
+    calibrate_for: str | None = None,
+    size_preset: str | None = None,
     algorithm_2d: int | None = None,
     algorithm_3d: int | None = None,
     optimize: str | None = None,
@@ -1068,8 +1149,10 @@ def mesh(
     smoothing_steps: int | None = None,
     size_factor: float | None = None,
     size_from_curvature: int | None = None,
+    curvature_factor: float | None = None,
     growth_rate: float | None = None,
     narrow_regions: int | None = None,
+    narrow_region_resolution: float | None = None,
     compute_quality: bool | None = None,
     per_element_quality: bool | None = None,
 ) -> None:
@@ -1087,6 +1170,10 @@ def mesh(
     if source is not None:
         _state._default_mesh_spec.source = source
         _state._mesh_source = source
+    if calibrate_for is not None:
+        _state._default_mesh_spec.calibrate_for = _normalize_mesh_calibration(calibrate_for)
+    if size_preset is not None:
+        _state._default_mesh_spec.size_preset = _normalize_mesh_preset(size_preset)
     if algorithm_2d is not None:
         _state._default_mesh_spec.algorithm_2d = algorithm_2d
     if algorithm_3d is not None:
@@ -1101,10 +1188,14 @@ def mesh(
         _state._default_mesh_spec.size_factor = size_factor
     if size_from_curvature is not None:
         _state._default_mesh_spec.size_from_curvature = size_from_curvature
+    if curvature_factor is not None:
+        _state._default_mesh_spec.curvature_factor = float(curvature_factor)
     if growth_rate is not None:
         _state._default_mesh_spec.growth_rate = growth_rate
     if narrow_regions is not None:
         _state._default_mesh_spec.narrow_regions = narrow_regions
+    if narrow_region_resolution is not None:
+        _state._default_mesh_spec.narrow_region_resolution = float(narrow_region_resolution)
     if compute_quality is not None:
         _state._default_mesh_spec.compute_quality = compute_quality
     if per_element_quality is not None:
@@ -1321,6 +1412,10 @@ def _mesh_spec_to_metadata(spec: _MeshSpecState) -> dict[str, object]:
         payload["order"] = spec.order
     if spec.source is not None:
         payload["source"] = spec.source
+    if spec.calibrate_for is not None:
+        payload["calibrate_for"] = spec.calibrate_for
+    if spec.size_preset is not None:
+        payload["size_preset"] = spec.size_preset
     if spec.build_requested:
         payload["build_requested"] = True
     if spec.algorithm_2d is not None:
@@ -1337,10 +1432,14 @@ def _mesh_spec_to_metadata(spec: _MeshSpecState) -> dict[str, object]:
         payload["size_factor"] = spec.size_factor
     if spec.size_from_curvature != 0:
         payload["size_from_curvature"] = spec.size_from_curvature
+    if spec.curvature_factor is not None:
+        payload["curvature_factor"] = spec.curvature_factor
     if spec.growth_rate is not None:
         payload["growth_rate"] = spec.growth_rate
     if spec.narrow_regions != 0:
         payload["narrow_regions"] = spec.narrow_regions
+    if spec.narrow_region_resolution is not None:
+        payload["narrow_region_resolution"] = spec.narrow_region_resolution
     if spec.compute_quality:
         payload["compute_quality"] = True
     if spec.per_element_quality:
@@ -1406,6 +1505,10 @@ def _collect_mesh_workflow_metadata() -> dict[str, object] | None:
         mesh_options["algorithm_3d"] = primary_spec.algorithm_3d
     if primary_spec.hmin is not None:
         mesh_options["hmin"] = primary_spec.hmin
+    if primary_spec.calibrate_for is not None:
+        mesh_options["calibrate_for"] = primary_spec.calibrate_for
+    if primary_spec.size_preset is not None:
+        mesh_options["size_preset"] = primary_spec.size_preset
     if primary_spec.optimize_method is not None:
         mesh_options["optimize"] = primary_spec.optimize_method
     if primary_spec.optimize_iterations != 1:
@@ -1416,10 +1519,14 @@ def _collect_mesh_workflow_metadata() -> dict[str, object] | None:
         mesh_options["size_factor"] = primary_spec.size_factor
     if primary_spec.size_from_curvature > 0:
         mesh_options["size_from_curvature"] = primary_spec.size_from_curvature
+    if primary_spec.curvature_factor is not None:
+        mesh_options["curvature_factor"] = primary_spec.curvature_factor
     if primary_spec.growth_rate is not None:
         mesh_options["growth_rate"] = primary_spec.growth_rate
     if primary_spec.narrow_regions > 0:
         mesh_options["narrow_regions"] = primary_spec.narrow_regions
+    if primary_spec.narrow_region_resolution is not None:
+        mesh_options["narrow_region_resolution"] = primary_spec.narrow_region_resolution
     if primary_spec.compute_quality:
         mesh_options["compute_quality"] = True
     if primary_spec.per_element_quality:

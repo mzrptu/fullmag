@@ -1,7 +1,8 @@
 //! Public and internal types for the runner.
 
-use fullmag_ir::{FemMeshPartRole, FemMeshPartSelector};
+use fullmag_ir::{FemMeshPartRole, FemMeshPartSelector, MeshQualityIR};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::AtomicBool;
 use uuid::Uuid;
@@ -298,6 +299,47 @@ pub struct FemMeshPartPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshQualityPayload {
+    pub n_elements: u32,
+    pub sicn_min: f64,
+    pub sicn_max: f64,
+    pub sicn_mean: f64,
+    pub sicn_p5: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sicn_histogram: Vec<u32>,
+    pub gamma_min: f64,
+    pub gamma_mean: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gamma_histogram: Vec<u32>,
+    pub volume_min: f64,
+    pub volume_max: f64,
+    pub volume_mean: f64,
+    pub volume_std: f64,
+    pub avg_quality: f64,
+}
+
+impl From<&MeshQualityIR> for MeshQualityPayload {
+    fn from(q: &MeshQualityIR) -> Self {
+        Self {
+            n_elements: q.n_elements,
+            sicn_min: q.sicn_min,
+            sicn_max: q.sicn_max,
+            sicn_mean: q.sicn_mean,
+            sicn_p5: q.sicn_p5,
+            sicn_histogram: q.sicn_histogram.clone(),
+            gamma_min: q.gamma_min,
+            gamma_mean: q.gamma_mean,
+            gamma_histogram: q.gamma_histogram.clone(),
+            volume_min: q.volume_min,
+            volume_max: q.volume_max,
+            volume_mean: q.volume_mean,
+            volume_std: q.volume_std,
+            avg_quality: q.avg_quality,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FemMeshPayload {
     pub mesh_name: String,
     pub mesh_id: String,
@@ -318,6 +360,8 @@ pub struct FemMeshPayload {
     pub domain_frame: Option<fullmag_ir::DomainFrameIR>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub per_domain_quality: HashMap<u32, MeshQualityPayload>,
 }
 
 impl From<&fullmag_ir::FemPlanIR> for FemMeshPayload {
@@ -353,6 +397,12 @@ impl From<&fullmag_ir::FemPlanIR> for FemMeshPayload {
             domain_mesh_mode: Some(domain_mesh_mode_name(plan.domain_mesh_mode).to_string()),
             domain_frame: plan.domain_frame.clone(),
             generation_id: Some(generation_id),
+            per_domain_quality: plan
+                .mesh
+                .per_domain_quality
+                .iter()
+                .map(|(k, v)| (*k, MeshQualityPayload::from(v)))
+                .collect(),
         }
     }
 }
@@ -390,6 +440,12 @@ impl From<&fullmag_ir::FemEigenPlanIR> for FemMeshPayload {
             domain_mesh_mode: Some(domain_mesh_mode_name(plan.domain_mesh_mode).to_string()),
             domain_frame: plan.domain_frame.clone(),
             generation_id: Some(generation_id),
+            per_domain_quality: plan
+                .mesh
+                .per_domain_quality
+                .iter()
+                .map(|(k, v)| (*k, MeshQualityPayload::from(v)))
+                .collect(),
         }
     }
 }

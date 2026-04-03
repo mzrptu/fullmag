@@ -35,7 +35,6 @@ __all__ = [
     "VoxelMaskData",
     "add_air_box",
     "export_geometry_to_stl",
-    "extract_per_domain_quality",
     "generate_box_mesh",
     "generate_cylinder_mesh",
     "generate_mesh",

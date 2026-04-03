@@ -71,8 +71,11 @@ from .meshing import (
     MeshData,
     MeshOptions,
     MeshQualityReport,
+    MESH_SIZE_CALIBRATIONS,
+    MESH_SIZE_PRESETS,
     generate_mesh,
     export_geometry_to_stl as export_stl,
+    resolve_mesh_size_controls,
 )
 
 # ── Flat scripting API (mumax-style) ──────────────────────
@@ -150,6 +153,8 @@ __all__ = [
     "MechanicalLoad",
     "MeshData",
     "MicrostripAntenna",
+    "MESH_SIZE_CALIBRATIONS",
+    "MESH_SIZE_PRESETS",
     "PrescribedStrain",
     "Problem",
     "QuasistaticElasticity",
@@ -174,6 +179,7 @@ __all__ = [
     "backend",
     "export_stl",
     "generate_mesh",
+    "resolve_mesh_size_controls",
     "infer_magnetization_state_format",
     "init",
     "load_magnetization",

@@ -544,6 +544,7 @@ pub(crate) fn pack_mesh_by_analysis(
         element_markers: reordered_markers,
         boundary_faces: reordered_boundary_faces,
         boundary_markers: reordered_boundary_markers,
+        per_domain_quality: Default::default(),
     };
     reordered_mesh.validate().map_err(|errors| {
         format!(
@@ -1049,6 +1050,7 @@ pub(crate) fn merge_fem_meshes(
         element_markers,
         boundary_faces,
         boundary_markers,
+        per_domain_quality: Default::default(),
     };
     merged.validate().map_err(|errors| {
         format!(

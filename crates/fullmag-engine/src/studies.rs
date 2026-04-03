@@ -562,6 +562,7 @@ fn build_structured_box_tet_mesh(box_size_m: [f64; 3], divisions: usize) -> Mesh
         element_markers: vec![1; element_count],
         boundary_faces,
         boundary_markers: vec![1; boundary_face_count],
+        per_domain_quality: Default::default(),
     }
 }
 

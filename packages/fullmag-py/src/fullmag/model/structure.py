@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from fullmag._validation import as_vector3, require_non_empty, require_non_negative, require_positive
 from fullmag.init import InitialMagnetization, uniform
+from fullmag.model.discretization import PerObjectMeshRecipe
 from fullmag.model.geometry import Geometry
 
 
@@ -91,6 +92,7 @@ class Ferromagnet:
     material: Material
     region: Region | None = None
     m0: InitialMagnetization | None = None
+    mesh: PerObjectMeshRecipe | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", require_non_empty(self.name, "name"))
@@ -111,4 +113,5 @@ class Ferromagnet:
             "region": self.region_name,
             "material": self.material.name,
             "initial_magnetization": self.m0.to_ir() if self.m0 else None,
+            "mesh_recipe": self.mesh.to_ir() if self.mesh else None,
         }

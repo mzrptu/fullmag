@@ -8,7 +8,7 @@ from typing import Mapping
 import numpy as np
 
 from fullmag._progress import emit_progress, emit_progress_event
-from fullmag.model.discretization import FDM, FEM
+from fullmag.model.discretization import FDM, FEM, PerObjectMeshRecipe, SharedMeshAssemblyPolicy
 from fullmag.model.domain_frame import geometry_bounds
 from fullmag.model.geometry import (
     Box,
@@ -369,6 +369,57 @@ def _shared_domain_local_size_fields(
     return fields
 
 
+def _resolve_per_object_mesh_options(
+    geometries: list[Geometry],
+    per_object_recipes: dict[str, PerObjectMeshRecipe],
+    assembly_policy: SharedMeshAssemblyPolicy,
+    *,
+    default_hmax: float,
+) -> list[dict[str, object]]:
+    """Build size-field overrides from per-object mesh recipes.
+
+    For each geometry that has an associated :class:`PerObjectMeshRecipe`, a
+    Box size field is injected centred around the object's bounding box.  The
+    element size inside the box is taken from ``recipe.hmax`` (or the global
+    ``default_hmax`` when not set) and the size field boundary tolerance is
+    scaled by ``assembly_policy.interface_hmax_factor``.
+    """
+    extra_fields: list[dict[str, object]] = []
+    for geometry in geometries:
+        recipe = per_object_recipes.get(geometry.geometry_name)
+        if recipe is None:
+            continue
+        bounds = geometry_bounds(geometry, source_root=None)
+        if bounds is None:
+            continue
+        bounds_min, bounds_max = bounds
+        target_hmax = recipe.hmax if recipe.hmax is not None else default_hmax
+        # The interface factor controls how tightly the refined region tracks
+        # the object boundary.  Values < 1 mean finer elements at interfaces.
+        interface_h = target_hmax * assembly_policy.interface_hmax_factor
+        pad = max(target_hmax, interface_h) * 2.5
+        extra_fields.append(
+            {
+                "kind": "Box",
+                "params": {
+                    "VIn": float(target_hmax),
+                    "VOut": float(default_hmax),
+                    "XMin": float(bounds_min[0] - pad),
+                    "XMax": float(bounds_max[0] + pad),
+                    "YMin": float(bounds_min[1] - pad),
+                    "YMax": float(bounds_max[1] + pad),
+                    "ZMin": float(bounds_min[2] - pad),
+                    "ZMax": float(bounds_max[2] + pad),
+                },
+            }
+        )
+        # Inject any extra size fields declared directly on the recipe.
+        for sf in recipe.size_fields:
+            if isinstance(sf, dict):
+                extra_fields.append(sf)
+    return extra_fields
+
+
 def _mesh_options_from_runtime_metadata(
     mesh_workflow: Mapping[str, object] | None,
     *,
@@ -399,10 +450,24 @@ def _mesh_options_from_runtime_metadata(
         algorithm_2d=int(raw_mesh_options.get("algorithm_2d", 6)),
         algorithm_3d=int(raw_mesh_options.get("algorithm_3d", 1)),
         hmin=_coerce_positive_float(raw_mesh_options.get("hmin")),
+        calibrate_for=(
+            str(raw_mesh_options.get("calibrate_for"))
+            if isinstance(raw_mesh_options.get("calibrate_for"), str)
+            else None
+        ),
+        size_preset=(
+            str(raw_mesh_options.get("size_preset"))
+            if isinstance(raw_mesh_options.get("size_preset"), str)
+            else None
+        ),
         size_factor=float(raw_mesh_options.get("size_factor", 1.0)),
         size_from_curvature=int(raw_mesh_options.get("size_from_curvature", 0)),
+        curvature_factor=_coerce_positive_float(raw_mesh_options.get("curvature_factor")),
         growth_rate=_coerce_positive_float(raw_mesh_options.get("growth_rate")),
         narrow_regions=int(raw_mesh_options.get("narrow_regions", 0)),
+        narrow_region_resolution=_coerce_positive_float(
+            raw_mesh_options.get("narrow_region_resolution")
+        ),
         smoothing_steps=int(raw_mesh_options.get("smoothing_steps", 1)),
         optimize=str(optimize) if isinstance(optimize, str) and optimize.strip() else None,
         optimize_iters=int(raw_mesh_options.get("optimize_iterations", 1)),
@@ -575,6 +640,8 @@ def realize_fem_domain_mesh_asset(
     *,
     study_universe: Mapping[str, object] | None = None,
     mesh_workflow: Mapping[str, object] | None = None,
+    per_object_recipes: dict[str, PerObjectMeshRecipe] | None = None,
+    assembly_policy: SharedMeshAssemblyPolicy | None = None,
 ) -> tuple[MeshData, list[dict[str, object]]]:
     if not geometries:
         raise ValueError("shared FEM domain mesh requires at least one geometry")
@@ -602,6 +669,24 @@ def realize_fem_domain_mesh_asset(
             geometries=geometries,
             default_hmax=float(hints.hmax),
         )
+        # Overlay per-object recipe size fields on top of the workflow fields.
+        if per_object_recipes:
+            _policy = assembly_policy if assembly_policy is not None else SharedMeshAssemblyPolicy()
+            recipe_fields = _resolve_per_object_mesh_options(
+                geometries,
+                per_object_recipes,
+                _policy,
+                default_hmax=float(hints.hmax),
+            )
+            if recipe_fields:
+                # Prepend recipe fields so they take priority over generic workflow fields.
+                existing = list(mesh_options.size_fields)
+                from dataclasses import replace as _dc_replace  # local import to avoid polluting module namespace
+                mesh_options = _dc_replace(mesh_options, size_fields=recipe_fields + existing)
+                emit_progress(
+                    f"Per-object mesh recipes active: {len(per_object_recipes)} objects, "
+                    f"{len(recipe_fields)} extra size fields"
+                )
         if mesh_options.size_fields:
             emit_progress(
                 f"Shared-domain local sizing active ({len(mesh_options.size_fields)} size fields)"
@@ -667,6 +752,7 @@ def realize_fem_domain_mesh_asset(
         boundary_faces=mesh.boundary_faces,
         boundary_markers=mesh.boundary_markers,
         quality=mesh.quality,
+        per_domain_quality=mesh.per_domain_quality,
     )
     return classified_mesh, region_markers
 

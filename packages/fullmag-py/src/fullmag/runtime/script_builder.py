@@ -640,6 +640,14 @@ def _render_mesh_kwargs(mesh_config: dict[str, object], *, source_root: Path) ->
     if isinstance(source_value, str) and source_value.strip():
         kwargs.append(f"source={_py_repr(_relativize_path(source_value, source_root))}")
 
+    calibrate_for_value = mesh_config.get("calibrate_for")
+    if isinstance(calibrate_for_value, str) and calibrate_for_value.strip():
+        kwargs.append(f"calibrate_for={_py_repr(calibrate_for_value)}")
+
+    size_preset_value = mesh_config.get("size_preset")
+    if isinstance(size_preset_value, str) and size_preset_value.strip():
+        kwargs.append(f"size_preset={_py_repr(size_preset_value)}")
+
     for key in (
         "algorithm_2d",
         "algorithm_3d",
@@ -651,6 +659,10 @@ def _render_mesh_kwargs(mesh_config: dict[str, object], *, source_root: Path) ->
         if mesh_config.get(key) is not None:
             kwargs.append(f"{key}={_py_literal(mesh_config[key])}")
 
+    curvature_factor_value = _number_or_none(mesh_config.get("curvature_factor"))
+    if curvature_factor_value is not None:
+        kwargs.append(f"curvature_factor={_py_number(curvature_factor_value)}")
+
     growth_rate_value = _number_or_none(mesh_config.get("growth_rate"))
     if growth_rate_value is not None:
         kwargs.append(f"growth_rate={_py_number(growth_rate_value)}")
@@ -658,6 +670,12 @@ def _render_mesh_kwargs(mesh_config: dict[str, object], *, source_root: Path) ->
     narrow_regions_value = mesh_config.get("narrow_regions")
     if isinstance(narrow_regions_value, (int, float)):
         kwargs.append(f"narrow_regions={int(narrow_regions_value)}")
+
+    narrow_region_resolution_value = _number_or_none(mesh_config.get("narrow_region_resolution"))
+    if narrow_region_resolution_value is not None:
+        kwargs.append(
+            f"narrow_region_resolution={_py_number(narrow_region_resolution_value)}"
+        )
 
     if mesh_config.get("optimize") is not None:
         kwargs.append(f"optimize={_py_repr(str(mesh_config['optimize']))}")
@@ -1534,10 +1552,16 @@ def _export_global_mesh_state(problem: Problem) -> dict[str, object]:
         "algorithm_3d": int(mesh_options.get("algorithm_3d", 1)),
         "hmax": _text_mesh_size(declared_hmax),
         "hmin": _text_number(_number_or_none(mesh_options.get("hmin"))),
+        "calibrate_for": str(mesh_options.get("calibrate_for", "") or ""),
+        "size_preset": str(mesh_options.get("size_preset", "") or ""),
         "size_factor": float(mesh_options.get("size_factor", 1.0)),
         "size_from_curvature": int(mesh_options.get("size_from_curvature", 0)),
+        "curvature_factor": _text_number(_number_or_none(mesh_options.get("curvature_factor"))),
         "growth_rate": _text_number(_number_or_none(mesh_options.get("growth_rate"))),
         "narrow_regions": int(mesh_options.get("narrow_regions", 0)),
+        "narrow_region_resolution": _text_number(
+            _number_or_none(mesh_options.get("narrow_region_resolution"))
+        ),
         "smoothing_steps": int(mesh_options.get("smoothing_steps", 1)),
         "optimize": str(mesh_options.get("optimize", "") or ""),
         "optimize_iterations": int(mesh_options.get("optimize_iterations", 1)),
@@ -1569,14 +1593,20 @@ def _export_geometry_mesh_entry(magnet_name: str, problem: Problem) -> dict[str,
             "mode": resolved_mode,
             "hmax": _text_mesh_size(mesh_entry.get("hmax")),
             "hmin": _text_number(_number_or_none(mesh_entry.get("hmin"))),
+            "calibrate_for": str(mesh_entry.get("calibrate_for")) if isinstance(mesh_entry.get("calibrate_for"), str) else None,
+            "size_preset": str(mesh_entry.get("size_preset")) if isinstance(mesh_entry.get("size_preset"), str) else None,
             "order": int(mesh_entry["order"]) if isinstance(mesh_entry.get("order"), (int, float)) else None,
             "source": str(mesh_entry["source"]) if isinstance(mesh_entry.get("source"), str) else None,
             "algorithm_2d": int(mesh_entry["algorithm_2d"]) if isinstance(mesh_entry.get("algorithm_2d"), (int, float)) else None,
             "algorithm_3d": int(mesh_entry["algorithm_3d"]) if isinstance(mesh_entry.get("algorithm_3d"), (int, float)) else None,
             "size_factor": float(mesh_entry["size_factor"]) if isinstance(mesh_entry.get("size_factor"), (int, float)) else None,
             "size_from_curvature": int(mesh_entry["size_from_curvature"]) if isinstance(mesh_entry.get("size_from_curvature"), (int, float)) else None,
+            "curvature_factor": _text_number(_number_or_none(mesh_entry.get("curvature_factor"))),
             "growth_rate": _text_number(_number_or_none(mesh_entry.get("growth_rate"))),
             "narrow_regions": int(mesh_entry["narrow_regions"]) if isinstance(mesh_entry.get("narrow_regions"), (int, float)) else None,
+            "narrow_region_resolution": _text_number(
+                _number_or_none(mesh_entry.get("narrow_region_resolution"))
+            ),
             "smoothing_steps": int(mesh_entry["smoothing_steps"]) if isinstance(mesh_entry.get("smoothing_steps"), (int, float)) else None,
             "optimize": str(mesh_entry["optimize"]) if isinstance(mesh_entry.get("optimize"), str) else None,
             "optimize_iterations": int(mesh_entry["optimize_iterations"]) if isinstance(mesh_entry.get("optimize_iterations"), (int, float)) else None,
@@ -1591,14 +1621,18 @@ def _export_geometry_mesh_entry(magnet_name: str, problem: Problem) -> dict[str,
             "mode": "inherit",
             "hmax": "",
             "hmin": "",
+            "calibrate_for": None,
+            "size_preset": None,
             "order": None,
             "source": None,
             "algorithm_2d": None,
             "algorithm_3d": None,
             "size_factor": None,
             "size_from_curvature": None,
+            "curvature_factor": "",
             "growth_rate": "",
             "narrow_regions": None,
+            "narrow_region_resolution": "",
             "smoothing_steps": None,
             "optimize": None,
             "optimize_iterations": None,

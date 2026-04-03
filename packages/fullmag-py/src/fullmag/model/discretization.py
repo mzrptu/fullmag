@@ -324,6 +324,8 @@ class PerObjectMeshRecipe:
     # ── element order / source ──
     order: int | None = None
     source: str | None = None          # path to a pre-built mesh file
+    calibrate_for: str | None = None
+    size_preset: str | None = None
 
     # ── algorithms ──
     algorithm_2d: int | None = None
@@ -332,10 +334,12 @@ class PerObjectMeshRecipe:
     # ── size controls ──
     size_factor: float | None = None
     size_from_curvature: int | None = None
+    curvature_factor: float | None = None
     growth_rate: float | None = None
 
     # ── topology controls ──
     narrow_regions: int | None = None
+    narrow_region_resolution: float | None = None
     smoothing_steps: int | None = None
 
     # ── optimisation ──
@@ -363,12 +367,16 @@ class PerObjectMeshRecipe:
             "hmin": self.hmin,
             "order": self.order,
             "source": self.source,
+            "calibrate_for": self.calibrate_for,
+            "size_preset": self.size_preset,
             "algorithm_2d": self.algorithm_2d,
             "algorithm_3d": self.algorithm_3d,
             "size_factor": self.size_factor,
             "size_from_curvature": self.size_from_curvature,
+            "curvature_factor": self.curvature_factor,
             "growth_rate": self.growth_rate,
             "narrow_regions": self.narrow_regions,
+            "narrow_region_resolution": self.narrow_region_resolution,
             "smoothing_steps": self.smoothing_steps,
             "optimize": self.optimize,
             "optimize_iters": self.optimize_iters,

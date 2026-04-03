@@ -157,6 +157,7 @@ mod tests {
             domain_mesh_mode: None,
             domain_frame: None,
             generation_id: Some("gen0".to_string()),
+            per_domain_quality: Default::default(),
         }
     }
 
