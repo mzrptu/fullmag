@@ -2075,6 +2075,15 @@ def _build_problem(
     relax_torque_tolerance: float = 1e-6,
     relax_energy_tolerance: float | None = None,
     relax_max_steps: int = 50_000,
+    eigen_count: int = 10,
+    eigen_target: str = "lowest",
+    eigen_target_frequency: float | None = None,
+    eigen_include_demag: bool = True,
+    eigen_equilibrium_source: str = "relax",
+    eigen_equilibrium_artifact: str | None = None,
+    eigen_normalization: str = "unit_l2",
+    eigen_damping_policy: str = "ignore",
+    eigen_k_vector: tuple[float, float, float] | None = None,
 ) -> Problem:
     """Construct a Problem from the current world state."""
     s = _state
@@ -2155,17 +2164,41 @@ def _build_problem(
     if mesh_workflow is not None:
         runtime_metadata["mesh_workflow"] = mesh_workflow
 
+    # Partition outputs: eigen-specific vs time-domain (field/scalar/snapshot).
+    _EIGEN_OUTPUT_TYPES = (SaveSpectrum, SaveMode, SaveDispersion)
+    eigen_outputs = [o for o in outputs if isinstance(o, _EIGEN_OUTPUT_TYPES)]
+    td_outputs = [o for o in outputs if not isinstance(o, _EIGEN_OUTPUT_TYPES)]
+
     if study_kind == "relaxation":
         study = Relaxation(
-            outputs=outputs,
+            outputs=td_outputs or [
+                SaveField(field="m", every=1e-12),
+                SaveScalar(scalar="E_total", every=1e-12),
+            ],
             algorithm=relax_algorithm,
             torque_tolerance=relax_torque_tolerance,
             energy_tolerance=relax_energy_tolerance,
             max_steps=relax_max_steps,
             dynamics=dynamics,
         )
+    elif study_kind == "eigenmodes":
+        if not eigen_outputs:
+            eigen_outputs = [SaveSpectrum()]
+        study = Eigenmodes(
+            outputs=eigen_outputs,
+            count=eigen_count,
+            target=eigen_target,
+            target_frequency=eigen_target_frequency,
+            include_demag=eigen_include_demag,
+            equilibrium_source=eigen_equilibrium_source,
+            equilibrium_artifact=eigen_equilibrium_artifact,
+            normalization=eigen_normalization,
+            damping_policy=eigen_damping_policy,
+            k_vector=eigen_k_vector,
+            dynamics=dynamics,
+        )
     else:
-        study = TimeEvolution(dynamics=dynamics, outputs=outputs)
+        study = TimeEvolution(dynamics=dynamics, outputs=td_outputs or outputs)
 
     return Problem(
         name=s._name,
@@ -2272,3 +2305,67 @@ def relax(
     else:
         until_seconds = 1e-13 * max_steps
     return Simulation(problem).run(until=until_seconds)
+
+
+def eigenmodes(
+    *,
+    count: int = 10,
+    target: str = "lowest",
+    target_frequency: float | None = None,
+    include_demag: bool = True,
+    equilibrium_source: str = "relax",
+    equilibrium_artifact: str | None = None,
+    normalization: str = "unit_l2",
+    damping_policy: str = "ignore",
+    k_vector: tuple[float, float, float] | None = None,
+) -> Any:
+    """Build the problem and queue/run an eigenmodes analysis.
+
+    Parameters
+    ----------
+    count : int
+        Number of eigenfrequencies/modes to compute.
+    target : str
+        ``"lowest"`` or ``"nearest"`` target selection strategy.
+    target_frequency : float, optional
+        Target frequency in Hz when ``target="nearest"``.
+    include_demag : bool
+        Include demagnetization in the linearized operator.
+    equilibrium_source : str
+        ``"relax"`` — use preceding relaxation result,
+        ``"provided"`` — use initial magnetization as-is,
+        ``"artifact"`` — load from file.
+    equilibrium_artifact : str, optional
+        Path to equilibrium artifact when ``equilibrium_source="artifact"``.
+    normalization : str
+        ``"unit_l2"`` or ``"unit_max_amplitude"``.
+    damping_policy : str
+        ``"ignore"`` or ``"include"``.
+    k_vector : tuple, optional
+        Bloch k-vector for dispersion sampling.
+    """
+    from fullmag.runtime import Simulation
+    problem = _build_problem(
+        study_kind="eigenmodes",
+        eigen_count=count,
+        eigen_target=target,
+        eigen_target_frequency=target_frequency,
+        eigen_include_demag=include_demag,
+        eigen_equilibrium_source=equilibrium_source,
+        eigen_equilibrium_artifact=equilibrium_artifact,
+        eigen_normalization=normalization,
+        eigen_damping_policy=damping_policy,
+        eigen_k_vector=k_vector,
+    )
+
+    if _capture_enabled:
+        _captured_stages.append(
+            CapturedStage(
+                problem=problem,
+                entrypoint_kind="flat_eigenmodes",
+                default_until_seconds=None,
+            )
+        )
+        return problem
+
+    return Simulation(problem).run()

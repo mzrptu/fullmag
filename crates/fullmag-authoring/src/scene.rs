@@ -40,6 +40,10 @@ pub struct SceneMetadata {
     pub id: String,
     #[serde(default = "default_scene_name")]
     pub name: String,
+    #[serde(default = "default_source_of_truth")]
+    pub source_of_truth: String,
+    #[serde(default = "default_authoring_schema")]
+    pub authoring_schema: String,
 }
 
 impl Default for SceneMetadata {
@@ -47,6 +51,8 @@ impl Default for SceneMetadata {
         Self {
             id: String::new(),
             name: default_scene_name(),
+            source_of_truth: default_source_of_truth(),
+            authoring_schema: default_authoring_schema(),
         }
     }
 }
@@ -63,6 +69,8 @@ pub struct SceneObject {
     pub region_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub magnetization_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_mesh: Option<ScriptBuilderPerGeometryMeshState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh_override: Option<ScriptBuilderPerGeometryMeshState>,
     #[serde(default = "default_true")]
@@ -196,6 +204,10 @@ pub struct SceneStudyState {
     pub demag_realization: Option<String>,
     #[serde(default = "default_solver")]
     pub solver: ScriptBuilderSolverState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub universe_mesh: Option<ScriptBuilderUniverseState>,
+    #[serde(default = "default_mesh")]
+    pub shared_domain_mesh: ScriptBuilderMeshState,
     #[serde(default = "default_mesh")]
     pub mesh_defaults: ScriptBuilderMeshState,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -277,6 +289,14 @@ fn default_scene_version() -> String {
 
 fn default_scene_name() -> String {
     "Scene".to_string()
+}
+
+fn default_source_of_truth() -> String {
+    "repo_head".to_string()
+}
+
+fn default_authoring_schema() -> String {
+    "mesh-first-fem.v1".to_string()
 }
 
 const fn zero_vec3() -> [f64; 3] {

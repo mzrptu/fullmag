@@ -1735,6 +1735,7 @@ bool compute_effective_fields_for_magnetization(
 
         // F-09 fix: add thermal noise to H_eff per step.
         if (ctx.temperature > 0.0 && !ctx.h_therm_xyz.empty()) {
+            context_refresh_thermal_field(ctx);
             for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
                 h_eff_xyz[i] += ctx.h_therm_xyz[i];
             }

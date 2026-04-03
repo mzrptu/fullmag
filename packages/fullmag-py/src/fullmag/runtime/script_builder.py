@@ -1017,11 +1017,16 @@ def _render_outputs(problem: Problem, magnet_vars: dict[str, str], *, surface: s
                     f"{_surface_call(surface, 'snapshot')}({_py_repr(quantity)}, every={_py_number(output.every)})"
                 )
             continue
-        if isinstance(output, (SaveSpectrum, SaveMode, SaveDispersion)):
-            raise ValueError(
-                "canonical flat-script rewrite does not yet support Eigenmodes outputs; "
-                "keep these studies in build()/Problem scripts for now"
-            )
+        if isinstance(output, SaveSpectrum):
+            lines.append(f"{_surface_call(surface, 'save')}(\"spectrum\")")
+            continue
+        if isinstance(output, SaveMode):
+            indices_repr = repr(list(output.indices))
+            lines.append(f"{_surface_call(surface, 'save')}(\"mode\", indices={indices_repr})")
+            continue
+        if isinstance(output, SaveDispersion):
+            lines.append(f"{_surface_call(surface, 'save')}(\"dispersion\")")
+            continue
         raise ValueError(f"unsupported output type: {type(output).__name__}")
     return lines
 
@@ -1053,10 +1058,22 @@ def _render_stages(
         study = stage.problem.study
         stage_override = _stage_override_for(stage_overrides, index=index, stage=stage)
         if isinstance(study, Eigenmodes):
-            raise ValueError(
-                "canonical flat-script rewrite does not yet support Eigenmodes studies; "
-                "keep them in build()/Problem scripts for now"
-            )
+            call_parts = [
+                f"count={study.count}",
+                f"target={_py_repr(study.target)}",
+            ]
+            if study.target_frequency is not None:
+                call_parts.append(f"target_frequency={_py_number(study.target_frequency)}")
+            call_parts.append(f"include_demag={study.include_demag!r}")
+            call_parts.append(f"equilibrium_source={_py_repr(study.equilibrium_source)}")
+            if study.equilibrium_artifact is not None:
+                call_parts.append(f"equilibrium_artifact={_py_repr(study.equilibrium_artifact)}")
+            call_parts.append(f"normalization={_py_repr(study.normalization)}")
+            call_parts.append(f"damping_policy={_py_repr(study.damping_policy)}")
+            if study.k_vector is not None:
+                call_parts.append(f"k_vector={study.k_vector!r}")
+            lines.append(f"{_surface_call(surface, 'eigenmodes')}({', '.join(call_parts)})")
+            continue
         if isinstance(study, Relaxation):
             relax_override = _normalize_mapping(solver_override.get("relax"))
             algorithm = (
@@ -1123,7 +1140,7 @@ def _stage_override_for(
     override = _normalize_mapping(raw_stage_overrides[index])
     if not override:
         return {}
-    expected_kind = "relax" if isinstance(stage.problem.study, Relaxation) else "run"
+    expected_kind = "relax" if isinstance(stage.problem.study, Relaxation) else ("eigenmodes" if isinstance(stage.problem.study, Eigenmodes) else "run")
     override_kind = override.get("kind")
     if isinstance(override_kind, str) and override_kind and override_kind != expected_kind:
         return {}

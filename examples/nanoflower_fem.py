@@ -44,8 +44,8 @@ study.build_domain_mesh()
 study.solver(max_error=1e-6, integrator="rk23", g=2.115)
 
 # ── Outputs ─────────────────────────────────────────────────
-study.save("m", every=1e-13)
-study.save("H_demag", every=1e-13)
+# study.save("m", every=1e-13)
+# study.save("H_demag", every=1e-13)
 study.tableautosave(1e-13)
 
 # ── Run ─────────────────────────────────────────────────────
@@ -63,4 +63,14 @@ if not USE_SAVED_RELAXED_STATE:
         relax_result.save_state(RELAXED_STATE_H5, format="h5")
         body.m = fm.load_magnetization(RELAXED_STATE_ZARR, format="zarr")
 
-study.run(1e-9)
+# ── Eigenmode analysis ──────────────────────────────────────
+study.save("spectrum")
+study.save("mode", indices=[0, 1, 2])
+study.eigenmodes(
+    count=10,
+    target="lowest",
+    include_demag=True,
+    equilibrium_source="relax",
+)
+
+# study.run(1e-9)

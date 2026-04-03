@@ -532,6 +532,7 @@ export interface ModelBuilderGraphObjectNode {
   name: string;
   label: string;
   geometry: ScriptBuilderGeometryEntry;
+  object_mesh: ScriptBuilderPerGeometryMeshEntry | null;
   tree: ModelBuilderGraphObjectTreeRefs;
 }
 
@@ -542,6 +543,8 @@ export interface ModelBuilderGraphStudyNode {
   backend: string | null;
   demag_realization: string | null;
   solver: ScriptBuilderSolverState;
+  universe_mesh: ScriptBuilderUniverseState | null;
+  shared_domain_mesh: ScriptBuilderMeshState;
   mesh_defaults: ScriptBuilderMeshState;
   stages: ScriptBuilderStageState[];
   initial_state: ScriptBuilderInitialState | null;
@@ -571,6 +574,8 @@ export interface ModelBuilderGraphCurrentModulesNode {
 
 export interface ModelBuilderGraphV2 {
   version: "model_builder.v2";
+  source_of_truth: "repo_head";
+  authoring_schema: "mesh-first-fem.v1";
   revision: number;
   study: ModelBuilderGraphStudyNode;
   universe: ModelBuilderGraphUniverseNode;
@@ -581,6 +586,8 @@ export interface ModelBuilderGraphV2 {
 export interface SceneMetadata {
   id: string;
   name: string;
+  source_of_truth?: "repo_head";
+  authoring_schema?: string;
 }
 
 export interface Transform3D {
@@ -618,6 +625,7 @@ export interface SceneObject {
   material_ref: string;
   region_name: string | null;
   magnetization_ref: string | null;
+  object_mesh: ScriptBuilderPerGeometryMeshEntry | null;
   mesh_override: ScriptBuilderPerGeometryMeshEntry | null;
   visible: boolean;
   locked: boolean;
@@ -653,6 +661,8 @@ export interface SceneStudyState {
   backend: string | null;
   demag_realization: string | null;
   solver: ScriptBuilderSolverState;
+  universe_mesh: ScriptBuilderUniverseState | null;
+  shared_domain_mesh: ScriptBuilderMeshState;
   mesh_defaults: ScriptBuilderMeshState;
   stages: ScriptBuilderStageState[];
   initial_state: ScriptBuilderInitialState | null;

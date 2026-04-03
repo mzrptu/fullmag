@@ -189,6 +189,8 @@ struct Context {
     double temperature = 0.0;       // Kelvin
     double thermal_sigma = 0.0;     // Precomputed noise amplitude (A/m)
     double current_dt = 1e-13;      // Current timestep for thermal sigma computation
+    double last_thermal_refresh_time = -1.0;
+    double last_thermal_refresh_dt = -1.0;
     std::vector<double> h_therm_xyz;  // Per-node thermal field buffer (AOS-3)
 
     TransferGridState transfer_grid{};
@@ -294,6 +296,7 @@ int context_upload_magnetization_f64(
     uint64_t len,
     std::string &error);
 void context_populate_device_info(Context &ctx);
+void context_refresh_thermal_field(Context &ctx);
 #if FULLMAG_HAS_MFEM_STACK
 bool context_initialize_mfem(Context &ctx, std::string &error);
 void context_destroy_mfem(Context &ctx);

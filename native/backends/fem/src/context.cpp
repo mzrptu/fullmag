@@ -131,7 +131,69 @@ double average_magnetic_node_volume(const Context &ctx) {
     return total_magnetic_volume / static_cast<double>(magnetic_node_count);
 }
 
+void refresh_thermal_field_for_current_state(Context &ctx) {
+    if (ctx.h_therm_xyz.size() != static_cast<size_t>(ctx.n_nodes) * 3u) {
+        ctx.h_therm_xyz.assign(static_cast<size_t>(ctx.n_nodes) * 3u, 0.0);
+    }
+    if (ctx.temperature <= 0.0 || ctx.current_dt <= 0.0) {
+        ctx.thermal_sigma = 0.0;
+        std::fill(ctx.h_therm_xyz.begin(), ctx.h_therm_xyz.end(), 0.0);
+        return;
+    }
+    if (ctx.last_thermal_refresh_time == ctx.current_time &&
+        ctx.last_thermal_refresh_dt == ctx.current_dt) {
+        return;
+    }
+
+    const double alpha = average_magnetic_scalar_field(
+        ctx.alpha_field,
+        ctx.magnetic_node_mask,
+        ctx.material.damping);
+    const double Ms = average_magnetic_scalar_field(
+        ctx.Ms_field,
+        ctx.magnetic_node_mask,
+        ctx.material.saturation_magnetisation);
+    const double gamma_red = ctx.material.gyromagnetic_ratio;
+    const double gamma0 = gamma_red * (1.0 + alpha * alpha);
+    const double V_node = average_magnetic_node_volume(ctx);
+
+    if (!(alpha > 0.0) || !(Ms > 0.0) || !(gamma_red > 0.0) || !(V_node > 0.0)) {
+        ctx.thermal_sigma = 0.0;
+        std::fill(ctx.h_therm_xyz.begin(), ctx.h_therm_xyz.end(), 0.0);
+        ctx.last_thermal_refresh_time = ctx.current_time;
+        ctx.last_thermal_refresh_dt = ctx.current_dt;
+        return;
+    }
+
+    const double sigma = std::sqrt(
+        2.0 * alpha * kB * ctx.temperature /
+        (gamma0 * kMU0 * Ms * V_node * ctx.current_dt)
+    );
+    ctx.thermal_sigma = sigma;
+
+    static thread_local std::mt19937_64 rng(42);
+    std::normal_distribution<double> dist(0.0, sigma);
+    for (size_t node = 0; node < static_cast<size_t>(ctx.n_nodes); ++node) {
+        const size_t base = node * 3u;
+        if (!ctx.magnetic_node_mask.empty() && ctx.magnetic_node_mask[node] == 0u) {
+            ctx.h_therm_xyz[base + 0] = 0.0;
+            ctx.h_therm_xyz[base + 1] = 0.0;
+            ctx.h_therm_xyz[base + 2] = 0.0;
+            continue;
+        }
+        ctx.h_therm_xyz[base + 0] = dist(rng);
+        ctx.h_therm_xyz[base + 1] = dist(rng);
+        ctx.h_therm_xyz[base + 2] = dist(rng);
+    }
+    ctx.last_thermal_refresh_time = ctx.current_time;
+    ctx.last_thermal_refresh_dt = ctx.current_dt;
+}
+
 } // namespace
+
+void context_refresh_thermal_field(Context &ctx) {
+    refresh_thermal_field_for_current_state(ctx);
+}
 
 bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::string &error) {
     if (plan.mesh.n_nodes == 0) {
@@ -242,6 +304,53 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
             !check_field_len(ctx.Kc3_field, "Kc3_field")) {
             return false;
         }
+        auto validate_field_values = [&](const std::vector<double> &field, const char *name,
+                                         bool require_positive, bool allow_zero) -> bool {
+            for (size_t i = 0; i < field.size(); ++i) {
+                const double value = field[i];
+                if (!std::isfinite(value)) {
+                    error = std::string("per-node field '") + name +
+                            "' contains NaN/Inf at index " + std::to_string(i);
+                    return false;
+                }
+                if (require_positive) {
+                    const bool valid = allow_zero ? value >= 0.0 : value > 0.0;
+                    if (!valid) {
+                        error = std::string("per-node field '") + name +
+                                "' contains invalid value " + std::to_string(value) +
+                                " at index " + std::to_string(i);
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+        if (!validate_field_values(ctx.Ms_field, "Ms_field", true, false) ||
+            !validate_field_values(ctx.A_field, "A_field", true, true) ||
+            !validate_field_values(ctx.alpha_field, "alpha_field", true, true) ||
+            !validate_field_values(ctx.Ku_field, "Ku_field", false, true) ||
+            !validate_field_values(ctx.Ku2_field, "Ku2_field", false, true) ||
+            !validate_field_values(ctx.Dind_field, "Dind_field", false, true) ||
+            !validate_field_values(ctx.Dbulk_field, "Dbulk_field", false, true) ||
+            !validate_field_values(ctx.Kc1_field, "Kc1_field", false, true) ||
+            !validate_field_values(ctx.Kc2_field, "Kc2_field", false, true) ||
+            !validate_field_values(ctx.Kc3_field, "Kc3_field", false, true)) {
+            return false;
+        }
+        if (!std::isfinite(ctx.material.saturation_magnetisation) ||
+            ctx.material.saturation_magnetisation <= 0.0) {
+            error = "material.saturation_magnetisation must be finite and > 0";
+            return false;
+        }
+        if (!std::isfinite(ctx.material.exchange_stiffness) ||
+            ctx.material.exchange_stiffness < 0.0) {
+            error = "material.exchange_stiffness must be finite and >= 0";
+            return false;
+        }
+        if (!std::isfinite(ctx.material.damping) || ctx.material.damping < 0.0) {
+            error = "material.damping must be finite and >= 0";
+            return false;
+        }
     }
 
     // F-14 fix: normalize anisotropy axes.
@@ -258,6 +367,25 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
         if (ctx.enable_cubic_anisotropy) {
             normalize3(ctx.cubic_axis1);
             normalize3(ctx.cubic_axis2);
+            const double dot =
+                ctx.cubic_axis1[0] * ctx.cubic_axis2[0] +
+                ctx.cubic_axis1[1] * ctx.cubic_axis2[1] +
+                ctx.cubic_axis1[2] * ctx.cubic_axis2[2];
+            const double cross_x =
+                ctx.cubic_axis1[1] * ctx.cubic_axis2[2] -
+                ctx.cubic_axis1[2] * ctx.cubic_axis2[1];
+            const double cross_y =
+                ctx.cubic_axis1[2] * ctx.cubic_axis2[0] -
+                ctx.cubic_axis1[0] * ctx.cubic_axis2[2];
+            const double cross_z =
+                ctx.cubic_axis1[0] * ctx.cubic_axis2[1] -
+                ctx.cubic_axis1[1] * ctx.cubic_axis2[0];
+            const double cross_norm = std::sqrt(cross_x * cross_x + cross_y * cross_y + cross_z * cross_z);
+            if (!std::isfinite(dot) || !std::isfinite(cross_norm) ||
+                std::abs(dot) > 1e-3 || cross_norm < 1e-6) {
+                error = "cubic anisotropy axes must be finite, normalized and mutually orthogonal";
+                return false;
+            }
         }
     }
 
@@ -401,6 +529,27 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     for (int i = 0; i < 3; ++i) {
         ctx.oersted_center[i] = plan.oersted_center[i];
         ctx.oersted_axis[i] = plan.oersted_axis[i];
+    }
+    if (ctx.has_oersted_cylinder) {
+        const double axis_norm = std::sqrt(
+            ctx.oersted_axis[0] * ctx.oersted_axis[0] +
+            ctx.oersted_axis[1] * ctx.oersted_axis[1] +
+            ctx.oersted_axis[2] * ctx.oersted_axis[2]);
+        if (!(axis_norm > 1e-12) || !std::isfinite(axis_norm)) {
+            error = "oersted_axis must be finite and non-zero";
+            return false;
+        }
+        for (double &value : ctx.oersted_axis) {
+            value /= axis_norm;
+        }
+        if (std::abs(ctx.oersted_axis[0]) > 1e-6 ||
+            std::abs(ctx.oersted_axis[1]) > 1e-6 ||
+            std::abs(ctx.oersted_axis[2] - 1.0) > 1e-6) {
+            error =
+                "Only Oersted cylinders aligned with +Z are currently implemented; "
+                "requested oersted_axis is not supported";
+            return false;
+        }
     }
     ctx.oersted_time_dep_kind = plan.oersted_time_dep_kind;
     ctx.oersted_time_dep_freq = plan.oersted_time_dep_freq;
@@ -635,59 +784,11 @@ int context_upload_magnetization_f64(
         }
     }
 
-    // Add thermal noise: H_eff += H_therm  (Brown sLLG field)
-    if (ctx.temperature > 0.0 && ctx.current_dt > 0.0) {
-        // Brown noise amplitude: sigma = sqrt(2*alpha*kB*T / (gamma0*mu0*Ms*V_node*dt))
-        // where gamma0 = gamma_red * (1+alpha^2).
-        const double alpha = average_magnetic_scalar_field(
-            ctx.alpha_field,
-            ctx.magnetic_node_mask,
-            ctx.material.damping);
-        const double Ms = average_magnetic_scalar_field(
-            ctx.Ms_field,
-            ctx.magnetic_node_mask,
-            ctx.material.saturation_magnetisation);
-        const double gamma_red = ctx.material.gyromagnetic_ratio;
-        const double gamma0 = gamma_red * (1.0 + alpha * alpha);
-        const double V_node = average_magnetic_node_volume(ctx);
-
-        if (alpha <= 0.0 || Ms <= 0.0 || gamma_red <= 0.0 || V_node <= 0.0) {
-            ctx.thermal_sigma = 0.0;
-            std::fill(ctx.h_therm_xyz.begin(), ctx.h_therm_xyz.end(), 0.0);
-            return FULLMAG_FEM_OK;
-        }
-
-        const double sigma = std::sqrt(
-            2.0 * alpha * kB * ctx.temperature /
-            (gamma0 * kMU0 * Ms * V_node * ctx.current_dt)
-        );
-        ctx.thermal_sigma = sigma;
-
-        // Generate and add thermal noise using std::mt19937_64 + normal distribution
-        // Seed: deterministic from step counter for reproducibility
-        static thread_local std::mt19937_64 rng(42);
-        std::normal_distribution<double> dist(0.0, sigma);
-        if (ctx.h_therm_xyz.size() != ctx.h_eff_xyz.size()) {
-            ctx.h_therm_xyz.assign(ctx.h_eff_xyz.size(), 0.0);
-        }
-        for (size_t node = 0; node < static_cast<size_t>(ctx.n_nodes); ++node) {
-            const size_t base = node * 3u;
-            if (!ctx.magnetic_node_mask.empty() && ctx.magnetic_node_mask[node] == 0u) {
-                ctx.h_therm_xyz[base + 0] = 0.0;
-                ctx.h_therm_xyz[base + 1] = 0.0;
-                ctx.h_therm_xyz[base + 2] = 0.0;
-                continue;
-            }
-            for (size_t axis = 0; axis < 3u; ++axis) {
-                const double noise = dist(rng);
-                ctx.h_therm_xyz[base + axis] = noise;
-                ctx.h_eff_xyz[base + axis] += noise;
-            }
-        }
-    } else {
-        ctx.thermal_sigma = 0.0;
-        std::fill(ctx.h_therm_xyz.begin(), ctx.h_therm_xyz.end(), 0.0);
-    }
+    // Thermal noise is refreshed in the RHS/effective-field path, not on upload.
+    ctx.thermal_sigma = 0.0;
+    std::fill(ctx.h_therm_xyz.begin(), ctx.h_therm_xyz.end(), 0.0);
+    ctx.last_thermal_refresh_time = -1.0;
+    ctx.last_thermal_refresh_dt = -1.0;
 
     return FULLMAG_FEM_OK;
 }

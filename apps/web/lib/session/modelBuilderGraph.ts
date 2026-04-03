@@ -66,6 +66,7 @@ function buildObjectNode(geometry: ScriptBuilderGeometryEntry): ModelBuilderGrap
     name: geometry.name,
     label: geometry.name,
     geometry,
+    object_mesh: geometry.mesh ?? null,
     tree: {
       geometry: geometryId,
       material: `mat-${geometry.name}`,
@@ -93,6 +94,8 @@ export function createModelBuilderGraphV2(
 ): ModelBuilderGraphV2 {
   return {
     version: "model_builder.v2",
+    source_of_truth: "repo_head",
+    authoring_schema: "mesh-first-fem.v1",
     revision: builder?.revision ?? 0,
     study: {
       id: "study",
@@ -101,6 +104,8 @@ export function createModelBuilderGraphV2(
       backend: builder?.backend ?? null,
       demag_realization: builder?.demag_realization ?? null,
       solver: builder?.solver ?? EMPTY_SOLVER,
+      universe_mesh: builder?.universe ?? null,
+      shared_domain_mesh: builder?.mesh ?? EMPTY_MESH,
       mesh_defaults: builder?.mesh ?? EMPTY_MESH,
       stages: builder?.stages ?? [],
       initial_state: builder?.initial_state ?? null,
@@ -156,7 +161,7 @@ export function serializeModelBuilderGraphV2(graph: ModelBuilderGraphV2): Omit<
     backend: graph.study.backend,
     demag_realization: graph.study.demag_realization,
     solver: graph.study.solver,
-    mesh: graph.study.mesh_defaults,
+    mesh: graph.study.shared_domain_mesh,
     universe: graph.universe.value,
     domain_frame: null,
     stages: graph.study.stages,
@@ -205,7 +210,7 @@ export function selectModelBuilderSolver(
 export function selectModelBuilderMeshDefaults(
   graph: ModelBuilderGraphV2 | null | undefined,
 ): ScriptBuilderMeshState | null {
-  return graph?.study.mesh_defaults ?? null;
+  return graph?.study.shared_domain_mesh ?? graph?.study.mesh_defaults ?? null;
 }
 
 export function setModelBuilderStages(
@@ -326,6 +331,7 @@ export function setModelBuilderMeshDefaults(
     ...ensured,
     study: {
       ...ensured.study,
+      shared_domain_mesh: meshDefaults,
       mesh_defaults: meshDefaults,
     },
   };

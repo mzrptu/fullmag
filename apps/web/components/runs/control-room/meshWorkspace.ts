@@ -270,15 +270,18 @@ export function buildMeshConfigurationSignature(
   }
   return JSON.stringify({
     revision: sceneDocument.revision,
+    source_of_truth: sceneDocument.scene.source_of_truth ?? "repo_head",
+    authoring_schema: sceneDocument.scene.authoring_schema ?? "mesh-first-fem.v1",
     universe: sceneDocument.universe,
-    study_mesh_defaults: sceneDocument.study.mesh_defaults,
+    universe_mesh: sceneDocument.study.universe_mesh ?? sceneDocument.universe,
+    shared_domain_mesh: sceneDocument.study.shared_domain_mesh ?? sceneDocument.study.mesh_defaults,
     objects: sceneDocument.objects.map((object) => ({
       id: object.id,
       name: object.name,
       geometry: object.geometry,
       transform: object.transform,
       region_name: object.region_name,
-      mesh_override: object.mesh_override,
+      object_mesh: object.object_mesh ?? object.mesh_override,
     })),
   });
 }
@@ -355,6 +358,9 @@ export function buildMeshBuildStages(args: {
   }
   const latestMessage = engineLog.length > 0 ? engineLog[engineLog.length - 1]?.message ?? null : null;
   const lower = (latestMessage ?? commandMessage ?? latestActivityDetail ?? "").toLowerCase();
+  const missingStructuredTelemetry =
+    meshGenerating &&
+    (!meshWorkspace?.mesh_pipeline_status || meshWorkspace.mesh_pipeline_status.length === 0);
   const failed =
     workspaceStatus === "failed" ||
     lower.includes("failed") ||
@@ -413,7 +419,9 @@ export function buildMeshBuildStages(args: {
       detail:
         failed
           ? (latestMessage ?? commandMessage ?? latestActivityDetail ?? "Mesh build failed before completion.")
-          : (commandMessage ?? "Build request accepted and waiting for the next mesh pipeline step."),
+          : missingStructuredTelemetry
+            ? "Build telemetry unavailable. The backend is still working, but structured mesh progress events did not reach this session snapshot."
+            : (commandMessage ?? "Build request accepted and waiting for the next mesh pipeline step."),
     },
     {
       id: "materializing",

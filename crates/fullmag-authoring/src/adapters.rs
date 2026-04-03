@@ -41,6 +41,8 @@ pub fn scene_document_from_script_builder(builder: &ScriptBuilderState) -> Scene
         scene: SceneMetadata {
             id: "scene".to_string(),
             name: "Scene".to_string(),
+            source_of_truth: "repo_head".to_string(),
+            authoring_schema: "mesh-first-fem.v1".to_string(),
         },
         universe: builder.universe.clone(),
         objects,
@@ -54,6 +56,8 @@ pub fn scene_document_from_script_builder(builder: &ScriptBuilderState) -> Scene
             backend: builder.backend.clone(),
             demag_realization: builder.demag_realization.clone(),
             solver: builder.solver.clone(),
+            universe_mesh: builder.universe.clone(),
+            shared_domain_mesh: builder.mesh.clone(),
             mesh_defaults: builder.mesh.clone(),
             stages: builder.stages.clone(),
             initial_state: builder.initial_state.clone(),
@@ -126,7 +130,7 @@ pub fn scene_document_to_script_builder(
                 bounds_max: object.geometry.bounds_max,
                 material,
                 magnetization,
-                mesh: object.mesh_override.clone(),
+                mesh: object.object_mesh.clone().or_else(|| object.mesh_override.clone()),
             })
         })
         .collect::<Result<Vec<_>, SceneDocumentValidationError>>()?;
@@ -136,8 +140,12 @@ pub fn scene_document_to_script_builder(
         backend: scene.study.backend.clone(),
         demag_realization: scene.study.demag_realization.clone(),
         solver: scene.study.solver.clone(),
-        mesh: scene.study.mesh_defaults.clone(),
-        universe: scene.universe.clone(),
+        mesh: scene.study.shared_domain_mesh.clone(),
+        universe: scene
+            .study
+            .universe_mesh
+            .clone()
+            .or_else(|| scene.universe.clone()),
         domain_frame: None,
         stages: scene.study.stages.clone(),
         initial_state: scene.study.initial_state.clone(),
@@ -319,6 +327,7 @@ fn scene_object_from_geometry(geometry: &ScriptBuilderGeometryEntry) -> SceneObj
         material_ref: material_id_for_geometry(&geometry.name),
         region_name: geometry.region_name.clone(),
         magnetization_ref: Some(magnetization_id_for_geometry(&geometry.name)),
+        object_mesh: geometry.mesh.clone(),
         mesh_override: geometry.mesh.clone(),
         visible: true,
         locked: false,

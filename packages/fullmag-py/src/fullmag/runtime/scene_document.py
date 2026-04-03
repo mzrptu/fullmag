@@ -59,6 +59,7 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
                 "material_ref": _material_id(name),
                 "region_name": geometry.get("region_name"),
                 "magnetization_ref": _magnetization_id(name),
+                "object_mesh": geometry.get("mesh"),
                 "mesh_override": geometry.get("mesh"),
                 "visible": True,
                 "locked": False,
@@ -100,7 +101,12 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
     return {
         "version": "scene.v1",
         "revision": int(builder.get("revision", 0)),
-        "scene": {"id": "scene", "name": "Scene"},
+        "scene": {
+            "id": "scene",
+            "name": "Scene",
+            "source_of_truth": "repo_head",
+            "authoring_schema": "mesh-first-fem.v1",
+        },
         "universe": builder.get("universe"),
         "objects": objects,
         "materials": materials,
@@ -113,6 +119,8 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
             "backend": builder.get("backend"),
             "demag_realization": builder.get("demag_realization"),
             "solver": builder.get("solver") or {},
+            "universe_mesh": builder.get("universe"),
+            "shared_domain_mesh": builder.get("mesh") or {},
             "mesh_defaults": builder.get("mesh") or {},
             "stages": builder.get("stages") or [],
             "initial_state": builder.get("initial_state"),
@@ -183,7 +191,7 @@ def build_builder_from_scene_document(scene: dict[str, Any]) -> dict[str, Any]:
                 "bounds_max": geometry.get("bounds_max"),
                 "material": materials[material_ref],
                 "magnetization": magnetization,
-                "mesh": obj.get("mesh_override"),
+                "mesh": obj.get("object_mesh", obj.get("mesh_override")),
             }
         )
 
@@ -194,8 +202,8 @@ def build_builder_from_scene_document(scene: dict[str, Any]) -> dict[str, Any]:
         "backend": study.get("backend"),
         "demag_realization": study.get("demag_realization"),
         "solver": study.get("solver") or {},
-        "mesh": study.get("mesh_defaults") or {},
-        "universe": scene.get("universe"),
+        "mesh": study.get("shared_domain_mesh") or study.get("mesh_defaults") or {},
+        "universe": study.get("universe_mesh") or scene.get("universe"),
         "stages": study.get("stages") or [],
         "initial_state": study.get("initial_state"),
         "geometries": geometries,

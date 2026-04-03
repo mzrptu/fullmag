@@ -32,7 +32,11 @@ import HslSphere from "./HslSphere";
 import ViewCube from "./ViewCube";
 import ScientificViewportShell from "./shared/ScientificViewportShell";
 import type { ViewportQualityProfileId } from "./shared/viewportQualityProfiles";
-import { ViewportOverlayManager, ViewportOverlaySlot } from "./ViewportOverlayManager";
+import { exportCanvasAsImage } from "./export/FigureExport";
+import {
+  ViewportOverlayManager,
+  type ViewportOverlayDescriptor,
+} from "./ViewportOverlayManager";
 
 const AIR_OBJECT_SEGMENT_ID = "__air__";
 
@@ -529,6 +533,7 @@ function FemMeshView3DInner({
   const [labeledMode, setLabeledMode] = useState(false);
   const [openPopover, setOpenPopover] = useState<"quantity" | "color" | "clip" | "display" | "vectors" | "camera" | "panels" | null>(null);
   const [qualityProfile, setQualityProfile] = useState<ViewportQualityProfileId>("interactive");
+  const [captureOverlayHidden, setCaptureOverlayHidden] = useState(false);
   
   const [hoveredFace, setHoveredFace] = useState<{ idx: number; x: number; y: number } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; faceIdx: number } | null>(null);
@@ -541,6 +546,7 @@ function FemMeshView3DInner({
   const viewCubeSceneRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const faceARsRef = useRef<Float32Array | null>(null);
+  const qualityProfileRef = useRef<ViewportQualityProfileId>("interactive");
   const renderMode = controlledRenderMode ?? internalRenderMode;
   const opacity = controlledOpacity ?? internalOpacity;
   const clipEnabled = controlledClipEnabled ?? internalClipEnabled;
@@ -1172,13 +1178,20 @@ function FemMeshView3DInner({
     rotateCameraAroundTarget(bridge.camera, bridge.controls, quat);
   }, []);
 
-  const takeScreenshot = useCallback(() => {
+  const takeScreenshot = useCallback(async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const a = document.createElement("a");
-    a.href = canvas.toDataURL("image/png");
-    a.download = `fem-mesh-${Date.now()}.png`;
-    a.click();
+    const previousProfile = qualityProfileRef.current;
+    setCaptureOverlayHidden(true);
+    setQualityProfile("capture");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    exportCanvasAsImage(canvas, `fem-mesh-${Date.now()}`, {
+      pixelRatio: 4,
+      backgroundColor: "#171726",
+      format: "png",
+    });
+    setQualityProfile(previousProfile);
+    setCaptureOverlayHidden(false);
   }, []);
 
   // Pre-compute face aspect ratios when topology changes (fix #7: no first-hover jank)
@@ -1231,6 +1244,322 @@ function FemMeshView3DInner({
     showOrientationLegend ||
     legendField === "orientation" ||
     arrowField === "orientation";
+  useEffect(() => {
+    qualityProfileRef.current = qualityProfile;
+  }, [qualityProfile]);
+  const overlayItems = useMemo<ViewportOverlayDescriptor[]>(() => {
+    if (captureOverlayHidden) {
+      return [];
+    }
+    const items: ViewportOverlayDescriptor[] = [];
+    if (toolbarMode !== "hidden") {
+      items.push({
+        id: "toolbar",
+        anchor: "top-left",
+        priority: 1,
+        minWidth: 1080,
+        collapseTarget: "icon",
+        render: ({ mode, variant }) => (
+          <FemViewportToolbar
+            compact={variant !== "full"}
+            renderMode={toolbarRenderMode}
+            surfaceColorField={toolbarColorField}
+            arrowColorField={arrowField}
+            projection={cameraProjection}
+            navigation={navigationMode}
+            qualityProfile={qualityProfile}
+            clipEnabled={clipEnabled}
+            clipAxis={clipAxis}
+            clipPos={clipPos}
+            arrowsVisible={showArrows}
+            arrowDensity={arrowDensity}
+            opacity={toolbarOpacity}
+            shrinkFactor={shrinkFactor}
+            showShrink={meshData.elements.length >= 4}
+            labeledMode={variant === "full" ? labeledMode : false}
+            legendOpen={legendOpen}
+            partExplorerOpen={partExplorerOpen}
+            visiblePartsCount={hasMeshParts ? visibleLayers.length : undefined}
+            totalPartsCount={hasMeshParts ? meshParts.length : undefined}
+            hasField={!missingMagneticMask}
+            fieldLabel={fieldLabel}
+            openPopover={openPopover}
+            onOpenPopoverChange={(id) => setOpenPopover(id as typeof openPopover)}
+            onRenderModeChange={applyToolbarRenderMode}
+            onSurfaceColorFieldChange={applyToolbarColorField}
+            onArrowColorFieldChange={setArrowColorField}
+            onProjectionChange={setCameraProjection}
+            onNavigationChange={setNavigationMode}
+            onQualityProfileChange={setQualityProfile}
+            onClipEnabledChange={(v) => {
+              onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v);
+            }}
+            onClipAxisChange={(a) => {
+              onClipAxisChange ? onClipAxisChange(a) : setInternalClipAxis(a);
+            }}
+            onClipPosChange={(v) => {
+              onClipPosChange ? onClipPosChange(v) : setInternalClipPos(v);
+            }}
+            onArrowsVisibleChange={(v) => {
+              onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v);
+            }}
+            onArrowDensityChange={setArrowDensity}
+            onOpacityChange={applyToolbarOpacity}
+            onShrinkFactorChange={(v) => {
+              onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v);
+            }}
+            onLabeledModeChange={setLabeledMode}
+            onToggleLegend={() => setLegendOpen((prev) => !prev)}
+            onTogglePartExplorer={() => setPartExplorerOpen((prev) => !prev)}
+            onCameraPreset={setCameraPreset}
+            onCapture={takeScreenshot}
+            quantityId={quantityId}
+            quantityOptions={prominentQuantityOptions}
+            onQuantityChange={onQuantityChange}
+          />
+        ),
+      });
+    }
+    if (missingExactScopeSegment && selectedObjectId) {
+      items.push({
+        id: "segment-warning",
+        anchor: "top-left",
+        priority: 2,
+        minWidth: 960,
+        collapseTarget: "drawer",
+        render: () => (
+          <div className="pointer-events-none rounded-xl border border-rose-400/25 bg-background/85 px-4 py-3 text-sm text-rose-200 shadow-lg backdrop-blur-md">
+            Object mesh segmentation unavailable for shared-domain FEM: `{selectedObjectId}`
+          </div>
+        ),
+      });
+    }
+    if (missingMagneticMask) {
+      items.push({
+        id: "mask-warning",
+        anchor: "top-left",
+        priority: 3,
+        minWidth: 960,
+        collapseTarget: "drawer",
+        render: () => (
+          <div className="pointer-events-none rounded-xl border border-amber-400/25 bg-background/85 px-4 py-3 text-sm text-amber-100 shadow-lg backdrop-blur-md">
+            Magnetic-region preview mask unavailable for quantity `{fieldLabel ?? "m"}`.
+          </div>
+        ),
+      });
+    }
+    items.push({
+      id: "gizmo-stack",
+      anchor: "top-right",
+      priority: 3,
+      render: () => (
+        <div className="flex flex-col items-end gap-2">
+          <ViewCube
+            sceneRef={viewCubeSceneRef}
+            onRotate={handleViewCubeRotate}
+            onReset={() => setCameraPreset("reset")}
+            embedded
+          />
+        </div>
+      ),
+    });
+    if (hasMeshParts && partExplorerOpen) {
+      items.push({
+        id: "part-explorer",
+        anchor: "right",
+        priority: 2,
+        minWidth: 1280,
+        collapseTarget: "drawer",
+        render: ({ variant }) =>
+          variant === "drawer" ? (
+            <FemPartExplorerPanel
+              meshParts={meshParts}
+              meshEntityViewState={meshEntityViewState}
+              partQualityById={partQualityById}
+              partExplorerGroups={partExplorerGroups}
+              roleVisibilitySummary={roleVisibilitySummary}
+              inspectedMeshPart={inspectedMeshPart}
+              inspectedPartQuality={inspectedPartQuality}
+              selectedEntityId={selectedEntityId}
+              focusedEntityId={focusedEntityId}
+              visiblePartsCount={visibleLayers.length}
+              onClose={() => setPartExplorerOpen(false)}
+              onPartSelect={handlePartSelect}
+              onEntityFocus={onEntityFocus}
+              onPatchPart={patchSinglePart}
+              onRoleVisibility={handleRoleVisibility}
+            />
+          ) : (
+            <DraggableViewportBlock defaultOffset={{ x: 0, y: variant === "full" ? 10 : 6 }}>
+              {({ dragHandleProps }) => (
+                <FemPartExplorerPanel
+                  meshParts={meshParts}
+                  meshEntityViewState={meshEntityViewState}
+                  partQualityById={partQualityById}
+                  partExplorerGroups={partExplorerGroups}
+                  roleVisibilitySummary={roleVisibilitySummary}
+                  inspectedMeshPart={inspectedMeshPart}
+                  inspectedPartQuality={inspectedPartQuality}
+                  selectedEntityId={selectedEntityId}
+                  focusedEntityId={focusedEntityId}
+                  visiblePartsCount={visibleLayers.length}
+                  onClose={() => setPartExplorerOpen(false)}
+                  onPartSelect={handlePartSelect}
+                  onEntityFocus={onEntityFocus}
+                  onPatchPart={patchSinglePart}
+                  onRoleVisibility={handleRoleVisibility}
+                  dragHandleProps={dragHandleProps}
+                />
+              )}
+            </DraggableViewportBlock>
+          ),
+      });
+    }
+    if (legendOpen) {
+      items.push({
+        id: "field-legend",
+        anchor: "bottom-left",
+        priority: 4,
+        render: ({ variant }) => (
+          <FieldLegend
+            compact={variant !== "full"}
+            className="pointer-events-none z-10"
+            colorLabel={colorLegendLabel(legendField, fieldLabel)}
+            lengthLabel={
+              effectiveShowArrows
+                ? arrowField === "orientation"
+                  ? "vector magnitude, arrow color = orientation"
+                  : `vector magnitude, arrow color = ${colorLegendLabel(arrowField, fieldLabel)}`
+                : undefined
+            }
+            min={legendField === "none" ? undefined : fieldMagnitudeStats?.min}
+            max={legendField === "none" ? undefined : fieldMagnitudeStats?.max}
+            mean={legendField === "none" ? undefined : fieldMagnitudeStats?.mean}
+            gradient={colorLegendGradient(legendField)}
+          />
+        ),
+      });
+    }
+    if (effectiveShowOrientationLegend) {
+      items.push({
+        id: "orientation-legend",
+        anchor: "bottom-left",
+        priority: 5,
+        render: ({ variant }) => (
+          <HslSphere
+            sceneRef={viewCubeSceneRef}
+            axisConvention="identity"
+            compact={variant !== "full"}
+            embedded
+          />
+        ),
+      });
+    }
+    items.push({
+      id: "selection-hud",
+      anchor: "bottom-center",
+      priority: 5,
+      render: ({ variant }) => (
+        <>
+          <FemSelectionHUD
+            compact={variant !== "full"}
+            nNodes={meshData.nNodes}
+            nElements={meshData.nElements}
+            nFaces={meshData.boundaryFaces.length / 3}
+            clipEnabled={clipEnabled}
+            clipAxis={clipAxis}
+            clipPos={clipPos}
+            selectedFacesCount={selectedFaces.length}
+          />
+          {onRefine ? (
+            <FemRefineToolbar
+              className={variant === "icon" ? "max-w-full flex-wrap justify-center" : undefined}
+              selectedFacesCount={selectedFaces.length}
+              onRefine={(factor) => {
+                onRefine(selectedFaces, factor);
+                setSelectedFaces([]);
+              }}
+              onCoarsen={(factor) => {
+                onRefine(selectedFaces, factor);
+                setSelectedFaces([]);
+              }}
+              onClear={() => setSelectedFaces([])}
+            />
+          ) : null}
+        </>
+      ),
+    });
+    return items;
+  }, [
+    airSegmentOpacity,
+    applyToolbarColorField,
+    applyToolbarOpacity,
+    applyToolbarRenderMode,
+    arrowDensity,
+    arrowField,
+    cameraProjection,
+    captureOverlayHidden,
+    clipAxis,
+    clipEnabled,
+    clipPos,
+    effectiveShowArrows,
+    effectiveShowOrientationLegend,
+    fieldLabel,
+    fieldMagnitudeStats?.max,
+    fieldMagnitudeStats?.mean,
+    fieldMagnitudeStats?.min,
+    focusedEntityId,
+    handlePartSelect,
+    handleRoleVisibility,
+    hasMeshParts,
+    inspectedMeshPart,
+    inspectedPartQuality,
+    labeledMode,
+    legendField,
+    legendOpen,
+    meshData.boundaryFaces.length,
+    meshData.elements.length,
+    meshData.nElements,
+    meshData.nNodes,
+    meshEntityViewState,
+    meshParts,
+    missingExactScopeSegment,
+    missingMagneticMask,
+    navigationMode,
+    onClipAxisChange,
+    onClipEnabledChange,
+    onClipPosChange,
+    onEntityFocus,
+    onMeshPartViewStatePatch,
+    onOpacityChange,
+    onQuantityChange,
+    onRefine,
+    onRenderModeChange,
+    onShowArrowsChange,
+    onShrinkFactorChange,
+    openPopover,
+    partExplorerGroups,
+    partExplorerOpen,
+    partQualityById,
+    patchSinglePart,
+    prominentQuantityOptions,
+    qualityProfile,
+    quantityId,
+    roleVisibilitySummary,
+    selectedEntityId,
+    selectedFaces,
+    selectedObjectId,
+    setCameraPreset,
+    shrinkFactor,
+    showArrows,
+    takeScreenshot,
+    toolbarColorField,
+    toolbarMode,
+    toolbarOpacity,
+    toolbarRenderMode,
+    viewCubeSceneRef,
+    visibleLayers.length,
+  ]);
   return (
     <div className="relative flex flex-1 w-[100%] h-[100%] min-w-0 min-h-0 bg-background overflow-hidden rounded-md fem-canvas-container">
       <ScientificViewportShell
@@ -1298,209 +1627,36 @@ function FemMeshView3DInner({
           />
         ) : null}
       </ScientificViewportShell>
-      <ViewportOverlayManager>
-        {({ mode }) => (
-          <>
-            {toolbarMode !== "hidden" ? (
-              <ViewportOverlaySlot anchor="top-left">
-                <FemViewportToolbar
-                  compact={mode !== "full"}
-                  renderMode={toolbarRenderMode}
-                  surfaceColorField={toolbarColorField}
-                  arrowColorField={arrowField}
-                  projection={cameraProjection}
-                  navigation={navigationMode}
-                  qualityProfile={qualityProfile}
-                  clipEnabled={clipEnabled}
-                  clipAxis={clipAxis}
-                  clipPos={clipPos}
-                  arrowsVisible={showArrows}
-                  arrowDensity={arrowDensity}
-                  opacity={toolbarOpacity}
-                  shrinkFactor={shrinkFactor}
-                  showShrink={meshData.elements.length >= 4}
-                  labeledMode={labeledMode}
-                  legendOpen={legendOpen}
-                  partExplorerOpen={partExplorerOpen}
-                  visiblePartsCount={hasMeshParts ? visibleLayers.length : undefined}
-                  totalPartsCount={hasMeshParts ? meshParts.length : undefined}
-                  hasField={!missingMagneticMask}
-                  fieldLabel={fieldLabel}
-                  openPopover={openPopover}
-                  onOpenPopoverChange={(id) => setOpenPopover(id as typeof openPopover)}
-                  onRenderModeChange={applyToolbarRenderMode}
-                  onSurfaceColorFieldChange={applyToolbarColorField}
-                  onArrowColorFieldChange={setArrowColorField}
-                  onProjectionChange={setCameraProjection}
-                  onNavigationChange={setNavigationMode}
-                  onQualityProfileChange={setQualityProfile}
-                  onClipEnabledChange={(v) => {
-                    onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v);
-                  }}
-                  onClipAxisChange={(a) => {
-                    onClipAxisChange ? onClipAxisChange(a) : setInternalClipAxis(a);
-                  }}
-                  onClipPosChange={(v) => {
-                    onClipPosChange ? onClipPosChange(v) : setInternalClipPos(v);
-                  }}
-                  onArrowsVisibleChange={(v) => {
-                    onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v);
-                  }}
-                  onArrowDensityChange={setArrowDensity}
-                  onOpacityChange={applyToolbarOpacity}
-                  onShrinkFactorChange={(v) => {
-                    onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v);
-                  }}
-                  onLabeledModeChange={setLabeledMode}
-                  onToggleLegend={() => setLegendOpen((prev) => !prev)}
-                  onTogglePartExplorer={() => setPartExplorerOpen((prev) => !prev)}
-                  onCameraPreset={setCameraPreset}
-                  onCapture={takeScreenshot}
-                  quantityId={quantityId}
-                  quantityOptions={prominentQuantityOptions}
-                  onQuantityChange={onQuantityChange}
-                />
-              </ViewportOverlaySlot>
-            ) : null}
-            {missingExactScopeSegment && selectedObjectId ? (
-              <ViewportOverlaySlot anchor="top-left" className="max-w-[min(56rem,calc(100%-7rem))]">
-                <div className="pointer-events-none rounded-xl border border-rose-400/25 bg-background/85 px-4 py-3 text-sm text-rose-200 shadow-lg backdrop-blur-md">
-                  Object mesh segmentation unavailable for shared-domain FEM: `{selectedObjectId}`
-                </div>
-              </ViewportOverlaySlot>
-            ) : null}
-            {missingMagneticMask ? (
-              <ViewportOverlaySlot anchor="top-left" className="top-16 max-w-[min(56rem,calc(100%-7rem))]">
-                <div className="pointer-events-none rounded-xl border border-amber-400/25 bg-background/85 px-4 py-3 text-sm text-amber-100 shadow-lg backdrop-blur-md">
-                  Magnetic-region preview mask unavailable for quantity `{fieldLabel ?? "m"}`.
-                </div>
-              </ViewportOverlaySlot>
-            ) : null}
-            {legendOpen ? (
-              <ViewportOverlaySlot anchor="bottom-left" className={effectiveShowOrientationLegend ? "bottom-32" : undefined}>
-                <FieldLegend
-                  compact={mode !== "full"}
-                  className="pointer-events-none z-10"
-                  colorLabel={colorLegendLabel(legendField, fieldLabel)}
-                  lengthLabel={
-                    effectiveShowArrows
-                      ? arrowField === "orientation"
-                        ? "vector magnitude, arrow color = orientation"
-                        : `vector magnitude, arrow color = ${colorLegendLabel(arrowField, fieldLabel)}`
-                      : undefined
-                  }
-                  min={legendField === "none" ? undefined : fieldMagnitudeStats?.min}
-                  max={legendField === "none" ? undefined : fieldMagnitudeStats?.max}
-                  mean={legendField === "none" ? undefined : fieldMagnitudeStats?.mean}
-                  gradient={colorLegendGradient(legendField)}
-                />
-              </ViewportOverlaySlot>
-            ) : null}
-            <ViewportOverlaySlot
-              anchor="top-right"
-              className={mode === "icon" ? "top-16 max-w-[224px]" : mode === "compact" ? "top-16" : "top-3"}
-            >
-              <div className="flex flex-col items-end gap-2">
-                <ViewCube
-                  sceneRef={viewCubeSceneRef}
-                  onRotate={handleViewCubeRotate}
-                  onReset={() => setCameraPreset("reset")}
-                  embedded
-                />
-              </div>
-              {hasMeshParts && partExplorerOpen ? (
-                <DraggableViewportBlock defaultOffset={{ x: 0, y: mode === "full" ? 10 : 6 }}>
-                  {({ dragHandleProps }) => (
-                    <FemPartExplorerPanel
-                      meshParts={meshParts}
-                      meshEntityViewState={meshEntityViewState}
-                      partQualityById={partQualityById}
-                      partExplorerGroups={partExplorerGroups}
-                      roleVisibilitySummary={roleVisibilitySummary}
-                      inspectedMeshPart={inspectedMeshPart}
-                      inspectedPartQuality={inspectedPartQuality}
-                      selectedEntityId={selectedEntityId}
-                      focusedEntityId={focusedEntityId}
-                      visiblePartsCount={visibleLayers.length}
-                      onClose={() => setPartExplorerOpen(false)}
-                      onPartSelect={handlePartSelect}
-                      onEntityFocus={onEntityFocus}
-                      onPatchPart={patchSinglePart}
-                      onRoleVisibility={handleRoleVisibility}
-                      dragHandleProps={dragHandleProps}
-                    />
-                  )}
-                </DraggableViewportBlock>
-              ) : null}
-            </ViewportOverlaySlot>
-            <ViewportOverlaySlot
-              anchor="bottom-center"
-              className={mode === "icon" ? "bottom-14 max-w-[min(92vw,30rem)]" : "bottom-12"}
-            >
-              <FemSelectionHUD
-                compact={mode !== "full"}
-                nNodes={meshData.nNodes}
-                nElements={meshData.nElements}
-                nFaces={meshData.boundaryFaces.length / 3}
-                clipEnabled={clipEnabled}
-                clipAxis={clipAxis}
-                clipPos={clipPos}
-                selectedFacesCount={selectedFaces.length}
-              />
-              {onRefine ? (
-                <FemRefineToolbar
-                  className={mode === "icon" ? "max-w-full flex-wrap justify-center" : undefined}
-                  selectedFacesCount={selectedFaces.length}
-                  onRefine={(factor) => {
-                    onRefine(selectedFaces, factor);
-                    setSelectedFaces([]);
-                  }}
-                  onCoarsen={(factor) => {
-                    onRefine(selectedFaces, factor);
-                    setSelectedFaces([]);
-                  }}
-                  onClear={() => setSelectedFaces([])}
-                />
-              ) : null}
-            </ViewportOverlaySlot>
-          </>
-        )}
-      </ViewportOverlayManager>
+      {!captureOverlayHidden ? <ViewportOverlayManager items={overlayItems} /> : null}
 
-      {effectiveShowOrientationLegend ? (
-        <div className="pointer-events-none absolute left-3 bottom-3 z-30">
-          <HslSphere
-            sceneRef={viewCubeSceneRef}
-            axisConvention="identity"
-            compact={false}
-          />
-        </div>
+      {!captureOverlayHidden ? (
+        <FemHoverTooltip hoveredFace={hoveredFace} hoveredFaceInfo={hoveredFaceInfo} />
       ) : null}
 
-      <FemHoverTooltip hoveredFace={hoveredFace} hoveredFaceInfo={hoveredFaceInfo} />
-
-      <FemContextMenu
-        ctxMenu={ctxMenu}
-        clipEnabled={clipEnabled}
-        selectedFacesCount={selectedFaces.length}
-        onInspectFace={(faceIdx) => {
-          setSelectedFaces([faceIdx]);
-          setCtxMenu(null);
-        }}
-        onShowQuality={() => {
-          applyToolbarColorField("quality");
-          setCtxMenu(null);
-        }}
-        onToggleClip={() => {
-          const next = !clipEnabled;
-          onClipEnabledChange ? onClipEnabledChange(next) : setInternalClipEnabled(next);
-          setCtxMenu(null);
-        }}
-        onClearSelection={() => {
-          setSelectedFaces([]);
-          setCtxMenu(null);
-        }}
-      />
+      {!captureOverlayHidden ? (
+        <FemContextMenu
+          ctxMenu={ctxMenu}
+          clipEnabled={clipEnabled}
+          selectedFacesCount={selectedFaces.length}
+          onInspectFace={(faceIdx) => {
+            setSelectedFaces([faceIdx]);
+            setCtxMenu(null);
+          }}
+          onShowQuality={() => {
+            applyToolbarColorField("quality");
+            setCtxMenu(null);
+          }}
+          onToggleClip={() => {
+            const next = !clipEnabled;
+            onClipEnabledChange ? onClipEnabledChange(next) : setInternalClipEnabled(next);
+            setCtxMenu(null);
+          }}
+          onClearSelection={() => {
+            setSelectedFaces([]);
+            setCtxMenu(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

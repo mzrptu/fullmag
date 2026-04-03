@@ -748,12 +748,22 @@ function normalizeModelBuilderGraph(raw: any): ModelBuilderGraphV2 | null {
     backend: raw.study?.backend,
     demag_realization: raw.study?.demag_realization,
     solver: raw.study?.solver,
-    mesh: raw.study?.mesh_defaults,
+    mesh: raw.study?.shared_domain_mesh ?? raw.study?.mesh_defaults,
     universe: raw.universe?.value,
     stages: raw.study?.stages,
     initial_state: raw.study?.initial_state,
     geometries: Array.isArray(raw.objects?.items)
-      ? raw.objects.items.map((item: any) => item?.geometry ?? null).filter(Boolean)
+      ? raw.objects.items
+          .map((item: any) => {
+            if (!item?.geometry) {
+              return null;
+            }
+            return {
+              ...item.geometry,
+              mesh: item.object_mesh ?? item.geometry.mesh ?? null,
+            };
+          })
+          .filter(Boolean)
       : [],
     current_modules: raw.current_modules?.modules,
     excitation_analysis: raw.current_modules?.excitation_analysis,
@@ -842,7 +852,7 @@ function normalizeSceneStudy(raw: any) {
     backend: raw?.backend ?? null,
     demag_realization: raw?.demag_realization ?? null,
     solver: raw?.solver ?? {},
-    mesh: raw?.mesh_defaults ?? {},
+    mesh: raw?.shared_domain_mesh ?? raw?.mesh_defaults ?? {},
     universe: null,
     stages: Array.isArray(raw?.stages) ? raw.stages : [],
     initial_state: raw?.initial_state ?? null,
@@ -854,6 +864,28 @@ function normalizeSceneStudy(raw: any) {
     backend: normalized?.backend ?? null,
     demag_realization: normalized?.demag_realization ?? null,
     solver: normalized?.solver ?? defaults.solver,
+    universe_mesh:
+      raw?.universe_mesh && typeof raw.universe_mesh === "object"
+        ? {
+            mode: String(raw.universe_mesh.mode ?? "auto"),
+            size: normalizeVec3(raw.universe_mesh.size),
+            center: normalizeVec3(raw.universe_mesh.center),
+            padding: normalizeVec3(raw.universe_mesh.padding),
+            airbox_hmax:
+              raw.universe_mesh.airbox_hmax != null
+                ? Number(raw.universe_mesh.airbox_hmax)
+                : null,
+            airbox_hmin:
+              raw.universe_mesh.airbox_hmin != null
+                ? Number(raw.universe_mesh.airbox_hmin)
+                : null,
+            airbox_growth_rate:
+              raw.universe_mesh.airbox_growth_rate != null
+                ? Number(raw.universe_mesh.airbox_growth_rate)
+                : null,
+          }
+        : null,
+    shared_domain_mesh: normalized?.mesh ?? defaults.mesh,
     mesh_defaults: normalized?.mesh ?? defaults.mesh,
     stages: normalized?.stages ?? [],
     initial_state: normalized?.initial_state ?? null,
@@ -872,10 +904,14 @@ function normalizeSceneDocument(raw: any): SceneDocument | null {
         ? {
             id: String(raw.scene.id ?? ""),
             name: String(raw.scene.name ?? "Scene"),
+            source_of_truth: "repo_head",
+            authoring_schema: String(raw.scene.authoring_schema ?? "mesh-first-fem.v1"),
           }
         : {
             id: "",
             name: "Scene",
+            source_of_truth: "repo_head",
+            authoring_schema: "mesh-first-fem.v1",
           },
     universe:
       raw.universe && typeof raw.universe === "object"
@@ -925,6 +961,9 @@ function normalizeSceneDocument(raw: any): SceneDocument | null {
             typeof object?.magnetization_ref === "string"
               ? object.magnetization_ref
               : null,
+          object_mesh: normalizeSceneMeshOverride(
+            object?.object_mesh ?? object?.mesh_override ?? null,
+          ),
           mesh_override: normalizeSceneMeshOverride(object?.mesh_override ?? null),
           visible: Boolean(object?.visible ?? true),
           locked: Boolean(object?.locked),

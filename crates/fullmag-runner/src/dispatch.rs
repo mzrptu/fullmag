@@ -12,6 +12,7 @@
 
 use fullmag_ir::{FdmMultilayerPlanIR, FdmPlanIR, FemEigenPlanIR, FemPlanIR, OutputIR, ProblemIR};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 use crate::artifact_pipeline::ArtifactPipelineSender;
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
@@ -67,6 +68,117 @@ pub(crate) enum FemEngine {
     CpuReference,
     /// Native GPU FEM backend scaffold / future MFEM backend.
     NativeGpu,
+}
+
+fn unsupported_cpu_reference_terms(plan: &FemPlanIR) -> Vec<&'static str> {
+    let mut unsupported = Vec::new();
+    if plan.material.uniaxial_anisotropy.is_some()
+        || plan.material.uniaxial_anisotropy_k2.is_some()
+        || plan.material.ku_field.is_some()
+        || plan.material.ku2_field.is_some()
+    {
+        unsupported.push("uniaxial_anisotropy");
+    }
+    if plan.material.cubic_anisotropy_kc1.is_some()
+        || plan.material.cubic_anisotropy_kc2.is_some()
+        || plan.material.cubic_anisotropy_kc3.is_some()
+    {
+        unsupported.push("cubic_anisotropy");
+    }
+    if plan.interfacial_dmi.is_some() || plan.dind_field.is_some() {
+        unsupported.push("interfacial_dmi");
+    }
+    if plan.bulk_dmi.is_some() || plan.dbulk_field.is_some() {
+        unsupported.push("bulk_dmi");
+    }
+    if plan.magnetoelastic.is_some() {
+        unsupported.push("magnetoelastic");
+    }
+    if plan.has_oersted_cylinder {
+        unsupported.push("oersted");
+    }
+    if plan.temperature.is_some_and(|t| t > 0.0) {
+        unsupported.push("thermal");
+    }
+    unsupported
+}
+
+fn allow_unsupported_cpu_reference_terms() -> bool {
+    matches!(
+        std::env::var("FULLMAG_FEM_ALLOW_UNSUPPORTED_CPU_REFERENCE").as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES")
+    )
+}
+
+fn normalized_runtime_element_markers(plan: &FemPlanIR) -> Result<Vec<u32>, RunError> {
+    let markers = &plan.mesh.element_markers;
+    if markers.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let distinct_nonzero = markers
+        .iter()
+        .copied()
+        .filter(|marker| *marker != 0)
+        .collect::<BTreeSet<_>>();
+    let has_air = markers.contains(&0);
+
+    if !plan.region_materials.is_empty() {
+        let magnetic_markers = plan
+            .region_materials
+            .iter()
+            .map(|region| region.element_marker)
+            .collect::<BTreeSet<_>>();
+        if magnetic_markers.contains(&0) {
+            return Err(RunError {
+                message: "invalid FEM plan: region_materials must not use element_marker=0 for magnetic regions"
+                    .to_string(),
+            });
+        }
+        let unknown_nonzero = distinct_nonzero
+            .difference(&magnetic_markers)
+            .copied()
+            .collect::<Vec<_>>();
+        if !unknown_nonzero.is_empty() {
+            return Err(RunError {
+                message: format!(
+                    "ambiguous FEM magnetic region contract: mesh contains non-zero element markers {:?} \
+                     that are not declared in region_materials. Refusing to guess which regions are magnetic.",
+                    unknown_nonzero
+                ),
+            });
+        }
+        return Ok(markers
+            .iter()
+            .map(|marker| u32::from(magnetic_markers.contains(marker)))
+            .collect());
+    }
+
+    if distinct_nonzero.len() > 1 {
+        return Err(RunError {
+            message: format!(
+                "ambiguous FEM magnetic region contract: mesh uses multiple non-zero element markers {:?} \
+                 without region_materials. Refusing to guess which regions are magnetic.",
+                distinct_nonzero
+            ),
+        });
+    }
+
+    if has_air && !distinct_nonzero.is_empty() {
+        Ok(markers
+            .iter()
+            .map(|marker| u32::from(*marker != 0))
+            .collect())
+    } else {
+        Ok(vec![1; markers.len()])
+    }
+}
+
+fn normalized_fem_plan_for_runtime(plan: &FemPlanIR) -> Result<FemPlanIR, RunError> {
+    let normalized_markers = normalized_runtime_element_markers(plan)?;
+    let mut normalized = plan.clone();
+    normalized.mesh.element_markers = normalized_markers;
+    Ok(normalized)
 }
 
 /// Resolve which FDM engine to use based on environment and availability.
@@ -555,48 +667,31 @@ pub(crate) fn execute_fem<'a>(
     live: Option<LiveStepConsumer<'a>>,
     artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
+    let normalized_plan = normalized_fem_plan_for_runtime(plan)?;
     match engine {
         FemEngine::CpuReference => {
-            // F-04 fix: warn when the plan contains terms unsupported by the
-            // CPU reference engine so the user knows physics may differ.
-            let mut unsupported = Vec::new();
-            if plan.material.uniaxial_anisotropy.is_some()
-                || plan.material.uniaxial_anisotropy_k2.is_some()
-                || plan.material.ku_field.is_some()
-                || plan.material.ku2_field.is_some()
-            {
-                unsupported.push("uniaxial_anisotropy");
-            }
-            if plan.material.cubic_anisotropy_kc1.is_some()
-                || plan.material.cubic_anisotropy_kc2.is_some()
-                || plan.material.cubic_anisotropy_kc3.is_some()
-            {
-                unsupported.push("cubic_anisotropy");
-            }
-            if plan.interfacial_dmi.is_some() || plan.dind_field.is_some() {
-                unsupported.push("interfacial_dmi");
-            }
-            if plan.bulk_dmi.is_some() || plan.dbulk_field.is_some() {
-                unsupported.push("bulk_dmi");
-            }
-            if plan.magnetoelastic.is_some() {
-                unsupported.push("magnetoelastic");
-            }
-            if plan.has_oersted_cylinder {
-                unsupported.push("oersted");
-            }
-            if plan.temperature.map_or(false, |t| t > 0.0) {
-                unsupported.push("thermal");
-            }
+            let unsupported = unsupported_cpu_reference_terms(&normalized_plan);
             if !unsupported.is_empty() {
-                eprintln!(
-                    "warning: CPU reference FEM engine does not support these plan terms: [{}]. \
-                     They will be IGNORED during this run. Use a native GPU backend for full physics.",
-                    unsupported.join(", ")
-                );
+                if allow_unsupported_cpu_reference_terms() {
+                    eprintln!(
+                        "warning: CPU reference FEM engine does not support these plan terms: [{}]. \
+                         They will be IGNORED during this run because \
+                         FULLMAG_FEM_ALLOW_UNSUPPORTED_CPU_REFERENCE is enabled.",
+                        unsupported.join(", ")
+                    );
+                } else {
+                    return Err(RunError {
+                        message: format!(
+                            "CPU reference FEM engine cannot execute this plan faithfully; unsupported terms: [{}]. \
+                             Rerun with the native FEM backend or set FULLMAG_FEM_ALLOW_UNSUPPORTED_CPU_REFERENCE=1 \
+                             to force a lossy fallback.",
+                            unsupported.join(", ")
+                        ),
+                    });
+                }
             }
             fem_reference::execute_reference_fem(
-                plan,
+                &normalized_plan,
                 until_seconds,
                 outputs,
                 live,
@@ -604,25 +699,25 @@ pub(crate) fn execute_fem<'a>(
             )
         }
         FemEngine::NativeGpu => {
-            if let Some(min_nodes) = should_fallback_to_cpu_for_small_fem_gpu(plan) {
+            if let Some(min_nodes) = should_fallback_to_cpu_for_small_fem_gpu(&normalized_plan) {
                 eprintln!(
                     "warning: FEM plan has {} nodes, below FULLMAG_FEM_GPU_MIN_NODES={} — \
                      falling back to CPU reference engine \
                      (fallback_reason=fem_gpu_small_mesh_policy; \
                      set FULLMAG_FEM_EXECUTION=gpu to force GPU or \
                      FULLMAG_FEM_GPU_MIN_NODES=0 to disable this policy)",
-                    plan.mesh.nodes.len(),
+                    normalized_plan.mesh.nodes.len(),
                     min_nodes
                 );
                 return fem_reference::execute_reference_fem(
-                    plan,
+                    &normalized_plan,
                     until_seconds,
                     outputs,
                     live,
                     artifact_writer,
                 );
             }
-            execute_native_fem(plan, until_seconds, outputs, live, artifact_writer)
+            execute_native_fem(&normalized_plan, until_seconds, outputs, live, artifact_writer)
         }
     }
 }
