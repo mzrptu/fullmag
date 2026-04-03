@@ -2117,3 +2117,188 @@ fn fem_eigen_accepts_shared_domain_mesh_with_air_when_transfer_grid_is_used() {
         other => panic!("expected FEM eigen plan, got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Commit 7 — acceptance tests for build contract invariants
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fem_plan_fails_when_shared_domain_requested_but_no_domain_mesh_asset() {
+    // study_universe + mesh_workflow build_target=domain but no fem_domain_mesh_asset
+    // → the Commit 4 invariant in plan_fem() should reject this.
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.problem_meta.runtime_metadata.insert(
+        "study_universe".to_string(),
+        serde_json::json!({
+            "mode": "manual",
+            "size": [8.0, 6.0, 4.0],
+            "center": [0.0, 0.0, 0.0],
+        }),
+    );
+    ir.problem_meta.runtime_metadata.insert(
+        "mesh_workflow".to_string(),
+        serde_json::json!({
+            "build_target": "domain",
+            "domain_mesh_mode": "generated_shared_domain_mesh",
+        }),
+    );
+    ir.energy_terms = vec![
+        fullmag_ir::EnergyTermIR::Exchange,
+    ];
+    ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+        fdm: Some(fullmag_ir::FdmHintsIR {
+            cell: [2e-9, 2e-9, 5e-9],
+            default_cell: None,
+            per_magnet: None,
+            demag: None,
+            boundary_correction: None,
+        }),
+        fem: Some(fullmag_ir::FemHintsIR {
+            order: 1,
+            hmax: 2e-9,
+            mesh: None,
+        }),
+        hybrid: None,
+    });
+    // Per-object mesh but NO shared domain mesh asset
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
+            geometry_name: "strip".to_string(),
+            mesh_source: None,
+            mesh: Some(fullmag_ir::MeshIR {
+                mesh_name: "strip".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                elements: vec![[0, 1, 2, 3]],
+                element_markers: vec![1],
+                boundary_faces: vec![[0, 1, 2]],
+                boundary_markers: vec![1],
+            }),
+        }],
+        fem_domain_mesh_asset: None,
+    });
+
+    let error = plan(&ir).expect_err(
+        "shared-domain mesh requested with no fem_domain_mesh_asset should fail",
+    );
+    assert!(
+        error.reasons.iter().any(|reason| {
+            reason.contains("shared-domain FEM mesh")
+                || reason.contains("study.build_domain_mesh()")
+        }),
+        "expected error to mention shared-domain or build_domain_mesh, got: {:?}",
+        error.reasons,
+    );
+}
+
+#[test]
+fn fem_plan_succeeds_when_shared_domain_has_domain_mesh_asset() {
+    // Same setup as above but WITH a fem_domain_mesh_asset → should succeed
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.problem_meta.runtime_metadata.insert(
+        "study_universe".to_string(),
+        serde_json::json!({
+            "mode": "manual",
+            "size": [8.0, 6.0, 4.0],
+            "center": [0.0, 0.0, 0.0],
+        }),
+    );
+    ir.problem_meta.runtime_metadata.insert(
+        "mesh_workflow".to_string(),
+        serde_json::json!({
+            "build_target": "domain",
+            "domain_mesh_mode": "generated_shared_domain_mesh",
+        }),
+    );
+    ir.energy_terms = vec![
+        fullmag_ir::EnergyTermIR::Exchange,
+        fullmag_ir::EnergyTermIR::Demag { realization: None },
+    ];
+    ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+        fdm: Some(fullmag_ir::FdmHintsIR {
+            cell: [2e-9, 2e-9, 5e-9],
+            default_cell: None,
+            per_magnet: None,
+            demag: None,
+            boundary_correction: None,
+        }),
+        fem: Some(fullmag_ir::FemHintsIR {
+            order: 1,
+            hmax: 2e-9,
+            mesh: None,
+        }),
+        hybrid: None,
+    });
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
+            geometry_name: "strip".to_string(),
+            mesh_source: None,
+            mesh: Some(fullmag_ir::MeshIR {
+                mesh_name: "strip".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                elements: vec![[0, 1, 2, 3]],
+                element_markers: vec![1],
+                boundary_faces: vec![[0, 1, 2]],
+                boundary_markers: vec![1],
+            }),
+        }],
+        // Provide the shared domain mesh asset
+        fem_domain_mesh_asset: Some(fullmag_ir::FemDomainMeshAssetIR {
+            mesh: fullmag_ir::MeshIR {
+                mesh_name: "shared_domain".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [-2.0, -2.0, -2.0],
+                    [2.0, -2.0, -2.0],
+                    [-2.0, 2.0, -2.0],
+                    [-2.0, -2.0, 2.0],
+                ],
+                elements: vec![[0, 1, 2, 3], [4, 5, 6, 7]],
+                element_markers: vec![1, 0],
+                boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
+                boundary_markers: vec![1, 99],
+            },
+            region_markers: vec![
+                fullmag_ir::FemDomainRegionMarkerIR {
+                    marker: 1,
+                    geometry_name: "strip".to_string(),
+                    role: "magnetic_object".to_string(),
+                },
+            ],
+            mesh_provenance: None,
+        }),
+    });
+
+    let result = plan(&ir);
+    assert!(
+        result.is_ok(),
+        "plan should succeed when fem_domain_mesh_asset is provided, but got: {:?}",
+        result.err(),
+    );
+    match result.unwrap().backend_plan {
+        BackendPlanIR::Fem(fem) => {
+            assert!(
+                fem.mesh_parts.len() >= 2,
+                "shared-domain should produce at least magnetic + air parts, got {}",
+                fem.mesh_parts.len(),
+            );
+        }
+        other => panic!("expected FEM plan, got {other:?}"),
+    }
+}

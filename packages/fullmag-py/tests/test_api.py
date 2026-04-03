@@ -2022,6 +2022,41 @@ class ProblemApiTests(unittest.TestCase):
         self.assertNotIn("study.mesh(", rewritten)
         self.assertIn("a.mesh(hmax=4e-09, order=1)", rewritten)
 
+    def test_study_mesh_build_request_without_local_override_stays_inherit(self) -> None:
+        script = """
+        import fullmag as fm
+
+        study = fm.study("build_request_inherit")
+        study.engine("fem")
+        study.universe(mode="auto", padding=(10e-9, 10e-9, 10e-9), airbox_hmax=25e-9)
+        study.mesh(hmax=8e-9, order=1)
+
+        body = study.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="body")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        body.mesh.build()
+
+        study.run(1e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_study_mesh_build_request_inherit.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            with patch("fullmag.world.build_geometry_assets_for_request", return_value=None):
+                loaded = fm.load_problem_from_script(path)
+
+        draft = export_builder_draft(loaded)
+        mesh_entry = draft["geometries"][0]["mesh"]
+        self.assertEqual(mesh_entry["mode"], "inherit")
+        self.assertTrue(mesh_entry["build_requested"])
+
+        rewritten = rewrite_loaded_problem_script(loaded)["rendered_source"]
+        self.assertIn('study.object_mesh_defaults(hmax=8e-09, order=1)', rewritten)
+        self.assertNotIn("body.mesh(hmax=", rewritten)
+        self.assertIn("body.mesh.build()", rewritten)
+
     def test_study_mesh_builder_exports_full_per_object_mesh_details(self) -> None:
         script = """
         import fullmag as fm

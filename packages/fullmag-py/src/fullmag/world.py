@@ -1543,7 +1543,7 @@ def _resolve_flat_fem_hint() -> FEM | None:
 
 
 def _mesh_spec_declares_override(spec: _MeshSpecState) -> bool:
-    return spec.is_configured() or spec.build_requested
+    return spec.is_configured()
 
 
 def _mesh_spec_to_metadata(spec: _MeshSpecState) -> dict[str, object]:

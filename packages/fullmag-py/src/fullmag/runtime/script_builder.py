@@ -821,6 +821,14 @@ def _study_geometry_mesh_configs(
     ]
 
 
+def _mesh_entry_requests_build(mesh_config: Mapping[str, object]) -> bool:
+    return bool(mesh_config.get("build_requested", False))
+
+
+def _mesh_entry_requires_explicit_render(mesh_config: Mapping[str, object]) -> bool:
+    return _mesh_mode(mesh_config.get("mode")) == "custom" or _mesh_entry_requests_build(mesh_config)
+
+
 def _render_study_mesh_workflow(
     problem: Problem,
     magnet_vars: dict[str, str],
@@ -837,7 +845,7 @@ def _render_study_mesh_workflow(
         lines.append(f"study.object_mesh_defaults({', '.join(global_kwargs)})")
 
     for magnet_name, mesh_config in _study_geometry_mesh_configs(problem, overrides):
-        if _mesh_mode(mesh_config.get("mode")) != "custom":
+        if not _mesh_entry_requires_explicit_render(mesh_config):
             continue
         target_var = magnet_vars.get(magnet_name)
         if target_var is None:
@@ -847,7 +855,7 @@ def _render_study_mesh_workflow(
             lines.append(f"{target_var}.mesh({', '.join(kwargs)})")
         lines.extend(_render_mesh_size_fields(target_var, mesh_config))
         lines.extend(_render_mesh_operations(target_var, mesh_config))
-        if bool(mesh_config.get("build_requested", False)):
+        if _mesh_entry_requests_build(mesh_config):
             lines.append(f"{target_var}.mesh.build()")
 
     explicit_domain_mesh_call = _render_domain_mesh_call("study", global_mesh, source_root=source_root)
@@ -884,16 +892,16 @@ def _render_mesh_workflow(
         return []
 
     geometry_mesh_configs = _study_geometry_mesh_configs(problem, overrides)
-    custom_geometry_mesh_configs = [
+    explicit_geometry_mesh_configs = [
         (magnet_name, mesh_config)
         for magnet_name, mesh_config in geometry_mesh_configs
-        if _mesh_mode(mesh_config.get("mode")) == "custom"
+        if _mesh_entry_requires_explicit_render(mesh_config)
     ]
     lines: list[str] = []
 
-    if custom_geometry_mesh_configs:
+    if explicit_geometry_mesh_configs:
         geometry_build_requested = False
-        for magnet_name, mesh_config in custom_geometry_mesh_configs:
+        for magnet_name, mesh_config in explicit_geometry_mesh_configs:
             target_var = magnet_vars.get(magnet_name)
             if target_var is None:
                 continue
@@ -902,7 +910,7 @@ def _render_mesh_workflow(
                 lines.append(f"{target_var}.mesh({', '.join(kwargs)})")
             lines.extend(_render_mesh_size_fields(target_var, mesh_config))
             lines.extend(_render_mesh_operations(target_var, mesh_config))
-            build_requested = bool(mesh_config.get("build_requested", False))
+            build_requested = _mesh_entry_requests_build(mesh_config)
             geometry_build_requested = geometry_build_requested or build_requested
             if build_requested:
                 lines.append(f"{target_var}.mesh.build()")
