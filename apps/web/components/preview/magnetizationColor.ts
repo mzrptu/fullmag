@@ -1,17 +1,16 @@
 import * as THREE from "three";
 
 /**
- * Mumax3 viewer orientation coloring:
+ * Amumax frontend orientation coloring:
  * - normalize m
  * - hue from atan2(my, mx)
- * - saturation fixed at 1
- * - lightness from mz via 0.5 + 0.5 * mz
+ * - saturation from |m|, capped at 1
+ * - lightness from mz, clamped to the same perceptual band used by amumax
+ *   so the poles do not wash out to near-white / near-black in the viewport
  *
- * The poles are still neutral because HSL collapses to white/black at L=1/0.
- * Our previous clamp of lightness to <1 made +Z incorrectly appear pastel pink.
- *
- * Reference:
- * https://github.com/JeroenMulkers/mumax-view/blob/master/src/shaders.hpp
+ * References:
+ * - external_solvers/amumax/frontend/src/lib/preview/preview3D.ts
+ * - external_solvers/amumax/src/draw/hslscale.go
  */
 export function applyMagnetizationHsl(
   mx: number,
@@ -27,8 +26,9 @@ export function applyMagnetizationHsl(
   const ny = my / magnitude;
   const nz = mz / magnitude;
   const hue = Math.atan2(ny, nx) / (Math.PI * 2);
-  const lightness = THREE.MathUtils.clamp(nz * 0.5 + 0.5, 0, 1);
-  return color.setHSL((hue + 1) % 1, 1, lightness, THREE.SRGBColorSpace);
+  const saturation = Math.min(1, magnitude);
+  const lightness = THREE.MathUtils.clamp(nz * 0.5 + 0.5, 0.18, 0.84);
+  return color.setHSL((hue + 1) % 1, saturation, lightness);
 }
 
 export function magnetizationHslColor(mx: number, my: number, mz: number): THREE.Color {

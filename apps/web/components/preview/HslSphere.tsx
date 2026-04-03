@@ -97,7 +97,7 @@ export default function HslSphere({
   const sphereSize = compact ? Math.round(size * 0.82) : size;
   return (
     <div
-      className={`pointer-events-none ${embedded ? "relative" : "absolute z-10"} ${anchorClassName} ${className}`}
+      className={`pointer-events-none ${embedded ? "relative" : `absolute z-10 ${anchorClassName}`} ${className}`}
       style={{ width: sphereSize, height: sphereSize }}
     >
       <Canvas

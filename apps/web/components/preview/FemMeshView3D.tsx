@@ -20,6 +20,7 @@ import type {
   ObjectViewMode,
 } from "../runs/control-room/shared";
 import { FieldLegend } from "./field/FieldLegend";
+import { DraggableViewportBlock } from "./DraggableViewportBlock";
 import { combineMeshQualityStats } from "./fem/femQualityUtils";
 import { partMeshTint, partEdgeTint, colorLegendGradient, colorLegendLabel } from "./fem/femColorUtils";
 import { FemViewportToolbar } from "./fem/FemViewportToolbar";
@@ -27,8 +28,9 @@ import { FemPartExplorerPanel } from "./fem/FemPartExplorerPanel";
 import { FemViewportScene } from "./fem/FemViewportScene";
 import { FemContextMenu, FemHoverTooltip } from "./fem/FemContextMenu";
 import { FemRefineToolbar, FemSelectionHUD } from "./fem/FemSelectionHUD";
+import HslSphere from "./HslSphere";
+import ViewCube from "./ViewCube";
 import ScientificViewportShell from "./shared/ScientificViewportShell";
-import ViewportGizmoStack from "./shared/ViewportGizmoStack";
 import type { ViewportQualityProfileId } from "./shared/viewportQualityProfiles";
 import { ViewportOverlayManager, ViewportOverlaySlot } from "./ViewportOverlayManager";
 
@@ -1378,7 +1380,7 @@ function FemMeshView3DInner({
               </ViewportOverlaySlot>
             ) : null}
             {legendOpen ? (
-              <ViewportOverlaySlot anchor="bottom-left">
+              <ViewportOverlaySlot anchor="bottom-left" className={effectiveShowOrientationLegend ? "bottom-32" : undefined}>
                 <FieldLegend
                   compact={mode !== "full"}
                   className="pointer-events-none z-10"
@@ -1401,35 +1403,49 @@ function FemMeshView3DInner({
               anchor="top-right"
               className={mode === "icon" ? "top-16 max-w-[224px]" : mode === "compact" ? "top-16" : "top-3"}
             >
-              <ViewportGizmoStack
-                sceneRef={viewCubeSceneRef}
-                onRotate={handleViewCubeRotate}
-                onReset={() => setCameraPreset("reset")}
-                showOrientationSphere={effectiveShowOrientationLegend}
-                orientationSphereAxisConvention="identity"
-                compact={mode !== "full"}
-                embedded
-              />
-              {hasMeshParts && partExplorerOpen ? (
-                <FemPartExplorerPanel
-                  meshParts={meshParts}
-                  meshEntityViewState={meshEntityViewState}
-                  partQualityById={partQualityById}
-                  partExplorerGroups={partExplorerGroups}
-                  roleVisibilitySummary={roleVisibilitySummary}
-                  inspectedMeshPart={inspectedMeshPart}
-                  inspectedPartQuality={inspectedPartQuality}
-                  selectedEntityId={selectedEntityId}
-                  focusedEntityId={focusedEntityId}
-                  visiblePartsCount={visibleLayers.length}
-                  onClose={() => setPartExplorerOpen(false)}
-                  onPartSelect={handlePartSelect}
-                  onEntityFocus={onEntityFocus}
-                  onPatchPart={patchSinglePart}
-                  onRoleVisibility={handleRoleVisibility}
+              <div className="flex flex-col items-end gap-2">
+                <ViewCube
+                  sceneRef={viewCubeSceneRef}
+                  onRotate={handleViewCubeRotate}
+                  onReset={() => setCameraPreset("reset")}
+                  embedded
                 />
+              </div>
+              {hasMeshParts && partExplorerOpen ? (
+                <DraggableViewportBlock defaultOffset={{ x: 0, y: mode === "full" ? 10 : 6 }}>
+                  {({ dragHandleProps }) => (
+                    <FemPartExplorerPanel
+                      meshParts={meshParts}
+                      meshEntityViewState={meshEntityViewState}
+                      partQualityById={partQualityById}
+                      partExplorerGroups={partExplorerGroups}
+                      roleVisibilitySummary={roleVisibilitySummary}
+                      inspectedMeshPart={inspectedMeshPart}
+                      inspectedPartQuality={inspectedPartQuality}
+                      selectedEntityId={selectedEntityId}
+                      focusedEntityId={focusedEntityId}
+                      visiblePartsCount={visibleLayers.length}
+                      onClose={() => setPartExplorerOpen(false)}
+                      onPartSelect={handlePartSelect}
+                      onEntityFocus={onEntityFocus}
+                      onPatchPart={patchSinglePart}
+                      onRoleVisibility={handleRoleVisibility}
+                      dragHandleProps={dragHandleProps}
+                    />
+                  )}
+                </DraggableViewportBlock>
               ) : null}
             </ViewportOverlaySlot>
+            {effectiveShowOrientationLegend ? (
+              <ViewportOverlaySlot anchor="bottom-left">
+                <HslSphere
+                  sceneRef={viewCubeSceneRef}
+                  axisConvention="identity"
+                  compact={mode !== "full"}
+                  embedded
+                />
+              </ViewportOverlaySlot>
+            ) : null}
             <ViewportOverlaySlot
               anchor="bottom-center"
               className={mode === "icon" ? "bottom-14 max-w-[min(92vw,30rem)]" : "bottom-12"}

@@ -199,7 +199,7 @@ export default function ViewCube({
         className={cn(
           "w-[88px] h-[98px] z-10 flex flex-col items-center pointer-events-none pt-[6px] rounded-xl bg-gradient-to-b from-slate-800/90 to-slate-900/80 border border-slate-500/20 shadow-xl backdrop-blur-md [perspective:220px]",
           embedded ? "relative" : "absolute",
-          cubeClassName,
+          !embedded && cubeClassName,
         )}
       >
         <div
@@ -235,7 +235,7 @@ export default function ViewCube({
         className={cn(
           "w-[90px] h-[90px] z-10 pointer-events-none [perspective:200px]",
           embedded ? "relative self-end" : "absolute",
-          axisClassName,
+          !embedded && axisClassName,
         )}
       >
         <div ref={axisSceneRef} className="relative w-[90px] h-[90px] [transform-style:preserve-3d]">

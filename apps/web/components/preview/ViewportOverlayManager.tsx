@@ -63,14 +63,15 @@ export function ViewportOverlayManager({
   }, []);
 
   const mode = useMemo<ViewportOverlayMode>(() => {
-    if (size.width > 0 && size.width < 1024) {
+    const { width, height } = size;
+    if (width > 0 && (width < 1024 || height < 480)) {
       return "icon";
     }
-    if (size.width > 0 && size.width < 1440) {
+    if (width > 0 && (width < 1440 || height < 640)) {
       return "compact";
     }
     return "full";
-  }, [size.width]);
+  }, [size.width, size.height]);
 
   return (
     <div ref={ref} className={cn("pointer-events-none absolute inset-0 z-20", className)}>

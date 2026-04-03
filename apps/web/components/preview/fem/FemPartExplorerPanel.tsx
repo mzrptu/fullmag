@@ -1,5 +1,6 @@
 "use client";
 
+import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type {
   FemMeshPart,
@@ -48,6 +49,8 @@ interface FemPartExplorerPanelProps {
   onPatchPart: (partId: string, patch: Partial<MeshEntityViewState>) => void;
   onRoleVisibility: (role: FemMeshPart["role"], visible: boolean) => void;
   className?: string;
+  headerAccessory?: ReactNode;
+  dragHandleProps?: HTMLAttributes<HTMLElement>;
 }
 
 /* ── Part detail card ── */
@@ -306,6 +309,8 @@ export function FemPartExplorerPanel({
   onPatchPart,
   onRoleVisibility,
   className,
+  headerAccessory,
+  dragHandleProps,
 }: FemPartExplorerPanelProps) {
   const headerLabel = inspectedMeshPart
     ? "Selected submesh"
@@ -323,13 +328,21 @@ export function FemPartExplorerPanel({
             {visiblePartsCount}/{meshParts.length} visible parts
           </p>
         </div>
-        <button
-          type="button"
-          className="rounded-md px-2 py-1 text-[0.65rem] font-semibold text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-          onClick={onClose}
-        >
-          Hide
-        </button>
+        <div className="flex items-center gap-2">
+          {dragHandleProps ? (
+            <div {...dragHandleProps}>
+              Move
+            </div>
+          ) : null}
+          {headerAccessory}
+          <button
+            type="button"
+            className="rounded-md px-2 py-1 text-[0.65rem] font-semibold text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+            onClick={onClose}
+          >
+            Hide
+          </button>
+        </div>
       </div>
 
       {/* Role visibility toggles */}
