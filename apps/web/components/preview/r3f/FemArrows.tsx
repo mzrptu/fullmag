@@ -35,7 +35,7 @@ function useArrowTemplate(maxDim: number) {
 
     const shaft = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLen, 6);
     shaft.rotateX(Math.PI / 2);
-    // Position base of shaft exactly at Z=0
+    // Center the full glyph on the node instead of anchoring its tail there.
     shaft.translate(0, 0, shaftLen / 2);
     
     const head = new THREE.ConeGeometry(headRadius, headLen, 6);
@@ -68,6 +68,7 @@ function useArrowTemplate(maxDim: number) {
     for (let i = 0; i < shaftIdx.count; i++) indexArr[i] = shaftIdx.array[i];
     for (let i = 0; i < headIdx.count; i++) indexArr[shaftIdx.count + i] = headIdx.array[i] + shaftPos.count;
     merged.setIndex(new THREE.BufferAttribute(indexArr, 1));
+    merged.translate(0, 0, -arrowLen / 2);
 
     shaft.dispose();
     head.dispose();

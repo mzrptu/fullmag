@@ -30,6 +30,7 @@ import { ViewportToolbar3D } from "./ViewportToolbar3D";
 import { ViewportToolGroup, ViewportToolSeparator } from "./ViewportToolGroup";
 import { ViewportIconAction } from "./ViewportIconAction";
 import { ViewportPopoverPanel, ViewportPopoverRow, ViewportPopoverTrigger } from "./ViewportPopoverPanel";
+import { ViewportOverlayLayout } from "./ViewportOverlayLayout";
 import { ViewportStatusChip } from "./ViewportStatusChips";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -363,7 +364,7 @@ function FdmObjectOverlayMeshes({
                   const physicalDx = p.x * cellX;
                   const physicalDz = p.y * cellZ; 
                   const physicalDy = p.z * cellY; 
-                  onGeometryTranslate(overlay.id, physicalDx, physicalDy, physicalDz);
+                  onGeometryTranslate(overlay.id, physicalDx, physicalDy, physicalDy);
                   groupRef.current.position.set(0, 0, 0);
                 }
               }}
@@ -461,7 +462,7 @@ function FdmAntennaOverlayMeshes({
                   const physicalDx = p.x * cellX;
                   const physicalDz = p.y * cellZ; 
                   const physicalDy = p.z * cellY; 
-                  onAntennaTranslate(overlay.id, physicalDx, physicalDy, physicalDz);
+                  onAntennaTranslate(overlay.id, physicalDx, physicalDy, physicalDy);
                   groupRef.current.position.set(0, 0, 0);
                 }
               }}
@@ -626,263 +627,265 @@ function MagnetizationView3DInner({
 
   return (
     <div className="relative flex flex-col h-full">
-      {/* ── Settings toolbar overlay ──────────────────────── */}
-      <ViewportToolbar3D>
-        {/* Render mode */}
-        {!geometryMode && (
-          <ViewportToolGroup label="Render">
-            <ViewportIconAction
-              icon={<ArrowUpRight size={14} />}
-              active={settings.renderMode === "glyph"}
-              onClick={() => update({ renderMode: "glyph" })}
-              title="Arrows"
-            />
-            <ViewportIconAction
-              icon={<Box size={14} />}
-              active={settings.renderMode === "voxel"}
-              onClick={() => update({ renderMode: "voxel" })}
-              title="Voxel"
-            />
-          </ViewportToolGroup>
-        )}
+      {/* ── Overlay Layout ────────────────────────────────────── */}
+      <ViewportOverlayLayout>
+        <ViewportOverlayLayout.TopLeft>
+          <ViewportToolbar3D>
+            {/* Render mode */}
+            {!geometryMode && (
+              <ViewportToolGroup label="Render">
+                <ViewportIconAction
+                  icon={<ArrowUpRight size={14} />}
+                  active={settings.renderMode === "glyph"}
+                  onClick={() => update({ renderMode: "glyph" })}
+                  title="Arrows"
+                />
+                <ViewportIconAction
+                  icon={<Box size={14} />}
+                  active={settings.renderMode === "voxel"}
+                  onClick={() => update({ renderMode: "voxel" })}
+                  title="Voxel"
+                />
+              </ViewportToolGroup>
+            )}
 
-        <ViewportToolSeparator />
+            <ViewportToolSeparator />
 
-        {/* Color field (only voxel) */}
-        {settings.renderMode === "voxel" && (
-          <ViewportToolGroup label="Color">
-            <ViewportPopoverTrigger preferredHorizontal="left">
-              <ViewportIconAction
-                icon={<Palette size={14} />}
-                label={settings.voxelColorMode === "orientation" ? "ORI" : settings.voxelColorMode.toUpperCase()}
-                active={openPopover === "color"}
-                showCaret
-                onClick={() => setOpenPopover(prev => prev === "color" ? null : "color")}
-                title="Color Field"
-              />
-              {openPopover === "color" && (
-                <ViewportPopoverPanel anchorRef={{ current: null }} title="Color Mode">
-                   <ViewportPopoverRow label="Field">
-                    {(["orientation", "x", "y", "z"] as VoxelColorMode[]).map(v => (
-                       <button key={v} className={toolbarOptionClassName} data-active={settings.voxelColorMode === v} onClick={() => { update({ voxelColorMode: v }); setOpenPopover(null); }}>
-                         {v === "orientation" ? "ORI" : v.toUpperCase()}
-                       </button>
-                    ))}
-                  </ViewportPopoverRow>
-                </ViewportPopoverPanel>
-              )}
-            </ViewportPopoverTrigger>
-          </ViewportToolGroup>
-        )}
-
-        {settings.renderMode === "voxel" && <ViewportToolSeparator />}
-
-        <ViewportStatusChip color="cyan">{fieldLabel ?? "M"}</ViewportStatusChip>
-
-        <ViewportToolSeparator />
-
-        <ViewportToolGroup>
-          {/* Display settings Popover */}
-          <ViewportPopoverTrigger preferredHorizontal="left">
-            <ViewportIconAction
-              icon={<Eye size={14} />}
-              showCaret
-              active={openPopover === "display"}
-              onClick={() => setOpenPopover(prev => prev === "display" ? null : "display")}
-              title="Display Options"
-            />
-            {openPopover === "display" && (
-              <ViewportPopoverPanel anchorRef={{ current: null }} title="Display & Quality">
-                <ViewportPopoverRow label="Quality">
-                   {(["low", "high", "ultra"] as QualityLevel[]).map(v => (
-                       <button key={v} className={toolbarOptionClassName} data-active={settings.quality === v} onClick={() => update({ quality: v })}>
-                         {v}
-                       </button>
-                    ))}
-                </ViewportPopoverRow>
-                <ViewportPopoverRow label="Brightness">
-                   <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.3} max={3.0} step={0.1} value={settings.brightness} onChange={(e) => update({ brightness: parseFloat(e.target.value) })} />
-                </ViewportPopoverRow>
-                {settings.renderMode === "voxel" && (
-                  <>
-                    <div className="h-px bg-border/20 my-1"/>
-                    <ViewportPopoverRow label="Opacity">
-                       <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.15} max={0.95} step={0.01} value={settings.voxelOpacity} onChange={(e) => update({ voxelOpacity: parseFloat(e.target.value) })} />
-                    </ViewportPopoverRow>
-                    <ViewportPopoverRow label="Spacing">
-                       <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.02} max={0.42} step={0.01} value={settings.voxelGap} onChange={(e) => update({ voxelGap: parseFloat(e.target.value) })} />
-                    </ViewportPopoverRow>
-                    <ViewportPopoverRow label="Min Str">
-                       <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0} max={0.95} step={0.01} value={settings.voxelThreshold} onChange={(e) => update({ voxelThreshold: parseFloat(e.target.value) })} />
-                    </ViewportPopoverRow>
-                    <ViewportPopoverRow label="Sampling">
-                       {(["1", "2", "4"]).map(v => (
-                         <button key={v} className={toolbarOptionClassName} data-active={String(settings.sampling) === v} onClick={() => update({ sampling: parseInt(v, 10) as VoxelSampling })}>
-                           {v}X
+            {/* Color field (only voxel) */}
+            {settings.renderMode === "voxel" && (
+              <ViewportToolGroup label="Color">
+                <ViewportPopoverTrigger preferredHorizontal="left">
+                  <ViewportIconAction
+                    icon={<Palette size={14} />}
+                    label={settings.voxelColorMode === "orientation" ? "ORI" : settings.voxelColorMode.toUpperCase()}
+                    active={openPopover === "color"}
+                    showCaret
+                    onClick={() => setOpenPopover(prev => prev === "color" ? null : "color")}
+                    title="Color Field"
+                  />
+                  <ViewportPopoverPanel anchorRef={{ current: null }} title="Color Mode">
+                     <ViewportPopoverRow label="Field">
+                      {(["orientation", "x", "y", "z"] as VoxelColorMode[]).map(v => (
+                         <button key={v} className={toolbarOptionClassName} data-active={settings.voxelColorMode === v} onClick={() => { update({ voxelColorMode: v }); setOpenPopover(null); }}>
+                           {v === "orientation" ? "ORI" : v.toUpperCase()}
                          </button>
-                       ))}
+                      ))}
                     </ViewportPopoverRow>
-                  </>
-                )}
-              </ViewportPopoverPanel>
+                  </ViewportPopoverPanel>
+                </ViewportPopoverTrigger>
+              </ViewportToolGroup>
             )}
-          </ViewportPopoverTrigger>
 
-          {/* Topography */}
-          {!geometryMode && (
-            <ViewportPopoverTrigger preferredHorizontal="left">
-              <ViewportIconAction
-                icon={<Mountain size={14} />}
-                showCaret
-                active={openPopover === "topo"}
-                onClick={() => setOpenPopover(prev => prev === "topo" ? null : "topo")}
-                title="Topography"
-              />
-              {openPopover === "topo" && (
-                <ViewportPopoverPanel anchorRef={{ current: null }} title="Topography">
-                   <ViewportPopoverRow label="Enable">
-                      <button className={toolbarOptionClassName} data-active={settings.topoEnabled} onClick={() => update({ topoEnabled: !settings.topoEnabled })}>
-                        {settings.topoEnabled ? "ON" : "OFF"}
-                      </button>
-                   </ViewportPopoverRow>
-                   {settings.topoEnabled && (
-                     <>
-                        <ViewportPopoverRow label="Display">
-                          {(["x", "y", "z"] as TopoComponent[]).map(v => (
-                            <button key={v} className={toolbarOptionClassName} data-active={settings.topoComponent === v} onClick={() => update({ topoComponent: v })}>
-                              m{v.toUpperCase()}
-                            </button>
-                          ))}
-                        </ViewportPopoverRow>
-                        <ViewportPopoverRow label="Amplitude">
-                           <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.5} max={50} step={0.5} value={settings.topoMultiplier} onChange={(e) => update({ topoMultiplier: parseFloat(e.target.value) })} />
-                        </ViewportPopoverRow>
-                     </>
-                   )}
+            {settings.renderMode === "voxel" && <ViewportToolSeparator />}
+
+            <ViewportStatusChip color="cyan">{fieldLabel ?? "M"}</ViewportStatusChip>
+
+            <ViewportToolSeparator />
+
+            <ViewportToolGroup>
+              {/* Display settings Popover */}
+              <ViewportPopoverTrigger preferredHorizontal="left">
+                <ViewportIconAction
+                  icon={<Eye size={14} />}
+                  showCaret
+                  active={openPopover === "display"}
+                  onClick={() => setOpenPopover(prev => prev === "display" ? null : "display")}
+                  title="Display Options"
+                />
+                <ViewportPopoverPanel anchorRef={{ current: null }} title="Display & Quality">
+                  <ViewportPopoverRow label="Quality">
+                     {(["low", "high", "ultra"] as QualityLevel[]).map(v => (
+                         <button key={v} className={toolbarOptionClassName} data-active={settings.quality === v} onClick={() => update({ quality: v })}>
+                           {v}
+                         </button>
+                      ))}
+                  </ViewportPopoverRow>
+                  <ViewportPopoverRow label="Brightness">
+                     <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.3} max={3.0} step={0.1} value={settings.brightness} onChange={(e) => update({ brightness: parseFloat(e.target.value) })} />
+                  </ViewportPopoverRow>
+                  {settings.renderMode === "voxel" && (
+                    <>
+                      <div className="h-px bg-border/20 my-1"/>
+                      <ViewportPopoverRow label="Opacity">
+                         <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.15} max={0.95} step={0.01} value={settings.voxelOpacity} onChange={(e) => update({ voxelOpacity: parseFloat(e.target.value) })} />
+                      </ViewportPopoverRow>
+                      <ViewportPopoverRow label="Spacing">
+                         <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.02} max={0.42} step={0.01} value={settings.voxelGap} onChange={(e) => update({ voxelGap: parseFloat(e.target.value) })} />
+                      </ViewportPopoverRow>
+                      <ViewportPopoverRow label="Min Str">
+                         <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0} max={0.95} step={0.01} value={settings.voxelThreshold} onChange={(e) => update({ voxelThreshold: parseFloat(e.target.value) })} />
+                      </ViewportPopoverRow>
+                      <ViewportPopoverRow label="Sampling">
+                         {(["1", "2", "4"]).map(v => (
+                           <button key={v} className={toolbarOptionClassName} data-active={String(settings.sampling) === v} onClick={() => update({ sampling: parseInt(v, 10) as VoxelSampling })}>
+                             {v}X
+                           </button>
+                         ))}
+                      </ViewportPopoverRow>
+                    </>
+                  )}
                 </ViewportPopoverPanel>
+              </ViewportPopoverTrigger>
+
+              {/* Topography */}
+              {!geometryMode && (
+                <ViewportPopoverTrigger preferredHorizontal="left">
+                  <ViewportIconAction
+                    icon={<Mountain size={14} />}
+                    showCaret
+                    active={openPopover === "topo"}
+                    onClick={() => setOpenPopover(prev => prev === "topo" ? null : "topo")}
+                    title="Topography"
+                  />
+                  <ViewportPopoverPanel anchorRef={{ current: null }} title="Topography">
+                     <ViewportPopoverRow label="Enable">
+                        <button className={toolbarOptionClassName} data-active={settings.topoEnabled} onClick={() => update({ topoEnabled: !settings.topoEnabled })}>
+                          {settings.topoEnabled ? "ON" : "OFF"}
+                        </button>
+                     </ViewportPopoverRow>
+                     {settings.topoEnabled && (
+                       <>
+                          <ViewportPopoverRow label="Display">
+                            {(["x", "y", "z"] as TopoComponent[]).map(v => (
+                              <button key={v} className={toolbarOptionClassName} data-active={settings.topoComponent === v} onClick={() => update({ topoComponent: v })}>
+                                m{v.toUpperCase()}
+                              </button>
+                            ))}
+                          </ViewportPopoverRow>
+                          <ViewportPopoverRow label="Amplitude">
+                             <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.5} max={50} step={0.5} value={settings.topoMultiplier} onChange={(e) => update({ topoMultiplier: parseFloat(e.target.value) })} />
+                          </ViewportPopoverRow>
+                       </>
+                     )}
+                  </ViewportPopoverPanel>
+                </ViewportPopoverTrigger>
               )}
-            </ViewportPopoverTrigger>
-          )}
 
-          {/* Camera Info */}
-          <ViewportPopoverTrigger preferredHorizontal="left">
-            <ViewportIconAction
-              icon={<Video size={14} />}
-              showCaret
-              active={openPopover === "camera"}
-              onClick={() => setOpenPopover(prev => prev === "camera" ? null : "camera")}
-              title="Camera"
-            />
-            {openPopover === "camera" && (
-              <ViewportPopoverPanel anchorRef={{ current: null }} title="Camera Presets">
-                <div className="grid grid-cols-2 gap-1 px-1">
-                  {cameraPresets.map(p => (
-                    <button key={p.label} className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { p.fn(); setOpenPopover(null); }}>{p.label}</button>
-                  ))}
-                  <button className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { resetCamera(); setOpenPopover(null); }}>Reset</button>
-                </div>
-              </ViewportPopoverPanel>
-            )}
-          </ViewportPopoverTrigger>
+              {/* Camera Info */}
+              <ViewportPopoverTrigger preferredHorizontal="left">
+                <ViewportIconAction
+                  icon={<Video size={14} />}
+                  showCaret
+                  active={openPopover === "camera"}
+                  onClick={() => setOpenPopover(prev => prev === "camera" ? null : "camera")}
+                  title="Camera"
+                />
+                <ViewportPopoverPanel anchorRef={{ current: null }} title="Camera Presets">
+                  <div className="grid grid-cols-2 gap-1 px-1">
+                    {cameraPresets.map(p => (
+                      <button key={p.label} className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { p.fn(); setOpenPopover(null); }}>{p.label}</button>
+                    ))}
+                    <button className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { resetCamera(); setOpenPopover(null); }}>Reset</button>
+                  </div>
+                </ViewportPopoverPanel>
+              </ViewportPopoverTrigger>
 
-          <ViewportToolSeparator />
+              <ViewportToolSeparator />
 
-          {/* Capture */}
-          <ViewportIconAction
-            icon={<Camera size={14} />}
-            onClick={captureSnapshot}
-            title="Snapshot"
+              {/* Capture */}
+              <ViewportIconAction
+                icon={<Camera size={14} />}
+                onClick={captureSnapshot}
+                title="Snapshot"
+              />
+            </ViewportToolGroup>
+          </ViewportToolbar3D>
+        </ViewportOverlayLayout.TopLeft>
+
+        <ViewportOverlayLayout.TopRight>
+          <ViewCube
+            sceneRef={viewCubeSceneRef}
+            onRotate={handleViewCubeRotate}
+            onReset={resetCamera}
           />
+        </ViewportOverlayLayout.TopRight>
 
-        </ViewportToolGroup>
-      </ViewportToolbar3D>
+        <ViewportOverlayLayout.BottomLeft>
+          {!geometryMode ? <HslSphere sceneRef={viewCubeSceneRef} axisConvention="identity" /> : null}
+        </ViewportOverlayLayout.BottomLeft>
+      </ViewportOverlayLayout>
 
       {/* ── R3F Canvas ────────────────────────────────────── */}
-      <Canvas
-        className="w-full flex-1 min-h-0"
-        camera={{
-          fov: 50,
-          near: 0.1,
-          far: 1000,
-          position: [
-            cx + DEFAULT_CAMERA_DIRECTION[0] * orbitDist,
-            cy + DEFAULT_CAMERA_DIRECTION[1] * orbitDist,
-            cz + DEFAULT_CAMERA_DIRECTION[2] * orbitDist,
-          ],
-          up: DEFAULT_CAMERA_UP,
-        }}
-        gl={{
-          antialias: settings.quality !== "low",
-          preserveDrawingBuffer: true,
-        }}
-        onCreated={({ gl }) => { canvasRef.current = gl.domElement; }}
-        dpr={settings.quality === "ultra"
-          ? Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)
-          : 1
-        }
-        style={{ background: `#${BG_COLOR.toString(16).padStart(6, "0")}` }}
-      >
-        <color attach="background" args={[BG_COLOR]} />
-        <SceneConfig toneMapping={settings.quality !== "low"} />
+      <div className="absolute inset-0 pointer-events-none z-0">
+        <Canvas
+          className="w-full h-full pointer-events-auto"
+          camera={{
+            fov: 50,
+            near: 0.1,
+            far: 1000,
+            position: [
+              cx + DEFAULT_CAMERA_DIRECTION[0] * orbitDist,
+              cy + DEFAULT_CAMERA_DIRECTION[1] * orbitDist,
+              cz + DEFAULT_CAMERA_DIRECTION[2] * orbitDist,
+            ],
+            up: DEFAULT_CAMERA_UP,
+          }}
+          gl={{
+            antialias: settings.quality !== "low",
+            preserveDrawingBuffer: true,
+          }}
+          onCreated={({ gl }) => { canvasRef.current = gl.domElement; }}
+          dpr={settings.quality === "ultra"
+            ? Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)
+            : 1
+          }
+          style={{ background: `#${BG_COLOR.toString(16).padStart(6, "0")}` }}
+        >
+          <color attach="background" args={[BG_COLOR]} />
+          <SceneConfig toneMapping={settings.quality !== "low"} />
 
-        <FdmLighting brightness={settings.brightness} quality={settings.quality} />
+          <FdmLighting brightness={settings.brightness} quality={settings.quality} />
 
-        <FdmInstances
-          grid={grid}
-          vectors={deferredVectors}
-          geometryMode={geometryMode}
-          activeMask={activeMask}
-          settings={deferredSettings}
-          sceneOpacityMultiplier={sceneOpacityMultiplier}
-          onVisibleCount={setVisibleCount}
-        />
-
-        {worldExtent && objectOverlays.length > 0 ? (
-          <FdmObjectOverlayMeshes
-            overlays={objectOverlays}
-            selectedObjectId={selectedObjectId}
-            objectViewMode={objectViewMode}
+          <FdmInstances
             grid={grid}
-            worldExtent={worldExtent}
-            universeCenter={universeCenter}
-            onRequestObjectSelect={onRequestObjectSelect}
-            onGeometryTranslate={onGeometryTranslate}
+            vectors={deferredVectors}
+            geometryMode={geometryMode}
+            activeMask={activeMask}
+            settings={deferredSettings}
+            sceneOpacityMultiplier={sceneOpacityMultiplier}
+            onVisibleCount={setVisibleCount}
           />
-        ) : null}
 
-        {worldExtent && antennaOverlays.length > 0 && objectViewMode !== "isolate" ? (
-          <FdmAntennaOverlayMeshes
-            overlays={antennaOverlays}
-            selectedAntennaId={selectedAntennaId}
+          {worldExtent && objectOverlays.length > 0 ? (
+            <FdmObjectOverlayMeshes
+              overlays={objectOverlays}
+              selectedObjectId={selectedObjectId}
+              objectViewMode={objectViewMode}
+              grid={grid}
+              worldExtent={worldExtent}
+              universeCenter={universeCenter}
+              onRequestObjectSelect={onRequestObjectSelect}
+              onGeometryTranslate={onGeometryTranslate}
+            />
+          ) : null}
+
+          {worldExtent && antennaOverlays.length > 0 && objectViewMode !== "isolate" ? (
+            <FdmAntennaOverlayMeshes
+              overlays={antennaOverlays}
+              selectedAntennaId={selectedAntennaId}
+              grid={grid}
+              worldExtent={worldExtent}
+              universeCenter={universeCenter}
+              onAntennaTranslate={onAntennaTranslate}
+            />
+          ) : null}
+
+          {axesWorldExtent && axesWorldExtent[0] > 0 && axesWorldExtent[1] > 0 && axesWorldExtent[2] > 0 && (
+            <SceneAxes3D
+              worldExtent={axesWorldExtent}
+              center={[cx, cy, cz]}
+              sceneScale={axesSceneScale}
+              axisLabels={["x", "z", "y"]}
+            />
+          )}
+
+          <SyncedControls
+            controlsRefObject={controlsRef}
+            viewCubeBridgeRef={viewCubeSceneRef}
             grid={grid}
-            worldExtent={worldExtent}
-            universeCenter={universeCenter}
-            onAntennaTranslate={onAntennaTranslate}
           />
-        ) : null}
-
-        {axesWorldExtent && axesWorldExtent[0] > 0 && axesWorldExtent[1] > 0 && axesWorldExtent[2] > 0 && (
-          <SceneAxes3D
-            worldExtent={axesWorldExtent}
-            center={[cx, cy, cz]}
-            sceneScale={axesSceneScale}
-            axisLabels={["x", "z", "y"]}
-          />
-        )}
-
-        <SyncedControls
-          controlsRefObject={controlsRef}
-          viewCubeBridgeRef={viewCubeSceneRef}
-          grid={grid}
-        />
-      </Canvas>
-
-      <ViewCube
-        sceneRef={viewCubeSceneRef}
-        onRotate={handleViewCubeRotate}
-        onReset={resetCamera}
-      />
-      {!geometryMode ? <HslSphere sceneRef={viewCubeSceneRef} axisConvention="swapYZ" /> : null}
+        </Canvas>
+      </div>
     </div>
   );
 }

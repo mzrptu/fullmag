@@ -64,16 +64,12 @@ const faces: { cssTransform: string; zones: FaceZone[][] }[] = [
   { cssTransform: "vcFaceLeft", zones: buildZones([-1, 0, 0], [0, 0, 1], [0, 1, 0], "-X") },
   { cssTransform: "vcFaceFront", zones: buildZones([0, 0, 1], [0, 1, 0], [1, 0, 0], "+Z") },
   { cssTransform: "vcFaceBack", zones: buildZones([0, 0, -1], [0, -1, 0], [1, 0, 0], "-Z") },
-];
-
-export default function ViewCube({
+];export default function ViewCube({
   sceneRef,
   onRotate,
   onReset,
-  cubeClassName = "top-[80px] right-3",
-  axisClassName = "bottom-5 right-5",
-  embedded = false,
-}: ViewCubeProps) {
+  className,
+}: ViewCubeProps & { className?: string }) {
   const rafRef = useRef<number | null>(null);
   const dragRef = useRef({ dragging: false, startX: 0, startY: 0, hasDragged: false });
   const cubeSceneRef = useRef<HTMLDivElement | null>(null);
@@ -193,13 +189,11 @@ export default function ViewCube({
   }, []);
 
   return (
-    <>
+    <div className={cn("flex flex-col items-center gap-4", className)}>
       {/* ViewCube */}
       <div
         className={cn(
-          "w-[88px] h-[98px] z-10 flex flex-col items-center pointer-events-none pt-[6px] rounded-xl bg-gradient-to-b from-slate-800/90 to-slate-900/80 border border-slate-500/20 shadow-xl backdrop-blur-md [perspective:220px]",
-          embedded ? "relative" : "absolute",
-          !embedded && cubeClassName,
+          "w-[88px] h-[98px] flex flex-col items-center pointer-events-none pt-[6px] rounded-xl bg-gradient-to-b from-slate-800/90 to-slate-900/80 border border-slate-500/20 shadow-xl backdrop-blur-md [perspective:220px] relative pointer-events-auto"
         )}
       >
         <div
@@ -232,11 +226,7 @@ export default function ViewCube({
 
       {/* Axis Gizmo */}
       <div
-        className={cn(
-          "w-[90px] h-[90px] z-10 pointer-events-none [perspective:200px]",
-          embedded ? "relative self-end" : "absolute",
-          !embedded && axisClassName,
-        )}
+        className="w-[90px] h-[90px] pointer-events-none [perspective:200px] relative pointer-events-none"
       >
         <div ref={axisSceneRef} className="relative w-[90px] h-[90px] [transform-style:preserve-3d]">
           {/* X axis (red) */}
@@ -253,6 +243,6 @@ export default function ViewCube({
           <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] text-[13px] font-extrabold pointer-events-none -ml-[5px] -mt-[8px] text-green-500" style={{ transform: "translateZ(36px)" }}>Y</div>
         </div>
       </div>
-    </>
+    </div>
   );
 }

@@ -7,8 +7,14 @@
  * viewport camera. The sphere surface uses the exact same magnetizationHSL
  * colour mapping as arrow/voxel rendering.
  *
- * Axis labels (X / Y / Z) protrude from the sphere following the active
- * viewport convention. FEM uses identity axes; FDM swaps Y/Z.
+ * Axis labels (X / Y / Z) and the sampled color map follow the same effective
+ * preview-axis convention as the viewport. In practice we want:
+ * - X = in-plane horizontal
+ * - Y = in-plane depth
+ * - Z = out-of-plane / thickness / vertical
+ *
+ * That means the screen-up direction corresponds to +Z, not +Y, so the
+ * reference sphere must swap Y/Z when sampling the HSL map for FEM/FDM.
  */
 
 import { useRef, useMemo } from "react";
@@ -16,6 +22,7 @@ import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Text, Billboard, Line } from "@react-three/drei";
 import { magnetizationHslColor } from "./magnetizationColor";
+import { cn } from "@/lib/utils";
 
 /* ── Types ─────────────────────────────────────────────────── */
 
@@ -25,10 +32,10 @@ interface HslSphereProps {
     controls: any;
   } | null>;
   axisConvention?: "identity" | "swapYZ";
-  anchorClassName?: string;
   size?: number;
   compact?: boolean;
   className?: string;
+  anchorClassName?: string;
   embedded?: boolean;
 }
 
@@ -88,16 +95,21 @@ function CameraSync({
 export default function HslSphere({
   sceneRef,
   axisConvention = "identity",
-  anchorClassName = "bottom-4 left-4",
   size = SIZE,
   compact = false,
   className = "",
+  anchorClassName,
   embedded = false,
 }: HslSphereProps) {
   const sphereSize = compact ? Math.round(size * 0.82) : size;
   return (
     <div
-      className={`pointer-events-none ${embedded ? "relative" : `absolute z-10 ${anchorClassName}`} ${className}`}
+      className={cn(
+        "pointer-events-none relative",
+        embedded ? "self-start" : null,
+        anchorClassName,
+        className,
+      )}
       style={{ width: sphereSize, height: sphereSize }}
     >
       <Canvas
@@ -132,13 +144,27 @@ export default function HslSphere({
 
 /* ── Inner scene (must be inside Canvas) ───────────────────── */
 
+type AxisConvention = "identity" | "swapYZ";
+
+function conventionVector(
+  x: number,
+  y: number,
+  z: number,
+  axisConvention: AxisConvention,
+): [number, number, number] {
+  if (axisConvention === "swapYZ") {
+    return [x, z, y];
+  }
+  return [x, y, z];
+}
+
 function HslSphereScene({
   mainCameraRef,
   axisConvention,
   compact,
 }: {
   mainCameraRef: React.MutableRefObject<{ camera: THREE.Camera } | null>;
-  axisConvention: "identity" | "swapYZ";
+  axisConvention: AxisConvention;
   compact: boolean;
 }) {
   const sphereGeo = useMemo(() => {
@@ -149,10 +175,8 @@ function HslSphereScene({
 
     for (let i = 0; i < posAttr.count; i++) {
       v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).normalize();
-      const c =
-        axisConvention === "swapYZ"
-          ? magnetizationHslColor(v.x, v.z, v.y)
-          : magnetizationHslColor(v.x, v.y, v.z);
+      const [mx, my, mz] = conventionVector(v.x, v.y, v.z, axisConvention);
+      const c = magnetizationHslColor(mx, my, mz);
       colors[i * 3] = c.r;
       colors[i * 3 + 1] = c.g;
       colors[i * 3 + 2] = c.b;
@@ -165,6 +189,18 @@ function HslSphereScene({
     () => new THREE.MeshBasicMaterial({ vertexColors: true }),
     [],
   );
+  const axisLabels =
+    axisConvention === "swapYZ"
+      ? {
+          screenX: { text: "X", color: "#e65050" },
+          screenY: { text: "Z", color: "#5090e6" },
+          depth: { text: "Y", color: "#50c850" },
+        }
+      : {
+          screenX: { text: "X", color: "#e65050" },
+          screenY: { text: "Y", color: "#50c850" },
+          depth: { text: "Z", color: "#5090e6" },
+        };
 
   return (
     <>
@@ -176,33 +212,33 @@ function HslSphereScene({
       {/* Axis labels — visual XYZ reference for the active viewport convention */}
       {!compact ? (
         <>
-          <AxisLabel text="X" color="#e65050" position={[LABEL_DIST, 0, 0]} />
-          <AxisLabel text="X" color="#e65050" position={[-LABEL_DIST, 0, 0]} />
-          <AxisLabel text="Z" color="#5090e6" position={[0, LABEL_DIST, 0]} />
-          <AxisLabel text="Z" color="#5090e6" position={[0, -LABEL_DIST, 0]} />
-          <AxisLabel text="Y" color="#50c850" position={[0, 0, LABEL_DIST]} />
-          <AxisLabel text="Y" color="#50c850" position={[0, 0, -LABEL_DIST]} />
+          <AxisLabel text={`+${axisLabels.screenX.text}`} color={axisLabels.screenX.color} position={[LABEL_DIST, 0, 0]} />
+          <AxisLabel text={`-${axisLabels.screenX.text}`} color={axisLabels.screenX.color} position={[-LABEL_DIST, 0, 0]} />
+          <AxisLabel text={`+${axisLabels.screenY.text}`} color={axisLabels.screenY.color} position={[0, LABEL_DIST, 0]} />
+          <AxisLabel text={`-${axisLabels.screenY.text}`} color={axisLabels.screenY.color} position={[0, -LABEL_DIST, 0]} />
+          <AxisLabel text={`+${axisLabels.depth.text}`} color={axisLabels.depth.color} position={[0, 0, LABEL_DIST]} />
+          <AxisLabel text={`-${axisLabels.depth.text}`} color={axisLabels.depth.color} position={[0, 0, -LABEL_DIST]} />
         </>
       ) : null}
 
       {/* Thin axis lines through sphere */}
       <Line
         points={[[-1.05, 0, 0], [1.05, 0, 0]]}
-        color="#e65050"
+        color={axisLabels.screenX.color}
         lineWidth={1}
         transparent
         opacity={0.5}
       />
       <Line
         points={[[0, -1.05, 0], [0, 1.05, 0]]}
-        color="#5090e6"
+        color={axisLabels.screenY.color}
         lineWidth={1}
         transparent
         opacity={0.5}
       />
       <Line
         points={[[0, 0, -1.05], [0, 0, 1.05]]}
-        color="#50c850"
+        color={axisLabels.depth.color}
         lineWidth={1}
         transparent
         opacity={0.5}

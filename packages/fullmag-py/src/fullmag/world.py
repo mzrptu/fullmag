@@ -46,8 +46,8 @@ from fullmag.model.antenna import (
 )
 from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Zeeman
 from fullmag.model.dynamics import AdaptiveTimestep, DEFAULT_GAMMA, LLG
-from fullmag.model.outputs import SaveField, SaveScalar, Snapshot, parse_snapshot_quantity
-from fullmag.model.study import Relaxation, TimeEvolution
+from fullmag.model.outputs import SaveField, SaveScalar, SaveSpectrum, SaveMode, SaveDispersion, Snapshot, parse_snapshot_quantity
+from fullmag.model.study import Eigenmodes, Relaxation, TimeEvolution
 from fullmag.model.structure import Ferromagnet, Material, Region
 from fullmag.model.problem import (
     BackendTarget,
@@ -1037,8 +1037,14 @@ class StudyBuilder:
         b_ext(magnitude, by, bz, theta=theta, phi=phi)
         return self
 
-    def save(self, quantity: str, *, every: float) -> "StudyBuilder":
-        save(quantity, every=every)
+    def save(
+        self,
+        quantity: str,
+        *,
+        every: float | None = None,
+        indices: Sequence[int] | None = None,
+    ) -> "StudyBuilder":
+        save(quantity, every=every, indices=indices)
         return self
 
     def snapshot(
@@ -1107,6 +1113,31 @@ class StudyBuilder:
             algorithm=algorithm,
             energy_tolerance=energy_tolerance,
             relax_alpha=relax_alpha,
+        )
+
+    def eigenmodes(
+        self,
+        *,
+        count: int = 10,
+        target: str = "lowest",
+        target_frequency: float | None = None,
+        include_demag: bool = True,
+        equilibrium_source: str = "relax",
+        equilibrium_artifact: str | None = None,
+        normalization: str = "unit_l2",
+        damping_policy: str = "ignore",
+        k_vector: tuple[float, float, float] | None = None,
+    ) -> Any:
+        return eigenmodes(
+            count=count,
+            target=target,
+            target_frequency=target_frequency,
+            include_demag=include_demag,
+            equilibrium_source=equilibrium_source,
+            equilibrium_artifact=equilibrium_artifact,
+            normalization=normalization,
+            damping_policy=damping_policy,
+            k_vector=k_vector,
         )
 
 
@@ -1913,17 +1944,41 @@ _TABLE_DEFAULT_SCALARS = (
 )
 
 
-def save(quantity: str, *, every: float) -> None:
+_EIGEN_QUANTITIES = {"spectrum", "mode", "dispersion"}
+
+
+def save(
+    quantity: str,
+    *,
+    every: float | None = None,
+    indices: Sequence[int] | None = None,
+) -> None:
     """Register an output quantity to save periodically.
 
     Parameters
     ----------
     quantity : str
-        Field name (``"m"``, ``"H_demag"``, ``"H_eff"``) or
-        scalar name (``"E_ex"``, ``"E_total"``, ``"max_h_eff"``).
-    every : float
-        Save interval in seconds.
+        Field name (``"m"``, ``"H_demag"``, ``"H_eff"``),
+        scalar name (``"E_ex"``, ``"E_total"``, ``"max_h_eff"``),
+        or eigen quantity (``"spectrum"``, ``"mode"``, ``"dispersion"``).
+    every : float, optional
+        Save interval in seconds.  Required for field/scalar outputs,
+        ignored for eigen outputs.
+    indices : sequence of int, optional
+        Mode indices for ``"mode"`` output.
     """
+    if quantity in _EIGEN_QUANTITIES:
+        if quantity == "spectrum":
+            _state._outputs.append(SaveSpectrum())
+        elif quantity == "mode":
+            if indices is None:
+                raise ValueError("save('mode', indices=[...]) requires mode indices")
+            _state._outputs.append(SaveMode(indices=tuple(indices)))
+        elif quantity == "dispersion":
+            _state._outputs.append(SaveDispersion())
+        return
+    if every is None:
+        raise ValueError("save() requires every= for field/scalar outputs")
     if quantity in _SCALAR_QUANTITIES or quantity.startswith("E_"):
         _state._outputs.append(SaveScalar(scalar=quantity, every=every))
     else:

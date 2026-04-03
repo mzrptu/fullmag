@@ -1302,10 +1302,7 @@ function FemMeshView3DInner({
         {({ mode }) => (
           <>
             {toolbarMode !== "hidden" ? (
-              <ViewportOverlaySlot
-                anchor="top-center"
-                className={mode === "icon" ? "w-[min(calc(100%-1.5rem),40rem)]" : "w-[min(calc(100%-1.5rem),72rem)]"}
-              >
+              <ViewportOverlaySlot anchor="top-left">
                 <FemViewportToolbar
                   compact={mode !== "full"}
                   renderMode={toolbarRenderMode}
@@ -1436,16 +1433,6 @@ function FemMeshView3DInner({
                 </DraggableViewportBlock>
               ) : null}
             </ViewportOverlaySlot>
-            {effectiveShowOrientationLegend ? (
-              <ViewportOverlaySlot anchor="bottom-left">
-                <HslSphere
-                  sceneRef={viewCubeSceneRef}
-                  axisConvention="identity"
-                  compact={mode !== "full"}
-                  embedded
-                />
-              </ViewportOverlaySlot>
-            ) : null}
             <ViewportOverlaySlot
               anchor="bottom-center"
               className={mode === "icon" ? "bottom-14 max-w-[min(92vw,30rem)]" : "bottom-12"}
@@ -1479,6 +1466,16 @@ function FemMeshView3DInner({
           </>
         )}
       </ViewportOverlayManager>
+
+      {effectiveShowOrientationLegend ? (
+        <div className="pointer-events-none absolute left-3 bottom-3 z-30">
+          <HslSphere
+            sceneRef={viewCubeSceneRef}
+            axisConvention="identity"
+            compact={false}
+          />
+        </div>
+      ) : null}
 
       <FemHoverTooltip hoveredFace={hoveredFace} hoveredFaceInfo={hoveredFaceInfo} />
 

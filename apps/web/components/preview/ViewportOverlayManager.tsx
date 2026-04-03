@@ -3,34 +3,19 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
+import { ViewportOverlayLayout } from "./ViewportOverlayLayout";
+
 export type ViewportOverlayAnchor =
   | "top-left"
   | "top-center"
   | "top-right"
+  | "left"
+  | "right"
   | "bottom-left"
   | "bottom-center"
   | "bottom-right";
 
 export type ViewportOverlayMode = "full" | "compact" | "icon";
-
-function anchorClass(anchor: ViewportOverlayAnchor): string {
-  switch (anchor) {
-    case "top-left":
-      return "top-3 left-3 items-start";
-    case "top-center":
-      return "top-3 left-1/2 -translate-x-1/2 items-center";
-    case "top-right":
-      return "top-3 right-3 items-end";
-    case "bottom-left":
-      return "bottom-3 left-3 items-start";
-    case "bottom-center":
-      return "bottom-3 left-1/2 -translate-x-1/2 items-center";
-    case "bottom-right":
-      return "bottom-3 right-3 items-end";
-    default:
-      return "top-3 left-3 items-start";
-  }
-}
 
 export function ViewportOverlayManager({
   className,
@@ -74,8 +59,10 @@ export function ViewportOverlayManager({
   }, [size.width, size.height]);
 
   return (
-    <div ref={ref} className={cn("pointer-events-none absolute inset-0 z-20", className)}>
-      {children({ width: size.width, height: size.height, mode })}
+    <div ref={ref} className="absolute inset-0 pointer-events-none z-20">
+      <ViewportOverlayLayout className={className}>
+        {children({ width: size.width, height: size.height, mode })}
+      </ViewportOverlayLayout>
     </div>
   );
 }
@@ -89,9 +76,24 @@ export function ViewportOverlaySlot({
   className?: string;
   children: ReactNode;
 }) {
-  return (
-    <div className={cn("absolute flex flex-col gap-2", anchorClass(anchor), className)}>
-      {children}
-    </div>
-  );
+  switch (anchor) {
+    case "top-left":
+      return <ViewportOverlayLayout.TopLeft className={className}>{children}</ViewportOverlayLayout.TopLeft>;
+    case "top-center":
+      return <ViewportOverlayLayout.TopCenter className={className}>{children}</ViewportOverlayLayout.TopCenter>;
+    case "top-right":
+      return <ViewportOverlayLayout.TopRight className={className}>{children}</ViewportOverlayLayout.TopRight>;
+    case "left":
+      return <ViewportOverlayLayout.Left className={className}>{children}</ViewportOverlayLayout.Left>;
+    case "right":
+      return <ViewportOverlayLayout.Right className={className}>{children}</ViewportOverlayLayout.Right>;
+    case "bottom-left":
+      return <ViewportOverlayLayout.BottomLeft className={className}>{children}</ViewportOverlayLayout.BottomLeft>;
+    case "bottom-center":
+      return <ViewportOverlayLayout.BottomCenter className={className}>{children}</ViewportOverlayLayout.BottomCenter>;
+    case "bottom-right":
+      return <ViewportOverlayLayout.BottomRight className={className}>{children}</ViewportOverlayLayout.BottomRight>;
+    default:
+      return <ViewportOverlayLayout.TopLeft className={className}>{children}</ViewportOverlayLayout.TopLeft>;
+  }
 }

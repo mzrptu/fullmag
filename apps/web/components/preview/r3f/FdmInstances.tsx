@@ -99,12 +99,15 @@ function resolveVoxelTopography(baseZ: number, baseDepth: number, signedDisplace
 /* ── Geometry builders ─────────────────────────────────────────────── */
 
 function createArrowGeometry(segments: number): THREE.BufferGeometry {
+  const totalLength = 0.55 + 0.4;
   const shaft = new THREE.CylinderGeometry(0.05, 0.05, 0.55, segments);
-  shaft.translate(0, 0.275, 0); // Position base of shaft at Y=0
+  shaft.translate(0, 0.275, 0);
   const head = new THREE.ConeGeometry(0.2, 0.4, segments);
-  head.translate(0, 0.55 + 0.2, 0); // Position head exactly at the end of the shaft
+  head.translate(0, 0.55 + 0.2, 0);
   const merged = mergeGeometries([shaft, head]);
   if (!merged) throw new Error("failed to merge arrow geometry");
+  // Center the glyph on the sampled cell instead of anchoring the tail there.
+  merged.translate(0, -totalLength / 2, 0);
   merged.computeVertexNormals();
   return merged;
 }
