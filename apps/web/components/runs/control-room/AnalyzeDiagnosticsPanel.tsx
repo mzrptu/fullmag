@@ -21,16 +21,16 @@ export default function AnalyzeDiagnosticsPanel({
       <AnalyzeMeshSemanticsPanel summary={diagnostics.meshSemantics} />
 
       {hasError && (
-        <section className="rounded-xl border border-rose-500/25 bg-rose-500/10 p-3">
-          <h3 className="text-[0.74rem] font-semibold text-rose-200">Backend Error</h3>
-          <p className="mt-2 text-[0.7rem] leading-5 text-rose-100/90">{diagnostics.backendError}</p>
+        <section className="rounded-xl border border-error/25 bg-error/10 p-3">
+          <h3 className="text-[0.74rem] font-semibold text-error/90">Backend Error</h3>
+          <p className="mt-2 text-[0.7rem] leading-5 text-error/80">{diagnostics.backendError}</p>
         </section>
       )}
 
       {hasWarnings && (
-        <section className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3">
-          <h3 className="text-[0.74rem] font-semibold text-amber-200">Warnings</h3>
-          <ul className="mt-2 space-y-1.5 text-[0.7rem] leading-5 text-amber-100/90">
+        <section className="rounded-xl border border-warning/25 bg-warning/10 p-3">
+          <h3 className="text-[0.74rem] font-semibold text-warning/90">Warnings</h3>
+          <ul className="mt-2 space-y-1.5 text-[0.7rem] leading-5 text-warning/80">
             {diagnostics.warnings.map((warning, index) => (
               <li key={`${warning}-${index}`}>• {warning}</li>
             ))}

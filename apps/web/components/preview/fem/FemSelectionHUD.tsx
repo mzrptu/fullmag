@@ -24,7 +24,7 @@ export function FemSelectionHUD({
   return (
     <div
       className={cn(
-        "text-[0.65rem] text-slate-300 font-mono pointer-events-none flex items-baseline gap-3 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-md border border-slate-500/30 shadow-md",
+        "text-[0.65rem] text-muted-foreground font-mono pointer-events-none flex items-baseline gap-3 bg-primary-foreground/80 backdrop-blur-md px-3 py-1.5 rounded-md border border-secondary/30 shadow-md",
         compact && "gap-2 px-2.5",
       )}
     >
@@ -39,8 +39,8 @@ export function FemSelectionHUD({
       ) : null}
       {clipEnabled ? (
         <>
-          <span className="h-[3px] w-[3px] rounded-full bg-slate-500/50" />
-          <span className="text-amber-500">
+      <span className="h-[3px] w-[3px] rounded-full bg-secondary/50" />
+          <span className="text-warning">
             clip {clipAxis.toUpperCase()} @ {clipPos}%
           </span>
         </>
@@ -48,7 +48,7 @@ export function FemSelectionHUD({
       {selectedFacesCount > 0 ? (
         <>
           <span className="h-[3px] w-[3px] rounded-full bg-slate-500/50" />
-          <span className="text-blue-400">{selectedFacesCount} selected</span>
+          <span className="text-info">{selectedFacesCount} selected</span>
         </>
       ) : null}
     </div>
@@ -73,32 +73,32 @@ export function FemRefineToolbar({
   }
 
   return (
-    <div className={cn("z-30 flex items-center gap-2 rounded-lg border border-slate-500/30 bg-slate-900/90 p-2 shadow-xl backdrop-blur-md pointer-events-auto", className)}>
-      <span className="px-1 font-mono text-[0.65rem] text-slate-400">
+    <div className={cn("z-30 flex items-center gap-2 rounded-lg border border-secondary/30 bg-primary-foreground/90 p-2 shadow-xl backdrop-blur-md pointer-events-auto", className)}>
+      <span className="px-1 font-mono text-[0.65rem] text-muted-foreground">
         {selectedFacesCount} faces
       </span>
-      <div className="h-4 w-px bg-slate-500/30" />
+      <div className="h-4 w-px bg-secondary/30" />
       <button
-        className="rounded px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-widest text-emerald-400 transition-colors hover:bg-emerald-500/10 hover:text-emerald-300"
+        className="rounded px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-widest text-success transition-colors hover:bg-success/10"
         onClick={() => onRefine(0.5)}
       >
         Refine ×2
       </button>
       <button
-        className="rounded px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-widest text-emerald-400 transition-colors hover:bg-emerald-500/10 hover:text-emerald-300"
+        className="rounded px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-widest text-success transition-colors hover:bg-success/10"
         onClick={() => onRefine(0.25)}
       >
         Refine ×4
       </button>
       <button
-        className="rounded px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-widest text-amber-400 transition-colors hover:bg-amber-500/10 hover:text-amber-300"
+        className="rounded px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-widest text-warning transition-colors hover:bg-warning/10"
         onClick={() => onCoarsen(2)}
       >
         Coarsen ×2
       </button>
       <div className="h-4 w-px bg-slate-500/30" />
       <button
-        className="rounded px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-widest text-slate-400 transition-colors hover:bg-slate-500/10 hover:text-slate-200"
+        className="rounded px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground transition-colors hover:bg-secondary/10 hover:text-foreground"
         onClick={onClear}
       >
         Clear

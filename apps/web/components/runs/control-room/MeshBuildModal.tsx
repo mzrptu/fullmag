@@ -28,9 +28,9 @@ interface MeshBuildModalProps {
 function stageIcon(status: MeshBuildStage["status"]) {
   switch (status) {
     case "done":
-      return <CheckCircle2 size={15} className="text-emerald-400" />;
+      return <CheckCircle2 size={15} className="text-success" />;
     case "warning":
-      return <AlertTriangle size={15} className="text-amber-400" />;
+      return <AlertTriangle size={15} className="text-warning" />;
     case "active":
       return <Loader2 size={15} className="animate-spin text-primary" />;
     default:
@@ -145,7 +145,7 @@ export default function MeshBuildModal({
               <div
                 className={cn(
                   "h-full rounded-full transition-[width] duration-300",
-                  hasError ? "bg-amber-400" : "bg-cyan-400",
+                  hasError ? "bg-warning" : "bg-info",
                 )}
                 style={{ width: `${Math.max(4, Math.min(100, progressValue))}%` }}
               />

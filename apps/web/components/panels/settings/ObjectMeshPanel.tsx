@@ -340,14 +340,14 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
   function getPhaseStyle(status: "idle" | "active" | "done" | "warning" | "queued" | "failed") {
     switch (status) {
       case "done":
-        return { css: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300", icon: <CheckCircle2 size={13} className="text-emerald-400" /> };
+        return { css: "border-success/30 bg-success/10 text-success", icon: <CheckCircle2 size={13} className="text-success" /> };
       case "active":
         return { css: "border-primary/40 bg-primary/10 text-primary shadow-[0_0_12px_rgba(59,130,246,0.15)]", icon: <Loader2 size={13} className="animate-spin text-primary" /> };
       case "queued":
-        return { css: "border-sky-500/30 bg-sky-500/10 text-sky-200", icon: <CircleDashed size={13} className="text-sky-300" /> };
+        return { css: "border-info/30 bg-info/10 text-info", icon: <CircleDashed size={13} className="text-info" /> };
       case "failed":
       case "warning":
-        return { css: "border-amber-500/30 bg-amber-500/10 text-amber-300", icon: <AlertTriangle size={13} className="text-amber-400" /> };
+        return { css: "border-warning/30 bg-warning/10 text-warning", icon: <AlertTriangle size={13} className="text-warning" /> };
       default:
         return { css: "border-border/40 bg-background/40 backdrop-blur-sm text-muted-foreground", icon: <CircleDashed size={13} className="opacity-50" /> };
     }
@@ -453,7 +453,7 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                   </div>
                 )}
                 {sharedDomainMesh ? (
-                  <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100/90">
+                  <div className="rounded-lg border border-info/20 bg-info/10 px-3 py-2 text-xs text-info/90">
                     Shared-domain FEM uses one conformal solver mesh. This panel edits only this
                     object&apos;s local sizing override, but applying it rebuilds the full study-domain
                     mesh rather than an isolated object mesh.
@@ -684,10 +684,10 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                           overrideActive: false,
                         },
                       ].map(({ param, studyVal, overrideVal, effectiveVal, overrideActive }) => (
-                        <tr key={param} className={cn("transition-colors hover:bg-muted/10", overrideActive && "bg-amber-500/5")}>
+                        <tr key={param} className={cn("transition-colors hover:bg-muted/10", overrideActive && "bg-warning/5")}>
                           <td className="px-2 py-1.5 font-medium text-muted-foreground">{param}</td>
                           <td className="px-2 py-1.5 text-right font-mono text-foreground/70">{studyVal}</td>
-                          <td className={cn("px-2 py-1.5 text-right font-mono", overrideActive ? "text-amber-400 font-semibold" : "text-muted-foreground/40")}>{overrideVal}</td>
+                          <td className={cn("px-2 py-1.5 text-right font-mono", overrideActive ? "text-warning font-semibold" : "text-muted-foreground/40")}>{overrideVal}</td>
                           <td className="px-2 py-1.5 text-right font-mono text-primary font-semibold">{effectiveVal}</td>
                         </tr>
                       ))}
@@ -863,10 +863,10 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
               className={cn(
                 "font-mono text-xs",
                 (effectiveFemMesh?.nodes.length ?? 0) > 50_000
-                  ? "text-destructive"
+                  ? "text-error"
                   : (effectiveFemMesh?.nodes.length ?? 0) > 10_000
-                    ? "text-amber-400"
-                    : "text-emerald-400",
+                    ? "text-warning"
+                    : "text-success",
               )}
             >
               {effectiveFemMesh ? `${estimatedRamGb.toFixed(1)} GB` : "—"}
@@ -949,13 +949,13 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
               <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">AR Mean</span>
               <span className="font-mono text-xs font-semibold text-foreground/90">{meshQualitySummary.mean.toFixed(2)}</span>
             </div>
-            <div className="grid gap-1 rounded-xl border border-border/35 bg-emerald-500/10 backdrop-blur-sm px-2.5 py-2">
-              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-emerald-500/80">Good Faces</span>
-              <span className="font-mono text-xs font-semibold text-emerald-400">{meshQualitySummary.good.toLocaleString()}</span>
+            <div className="grid gap-1 rounded-xl border border-border/35 bg-success/10 backdrop-blur-sm px-2.5 py-2">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-success/80">Good Faces</span>
+              <span className="font-mono text-xs font-semibold text-success">{meshQualitySummary.good.toLocaleString()}</span>
             </div>
-            <div className="grid gap-1 rounded-xl border border-border/35 bg-amber-500/10 backdrop-blur-sm px-2.5 py-2">
-              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-amber-500/80">Poor Faces</span>
-              <span className="font-mono text-xs font-semibold text-amber-400">{meshQualitySummary.poor.toLocaleString()}</span>
+            <div className="grid gap-1 rounded-xl border border-border/35 bg-warning/10 backdrop-blur-sm px-2.5 py-2">
+              <span className="text-[0.6rem] font-medium uppercase tracking-wider text-warning/80">Poor Faces</span>
+              <span className="font-mono text-xs font-semibold text-warning">{meshQualitySummary.poor.toLocaleString()}</span>
             </div>
           </div>
         ) : (
@@ -984,8 +984,8 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                             <span className={cn(
                               "rounded-full px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-wider",
                               sicnOk
-                                ? "bg-emerald-500/15 text-emerald-400"
-                                : "bg-amber-500/15 text-amber-400",
+                                ? "bg-success/15 text-success"
+                                : "bg-warning/15 text-warning",
                             )}>
                               {sicnOk ? "OK" : "WARN"}
                             </span>
@@ -1021,7 +1021,7 @@ export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
                       : "Use Build Selected in the Mesh ribbon to rebuild the active FEM mesh workflow from this object context."}
                   </div>
                   {ctx.meshConfigDirty && (
-                    <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-[0.72rem] leading-relaxed text-amber-100/90">
+                    <div className="rounded-lg border border-warning/25 bg-warning/10 p-3 text-[0.72rem] leading-relaxed text-warning/90">
                       This override is newer than the currently realized mesh. The 3D viewport still shows the last built mesh until you rebuild the study-domain mesh.
                     </div>
                   )}

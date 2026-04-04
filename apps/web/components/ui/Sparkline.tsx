@@ -26,7 +26,7 @@ export default function Sparkline({
   data,
   width = 100,
   height = 24,
-  color = "hsl(210, 60%, 55%)",
+  color = "hsl(var(--primary))",
   fill = true,
   label,
   responsive = false,

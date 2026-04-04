@@ -76,7 +76,9 @@ pub(crate) struct NativeFieldSnapshotInfo {
 #[cfg(feature = "cuda")]
 #[derive(Debug)]
 struct NativeFieldSnapshotReady {
-    ptr: *const u8,
+    /// Owned copy of the snapshot bytes, copied from the native buffer at the
+    /// FFI boundary.  No raw pointer escapes after `ensure_ready` returns.
+    data: Vec<u8>,
     info: NativeFieldSnapshotInfo,
 }
 
@@ -92,6 +94,12 @@ pub(crate) struct NativeFdmFieldSnapshot {
 }
 
 #[cfg(feature = "cuda")]
+// SAFETY: `NativeFdmFieldSnapshot` is sent between threads only between its
+// construction (on the runner thread) and its consumption (on the writer
+// thread).  The native handle is valid for the object's lifetime and is only
+// freed via `Drop`.  Snapshot data is copied into `ready.data: Vec<u8>` at the
+// FFI boundary, so no aliased raw pointer to CUDA-managed memory is
+// reachable from other threads.
 unsafe impl Send for NativeFdmFieldSnapshot {}
 
 #[cfg(feature = "cuda")]
@@ -105,6 +113,7 @@ pub(crate) struct NativeFdmPreviewSnapshot {
 }
 
 #[cfg(feature = "cuda")]
+// SAFETY: same invariants as `NativeFdmFieldSnapshot` above.
 unsafe impl Send for NativeFdmPreviewSnapshot {}
 
 #[cfg(feature = "cuda")]
@@ -978,14 +987,19 @@ impl NativeFdmFieldSnapshot {
                     NativeFieldSnapshotScalarType::F64
                 }
             };
+            let len = len_bytes as usize;
+            // SAFETY: `data` points to a CUDA-managed buffer valid until the
+            // handle is destroyed.  We copy immediately into an owned Vec so
+            // the raw pointer does not escape this block.
+            let owned = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), len) }.to_vec();
             self.ready = Some(NativeFieldSnapshotReady {
-                ptr: data.cast::<u8>(),
+                data: owned,
                 info: NativeFieldSnapshotInfo {
                     cell_count: desc.cell_count as usize,
                     component_count: desc.component_count as usize,
                     scalar_bytes: desc.scalar_bytes as usize,
                     scalar_type,
-                    len_bytes: len_bytes as usize,
+                    len_bytes: len,
                 },
             });
         }
@@ -1002,8 +1016,7 @@ impl NativeFdmFieldSnapshot {
     ) -> Result<NativeFieldSnapshotInfo, RunError> {
         let snapshot_name = self.name.clone();
         let ready = self.ensure_ready()?;
-        let bytes = unsafe { std::slice::from_raw_parts(ready.ptr, ready.info.len_bytes) };
-        writer.write_all(bytes).map_err(|error| RunError {
+        writer.write_all(&ready.data).map_err(|error| RunError {
             message: format!(
                 "failed to write CUDA field snapshot payload for '{}': {}",
                 snapshot_name, error
@@ -1050,7 +1063,12 @@ impl NativeFdmPreviewSnapshot {
                 }
             };
             self.ready = Some(NativeFieldSnapshotReady {
-                ptr: data.cast::<u8>(),
+                // SAFETY: `data` is valid until the handle is destroyed.
+                // We copy immediately so the raw pointer does not escape.
+                data: unsafe {
+                    std::slice::from_raw_parts(data.cast::<u8>(), len_bytes as usize)
+                }
+                .to_vec(),
                 info: NativeFieldSnapshotInfo {
                     cell_count: desc.cell_count as usize,
                     component_count: desc.component_count as usize,
@@ -1068,19 +1086,22 @@ impl NativeFdmPreviewSnapshot {
         active_mask: Option<&[bool]>,
     ) -> Result<LivePreviewField, RunError> {
         let ready = self.ensure_ready()?;
-        let expected_len = ready.info.cell_count * ready.info.component_count as usize;
-        let vector_field_values = match ready.info.scalar_type {
+        let expected_len = ready.info.cell_count * ready.info.component_count;
+        let vector_field_values: Vec<f64> = match ready.info.scalar_type {
             NativeFieldSnapshotScalarType::F32 => {
-                let flat =
-                    unsafe { std::slice::from_raw_parts(ready.ptr.cast::<f32>(), expected_len) };
-                flat.iter().copied().map(f64::from).collect()
+                ready.data
+                    .chunks_exact(std::mem::size_of::<f32>())
+                    .map(|b| f64::from(f32::from_ne_bytes(b.try_into().unwrap())))
+                    .collect()
             }
             NativeFieldSnapshotScalarType::F64 => {
-                let flat =
-                    unsafe { std::slice::from_raw_parts(ready.ptr.cast::<f64>(), expected_len) };
-                flat.to_vec()
+                ready.data
+                    .chunks_exact(std::mem::size_of::<f64>())
+                    .map(|b| f64::from_ne_bytes(b.try_into().unwrap()))
+                    .collect()
             }
         };
+        debug_assert_eq!(vector_field_values.len(), expected_len);
         Ok(build_grid_preview_field_from_flat_plan(
             &self.request,
             &self.plan,

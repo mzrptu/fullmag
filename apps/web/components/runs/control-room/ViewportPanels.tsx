@@ -100,11 +100,11 @@ function ViewportChip({
 }) {
   const toneClass =
     tone === "active"
-      ? "border-cyan-400/25 bg-cyan-400/10 text-cyan-100"
+      ? "border-info/25 bg-info/10 text-info"
       : tone === "warning"
-        ? "border-amber-400/25 bg-amber-400/10 text-amber-100"
+        ? "border-warning/25 bg-warning/10 text-warning"
         : tone === "success"
-          ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-100"
+          ? "border-success/25 bg-success/10 text-success"
           : "border-border/35 bg-background/45 text-foreground/85";
   return (
     <div className={cn("inline-flex items-center gap-2 rounded-md border px-2.5 py-1", toneClass)}>
@@ -170,7 +170,7 @@ export function ViewportBar() {
             <ViewportChip label="Face" value={`#${ctx.meshSelection.primaryFaceIndex}`} />
           )}
           {ctx.meshConfigDirty && !ctx.meshGenerating && (
-            <div className="text-[0.72rem] text-amber-200/90">
+            <div className="text-[0.72rem] text-warning/90">
               Viewport shows the last built mesh until you rebuild.
             </div>
           )}

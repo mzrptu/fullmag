@@ -3373,6 +3373,9 @@ fn cpu_execution_provenance(plan: &FdmPlanIR) -> ExecutionProvenance {
         compute_capability: None,
         cuda_driver_version: None,
         cuda_runtime_version: None,
+        lossy_fallback_used: false,
+        ignored_terms: Vec::new(),
+        random_seed: None,
     }
 }
 
@@ -3401,6 +3404,9 @@ fn cuda_execution_provenance(
         compute_capability: Some(device_info.compute_capability.clone()),
         cuda_driver_version: Some(device_info.driver_version),
         cuda_runtime_version: Some(device_info.runtime_version),
+        lossy_fallback_used: false,
+        ignored_terms: Vec::new(),
+        random_seed: None,
     }
 }
 
@@ -3436,6 +3442,9 @@ fn fem_gpu_execution_provenance(
         compute_capability: Some(device_info.compute_capability.clone()),
         cuda_driver_version: Some(device_info.driver_version),
         cuda_runtime_version: Some(device_info.runtime_version),
+        lossy_fallback_used: false,
+        ignored_terms: Vec::new(),
+        random_seed: None,
     }
 }
 

@@ -46,7 +46,7 @@ function PreviewProxyMesh({ proxy }: { proxy: TexturePreviewProxy }) {
     return (
       <mesh>
         <sphereGeometry args={[0.18, 20, 20]} />
-        <meshBasicMaterial color="#67e8f9" wireframe transparent opacity={0.55} />
+        <meshBasicMaterial color="#89dceb" wireframe transparent opacity={0.55} />
       </mesh>
     );
   }
@@ -54,7 +54,7 @@ function PreviewProxyMesh({ proxy }: { proxy: TexturePreviewProxy }) {
     return (
       <mesh rotation={[Math.PI / 2, 0, 0]}>
         <cylinderGeometry args={[0.7, 0.7, 0.06, 48, 1, true]} />
-        <meshBasicMaterial color="#67e8f9" wireframe transparent opacity={0.4} />
+        <meshBasicMaterial color="#89dceb" wireframe transparent opacity={0.4} />
       </mesh>
     );
   }
@@ -62,7 +62,7 @@ function PreviewProxyMesh({ proxy }: { proxy: TexturePreviewProxy }) {
     return (
       <mesh>
         <cylinderGeometry args={[0.45, 0.45, 1.2, 28, 1, true]} />
-        <meshBasicMaterial color="#67e8f9" wireframe transparent opacity={0.35} />
+        <meshBasicMaterial color="#89dceb" wireframe transparent opacity={0.35} />
       </mesh>
     );
   }
@@ -71,15 +71,15 @@ function PreviewProxyMesh({ proxy }: { proxy: TexturePreviewProxy }) {
       <group>
         <mesh>
           <boxGeometry args={[0.2, 1.2, 1.2]} />
-          <meshBasicMaterial color="#67e8f9" wireframe transparent opacity={0.4} />
+          <meshBasicMaterial color="#89dceb" wireframe transparent opacity={0.4} />
         </mesh>
         <mesh position={[0.4, 0, 0]}>
           <boxGeometry args={[0.6, 1.2, 1.2]} />
-          <meshBasicMaterial color="#fca5a5" wireframe transparent opacity={0.15} />
+          <meshBasicMaterial color="#f38ba8" wireframe transparent opacity={0.15} />
         </mesh>
         <mesh position={[-0.4, 0, 0]}>
           <boxGeometry args={[0.6, 1.2, 1.2]} />
-          <meshBasicMaterial color="#93c5fd" wireframe transparent opacity={0.15} />
+          <meshBasicMaterial color="#89b4fa" wireframe transparent opacity={0.15} />
         </mesh>
       </group>
     );
@@ -89,11 +89,11 @@ function PreviewProxyMesh({ proxy }: { proxy: TexturePreviewProxy }) {
       <group>
         <mesh>
           <boxGeometry args={[1.5, 0.6, 0.6]} />
-          <meshBasicMaterial color="#67e8f9" wireframe transparent opacity={0.25} />
+          <meshBasicMaterial color="#89dceb" wireframe transparent opacity={0.25} />
         </mesh>
         <mesh rotation={[0, 0, Math.PI / 2]}>
           <cylinderGeometry args={[0.02, 0.02, 1.8, 8]} />
-          <meshBasicMaterial color="#ec4899" transparent opacity={0.8} />
+          <meshBasicMaterial color="#f5c2e7" transparent opacity={0.8} />
         </mesh>
       </group>
     );
@@ -101,7 +101,7 @@ function PreviewProxyMesh({ proxy }: { proxy: TexturePreviewProxy }) {
   return (
     <mesh>
       <boxGeometry args={[1, 1, 1]} />
-      <meshBasicMaterial color="#67e8f9" wireframe transparent opacity={0.3} />
+      <meshBasicMaterial color="#89dceb" wireframe transparent opacity={0.3} />
     </mesh>
   );
 }

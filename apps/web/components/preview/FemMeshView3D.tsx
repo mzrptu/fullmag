@@ -1328,7 +1328,7 @@ function FemMeshView3DInner({
         minWidth: 960,
         collapseTarget: "drawer",
         render: () => (
-          <div className="pointer-events-none rounded-xl border border-rose-400/25 bg-background/85 px-4 py-3 text-sm text-rose-200 shadow-lg backdrop-blur-md">
+          <div className="pointer-events-none rounded-xl border border-error/25 bg-background/85 px-4 py-3 text-sm text-error/90 shadow-lg backdrop-blur-md">
             Object mesh segmentation unavailable for shared-domain FEM: `{selectedObjectId}`
           </div>
         ),
@@ -1342,8 +1342,8 @@ function FemMeshView3DInner({
         minWidth: 960,
         collapseTarget: "drawer",
         render: () => (
-          <div className="pointer-events-none rounded-xl border border-amber-400/25 bg-background/85 px-4 py-3 text-sm text-amber-100 shadow-lg backdrop-blur-md">
-            Magnetic-region preview mask unavailable for quantity `{fieldLabel ?? "m"}`.
+          <div className="pointer-events-none rounded-xl border border-warning/25 bg-background/85 px-4 py-3 text-sm text-warning/90 shadow-lg backdrop-blur-md">
+            Magnetic masking unavailable for shared-domain FEM. View shows built airbox.
           </div>
         ),
       });

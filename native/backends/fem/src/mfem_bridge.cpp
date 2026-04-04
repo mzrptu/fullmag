@@ -25,6 +25,7 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kMu0 = 4.0e-7 * kPi;
 constexpr double kGeomEps = 1e-30;
+constexpr double kPoissonAbsResidualTol = 1e-6;
 constexpr int kInterruptPollStride = 256;
 
 using Vec3 = std::array<double, 3>;
@@ -2012,22 +2013,57 @@ bool solve_poisson(
     direction = z;
     double rho = dot(residual, z);
     const double rhs_norm = std::sqrt(std::max(dot(rhs_bc, rhs_bc), 1e-300));
-    double rel_residual = std::sqrt(std::max(dot(residual, residual), 0.0)) / rhs_norm;
-    const int max_iter = static_cast<int>(ctx.demag_solver.max_iterations);
     const double tol = ctx.demag_solver.relative_tolerance;
+    double residual_norm = std::sqrt(std::max(dot(residual, residual), 0.0));
+    const double abs_residual_tol = std::max(kPoissonAbsResidualTol, tol * rhs_norm);
+    double rel_residual = residual_norm / rhs_norm;
+    const int max_iter = static_cast<int>(ctx.demag_solver.max_iterations);
     int iter = 0;
+
+    if (residual_norm <= abs_residual_tol) {
+        ctx.poisson_last_iterations = 0;
+        ctx.poisson_last_residual = rel_residual;
+        for (int i = 0; i < ess_tdof.Size(); ++i) {
+            sol_bc(ess_tdof[i]) = 0.0;
+        }
+        solution = sol_bc;
+        debug_checkpoint("context_compute_demag_poisson:solve_done_cpu");
+        return true;
+    }
 
     for (; iter < max_iter && rel_residual > tol; ++iter) {
         debug_checkpoint("context_compute_demag_poisson:solve_iter_mult_enter");
         A_bc->Mult(direction, q);
         debug_checkpoint("context_compute_demag_poisson:solve_iter_mult_done");
         const double denom = dot(direction, q);
-        if (!std::isfinite(denom) || std::abs(denom) <= 1e-300) {
+        residual_norm = std::sqrt(std::max(dot(residual, residual), 0.0));
+        const double q_norm = std::sqrt(std::max(dot(q, q), 0.0));
+        const double curvature_scale = std::max(1.0, residual_norm * q_norm);
+        const double tiny_curvature = 1e-24 * curvature_scale;
+        if (!std::isfinite(denom)) {
             error = "Poisson host CG encountered a non-finite or zero curvature"
                 " (rho=" + std::to_string(rho)
                 + ", denom=" + std::to_string(denom)
-                + ", |r|=" + std::to_string(std::sqrt(std::max(dot(residual, residual), 0.0)))
-                + ", |q|=" + std::to_string(std::sqrt(std::max(dot(q, q), 0.0)))
+                + ", |r|=" + std::to_string(residual_norm)
+                + ", |q|=" + std::to_string(q_norm)
+                + ")";
+            return false;
+        }
+        if (!std::isfinite(rho) || std::abs(rho) <= tiny_curvature || std::abs(denom) <= tiny_curvature) {
+            // Near the converged solution the BC-eliminated Poisson system can
+            // produce an almost-null search curvature due to roundoff. Treat
+            // that as a soft convergence exit instead of aborting the whole
+            // FEM GPU solve.
+            rel_residual = residual_norm / rhs_norm;
+            if (residual_norm <= abs_residual_tol || rel_residual <= std::max(tol, 1e-8)) {
+                ++iter;
+                break;
+            }
+            error = "Poisson host CG encountered a non-finite or zero curvature"
+                " (rho=" + std::to_string(rho)
+                + ", denom=" + std::to_string(denom)
+                + ", |r|=" + std::to_string(residual_norm)
+                + ", |q|=" + std::to_string(q_norm)
                 + ")";
             return false;
         }

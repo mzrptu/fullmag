@@ -15,10 +15,10 @@ const badgeVariants = cva(
           "border-transparent bg-destructive/20 text-destructive hover:bg-destructive/30",
         outline: "text-foreground",
         // Custom semantic variants for Fullmag Status
-        info: "border-transparent bg-blue-500/15 text-blue-400 hover:bg-blue-500/25",
-        success: "border-transparent bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25",
-        warn: "border-transparent bg-amber-500/15 text-amber-500 hover:bg-amber-500/25",
-        accent: "border-transparent bg-teal-500/15 text-teal-400 hover:bg-teal-500/25",
+        info: "border-transparent bg-info/15 text-info hover:bg-info/25",
+        success: "border-transparent bg-success/15 text-success hover:bg-success/25",
+        warn: "border-transparent bg-warning/15 text-warning hover:bg-warning/25",
+        accent: "border-transparent bg-primary/15 text-primary hover:bg-primary/25",
       },
     },
     defaultVariants: {

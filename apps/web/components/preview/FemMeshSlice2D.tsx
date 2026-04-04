@@ -45,7 +45,7 @@ interface AntennaRect2D {
   selected: boolean;
 }
 
-const BG = "#1e1e2e";
+const BG = "#1e1e2e"; /* Catppuccin Base */
 const BORDER = "#313244"; /* Catppuccin Surface0 */
 const TEXT = "#a6adc8"; /* Catppuccin Subtext0 */
 const TEXT_STRONG = "#cdd6f4"; /* Catppuccin Text */
@@ -567,12 +567,12 @@ function antennaRectColors(
 ): { fill: string; stroke: string } {
   if (role === "ground") {
     return selected
-      ? { fill: "rgba(103, 232, 249, 0.28)", stroke: "#a5f3fc" }
-      : { fill: "rgba(14, 165, 233, 0.16)", stroke: "#67e8f9" };
+      ? { fill: "rgba(137, 220, 235, 0.28)", stroke: "#89dceb" } /* Sky */
+      : { fill: "rgba(137, 220, 235, 0.16)", stroke: "#89dceb66" };
   }
   return selected
-    ? { fill: "rgba(251, 146, 60, 0.32)", stroke: "#fdba74" }
-    : { fill: "rgba(249, 115, 22, 0.18)", stroke: "#fb923c" };
+    ? { fill: "rgba(250, 179, 135, 0.32)", stroke: "#fab387" } /* Peach */
+    : { fill: "rgba(250, 179, 135, 0.18)", stroke: "#fab38766" };
 }
 
 interface SliceRenderFrame {

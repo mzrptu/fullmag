@@ -415,7 +415,7 @@ export default function UniversePanel() {
         {ctx.isFemBackend ? (
           <SidebarSection title="Airbox" defaultOpen={true}>
             <div className="flex flex-col gap-3">
-              <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2.5 text-[0.68rem] leading-relaxed text-cyan-100/90">
+              <div className="rounded-lg border border-info/20 bg-info/10 p-2.5 text-[0.68rem] leading-relaxed text-info/90">
                 Shared-domain FEM builds one conformal solver mesh for the airbox and magnetic bodies.
                 `Airbox Hmax` steers the air-region density, while interfaces still refine around the magnetic geometry.
               </div>
@@ -719,11 +719,11 @@ export default function UniversePanel() {
                 </div>
               </div>
               <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-card/20 p-3 shadow-sm transition-all duration-300">
-                <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2.5 text-[0.72rem] leading-relaxed text-cyan-100/90">
+                <div className="rounded-lg border border-info/20 bg-info/10 px-3 py-2.5 text-[0.72rem] leading-relaxed text-info/90">
                   Use the Mesh ribbon to launch `Build Selected` for the airbox or `Build All` for the full study-domain mesh. The build modal now owns progress, logs and pipeline feedback.
                 </div>
                 {ctx.meshConfigDirty && (
-                  <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-[0.72rem] leading-relaxed text-amber-100/90">
+                  <div className="rounded-lg border border-warning/25 bg-warning/10 px-3 py-2.5 text-[0.72rem] leading-relaxed text-warning/90">
                     Airbox or mesh settings changed after the last build. The 3D viewport still shows the last built mesh until you rebuild.
                   </div>
                 )}

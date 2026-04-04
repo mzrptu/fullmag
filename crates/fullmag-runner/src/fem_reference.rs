@@ -211,6 +211,7 @@ pub(crate) fn execution_provenance(plan: &FemPlanIR) -> ExecutionProvenance {
         compute_capability: None,
         cuda_driver_version: None,
         cuda_runtime_version: None,
+        ..Default::default()
     }
 }
 

@@ -50,7 +50,7 @@ export function MetricField({ label, value, sparkData, sparkColor, tooltip, valu
       </span>
       <span className={cn(
         "font-mono text-xs text-foreground tracking-tight",
-        valueTone === "success" ? "text-emerald-400" : undefined
+        valueTone === "success" ? "text-success" : undefined
       )}>
         {value}
       </span>
@@ -207,9 +207,9 @@ interface StatusBadgeProps {
 
 const badgeToneClasses: Record<BadgeTone, string> = {
   default: "border-border/40 bg-muted/30 text-muted-foreground",
-  success: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-  info: "border-sky-500/30 bg-sky-500/10 text-sky-300",
-  warn: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  success: "border-success/30 bg-success/10 text-success",
+  info: "border-info/30 bg-info/10 text-info",
+  warn: "border-warning/30 bg-warning/10 text-warning",
   accent: "border-primary/30 bg-primary/10 text-primary",
 };
 
@@ -222,9 +222,9 @@ export function StatusBadge({ label, tone = "default", dot }: StatusBadgeProps) 
       {dot && (
         <span className={cn(
           "h-1.5 w-1.5 rounded-full shrink-0",
-          tone === "success" ? "bg-emerald-400" :
-          tone === "info" ? "bg-sky-400" :
-          tone === "warn" ? "bg-amber-400" :
+          tone === "success" ? "bg-success" :
+          tone === "info" ? "bg-info" :
+          tone === "warn" ? "bg-warning" :
           tone === "accent" ? "bg-primary" :
           "bg-muted-foreground/50"
         )} />

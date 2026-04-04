@@ -55,9 +55,9 @@ function formatVec3(value: [number, number, number] | null): string {
 
 function StatChip({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5 rounded-lg border border-border/30 bg-muted/30 px-2.5 py-1.5 min-w-[80px]">
-      <span className="text-[0.58rem] font-bold uppercase tracking-widest text-muted-foreground">{label}</span>
-      <span className="font-mono text-[0.72rem] text-foreground/85 truncate">{value}</span>
+    <div className="flex flex-col gap-0.5 rounded-lg border border-border/30 bg-secondary/10 px-2.5 py-1.5 min-w-[80px]">
+      <span className="text-[0.58rem] font-bold uppercase tracking-widest text-muted-foreground/70">{label}</span>
+      <span className="font-mono text-[0.72rem] text-foreground/90 truncate">{value}</span>
     </div>
   );
 }
@@ -148,12 +148,16 @@ export default function EigenModeInspector({
   }
 
   const render3DControls = () => (
-    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/40 bg-card/60 backdrop-blur-md px-3 py-2 shadow-sm pointer-events-auto">
-      <div className="flex rounded-md border border-border/50 bg-background/50 overflow-hidden">
+    <div className="flex flex-wrap items-center gap-2 rounded-full border border-border/40 bg-card/60 backdrop-blur-md px-3 py-1.5 shadow-lg pointer-events-auto">
+      <div className="flex rounded-full border border-border/50 bg-background/50 p-1 overflow-hidden">
         {(["real", "imag", "amplitude", "phase"] as const).map((view) => (
           <button
             key={view}
-            className={`px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-wider transition-colors ${fieldView === view ? "bg-primary/20 text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+            className={`px-3 py-1 rounded-full text-[0.65rem] font-bold uppercase tracking-wider transition-all ${
+              fieldView === view 
+                ? "bg-primary text-primary-foreground shadow-sm" 
+                : "text-muted-foreground hover:text-foreground hover:bg-secondary/20"
+            }`}
             onClick={() => setFieldView(view)}
           >
             {view === "amplitude" ? "AMP" : view === "phase" ? "PHASE" : view.toUpperCase()}
@@ -163,11 +167,15 @@ export default function EigenModeInspector({
       {(fieldView === "real" || fieldView === "imag") && (
         <>
           <div className="w-[1px] h-4 bg-border/50 mx-1" />
-          <div className="flex rounded-md border border-border/50 bg-background/50 overflow-hidden">
+          <div className="flex rounded-full border border-border/50 bg-background/50 p-1 overflow-hidden">
             {(["magnitude", "x", "y", "z"] as const).map((comp) => (
               <button
                 key={comp}
-                className={`px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-wider transition-colors ${vectorComponent === comp ? "bg-primary/20 text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+                className={`px-3 py-1 rounded-full text-[0.65rem] font-bold uppercase tracking-wider transition-all ${
+                  vectorComponent === comp 
+                    ? "bg-primary/20 text-primary shadow-sm" 
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/20"
+                }`}
                 onClick={() => setVectorComponent(comp)}
               >
                 {comp === "magnitude" ? "|M|" : comp.toUpperCase()}
@@ -185,7 +193,7 @@ export default function EigenModeInspector({
 
   const headerBgClass = compact
     ? "px-1"
-    : "rounded-[16px] border border-[var(--ide-border-subtle)] bg-[linear-gradient(135deg,rgba(38,65,140,0.12),rgba(11,18,35,0.78))] p-3.5";
+    : "rounded-[16px] border border-border/30 bg-card/40 p-3.5 shadow-sm";
 
   return (
     <div className={containerClass}>
@@ -199,7 +207,7 @@ export default function EigenModeInspector({
             {!compact && <Badge variant="outline">{mode.damping_policy}</Badge>}
           </div>
           {!compact && (
-            <p className="max-w-2xl text-xs text-[var(--ide-text-3)] leading-relaxed">
+            <p className="max-w-2xl text-[0.68rem] text-muted-foreground/80 leading-relaxed font-medium">
               Field view stays locked to explicit modal data. The 2D slice and 3D mesh share the same representation.
             </p>
           )}
@@ -213,7 +221,7 @@ export default function EigenModeInspector({
       </div>
 
       <div className="flex gap-3 flex-1 min-h-0">
-        <div className="relative flex-[1.4] h-full w-full overflow-hidden rounded-[14px] border border-border/30 bg-[rgba(3,9,20,0.72)] shadow-lg">
+        <div className="relative flex-[1.4] h-full w-full overflow-hidden rounded-[14px] border border-border/30 bg-background shadow-lg">
           <FemMeshView3D
             meshData={meshData}
             colorField={colorField}

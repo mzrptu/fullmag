@@ -97,6 +97,9 @@ pub(crate) fn execute_reference_fdm_multilayer(
         compute_capability: None,
         cuda_driver_version: None,
         cuda_runtime_version: None,
+        lossy_fallback_used: false,
+        ignored_terms: Vec::new(),
+        random_seed: None,
     };
     let mut artifacts = if let Some(writer) = artifact_writer {
         ArtifactRecorder::streaming(provenance.clone(), writer)

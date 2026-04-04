@@ -46,6 +46,20 @@
   /* Shadow tokens */
   --shadow-glass: var(--shadow-glass);
   --shadow-glass-side: var(--shadow-glass-side);
+
+  /* Status Colors (Catppuccin Mocha) */
+  --color-status-running: hsl(var(--status-running));
+  --color-status-completed: hsl(var(--status-completed));
+  --color-status-failed: hsl(var(--status-failed));
+  --color-status-idle: hsl(var(--status-idle));
+  --color-status-warn: hsl(var(--status-warn));
+  --color-status-info: hsl(var(--status-info));
+
+  /* Semantic Aliases */
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
+  --color-error: hsl(var(--error));
+  --color-info: hsl(var(--info));
 }
 
 @layer base {
@@ -101,19 +115,28 @@
     --tree-indent: 0.875rem;      /* 14px */
     --tree-node-height: 1.875rem; /* 30px */
     
-    /* Status Colors */
-    --status-running: 142.1 76.2% 36.3%; /* Green */
-    --status-completed: 210 100% 50%; /* Blue */
-    --status-failed: 0 84.2% 60.2%; /* Red */
-    --status-idle: 215.4 16.3% 46.9%; /* Slate 500 */
-    --status-warn: 47.9 95.8% 53.1%; /* Yellow */
+    /* Status Colors (Catppuccin Mocha) */
+    --status-running: 115 54% 76%;   /* Green */
+    --status-completed: 217 92% 76%; /* Blue */
+    --status-failed: 343 81% 75%;    /* Red */
+    --status-idle: 233 10% 47%;      /* Overlay0 */
+    --status-warn: 41 86% 83%;       /* Yellow */
+    --status-info: 189 71% 73%;       /* Sky */
+
+    /* Semantic Status Utilities */
+    --success: var(--status-running);
+    --warning: var(--status-warn);
+    --error: var(--status-failed);
+    --info: var(--status-info);
+    --accent-strong: var(--accent);
 
     /* Chart / Sparkline Colors */
-    --chart-sky: #0ea5e9;
-    --chart-amber: #f59e0b;
-    --chart-emerald: #10b981;
-    --chart-violet: #8b5cf6;
-    --chart-blue: #3b82f6;
+    /* Chart / Sparkline Colors (Catppuccin Mocha) */
+    --chart-sky: hsl(189 71% 73%);
+    --chart-amber: hsl(23 92% 75%);
+    --chart-emerald: hsl(115 54% 76%);
+    --chart-violet: hsl(267 84% 81%);
+    --chart-blue: hsl(217 92% 76%);
     
     /* Z-indexes */
     --z-base: 0;
@@ -746,8 +769,8 @@ body,
 
 .hero-surface {
   background:
-    linear-gradient(145deg, rgba(30, 30, 46, 0.92), rgba(17, 17, 27, 0.88)),
-    linear-gradient(180deg, rgba(137, 180, 250, 0.06), transparent);
+    linear-gradient(145deg, hsl(var(--background) / 0.92), hsl(var(--card-foreground) / 0.05)),
+    linear-gradient(180deg, hsl(var(--primary) / 0.06), transparent);
   border: 1px solid var(--border-strong);
   border-radius: 32px;
   box-shadow: var(--shadow);
@@ -860,8 +883,8 @@ pre {
 .hero-metrics article {
   padding: 18px;
   border-radius: 20px;
-  background: rgba(24, 24, 37, 0.76); /* Catppuccin Mantle */
-  border: 1px solid rgba(69, 71, 90, 0.3); /* Surface1 */
+  background: hsl(var(--card) / 0.76); /* Catppuccin Mantle */
+  border: 1px solid hsl(var(--secondary) / 0.3); /* Surface0 */
 }
 
 .hero-metrics span,
@@ -905,8 +928,8 @@ pre {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #b4befe, #cba6f7); /* Lavender → Mauve */
-  box-shadow: 0 0 12px rgba(180, 190, 254, 0.4);
+  background: linear-gradient(135deg, hsl(var(--accent)), hsl(var(--chart-violet))); /* Lavender → Mauve */
+  box-shadow: 0 0 12px hsl(var(--accent) / 0.4);
 }
 
 .tab-rail {
@@ -918,7 +941,7 @@ pre {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   padding: 12px;
-  background: rgba(17, 17, 27, 0.74); /* Catppuccin Crust */
+  background: hsl(var(--primary-foreground) / 0.74); /* Catppuccin Crust */
   border: 1px solid var(--border);
   border-radius: 22px;
   box-shadow: 0 18px 48px rgba(17, 17, 27, 0.4);
@@ -927,8 +950,8 @@ pre {
 .tab-chip {
   padding: 14px 16px;
   border-radius: 18px;
-  background: rgba(24, 24, 37, 0.72); /* Catppuccin Mantle */
-  border: 1px solid rgba(69, 71, 90, 0.25);
+  background: hsl(var(--card) / 0.72); /* Catppuccin Mantle */
+  border: 1px solid hsl(var(--secondary) / 0.25);
   transition:
     transform 180ms ease,
     border-color 180ms ease,
@@ -956,8 +979,8 @@ pre {
 .dashboard-section {
   margin-top: 24px;
   padding: 32px;
-  background: rgba(17, 17, 27, 0.6); /* Crust */
-  border: 1px solid rgba(69, 71, 90, 0.2); /* Surface1 */
+  background: hsl(var(--primary-foreground) / 0.6); /* Crust */
+  border: 1px solid hsl(var(--secondary) / 0.2); /* Surface0 */
   border-radius: 28px;
 }
 
@@ -1011,15 +1034,15 @@ pre {
 }
 
 .accent-cyan::after {
-  background: #cba6f7; /* Catppuccin Mauve */
+  background: hsl(var(--chart-violet)); /* Catppuccin Mauve */
 }
 
 .accent-violet::after {
-  background: #b4befe; /* Catppuccin Lavender */
+  background: hsl(var(--accent)); /* Catppuccin Lavender */
 }
 
 .accent-amber::after {
-  background: #fab387; /* Catppuccin Peach */
+  background: hsl(var(--chart-amber)); /* Catppuccin Peach */
 }
 
 .split-grid {
@@ -1065,8 +1088,8 @@ pre {
   margin-top: 18px;
   padding: 18px;
   border-radius: 20px;
-  background: rgba(17, 17, 27, 0.84); /* Crust */
-  border: 1px solid rgba(69, 71, 90, 0.25); /* Surface1 */
+  background: hsl(var(--primary-foreground) / 0.84); /* Crust */
+  border: 1px solid hsl(var(--secondary) / 0.25); /* Surface0 */
   overflow-x: auto;
   line-height: 1.65;
 }
@@ -1082,8 +1105,8 @@ pre {
 
 .status-pill {
   padding: 8px 12px;
-  background: rgba(180, 190, 254, 0.14); /* Lavender */
-  border: 1px solid rgba(180, 190, 254, 0.18);
+  background: hsl(var(--accent) / 0.14); /* Lavender */
+  border: 1px solid hsl(var(--accent) / 0.18);
   color: #cdd6f4; /* Text */
   white-space: nowrap;
 }

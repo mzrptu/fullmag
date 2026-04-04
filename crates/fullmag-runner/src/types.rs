@@ -570,7 +570,7 @@ impl From<fullmag_plan::PlanError> for RunError {
 
 /// Records which engine and device produced a run.
 /// Included in artifact metadata for reproducibility.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExecutionProvenance {
     /// Engine that executed the run: "cpu_reference" or "cuda_fdm".
     pub execution_engine: String,
@@ -594,6 +594,17 @@ pub struct ExecutionProvenance {
     /// CUDA runtime version, if applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cuda_runtime_version: Option<i32>,
+    /// Whether a lossy fallback was used during this run (e.g. single-precision
+    /// requested but unavailable, or an approximate demag operator substituted).
+    #[serde(default)]
+    pub lossy_fallback_used: bool,
+    /// Physics terms that were present in the plan but silently ignored by the
+    /// engine (e.g. H_ani on a CPU reference engine that folds it into H_eff).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignored_terms: Vec<String>,
+    /// RNG seed used for stochastic initialisations, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub random_seed: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

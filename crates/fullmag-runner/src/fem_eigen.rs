@@ -420,6 +420,7 @@ fn execution_provenance(plan: &FemEigenPlanIR) -> ExecutionProvenance {
         compute_capability: None,
         cuda_driver_version: None,
         cuda_runtime_version: None,
+        ..Default::default()
     }
 }
 

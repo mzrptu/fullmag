@@ -715,6 +715,7 @@ fn assisted_multilayer_provenance(
             .map(|info| info.compute_capability.clone()),
         cuda_driver_version: device_info.as_ref().map(|info| info.driver_version),
         cuda_runtime_version: device_info.as_ref().map(|info| info.runtime_version),
+        ..Default::default()
     }
 }
 
@@ -917,6 +918,7 @@ fn execute_native_stacked_cuda_multilayer(
             .map(|info| info.compute_capability.clone()),
         cuda_driver_version: device_info.as_ref().map(|info| info.driver_version),
         cuda_runtime_version: device_info.as_ref().map(|info| info.runtime_version),
+        ..Default::default()
     };
     let mut artifacts = if let Some(writer) = artifact_writer {
         ArtifactRecorder::streaming(provenance.clone(), writer)
