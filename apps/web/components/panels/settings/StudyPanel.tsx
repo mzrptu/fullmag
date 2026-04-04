@@ -21,7 +21,7 @@ import { SidebarSection, InfoRow, StatusBadge } from "./primitives";
 import TextField from "../../ui/TextField";
 import SelectField from "../../ui/SelectField";
 
-const EDITABLE_STAGE_STATES = new Set(["relax", "run"]);
+const EDITABLE_STAGE_STATES = new Set(["relax", "run", "eigenmodes"]);
 
 function stageTitle(stage: ScriptBuilderStageState, index: number): string {
   switch (stage.kind) {
@@ -49,6 +49,15 @@ function stageSummary(stage: ScriptBuilderStageState): string {
   if (stage.kind === "run") {
     return stage.until_seconds ? `Run until ${stage.until_seconds} s` : "Time-evolution stage";
   }
+  if (stage.kind === "eigenmodes") {
+    return [
+      stage.eigen_count ? `${stage.eigen_count} modes` : null,
+      stage.eigen_target ? humanizeToken(stage.eigen_target) : null,
+      stage.eigen_include_demag ? "demag on" : null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || "Eigenmode analysis";
+  }
   return stage.entrypoint_kind ? humanizeToken(stage.entrypoint_kind) : "Stage details unavailable";
 }
 
@@ -58,6 +67,9 @@ function stageBadgeClass(kind: string): string {
   }
   if (kind === "run") {
     return "border-sky-500/30 bg-sky-500/10 text-sky-300";
+  }
+  if (kind === "eigenmodes") {
+    return "border-violet-500/30 bg-violet-500/10 text-violet-300";
   }
   return "border-border/40 bg-card/20 text-muted-foreground";
 }
@@ -195,6 +207,7 @@ export default function StudyPanel() {
             {solverPlan?.externalField?.some((value) => value !== 0) && <StatusBadge label="Zeeman" />}
             {solverPlan?.adaptive && <StatusBadge label="Adaptive Δt" />}
             {solverPlan?.relaxation && <StatusBadge label="Relaxation stage" />}
+            {ctx.studyStages.some((s) => s.kind === "eigenmodes") && <StatusBadge label="Eigenmode stage" />}
           </div>
 
           {solverPlan?.notes.length ? (
@@ -299,6 +312,75 @@ export default function StudyPanel() {
                         mono
                         tooltip="Stopping criterion based on the fractional energy change between steps."
                       />
+                    </div>
+                  </div>
+                )}
+
+                {stage.kind === "eigenmodes" && (
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    <div>
+                      <TextField
+                        label="Mode count"
+                        value={stage.eigen_count || ""}
+                        onchange={(e) => updateStage(index, { eigen_count: e.target.value })}
+                        placeholder="10"
+                        disabled={stageEditingDisabled}
+                        mono
+                        tooltip="Number of eigenmodes to compute."
+                      />
+                    </div>
+                    <div>
+                      <SelectField
+                        label="Target"
+                        value={stage.eigen_target || "lowest"}
+                        onchange={(val) => updateStage(index, { eigen_target: val })}
+                        disabled={stageEditingDisabled}
+                        options={[
+                          { value: "lowest", label: "Lowest freq." },
+                          { value: "nearest", label: "Nearest to target" },
+                        ]}
+                        tooltip="Which part of the spectrum to extract."
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <SelectField
+                        label="Equilibrium source"
+                        value={stage.eigen_equilibrium_source || "relax"}
+                        onchange={(val) => updateStage(index, { eigen_equilibrium_source: val })}
+                        disabled={stageEditingDisabled}
+                        options={[
+                          { value: "relax", label: "From relaxation stage" },
+                          { value: "supplied", label: "Supplied initial state" },
+                        ]}
+                        tooltip="Origin of the equilibrium magnetization used to linearise the LLG."
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <SelectField
+                        label="Normalization"
+                        value={stage.eigen_normalization || "max_amplitude"}
+                        onchange={(val) => updateStage(index, { eigen_normalization: val })}
+                        disabled={stageEditingDisabled}
+                        options={[
+                          { value: "max_amplitude", label: "Max amplitude" },
+                          { value: "unit_norm", label: "Unit norm" },
+                          { value: "none", label: "None (raw eigenvector)" },
+                        ]}
+                        tooltip="How the computed eigenvectors are normalised before output."
+                      />
+                    </div>
+                    <div className="col-span-2 flex items-center gap-2 rounded-lg border border-border/30 bg-background/20 p-2.5">
+                      <input
+                        type="checkbox"
+                        id={`eigen-demag-${index}`}
+                        checked={stage.eigen_include_demag}
+                        disabled={stageEditingDisabled}
+                        onChange={(e) => updateStage(index, { eigen_include_demag: e.target.checked })}
+                        className="h-3.5 w-3.5 rounded accent-violet-500"
+                      />
+                      <label htmlFor={`eigen-demag-${index}`} className="text-xs font-medium text-foreground select-none cursor-pointer">
+                        Include demagnetization in eigen operator
+                      </label>
                     </div>
                   </div>
                 )}

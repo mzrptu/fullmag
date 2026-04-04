@@ -602,6 +602,11 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
           torque_tolerance: String(stage?.torque_tolerance ?? ""),
           energy_tolerance: String(stage?.energy_tolerance ?? ""),
           max_steps: String(stage?.max_steps ?? ""),
+          eigen_count: String(stage?.eigen_count ?? ""),
+          eigen_target: String(stage?.eigen_target ?? ""),
+          eigen_include_demag: Boolean(stage?.eigen_include_demag ?? false),
+          eigen_equilibrium_source: String(stage?.eigen_equilibrium_source ?? ""),
+          eigen_normalization: String(stage?.eigen_normalization ?? ""),
         }))
       : [],
     initial_state:

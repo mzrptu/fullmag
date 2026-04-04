@@ -216,6 +216,11 @@ pub fn scene_document_to_script_builder_overrides(
             "torque_tolerance": parse_optional_text_f64(&stage.torque_tolerance),
             "energy_tolerance": parse_optional_text_f64(&stage.energy_tolerance),
             "max_steps": parse_optional_text_u64(&stage.max_steps),
+            "eigen_count": parse_optional_text_u64(&stage.eigen_count),
+            "eigen_target": string_or_null(&stage.eigen_target),
+            "eigen_include_demag": stage.eigen_include_demag,
+            "eigen_equilibrium_source": string_or_null(&stage.eigen_equilibrium_source),
+            "eigen_normalization": string_or_null(&stage.eigen_normalization),
         })).collect::<Vec<_>>(),
         "initial_state": builder.initial_state.as_ref().map(|initial_state| serde_json::json!({
             "magnet_name": initial_state.magnet_name,
@@ -544,6 +549,11 @@ mod tests {
                 torque_tolerance: String::new(),
                 energy_tolerance: String::new(),
                 max_steps: String::new(),
+                eigen_count: String::new(),
+                eigen_target: String::new(),
+                eigen_include_demag: false,
+                eigen_equilibrium_source: String::new(),
+                eigen_normalization: String::new(),
             }],
             initial_state: Some(ScriptBuilderInitialState {
                 magnet_name: Some("flower".to_string()),

@@ -353,6 +353,10 @@ export function buildFullmagModelTree(opts: {
   geometries?: ScriptBuilderGeometryEntry[];
   currentModules?: ScriptBuilderCurrentModuleEntry[];
   excitationAnalysis?: ScriptBuilderExcitationAnalysisEntry | null;
+  /** Number of eigenmodes computed. When >0 an Eigenmodes branch appears under Outputs. */
+  eigenModeCount?: number | null;
+  /** Short summary labels for each computed eigenmode (e.g. "0 · 12.3 GHz · ip"). */
+  eigenModeSummaries?: { index: number; label: string }[];
 }): TreeNodeData[] {
   const graph = opts.graph ?? null;
   const sceneDocument = opts.sceneDocument ?? null;
@@ -619,6 +623,32 @@ export function buildFullmagModelTree(opts: {
         { id: "res-energy", label: "Energy", icon: "⚡" },
         { id: "res-state-io", label: "State I/O", icon: "💾" },
         { id: "res-export", label: "Export", icon: "💾" },
+        ...(opts.eigenModeCount && opts.eigenModeCount > 0
+          ? [
+              {
+                id: "res-eigenmodes",
+                label: "Eigenmodes",
+                icon: "〜",
+                badge: `${opts.eigenModeCount} modes`,
+                status: "ready" as const,
+                defaultOpen: false,
+                children: [
+                  {
+                    id: "res-eigenmodes-spectrum",
+                    label: "Spectrum",
+                    icon: "📊",
+                    status: "ready" as const,
+                  },
+                  ...(opts.eigenModeSummaries ?? []).map((m) => ({
+                    id: `res-eigenmode-${m.index}`,
+                    label: m.label,
+                    icon: "〜",
+                    status: "ready" as const,
+                  })),
+                ],
+              },
+            ]
+          : []),
       ],
     },
   );

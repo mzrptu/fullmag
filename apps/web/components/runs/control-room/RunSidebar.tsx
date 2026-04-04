@@ -114,6 +114,17 @@ export default function RunSidebar() {
   }, [cmd.isFemBackend, model.worldExtentSource]);
   const runtimeDeclaredUniverse = model.domainFrame?.declared_universe ?? null;
 
+  /* ── Derive eigen state from artifacts ── */
+  const eigenModeCount = useMemo(() => {
+    const artifacts = cmd.artifacts ?? [];
+    const hasSpectrum = artifacts.some(
+      (a) => a.path === "eigen/spectrum.json" || a.path.startsWith("eigen/spectrum"),
+    );
+    if (!hasSpectrum) return null;
+    const modeCount = artifacts.filter((a) => a.path.startsWith("eigen/modes/mode_")).length;
+    return modeCount > 0 ? modeCount : null;
+  }, [cmd.artifacts]);
+
   /* ── Build model tree nodes ── */
   const modelTreeNodes = useMemo(
     () =>
@@ -157,6 +168,7 @@ export default function RunSidebar() {
               ? "active"
               : undefined,
         scalarRowCount: tp.scalarRows.length,
+        eigenModeCount,
       }),
     [
       model.modelBuilderGraph, model.sceneDocument, model.effectiveFemMesh, tp.hasSolverTelemetry, cmd.isFemBackend, model.material,
@@ -164,7 +176,7 @@ export default function RunSidebar() {
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm,
       tp.effectiveDmDt, tp.scalarRows.length, model.worldCenter, model.worldExtent, runtimeDeclaredUniverse?.mode, runtimeDeclaredUniverse?.padding, runtimeDeclaredUniverse?.size,
-      universeRole,
+      universeRole, eigenModeCount, cmd.artifacts,
     ],
   );
 
@@ -309,6 +321,10 @@ export default function RunSidebar() {
       case "results": case "res-fields":
         if (cmd.isFemBackend && vp.effectiveViewMode === "Mesh") vp.setViewMode("3D");
         return;
+      case "res-eigenmodes":
+      case "res-eigenmodes-spectrum":
+        vp.setViewMode("Analyze");
+        return;
       case "antennas":
         // Show the inspector with AntennaPanel
         return;
@@ -320,6 +336,11 @@ export default function RunSidebar() {
             vp.requestPreviewQuantity("H_ant");
           }
           vp.setViewMode("3D");
+          return;
+        }
+        // Eigenmode nodes → switch to Analyze viewport
+        if (id.startsWith("res-eigenmode")) {
+          vp.setViewMode("Analyze");
           return;
         }
         // Per-object mesh nodes (e.g. "geo-nanoflower-mesh") → open mesh workspace

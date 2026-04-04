@@ -403,6 +403,12 @@ export interface ScriptBuilderStageState {
   torque_tolerance: string;
   energy_tolerance: string;
   max_steps: string;
+  /** Eigenmode fields — only meaningful when kind === "eigenmodes" */
+  eigen_count: string;
+  eigen_target: string;
+  eigen_include_demag: boolean;
+  eigen_equilibrium_source: string;
+  eigen_normalization: string;
 }
 
 export interface ScriptBuilderInitialState {

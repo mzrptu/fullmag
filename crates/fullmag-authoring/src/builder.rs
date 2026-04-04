@@ -177,6 +177,17 @@ pub struct ScriptBuilderStageState {
     pub torque_tolerance: String,
     pub energy_tolerance: String,
     pub max_steps: String,
+    /// Eigenmode fields — only meaningful when kind == "eigenmodes"
+    #[serde(default)]
+    pub eigen_count: String,
+    #[serde(default)]
+    pub eigen_target: String,
+    #[serde(default)]
+    pub eigen_include_demag: bool,
+    #[serde(default)]
+    pub eigen_equilibrium_source: String,
+    #[serde(default)]
+    pub eigen_normalization: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
