@@ -173,9 +173,7 @@ impl NativeFemBackend {
             boundary_faces: boundary_flat.as_ptr(),
             n_boundary_faces: plan.mesh.boundary_faces.len() as u32,
             boundary_markers: plan.mesh.boundary_markers.as_ptr(),
-        periodic_boundary_pairs: Vec::new(),
-        periodic_node_pairs: Vec::new(),
-};
+        };
 
         let material = ffi::fullmag_fem_material_desc {
             saturation_magnetisation: plan.material.saturation_magnetisation,

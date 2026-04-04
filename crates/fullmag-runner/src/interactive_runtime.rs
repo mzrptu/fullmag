@@ -1278,7 +1278,10 @@ impl CudaInteractiveFdmPreviewRuntime {
         let base_request = display_state.preview_request();
         let mut snapshots = Vec::with_capacity(quantities.len());
         let mut seen = HashSet::new();
-        for quantity in quantities.into_iter().map(normalize_quantity_id) {
+        for quantity in quantities
+            .into_iter()
+            .filter_map(|quantity| normalized_quantity_name(quantity).ok())
+        {
             if !seen.insert(quantity) {
                 continue;
             }

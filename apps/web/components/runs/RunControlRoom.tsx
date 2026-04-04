@@ -22,6 +22,7 @@ import {
   resolveSelectedObjectId,
   fmtSIOrDash,
   fmtStepValue,
+  materializationProgressFromMessage,
 } from "./control-room/shared";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import BackendErrorNotice from "./control-room/BackendErrorNotice";
@@ -203,6 +204,79 @@ function ControlRoomShell() {
         : null,
     [ctx.latestBackendError, meshBuildOpenedAt],
   );
+  const footerPipeline = useMemo(() => {
+    const meshPhases = ctx.meshWorkspace?.mesh_pipeline_status ?? [];
+    const doneMeshPhases = meshPhases.filter((phase) => phase.status === "done").length;
+    const activeMeshPhase = meshPhases.find((phase) => phase.status === "active");
+    if (ctx.workspaceStatus === "bootstrapping") {
+      return {
+        label: "Bootstrap pipeline",
+        detail: ctx.activity.detail,
+        mode: "indeterminate" as const,
+        value: undefined,
+      };
+    }
+    if (ctx.workspaceStatus === "materializing_script") {
+      const progress = materializationProgressFromMessage(ctx.activity.detail ?? null);
+      return {
+        label: activeMeshPhase ? `Mesh pipeline · ${activeMeshPhase.label}` : "Materialization pipeline",
+        detail: activeMeshPhase?.detail ?? ctx.activity.detail,
+        mode: "determinate" as const,
+        value: progress,
+      };
+    }
+    if (meshPhases.length > 0 && (ctx.meshGenerating || ctx.scriptSyncBusy)) {
+      const activeIndex = meshPhases.findIndex((phase) => phase.status === "active");
+      const completed = doneMeshPhases + (activeIndex >= 0 ? 0.5 : 0);
+      return {
+        label: activeMeshPhase ? `Mesh pipeline · ${activeMeshPhase.label}` : "Mesh pipeline",
+        detail: activeMeshPhase?.detail ?? ctx.activity.detail,
+        mode: "determinate" as const,
+        value: Math.min(100, (completed / meshPhases.length) * 100),
+      };
+    }
+    return {
+      label: "Workspace pipeline",
+      detail: ctx.activity.detail,
+      mode: "determinate" as const,
+      value: ctx.workspaceStatus === "running" || ctx.workspaceStatus === "completed" || ctx.workspaceStatus === "awaiting_command" ? 100 : 0,
+    };
+  }, [
+    ctx.activity.detail,
+    ctx.meshGenerating,
+    ctx.meshWorkspace?.mesh_pipeline_status,
+    ctx.scriptSyncBusy,
+    ctx.workspaceStatus,
+  ]);
+  const footerStage = useMemo(() => {
+    const stages = ctx.studyStages ?? [];
+    const total = stages.length;
+    const activityStage = ctx.activity.label.match(/stage\s+(\d+)\/(\d+)/i);
+    const current = activityStage ? Number(activityStage[1]) : (ctx.workspaceStatus === "completed" || ctx.workspaceStatus === "awaiting_command") && total > 0 ? total : 0;
+    const declaredTotal = activityStage ? Number(activityStage[2]) : total;
+    if (declaredTotal <= 0) {
+      return {
+        label: "Study stages",
+        detail: "No scripted stages declared",
+        mode: "idle" as const,
+        value: undefined,
+      };
+    }
+    const completedStages = Math.max(0, current - (ctx.workspaceStatus === "running" ? 1 : 0));
+    const inFlightWeight =
+      ctx.workspaceStatus === "running"
+        ? 0.5
+        : ctx.workspaceStatus === "completed" || ctx.workspaceStatus === "awaiting_command"
+          ? 0
+          : 0;
+    const progress = Math.min(100, ((completedStages + inFlightWeight) / declaredTotal) * 100);
+    return {
+      label: `Study stages ${Math.max(current, completedStages)}/${declaredTotal}`,
+      detail: activityStage ? ctx.activity.label : stages[Math.max(0, current - 1)]?.kind ?? "Waiting for first scripted stage",
+      mode: "determinate" as const,
+      value: ctx.workspaceStatus === "completed" || ctx.workspaceStatus === "awaiting_command" ? 100 : progress,
+    };
+  }, [ctx.activity.label, ctx.studyStages, ctx.workspaceStatus]);
 
   const ensureMeshBuildModal = useCallback((intent: ReturnType<typeof meshBuildIntentForNode>) => {
     setMeshBuildError(null);
@@ -556,6 +630,18 @@ function ControlRoomShell() {
         }
         previewPending={ctx.previewBusy}
         runtimeCanAcceptCommands={ctx.runtimeCanAcceptCommands}
+        pipelineLabel={footerPipeline.label}
+        pipelineDetail={footerPipeline.detail}
+        pipelineProgressMode={footerPipeline.mode}
+        pipelineProgressValue={footerPipeline.value}
+        stageLabel={footerStage.label}
+        stageDetail={footerStage.detail}
+        stageProgressMode={footerStage.mode}
+        stageProgressValue={footerStage.value}
+        eTotalSpark={ctx.eTotalSpark}
+        dmDtSpark={ctx.dmDtSpark}
+        dtSpark={ctx.dtSpark}
+        hasSolverTelemetry={ctx.hasSolverTelemetry}
         nodeCount={ctx.isFemBackend && ctx.femMesh
           ? `${ctx.femMesh.nodes.length.toLocaleString()} nodes`
           : ctx.totalCells && ctx.totalCells > 0

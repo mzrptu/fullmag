@@ -793,6 +793,9 @@ mod tests {
         let builder = sample_builder();
         let scene_document = scene_document_from_script_builder(&builder);
         let response = SessionStateResponse {
+            session_protocol_version: "1".to_string(),
+            capability_profile_version: "2026-04-04".to_string(),
+            capabilities: None,
             session: SessionManifest {
                 session_id: "s1".to_string(),
                 run_id: "r1".to_string(),

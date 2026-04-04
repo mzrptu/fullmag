@@ -128,6 +128,12 @@ pub struct fullmag_fdm_plan_desc {
     pub has_bulk_dmi: i32,
     pub dmi_d_bulk: f64,
 
+    // Magnetoelastic coupling
+    pub has_magnetoelastic: i32,
+    pub mel_b1: f64,
+    pub mel_b2: f64,
+    pub mel_strain: [f64; 6],
+
     pub temperature: f64,
 
     pub current_density_x: f64,

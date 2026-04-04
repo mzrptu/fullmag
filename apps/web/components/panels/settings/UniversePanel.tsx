@@ -119,9 +119,9 @@ export default function UniversePanel() {
     ctx.scriptBuilderUniverse?.airbox_hmax ?? runtimeUniverse?.airbox_hmax ?? null;
   const outerBoundaryPolicy = ctx.scriptBuilderDemagRealization ?? "auto";
   const outerBoundaryLabel =
-    outerBoundaryPolicy === "airbox_dirichlet"
+    outerBoundaryPolicy === "poisson_dirichlet" || outerBoundaryPolicy === "airbox_dirichlet"
       ? "Dirichlet"
-      : outerBoundaryPolicy === "airbox_robin"
+      : outerBoundaryPolicy === "poisson_robin" || outerBoundaryPolicy === "airbox_robin"
         ? "Robin"
         : outerBoundaryPolicy === "transfer_grid"
           ? "Transfer Grid"
@@ -657,8 +657,8 @@ export default function UniversePanel() {
                 disabled={!editable}
                 options={[
                   { value: "auto", label: "Auto" },
-                  { value: "airbox_dirichlet", label: "Dirichlet" },
-                  { value: "airbox_robin", label: "Robin" },
+                  { value: "poisson_dirichlet", label: "Dirichlet" },
+                  { value: "poisson_robin", label: "Robin" },
                   { value: "transfer_grid", label: "Transfer Grid" },
                 ]}
               />

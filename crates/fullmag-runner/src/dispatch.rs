@@ -31,6 +31,7 @@ use crate::native_fdm::NativeFdmBackend;
 use crate::native_fem;
 #[cfg(feature = "fem-gpu")]
 use crate::native_fem::NativeFemBackend;
+use crate::quantities::normalized_quantity_name;
 #[cfg(feature = "cuda")]
 use crate::relaxation::llg_overdamped_uses_pure_damping;
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
@@ -111,12 +112,22 @@ fn unsupported_cpu_fdm_terms(plan: &FdmPlanIR, outputs: &[OutputIR]) -> Vec<&'st
     if plan.boundary_geometry.is_some() || plan.boundary_correction.is_some() {
         unsupported.push("boundary_correction");
     }
+    // Fields available in CPU FDM snapshots: m, H_ex, H_demag, H_ext, H_eff.
+    // H_ani, H_dmi, H_ant are not exposed as separate observables by the reference engine.
     if outputs.iter().any(|output| match output {
         OutputIR::Field { name, .. } | OutputIR::Scalar { name, .. } => {
-            matches!(name.as_str(), "H_mel" | "u" | "u_dot" | "eps" | "sigma" | "E_mel" | "E_el" | "E_kin_el")
+            matches!(
+                name.as_str(),
+                "H_mel" | "u" | "u_dot" | "eps" | "sigma"
+                    | "E_mel" | "E_el" | "E_kin_el"
+            )
         }
         OutputIR::Snapshot { field, .. } => {
-            matches!(field.as_str(), "H_mel" | "u" | "u_dot" | "eps" | "sigma")
+            matches!(
+                field.as_str(),
+                "H_mel" | "u" | "u_dot" | "eps" | "sigma"
+                    | "H_ani" | "H_dmi" | "H_ant"
+            )
         }
         _ => false,
     }) {

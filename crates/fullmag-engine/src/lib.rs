@@ -1,5 +1,6 @@
 pub mod fem;
 pub mod fem_afem_loop;
+pub mod fem_sparse;
 pub mod fem_edge_topology;
 pub mod fem_error_estimator;
 pub mod fem_face_topology;

@@ -2346,6 +2346,9 @@ def _validate_energy_terms(problem: Problem) -> None:
                 None,
                 "auto",
                 "transfer_grid",
+                "poisson_dirichlet",
+                "poisson_robin",
+                # Legacy aliases still accepted by Demag class:
                 "poisson_airbox",
                 "airbox_dirichlet",
                 "airbox_robin",

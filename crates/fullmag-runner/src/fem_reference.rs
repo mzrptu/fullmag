@@ -658,7 +658,7 @@ fn record_due_outputs(
                 step,
                 time: state.time_seconds,
                 solver_dt,
-                values: select_field_values(&observables, &name),
+                values: select_field_values(&observables, &name)?,
             })?;
         }
         advance_due_schedules(field_schedules, state.time_seconds);
@@ -735,7 +735,7 @@ fn record_final_outputs(
             step,
             time: state.time_seconds,
             solver_dt,
-            values: select_field_values(&observables, &name),
+            values: select_field_values(&observables, &name)?,
         })?;
     }
 
@@ -792,31 +792,50 @@ fn make_step_stats(
     stats
 }
 
-fn select_field_values(observables: &StateObservables, name: &str) -> Vec<[f64; 3]> {
+fn select_field_values(
+    observables: &StateObservables,
+    name: &str,
+) -> Result<Vec<[f64; 3]>, RunError> {
     if let Some(dot_pos) = name.find('.') {
         let base = &name[..dot_pos];
         let comp = &name[dot_pos + 1..];
-        let full = select_base_field(observables, base);
+        let full = select_base_field(observables, base)?;
         let idx = match comp {
             "x" => 0,
             "y" => 1,
             "z" => 2,
-            _ => panic!("unsupported snapshot component '{}' in '{}'", comp, name),
+            _ => {
+                return Err(RunError {
+                    message: format!(
+                        "snapshot '{}': unsupported component '{}' (use x, y, or z)",
+                        name, comp
+                    ),
+                });
+            }
         };
-        return full.iter().map(|v| [v[idx], 0.0, 0.0]).collect();
+        return Ok(full.iter().map(|v| [v[idx], 0.0, 0.0]).collect());
     }
     select_base_field(observables, name)
 }
 
-fn select_base_field(observables: &StateObservables, name: &str) -> Vec<[f64; 3]> {
+fn select_base_field(
+    observables: &StateObservables,
+    name: &str,
+) -> Result<Vec<[f64; 3]>, RunError> {
     match name {
-        "m" => observables.magnetization.clone(),
-        "H_ex" => observables.exchange_field.clone(),
-        "H_demag" => observables.demag_field.clone(),
-        "H_ant" => observables.antenna_field.clone(),
-        "H_ext" => observables.external_field.clone(),
-        "H_eff" => observables.effective_field.clone(),
-        other => panic!("unsupported FEM field snapshot '{}'", other),
+        "m" => Ok(observables.magnetization.clone()),
+        "H_ex" => Ok(observables.exchange_field.clone()),
+        "H_demag" => Ok(observables.demag_field.clone()),
+        "H_ant" => Ok(observables.antenna_field.clone()),
+        "H_ext" => Ok(observables.external_field.clone()),
+        "H_eff" => Ok(observables.effective_field.clone()),
+        other => Err(RunError {
+            message: format!(
+                "CPU FEM snapshot: field '{}' is not available in this execution path \
+                 (available: m, H_ex, H_demag, H_ant, H_ext, H_eff)",
+                other
+            ),
+        }),
     }
 }
 

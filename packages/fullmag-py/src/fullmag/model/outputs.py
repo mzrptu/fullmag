@@ -5,6 +5,21 @@ from typing import Sequence
 
 from fullmag._validation import require_non_empty, require_positive
 
+_KNOWN_SCALARS = {
+    "E_ex",
+    "E_demag",
+    "E_ext",
+    "E_total",
+    "time",
+    "step",
+    "solver_dt",
+    "mx",
+    "my",
+    "mz",
+    "max_h_eff",
+    "max_dm_dt",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class SaveField:
@@ -28,7 +43,7 @@ class SaveScalar:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scalar", require_non_empty(self.scalar, "scalar"))
-        if self.scalar not in {"E_ex", "E_demag", "E_ext", "E_total"}:
+        if self.scalar not in _KNOWN_SCALARS:
             raise ValueError(f"unsupported scalar quantity '{self.scalar}'")
         require_positive(self.every, "every")
 

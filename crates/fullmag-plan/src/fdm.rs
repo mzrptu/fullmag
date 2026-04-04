@@ -72,7 +72,13 @@ pub(crate) fn plan_fdm(
         ));
     }
     let geometry = &problem.geometry.entries[0];
-    let shape = ir_to_shape(geometry);
+    let shape = match ir_to_shape(geometry) {
+        Ok(shape) => shape,
+        Err(e) => {
+            errors.push(e);
+            return Err(PlanError { reasons: errors });
+        }
+    };
 
     let cell_size = match &problem.backend_policy.discretization_hints {
         Some(DiscretizationHintsIR { fdm: Some(fdm), .. }) => fdm.cell,

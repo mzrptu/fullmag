@@ -49,8 +49,22 @@ function runtimeTone(status: string) {
   return "border-border/60 bg-background/50 text-muted-foreground";
 }
 
+function solverAcceleratorLabel(
+  runtimeEngineLabel: string | null,
+  runtimeEngineGpuLabel: string | null,
+) {
+  const haystack = `${runtimeEngineLabel ?? ""} ${runtimeEngineGpuLabel ?? ""}`.toLowerCase();
+  if (/(gpu|cuda)/.test(haystack)) return "GPU";
+  if (/(cpu|reference)/.test(haystack)) return "CPU";
+  return null;
+}
+
 export default function WorkspaceControlStrip() {
   const ctx = useControlRoom();
+  const solverAccelerator = solverAcceleratorLabel(
+    ctx.runtimeEngineLabel,
+    ctx.runtimeEngineGpuLabel,
+  );
 
   const currentScalarValue =
     ctx.selectedScalarValue != null
@@ -88,6 +102,18 @@ export default function WorkspaceControlStrip() {
             <span className="rounded-full border border-border/60 bg-background/40 px-2.5 py-1 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-muted-foreground">
               {ctx.runtimeEngineLabel}
               {ctx.runtimeEngineGpuLabel ? ` · ${ctx.runtimeEngineGpuLabel}` : ""}
+            </span>
+          )}
+          {solverAccelerator && (
+            <span
+              className={cn(
+                "rounded-full border px-2.5 py-1 text-[0.62rem] font-bold uppercase tracking-[0.18em]",
+                solverAccelerator === "GPU"
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                  : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+              )}
+            >
+              Solver {solverAccelerator}
             </span>
           )}
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground/90">

@@ -54,16 +54,19 @@ pub(crate) fn capabilities_for_fdm_engine(engine: FdmEngine) -> BackendCapabilit
                 "interfacial_dmi".to_string(),
                 "bulk_dmi".to_string(),
                 "stt".to_string(),
+                "sot".to_string(),
+                "magnetoelastic".to_string(),
             ],
             supported_demag_realizations: vec!["tensor_fft_newell".to_string()],
+            // NOTE: H_ani and H_dmi are computed but folded into H_eff;
+            // they are not available as separate observable fields in the CPU reference engine.
+            // H_ant is always zero (no antenna connectivity in the reference path).
             preview_quantities: quantity_names(&[
                 QuantityId::M,
                 QuantityId::HEx,
                 QuantityId::HDemag,
                 QuantityId::HExt,
                 QuantityId::HEff,
-                QuantityId::HAni,
-                QuantityId::HDmi,
             ]),
             snapshot_quantities: quantity_names(&[
                 QuantityId::M,
@@ -71,8 +74,6 @@ pub(crate) fn capabilities_for_fdm_engine(engine: FdmEngine) -> BackendCapabilit
                 QuantityId::HDemag,
                 QuantityId::HExt,
                 QuantityId::HEff,
-                QuantityId::HAni,
-                QuantityId::HDmi,
             ]),
             scalar_outputs: vec![
                 "E_ex".to_string(),
@@ -96,6 +97,8 @@ pub(crate) fn capabilities_for_fdm_engine(engine: FdmEngine) -> BackendCapabilit
                 "interfacial_dmi".to_string(),
                 "bulk_dmi".to_string(),
                 "stt".to_string(),
+                "sot".to_string(),
+                "magnetoelastic".to_string(),
                 "oersted".to_string(),
                 "boundary_correction".to_string(),
             ],

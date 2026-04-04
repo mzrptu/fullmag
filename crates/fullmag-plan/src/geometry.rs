@@ -40,42 +40,42 @@ pub(crate) struct LoweredBody {
     pub material: FdmMaterialIR,
 }
 
-pub(crate) fn ir_to_shape(entry: &GeometryEntryIR) -> GeometryShape {
+pub(crate) fn ir_to_shape(entry: &GeometryEntryIR) -> Result<GeometryShape, String> {
     match entry {
-        GeometryEntryIR::Box { size, .. } => GeometryShape::Box { size: *size },
-        GeometryEntryIR::Cylinder { radius, height, .. } => GeometryShape::Cylinder {
+        GeometryEntryIR::Box { size, .. } => Ok(GeometryShape::Box { size: *size }),
+        GeometryEntryIR::Cylinder { radius, height, .. } => Ok(GeometryShape::Cylinder {
             radius: *radius,
             height: *height,
-        },
-        GeometryEntryIR::ImportedGeometry { source, format, .. } => GeometryShape::Imported {
+        }),
+        GeometryEntryIR::ImportedGeometry { source, format, .. } => Ok(GeometryShape::Imported {
             source: source.clone(),
             format: format.clone(),
-        },
-        GeometryEntryIR::Difference { base, tool, .. } => GeometryShape::Difference {
-            base: std::boxed::Box::new(ir_to_shape(base)),
-            tool: std::boxed::Box::new(ir_to_shape(tool)),
-        },
-        GeometryEntryIR::Union { name, .. } => panic!(
-            "unsupported geometry lowering: union '{}' must fail in planner before ir_to_shape",
+        }),
+        GeometryEntryIR::Difference { base, tool, .. } => Ok(GeometryShape::Difference {
+            base: std::boxed::Box::new(ir_to_shape(base)?),
+            tool: std::boxed::Box::new(ir_to_shape(tool)?),
+        }),
+        GeometryEntryIR::Union { name, .. } => Err(format!(
+            "geometry '{}' (Union) is not yet supported by the FDM planner; use Box, Cylinder, or Difference",
             name
-        ),
-        GeometryEntryIR::Intersection { name, .. } => panic!(
-            "unsupported geometry lowering: intersection '{}' must fail in planner before ir_to_shape",
+        )),
+        GeometryEntryIR::Intersection { name, .. } => Err(format!(
+            "geometry '{}' (Intersection) is not yet supported by the FDM planner; use Box, Cylinder, or Difference",
             name
-        ),
+        )),
         GeometryEntryIR::Translate { base, .. } => ir_to_shape(base),
-        GeometryEntryIR::Ellipsoid { name, .. } => panic!(
-            "unsupported geometry lowering: ellipsoid '{}' must fail in planner before ir_to_shape",
+        GeometryEntryIR::Ellipsoid { name, .. } => Err(format!(
+            "geometry '{}' (Ellipsoid) is not yet supported by the FDM planner; use Box or Cylinder",
             name
-        ),
-        GeometryEntryIR::Sphere { name, .. } => panic!(
-            "unsupported geometry lowering: sphere '{}' must fail in planner before ir_to_shape",
+        )),
+        GeometryEntryIR::Sphere { name, .. } => Err(format!(
+            "geometry '{}' (Sphere) is not yet supported by the FDM planner; use Box or Cylinder",
             name
-        ),
-        GeometryEntryIR::Ellipse { name, .. } => panic!(
-            "unsupported geometry lowering: ellipse '{}' must fail in planner before ir_to_shape",
+        )),
+        GeometryEntryIR::Ellipse { name, .. } => Err(format!(
+            "geometry '{}' (Ellipse) is not yet supported by the FDM planner; use Box or Cylinder",
             name
-        ),
+        )),
     }
 }
 
@@ -96,7 +96,7 @@ pub(crate) fn extract_multilayer_geometry(
         | GeometryEntryIR::ImportedGeometry { .. }
         | GeometryEntryIR::Difference { .. } => Ok(PlacedGeometry {
             name: entry.name().to_string(),
-            shape: ir_to_shape(entry),
+            shape: ir_to_shape(entry).map_err(|e| e)?,
             translation: [0.0, 0.0, 0.0],
         }),
         GeometryEntryIR::Union { .. } | GeometryEntryIR::Intersection { .. } => Err(format!(

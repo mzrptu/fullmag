@@ -12,29 +12,44 @@ class Exchange:
         return {"kind": "exchange"}
 
 
+_DEMAG_CANONICAL = frozenset({
+    "auto",
+    "transfer_grid",
+    "poisson_dirichlet",
+    "poisson_robin",
+})
+
+_DEMAG_LEGACY_ALIASES: dict[str, str] = {
+    "poisson_airbox": "poisson_robin",
+    "airbox_robin": "poisson_robin",
+    "airbox_dirichlet": "poisson_dirichlet",
+}
+
+_DEMAG_ALLOWED = frozenset({None}) | _DEMAG_CANONICAL | frozenset(_DEMAG_LEGACY_ALIASES)
+
+
 @dataclass(frozen=True, slots=True)
 class Demag:
     realization: str | None = None
 
     def __post_init__(self) -> None:
-        allowed = (
-            None,
-            "auto",
-            "transfer_grid",
-            "poisson_airbox",
-            "airbox_dirichlet",
-            "airbox_robin",
-        )
-        if self.realization not in allowed:
+        if self.realization not in _DEMAG_ALLOWED:
             raise ValueError(
-                f"Demag realization must be one of {allowed!r}, got {self.realization!r}"
+                f"Demag realization must be one of {sorted(r for r in _DEMAG_ALLOWED if r is not None)!r} "
+                f"or None, got {self.realization!r}"
             )
 
+    def _resolved_realization(self) -> str:
+        """Return the canonical realization string, normalizing legacy aliases."""
+        if self.realization is None:
+            return "auto"
+        return _DEMAG_LEGACY_ALIASES.get(self.realization, self.realization)
+
     def to_ir(self) -> dict[str, object]:
-        ir: dict[str, object] = {"kind": "demag"}
-        if self.realization is not None:
-            ir["realization"] = self.realization
-        return ir
+        return {
+            "kind": "demag",
+            "realization": self._resolved_realization(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
