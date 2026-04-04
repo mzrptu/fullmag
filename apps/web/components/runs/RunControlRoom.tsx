@@ -377,6 +377,7 @@ function ControlRoomShell() {
         problemName={ctx.session?.problem_name ?? "Local Live Workspace"}
         backend={ctx.session?.requested_backend ?? ""}
         runtimeEngine={ctx.runtimeEngineLabel ?? undefined}
+        runtimeGpuLabel={ctx.runtimeEngineGpuLabel ?? undefined}
         status={ctx.workspaceStatus}
         connection={ctx.connection}
         interactiveEnabled={ctx.interactiveEnabled}
@@ -536,6 +537,7 @@ function ControlRoomShell() {
         throughput={ctx.stepsPerSec > 0 ? `${ctx.stepsPerSec.toFixed(1)} st/s` : "—"}
         backend={ctx.session?.requested_backend ?? ""}
         runtimeEngine={ctx.runtimeEngineLabel ?? undefined}
+        runtimeGpuLabel={ctx.runtimeEngineGpuLabel ?? undefined}
         precision={ctx.session?.precision ?? ""}
         status={ctx.workspaceStatus}
         activityLabel={ctx.activity.label}

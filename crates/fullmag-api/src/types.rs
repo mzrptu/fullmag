@@ -69,6 +69,24 @@ pub(crate) struct VisionResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct GpuTelemetryDevice {
+    pub index: u32,
+    pub name: String,
+    pub utilization_gpu_percent: f64,
+    pub utilization_memory_percent: f64,
+    pub memory_used_mb: f64,
+    pub memory_total_mb: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature_c: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct GpuTelemetryResponse {
+    pub sample_time_unix_ms: u128,
+    pub devices: Vec<GpuTelemetryDevice>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct SessionManifest {
     pub session_id: String,
     pub run_id: String,

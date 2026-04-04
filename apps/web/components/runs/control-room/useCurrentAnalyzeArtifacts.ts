@@ -40,6 +40,10 @@ export interface CurrentAnalyzeArtifactsState {
   dispersionRows: DispersionRow[];
   modeCache: Record<number, EigenModeArtifact>;
   hasEigenArtifacts: boolean;
+  /** Map from mode index → artifact path (only modes that have a saved field file). */
+  modeArtifactMap: Map<number, string>;
+  /** Sorted list of mode indices that have saved field files. */
+  savedModeIndices: number[];
   refresh: () => void;
   ensureMode: (index: number) => Promise<void>;
 }
@@ -55,6 +59,7 @@ export function useCurrentAnalyzeArtifacts(
   const [spectrum, setSpectrum] = useState<EigenSpectrumArtifact | null>(null);
   const [dispersionRows, setDispersionRows] = useState<DispersionRow[]>([]);
   const [modeCache, setModeCache] = useState<Record<number, EigenModeArtifact>>({});
+  const [modeArtifactMap, setModeArtifactMap] = useState<Map<number, string>>(new Map());
   const [internalRefreshNonce, setInternalRefreshNonce] = useState(0);
 
   useEffect(() => {
@@ -79,6 +84,14 @@ export function useCurrentAnalyzeArtifacts(
           (a) => a.path === "eigen/dispersion/branch_table.csv",
         );
 
+        const nextModeArtifactMap = new Map<number, string>();
+        for (const a of artifacts) {
+          if (a.path.startsWith("eigen/modes/")) {
+            const match = /mode_(\d+)\.json$/i.exec(a.path);
+            if (match) nextModeArtifactMap.set(Number.parseInt(match[1], 10), a.path);
+          }
+        }
+
         const [nextSpectrum, nextDispersion] = await Promise.all([
           hasSpectrum
             ? fetchJson<EigenSpectrumArtifact>(`${base}/v1/live/current/eigen/spectrum`)
@@ -93,6 +106,7 @@ export function useCurrentAnalyzeArtifacts(
         setMesh(bootstrap.fem_mesh ?? bootstrap.live_state?.latest_step?.fem_mesh ?? null);
         setSpectrum(nextSpectrum);
         setDispersionRows(nextDispersion?.rows ?? []);
+        setModeArtifactMap(nextModeArtifactMap);
         setModeCache({});
         setModeLoadState("idle");
         setModeError(null);
@@ -132,6 +146,11 @@ export function useCurrentAnalyzeArtifacts(
 
   const hasEigenArtifacts = useMemo(() => Boolean(spectrum), [spectrum]);
 
+  const savedModeIndices = useMemo(
+    () => Array.from(modeArtifactMap.keys()).sort((a, b) => a - b),
+    [modeArtifactMap],
+  );
+
   const refresh = useCallback(() => {
     setInternalRefreshNonce((n) => n + 1);
   }, []);
@@ -146,6 +165,8 @@ export function useCurrentAnalyzeArtifacts(
     dispersionRows,
     modeCache,
     hasEigenArtifacts,
+    modeArtifactMap,
+    savedModeIndices,
     refresh,
     ensureMode,
   };

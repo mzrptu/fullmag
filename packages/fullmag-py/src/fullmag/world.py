@@ -1127,6 +1127,7 @@ class StudyBuilder:
         normalization: str = "unit_l2",
         damping_policy: str = "ignore",
         k_vector: tuple[float, float, float] | None = None,
+        bc: str = "free",
     ) -> Any:
         return eigenmodes(
             count=count,
@@ -1138,6 +1139,7 @@ class StudyBuilder:
             normalization=normalization,
             damping_policy=damping_policy,
             k_vector=k_vector,
+            bc=bc,
         )
 
 
@@ -2084,6 +2086,7 @@ def _build_problem(
     eigen_normalization: str = "unit_l2",
     eigen_damping_policy: str = "ignore",
     eigen_k_vector: tuple[float, float, float] | None = None,
+    eigen_spin_wave_bc: str = "free",
 ) -> Problem:
     """Construct a Problem from the current world state."""
     s = _state
@@ -2194,6 +2197,7 @@ def _build_problem(
             equilibrium_artifact=eigen_equilibrium_artifact,
             normalization=eigen_normalization,
             damping_policy=eigen_damping_policy,
+            spin_wave_bc=eigen_spin_wave_bc,
             k_vector=eigen_k_vector,
             dynamics=dynamics,
         )
@@ -2318,6 +2322,7 @@ def eigenmodes(
     normalization: str = "unit_l2",
     damping_policy: str = "ignore",
     k_vector: tuple[float, float, float] | None = None,
+    bc: str = "free",
 ) -> Any:
     """Build the problem and queue/run an eigenmodes analysis.
 
@@ -2356,6 +2361,7 @@ def eigenmodes(
         eigen_normalization=normalization,
         eigen_damping_policy=damping_policy,
         eigen_k_vector=k_vector,
+        eigen_spin_wave_bc=bc,
     )
 
     if _capture_enabled:

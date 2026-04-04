@@ -67,7 +67,7 @@ if not USE_SAVED_RELAXED_STATE:
 study.save("spectrum")
 study.save("mode", indices=[0, 1, 2])
 study.eigenmodes(
-    count=10,
+    count=20,
     target="lowest",
     include_demag=True,
     equilibrium_source="relax",

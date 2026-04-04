@@ -888,7 +888,7 @@ pub fn resolve_runtime_engine(problem: &ProblemIR) -> Result<RuntimeEngineInfo, 
             let engine = dispatch::resolve_fem_engine(problem)?;
             let (engine_id, engine_label, accelerator) = match engine {
                 dispatch::FemEngine::CpuReference => ("fem_cpu_reference", "CPU FEM", "cpu"),
-                dispatch::FemEngine::NativeGpu => ("fem_native_gpu", "Native FEM GPU", "gpu"),
+                dispatch::FemEngine::NativeGpu => ("fem_native_gpu", "GPU FEM", "gpu"),
             };
             Ok(RuntimeEngineInfo {
                 backend_family: "fem".to_string(),

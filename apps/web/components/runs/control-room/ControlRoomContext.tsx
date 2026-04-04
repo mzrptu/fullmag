@@ -9,7 +9,11 @@ import {
   useState,
 } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { currentLiveApiClient } from "../../../lib/liveApiClient";
+import {
+  currentLiveApiClient,
+  type GpuTelemetryDevice,
+  type GpuTelemetryResponse,
+} from "../../../lib/liveApiClient";
 import { useCurrentLiveStream } from "../../../lib/useSessionStream";
 import type {
   ArtifactEntry,
@@ -155,6 +159,18 @@ import type {
 const EMPTY_SCALAR_ROWS: ScalarRow[] = [];
 const EMPTY_ENGINE_LOG: EngineLogEntry[] = [];
 const DEFAULT_AIR_MESH_OPACITY = 28;
+const GPU_TELEMETRY_POLL_MS = 1000;
+
+function fmtGpuMemoryGb(valueMb: number): string {
+  return `${(valueMb / 1024).toFixed(1)} GB`;
+}
+
+function runtimeEngineGpuLabelForDevice(device: GpuTelemetryDevice | null): string | null {
+  if (!device) {
+    return null;
+  }
+  return `${Math.round(device.utilization_gpu_percent)}% GPU · ${fmtGpuMemoryGb(device.memory_used_mb)}/${fmtGpuMemoryGb(device.memory_total_mb)}`;
+}
 
 function parseOptionalFiniteNumberText(value: string): number | null {
   const trimmed = value.trim();
@@ -420,9 +436,53 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const quantities = state?.quantities ?? [];
   const artifactsArr = state?.artifacts ?? [];
   const meshWorkspace = (state?.mesh_workspace as MeshWorkspaceState | null) ?? null;
+  const runtimeEngine = (metadata?.runtime_engine as Record<string, unknown> | undefined) ?? undefined;
+  const runtimeEngineLabel = typeof runtimeEngine?.engine_label === "string" ? runtimeEngine.engine_label : null;
+  const runtimeEngineAccelerator =
+    typeof runtimeEngine?.accelerator === "string" ? runtimeEngine.accelerator : null;
+  const runtimeEngineDeviceName =
+    typeof runtimeEngine?.device_name === "string" ? runtimeEngine.device_name : null;
+  const [gpuTelemetry, setGpuTelemetry] = useState<GpuTelemetryResponse | null>(null);
+  const liveApi = useMemo(() => currentLiveApiClient(), []);
   const latestEngineMessage = engineLog.length > 0 ? engineLog[engineLog.length - 1]?.message ?? null : null;
   const workspaceStatus =
     runtimeStatus?.code ?? liveState?.status ?? session?.status ?? run?.status ?? "idle";
+  const runtimeUsesGpu = runtimeEngineAccelerator === "gpu" || /gpu|cuda/i.test(runtimeEngineLabel ?? "");
+
+  useEffect(() => {
+    if (!runtimeUsesGpu) {
+      setGpuTelemetry(null);
+      return;
+    }
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      try {
+        const next = await liveApi.fetchGpuTelemetry();
+        if (!cancelled) {
+          setGpuTelemetry(next);
+        }
+      } catch {
+        if (!cancelled) {
+          setGpuTelemetry(null);
+        }
+      } finally {
+        if (!cancelled) {
+          timer = setTimeout(poll, GPU_TELEMETRY_POLL_MS);
+        }
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+    };
+  }, [liveApi, runtimeUsesGpu]);
   const modelBuilderDefaults = useMemo(
     () => ({
       revision:
@@ -538,10 +598,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     : 0;
   const stepsPerSec = elapsed > 0 ? (effectiveStep / elapsed) * 1000 : 0;
 
-  const runtimeEngine = (metadata?.runtime_engine as Record<string, unknown> | undefined) ?? undefined;
-  const runtimeEngineLabel = typeof runtimeEngine?.engine_label === "string" ? runtimeEngine.engine_label : null;
   const solverPlan = useMemo(() => extractSolverPlan(metadata, session), [metadata, session]);
-  const liveApi = useMemo(() => currentLiveApiClient(), []);
   const quantityDescriptorById = useMemo(
     () => new Map(quantities.map((quantity) => [quantity.id, quantity] as const)),
     [quantities],
@@ -1116,6 +1173,29 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     return { label: "Workspace idle", detail: latestEngineMessage ?? "No active task",
              progressMode: "idle", progressValue: undefined };
   }, [effectiveStep, effectiveTime, currentStage, isFemBackend, latestEngineMessage, runtimeEngineLabel, session?.requested_backend, workspaceStatus]);
+
+  const runtimeEngineGpuDevice = useMemo<GpuTelemetryDevice | null>(() => {
+    const devices = gpuTelemetry?.devices ?? [];
+    if (devices.length === 0) {
+      return null;
+    }
+    if (runtimeEngineDeviceName) {
+      const exact = devices.find((device) => device.name === runtimeEngineDeviceName);
+      if (exact) {
+        return exact;
+      }
+      const partial = devices.find((device) => runtimeEngineDeviceName.includes(device.name) || device.name.includes(runtimeEngineDeviceName));
+      if (partial) {
+        return partial;
+      }
+    }
+    return [...devices].sort((left, right) => right.utilization_gpu_percent - left.utilization_gpu_percent)[0] ?? null;
+  }, [gpuTelemetry, runtimeEngineDeviceName]);
+
+  const runtimeEngineGpuLabel = useMemo(
+    () => runtimeEngineGpuLabelForDevice(runtimeEngineGpuDevice),
+    [runtimeEngineGpuDevice],
+  );
 
   /* Artifact / execution plan metadata */
   const artifactLayout = (metadata?.artifact_layout as Record<string, unknown> | undefined) ?? undefined;
@@ -2790,6 +2870,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const commandValue = useMemo<CommandContextValue>(() => ({
     connection, error, session, run, metadata, engineLog: mergedEngineLog, quantities, artifacts: artifactsArr,
     workspaceStatus, isWaitingForCompute, solverNotStartedMessage, isFemBackend, runtimeEngineLabel,
+    runtimeEngineGpuLabel, runtimeEngineGpuDevice,
     activity, sessionFooter, runtimeStatus, runtimeCanAcceptCommands,
     commandStatus, activeCommandKind, activeCommandState,
     canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,
@@ -2801,6 +2882,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }), [
     connection, error, session, run, metadata, mergedEngineLog, quantities, artifactsArr,
     workspaceStatus, isWaitingForCompute, solverNotStartedMessage, isFemBackend, runtimeEngineLabel,
+    runtimeEngineGpuLabel, runtimeEngineGpuDevice,
     activity, sessionFooter, runtimeStatus, runtimeCanAcceptCommands,
     commandStatus, activeCommandKind, activeCommandState,
     canRunCommand, canRelaxCommand, canPauseCommand, canStopCommand, primaryRunAction, primaryRunLabel,

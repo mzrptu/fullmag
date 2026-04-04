@@ -119,6 +119,26 @@ pub enum ExchangeBoundaryCondition {
     Neumann,
 }
 
+/// Spin-wave boundary condition applied to the linearised LLG eigenvalue problem.
+///
+/// * `Free` (default) — natural Neumann BC: ∂m/∂n = 0 at the magnetic surface.
+///   This is equivalent to zero surface torque and is the standard choice for
+///   fully unpinned spins.
+/// * `Pinned` — homogeneous Dirichlet BC: m = 0 at the magnetic surface.
+///   Surface spins are frozen; precession amplitude is forced to zero there.
+///   Computed by removing surface DOFs from the assembled eigenvalue problem.
+/// * `Periodic` — periodic (Bloch) BC on the specified boundary pair.
+///   Opposite-face DOFs are merged.  Requires a mesh with matched periodic
+///   node pairs; the runner will return an error until that is implemented.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SpinWaveBoundaryConditionIR {
+    #[default]
+    Free,
+    Pinned,
+    Periodic,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum ImportedGeometryScaleIR {
@@ -542,6 +562,9 @@ pub enum StudyIR {
         k_sampling: Option<KSamplingIR>,
         normalization: EigenNormalizationIR,
         damping_policy: EigenDampingPolicyIR,
+        /// Spin-wave boundary condition applied to the eigenvalue operator.
+        #[serde(default)]
+        spin_wave_bc: SpinWaveBoundaryConditionIR,
         sampling: SamplingIR,
     },
 }
@@ -1696,6 +1719,9 @@ pub struct FemEigenPlanIR {
     pub gyromagnetic_ratio: f64,
     pub precision: ExecutionPrecision,
     pub exchange_bc: ExchangeBoundaryCondition,
+    /// Spin-wave boundary condition: `free` (default), `pinned`, or `periodic`.
+    #[serde(default)]
+    pub spin_wave_bc: SpinWaveBoundaryConditionIR,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demag_realization: Option<String>,
 }

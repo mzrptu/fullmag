@@ -857,6 +857,7 @@ pub(crate) fn plan_fem_eigen(
         k_sampling,
         normalization,
         damping_policy,
+        spin_wave_bc,
         ..
     } = &problem.study
     else {
@@ -1046,6 +1047,14 @@ pub(crate) fn plan_fem_eigen(
                 .to_string(),
         );
     }
+    if matches!(spin_wave_bc, fullmag_ir::SpinWaveBoundaryConditionIR::Periodic) {
+        errors.push(
+            "spin_wave_bc='periodic' is not yet executable in the FEM eigen baseline; \
+             periodic Bloch BC requires a mesh with matched periodic node pairs which \
+             is not yet supported by the mesh generator."
+                .to_string(),
+        );
+    }
 
     validate_eigen_outputs(&problem.study.sampling().outputs, &mut errors);
     if problem.backend_policy.execution_precision != ExecutionPrecision::Double
@@ -1213,6 +1222,7 @@ pub(crate) fn plan_fem_eigen(
         gyromagnetic_ratio,
         precision: problem.backend_policy.execution_precision,
         exchange_bc: ExchangeBoundaryCondition::Neumann,
+        spin_wave_bc: *spin_wave_bc,
         demag_realization: resolved_demag_realization,
     };
 

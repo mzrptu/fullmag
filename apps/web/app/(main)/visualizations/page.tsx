@@ -1,16 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import DispersionBranchPlot from "@/components/analyze/DispersionBranchPlot";
 import EigenModeInspector from "@/components/analyze/EigenModeInspector";
 import ModeSpectrumPlot from "@/components/analyze/ModeSpectrumPlot";
-import type {
-  DispersionRow,
-  EigenModeArtifact,
-  EigenSpectrumArtifact,
-  FemMeshPayload,
-} from "@/components/analyze/eigenTypes";
+import type { FemMeshPayload } from "@/components/analyze/eigenTypes";
+import { useCurrentAnalyzeArtifacts } from "@/components/runs/control-room/useCurrentAnalyzeArtifacts";
 import { Badge } from "@/components/ui/badge";
 import EmptyState from "@/components/ui/EmptyState";
 import SelectField from "@/components/ui/SelectField";
@@ -30,11 +26,6 @@ interface SessionSummary {
   plan_summary: Record<string, unknown> | null;
 }
 
-interface ArtifactEntry {
-  path: string;
-  kind: string;
-}
-
 interface StepSnapshot {
   e_ex: number;
   e_demag: number;
@@ -45,23 +36,13 @@ interface StepSnapshot {
   max_dm_dt: number;
 }
 
-interface BootstrapResponse {
+interface SessionBootstrapResponse {
   session: SessionSummary | null;
   live_state: {
     latest_step?: (StepSnapshot & { fem_mesh?: FemMeshPayload | null }) | null;
   } | null;
   scalar_rows: StepSnapshot[];
-  fem_mesh: FemMeshPayload | null;
-  artifacts: ArtifactEntry[];
 }
-
-interface EigenDispersionResponse {
-  csv_path: string;
-  path_metadata?: unknown;
-  rows: DispersionRow[];
-}
-
-type LoadState = "idle" | "loading" | "loaded" | "error";
 
 const pageStackClass = "flex flex-col gap-[var(--sp-4)]";
 const autoFillMetricsClass =
@@ -105,14 +86,6 @@ function formatKVector(value: [number, number, number] | null): string {
   return value.map((entry) => entry.toExponential(2)).join(", ");
 }
 
-function parseModeIndex(path: string): number | null {
-  const match = /mode_(\d+)\.json$/i.exec(path);
-  if (!match) {
-    return null;
-  }
-  return Number.parseInt(match[1], 10);
-}
-
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
@@ -121,124 +94,50 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function fetchCurrentEigenSpectrum(): Promise<EigenSpectrumArtifact> {
-  const base = resolveApiBase();
-  return fetchJson<EigenSpectrumArtifact>(`${base}/v1/live/current/eigen/spectrum`);
-}
-
-async function fetchCurrentEigenMode(index: number): Promise<EigenModeArtifact> {
-  const base = resolveApiBase();
-  return fetchJson<EigenModeArtifact>(`${base}/v1/live/current/eigen/mode?index=${index}`);
-}
-
-async function fetchCurrentEigenDispersion(): Promise<EigenDispersionResponse> {
-  const base = resolveApiBase();
-  return fetchJson<EigenDispersionResponse>(`${base}/v1/live/current/eigen/dispersion`);
-}
-
 export default function VisualizationsPage() {
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [loadState, setLoadState] = useState<LoadState>("idle");
-  const [modeLoadState, setModeLoadState] = useState<LoadState>("idle");
-  const [error, setError] = useState<string | null>(null);
-  const [modeError, setModeError] = useState<string | null>(null);
   const [session, setSession] = useState<SessionSummary | null>(null);
   const [energy, setEnergy] = useState<StepSnapshot | null>(null);
-  const [mesh, setMesh] = useState<FemMeshPayload | null>(null);
-  const [artifacts, setArtifacts] = useState<ArtifactEntry[]>([]);
-  const [spectrum, setSpectrum] = useState<EigenSpectrumArtifact | null>(null);
-  const [dispersionRows, setDispersionRows] = useState<DispersionRow[]>([]);
   const [selectedMode, setSelectedMode] = useState<number | null>(null);
-  const [modeCache, setModeCache] = useState<Record<number, EigenModeArtifact>>({});
 
+  // Use the shared hook for all eigen data (spectrum, mesh, dispersion, modes)
+  const {
+    loadState,
+    modeLoadState,
+    error,
+    modeError,
+    mesh,
+    spectrum,
+    dispersionRows,
+    modeCache,
+    hasEigenArtifacts,
+    modeArtifactMap,
+    savedModeIndices,
+    refresh: refreshEigen,
+    ensureMode,
+  } = useCurrentAnalyzeArtifacts(refreshNonce);
+
+  // Lightweight session+energy fetch (not provided by the shared hook)
   useEffect(() => {
     let cancelled = false;
-
-    async function loadCurrentAnalysis() {
-      setLoadState("loading");
-      setError(null);
-      setModeError(null);
-
-      try {
-        const base = resolveApiBase();
-        const bootstrap = await fetchJson<BootstrapResponse>(`${base}/v1/live/current/bootstrap`);
-        if (cancelled) {
-          return;
-        }
-
-        const nextArtifacts = Array.isArray(bootstrap.artifacts) ? bootstrap.artifacts : [];
-        const nextMesh =
-          bootstrap.fem_mesh ??
-          bootstrap.live_state?.latest_step?.fem_mesh ??
-          null;
-        const liveStep = bootstrap.live_state?.latest_step ?? null;
+    const base = resolveApiBase();
+    fetchJson<SessionBootstrapResponse>(`${base}/v1/live/current/bootstrap`)
+      .then((bootstrap) => {
+        if (cancelled) return;
         const rows = Array.isArray(bootstrap.scalar_rows) ? bootstrap.scalar_rows : [];
-        const hasSpectrumArtifact = nextArtifacts.some(
-          (artifact) =>
-            artifact.path === "eigen/spectrum.json" ||
-            artifact.path === "eigen/metadata/eigen_summary.json",
-        );
-        const hasDispersionArtifact = nextArtifacts.some(
-          (artifact) => artifact.path === "eigen/dispersion/branch_table.csv",
-        );
-
-        const [nextSpectrum, nextDispersion] = await Promise.all([
-          hasSpectrumArtifact ? fetchCurrentEigenSpectrum() : Promise.resolve(null),
-          hasDispersionArtifact ? fetchCurrentEigenDispersion() : Promise.resolve(null),
-        ]);
-        if (cancelled) {
-          return;
-        }
-
         setSession(bootstrap.session ?? null);
-        setArtifacts(nextArtifacts);
-        setMesh(nextMesh);
-        setEnergy(liveStep ?? rows.at(-1) ?? null);
-        setSpectrum(nextSpectrum);
-        setDispersionRows(nextDispersion?.rows ?? []);
-        setModeCache({});
-        setLoadState("loaded");
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-        setError(err instanceof Error ? err.message : "Connection failed");
-        setSession(null);
-        setEnergy(null);
-        setMesh(null);
-        setArtifacts([]);
-        setSpectrum(null);
-        setDispersionRows([]);
-        setModeCache({});
-        setLoadState("error");
-      }
-    }
-
-    void loadCurrentAnalysis();
-    return () => {
-      cancelled = true;
-    };
+        setEnergy(bootstrap.live_state?.latest_step ?? rows.at(-1) ?? null);
+      })
+      .catch(() => { /* session info is optional */ });
+    return () => { cancelled = true; };
   }, [refreshNonce]);
 
-  const modeArtifactMap = useMemo(() => {
-    const entries = new Map<number, string>();
-    for (const artifact of artifacts) {
-      if (!artifact.path.startsWith("eigen/modes/")) {
-        continue;
-      }
-      const index = parseModeIndex(artifact.path);
-      if (index !== null) {
-        entries.set(index, artifact.path);
-      }
-    }
-    return entries;
-  }, [artifacts]);
+  const handleRefresh = useCallback(() => {
+    setRefreshNonce((n) => n + 1);
+    refreshEigen();
+  }, [refreshEigen]);
 
-  const savedModeIndices = useMemo(
-    () => Array.from(modeArtifactMap.keys()).sort((left, right) => left - right),
-    [modeArtifactMap],
-  );
-
+  // Auto-select first available mode when spectrum loads
   useEffect(() => {
     const validIndices = spectrum?.modes.map((mode) => mode.index) ?? savedModeIndices;
     if (validIndices.length === 0) {
@@ -250,50 +149,15 @@ export default function VisualizationsPage() {
     }
   }, [savedModeIndices, selectedMode, spectrum]);
 
+  // Ensure mode field is loaded when selection changes
+  useEffect(() => {
+    if (selectedMode != null && modeArtifactMap.has(selectedMode)) {
+      void ensureMode(selectedMode);
+    }
+  }, [ensureMode, modeArtifactMap, selectedMode]);
+
   const selectedModePath = selectedMode !== null ? modeArtifactMap.get(selectedMode) ?? null : null;
   const selectedModeArtifact = selectedMode !== null ? modeCache[selectedMode] ?? null : null;
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadSelectedMode() {
-      if (selectedMode === null || selectedModePath == null) {
-        setModeLoadState("idle");
-        return;
-      }
-      if (modeCache[selectedMode]) {
-        setModeLoadState("loaded");
-        return;
-      }
-
-      setModeLoadState("loading");
-      setModeError(null);
-      try {
-        const payload = await fetchCurrentEigenMode(selectedMode);
-        if (cancelled) {
-          return;
-        }
-        setModeCache((current) => ({
-          ...current,
-          [selectedMode]: payload,
-        }));
-        setModeLoadState("loaded");
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-        setModeError(err instanceof Error ? err.message : "Failed to load mode artifact");
-        setModeLoadState("error");
-      }
-    }
-
-    void loadSelectedMode();
-    return () => {
-      cancelled = true;
-    };
-  }, [modeCache, selectedMode, selectedModePath]);
-
-  const hasEigenArtifacts = artifacts.some((artifact) => artifact.path.startsWith("eigen/"));
   const availableModeCount = spectrum?.modes.length ?? 0;
   const selectedModeSummary =
     selectedMode !== null ? spectrum?.modes.find((mode) => mode.index === selectedMode) ?? null : null;
@@ -325,7 +189,7 @@ export default function VisualizationsPage() {
                 </p>
               </div>
             </div>
-            <button type="button" onClick={() => setRefreshNonce((value) => value + 1)} className={refreshButtonClass}>
+            <button type="button" onClick={handleRefresh} className={refreshButtonClass}>
               Refresh Analyze
             </button>
           </div>
@@ -607,7 +471,7 @@ export default function VisualizationsPage() {
                     <MetricCard label="Equilibrium source" value={spectrum.equilibrium_source.kind} />
                     <MetricCard label="Relax steps" value={spectrum.relaxation_steps.toLocaleString()} />
                     <MetricCard label="k sampling" value={formatKVector(spectrum.k_sampling)} />
-                    <MetricCard label="Artifacts" value={artifacts.length.toLocaleString()} />
+                    <MetricCard label="Artifacts" value={savedModeIndices.length.toLocaleString()} />
                   </div>
                 </section>
 

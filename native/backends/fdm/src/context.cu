@@ -24,6 +24,8 @@ extern void launch_demag_field_fp64(Context &ctx);
 extern void launch_demag_field_fp32(Context &ctx);
 extern void launch_effective_field_fp64(Context &ctx);
 extern void launch_effective_field_fp32(Context &ctx);
+extern void launch_newell_compute_spectra_fp64(Context &ctx);
+extern void launch_newell_compute_spectra_fp32(Context &ctx);
 static void free_boundary_correction(Context &ctx);
 static void free_anisotropy_fields(Context &ctx);
 static void free_cubic_anisotropy_fields(Context &ctx);
@@ -65,7 +67,7 @@ static void free_vector_field(DeviceVectorField &field) {
 }
 
 static bool alloc_demag_kernel(Context &ctx) {
-    if (!ctx.has_demag_tensor_kernel) {
+    if (!ctx.enable_demag) {
         return true;
     }
     size_t bytes = ctx.fft_cell_count * complex_size(ctx.precision);
@@ -449,6 +451,17 @@ bool context_alloc_device(Context &ctx) {
 
     if (!alloc_fft_workspace(ctx)) return false;
     if (!alloc_demag_kernel(ctx)) return false;
+    if (ctx.enable_demag && !ctx.has_demag_tensor_kernel) {
+        if (ctx.precision == FULLMAG_FDM_PRECISION_DOUBLE) {
+            launch_newell_compute_spectra_fp64(ctx);
+        } else {
+            launch_newell_compute_spectra_fp32(ctx);
+        }
+        if (!ctx.last_error.empty()) {
+            return false;
+        }
+        ctx.has_demag_tensor_kernel = true;
+    }
 
     // Oersted static field buffer
     if (ctx.has_oersted_cylinder) {

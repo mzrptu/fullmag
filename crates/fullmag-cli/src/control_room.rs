@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+#[cfg(unix)]
+use std::{io, os::unix::process::CommandExt};
 
 use crate::live_workspace::LocalLiveWorkspace;
 use crate::types::*;
@@ -43,6 +45,7 @@ pub(crate) fn init_api_port() -> Result<()> {
 pub(crate) struct ControlRoomGuard {
     web_port: Option<u16>,
     api_child: Option<std::process::Child>,
+    frontend_child: Option<std::process::Child>,
 }
 
 impl ControlRoomGuard {
@@ -50,21 +53,30 @@ impl ControlRoomGuard {
         Self {
             web_port: None,
             api_child: None,
+            frontend_child: None,
         }
     }
 
-    pub fn active(web_port: u16, api_child: std::process::Child) -> Self {
+    pub fn active(
+        web_port: u16,
+        api_child: std::process::Child,
+        frontend_child: Option<std::process::Child>,
+    ) -> Self {
         Self {
             web_port: Some(web_port),
             api_child: Some(api_child),
+            frontend_child,
         }
     }
 }
 
 impl Drop for ControlRoomGuard {
     fn drop(&mut self) {
+        if let Some(mut child) = self.frontend_child.take() {
+            terminate_child_process(&mut child);
+        }
         if let Some(mut child) = self.api_child.take() {
-            let _ = child.kill();
+            terminate_child_process(&mut child);
         }
         let Some(web_port) = self.web_port else {
             return;
@@ -79,7 +91,7 @@ pub(crate) fn spawn_control_room(
     dev_mode: bool,
     requested_port: Option<u16>,
     live_workspace: &LocalLiveWorkspace,
-) -> Result<(u16, std::process::Child)> {
+) -> Result<(u16, std::process::Child, Option<std::process::Child>)> {
     let root = repo_root();
     let log_dir = root.join(".fullmag").join("logs");
     let url_file = root.join(".fullmag").join("control-room-url.txt");
@@ -130,6 +142,7 @@ pub(crate) fn spawn_control_room(
             }
         }
 
+        let mut frontend_child = None;
         if !frontend_is_ready(web_port) {
             eprintln!("  starting control room on :{} ...", web_port);
             let web_log = fs::File::create(log_dir.join("control-room.log"))
@@ -152,6 +165,7 @@ pub(crate) fn spawn_control_room(
                 .stdin(Stdio::null())
                 .stdout(web_log)
                 .stderr(web_err);
+            configure_child_process(&mut command);
 
             if !dev_mode {
                 command
@@ -160,9 +174,9 @@ pub(crate) fn spawn_control_room(
                     .env("FULLMAG_STATIC_WEB_ROOT", &static_web_root);
             }
 
-            command
+            frontend_child = Some(command
                 .spawn()
-                .context("failed to spawn control room server")?;
+                .context("failed to spawn control room server")?);
 
             let _ = fs::write(&url_file, format!("http://localhost:{}", web_port));
             let _ = fs::write(&mode_file, desired_mode);
@@ -190,7 +204,7 @@ pub(crate) fn spawn_control_room(
                 .stderr(Stdio::null())
                 .spawn();
         }
-        return Ok((web_port, child));
+        return Ok((web_port, child, frontend_child));
     }
 
     if !dev_mode {
@@ -211,7 +225,7 @@ pub(crate) fn spawn_control_room(
                 .stderr(Stdio::null())
                 .spawn();
         }
-        return Ok((web_port, child));
+        return Ok((web_port, child, None));
     }
 
     bail!(
@@ -442,6 +456,7 @@ pub(crate) fn spawn_fullmag_api(
             .stdin(Stdio::null())
             .stdout(stdout)
             .stderr(stderr);
+        configure_child_process(&mut command);
         configure_repo_local_library_env(&mut command, root, Some(path));
         if disable_static_control_room {
             command.env("FULLMAG_DISABLE_STATIC_CONTROL_ROOM", "1");
@@ -463,6 +478,7 @@ pub(crate) fn spawn_fullmag_api(
         .stdin(Stdio::null())
         .stdout(stdout)
         .stderr(stderr);
+    configure_child_process(&mut command);
     configure_repo_local_library_env(&mut command, root, None);
     if disable_static_control_room {
         command.env("FULLMAG_DISABLE_STATIC_CONTROL_ROOM", "1");
@@ -470,6 +486,55 @@ pub(crate) fn spawn_fullmag_api(
     command
         .spawn()
         .context("failed to spawn fullmag-api via cargo")
+}
+
+#[cfg(unix)]
+fn configure_child_process(command: &mut ProcessCommand) {
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if libc::getppid() == 1 {
+                    return Err(io::Error::from_raw_os_error(libc::ECHILD));
+                }
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_child_process(_command: &mut ProcessCommand) {}
+
+fn terminate_child_process(child: &mut std::process::Child) {
+    if child.try_wait().ok().flatten().is_some() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        let pgid = child.id() as i32;
+        unsafe {
+            let _ = libc::kill(-pgid, libc::SIGTERM);
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if child.try_wait().ok().flatten().is_some() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        unsafe {
+            let _ = libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn configure_repo_local_library_env(

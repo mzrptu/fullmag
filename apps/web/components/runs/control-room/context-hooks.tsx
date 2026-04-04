@@ -16,6 +16,7 @@
  * ═══════════════════════════════════════════════════════════════════ */
 
 import { createContext, useContext, useMemo } from "react";
+import type { GpuTelemetryDevice } from "../../../lib/liveApiClient";
 import type {
   ArtifactEntry,
   CommandStatus,
@@ -178,6 +179,8 @@ export interface CommandContextValue {
   solverNotStartedMessage: string;
   isFemBackend: boolean;
   runtimeEngineLabel: string | null;
+  runtimeEngineGpuLabel: string | null;
+  runtimeEngineGpuDevice: GpuTelemetryDevice | null;
   activity: ActivityInfo;
   sessionFooter: SessionFooterData;
   runtimeStatus: RuntimeStatusState | null;

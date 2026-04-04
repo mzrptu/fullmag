@@ -33,6 +33,7 @@ export interface TopHeaderProps {
   problemName: string;
   backend: string;
   runtimeEngine?: string;
+  runtimeGpuLabel?: string;
   status: string;
   connection: "connecting" | "connected" | "disconnected";
   interactiveEnabled?: boolean;
@@ -178,7 +179,7 @@ export default function TopHeader(props: TopHeaderProps) {
       <div className="flex items-center gap-2">
         <div className="hidden items-center gap-2 border-r border-border/40 pr-3 h-5 md:flex">
           <span className="text-[0.62rem] font-medium tracking-wider text-muted-foreground uppercase mr-1">
-            {props.backend} {props.runtimeEngine ? `· ${props.runtimeEngine}` : ""}
+            {props.backend} {props.runtimeEngine ? `· ${props.runtimeEngine}` : ""} {props.runtimeGpuLabel ? `· ${props.runtimeGpuLabel}` : ""}
           </span>
           <span className={cn(
             "flex items-center gap-1.5 text-[0.62rem] font-medium tracking-wider uppercase",

@@ -23,34 +23,6 @@ use std::ffi::CStr;
 #[cfg(feature = "fem-gpu")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[cfg(feature = "fem-gpu")]
-type BBox = ([f64; 3], [f64; 3]);
-
-#[cfg(feature = "fem-gpu")]
-fn mesh_bbox(nodes: &[[f64; 3]]) -> Option<BBox> {
-    if nodes.is_empty() {
-        return None;
-    }
-    let mut min_corner = [f64::INFINITY; 3];
-    let mut max_corner = [f64::NEG_INFINITY; 3];
-    for point in nodes {
-        for axis in 0..3 {
-            min_corner[axis] = min_corner[axis].min(point[axis]);
-            max_corner[axis] = max_corner[axis].max(point[axis]);
-        }
-    }
-    Some((min_corner, max_corner))
-}
-
-#[cfg(feature = "fem-gpu")]
-fn transfer_axis_cells(extent: f64, requested_cell: f64) -> usize {
-    if extent <= 1e-18 {
-        1
-    } else {
-        ((extent / requested_cell).ceil() as usize).max(1)
-    }
-}
-
 pub(crate) fn is_gpu_available() -> bool {
     #[cfg(feature = "fem-gpu")]
     {
@@ -209,38 +181,19 @@ impl NativeFemBackend {
             damping: plan.material.damping,
             gyromagnetic_ratio: plan.gyromagnetic_ratio,
         };
-        let demag_kernel_spectra = if plan.enable_demag
-            && !matches!(
-                plan.demag_realization.as_deref(),
-                Some("airbox_dirichlet" | "airbox_robin" | "poisson_airbox")
-            ) {
-            let (bbox_min, bbox_max) = mesh_bbox(&plan.mesh.nodes).ok_or_else(|| RunError {
-                message: "FEM GPU demag requires a non-empty mesh bounding box".to_string(),
-            })?;
-            let requested = plan.hmax.max(1e-12);
-            let extent = [
-                (bbox_max[0] - bbox_min[0]).abs(),
-                (bbox_max[1] - bbox_min[1]).abs(),
-                (bbox_max[2] - bbox_min[2]).abs(),
-            ];
-            let nx = transfer_axis_cells(extent[0], requested);
-            let ny = transfer_axis_cells(extent[1], requested);
-            let nz = transfer_axis_cells(extent[2], requested);
-            let dx = (extent[0] / nx as f64).max(1e-12);
-            let dy = (extent[1] / ny as f64).max(1e-12);
-            let dz = (extent[2] / nz as f64).max(1e-12);
-            if nz == 1 {
-                Some(fullmag_engine::compute_newell_kernel_spectra_thin_film_2d(
-                    nx, ny, dx, dy, dz,
-                ))
-            } else {
-                Some(fullmag_engine::compute_newell_kernel_spectra(
-                    nx, ny, nz, dx, dy, dz,
-                ))
-            }
-        } else {
-            None
+        let resolved_demag_realization = match plan.demag_realization.as_deref() {
+            Some("poisson_airbox") => "transfer_grid",
+            Some("airbox_dirichlet") => "airbox_dirichlet",
+            Some("airbox_robin") => "airbox_robin",
+            Some(other) => other,
+            None => "transfer_grid",
         };
+
+        // Let the native FDM backend build its own Newell tensor for FEM
+        // transfer-grid demag. The transfer-grid dimensions are derived from
+        // the magnetic subset of the mesh on the native side, which can differ
+        // from the whole-mesh bbox available here.
+        let demag_kernel_spectra: Option<fullmag_engine::DemagKernelSpectra> = None;
 
         let precision = match plan.precision {
             fullmag_ir::ExecutionPrecision::Single => {
@@ -289,11 +242,11 @@ impl NativeFemBackend {
                 max_iterations: 500,
             },
             air_box_factor: plan.air_box_config.as_ref().map_or(0.0, |c| c.factor),
-            demag_realization: match plan.demag_realization.as_deref() {
-                Some("poisson_airbox" | "airbox_dirichlet") => {
+            demag_realization: match resolved_demag_realization {
+                "airbox_dirichlet" => {
                     ffi::fullmag_fem_demag_realization::FULLMAG_FEM_DEMAG_AIRBOX_DIRICHLET
                 }
-                Some("airbox_robin") => {
+                "airbox_robin" => {
                     ffi::fullmag_fem_demag_realization::FULLMAG_FEM_DEMAG_AIRBOX_ROBIN
                 }
                 _ => ffi::fullmag_fem_demag_realization::FULLMAG_FEM_DEMAG_TRANSFER_GRID,

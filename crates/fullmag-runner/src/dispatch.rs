@@ -742,10 +742,28 @@ pub(crate) fn execute_fem_eigen(
 ) -> Result<ExecutedRun, RunError> {
     match engine {
         FemEngine::CpuReference => fem_eigen::execute_reference_fem_eigen(plan, outputs),
-        FemEngine::NativeGpu => Err(RunError {
-            message: "native FEM GPU eigen execution is not available yet; rerun with device='cpu'"
-                .to_string(),
-        }),
+        FemEngine::NativeGpu => {
+            // GPU eigen solver is not yet implemented. If GPU was explicitly
+            // forced by the user, surface a clear error; otherwise fall back
+            // to the CPU reference solver with a diagnostic warning.
+            let gpu_forced = std::env::var("FULLMAG_FEM_EXECUTION")
+                .map(|v| v.trim().eq_ignore_ascii_case("gpu"))
+                .unwrap_or(false);
+            if gpu_forced {
+                return Err(RunError {
+                    message: "FULLMAG_FEM_EXECUTION=gpu but the native FEM GPU eigen solver is \
+                              not yet implemented; omit device selection or set device='cpu' for \
+                              eigenmode analysis (fallback_reason=fem_gpu_eigen_not_implemented)"
+                        .to_string(),
+                });
+            }
+            eprintln!(
+                "warning: native FEM GPU eigen execution is not yet available — \
+                 falling back to CPU reference eigen solver \
+                 (fallback_reason=fem_gpu_eigen_not_implemented)"
+            );
+            fem_eigen::execute_reference_fem_eigen(plan, outputs)
+        }
     }
 }
 

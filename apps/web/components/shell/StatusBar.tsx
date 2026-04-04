@@ -15,6 +15,7 @@ interface StatusBarProps {
   throughput: string;
   backend: string;
   runtimeEngine?: string;
+  runtimeGpuLabel?: string;
   precision: string;
   status: string;
   activityLabel?: string;
@@ -39,6 +40,7 @@ export default function StatusBar({
   throughput,
   backend,
   runtimeEngine,
+  runtimeGpuLabel,
   precision,
   status,
   activityLabel,
@@ -129,7 +131,7 @@ export default function StatusBar({
           {runtimeCanAcceptCommands ? "Ready" : "Busy"}
         </span>
         <span className="h-3 w-px bg-border/50" />
-        <span className="flex items-center gap-1.5"><Cpu size={11} />{runtimeEngine ? `${runtimeEngine} · ${precision}` : `${backend.toUpperCase()} · ${precision}`}</span>
+        <span className="flex items-center gap-1.5"><Cpu size={11} />{runtimeEngine ? `${runtimeEngine}${runtimeGpuLabel ? ` · ${runtimeGpuLabel}` : ""} · ${precision}` : `${backend.toUpperCase()} · ${precision}`}</span>
       </div>
       </div>
     </div>

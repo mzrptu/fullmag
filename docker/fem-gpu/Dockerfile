@@ -84,6 +84,12 @@ ENV PATH=/usr/local/cuda/bin:/root/.cargo/bin:${PNPM_HOME}:${INSTALL_PREFIX}/bin
 ENV CMAKE_PREFIX_PATH=${INSTALL_PREFIX}:${CMAKE_PREFIX_PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}
 ENV FULLMAG_FEM_MFEM_DEVICE=ceed-cuda:/gpu/cuda/shared
+# Build contract: require MFEM stack, CUDA backend, and libCEED so that
+# `cargo build --features fem-gpu` inside this container never silently
+# produces a stub backend.
+ENV FULLMAG_USE_MFEM_STACK=ON
+ENV FULLMAG_FEM_REQUIRE_GPU=1
+ENV FULLMAG_FEM_REQUIRE_CEED=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \

@@ -4,6 +4,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use fullmag_ir::{BackendPlanIR, FemDomainMeshModeIR};
+use serde_json::{json, Value};
 
 use crate::control_room::*;
 use crate::live_workspace::*;
@@ -393,11 +394,14 @@ impl InteractiveRuntimeHost {
         &mut self,
         problem: &ProblemIR,
         continuation_magnetization: Option<&[[f64; 3]]>,
+        live_workspace: &LocalLiveWorkspace,
     ) -> Result<()> {
         if !self.runtime_capable {
             return Ok(());
         }
-        ensure_interactive_preview_runtime(&mut self.runtime, problem, continuation_magnetization)
+        ensure_interactive_preview_runtime(&mut self.runtime, problem, continuation_magnetization)?;
+        self.publish_runtime_engine_metadata(live_workspace);
+        Ok(())
     }
 
     pub(super) fn runtime_mut(&mut self) -> Option<&mut fullmag_runner::InteractiveRuntime> {
@@ -472,6 +476,7 @@ impl InteractiveRuntimeHost {
             {
                 Ok(runtime) => {
                     self.runtime = Some(runtime);
+                    self.publish_runtime_engine_metadata(live_workspace);
                 }
                 Err(error) => {
                     eprintln!("interactive preview runtime warning: {}", error);
@@ -492,8 +497,20 @@ impl InteractiveRuntimeHost {
                     format!("Idle live preview runtime resync failed: {}", error),
                 );
                 self.runtime = None;
+            } else {
+                self.publish_runtime_engine_metadata(live_workspace);
             }
         }
+    }
+
+    fn publish_runtime_engine_metadata(&self, live_workspace: &LocalLiveWorkspace) {
+        let Some(runtime) = self.runtime.as_ref() else {
+            return;
+        };
+        let runtime_engine = runtime_engine_metadata_from_provenance(&runtime.execution_provenance());
+        live_workspace.update(|state| {
+            upsert_runtime_engine_metadata(&mut state.metadata, runtime_engine.clone());
+        });
     }
 
     fn refresh_idle_preview(
@@ -749,4 +766,62 @@ fn current_live_display_selection() -> Result<CurrentDisplaySelection> {
         .context("current live display selection endpoint returned error")?
         .json::<CurrentDisplaySelection>()
         .context("failed to decode current live display selection")
+}
+
+fn upsert_runtime_engine_metadata(metadata: &mut Option<Value>, runtime_engine: Value) {
+    match metadata {
+        Some(Value::Object(map)) => {
+            map.insert("runtime_engine".to_string(), runtime_engine);
+        }
+        _ => {
+            *metadata = Some(json!({
+                "runtime_engine": runtime_engine,
+            }));
+        }
+    }
+}
+
+fn runtime_engine_metadata_from_provenance(
+    provenance: &fullmag_runner::ExecutionProvenance,
+) -> Value {
+    let (backend_family, engine_id, engine_label, accelerator) =
+        match provenance.execution_engine.as_str() {
+            "native_fem_gpu" => ("fem", "fem_native_gpu", "GPU FEM", "gpu"),
+            "cpu_reference_fem" => ("fem", "fem_cpu_reference", "CPU FEM", "cpu"),
+            "cuda_fdm" => ("fdm", "fdm_cuda", "CUDA FDM", "cuda"),
+            "cpu_reference_multilayer" => (
+                "fdm_multilayer",
+                "fdm_multilayer_cpu_reference",
+                "CPU FDM Multilayer",
+                "cpu",
+            ),
+            "cuda_assisted_multilayer" | "cuda_native_multilayer_single_grid" => (
+                "fdm_multilayer",
+                "fdm_multilayer_cuda",
+                "CUDA FDM Multilayer",
+                "cuda",
+            ),
+            "cpu_reference" => ("fdm", "fdm_cpu_reference", "CPU FDM", "cpu"),
+            other if other.contains("fem") && other.contains("gpu") => {
+                ("fem", "fem_native_gpu", "GPU FEM", "gpu")
+            }
+            other if other.contains("fem") && other.contains("cpu") => {
+                ("fem", "fem_cpu_reference", "CPU FEM", "cpu")
+            }
+            other if other.contains("cuda") => ("fdm", "fdm_cuda", "CUDA FDM", "cuda"),
+            _ => ("unknown", "unknown", "Runtime", "unknown"),
+        };
+
+    json!({
+        "backend_family": backend_family,
+        "engine_id": engine_id,
+        "engine_label": engine_label,
+        "accelerator": accelerator,
+        "execution_engine": provenance.execution_engine,
+        "precision": provenance.precision,
+        "device_name": provenance.device_name,
+        "compute_capability": provenance.compute_capability,
+        "cuda_driver_version": provenance.cuda_driver_version,
+        "cuda_runtime_version": provenance.cuda_runtime_version,
+    })
 }

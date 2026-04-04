@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <limits>
 #include <mutex>
@@ -117,6 +119,36 @@ const char *configured_mfem_device_string() {
 #else
     return "cuda";
 #endif
+}
+
+bool mfem_device_requests_gpu() {
+    const char *device = configured_mfem_device_string();
+    if (device == nullptr || *device == '\0') {
+        return true;
+    }
+    return std::strcmp(device, "cpu") != 0;
+}
+
+bool env_flag_enabled(const char *name) {
+    const char *raw = std::getenv(name);
+    if (raw == nullptr || *raw == '\0') {
+        return false;
+    }
+    return std::strcmp(raw, "1") == 0 ||
+           std::strcmp(raw, "true") == 0 ||
+           std::strcmp(raw, "TRUE") == 0 ||
+           std::strcmp(raw, "on") == 0 ||
+           std::strcmp(raw, "ON") == 0 ||
+           std::strcmp(raw, "yes") == 0 ||
+           std::strcmp(raw, "YES") == 0;
+}
+
+void debug_checkpoint(const char *stage) {
+    if (!env_flag_enabled("FULLMAG_FEM_DEBUG_STARTUP")) {
+        return;
+    }
+    std::fprintf(stderr, "[fullmag_fem][debug] %s\n", stage);
+    std::fflush(stderr);
 }
 
 double dot3(const Vec3 &a, const Vec3 &b) {
@@ -1441,13 +1473,16 @@ bool ensure_transfer_grid_backend(
     fdm_plan.precision    = transfer_grid_precision(ctx);
     fdm_plan.integrator   = FULLMAG_FDM_INTEGRATOR_HEUN;
     fdm_plan.enable_demag = 1;
-    fdm_plan.demag_kernel_xx_spectrum    = ctx.transfer_grid.kernel_xx_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_xx_spectrum.data();
-    fdm_plan.demag_kernel_yy_spectrum    = ctx.transfer_grid.kernel_yy_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_yy_spectrum.data();
-    fdm_plan.demag_kernel_zz_spectrum    = ctx.transfer_grid.kernel_zz_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_zz_spectrum.data();
-    fdm_plan.demag_kernel_xy_spectrum    = ctx.transfer_grid.kernel_xy_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_xy_spectrum.data();
-    fdm_plan.demag_kernel_xz_spectrum    = ctx.transfer_grid.kernel_xz_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_xz_spectrum.data();
-    fdm_plan.demag_kernel_yz_spectrum    = ctx.transfer_grid.kernel_yz_spectrum.empty() ? nullptr : ctx.transfer_grid.kernel_yz_spectrum.data();
-    fdm_plan.demag_kernel_spectrum_len   = static_cast<uint64_t>(ctx.transfer_grid.kernel_xx_spectrum.size());
+    // Let the native FDM backend generate its own Newell tensor for the
+    // resolved transfer grid. This keeps the kernel shape aligned with the
+    // native grid descriptor derived from the magnetic FEM subset.
+    fdm_plan.demag_kernel_xx_spectrum    = nullptr;
+    fdm_plan.demag_kernel_yy_spectrum    = nullptr;
+    fdm_plan.demag_kernel_zz_spectrum    = nullptr;
+    fdm_plan.demag_kernel_xy_spectrum    = nullptr;
+    fdm_plan.demag_kernel_xz_spectrum    = nullptr;
+    fdm_plan.demag_kernel_yz_spectrum    = nullptr;
+    fdm_plan.demag_kernel_spectrum_len   = 0;
     fdm_plan.active_mask                 = ctx.transfer_grid.active_mask.data();
     fdm_plan.active_mask_len             = static_cast<uint64_t>(ctx.transfer_grid.active_mask.size());
     fdm_plan.initial_magnetization_xyz   = ctx.transfer_grid.magnetization_xyz.data();
@@ -1896,6 +1931,7 @@ bool assemble_poisson_rhs(
     mfem::Vector &rhs,
     std::string &error)
 {
+    debug_checkpoint("context_compute_demag_poisson:assemble_rhs_enter");
     auto *fes = static_cast<mfem::FiniteElementSpace *>(ctx.mfem_potential_fes);
     if (fes == nullptr) {
         error = "Poisson FE space is null during RHS assembly";
@@ -1914,6 +1950,7 @@ bool assemble_poisson_rhs(
     } else {
         rhs = b;
     }
+    debug_checkpoint("context_compute_demag_poisson:assemble_rhs_done");
 
     return true;
 }
@@ -1925,6 +1962,7 @@ bool solve_poisson(
     mfem::Vector &solution,
     std::string &error)
 {
+    debug_checkpoint("context_compute_demag_poisson:solve_enter");
     auto *A_bc = static_cast<mfem::SparseMatrix *>(ctx.mfem_poisson_bc_op);
     if (A_bc == nullptr) {
         error = "Poisson BC-eliminated operator is null during solve";
@@ -1941,20 +1979,83 @@ bool solve_poisson(
 
     // Warm-start from previous step
     mfem::Vector sol_bc(solution);
+    mfem::Vector residual(rhs_bc.Size());
+    mfem::Vector direction(rhs_bc.Size());
+    mfem::Vector q(rhs_bc.Size());
+    mfem::Vector z(rhs_bc.Size());
+    mfem::Vector diagonal(rhs_bc.Size());
+    debug_checkpoint("context_compute_demag_poisson:solve_before_diag");
+    A_bc->GetDiag(diagonal);
+    debug_checkpoint("context_compute_demag_poisson:solve_after_diag");
 
-    // CG solver with diagonal (Jacobi) preconditioner
-    mfem::DSmoother prec;
-    mfem::CGSolver cg;
-    cg.SetRelTol(ctx.demag_solver.relative_tolerance);
-    cg.SetMaxIter(static_cast<int>(ctx.demag_solver.max_iterations));
-    cg.SetPrintLevel(0);
-    cg.SetOperator(*A_bc);
-    cg.SetPreconditioner(prec);
+    auto apply_jacobi = [&](const mfem::Vector &src, mfem::Vector &dst) {
+        dst.SetSize(src.Size());
+        for (int i = 0; i < src.Size(); ++i) {
+            const double diag = diagonal(i);
+            dst(i) = std::abs(diag) > 1e-30 ? src(i) / diag : src(i);
+        }
+    };
+    auto dot = [](const mfem::Vector &a, const mfem::Vector &b) {
+        double sum = 0.0;
+        for (int i = 0; i < a.Size(); ++i) {
+            sum += a(i) * b(i);
+        }
+        return sum;
+    };
 
-    cg.Mult(rhs_bc, sol_bc);
+    debug_checkpoint("context_compute_demag_poisson:solve_before_initial_mult");
+    A_bc->Mult(sol_bc, q);
+    debug_checkpoint("context_compute_demag_poisson:solve_after_initial_mult");
+    residual = rhs_bc;
+    residual -= q;
+    apply_jacobi(residual, z);
+    direction = z;
+    double rho = dot(residual, z);
+    const double rhs_norm = std::sqrt(std::max(dot(rhs_bc, rhs_bc), 1e-300));
+    double rel_residual = std::sqrt(std::max(dot(residual, residual), 0.0)) / rhs_norm;
+    const int max_iter = static_cast<int>(ctx.demag_solver.max_iterations);
+    const double tol = ctx.demag_solver.relative_tolerance;
+    int iter = 0;
 
-    ctx.poisson_last_iterations = cg.GetNumIterations();
-    ctx.poisson_last_residual = cg.GetFinalNorm();
+    for (; iter < max_iter && rel_residual > tol; ++iter) {
+        debug_checkpoint("context_compute_demag_poisson:solve_iter_mult_enter");
+        A_bc->Mult(direction, q);
+        debug_checkpoint("context_compute_demag_poisson:solve_iter_mult_done");
+        const double denom = dot(direction, q);
+        if (!std::isfinite(denom) || std::abs(denom) <= 1e-300) {
+            error = "Poisson host CG encountered a non-finite or zero curvature"
+                " (rho=" + std::to_string(rho)
+                + ", denom=" + std::to_string(denom)
+                + ", |r|=" + std::to_string(std::sqrt(std::max(dot(residual, residual), 0.0)))
+                + ", |q|=" + std::to_string(std::sqrt(std::max(dot(q, q), 0.0)))
+                + ")";
+            return false;
+        }
+        const double alpha = rho / denom;
+        for (int i = 0; i < sol_bc.Size(); ++i) {
+            sol_bc(i) += alpha * direction(i);
+            residual(i) -= alpha * q(i);
+        }
+        rel_residual = std::sqrt(std::max(dot(residual, residual), 0.0)) / rhs_norm;
+        if (rel_residual <= tol) {
+            ++iter;
+            break;
+        }
+        apply_jacobi(residual, z);
+        const double rho_next = dot(residual, z);
+        if (!std::isfinite(rho_next)) {
+            error = "Poisson host CG encountered a non-finite preconditioned residual";
+            return false;
+        }
+        const double beta = rho_next / rho;
+        for (int i = 0; i < direction.Size(); ++i) {
+            direction(i) = z(i) + beta * direction(i);
+        }
+        rho = rho_next;
+    }
+
+    ctx.poisson_last_iterations = iter;
+    ctx.poisson_last_residual = rel_residual;
 
     // Restore essential DOF values (u=0 on boundary)
     for (int i = 0; i < ess_tdof.Size(); ++i) {
@@ -1962,6 +2063,7 @@ bool solve_poisson(
     }
 
     solution = sol_bc;
+    debug_checkpoint("context_compute_demag_poisson:solve_done_cpu");
     return true;
 }
 
@@ -1986,6 +2088,7 @@ bool solve_poisson_hypre(
     mfem::Vector &solution,
     std::string &error)
 {
+    debug_checkpoint("context_compute_demag_poisson:solve_enter_hypre");
     auto *A_bc = static_cast<mfem::SparseMatrix *>(ctx.mfem_poisson_bc_op);
     if (A_bc == nullptr) {
         error = "Poisson BC-eliminated operator is null during Hypre solve";
@@ -2050,6 +2153,7 @@ bool solve_poisson_hypre(
         solution(ess_tdof[i]) = 0.0;
     }
 
+    debug_checkpoint("context_compute_demag_poisson:solve_done_hypre");
     return true;
 }
 #endif // MFEM_USE_MPI
@@ -2064,6 +2168,7 @@ bool recover_demag_field(
     const std::vector<double> &m_xyz,
     std::string &error)
 {
+    debug_checkpoint("context_compute_demag_poisson:recover_enter");
     auto *fes = static_cast<mfem::FiniteElementSpace *>(ctx.mfem_potential_fes);
     auto *mesh = static_cast<mfem::Mesh *>(ctx.mfem_mesh);
     if (fes == nullptr || mesh == nullptr) {
@@ -2184,6 +2289,7 @@ bool recover_demag_field(
         demag_energy += 0.5 * kMu0 * ctx.robin_effective_beta * (gf_u * Bu);
     }
 
+    debug_checkpoint("context_compute_demag_poisson:recover_done");
     return true;
 }
 
@@ -2191,37 +2297,39 @@ bool recover_demag_field(
 
 bool context_initialize_mfem(Context &ctx, std::string &error) {
     try {
+        debug_checkpoint("context_initialize_mfem:enter");
         // mfem::Device is a process-global singleton; creating it more than once
         // triggers an abort ("mfem::Device is already configured!").  We use
         // std::call_once so that multi-stage simulations AND parallel test
         // threads share the same device safely.
         static std::once_flag s_mfem_device_once;
 #if FULLMAG_HAS_CUDA_RUNTIME
-        const int selected_device = selected_cuda_device_from_env().value_or(0);
-        int device_count = 0;
-        cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
-        if (cuda_err != cudaSuccess || device_count <= 0) {
-            error = "MFEM CUDA backend requested but no CUDA device is available";
-            return false;
-        }
-        if (selected_device < 0 || selected_device >= device_count) {
-            error = "requested FEM GPU device index is out of range";
-            return false;
-        }
-        cuda_err = cudaSetDevice(selected_device);
-        if (cuda_err != cudaSuccess) {
-            error = std::string("cudaSetDevice failed for native FEM backend: ") +
-                    cudaGetErrorString(cuda_err);
-            return false;
-        }
         const char *device_config = configured_mfem_device_string();
-        std::call_once(s_mfem_device_once, [&ctx, device_config]() {
-            ctx.mfem_device = new mfem::Device(device_config);
-        });
-        ctx.mfem_selected_device_index = selected_device;
+        const bool use_gpu_device = mfem_device_requests_gpu();
+        if (use_gpu_device) {
+            const int selected_device = selected_cuda_device_from_env().value_or(0);
+            int device_count = 0;
+            cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
+            if (cuda_err != cudaSuccess || device_count <= 0) {
+                error = "MFEM CUDA backend requested but no CUDA device is available";
+                return false;
+            }
+            if (selected_device < 0 || selected_device >= device_count) {
+                error = "requested FEM GPU device index is out of range";
+                return false;
+            }
+            cuda_err = cudaSetDevice(selected_device);
+            if (cuda_err != cudaSuccess) {
+                error = std::string("cudaSetDevice failed for native FEM backend: ") +
+                        cudaGetErrorString(cuda_err);
+                return false;
+            }
+            std::call_once(s_mfem_device_once, [&, device_config]() {
+                ctx.mfem_device = new mfem::Device(device_config);
+            });
+            ctx.mfem_selected_device_index = selected_device;
 
-        // S12: Create prioritized CUDA streams
-        {
+            // S12: Create prioritized CUDA streams
             int low_priority = 0, high_priority = 0;
             cudaDeviceGetStreamPriorityRange(&low_priority, &high_priority);
             cudaStream_t cs{}, ios{};
@@ -2232,6 +2340,11 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
             cudaEvent_t ev{};
             cudaEventCreateWithFlags(&ev, cudaEventDisableTiming);
             ctx.compute_event = reinterpret_cast<void *>(ev);
+        } else {
+            std::call_once(s_mfem_device_once, [&ctx]() {
+                ctx.mfem_device = new mfem::Device("cpu");
+            });
+            ctx.mfem_selected_device_index = -1;
         }
 #else
         std::call_once(s_mfem_device_once, [&ctx]() {
@@ -2240,6 +2353,7 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
         ctx.mfem_selected_device_index = -1;
 #endif
 
+        debug_checkpoint("context_initialize_mfem:device_ready");
         auto *mesh = new mfem::Mesh(3, static_cast<int>(ctx.n_nodes), static_cast<int>(ctx.n_elements),
                                     static_cast<int>(ctx.n_boundary_faces), 3);
 
@@ -2284,9 +2398,11 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
 
         mesh->FinalizeTopology();
         mesh->Finalize(false, true);
+        debug_checkpoint("context_initialize_mfem:mesh_ready");
 
         auto *fec = new mfem::H1_FECollection(static_cast<int>(ctx.fe_order), mesh->Dimension());
         auto *fes = new mfem::FiniteElementSpace(mesh, fec);
+        debug_checkpoint("context_initialize_mfem:fes_ready");
 
         if (fes->GetNDofs() != static_cast<int>(ctx.n_nodes)) {
             error = "MFEM H1 P1 space DOF count does not match node count";
@@ -2404,6 +2520,7 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
             magnetic_attr_marker);
         exchange_form->Assemble();
         exchange_form->Finalize();
+        debug_checkpoint("context_initialize_mfem:exchange_form_ready");
 
         // Build the scalar mass form once in the assembled mode to obtain a
         // stable lumped diagonal for runtime use on simplex meshes.
@@ -2413,6 +2530,7 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
         mass_form->Assemble();
         mass_form->Finalize();
         prepare_mass_lumping(*mass_form, *mass_ones, *mass_lumped, *inv_lumped_mass, ctx.mfem_lumped_mass);
+        debug_checkpoint("context_initialize_mfem:mass_ready");
         const bool has_nonzero_lumped_mass = std::any_of(
             ctx.mfem_lumped_mass.begin(),
             ctx.mfem_lumped_mass.end(),
@@ -2458,6 +2576,7 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
         ctx.mfem_exchange_tmp_vec = exchange_tmp_vec;
         ctx.mfem_exchange_out_vec = exchange_out_vec;
         ctx.mfem_ready = true;
+        debug_checkpoint("context_initialize_mfem:done");
         return true;
     } catch (const std::exception &ex) {
         error = std::string("MFEM mesh/space initialization failed: ") + ex.what();
@@ -2556,6 +2675,7 @@ void context_destroy_mfem(Context &ctx) {
 
 bool context_initialize_poisson(Context &ctx, std::string &error) {
     try {
+        debug_checkpoint("context_initialize_poisson:enter");
         auto *mesh = static_cast<mfem::Mesh *>(ctx.mfem_mesh);
         if (mesh == nullptr) {
             error = "MFEM mesh is null — cannot initialize Poisson demag";
@@ -2681,6 +2801,7 @@ bool context_initialize_poisson(Context &ctx, std::string &error) {
         }
 
         ctx.poisson_ready = true;
+        debug_checkpoint("context_initialize_poisson:done");
         return true;
     } catch (const std::exception &ex) {
         error = std::string("Poisson demag initialization failed: ") + ex.what();
@@ -2737,6 +2858,7 @@ bool context_compute_demag_poisson(
         error = "Poisson demag requested before initialization";
         return false;
     }
+    debug_checkpoint("context_compute_demag_poisson:enter");
 
     // S03: Assemble RHS b(v) = ∫ M·∇v dV
     mfem::Vector rhs;
@@ -2754,15 +2876,19 @@ bool context_compute_demag_poisson(
     gf_potential->GetTrueDofs(solution);  // warm-start
 
 #ifdef MFEM_USE_MPI
-    // S10: Prefer Hypre CG+AMG when available (GPU-accelerated)
-    if (!solve_poisson_hypre(ctx, rhs, solution, error)) {
-        return false;
-    }
-#else
+    // Prefer the simpler MFEM CG path by default. The managed host runtime is
+    // currently more stable there than on the Hypre GPU path during preview
+    // snapshots. Hypre can still be re-enabled explicitly for triage.
+    if (env_flag_enabled("FULLMAG_FEM_ENABLE_HYPRE_POISSON")) {
+        if (!solve_poisson_hypre(ctx, rhs, solution, error)) {
+            return false;
+        }
+    } else
+#endif
     if (!solve_poisson(ctx, rhs, solution, error)) {
         return false;
     }
-#endif
+    debug_checkpoint("context_compute_demag_poisson:solve_done");
     if (allow_interrupt && poll_interrupt(ctx)) {
         return false;
     }
@@ -2771,6 +2897,7 @@ bool context_compute_demag_poisson(
     if (!recover_demag_field(ctx, solution, h_demag_xyz, demag_energy, m_xyz, error)) {
         return false;
     }
+    debug_checkpoint("context_compute_demag_poisson:recover_done");
     if (allow_interrupt && poll_interrupt(ctx)) {
         return false;
     }
@@ -2782,6 +2909,7 @@ bool context_compute_demag_poisson(
 }
 
 bool context_refresh_exchange_field_mfem(Context &ctx, std::string &error) {
+    debug_checkpoint("context_refresh_exchange_field_mfem:enter");
     double exchange_energy = 0.0;
     double demag_energy = 0.0;
     if (!compute_effective_fields_for_magnetization(
@@ -2798,6 +2926,7 @@ bool context_refresh_exchange_field_mfem(Context &ctx, std::string &error) {
         return false;
     }
     ctx.mfem_exchange_ready = true;
+    debug_checkpoint("context_refresh_exchange_field_mfem:done");
     return true;
 }
 

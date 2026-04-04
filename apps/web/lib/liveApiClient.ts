@@ -12,6 +12,21 @@ interface QueueRemeshPayload {
   mesh_reason?: string;
 }
 
+export interface GpuTelemetryDevice {
+  index: number;
+  name: string;
+  utilization_gpu_percent: number;
+  utilization_memory_percent: number;
+  memory_used_mb: number;
+  memory_total_mb: number;
+  temperature_c?: number | null;
+}
+
+export interface GpuTelemetryResponse {
+  sample_time_unix_ms: number;
+  devices: GpuTelemetryDevice[];
+}
+
 export class ApiHttpError extends Error {
   status: number;
 
@@ -51,6 +66,7 @@ export function currentLiveApiClient() {
       importState: `${baseUrl}/v1/live/current/state/import`,
       scriptSync: `${baseUrl}/v1/live/current/script/sync`,
       scene: `${baseUrl}/v1/live/current/scene`,
+      gpuTelemetry: `${baseUrl}/v1/live/current/gpu/telemetry`,
     },
     fetchBootstrap() {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/bootstrap`, {
@@ -138,6 +154,11 @@ export function currentLiveApiClient() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+      });
+    },
+    fetchGpuTelemetry() {
+      return requestJson<GpuTelemetryResponse>(`${baseUrl}/v1/live/current/gpu/telemetry`, {
+        cache: "no-store",
       });
     },
   };

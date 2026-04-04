@@ -13,6 +13,7 @@ use base64::Engine;
 use fullmag_authoring::{SceneDocument, ScriptBuilderInitialState};
 use serde::Deserialize;
 use serde_json::Value;
+use std::process::Command;
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -80,6 +81,10 @@ async fn main() {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/meta/vision", get(vision))
+        .route(
+            "/v1/live/current/gpu/telemetry",
+            get(get_current_gpu_telemetry),
+        )
         .route(
             "/v1/live/current/bootstrap",
             get(get_current_live_bootstrap),
@@ -248,6 +253,81 @@ async fn vision() -> Json<VisionResponse> {
             "Describe one physical problem and execute it through FDM, FEM, or hybrid plans.",
         modes: ["strict", "extended", "hybrid"],
         runtime_spine: "current-live",
+    })
+}
+
+async fn get_current_gpu_telemetry() -> Result<Json<GpuTelemetryResponse>, ApiError> {
+    let output = tokio::task::spawn_blocking(sample_gpu_telemetry)
+        .await
+        .map_err(|error| ApiError::internal(format!("gpu telemetry task join failed: {error}")))??;
+    Ok(Json(output))
+}
+
+fn sample_gpu_telemetry() -> Result<GpuTelemetryResponse, ApiError> {
+    let output = Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .map_err(|error| ApiError::internal(format!("failed to launch nvidia-smi: {error}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("nvidia-smi exited with status {}", output.status)
+        } else {
+            stderr
+        };
+        return Err(ApiError::internal(format!(
+            "failed to sample GPU telemetry: {detail}"
+        )));
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|error| ApiError::internal(format!("nvidia-smi emitted invalid UTF-8: {error}")))?;
+
+    let mut devices = Vec::new();
+    for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+        let parts = line.split(',').map(|part| part.trim()).collect::<Vec<_>>();
+        if parts.len() != 7 {
+            return Err(ApiError::internal(format!(
+                "unexpected nvidia-smi output shape: '{line}'"
+            )));
+        }
+        devices.push(GpuTelemetryDevice {
+            index: parts[0].parse().map_err(|error| {
+                ApiError::internal(format!("failed to parse GPU index from '{line}': {error}"))
+            })?,
+            name: parts[1].to_string(),
+            utilization_gpu_percent: parts[2].parse().map_err(|error| {
+                ApiError::internal(format!(
+                    "failed to parse GPU utilization from '{line}': {error}"
+                ))
+            })?,
+            utilization_memory_percent: parts[3].parse().map_err(|error| {
+                ApiError::internal(format!(
+                    "failed to parse GPU memory utilization from '{line}': {error}"
+                ))
+            })?,
+            memory_used_mb: parts[4].parse().map_err(|error| {
+                ApiError::internal(format!("failed to parse GPU memory used from '{line}': {error}"))
+            })?,
+            memory_total_mb: parts[5].parse().map_err(|error| {
+                ApiError::internal(format!(
+                    "failed to parse GPU memory total from '{line}': {error}"
+                ))
+            })?,
+            temperature_c: parts[6].parse().ok(),
+        });
+    }
+
+    Ok(GpuTelemetryResponse {
+        sample_time_unix_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0),
+        devices,
     })
 }
 

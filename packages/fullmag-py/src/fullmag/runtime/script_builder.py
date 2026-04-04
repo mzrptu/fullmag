@@ -1087,6 +1087,8 @@ def _render_stages(
                 call_parts.append(f"equilibrium_artifact={_py_repr(study.equilibrium_artifact)}")
             call_parts.append(f"normalization={_py_repr(normalization)}")
             call_parts.append(f"damping_policy={_py_repr(study.damping_policy)}")
+            if study.spin_wave_bc != "free":
+                call_parts.append(f"bc={_py_repr(study.spin_wave_bc)}")
             if study.k_vector is not None:
                 call_parts.append(f"k_vector={study.k_vector!r}")
             lines.append(f"{_surface_call(surface, 'eigenmodes')}({', '.join(call_parts)})")

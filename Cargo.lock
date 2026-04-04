@@ -444,6 +444,7 @@ dependencies = [
  "fullmag-ir",
  "fullmag-plan",
  "fullmag-runner",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

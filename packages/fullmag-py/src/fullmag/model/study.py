@@ -28,6 +28,7 @@ SUPPORTED_EIGEN_TARGETS = {"lowest", "nearest"}
 SUPPORTED_EQUILIBRIUM_SOURCES = {"provided", "relax", "artifact"}
 SUPPORTED_EIGEN_NORMALIZATIONS = {"unit_l2", "unit_max_amplitude"}
 SUPPORTED_EIGEN_DAMPING_POLICIES = {"ignore", "include"}
+SUPPORTED_SPIN_WAVE_BCS = {"free", "pinned", "periodic"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +141,7 @@ class Eigenmodes:
     k_vector: tuple[float, float, float] | None = None
     normalization: str = "unit_l2"
     damping_policy: str = "ignore"
+    spin_wave_bc: str = "free"
     dynamics: LLG = field(default_factory=LLG)
 
     def __post_init__(self) -> None:
@@ -182,6 +184,9 @@ class Eigenmodes:
         if self.damping_policy not in SUPPORTED_EIGEN_DAMPING_POLICIES:
             supported = ", ".join(sorted(SUPPORTED_EIGEN_DAMPING_POLICIES))
             raise ValueError(f"damping_policy must be one of: {supported}")
+        if self.spin_wave_bc not in SUPPORTED_SPIN_WAVE_BCS:
+            supported = ", ".join(sorted(SUPPORTED_SPIN_WAVE_BCS))
+            raise ValueError(f"spin_wave_bc must be one of: {supported}")
 
     def to_ir(self) -> dict[str, object]:
         target: dict[str, object]
@@ -218,5 +223,6 @@ class Eigenmodes:
             "k_sampling": sampling,
             "normalization": self.normalization,
             "damping_policy": self.damping_policy,
+            "spin_wave_bc": self.spin_wave_bc,
             "sampling": {"outputs": [output.to_ir() for output in self.outputs]},
         }

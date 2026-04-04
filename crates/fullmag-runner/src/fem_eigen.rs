@@ -5,7 +5,7 @@ use fullmag_engine::{
 };
 use fullmag_ir::{
     EigenDampingPolicyIR, EigenNormalizationIR, EquilibriumSourceIR, FemEigenPlanIR, KSamplingIR,
-    OutputIR, RelaxationAlgorithmIR, RelaxationControlIR,
+    OutputIR, RelaxationAlgorithmIR, RelaxationControlIR, SpinWaveBoundaryConditionIR,
 };
 use nalgebra::{DMatrix, DVector, SymmetricEigen};
 
@@ -36,7 +36,7 @@ pub(crate) fn execute_reference_fem_eigen(
     let (problem, equilibrium, relaxation_steps, observables) =
         materialize_equilibrium(plan, &initial_magnetization)?;
     let topology = &problem.topology;
-    let (active_nodes, node_map) = active_node_mapping(topology);
+    let (active_nodes, node_map) = active_node_mapping(topology, plan.spin_wave_bc);
     if active_nodes.is_empty() {
         return Err(RunError {
             message: "FEM eigen solver found no magnetically active nodes".to_string(),
@@ -159,6 +159,7 @@ pub(crate) fn execute_reference_fem_eigen(
         "mode_count": modes_summary.len(),
         "normalization": normalization_label(plan.normalization),
         "damping_policy": damping_policy_label(plan.damping_policy),
+        "spin_wave_bc": spin_wave_bc_label(plan.spin_wave_bc),
         "equilibrium_source": equilibrium_source_json(&plan.equilibrium),
         "operator": {
             "kind": format!("{:?}", plan.operator.kind).to_lowercase(),
@@ -402,16 +403,66 @@ fn load_equilibrium_artifact(path: &str, expected_len: usize) -> Result<Vec<Vect
         .collect()
 }
 
-fn active_node_mapping(topology: &MeshTopology) -> (Vec<usize>, Vec<Option<usize>>) {
+fn active_node_mapping(
+    topology: &MeshTopology,
+    spin_wave_bc: SpinWaveBoundaryConditionIR,
+) -> (Vec<usize>, Vec<Option<usize>>) {
+    let pinned: std::collections::HashSet<usize> =
+        if matches!(spin_wave_bc, SpinWaveBoundaryConditionIR::Pinned) {
+            magnetic_boundary_nodes(topology)
+        } else {
+            std::collections::HashSet::new()
+        };
+
     let mut active_nodes = Vec::new();
     let mut mapping = vec![None; topology.n_nodes];
     for (node_index, volume) in topology.magnetic_node_volumes.iter().enumerate() {
-        if *volume > 0.0 {
+        if *volume > 0.0 && !pinned.contains(&node_index) {
             mapping[node_index] = Some(active_nodes.len());
             active_nodes.push(node_index);
         }
     }
     (active_nodes, mapping)
+}
+
+/// Returns the set of indices of nodes that lie on the surface of the magnetic
+/// region (i.e. surface relevant for spin-wave pinning BC).
+///
+/// * Standalone magnetic mesh (no airbox):  
+///   `topology.boundary_nodes` are all on the outer surface of the magnet.
+///
+/// * Shared-domain mesh with airbox:  
+///   `topology.boundary_nodes` are on the outer airbox surface, NOT the magnet
+///   surface.  We instead find nodes that are magnetic AND appear in at least
+///   one non-magnetic (airbox) element — these are exactly on the interface.
+fn magnetic_boundary_nodes(topology: &MeshTopology) -> std::collections::HashSet<usize> {
+    let has_airbox = topology
+        .magnetic_element_mask
+        .iter()
+        .any(|&is_magnetic| !is_magnetic);
+
+    if !has_airbox {
+        // Standalone magnetic mesh: outer boundary = magnet surface.
+        return topology
+            .boundary_nodes
+            .iter()
+            .map(|&n| n as usize)
+            .collect();
+    }
+
+    // Shared-domain mesh: collect nodes that appear in non-magnetic elements.
+    let mut in_airbox_element: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for (element_idx, element) in topology.elements.iter().enumerate() {
+        if !topology.magnetic_element_mask[element_idx] {
+            for &node in element.iter() {
+                in_airbox_element.insert(node as usize);
+            }
+        }
+    }
+    // Magnetic boundary = magnetic nodes that are also in an airbox element.
+    (0..topology.n_nodes)
+        .filter(|&i| topology.magnetic_node_volumes[i] > 0.0 && in_airbox_element.contains(&i))
+        .collect()
 }
 
 fn assemble_projected_scalar_operator(
@@ -614,6 +665,14 @@ fn damping_policy_label(policy: EigenDampingPolicyIR) -> &'static str {
     match policy {
         EigenDampingPolicyIR::Ignore => "ignore",
         EigenDampingPolicyIR::Include => "include",
+    }
+}
+
+fn spin_wave_bc_label(bc: SpinWaveBoundaryConditionIR) -> &'static str {
+    match bc {
+        SpinWaveBoundaryConditionIR::Free => "free",
+        SpinWaveBoundaryConditionIR::Pinned => "pinned",
+        SpinWaveBoundaryConditionIR::Periodic => "periodic",
     }
 }
 

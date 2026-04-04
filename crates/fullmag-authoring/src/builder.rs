@@ -188,6 +188,8 @@ pub struct ScriptBuilderStageState {
     pub eigen_equilibrium_source: String,
     #[serde(default)]
     pub eigen_normalization: String,
+    #[serde(default)]
+    pub eigen_spin_wave_bc: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

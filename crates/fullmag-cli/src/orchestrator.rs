@@ -1733,7 +1733,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
 
     let mut _control_room_guard = ControlRoomGuard::inactive();
     if !args.headless {
-        let (web_port, child) =
+        let (web_port, child, frontend_child) =
             spawn_control_room(&session_id, args.dev, args.web_port, &live_workspace)
                 .with_context(|| {
                     format!(
@@ -1743,7 +1743,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 })?;
         eprintln!("fullmag control room bootstrap verified");
         live_workspace.push_log("system", "Control room bootstrap verified");
-        _control_room_guard = ControlRoomGuard::active(web_port, child);
+        _control_room_guard = ControlRoomGuard::active(web_port, child, frontend_child);
     }
 
     live_workspace.publish_snapshot();
@@ -3199,6 +3199,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         if let Err(error) = interactive_runtime_host.ensure_runtime_for_problem(
                             &stage.ir,
                             continuation_magnetization.as_deref(),
+                            &live_workspace,
                         ) {
                             eprintln!("interactive preview runtime warning: {}", error);
                             live_workspace.push_log(

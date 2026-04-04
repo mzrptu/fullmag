@@ -401,7 +401,7 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
             return reinterpret_cast<fullmag_fdm_backend *>(ctx);
         }
     }
-    if (ctx->has_demag_tensor_kernel &&
+    if (plan->demag_kernel_spectrum_len != 0 &&
         !context_upload_demag_kernel_spectra(
             *ctx,
             plan->demag_kernel_xx_spectrum,

@@ -87,6 +87,7 @@ export default function WorkspaceControlStrip() {
           {ctx.runtimeEngineLabel && (
             <span className="rounded-full border border-border/60 bg-background/40 px-2.5 py-1 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-muted-foreground">
               {ctx.runtimeEngineLabel}
+              {ctx.runtimeEngineGpuLabel ? ` · ${ctx.runtimeEngineGpuLabel}` : ""}
             </span>
           )}
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground/90">
