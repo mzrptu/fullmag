@@ -41,7 +41,7 @@ __global__ void llg_rhs_fp32_kernel(
     float * __restrict__ out_z,
     int n,
     float gamma_bar, float alpha, int disable_precession,
-    SttParams stt)
+    SttParams stt, SotParams sot)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
@@ -172,6 +172,28 @@ __global__ void llg_rhs_fp32_kernel(
         rhs_z += beta_STT * (double_m_cross_pz + e_prime * m_cross_pz);
     }
 
+    // --- Spin-Orbit Torque (SOT) --- Manchon-Zhang DL + FL model
+    if (sot.has_sot) {
+        float sx = static_cast<float>(sot.sx);
+        float sy = static_cast<float>(sot.sy);
+        float sz = static_cast<float>(sot.sz);
+        float amp = static_cast<float>(sot.amp);
+        float xi_dl = static_cast<float>(sot.xi_dl);
+        float xi_fl = static_cast<float>(sot.xi_fl);
+        float m_dot_s = m0*sx + m1*sy + m2*sz;
+        // FL term: m × σ̂
+        float fl_x = m1*sz - m2*sy;
+        float fl_y = m2*sx - m0*sz;
+        float fl_z = m0*sy - m1*sx;
+        // DL term: m × (m × σ̂) = (m·σ̂)m - σ̂
+        float dl_x = m_dot_s*m0 - sx;
+        float dl_y = m_dot_s*m1 - sy;
+        float dl_z = m_dot_s*m2 - sz;
+        rhs_x += amp * (-xi_dl*dl_x + xi_fl*fl_x);
+        rhs_y += amp * (-xi_dl*dl_y + xi_fl*fl_y);
+        rhs_z += amp * (-xi_dl*dl_z + xi_fl*fl_z);
+    }
+
     out_x[idx] = rhs_x;
     out_y[idx] = rhs_y;
     out_z[idx] = rhs_z;
@@ -272,7 +294,7 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         (const float*)ctx.work.x, (const float*)ctx.work.y, (const float*)ctx.work.z,
         (float*)ctx.k1.x, (float*)ctx.k1.y, (float*)ctx.k1.z,
         n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
-        stt_params_from_ctx(ctx));
+        stt_params_from_ctx(ctx), sot_params_from_ctx(ctx));
     if (abort_step_from_tmp(ctx, false)) return;
 
     // Step 3: predictor → m
@@ -299,7 +321,7 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         (const float*)ctx.work.x, (const float*)ctx.work.y, (const float*)ctx.work.z,
         (float*)ctx.h_ex.x, (float*)ctx.h_ex.y, (float*)ctx.h_ex.z,
         n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
-        stt_params_from_ctx(ctx));
+        stt_params_from_ctx(ctx), sot_params_from_ctx(ctx));
     if (abort_step_from_tmp(ctx, false)) return;
 
     // Step 6: corrector → m
@@ -342,7 +364,7 @@ void launch_heun_step_fp32(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         (const float*)ctx.work.x, (const float*)ctx.work.y, (const float*)ctx.work.z,
         (float*)ctx.k1.x, (float*)ctx.k1.y, (float*)ctx.k1.z,
         n, gamma_bar_f, alpha_f, ctx.disable_precession ? 1 : 0,
-        stt_params_from_ctx(ctx));
+        stt_params_from_ctx(ctx), sot_params_from_ctx(ctx));
 
     double max_dm_dt = reduce_max_norm_fp32(ctx, ctx.k1.x, ctx.k1.y, ctx.k1.z, ctx.cell_count);
 

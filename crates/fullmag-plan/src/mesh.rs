@@ -847,15 +847,15 @@ fn derive_air_box_factor(mesh: &MeshIR, study_universe: Option<&StudyUniverseMet
 pub(crate) fn build_air_box_config(
     problem: &ProblemIR,
     mesh: &MeshIR,
-    resolved_demag_realization: Option<&str>,
+    resolved_demag_realization: Option<fullmag_ir::ResolvedFemDemagIR>,
 ) -> Option<AirBoxConfigIR> {
     if !mesh_has_air_elements(mesh) {
         return None;
     }
 
     let bc_kind = match resolved_demag_realization {
-        Some("airbox_dirichlet") => Some("dirichlet"),
-        Some("poisson_airbox") | Some("airbox_robin") => Some("robin"),
+        Some(fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet) => Some("dirichlet"),
+        Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin) => Some("robin"),
         _ => None,
     }?;
 
@@ -876,7 +876,7 @@ pub(crate) fn build_air_box_config(
 pub(crate) fn study_universe_planner_note(
     problem: &ProblemIR,
     mesh: &MeshIR,
-    resolved_demag_realization: Option<&str>,
+    resolved_demag_realization: Option<fullmag_ir::ResolvedFemDemagIR>,
     air_box_config: Option<&AirBoxConfigIR>,
 ) -> Option<String> {
     let study_universe = study_universe_metadata(problem)?;
@@ -897,7 +897,7 @@ pub(crate) fn study_universe_planner_note(
         ));
     }
 
-    if mesh_has_air_elements(mesh) && matches!(resolved_demag_realization, Some("transfer_grid")) {
+    if mesh_has_air_elements(mesh) && matches!(resolved_demag_realization, Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)) {
         return Some(
             "study_universe metadata present and the FEM mesh already contains air elements, but demag realization remains transfer_grid; the air-box solve is not selected"
                 .to_string(),

@@ -116,8 +116,8 @@ fn execute_fem_eigen_inner(
     outputs: &[OutputIR],
     try_gpu: bool,
 ) -> Result<ExecutedRun, RunError> {
-    let resolved_demag_realization = plan.demag_realization.as_deref().unwrap_or("transfer_grid");
-    if plan.enable_demag && resolved_demag_realization != "transfer_grid" {
+    let resolved_demag_realization = plan.demag_realization.as_ref();
+    if plan.enable_demag && !matches!(resolved_demag_realization, None | Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)) {
         return Err(RunError {
             message: "FEM eigen runner supports demag_realization='transfer_grid' only".to_string(),
         });
@@ -409,8 +409,8 @@ fn execution_provenance(plan: &FemEigenPlanIR) -> ExecutionProvenance {
         demag_operator_kind: if plan.enable_demag {
             Some(
                 plan.demag_realization
-                    .clone()
-                    .unwrap_or_else(|| "transfer_grid".to_string()),
+                    .map(|r| r.provenance_name().to_string())
+                    .unwrap_or_else(|| "fem_transfer_grid_tensor_fft_newell".to_string()),
             )
         } else {
             None

@@ -662,7 +662,7 @@ fn fem_backend_with_air_elements_lowers_study_universe_to_air_box_config() {
     );
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: None },
+        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
     ];
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
         fdm: Some(fullmag_ir::FdmHintsIR {
@@ -711,7 +711,7 @@ per_domain_quality: std::collections::HashMap::new(),
     let plan = plan(&ir).expect("FEM air-box mesh asset should produce an air-box config");
     match plan.backend_plan {
         BackendPlanIR::Fem(fem) => {
-            assert_eq!(fem.demag_realization.as_deref(), Some("poisson_airbox"));
+            assert_eq!(fem.demag_realization, Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin));
             assert!(
                 fem.air_box_config.is_some(),
                 "shared-domain poisson demag should lower an air-box config"
@@ -740,7 +740,7 @@ fn fem_backend_without_air_elements_keeps_universe_as_provenance_note() {
     );
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: None },
+        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
     ];
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
         fdm: Some(fullmag_ir::FdmHintsIR {
@@ -785,7 +785,7 @@ per_domain_quality: std::collections::HashMap::new(),
     let plan = plan(&ir).expect("FEM mesh without air elements should still plan");
     match plan.backend_plan {
         BackendPlanIR::Fem(fem) => {
-            assert_eq!(fem.demag_realization.as_deref(), Some("transfer_grid"));
+            assert_eq!(fem.demag_realization, Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid));
             assert!(fem.air_box_config.is_none());
         }
         _ => panic!("expected FEM plan"),
@@ -817,7 +817,7 @@ fn fem_backend_rejects_requested_shared_domain_without_air_elements() {
     );
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: None },
+        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
     ];
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
         fdm: Some(fullmag_ir::FdmHintsIR {
@@ -1154,7 +1154,7 @@ fn fem_backend_multibody_merges_disjoint_mesh_assets() {
     ];
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: None },
+        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
     ];
     ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
         fdm_grid_assets: vec![],
@@ -1730,7 +1730,7 @@ fn multilayer_single_precision_is_rejected_without_cuda_device_request() {
     ];
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: None },
+        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
     ];
     ir.backend_policy.execution_precision = ExecutionPrecision::Single;
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
@@ -1809,7 +1809,7 @@ fn multilayer_single_precision_is_accepted_when_cuda_device_requested() {
     ];
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: None },
+        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
     ];
     ir.backend_policy.execution_precision = ExecutionPrecision::Single;
     ir.problem_meta.runtime_metadata.insert(
@@ -1898,7 +1898,7 @@ fn stacked_two_body_problem_lowers_to_multilayer_plan() {
     ];
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: None },
+        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
     ];
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
         fdm: Some(fullmag_ir::FdmHintsIR {
@@ -1991,7 +1991,7 @@ fn multilayer_planner_rejects_xy_offset() {
             initial_magnetization: None,
         },
     ];
-    ir.energy_terms = vec![fullmag_ir::EnergyTermIR::Demag { realization: None }];
+    ir.energy_terms = vec![fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto }];
 
     let err = plan(&ir).expect_err("XY-offset multilayer problem should be rejected");
     assert!(err
@@ -2045,7 +2045,7 @@ per_domain_quality: std::collections::HashMap::new(),
     });
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: None },
+        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
     ];
     ir.study = fullmag_ir::StudyIR::Eigenmodes {
         dynamics: ir.study.dynamics().clone(),
@@ -2142,7 +2142,7 @@ per_domain_quality: std::collections::HashMap::new(),
     });
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: None },
+        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
     ];
     ir.study = fullmag_ir::StudyIR::Eigenmodes {
         dynamics: ir.study.dynamics().clone(),
@@ -2171,7 +2171,7 @@ per_domain_quality: std::collections::HashMap::new(),
                 fem.domain_mesh_mode,
                 fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir
             );
-            assert_eq!(fem.demag_realization.as_deref(), Some("transfer_grid"));
+            assert_eq!(fem.demag_realization, Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid));
             assert_eq!(fem.object_segments.len(), 2);
             assert_eq!(fem.object_segments[0].object_id, "strip");
             assert_eq!(fem.object_segments[0].geometry_id.as_deref(), Some("strip"));
@@ -2603,7 +2603,7 @@ fn fem_plan_succeeds_when_shared_domain_has_domain_mesh_asset() {
     );
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: None },
+        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
     ];
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
         fdm: Some(fullmag_ir::FdmHintsIR {

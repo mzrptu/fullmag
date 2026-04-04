@@ -257,6 +257,20 @@ impl NativeFdmBackend {
             stt_lambda: plan.stt_lambda.unwrap_or(0.0),
             stt_epsilon_prime: plan.stt_epsilon_prime.unwrap_or(0.0),
 
+            has_sot: if plan.sot_current_density.is_some()
+                && plan.sot_sigma.is_some()
+                && plan.sot_thickness.is_some()
+            {
+                1
+            } else {
+                0
+            },
+            sot_je: plan.sot_current_density.unwrap_or(0.0),
+            sot_xi_dl: plan.sot_xi_dl.unwrap_or(0.0),
+            sot_xi_fl: plan.sot_xi_fl.unwrap_or(0.0),
+            sot_sigma: plan.sot_sigma.unwrap_or([0.0, 0.0, 1.0]),
+            sot_thickness: plan.sot_thickness.unwrap_or(1.0e-9),
+
             has_oersted_cylinder: if plan.has_oersted_cylinder { 1 } else { 0 },
             oersted_current: plan.oersted_current.unwrap_or(0.0),
             oersted_radius: plan.oersted_radius.unwrap_or(0.0),

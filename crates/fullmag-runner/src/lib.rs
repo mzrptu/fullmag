@@ -1149,7 +1149,7 @@ mod tests {
         });
         problem.energy_terms = vec![
             fullmag_ir::EnergyTermIR::Exchange,
-            fullmag_ir::EnergyTermIR::Demag { realization: None },
+            fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
         ];
         problem.problem_meta.runtime_metadata.insert(
             "runtime_selection".to_string(),

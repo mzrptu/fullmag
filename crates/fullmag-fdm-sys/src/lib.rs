@@ -142,6 +142,14 @@ pub struct fullmag_fdm_plan_desc {
     pub stt_lambda: f64,
     pub stt_epsilon_prime: f64,
 
+    // Spin-Orbit Torque (SOT)
+    pub has_sot: i32,
+    pub sot_je: f64,
+    pub sot_xi_dl: f64,
+    pub sot_xi_fl: f64,
+    pub sot_sigma: [f64; 3],
+    pub sot_thickness: f64,
+
     // Oersted field (cylindrical conductor)
     pub has_oersted_cylinder: i32,
     pub oersted_current: f64,

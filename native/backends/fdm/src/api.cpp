@@ -292,6 +292,16 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
         ctx->stt_cpp_pf = 0.0;
     }
 
+    // ── Spin-Orbit Torque (SOT) ──
+    ctx->has_sot       = plan->has_sot != 0;
+    ctx->sot_je        = plan->sot_je;
+    ctx->sot_xi_dl     = plan->sot_xi_dl;
+    ctx->sot_xi_fl     = plan->sot_xi_fl;
+    ctx->sot_sigma[0]  = plan->sot_sigma[0];
+    ctx->sot_sigma[1]  = plan->sot_sigma[1];
+    ctx->sot_sigma[2]  = plan->sot_sigma[2];
+    ctx->sot_thickness = plan->sot_thickness > 0.0 ? plan->sot_thickness : 1.0e-9;
+
     // ── Oersted field (cylindrical conductor) ──
     ctx->has_oersted_cylinder = plan->has_oersted_cylinder != 0;
     ctx->oersted_current = plan->oersted_current;

@@ -132,10 +132,8 @@ impl NativeFemBackend {
         if matches!(
             plan.domain_mesh_mode,
             fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh
-        ) && matches!(
-            plan.demag_realization.as_deref(),
-            Some("airbox_dirichlet" | "airbox_robin" | "poisson_airbox")
-        ) {
+        ) && plan.demag_realization.is_some_and(|r| r.is_poisson())
+        {
             return Err(RunError {
                 message:
                     "native FEM air-box demag requires domain_mesh_mode='shared_domain_mesh_with_air'"
@@ -185,13 +183,8 @@ impl NativeFemBackend {
             damping: plan.material.damping,
             gyromagnetic_ratio: plan.gyromagnetic_ratio,
         };
-        let resolved_demag_realization = match plan.demag_realization.as_deref() {
-            Some("poisson_airbox") => "transfer_grid",
-            Some("airbox_dirichlet") => "airbox_dirichlet",
-            Some("airbox_robin") => "airbox_robin",
-            Some(other) => other,
-            None => "transfer_grid",
-        };
+        let resolved_demag_realization = plan.demag_realization
+            .unwrap_or(fullmag_ir::ResolvedFemDemagIR::TransferGrid);
 
         // Let the native FDM backend build its own Newell tensor for FEM
         // transfer-grid demag. The transfer-grid dimensions are derived from
@@ -247,13 +240,15 @@ impl NativeFemBackend {
             },
             air_box_factor: plan.air_box_config.as_ref().map_or(0.0, |c| c.factor),
             demag_realization: match resolved_demag_realization {
-                "airbox_dirichlet" => {
+                fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet => {
                     ffi::fullmag_fem_demag_realization::FULLMAG_FEM_DEMAG_AIRBOX_DIRICHLET
                 }
-                "airbox_robin" => {
+                fullmag_ir::ResolvedFemDemagIR::PoissonRobin => {
                     ffi::fullmag_fem_demag_realization::FULLMAG_FEM_DEMAG_AIRBOX_ROBIN
                 }
-                _ => ffi::fullmag_fem_demag_realization::FULLMAG_FEM_DEMAG_TRANSFER_GRID,
+                fullmag_ir::ResolvedFemDemagIR::TransferGrid => {
+                    ffi::fullmag_fem_demag_realization::FULLMAG_FEM_DEMAG_TRANSFER_GRID
+                }
             },
             poisson_boundary_marker: plan
                 .air_box_config

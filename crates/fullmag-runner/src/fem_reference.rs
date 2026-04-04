@@ -155,26 +155,17 @@ pub(crate) fn build_problem_and_state(
     let resolved_demag_realization = if !plan.enable_demag {
         None
     } else {
-        match plan.demag_realization.as_deref() {
-            Some("transfer_grid") => Some("transfer_grid"),
-            Some("airbox_dirichlet") => Some("airbox_dirichlet"),
-            // poisson_airbox uses Robin BC by default — Robin ∂φ/∂n + βφ = 0
-            // approximates far-field dipole decay and is much more accurate
-            // than Dirichlet φ=0 when the airbox boundary is close to the
-            // magnetic body.
-            Some("poisson_airbox" | "airbox_robin") => Some("airbox_robin"),
-            _ => Some("transfer_grid"),
-        }
+        plan.demag_realization
     };
     let problem = match resolved_demag_realization {
-        Some("transfer_grid") => FemLlgProblem::with_terms_and_demag_transfer_grid(
+        Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid) => FemLlgProblem::with_terms_and_demag_transfer_grid(
             topology,
             material,
             dynamics,
             terms,
             Some([plan.hmax, plan.hmax, plan.hmax]),
         ),
-        Some("airbox_robin") => FemLlgProblem::with_terms_and_demag_airbox(
+        Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin) => FemLlgProblem::with_terms_and_demag_airbox(
             topology,
             material,
             dynamics,
@@ -182,7 +173,7 @@ pub(crate) fn build_problem_and_state(
             false,
             plan.air_box_config.as_ref().and_then(|config| config.robin_beta_factor),
         ),
-        Some("airbox_dirichlet") => FemLlgProblem::with_terms_and_demag_airbox(
+        Some(fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet) => FemLlgProblem::with_terms_and_demag_airbox(
             topology,
             material,
             dynamics,
@@ -204,14 +195,12 @@ pub(crate) fn execution_provenance(plan: &FemPlanIR) -> ExecutionProvenance {
     let demag_operator_kind = if !plan.enable_demag {
         None
     } else {
-        match plan.demag_realization.as_deref() {
-            Some("transfer_grid") => Some("fem_transfer_grid_tensor_fft_newell".to_string()),
-            Some("airbox_dirichlet") => Some("fem_airbox_dirichlet".to_string()),
-            Some("poisson_airbox" | "airbox_robin") => {
-                Some("fem_airbox_robin".to_string())
-            }
-            _ => Some("fem_transfer_grid_tensor_fft_newell".to_string()),
-        }
+        Some(
+            plan.demag_realization
+                .map(|r| r.provenance_name())
+                .unwrap_or("fem_transfer_grid_tensor_fft_newell")
+                .to_string(),
+        )
     };
     ExecutionProvenance {
         execution_engine: "cpu_reference_fem".to_string(),
@@ -1182,7 +1171,7 @@ per_domain_quality: std::collections::HashMap::new(),
             fixed_timestep: Some(1e-13),
             adaptive_timestep: None,
             relaxation: None,
-            demag_realization: Some("poisson_airbox".to_string()),
+            demag_realization: Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin),
             air_box_config: Some(AirBoxConfigIR {
                 factor: 1.5,
                 grading: 1.0,
@@ -1294,7 +1283,7 @@ per_domain_quality: std::collections::HashMap::new(),
         );
         assert_eq!(
             provenance.demag_operator_kind.as_deref(),
-            Some("fem_airbox_robin"),
+            Some("fem_poisson_robin"),
         );
 
         let fields = snapshot_vector_fields(&plan, &["H_demag"], &crate::LivePreviewRequest::default())

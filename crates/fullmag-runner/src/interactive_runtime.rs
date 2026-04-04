@@ -3413,19 +3413,18 @@ fn fem_gpu_execution_provenance(
             fullmag_ir::ExecutionPrecision::Double => "double".to_string(),
         },
         demag_operator_kind: if plan.enable_demag {
-            Some(match plan.demag_realization.as_deref() {
-                Some("poisson_airbox" | "airbox_dirichlet") => "fem_airbox_dirichlet".to_string(),
-                Some("airbox_robin") => "fem_airbox_robin".to_string(),
-                _ => "fem_transfer_grid_tensor_fft_newell".to_string(),
-            })
+            Some(
+                plan.demag_realization
+                    .map(|r| r.provenance_name())
+                    .unwrap_or("fem_transfer_grid_tensor_fft_newell")
+                    .to_string(),
+            )
         } else {
             None
         },
         fft_backend: if plan.enable_demag
-            && !matches!(
-                plan.demag_realization.as_deref(),
-                Some("poisson_airbox" | "airbox_dirichlet" | "airbox_robin")
-            ) {
+            && !plan.demag_realization.is_some_and(|r| r.is_poisson())
+        {
             Some("cuFFT".to_string())
         } else {
             None

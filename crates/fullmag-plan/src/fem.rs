@@ -265,7 +265,7 @@ pub(crate) fn plan_fem(
     // Commit 4: fail early when study_universe requires a shared domain mesh
     // but no fem_domain_mesh_asset was provided.
     if resolved_domain_mesh_asset.is_none()
-        && shared_domain_mesh_requested(problem, None)
+        && shared_domain_mesh_requested(problem, fullmag_ir::RequestedFemDemagIR::Auto)
     {
         return Err(PlanError {
             reasons: vec![
@@ -394,7 +394,7 @@ pub(crate) fn plan_fem(
     let mut enable_exchange = false;
     let mut enable_demag = false;
     let mut external_field = None;
-    let mut demag_realization: Option<String> = None;
+    let mut demag_realization = fullmag_ir::RequestedFemDemagIR::Auto;
     let mut interfacial_dmi: Option<f64> = None;
     let mut bulk_dmi: Option<f64> = None;
     for term in &problem.energy_terms {
@@ -410,7 +410,7 @@ pub(crate) fn plan_fem(
                     errors.push("Demag is declared more than once".to_string());
                 }
                 enable_demag = true;
-                demag_realization = realization.clone();
+                demag_realization = *realization;
             }
             fullmag_ir::EnergyTermIR::Zeeman { b } => {
                 if external_field.is_some() {
@@ -567,7 +567,7 @@ pub(crate) fn plan_fem(
     let n_elements = mesh.elements.len();
     let mesh_name = mesh.mesh_name.clone();
     let domain_mesh_mode = resolved_domain_mesh_mode(&mesh);
-    if shared_domain_mesh_requested(problem, demag_realization.as_deref())
+    if shared_domain_mesh_requested(problem, demag_realization)
         && domain_mesh_mode != fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir
     {
         return Err(PlanError {
@@ -609,36 +609,31 @@ pub(crate) fn plan_fem(
         .and_then(DomainFrameIR::finalized);
 
     // S07: Auto-resolve demag realization.
-    // "auto" or None → "poisson_airbox" when the mesh contains air elements (marker 0),
-    // otherwise "transfer_grid" (traditional FFT-on-Cartesian-grid approach).
-    let resolved_demag_realization = if enable_demag {
-        match demag_realization.as_deref() {
-            Some("transfer_grid") => Some("transfer_grid".to_string()),
-            Some("poisson_airbox" | "airbox_dirichlet") => {
-                Some("poisson_airbox".to_string())
-            }
-            Some("airbox_robin") => Some("airbox_robin".to_string()),
-            // auto or unset: choose shared-domain Poisson when the mesh already
-            // contains an explicit air region; otherwise fall back to the
-            // transfer-grid FFT path for magnetic-only meshes.
-            _ => {
+    // Auto → PoissonRobin when the mesh contains air elements (marker 0),
+    // otherwise TransferGrid (traditional FFT-on-Cartesian-grid approach).
+    let resolved_demag_realization: Option<fullmag_ir::ResolvedFemDemagIR> = if enable_demag {
+        Some(match demag_realization {
+            fullmag_ir::RequestedFemDemagIR::TransferGrid => fullmag_ir::ResolvedFemDemagIR::TransferGrid,
+            fullmag_ir::RequestedFemDemagIR::PoissonDirichlet => fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet,
+            fullmag_ir::RequestedFemDemagIR::PoissonRobin => fullmag_ir::ResolvedFemDemagIR::PoissonRobin,
+            fullmag_ir::RequestedFemDemagIR::Auto => {
                 let has_air_elements = mesh.element_markers.iter().any(|&m| m == 0);
                 if has_air_elements {
-                    Some("poisson_airbox".to_string())
+                    fullmag_ir::ResolvedFemDemagIR::PoissonRobin
                 } else {
-                    Some("transfer_grid".to_string())
+                    fullmag_ir::ResolvedFemDemagIR::TransferGrid
                 }
             }
-        }
+        })
     } else {
         None
     };
     let air_box_config =
-        build_air_box_config(problem, &mesh, resolved_demag_realization.as_deref());
+        build_air_box_config(problem, &mesh, resolved_demag_realization);
     let universe_note = study_universe_planner_note(
         problem,
         &mesh,
-        resolved_demag_realization.as_deref(),
+        resolved_demag_realization,
         air_box_config.as_ref(),
     );
 
@@ -884,7 +879,7 @@ pub(crate) fn plan_fem_eigen(
     // Commit 4: fail early when study_universe requires a shared domain mesh
     // but no fem_domain_mesh_asset was provided (eigen path).
     if resolved_domain_mesh_asset.is_none()
-        && shared_domain_mesh_requested(problem, None)
+        && shared_domain_mesh_requested(problem, fullmag_ir::RequestedFemDemagIR::Auto)
     {
         return Err(PlanError {
             reasons: vec![
@@ -1006,7 +1001,7 @@ pub(crate) fn plan_fem_eigen(
     let mut enable_exchange = false;
     let mut enable_demag = false;
     let mut external_field = None;
-    let mut demag_realization: Option<String> = None;
+    let mut demag_realization = fullmag_ir::RequestedFemDemagIR::Auto;
     let mut interfacial_dmi: Option<f64> = None;
     let mut bulk_dmi: Option<f64> = None;
     for term in &problem.energy_terms {
@@ -1022,7 +1017,7 @@ pub(crate) fn plan_fem_eigen(
                     errors.push("Demag is declared more than once".to_string());
                 }
                 enable_demag = true;
-                demag_realization = realization.clone();
+                demag_realization = *realization;
             }
             fullmag_ir::EnergyTermIR::Zeeman { b } => {
                 if external_field.is_some() {
@@ -1245,7 +1240,7 @@ pub(crate) fn plan_fem_eigen(
     let n_nodes = mesh.nodes.len();
     let n_elements = mesh.elements.len();
     let domain_mesh_mode = resolved_domain_mesh_mode(&mesh);
-    if shared_domain_mesh_requested(problem, demag_realization.as_deref())
+    if shared_domain_mesh_requested(problem, demag_realization)
         && domain_mesh_mode != fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir
     {
         return Err(PlanError {
@@ -1273,16 +1268,17 @@ pub(crate) fn plan_fem_eigen(
         .map(|frame| frame.with_mesh_bounds(mesh_bounds(&mesh)))
         .and_then(DomainFrameIR::finalized);
 
-    let resolved_demag_realization = if enable_demag {
-        match demag_realization.as_deref() {
-            Some("transfer_grid") => Some("transfer_grid".to_string()),
-            Some("poisson_airbox") => Some("poisson_airbox".to_string()),
-            _ => Some("transfer_grid".to_string()),
-        }
+    let resolved_demag_realization: Option<fullmag_ir::ResolvedFemDemagIR> = if enable_demag {
+        Some(match demag_realization {
+            fullmag_ir::RequestedFemDemagIR::TransferGrid => fullmag_ir::ResolvedFemDemagIR::TransferGrid,
+            fullmag_ir::RequestedFemDemagIR::PoissonDirichlet => fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet,
+            fullmag_ir::RequestedFemDemagIR::PoissonRobin => fullmag_ir::ResolvedFemDemagIR::PoissonRobin,
+            fullmag_ir::RequestedFemDemagIR::Auto => fullmag_ir::ResolvedFemDemagIR::TransferGrid,
+        })
     } else {
         None
     };
-    if enable_demag && resolved_demag_realization.as_deref() != Some("transfer_grid") {
+    if enable_demag && resolved_demag_realization != Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid) {
         errors.push(
             "the current FEM eigen executable path supports demag_realization='transfer_grid' only"
                 .to_string(),

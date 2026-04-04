@@ -229,7 +229,7 @@ pub(crate) fn diagnose_initial_fem_plan(plan: &FemPlanIR) -> Result<InitialState
             headroom: adaptive.safety,
         });
     }
-    let mesh_has_air = plan.mesh.element_markers.iter().any(|marker| *marker == 0);
+    let _mesh_has_air = plan.mesh.element_markers.iter().any(|marker| *marker == 0);
     let terms = EffectiveFieldTerms {
         exchange: plan.enable_exchange,
         demag: plan.enable_demag,
@@ -241,15 +241,15 @@ pub(crate) fn diagnose_initial_fem_plan(plan: &FemPlanIR) -> Result<InitialState
     let problem = if !plan.enable_demag {
         FemLlgProblem::with_terms(topology, material, dynamics, terms)
     } else {
-        match plan.demag_realization.as_deref() {
-            Some("transfer_grid") => FemLlgProblem::with_terms_and_demag_transfer_grid(
+        match plan.demag_realization {
+            Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid) => FemLlgProblem::with_terms_and_demag_transfer_grid(
                 topology,
                 material,
                 dynamics,
                 terms,
                 Some([plan.hmax, plan.hmax, plan.hmax]),
             ),
-            Some("airbox_robin") => FemLlgProblem::with_terms_and_demag_airbox(
+            Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin) => FemLlgProblem::with_terms_and_demag_airbox(
                 topology,
                 material,
                 dynamics,
@@ -259,7 +259,7 @@ pub(crate) fn diagnose_initial_fem_plan(plan: &FemPlanIR) -> Result<InitialState
                     .as_ref()
                     .and_then(|config| config.robin_beta_factor),
             ),
-            Some("poisson_airbox" | "airbox_dirichlet") | _ if mesh_has_air => {
+            Some(fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet) => {
                 FemLlgProblem::with_terms_and_demag_airbox(
                     topology,
                     material,
@@ -269,7 +269,7 @@ pub(crate) fn diagnose_initial_fem_plan(plan: &FemPlanIR) -> Result<InitialState
                     None,
                 )
             }
-            _ => FemLlgProblem::with_terms_and_demag_transfer_grid(
+            None => FemLlgProblem::with_terms_and_demag_transfer_grid(
                 topology,
                 material,
                 dynamics,

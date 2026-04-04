@@ -26,11 +26,12 @@ pub(crate) fn mesh_workflow_metadata(problem: &ProblemIR) -> Option<&serde_json:
 
 pub(crate) fn shared_domain_mesh_requested(
     problem: &ProblemIR,
-    requested_demag_realization: Option<&str>,
+    requested_demag_realization: fullmag_ir::RequestedFemDemagIR,
 ) -> bool {
     if matches!(
         requested_demag_realization,
-        Some("poisson_airbox" | "airbox_dirichlet" | "airbox_robin")
+        fullmag_ir::RequestedFemDemagIR::PoissonDirichlet
+            | fullmag_ir::RequestedFemDemagIR::PoissonRobin
     ) {
         return true;
     }

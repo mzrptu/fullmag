@@ -55,7 +55,7 @@ __global__ void llg_rhs_fp64_kernel(
     double * __restrict__ out_z,
     int n,
     double gamma_bar, double alpha, int disable_precession,
-    SttParams stt)
+    SttParams stt, SotParams sot)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
@@ -183,6 +183,23 @@ __global__ void llg_rhs_fp64_kernel(
         rhs_z += beta_STT * (double_m_cross_pz + stt.stt_epsilon_prime * m_cross_pz);
     }
 
+    // --- Spin-Orbit Torque (SOT) --- Manchon-Zhang DL + FL model
+    // dm/dt|_SOT = amp * [ -xi_DL * m×(m×σ̂) + xi_FL * (m×σ̂) ]
+    if (sot.has_sot) {
+        double m_dot_s = m0*sot.sx + m1*sot.sy + m2*sot.sz;
+        // FL term: m × σ̂
+        double fl_x = m1*sot.sz - m2*sot.sy;
+        double fl_y = m2*sot.sx - m0*sot.sz;
+        double fl_z = m0*sot.sy - m1*sot.sx;
+        // DL term: m × (m × σ̂) = (m·σ̂)m - σ̂
+        double dl_x = m_dot_s*m0 - sot.sx;
+        double dl_y = m_dot_s*m1 - sot.sy;
+        double dl_z = m_dot_s*m2 - sot.sz;
+        rhs_x += sot.amp * (-sot.xi_dl*dl_x + sot.xi_fl*fl_x);
+        rhs_y += sot.amp * (-sot.xi_dl*dl_y + sot.xi_fl*fl_y);
+        rhs_z += sot.amp * (-sot.xi_dl*dl_z + sot.xi_fl*fl_z);
+    }
+
     out_x[idx] = rhs_x;
     out_y[idx] = rhs_y;
     out_z[idx] = rhs_z;
@@ -299,7 +316,7 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.k1.y),
         static_cast<double*>(ctx.k1.z),
         n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0,
-        stt_params_from_ctx(ctx));
+        stt_params_from_ctx(ctx), sot_params_from_ctx(ctx));
     if (abort_step_from_tmp(ctx, false)) return;
 
     // --- Step 3: Predictor: m_pred = normalize(m + dt·k1) ---
@@ -340,7 +357,7 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.h_ex.y),
         static_cast<double*>(ctx.h_ex.z),
         n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0,
-        stt_params_from_ctx(ctx));
+        stt_params_from_ctx(ctx), sot_params_from_ctx(ctx));
     if (abort_step_from_tmp(ctx, false)) return;
 
     // --- Step 6: Corrector: m_new = normalize(m_orig + 0.5·dt·(k1 + k2)) ---
@@ -401,7 +418,7 @@ void launch_heun_step_fp64(Context &ctx, double dt, fullmag_fdm_step_stats *stat
         static_cast<double*>(ctx.k1.y),
         static_cast<double*>(ctx.k1.z),
         n, gamma_bar, alpha, ctx.disable_precession ? 1 : 0,
-        stt_params_from_ctx(ctx));
+        stt_params_from_ctx(ctx), sot_params_from_ctx(ctx));
 
     double max_dm_dt = reduce_max_norm_fp64(ctx, ctx.k1.x, ctx.k1.y, ctx.k1.z, ctx.cell_count);
 

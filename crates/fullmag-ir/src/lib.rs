@@ -541,8 +541,8 @@ pub struct ExcitationAnalysisIR {
 pub enum EnergyTermIR {
     Exchange,
     Demag {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        realization: Option<String>,
+        #[serde(default)]
+        realization: RequestedFemDemagIR,
     },
     InterfacialDmi {
         #[serde(rename = "D")]
@@ -1823,6 +1823,56 @@ pub enum FemDomainMeshModeIR {
     SharedDomainMeshWithAir,
 }
 
+/// What the user/script requested for FEM demagnetization realization.
+///
+/// `Auto` lets the planner choose based on mesh topology:
+/// - shared-domain mesh with air → `PoissonRobin`
+/// - magnetic-only mesh → `TransferGrid`
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestedFemDemagIR {
+    #[default]
+    Auto,
+    TransferGrid,
+    #[serde(alias = "airbox_dirichlet")]
+    PoissonDirichlet,
+    #[serde(alias = "poisson_airbox", alias = "airbox_robin")]
+    PoissonRobin,
+}
+
+/// Planner-resolved FEM demagnetization realization. No `Auto` variant —
+/// must be concrete before reaching the runner.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolvedFemDemagIR {
+    TransferGrid,
+    #[serde(alias = "airbox_dirichlet")]
+    PoissonDirichlet,
+    #[serde(alias = "poisson_airbox", alias = "airbox_robin")]
+    PoissonRobin,
+}
+
+impl ResolvedFemDemagIR {
+    /// Canonical provenance name for artifact metadata.
+    pub fn provenance_name(&self) -> &'static str {
+        match self {
+            Self::TransferGrid => "fem_transfer_grid_tensor_fft_newell",
+            Self::PoissonDirichlet => "fem_poisson_dirichlet",
+            Self::PoissonRobin => "fem_poisson_robin",
+        }
+    }
+
+    /// Whether this realization uses a Poisson-based airbox solver.
+    pub fn is_poisson(&self) -> bool {
+        matches!(self, Self::PoissonDirichlet | Self::PoissonRobin)
+    }
+
+    /// Whether this realization uses Robin boundary conditions.
+    pub fn is_robin(&self) -> bool {
+        matches!(self, Self::PoissonRobin)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FemPlanIR {
     pub mesh_name: String,
@@ -1859,7 +1909,7 @@ pub struct FemPlanIR {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relaxation: Option<RelaxationControlIR>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub demag_realization: Option<String>,
+    pub demag_realization: Option<ResolvedFemDemagIR>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub air_box_config: Option<AirBoxConfigIR>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1979,7 +2029,7 @@ pub struct FemEigenPlanIR {
     #[serde(default)]
     pub spin_wave_bc: SpinWaveBoundaryConditionIR,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub demag_realization: Option<String>,
+    pub demag_realization: Option<ResolvedFemDemagIR>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

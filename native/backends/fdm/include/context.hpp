@@ -112,6 +112,14 @@ struct Context {
     double stt_epsilon_prime = 0.0;
     double stt_cpp_pf = 0.0;   // Precomputed coefficient: j * hbar / (2 * e * mu_0 * M_s * d)
 
+    // Spin-Orbit Torque (SOT) — Manchon-Zhang DL + FL model
+    bool   has_sot        = false;
+    double sot_je         = 0.0;          // |Je| charge current density [A/m²]
+    double sot_xi_dl      = 0.0;          // ξ_DL damping-like efficiency
+    double sot_xi_fl      = 0.0;          // ξ_FL field-like efficiency
+    double sot_sigma[3]   = {0.0, 0.0, 1.0}; // σ̂ spin polarisation vector (normalised on use)
+    double sot_thickness  = 1.0e-9;       // t_F FM layer thickness [m]
+
     // Oersted field (cylindrical conductor)
     bool has_oersted_cylinder = false;
     double oersted_current = 0.0;        // DC current [A]
@@ -294,6 +302,39 @@ inline SttParams stt_params_from_ctx(const Context &ctx) {
     p.stt_lambda          = ctx.stt_lambda;
     p.stt_epsilon_prime   = ctx.stt_epsilon_prime;
     p.stt_cpp_pf          = ctx.stt_cpp_pf;
+    return p;
+}
+
+/// Plain-old-data copy of SOT fields from Context.
+/// Passed by value to CUDA kernels so they don't need host-side Context access.
+struct SotParams {
+    int    has_sot = 0;
+    double xi_dl   = 0.0;  // ξ_DL damping-like efficiency
+    double xi_fl   = 0.0;  // ξ_FL field-like efficiency
+    double sx      = 0.0;  // σ̂_x (normalised)
+    double sy      = 0.0;  // σ̂_y
+    double sz      = 1.0;  // σ̂_z
+    double amp     = 0.0;  // ℏ|Je|/(2e μ₀ Ms t_F)  [rad/s]
+};
+
+/// Build a SotParams from a Context.
+inline SotParams sot_params_from_ctx(const Context &ctx) {
+    SotParams p;
+    if (!ctx.has_sot || ctx.Ms <= 0.0 || ctx.sot_thickness <= 0.0) return p;
+    constexpr double HBAR = 1.054571817e-34;
+    constexpr double E_CH = 1.60217662e-19;
+    constexpr double MU0  = 1.2566370614359173e-6;
+    p.has_sot = 1;
+    p.xi_dl   = ctx.sot_xi_dl;
+    p.xi_fl   = ctx.sot_xi_fl;
+    double len = sqrt(ctx.sot_sigma[0]*ctx.sot_sigma[0] +
+                      ctx.sot_sigma[1]*ctx.sot_sigma[1] +
+                      ctx.sot_sigma[2]*ctx.sot_sigma[2]);
+    double inv = (len > 1e-30) ? 1.0 / len : 0.0;
+    p.sx = ctx.sot_sigma[0] * inv;
+    p.sy = ctx.sot_sigma[1] * inv;
+    p.sz = ctx.sot_sigma[2] * inv;
+    p.amp = (fabs(ctx.sot_je) * HBAR) / (2.0 * E_CH * MU0 * ctx.Ms * ctx.sot_thickness);
     return p;
 }
 
