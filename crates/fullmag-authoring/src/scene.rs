@@ -143,6 +143,15 @@ pub struct MagnetizationAsset {
     pub mapping: MagnetizationMapping,
     #[serde(default)]
     pub texture_transform: TextureTransform3D,
+    // preset_texture fields
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_params: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_label: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

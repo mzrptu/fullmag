@@ -25,6 +25,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../../native/backends/fem/include");
     println!("cargo:rerun-if-env-changed=FULLMAG_FEM_LIB_DIR");
     println!("cargo:rerun-if-env-changed=FULLMAG_USE_MFEM_STACK");
+    println!("cargo:rerun-if-env-changed=FULLMAG_FEM_REQUIRE_GPU");
 
     if std::env::var_os("CARGO_FEATURE_BUILD_NATIVE").is_none() {
         return;
@@ -39,6 +40,12 @@ fn main() {
 
     let cmake = std::env::var("FULLMAG_CMAKE").unwrap_or_else(|_| "cmake".to_string());
     let use_mfem_stack = env_flag("FULLMAG_USE_MFEM_STACK");
+    let require_gpu = env_flag("FULLMAG_FEM_REQUIRE_GPU");
+    if require_gpu && !use_mfem_stack {
+        panic!(
+            "FULLMAG_FEM_REQUIRE_GPU=1 but FULLMAG_USE_MFEM_STACK is OFF; set FULLMAG_USE_MFEM_STACK=ON or provide a prebuilt FEM GPU runtime via FULLMAG_FEM_LIB_DIR"
+        );
+    }
     let external_fdm_lib_dir = std::env::var("DEP_FULLMAG_FDM_LIB_DIR")
         .ok()
         .filter(|value| !value.trim().is_empty())

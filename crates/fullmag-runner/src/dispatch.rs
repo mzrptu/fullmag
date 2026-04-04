@@ -35,7 +35,7 @@ use crate::native_fem::NativeFemBackend;
 use crate::relaxation::llg_overdamped_uses_pure_damping;
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
 use crate::relaxation::relaxation_converged;
-#[cfg(any(feature = "cuda", feature = "fem-gpu"))]
+#[cfg(feature = "cuda")]
 use crate::scalar_metrics::{
     apply_average_m_to_step_stats, scalar_outputs_request_average_m, scalar_row_due,
 };
@@ -234,13 +234,6 @@ pub(crate) fn resolve_fdm_engine(problem: &ProblemIR) -> Result<FdmEngine, RunEr
 
 /// Resolve which FEM engine to use based on environment and availability.
 pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunError> {
-    if !problem.current_modules.is_empty() {
-        eprintln!(
-            "warning: FEM engine falling back to CPU reference — \
-             native FEM GPU does not support active current_modules (fallback_reason=current_modules_force_cpu)"
-        );
-        return Ok(FemEngine::CpuReference);
-    }
     apply_runtime_gpu_index(problem, "fem");
     let ir_policy = runtime_fem_policy(problem);
     let fe_order = runtime_fem_order(problem);
@@ -257,19 +250,38 @@ pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunEr
         Err(_) => (ir_policy.to_string(), false),
     };
 
+    if !problem.current_modules.is_empty() {
+        if policy == "gpu" {
+            return Err(RunError {
+                message:
+                    "FEM GPU execution was requested, but native FEM GPU currently does not support active current_modules (fallback_reason=current_modules_force_cpu)"
+                        .to_string(),
+            });
+        }
+        eprintln!(
+            "warning: FEM engine falling back to CPU reference — \
+             native FEM GPU does not support active current_modules (fallback_reason=current_modules_force_cpu)"
+        );
+        return Ok(FemEngine::CpuReference);
+    }
+
+    let availability = native_fem::gpu_availability();
+
     match policy.as_str() {
         "cpu" => Ok(FemEngine::CpuReference),
         "gpu" => {
-            if !native_fem::is_gpu_available() {
+            if !availability.available {
                 if env_override {
                     Err(RunError {
-                        message:
-                            "FULLMAG_FEM_EXECUTION=gpu but the native FEM GPU backend is not available"
-                                .to_string(),
+                        message: format!(
+                            "FULLMAG_FEM_EXECUTION=gpu but the native FEM GPU backend is not available: {}",
+                            availability.reason
+                        ),
                     })
                 } else {
                     eprintln!(
-                        "warning: script requested FEM GPU execution, but the native FEM GPU backend is not available — falling back to CPU reference engine"
+                        "warning: script requested FEM GPU execution, but the native FEM GPU backend is not available: {} — falling back to CPU reference engine",
+                        availability.reason
                     );
                     Ok(FemEngine::CpuReference)
                 }
@@ -297,20 +309,21 @@ pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunEr
             }
         }
         "auto" | _ => {
-            if native_fem::is_gpu_available() && fe_order == 1 {
+            if availability.available && fe_order == 1 {
                 Ok(FemEngine::NativeGpu)
             } else {
-                if native_fem::is_gpu_available() && fe_order != 1 {
+                if availability.available && fe_order != 1 {
                     eprintln!(
                         "warning: native FEM GPU backend currently supports fe_order=1 only; \
                          falling back to CPU for requested fe_order={} \
                          (fallback_reason=fem_gpu_fe_order_unsupported)",
                         fe_order
                     );
-                } else if !native_fem::is_gpu_available() {
+                } else if !availability.available {
                     eprintln!(
                         "info: native FEM GPU backend is not available — using CPU reference engine \
-                         (fallback_reason=native_fem_gpu_unavailable)"
+                         (fallback_reason=native_fem_gpu_unavailable; reason={})",
+                        availability.reason
                     );
                 }
                 Ok(FemEngine::CpuReference)
@@ -540,9 +553,9 @@ fn fem_gpu_min_nodes_threshold() -> Option<usize> {
         Ok(raw) => match raw.trim().parse::<usize>() {
             Ok(0) => None,
             Ok(value) => Some(value),
-            Err(_) => Some(10_000),
+            Err(_) => None,
         },
-        Err(_) => Some(10_000),
+        Err(_) => None,
     }
 }
 
@@ -1436,4 +1449,210 @@ fn record_cuda_final_outputs(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fullmag_ir::{
+        AntennaIR, BackendTarget, CurrentModuleIR, DiscretizationHintsIR, FdmHintsIR, FemHintsIR,
+        FemPlanIR, MeshIR, ProblemIR, RfDriveIR,
+    };
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn fem_policy_problem() -> ProblemIR {
+        let mut problem = ProblemIR::bootstrap_example();
+        problem.backend_policy.requested_backend = BackendTarget::Fem;
+        problem.backend_policy.discretization_hints = Some(DiscretizationHintsIR {
+            fdm: Some(FdmHintsIR {
+                cell: [2e-9, 2e-9, 2e-9],
+                default_cell: None,
+                per_magnet: None,
+                demag: None,
+                boundary_correction: None,
+            }),
+            fem: Some(FemHintsIR {
+                order: 1,
+                hmax: 2e-9,
+                mesh: None,
+            }),
+            hybrid: None,
+        });
+        problem
+            .problem_meta
+            .runtime_metadata
+            .insert(
+                "runtime_selection".to_string(),
+                Value::Object(
+                    [("device".to_string(), Value::String("gpu".to_string()))]
+                        .into_iter()
+                        .collect(),
+                ),
+            );
+        problem
+    }
+
+    fn tiny_fem_plan() -> FemPlanIR {
+        FemPlanIR {
+            mesh_name: "unit_tet".to_string(),
+            mesh_source: None,
+            mesh: MeshIR {
+                mesh_name: "unit_tet".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                elements: vec![[0, 1, 2, 3]],
+                element_markers: vec![1],
+                boundary_faces: vec![[0, 1, 2]],
+                boundary_markers: vec![1],
+                per_domain_quality: HashMap::new(),
+            },
+            object_segments: Vec::new(),
+            mesh_parts: Vec::new(),
+            domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+            domain_frame: None,
+            fe_order: 1,
+            hmax: 0.4,
+            initial_magnetization: vec![[1.0, 0.0, 0.0]; 4],
+            material: fullmag_ir::MaterialIR {
+                name: "Py".to_string(),
+                saturation_magnetisation: 800e3,
+                exchange_stiffness: 13e-12,
+                damping: 0.02,
+                uniaxial_anisotropy: None,
+                anisotropy_axis: None,
+                uniaxial_anisotropy_k2: None,
+                cubic_anisotropy_kc1: None,
+                cubic_anisotropy_kc2: None,
+                cubic_anisotropy_kc3: None,
+                cubic_anisotropy_axis1: None,
+                cubic_anisotropy_axis2: None,
+                ms_field: None,
+                a_field: None,
+                alpha_field: None,
+                ku_field: None,
+                ku2_field: None,
+                kc1_field: None,
+                kc2_field: None,
+                kc3_field: None,
+            },
+            region_materials: Vec::new(),
+            enable_exchange: true,
+            enable_demag: false,
+            external_field: None,
+            current_modules: Vec::new(),
+            gyromagnetic_ratio: 2.211e5,
+            precision: fullmag_ir::ExecutionPrecision::Double,
+            exchange_bc: fullmag_ir::ExchangeBoundaryCondition::Neumann,
+            integrator: fullmag_ir::IntegratorChoice::Heun,
+            fixed_timestep: Some(1e-13),
+            adaptive_timestep: None,
+            relaxation: None,
+            demag_realization: None,
+            air_box_config: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
+            dind_field: None,
+            dbulk_field: None,
+            temperature: None,
+            current_density: None,
+            stt_degree: None,
+            stt_beta: None,
+            stt_spin_polarization: None,
+            stt_lambda: None,
+            stt_epsilon_prime: None,
+            has_oersted_cylinder: false,
+            oersted_current: None,
+            oersted_radius: None,
+            oersted_center: None,
+            oersted_axis: None,
+            oersted_time_dep_kind: 0,
+            oersted_time_dep_freq: 0.0,
+            oersted_time_dep_phase: 0.0,
+            oersted_time_dep_offset: 0.0,
+            oersted_time_dep_t_on: 0.0,
+            oersted_time_dep_t_off: 0.0,
+            magnetoelastic: None,
+        }
+    }
+
+    #[test]
+    fn forced_fem_gpu_without_backend_surfaces_reason() {
+        let _guard = env_lock().lock().expect("env mutex");
+        let problem = fem_policy_problem();
+        unsafe {
+            std::env::set_var("FULLMAG_FEM_EXECUTION", "gpu");
+            std::env::remove_var("FULLMAG_FEM_GPU_INDEX");
+            std::env::remove_var("FULLMAG_CUDA_DEVICE_INDEX");
+        }
+        let result = resolve_fem_engine(&problem);
+        unsafe {
+            std::env::remove_var("FULLMAG_FEM_EXECUTION");
+        }
+        let err = result.expect_err("missing fem-gpu backend should be surfaced");
+        assert!(err.message.contains("native FEM GPU backend is not available"));
+        assert!(err.message.contains("reason") || err.message.contains("without"));
+    }
+
+    #[test]
+    fn forced_fem_gpu_rejects_current_modules() {
+        let _guard = env_lock().lock().expect("env mutex");
+        let mut problem = fem_policy_problem();
+        problem.current_modules.push(CurrentModuleIR::AntennaFieldSource {
+            name: "src".to_string(),
+            solver: "fdtd".to_string(),
+            antenna: AntennaIR::Microstrip {
+                width: 1.0,
+                thickness: 1.0,
+                height_above_magnet: 1.0,
+                preview_length: 1.0,
+                center_x: 0.0,
+                center_y: 0.0,
+                current_distribution: "uniform".to_string(),
+            },
+            drive: RfDriveIR {
+                current_a: 1.0,
+                waveform: None,
+            },
+            air_box_factor: 2.0,
+        });
+        unsafe {
+            std::env::set_var("FULLMAG_FEM_EXECUTION", "gpu");
+        }
+        let result = resolve_fem_engine(&problem);
+        unsafe {
+            std::env::remove_var("FULLMAG_FEM_EXECUTION");
+        }
+        let err = result.expect_err("current modules must reject forced GPU");
+        assert!(err.message.contains("current_modules_force_cpu"));
+    }
+
+    #[test]
+    fn fem_small_mesh_policy_is_opt_in() {
+        let _guard = env_lock().lock().expect("env mutex");
+        unsafe {
+            std::env::remove_var("FULLMAG_FEM_EXECUTION");
+            std::env::remove_var("FULLMAG_FEM_GPU_MIN_NODES");
+        }
+        assert_eq!(should_fallback_to_cpu_for_small_fem_gpu(&tiny_fem_plan()), None);
+
+        unsafe {
+            std::env::set_var("FULLMAG_FEM_GPU_MIN_NODES", "10");
+        }
+        assert_eq!(should_fallback_to_cpu_for_small_fem_gpu(&tiny_fem_plan()), Some(10));
+
+        unsafe {
+            std::env::remove_var("FULLMAG_FEM_GPU_MIN_NODES");
+        }
+    }
 }

@@ -94,17 +94,17 @@ run-nanoflower-static:
 
 run-nanoflower-interactive:
     just ensure-python
-    FULLMAG_SKIP_MANAGED_FEM_GPU_EXPORT=1 just build fullmag-dev
+    just build fullmag-dev
     PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag --dev -i examples/nanoflower_fem.py
 
 run-pylayer-interactive:
     just ensure-python
-    FULLMAG_SKIP_MANAGED_FEM_GPU_EXPORT=1 just build fullmag-dev
+    just build fullmag-dev
     PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag --dev -i examples/py_layer_hole_relax_150nm.py
 
 run-nanoflower-headless:
     just ensure-python
-    FULLMAG_SKIP_MANAGED_FEM_GPU_EXPORT=1 just build fullmag
+    just build fullmag
     PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag examples/nanoflower_fem.py --headless --json
 
 fem-gpu-headless script:

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Sequence, TypeAlias
+from typing import TYPE_CHECKING, Callable, Sequence, TypeAlias
 
 from fullmag._validation import as_vector3, require_positive_int
+
+if TYPE_CHECKING:
+    from fullmag.init.textures import PresetTexture
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +63,7 @@ class SampledMagnetization:
         }
 
 
-InitialMagnetization: TypeAlias = UniformMagnetization | RandomMagnetization | SampledMagnetization
+InitialMagnetization: TypeAlias = "UniformMagnetization | RandomMagnetization | SampledMagnetization | PresetTexture"
 
 
 def uniform(

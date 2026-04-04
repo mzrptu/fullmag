@@ -216,9 +216,21 @@ typedef struct {
     int runtime_version;
 } fullmag_fem_device_info;
 
+typedef struct {
+    int available;
+    int built_with_mfem_stack;
+    int built_with_cuda_runtime;
+    int built_with_ceed;
+    int visible_cuda_device_count;
+    int requested_gpu_index;
+    int resolved_gpu_index;
+    char reason[256];
+} fullmag_fem_availability_info;
+
 typedef struct fullmag_fem_backend fullmag_fem_backend;
 
 int fullmag_fem_is_available(void);
+int fullmag_fem_get_availability_info(fullmag_fem_availability_info *out_info);
 
 fullmag_fem_backend *fullmag_fem_backend_create(
     const fullmag_fem_plan_desc *plan

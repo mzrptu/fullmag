@@ -656,6 +656,23 @@ export interface MagnetizationAsset {
   sample_index: number | null;
   mapping: MagnetizationMapping;
   texture_transform: TextureTransform3D;
+  preset_kind: string | null;
+  preset_params: Record<string, unknown> | null;
+  preset_version: number | null;
+  ui_label: string | null;
+}
+
+export interface MagnetizationPresetState {
+  preset_kind: string;
+  params: Record<string, unknown>;
+  ui_label: string | null;
+}
+
+export interface TextureTransformState {
+  translation: [number, number, number];
+  rotation_quat: [number, number, number, number];
+  scale: [number, number, number];
+  pivot: [number, number, number];
 }
 
 export interface SceneCurrentModulesState {
@@ -703,6 +720,8 @@ export interface SceneEditorState {
   air_mesh_visible: boolean | null;
   air_mesh_opacity: number | null;
   mesh_entity_view_state: Record<string, SceneEditorMeshEntityViewState>;
+  /** "object" | "texture" | null — which gizmo scope is active for the selected object */
+  active_transform_scope: "object" | "texture" | null;
 }
 
 export interface SceneDocument {

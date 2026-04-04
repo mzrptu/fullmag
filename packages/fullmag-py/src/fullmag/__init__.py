@@ -3,10 +3,16 @@
 from . import init
 from .init import (
     MAGNETIZATION_STATE_FORMATS,
+    EvaluatedTexture,
+    PresetTexture,
+    TextureMapping,
+    TextureTransform3D,
+    evaluate_preset_texture,
     infer_magnetization_state_format,
     load_magnetization,
     random,
     save_magnetization,
+    texture,
     uniform,
 )
 from .model import (
@@ -187,6 +193,12 @@ __all__ = [
     "load_problem_from_script",
     "random",
     "save_magnetization",
+    "texture",
+    "EvaluatedTexture",
+    "PresetTexture",
+    "TextureMapping",
+    "TextureTransform3D",
+    "evaluate_preset_texture",
     "uniform",
     # Flat scripting API
     "GeometryMeshHandle",

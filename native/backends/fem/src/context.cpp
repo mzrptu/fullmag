@@ -778,7 +778,9 @@ int context_upload_magnetization_f64(
     }
     // Add magnetoelastic field: H_eff += H_mel
     if (ctx.enable_magnetoelastic && !ctx.h_mel_xyz.empty()) {
+#if FULLMAG_HAS_MFEM_STACK
         compute_magnetoelastic_field(ctx, ctx.m_xyz);
+#endif
         for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
             ctx.h_eff_xyz[i] += ctx.h_mel_xyz[i];
         }
@@ -834,6 +836,7 @@ void context_populate_device_info(Context &ctx) {
 
 } // namespace fullmag::fem
 
+#if FULLMAG_HAS_MFEM_STACK
 void fullmag::fem::compute_magnetoelastic_field(
     Context &ctx,
     const std::vector<double> &m_xyz)
@@ -898,3 +901,4 @@ void fullmag::fem::compute_magnetoelastic_field(
 
     ctx.mel_energy = energy;
 }
+#endif

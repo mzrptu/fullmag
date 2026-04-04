@@ -106,6 +106,18 @@ Vec3 scale3(const Vec3 &a, double s) {
     return {a[0] * s, a[1] * s, a[2] * s};
 }
 
+const char *configured_mfem_device_string() {
+    const char *raw = std::getenv("FULLMAG_FEM_MFEM_DEVICE");
+    if (raw != nullptr && *raw != '\0') {
+        return raw;
+    }
+#ifdef MFEM_USE_CEED
+    return "ceed-cuda:/gpu/cuda/shared";
+#else
+    return "cuda";
+#endif
+}
+
 double dot3(const Vec3 &a, const Vec3 &b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
@@ -480,102 +492,84 @@ bool is_fully_magnetic(const Context &ctx) {
         [first](uint32_t marker) { return marker == first; });
 }
 
-void compute_row_sum_lumped_mass(const mfem::SparseMatrix &matrix, std::vector<double> &lumped) {
-    const int n = matrix.Height();
-    lumped.assign(static_cast<size_t>(n), 0.0);
-    const int *I = matrix.GetI();
-    const double *data = matrix.GetData();
-    for (int row = 0; row < n; ++row) {
-        double sum = 0.0;
-        for (int index = I[row]; index < I[row + 1]; ++index) {
-            sum += data[index];
-        }
-        lumped[static_cast<size_t>(row)] = sum;
+void copy_host_vector_to_mfem(const std::vector<double> &src, mfem::Vector &dst) {
+    dst.SetSize(static_cast<int>(src.size()));
+    dst.UseDevice(true);
+    double *host = dst.HostWrite();
+    for (size_t i = 0; i < src.size(); ++i) {
+        host[static_cast<int>(i)] = src[i];
     }
 }
 
-bool multiply_sparse_matrix_host(
-    Context *ctx,
-    bool allow_interrupt,
-    const mfem::SparseMatrix &matrix,
-    const std::vector<double> &x,
-    std::vector<double> &y)
-{
-    const int n = matrix.Height();
-    y.resize(static_cast<size_t>(n));
-    const int *I = matrix.GetI();
-    const int *J = matrix.GetJ();
-    const double *data = matrix.GetData();
-    for (int row = 0; row < n; ++row) {
-        if (allow_interrupt &&
-            ctx != nullptr &&
-            row > 0 &&
-            (row % kInterruptPollStride) == 0 &&
-            poll_interrupt(*ctx)) {
-            return false;
-        }
-        double sum = 0.0;
-        for (int index = I[row]; index < I[row + 1]; ++index) {
-            sum += data[index] * x[static_cast<size_t>(J[index])];
-        }
-        y[static_cast<size_t>(row)] = sum;
+void copy_mfem_vector_to_host(const mfem::Vector &src, std::vector<double> &dst) {
+    const int n = src.Size();
+    dst.resize(static_cast<size_t>(n));
+    const double *host = src.HostRead();
+    for (int i = 0; i < n; ++i) {
+        dst[static_cast<size_t>(i)] = host[i];
     }
-    return true;
 }
 
-bool apply_exchange_component(
+void prepare_mass_lumping(
+    mfem::BilinearForm &mass_form,
+    mfem::Vector &ones,
+    mfem::Vector &lumped,
+    mfem::Vector &inv_lumped,
+    std::vector<double> &host_lumped)
+{
+    const int ndofs = mass_form.FESpace()->GetNDofs();
+    ones.SetSize(ndofs);
+    lumped.SetSize(ndofs);
+    inv_lumped.SetSize(ndofs);
+    ones.UseDevice(true);
+    lumped.UseDevice(true);
+    inv_lumped.UseDevice(true);
+    ones = 1.0;
+    mass_form.Mult(ones, lumped);
+    const double *lumped_read = lumped.Read();
+    double *inv_write = inv_lumped.Write();
+    mfem::forall(ndofs, [=] MFEM_HOST_DEVICE (int i) {
+        const double mass = lumped_read[i];
+        inv_write[i] = mass > 0.0 ? 1.0 / mass : 0.0;
+    });
+    copy_mfem_vector_to_host(lumped, host_lumped);
+}
+
+bool apply_exchange_component_device(
     Context *ctx,
     bool allow_interrupt,
-    const mfem::SparseMatrix &stiffness,
-    const std::vector<double> &lumped_mass,
-    const std::vector<double> &m_values,
-    std::vector<double> &h_component,
-    std::vector<double> &tmp_host,
-    const std::vector<double> &a_field,
-    const std::vector<double> &ms_field,
-    double uniform_exchange_stiffness,
-    double uniform_ms,
-    double *energy_out,
-    std::string &error)
+    mfem::BilinearForm &exchange_form,
+    mfem::GridFunction &m_component,
+    mfem::GridFunction &ms_field,
+    mfem::Vector &inv_lumped_mass,
+    mfem::Vector &tmp,
+    mfem::Vector &h_component,
+    std::vector<double> &h_component_host,
+    double *energy_out)
 {
-    if (stiffness.Height() != static_cast<int>(m_values.size())) {
-        error = "MFEM stiffness size does not match host magnetization component size";
+    exchange_form.Mult(m_component, tmp);
+    if (allow_interrupt && ctx != nullptr && poll_interrupt(*ctx)) {
         return false;
     }
-    if (!multiply_sparse_matrix_host(ctx, allow_interrupt, stiffness, m_values, tmp_host)) {
-        return false;
-    }
-    h_component.resize(m_values.size());
-    double energy = 0.0;
-    for (int i = 0; i < stiffness.Height(); ++i) {
-        if (allow_interrupt &&
-            ctx != nullptr &&
-            i > 0 &&
-            (i % kInterruptPollStride) == 0 &&
-            poll_interrupt(*ctx)) {
-            return false;
-        }
-        const double mass = lumped_mass[static_cast<size_t>(i)];
-        const double A_i = scalar_field_value(
-            a_field,
-            static_cast<size_t>(i),
-            uniform_exchange_stiffness);
-        const double Ms_i = scalar_field_value(ms_field, static_cast<size_t>(i), uniform_ms);
-        if (mass <= 0.0) {
-            // S08: non-magnetic nodes may have zero lumped mass when
-            // assembly is restricted to magnetic elements — set h=0.
-            h_component[static_cast<size_t>(i)] = 0.0;
-        } else if (Ms_i <= 0.0) {
-            h_component[static_cast<size_t>(i)] = 0.0;
+
+    const int ndofs = tmp.Size();
+    const double *tmp_read = tmp.Read();
+    const double *inv_mass_read = inv_lumped_mass.Read();
+    const double *ms_read = ms_field.Read();
+    double *h_write = h_component.Write();
+    mfem::forall(ndofs, [=] MFEM_HOST_DEVICE (int i) {
+        const double inv_mass = inv_mass_read[i];
+        const double Ms_i = ms_read[i];
+        if (inv_mass <= 0.0 || Ms_i <= 0.0) {
+            h_write[i] = 0.0;
         } else {
-            const double prefactor_i = 2.0 * A_i / (kMu0 * Ms_i);
-            h_component[static_cast<size_t>(i)] = -prefactor_i * tmp_host[i] / mass;
+            h_write[i] = -(2.0 / (kMu0 * Ms_i)) * tmp_read[i] * inv_mass;
         }
-        energy += A_i * m_values[static_cast<size_t>(i)] * tmp_host[static_cast<size_t>(i)];
-    }
+    });
     if (energy_out != nullptr) {
-        *energy_out = energy;
+        *energy_out = m_component * tmp;
     }
+    copy_mfem_vector_to_host(h_component, h_component_host);
     return true;
 }
 
@@ -1264,80 +1258,72 @@ bool compute_exchange_for_magnetization(
     }
 
     auto *exchange_form = static_cast<mfem::BilinearForm *>(ctx.mfem_exchange_form);
-    auto *mass_form = static_cast<mfem::BilinearForm *>(ctx.mfem_mass_form);
-    if (exchange_form == nullptr || mass_form == nullptr) {
-        error = "MFEM exchange scaffold is missing one or more assembled objects";
+    auto *gf_mx = static_cast<mfem::GridFunction *>(ctx.mfem_gf_mx);
+    auto *gf_my = static_cast<mfem::GridFunction *>(ctx.mfem_gf_my);
+    auto *gf_mz = static_cast<mfem::GridFunction *>(ctx.mfem_gf_mz);
+    auto *gf_ms = static_cast<mfem::GridFunction *>(ctx.mfem_gf_ms);
+    auto *inv_lumped_mass = static_cast<mfem::Vector *>(ctx.mfem_inv_lumped_mass);
+    auto *tmp_vec = static_cast<mfem::Vector *>(ctx.mfem_exchange_tmp_vec);
+    auto *out_vec = static_cast<mfem::Vector *>(ctx.mfem_exchange_out_vec);
+    if (exchange_form == nullptr || gf_mx == nullptr || gf_my == nullptr || gf_mz == nullptr ||
+        gf_ms == nullptr || inv_lumped_mass == nullptr || tmp_vec == nullptr || out_vec == nullptr) {
+        error = "MFEM exchange scaffold is missing one or more operator/device buffers";
         return false;
     }
 
     unpack_aos_to_existing_components(m_xyz, ctx.mfem_mx, ctx.mfem_my, ctx.mfem_mz);
-
-    const auto &stiffness = exchange_form->SpMat();
-    const auto &mass = mass_form->SpMat();
-    if (ctx.mfem_lumped_mass.empty()) {
-        compute_row_sum_lumped_mass(mass, ctx.mfem_lumped_mass);
-    }
-    if (ctx.mfem_exchange_tmp.size() != ctx.mfem_lumped_mass.size()) {
-        ctx.mfem_exchange_tmp.resize(ctx.mfem_lumped_mass.size(), 0.0);
-    }
+    copy_host_vector_to_mfem(ctx.mfem_mx, *gf_mx);
+    copy_host_vector_to_mfem(ctx.mfem_my, *gf_my);
+    copy_host_vector_to_mfem(ctx.mfem_mz, *gf_mz);
 
     double exchange_energy_accum = 0.0;
     double component_energy = 0.0;
 
-    if (!apply_exchange_component(
+    if (!apply_exchange_component_device(
             &ctx,
             allow_interrupt,
-            stiffness,
-            ctx.mfem_lumped_mass,
-            ctx.mfem_mx,
+            *exchange_form,
+            *gf_mx,
+            *gf_ms,
+            *inv_lumped_mass,
+            *tmp_vec,
+            *out_vec,
             ctx.mfem_h_ex_x,
-            ctx.mfem_exchange_tmp,
-            ctx.A_field,
-            ctx.Ms_field,
-            ctx.material.exchange_stiffness,
-            ctx.material.saturation_magnetisation,
-            exchange_energy != nullptr ? &component_energy : nullptr,
-            error)) {
+            exchange_energy != nullptr ? &component_energy : nullptr)) {
         return false;
     }
     if (exchange_energy != nullptr) {
         exchange_energy_accum += component_energy;
     }
     component_energy = 0.0;
-    if (!apply_exchange_component(
+    if (!apply_exchange_component_device(
             &ctx,
             allow_interrupt,
-            stiffness,
-            ctx.mfem_lumped_mass,
-            ctx.mfem_my,
+            *exchange_form,
+            *gf_my,
+            *gf_ms,
+            *inv_lumped_mass,
+            *tmp_vec,
+            *out_vec,
             ctx.mfem_h_ex_y,
-            ctx.mfem_exchange_tmp,
-            ctx.A_field,
-            ctx.Ms_field,
-            ctx.material.exchange_stiffness,
-            ctx.material.saturation_magnetisation,
-            exchange_energy != nullptr ? &component_energy : nullptr,
-            error)) {
+            exchange_energy != nullptr ? &component_energy : nullptr)) {
         return false;
     }
     if (exchange_energy != nullptr) {
         exchange_energy_accum += component_energy;
     }
     component_energy = 0.0;
-    if (!apply_exchange_component(
+    if (!apply_exchange_component_device(
             &ctx,
             allow_interrupt,
-            stiffness,
-            ctx.mfem_lumped_mass,
-            ctx.mfem_mz,
+            *exchange_form,
+            *gf_mz,
+            *gf_ms,
+            *inv_lumped_mass,
+            *tmp_vec,
+            *out_vec,
             ctx.mfem_h_ex_z,
-            ctx.mfem_exchange_tmp,
-            ctx.A_field,
-            ctx.Ms_field,
-            ctx.material.exchange_stiffness,
-            ctx.material.saturation_magnetisation,
-            exchange_energy != nullptr ? &component_energy : nullptr,
-            error)) {
+            exchange_energy != nullptr ? &component_energy : nullptr)) {
         return false;
     }
     if (allow_interrupt && poll_interrupt(ctx)) {
@@ -1493,12 +1479,8 @@ bool compute_demag_for_magnetization(
     std::string &error)
 {
     if (ctx.mfem_lumped_mass.empty()) {
-        auto *mass_form = static_cast<mfem::BilinearForm *>(ctx.mfem_mass_form);
-        if (mass_form == nullptr) {
-            error = "MFEM mass form is unavailable for transfer-grid demag energy evaluation";
-            return false;
-        }
-        compute_row_sum_lumped_mass(mass_form->SpMat(), ctx.mfem_lumped_mass);
+        error = "MFEM lumped mass is unavailable for transfer-grid demag energy evaluation";
+        return false;
     }
 
     if (!ensure_transfer_grid_backend(ctx, m_xyz, error)) {
@@ -2166,10 +2148,8 @@ bool recover_demag_field(
 
     // Demag energy: E_d = -μ₀/2 · M_s · Σᵢ (m·h_d)ᵢ · M_Lᵢ
     if (ctx.mfem_lumped_mass.empty()) {
-        auto *mass_form = static_cast<mfem::BilinearForm *>(ctx.mfem_mass_form);
-        if (mass_form != nullptr) {
-            compute_row_sum_lumped_mass(mass_form->SpMat(), ctx.mfem_lumped_mass);
-        }
+        error = "MFEM lumped mass is unavailable for Poisson demag energy evaluation";
+        return false;
     }
 
     demag_energy = 0.0;
@@ -2233,8 +2213,9 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
                     cudaGetErrorString(cuda_err);
             return false;
         }
-        std::call_once(s_mfem_device_once, [&ctx]() {
-            ctx.mfem_device = new mfem::Device("cuda");
+        const char *device_config = configured_mfem_device_string();
+        std::call_once(s_mfem_device_once, [&ctx, device_config]() {
+            ctx.mfem_device = new mfem::Device(device_config);
         });
         ctx.mfem_selected_device_index = selected_device;
 
@@ -2318,22 +2299,46 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
         auto *gf_mx = new mfem::GridFunction(fes);
         auto *gf_my = new mfem::GridFunction(fes);
         auto *gf_mz = new mfem::GridFunction(fes);
+        auto *gf_a = new mfem::GridFunction(fes);
+        auto *gf_ms = new mfem::GridFunction(fes);
         // S09: enable device memory so that future GPU operators find data
         // already on device without extra H2D copies.
         gf_mx->UseDevice(true);
         gf_my->UseDevice(true);
         gf_mz->UseDevice(true);
+        gf_a->UseDevice(true);
+        gf_ms->UseDevice(true);
         double *mx_host = gf_mx->HostWrite();
         double *my_host = gf_my->HostWrite();
         double *mz_host = gf_mz->HostWrite();
+        double *a_host = gf_a->HostWrite();
+        double *ms_host = gf_ms->HostWrite();
         for (int i = 0; i < fes->GetNDofs(); ++i) {
             mx_host[i] = ctx.mfem_mx[static_cast<size_t>(i)];
             my_host[i] = ctx.mfem_my[static_cast<size_t>(i)];
             mz_host[i] = ctx.mfem_mz[static_cast<size_t>(i)];
+            a_host[i] = scalar_field_value(
+                ctx.A_field,
+                static_cast<size_t>(i),
+                ctx.material.exchange_stiffness);
+            ms_host[i] = scalar_field_value(
+                ctx.Ms_field,
+                static_cast<size_t>(i),
+                ctx.material.saturation_magnetisation);
         }
 
         auto *exchange_form = new mfem::BilinearForm(fes);
         auto *mass_form = new mfem::BilinearForm(fes);
+        auto *mass_ones = new mfem::Vector(fes->GetNDofs());
+        auto *mass_lumped = new mfem::Vector(fes->GetNDofs());
+        auto *inv_lumped_mass = new mfem::Vector(fes->GetNDofs());
+        auto *exchange_tmp_vec = new mfem::Vector(fes->GetNDofs());
+        auto *exchange_out_vec = new mfem::Vector(fes->GetNDofs());
+        mass_ones->UseDevice(true);
+        mass_lumped->UseDevice(true);
+        inv_lumped_mass->UseDevice(true);
+        exchange_tmp_vec->UseDevice(true);
+        exchange_out_vec->UseDevice(true);
 
         // F-01 fix: build magnetic attribute set from the actual magnetic
         // element mask instead of hardcoding attribute 1.  This ensures
@@ -2368,6 +2373,13 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
                         "assembly would be empty.  Check element_markers.";
                 delete exchange_form;
                 delete mass_form;
+                delete exchange_out_vec;
+                delete exchange_tmp_vec;
+                delete inv_lumped_mass;
+                delete mass_lumped;
+                delete mass_ones;
+                delete gf_ms;
+                delete gf_a;
                 delete gf_mx;
                 delete gf_my;
                 delete gf_mz;
@@ -2378,16 +2390,17 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
             }
         }
 
+        exchange_form->SetAssemblyLevel(mfem::AssemblyLevel::PARTIAL);
         exchange_form->AddDomainIntegrator(
-            new mfem::DiffusionIntegrator(), magnetic_attr_marker);
+            new mfem::DiffusionIntegrator(new mfem::GridFunctionCoefficient(gf_a)),
+            magnetic_attr_marker);
         exchange_form->Assemble();
-        exchange_form->Finalize();
 
+        mass_form->SetAssemblyLevel(mfem::AssemblyLevel::PARTIAL);
         mass_form->AddDomainIntegrator(
             new mfem::MassIntegrator(), magnetic_attr_marker);
         mass_form->Assemble();
-        mass_form->Finalize();
-        compute_row_sum_lumped_mass(mass_form->SpMat(), ctx.mfem_lumped_mass);
+        prepare_mass_lumping(*mass_form, *mass_ones, *mass_lumped, *inv_lumped_mass, ctx.mfem_lumped_mass);
         const bool has_nonzero_lumped_mass = std::any_of(
             ctx.mfem_lumped_mass.begin(),
             ctx.mfem_lumped_mass.end(),
@@ -2399,6 +2412,13 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
                     "resolution.";
             delete exchange_form;
             delete mass_form;
+            delete exchange_out_vec;
+            delete exchange_tmp_vec;
+            delete inv_lumped_mass;
+            delete mass_lumped;
+            delete mass_ones;
+            delete gf_ms;
+            delete gf_a;
             delete gf_mx;
             delete gf_my;
             delete gf_mz;
@@ -2414,8 +2434,15 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
         ctx.mfem_gf_mx = gf_mx;
         ctx.mfem_gf_my = gf_my;
         ctx.mfem_gf_mz = gf_mz;
+        ctx.mfem_gf_a = gf_a;
+        ctx.mfem_gf_ms = gf_ms;
         ctx.mfem_exchange_form = exchange_form;
         ctx.mfem_mass_form = mass_form;
+        ctx.mfem_mass_ones = mass_ones;
+        ctx.mfem_mass_lumped = mass_lumped;
+        ctx.mfem_inv_lumped_mass = inv_lumped_mass;
+        ctx.mfem_exchange_tmp_vec = exchange_tmp_vec;
+        ctx.mfem_exchange_out_vec = exchange_out_vec;
         ctx.mfem_ready = true;
         return true;
     } catch (const std::exception &ex) {
@@ -2448,8 +2475,15 @@ void context_destroy_mfem(Context &ctx) {
     ctx.transfer_grid.kernel_yz_spectrum.clear();
     // NOTE: mfem::Device is a process-global singleton — do NOT delete it here,
     // because a subsequent NativeFemBackend may need the already-configured device.
+    delete static_cast<mfem::Vector *>(ctx.mfem_exchange_out_vec);
+    delete static_cast<mfem::Vector *>(ctx.mfem_exchange_tmp_vec);
+    delete static_cast<mfem::Vector *>(ctx.mfem_inv_lumped_mass);
+    delete static_cast<mfem::Vector *>(ctx.mfem_mass_lumped);
+    delete static_cast<mfem::Vector *>(ctx.mfem_mass_ones);
     delete static_cast<mfem::BilinearForm *>(ctx.mfem_mass_form);
     delete static_cast<mfem::BilinearForm *>(ctx.mfem_exchange_form);
+    delete static_cast<mfem::GridFunction *>(ctx.mfem_gf_ms);
+    delete static_cast<mfem::GridFunction *>(ctx.mfem_gf_a);
     delete static_cast<mfem::GridFunction *>(ctx.mfem_gf_mz);
     delete static_cast<mfem::GridFunction *>(ctx.mfem_gf_my);
     delete static_cast<mfem::GridFunction *>(ctx.mfem_gf_mx);
@@ -2459,6 +2493,13 @@ void context_destroy_mfem(Context &ctx) {
     ctx.mfem_device = nullptr;
     ctx.mfem_mass_form = nullptr;
     ctx.mfem_exchange_form = nullptr;
+    ctx.mfem_exchange_out_vec = nullptr;
+    ctx.mfem_exchange_tmp_vec = nullptr;
+    ctx.mfem_inv_lumped_mass = nullptr;
+    ctx.mfem_mass_lumped = nullptr;
+    ctx.mfem_mass_ones = nullptr;
+    ctx.mfem_gf_ms = nullptr;
+    ctx.mfem_gf_a = nullptr;
     ctx.mfem_gf_mz = nullptr;
     ctx.mfem_gf_my = nullptr;
     ctx.mfem_gf_mx = nullptr;

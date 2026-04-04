@@ -92,6 +92,10 @@ function buildMagnetizationAsset(
       scale: oneVec3(),
       pivot: zeroVec3(),
     },
+    preset_kind: null,
+    preset_params: null,
+    preset_version: null,
+    ui_label: null,
   };
 }
 

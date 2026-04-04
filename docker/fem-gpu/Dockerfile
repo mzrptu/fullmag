@@ -3,6 +3,7 @@ FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS deps
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CMAKE_VERSION=3.30.5
 ENV MFEM_REF=v4.7
+ENV LIBCEED_REF=v0.12.0
 ENV INSTALL_PREFIX=/opt/fullmag-deps
 ENV CUDA_HOME=/usr/local/cuda
 ENV CUDA_PATH=/usr/local/cuda
@@ -12,6 +13,7 @@ ENV FC=gfortran
 ENV NVCC=/usr/local/cuda/bin/nvcc
 ENV PATH=/usr/local/cuda/bin:${INSTALL_PREFIX}/bin:/root/.cargo/bin:$PATH
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}
+ENV FULLMAG_FEM_MFEM_DEVICE=ceed-cuda:/gpu/cuda/shared
 ENV CMAKE_PREFIX_PATH=${INSTALL_PREFIX}:${CMAKE_PREFIX_PATH}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -38,6 +40,10 @@ RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain nightly
 WORKDIR /tmp/build
 
 RUN git clone --depth 1 --branch ${MFEM_REF} https://github.com/mfem/mfem.git
+RUN git clone --depth 1 --branch ${LIBCEED_REF} https://github.com/CEED/libCEED.git /tmp/build/libCEED
+
+RUN make -C /tmp/build/libCEED -j"$(nproc)" && \
+    make -C /tmp/build/libCEED install prefix=${INSTALL_PREFIX}
 
 # S10: Build hypre (serial + CUDA) — required for CG+AMG Poisson solver
 RUN git clone --depth 1 https://github.com/hypre-space/hypre.git /tmp/build/hypre && \
@@ -59,7 +65,8 @@ RUN cmake -S /tmp/build/mfem -B /tmp/build/mfem/build \
       -DMFEM_USE_MPI=YES \
       -DMFEM_USE_METIS=NO \
       -DMFEM_USE_CUDA=YES \
-      -DMFEM_USE_CEED=NO \
+      -DMFEM_USE_CEED=YES \
+      -DCEED_DIR=${INSTALL_PREFIX} \
       -DMFEM_USE_HYPRE=YES \
       -DHYPRE_DIR=${INSTALL_PREFIX} && \
     cmake --build /tmp/build/mfem/build -j"$(nproc)" && \
@@ -76,6 +83,7 @@ ENV CUDA_PATH=/usr/local/cuda
 ENV PATH=/usr/local/cuda/bin:/root/.cargo/bin:${PNPM_HOME}:${INSTALL_PREFIX}/bin:${PATH}
 ENV CMAKE_PREFIX_PATH=${INSTALL_PREFIX}:${CMAKE_PREFIX_PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}
+ENV FULLMAG_FEM_MFEM_DEVICE=ceed-cuda:/gpu/cuda/shared
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \

@@ -11,6 +11,8 @@ import FdmInstances from "./r3f/FdmInstances";
 import { rotateCameraAroundTarget, focusCameraOnBounds } from "./camera/cameraHelpers";
 import FdmLighting from "./r3f/FdmLighting";
 import SceneAxes3D from "./r3f/SceneAxes3D";
+import TextureTransformGizmo, { type TextureGizmoMode } from "./TextureTransformGizmo";
+import type { TextureTransform3D } from "@/lib/textureTransform";
 import type {
   AntennaOverlay,
   BuilderObjectOverlay,
@@ -52,6 +54,10 @@ interface Props {
   objectViewMode?: ObjectViewMode;
   onRequestObjectSelect?: (id: string) => void;
   onGeometryTranslate?: (id: string, dx: number, dy: number, dz: number) => void;
+  /** Active texture transform for the selected object (physical coords, metres) */
+  activeTextureTransform?: TextureTransform3D | null;
+  textureGizmoMode?: TextureGizmoMode;
+  onTextureTransformCommit?: (next: TextureTransform3D) => void;
 }
 
 export type QualityLevel = "low" | "high" | "ultra";

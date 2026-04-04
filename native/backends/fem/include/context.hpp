@@ -213,8 +213,15 @@ struct Context {
     void *mfem_gf_mx = nullptr;
     void *mfem_gf_my = nullptr;
     void *mfem_gf_mz = nullptr;
+    void *mfem_gf_a = nullptr;
+    void *mfem_gf_ms = nullptr;
     void *mfem_exchange_form = nullptr;
     void *mfem_mass_form = nullptr;
+    void *mfem_mass_ones = nullptr;
+    void *mfem_mass_lumped = nullptr;
+    void *mfem_inv_lumped_mass = nullptr;
+    void *mfem_exchange_tmp_vec = nullptr;
+    void *mfem_exchange_out_vec = nullptr;
     bool mfem_ready = false;
     bool mfem_exchange_ready = false;
 

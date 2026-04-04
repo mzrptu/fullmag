@@ -48,6 +48,10 @@ function fallbackMagnetization(name: string): MagnetizationAsset {
       scale: [1, 1, 1],
       pivot: [0, 0, 0],
     },
+    preset_kind: null,
+    preset_params: null,
+    preset_version: null,
+    ui_label: null,
   };
 }
 

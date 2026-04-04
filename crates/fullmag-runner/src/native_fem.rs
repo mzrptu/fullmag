@@ -54,11 +54,83 @@ fn transfer_axis_cells(extent: f64, requested_cell: f64) -> usize {
 pub(crate) fn is_gpu_available() -> bool {
     #[cfg(feature = "fem-gpu")]
     {
-        unsafe { ffi::fullmag_fem_is_available() == 1 }
+        gpu_availability().available
     }
     #[cfg(not(feature = "fem-gpu"))]
     {
         false
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub(crate) struct GpuAvailability {
+    pub available: bool,
+    pub built_with_mfem_stack: bool,
+    pub built_with_cuda_runtime: bool,
+    pub built_with_ceed: bool,
+    pub visible_cuda_device_count: i32,
+    pub requested_gpu_index: i32,
+    pub resolved_gpu_index: i32,
+    pub reason: String,
+}
+
+pub(crate) fn gpu_availability() -> GpuAvailability {
+    #[cfg(feature = "fem-gpu")]
+    {
+        let mut info = ffi::fullmag_fem_availability_info {
+            available: 0,
+            built_with_mfem_stack: 0,
+            built_with_cuda_runtime: 0,
+            built_with_ceed: 0,
+            visible_cuda_device_count: 0,
+            requested_gpu_index: -1,
+            resolved_gpu_index: -1,
+            reason: [0; 256],
+        };
+        let rc = unsafe { ffi::fullmag_fem_get_availability_info(&mut info) };
+        if rc != ffi::FULLMAG_FEM_OK {
+            return GpuAvailability {
+                available: false,
+                built_with_mfem_stack: false,
+                built_with_cuda_runtime: false,
+                built_with_ceed: false,
+                visible_cuda_device_count: 0,
+                requested_gpu_index: -1,
+                resolved_gpu_index: -1,
+                reason: last_global_error_or(
+                    "fullmag_fem_get_availability_info failed without an error message",
+                ),
+            };
+        }
+
+        let reason = unsafe { CStr::from_ptr(info.reason.as_ptr()) }
+            .to_string_lossy()
+            .to_string();
+
+        GpuAvailability {
+            available: info.available == 1,
+            built_with_mfem_stack: info.built_with_mfem_stack == 1,
+            built_with_cuda_runtime: info.built_with_cuda_runtime == 1,
+            built_with_ceed: info.built_with_ceed == 1,
+            visible_cuda_device_count: info.visible_cuda_device_count,
+            requested_gpu_index: info.requested_gpu_index,
+            resolved_gpu_index: info.resolved_gpu_index,
+            reason,
+        }
+    }
+    #[cfg(not(feature = "fem-gpu"))]
+    {
+        GpuAvailability {
+            available: false,
+            built_with_mfem_stack: false,
+            built_with_cuda_runtime: false,
+            built_with_ceed: false,
+            visible_cuda_device_count: 0,
+            requested_gpu_index: -1,
+            resolved_gpu_index: -1,
+            reason: "fullmag-runner was built without the fem-gpu feature".to_string(),
+        }
     }
 }
 
@@ -475,10 +547,12 @@ impl NativeFemBackend {
 
         let handle = unsafe { ffi::fullmag_fem_backend_create(&plan_desc) };
         if handle.is_null() {
+            let availability = gpu_availability();
             return Err(RunError {
-                message: last_global_error_or(
-                    "FEM GPU backend_create returned null without an error message",
-                ),
+                message: last_global_error_or(&format!(
+                    "FEM GPU backend_create returned null without an error message ({})",
+                    availability.reason
+                )),
             });
         }
 
@@ -1131,6 +1205,16 @@ mod tests {
         let backend = match NativeFemBackend::create(&plan) {
             Ok(backend) => backend,
             Err(err) => {
+                if !is_gpu_available() {
+                    assert!(
+                        err.message.contains("MFEM")
+                            || err.message.contains("scaffold")
+                            || err.message.contains("saturation_magnetisation"),
+                        "unexpected unavailable create message: {}",
+                        err.message
+                    );
+                    return;
+                }
                 if is_gpu_available() && err.message.contains("FDM backend") {
                     eprintln!("skipping native FEM demag bootstrap test: {}", err.message);
                     return;
@@ -1194,6 +1278,16 @@ mod tests {
         let mut backend = match NativeFemBackend::create(&plan) {
             Ok(backend) => backend,
             Err(err) => {
+                if !is_gpu_available() {
+                    assert!(
+                        err.message.contains("MFEM")
+                            || err.message.contains("scaffold")
+                            || err.message.contains("saturation_magnetisation"),
+                        "unexpected unavailable create message: {}",
+                        err.message
+                    );
+                    return;
+                }
                 if is_gpu_available() && err.message.contains("FDM backend") {
                     eprintln!(
                         "skipping native FEM demag bootstrap step test: {}",

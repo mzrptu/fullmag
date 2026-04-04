@@ -2,6 +2,8 @@
 
 #include "context.hpp"
 
+#include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <optional>
@@ -36,26 +38,122 @@ std::optional<int> selected_cuda_device_from_env() {
     return static_cast<int>(parsed);
 }
 
+bool env_flag(const char *name) {
+    const char *raw = std::getenv(name);
+    if (raw == nullptr) {
+        return false;
+    }
+    std::string value(raw);
+    for (char &ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value == "1" || value == "on" || value == "true" || value == "yes";
+}
+
+void set_reason(fullmag_fem_availability_info &info, const std::string &message) {
+    std::snprintf(info.reason, sizeof(info.reason), "%s", message.c_str());
+}
+
+bool mfem_device_request_needs_ceed() {
+    const char *raw = std::getenv("FULLMAG_FEM_MFEM_DEVICE");
+    return raw != nullptr && std::strncmp(raw, "ceed-", 5) == 0;
+}
+
+fullmag_fem_availability_info query_availability() {
+    fullmag_fem_availability_info info{};
+    info.available = 0;
+    info.requested_gpu_index = -1;
+    info.resolved_gpu_index = -1;
+
+#if FULLMAG_HAS_MFEM_STACK
+    info.built_with_mfem_stack = 1;
+#else
+    set_reason(info, kUnavailableMessage);
+    return info;
+#endif
+
+#if FULLMAG_HAS_CUDA_RUNTIME
+    info.built_with_cuda_runtime = 1;
+#else
+    set_reason(info, "fullmag_fem native backend was built without CUDA runtime support");
+    return info;
+#endif
+
+#ifdef MFEM_USE_CEED
+    info.built_with_ceed = 1;
+#endif
+
+    if (mfem_device_request_needs_ceed() && !info.built_with_ceed) {
+        set_reason(
+            info,
+            "FULLMAG_FEM_MFEM_DEVICE requests a CEED backend, but MFEM was built without libCEED support");
+        return info;
+    }
+
+    int device_count = 0;
+#if FULLMAG_HAS_CUDA_RUNTIME
+    const cudaError_t device_count_rc = cudaGetDeviceCount(&device_count);
+    if (device_count_rc != cudaSuccess) {
+        set_reason(
+            info,
+            std::string("cudaGetDeviceCount failed for fullmag_fem: ") + cudaGetErrorString(device_count_rc));
+        return info;
+    }
+
+    info.visible_cuda_device_count = device_count;
+    if (device_count <= 0) {
+        set_reason(info, "no CUDA devices are visible to the native FEM backend");
+        return info;
+    }
+
+    const auto selected = selected_cuda_device_from_env();
+    if (selected.has_value()) {
+        info.requested_gpu_index = *selected;
+    }
+
+    const int resolved_index = selected.value_or(0);
+    if (resolved_index < 0 || resolved_index >= device_count) {
+        set_reason(
+            info,
+            "requested FEM GPU device index is out of range for the visible CUDA device set");
+        return info;
+    }
+    info.resolved_gpu_index = resolved_index;
+#endif
+
+    if (env_flag("FULLMAG_FEM_REQUIRE_CEED") && !info.built_with_ceed) {
+        set_reason(
+            info,
+            "FULLMAG_FEM_REQUIRE_CEED=1 requested a libCEED-enabled FEM runtime, but the detected MFEM stack has no libCEED support");
+        return info;
+    }
+
+    info.available = 1;
+    if (info.built_with_ceed) {
+        set_reason(info, "native FEM GPU backend is available (MFEM + CUDA + libCEED)");
+    } else {
+        set_reason(info, "native FEM GPU backend is available in bootstrap mode (MFEM + CUDA, without libCEED)");
+    }
+    return info;
+}
+
 } // namespace
 
 extern "C" {
 
 int fullmag_fem_is_available(void) {
-#if FULLMAG_HAS_MFEM_STACK
-#if FULLMAG_HAS_CUDA_RUNTIME
-    int device_count = 0;
-    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count <= 0) {
-        return 0;
+    const auto info = query_availability();
+    return info.available != 0 ? 1 : 0;
+}
+
+int fullmag_fem_get_availability_info(fullmag_fem_availability_info *out_info) {
+    if (out_info == nullptr) {
+        fullmag_fem_set_global_error(
+            "fullmag_fem_get_availability_info received null out_info");
+        return FULLMAG_FEM_ERR_INVALID;
     }
-    const auto selected = selected_cuda_device_from_env();
-    if (selected.has_value() && (*selected < 0 || *selected >= device_count)) {
-        return 0;
-    }
-#endif
-    return 1;
-#else
-    return 0;
-#endif
+    *out_info = query_availability();
+    return FULLMAG_FEM_OK;
 }
 
 fullmag_fem_backend *fullmag_fem_backend_create(const fullmag_fem_plan_desc *plan) {

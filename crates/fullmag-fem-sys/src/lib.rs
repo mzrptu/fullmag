@@ -243,12 +243,28 @@ pub struct fullmag_fem_device_info {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct fullmag_fem_availability_info {
+    pub available: i32,
+    pub built_with_mfem_stack: i32,
+    pub built_with_cuda_runtime: i32,
+    pub built_with_ceed: i32,
+    pub visible_cuda_device_count: i32,
+    pub requested_gpu_index: i32,
+    pub resolved_gpu_index: i32,
+    pub reason: [c_char; 256],
+}
+
+#[repr(C)]
 pub struct fullmag_fem_backend {
     _private: [u8; 0],
 }
 
 extern "C" {
     pub fn fullmag_fem_is_available() -> i32;
+    pub fn fullmag_fem_get_availability_info(
+        out_info: *mut fullmag_fem_availability_info,
+    ) -> i32;
 
     pub fn fullmag_fem_backend_create(
         plan: *const fullmag_fem_plan_desc,

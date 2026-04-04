@@ -947,6 +947,27 @@ function _buildObjectNode(objectNode: {
       },
       _buildRegionNode(geo, regionId),
       _buildMaterialNode(geo, materialId),
+      {
+        id: `mag-${objectNode.name}`,
+        label: "Magnetization",
+        icon: "🧭",
+        status: "ready",
+        badge: geo.magnetization.kind,
+        children: [
+          {
+            id: `mag-${objectNode.name}-kind`,
+            label: `m₀: ${_magnetizationLabel(geo.magnetization)}`,
+            icon: geo.magnetization.kind === "preset_texture" ? "◉" : "◢",
+            status: "ready",
+          },
+          {
+            id: `mag-${objectNode.name}-transform`,
+            label: "Texture Transform",
+            icon: "⟳",
+            status: "pending",
+          },
+        ],
+      },
       meshNode,
     ],
   };
