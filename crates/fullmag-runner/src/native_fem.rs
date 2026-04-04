@@ -1208,8 +1208,7 @@ mod tests {
                 if !is_gpu_available() {
                     assert!(
                         err.message.contains("MFEM")
-                            || err.message.contains("scaffold")
-                            || err.message.contains("saturation_magnetisation"),
+                            || err.message.contains("scaffold"),
                         "unexpected unavailable create message: {}",
                         err.message
                     );
@@ -1281,8 +1280,7 @@ mod tests {
                 if !is_gpu_available() {
                     assert!(
                         err.message.contains("MFEM")
-                            || err.message.contains("scaffold")
-                            || err.message.contains("saturation_magnetisation"),
+                            || err.message.contains("scaffold"),
                         "unexpected unavailable create message: {}",
                         err.message
                     );

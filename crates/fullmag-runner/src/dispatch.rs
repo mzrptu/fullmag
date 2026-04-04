@@ -35,7 +35,7 @@ use crate::native_fem::NativeFemBackend;
 use crate::relaxation::llg_overdamped_uses_pure_damping;
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
 use crate::relaxation::relaxation_converged;
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "fem-gpu"))]
 use crate::scalar_metrics::{
     apply_average_m_to_step_stats, scalar_outputs_request_average_m, scalar_row_due,
 };

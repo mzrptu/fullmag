@@ -13,9 +13,7 @@ set -euo pipefail
 mkdir -p .fullmag/runtimes/fem-gpu-host/bin .fullmag/runtimes/fem-gpu-host/lib
 cargo +nightly clean -p fullmag-fdm-demag >/dev/null 2>&1 || true
 FULLMAG_USE_MFEM_STACK=ON cargo +nightly build -p fullmag-cli --features "cuda fem-gpu" --release >/tmp/fullmag-build.log
-tmp_bin=.fullmag/runtimes/fem-gpu-host/bin/fullmag-fem-gpu-bin.tmp
-cp target/release/fullmag "$tmp_bin"
-mv -f "$tmp_bin" .fullmag/runtimes/fem-gpu-host/bin/fullmag-fem-gpu-bin
+cp -f target/release/fullmag .fullmag/runtimes/fem-gpu-host/bin/fullmag-fem-gpu-bin
 FEM_LIB=$(dirname "$(find target/release/build -path "*fullmag-fem-sys*/out/native-build/backends/fem/libfullmag_fem.so.0" | head -n1)")
 FDM_LIB=$(dirname "$(find target/release/build -path "*fullmag-fdm-sys*/out/native-build/backends/fdm/libfullmag_fdm.so.0" | head -n1)")
 cp -a "$FEM_LIB"/libfullmag_fem.so* .fullmag/runtimes/fem-gpu-host/lib/

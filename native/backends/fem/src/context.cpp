@@ -263,6 +263,8 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     ctx.cubic_Kc3 = plan.cubic_kc3;
     ctx.cubic_axis1 = {plan.cubic_axis1[0], plan.cubic_axis1[1], plan.cubic_axis1[2]};
     ctx.cubic_axis2 = {plan.cubic_axis2[0], plan.cubic_axis2[1], plan.cubic_axis2[2]};
+    ctx.material = plan.material;
+    ctx.demag_solver = plan.demag_solver;
 
     // Copy per-node spatially varying fields
     auto copy_field = [](std::vector<double> &dst, const double *src, uint64_t len) {
@@ -388,9 +390,6 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
             }
         }
     }
-
-    ctx.material = plan.material;
-    ctx.demag_solver = plan.demag_solver;
 
     // Adaptive time-stepping from plan
     if (plan.adaptive_config != nullptr) {

@@ -2393,16 +2393,25 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
             }
         }
 
-        exchange_form->SetAssemblyLevel(mfem::AssemblyLevel::PARTIAL);
+        // The intended end state for exchange is partial assembly, but the
+        // current MFEM 4.7 tetrahedral H1 path in the managed GPU runtime can
+        // abort in `GetDofToQuad(..., DofToQuad::FULL)` before the simulation
+        // even starts. Use the assembled operator path here so FEM can execute
+        // on the GPU via device-backed SpMV instead of crashing at startup.
+        exchange_form->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
         exchange_form->AddDomainIntegrator(
             new mfem::DiffusionIntegrator(*a_coeff),
             magnetic_attr_marker);
         exchange_form->Assemble();
+        exchange_form->Finalize();
 
-        mass_form->SetAssemblyLevel(mfem::AssemblyLevel::PARTIAL);
+        // Build the scalar mass form once in the assembled mode to obtain a
+        // stable lumped diagonal for runtime use on simplex meshes.
+        mass_form->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
         mass_form->AddDomainIntegrator(
             new mfem::MassIntegrator(), magnetic_attr_marker);
         mass_form->Assemble();
+        mass_form->Finalize();
         prepare_mass_lumping(*mass_form, *mass_ones, *mass_lumped, *inv_lumped_mass, ctx.mfem_lumped_mass);
         const bool has_nonzero_lumped_mass = std::any_of(
             ctx.mfem_lumped_mass.begin(),
