@@ -27,6 +27,10 @@ import {
   Video,
   Camera,
   Mountain,
+  Move,
+  RotateCw,
+  Maximize2,
+  MousePointer2,
 } from "lucide-react";
 import { ViewportToolbar3D } from "./ViewportToolbar3D";
 import { ViewportToolGroup, ViewportToolSeparator } from "./ViewportToolGroup";
@@ -137,10 +141,12 @@ function SyncedControls({
   controlsRefObject,
   viewCubeBridgeRef,
   grid,
+  cameraEnabled = true,
 }: {
   controlsRefObject: React.MutableRefObject<any>;
   viewCubeBridgeRef: React.MutableRefObject<any>;
   grid: [number, number, number];
+  cameraEnabled?: boolean;
 }) {
   const { camera } = useThree();
   const [nx, ny, nz] = grid;
@@ -158,6 +164,7 @@ function SyncedControls({
       panSpeed={0.8}
       target={[cx, cy, cz]}
       dynamicDampingFactor={1}
+      enabled={cameraEnabled}
     />
   );
 }
@@ -503,10 +510,43 @@ function MagnetizationView3DInner({
   objectViewMode = "context",
   onRequestObjectSelect,
   onGeometryTranslate,
+  activeTextureTransform = null,
+  textureGizmoMode = "translate",
+  onTextureTransformCommit,
 }: Props) {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [openPopover, setOpenPopover] = useState<"color" | "display" | "topo" | "camera" | null>(null);
   const [visibleCount, setVisibleCount] = useState(0);
+
+  // ── 3dsmax-style interaction mode (camera / move / rotate / scale) ──
+  type InteractionMode = "camera" | "move" | "rotate" | "scale";
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>("camera");
+  const cameraActive = interactionMode === "camera";
+
+  // Switch back to camera when activeTextureTransform disappears
+  useEffect(() => {
+    if (!activeTextureTransform) setInteractionMode("camera");
+  }, [activeTextureTransform]);
+
+  // Keyboard shortcuts: Q=camera, W=move, E=rotate, R=scale (only when gizmo available)
+  useEffect(() => {
+    if (!activeTextureTransform) return;
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      if (e.key === "q" || e.key === "Q" || e.key === "Escape") setInteractionMode("camera");
+      else if (e.key === "w" || e.key === "W") setInteractionMode("move");
+      else if (e.key === "e" || e.key === "E") setInteractionMode("rotate");
+      else if (e.key === "r" || e.key === "R") setInteractionMode("scale");
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [activeTextureTransform]);
+
+  // Derive gizmo mode from interaction mode
+  const derivedGizmoMode: TextureGizmoMode =
+    interactionMode === "rotate" ? "rotate" :
+    interactionMode === "scale"  ? "scale"  : "translate";
   const deferredVectors = useDeferredValue(vectors);
   const deferredSettings = useDeferredValue(settings);
 
@@ -817,6 +857,83 @@ function MagnetizationView3DInner({
         <ViewportOverlayLayout.BottomLeft>
           {!geometryMode ? <HslSphere sceneRef={viewCubeSceneRef} axisConvention="identity" /> : null}
         </ViewportOverlayLayout.BottomLeft>
+
+        {/* ── 3dsmax-style interaction mode toolbar (only when texture gizmo available) ── */}
+        {activeTextureTransform && (
+          <ViewportOverlayLayout.BottomCenter>
+            <div className="pointer-events-auto flex items-center gap-px rounded-lg border border-border/40 bg-background/80 backdrop-blur-md shadow-md px-1 py-1">
+              {/* Orbit / Camera */}
+              <button
+                type="button"
+                title="Orbit camera (Q)"
+                onClick={() => setInteractionMode("camera")}
+                className={cn(
+                  "flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[0.65rem] font-bold uppercase tracking-wider transition-colors",
+                  cameraActive
+                    ? "bg-primary/20 text-primary border border-primary/35"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground border border-transparent",
+                )}
+              >
+                <MousePointer2 size={13} />
+                <span>Orbit</span>
+                <span className="text-[0.55rem] opacity-50 font-normal normal-case tracking-normal">Q</span>
+              </button>
+
+              <div className="w-px h-4 bg-border/50 mx-0.5" />
+
+              {/* Move */}
+              <button
+                type="button"
+                title="Move texture (W)"
+                onClick={() => setInteractionMode("move")}
+                className={cn(
+                  "flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[0.65rem] font-bold uppercase tracking-wider transition-colors",
+                  interactionMode === "move"
+                    ? "bg-amber-500/20 text-amber-400 border border-amber-500/35"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground border border-transparent",
+                )}
+              >
+                <Move size={13} />
+                <span>Move</span>
+                <span className="text-[0.55rem] opacity-50 font-normal normal-case tracking-normal">W</span>
+              </button>
+
+              {/* Rotate */}
+              <button
+                type="button"
+                title="Rotate texture (E)"
+                onClick={() => setInteractionMode("rotate")}
+                className={cn(
+                  "flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[0.65rem] font-bold uppercase tracking-wider transition-colors",
+                  interactionMode === "rotate"
+                    ? "bg-amber-500/20 text-amber-400 border border-amber-500/35"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground border border-transparent",
+                )}
+              >
+                <RotateCw size={13} />
+                <span>Rotate</span>
+                <span className="text-[0.55rem] opacity-50 font-normal normal-case tracking-normal">E</span>
+              </button>
+
+              {/* Scale */}
+              <button
+                type="button"
+                title="Scale texture (R)"
+                onClick={() => setInteractionMode("scale")}
+                className={cn(
+                  "flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[0.65rem] font-bold uppercase tracking-wider transition-colors",
+                  interactionMode === "scale"
+                    ? "bg-amber-500/20 text-amber-400 border border-amber-500/35"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground border border-transparent",
+                )}
+              >
+                <Maximize2 size={13} />
+                <span>Scale</span>
+                <span className="text-[0.55rem] opacity-50 font-normal normal-case tracking-normal">R</span>
+              </button>
+            </div>
+          </ViewportOverlayLayout.BottomCenter>
+        )}
       </ViewportOverlayLayout>
 
       {/* ── R3F Canvas ────────────────────────────────────── */}
@@ -897,7 +1014,17 @@ function MagnetizationView3DInner({
             controlsRefObject={controlsRef}
             viewCubeBridgeRef={viewCubeSceneRef}
             grid={grid}
+            cameraEnabled={cameraActive}
           />
+
+          {activeTextureTransform && !cameraActive && (
+            <TextureTransformGizmo
+              transform={activeTextureTransform}
+              mode={derivedGizmoMode}
+              visible
+              onCommit={onTextureTransformCommit}
+            />
+          )}
         </Canvas>
       </div>
     </div>

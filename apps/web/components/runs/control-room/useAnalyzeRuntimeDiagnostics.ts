@@ -67,6 +67,30 @@ export function useAnalyzeRuntimeDiagnostics(
     if (input.metadata?.["cpu_reference_guarded"] === true) {
       badges.push({ id: "cpu-guard", label: "CPU guarded", tone: "warning" });
     }
+    if (typeof input.metadata?.["normalization"] === "string") {
+      badges.push({
+        id: "normalization",
+        label: `norm: ${input.metadata["normalization"] as string}`,
+        tone: "neutral",
+        tooltip: "Magnetization normalization scheme used by the solver.",
+      });
+    }
+    if (typeof input.metadata?.["damping_policy"] === "string") {
+      badges.push({
+        id: "damping_policy",
+        label: `damp: ${input.metadata["damping_policy"] as string}`,
+        tone: "neutral",
+        tooltip: "Damping policy applied during eigenmode extraction.",
+      });
+    }
+    if (typeof input.metadata?.["equilibrium_source"] === "string") {
+      badges.push({
+        id: "equilibrium_source",
+        label: `eq: ${input.metadata["equilibrium_source"] as string}`,
+        tone: "info",
+        tooltip: "Origin of the equilibrium magnetization state used for linearization.",
+      });
+    }
 
     const warnings = input.engineLog
       .filter((entry) => {

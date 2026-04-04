@@ -66,6 +66,31 @@ export default function AnalyzeViewport() {
     }
   }, [model, spectrum]);
 
+  // ← / → keyboard shortcuts to navigate between eigen modes
+  useEffect(() => {
+    if (!spectrum || spectrum.modes.length === 0) return;
+    const sortedModes = [...spectrum.modes].sort((a, b) => a.index - b.index);
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      // Don't steal focus when user is typing in an input
+      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      const currentIndex = model.analyzeSelection.selectedModeIndex ?? sortedModes[0].index;
+      const pos = sortedModes.findIndex((m) => m.index === currentIndex);
+      if (pos === -1) return;
+      const next =
+        e.key === "ArrowRight"
+          ? sortedModes[Math.min(pos + 1, sortedModes.length - 1)]
+          : sortedModes[Math.max(pos - 1, 0)];
+      if (next && next.index !== currentIndex) {
+        model.selectAnalyzeMode(next.index);
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [model, spectrum]);
+
   useEffect(() => {
     if (selectedMode != null) {
       void ensureMode(selectedMode);

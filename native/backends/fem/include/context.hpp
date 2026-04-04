@@ -215,6 +215,7 @@ struct Context {
     void *mfem_gf_mz = nullptr;
     void *mfem_gf_a = nullptr;
     void *mfem_gf_ms = nullptr;
+    void *mfem_a_coeff = nullptr;
     void *mfem_exchange_form = nullptr;
     void *mfem_mass_form = nullptr;
     void *mfem_mass_ones = nullptr;

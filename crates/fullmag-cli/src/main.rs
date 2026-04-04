@@ -225,12 +225,8 @@ fn resolve_runtime_invocation(raw_args: Vec<OsString>) -> Result<RuntimeResoluti
         .unwrap_or(&config.ir);
     let resolved_backend = resolved_backend_from_problem(problem);
     let requested_device = runtime_selection_string(problem, "device", "auto");
-    let interactive_fem_session = args.interactive && resolved_backend == BackendTarget::Fem;
-    let preferred_runtime_family = if interactive_fem_session {
-        "cpu-reference".to_string()
-    } else {
-        preferred_runtime_family_for_problem(problem, resolved_backend, &requested_device)
-    };
+    let preferred_runtime_family =
+        preferred_runtime_family_for_problem(problem, resolved_backend, &requested_device);
     let (local_engine_id, local_engine_label, requires_managed_runtime) =
         local_engine_resolution(problem, resolved_backend, &preferred_runtime_family);
 

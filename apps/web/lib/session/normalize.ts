@@ -1061,6 +1061,11 @@ function normalizeSceneDocument(raw: any): SceneDocument | null {
       mesh_entity_view_state: normalizeSceneEditorMeshEntityViewState(
         raw.editor?.mesh_entity_view_state,
       ),
+      active_transform_scope:
+        raw.editor?.active_transform_scope === "object" ||
+        raw.editor?.active_transform_scope === "texture"
+          ? raw.editor.active_transform_scope
+          : null,
     },
   };
 }

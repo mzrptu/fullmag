@@ -20,7 +20,8 @@ namespace fullmag::fem {
 
 namespace {
 
-constexpr double kMu0 = 4.0e-7 * 3.14159265358979323846;
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kMu0 = 4.0e-7 * kPi;
 constexpr double kGeomEps = 1e-30;
 constexpr int kInterruptPollStride = 256;
 
@@ -526,12 +527,12 @@ void prepare_mass_lumping(
     inv_lumped.UseDevice(true);
     ones = 1.0;
     mass_form.Mult(ones, lumped);
-    const double *lumped_read = lumped.Read();
-    double *inv_write = inv_lumped.Write();
-    mfem::forall(ndofs, [=] MFEM_HOST_DEVICE (int i) {
-        const double mass = lumped_read[i];
-        inv_write[i] = mass > 0.0 ? 1.0 / mass : 0.0;
-    });
+    const double *lumped_host = lumped.HostRead();
+    double *inv_host = inv_lumped.HostWrite();
+    for (int i = 0; i < ndofs; ++i) {
+        const double mass = lumped_host[i];
+        inv_host[i] = mass > 0.0 ? 1.0 / mass : 0.0;
+    }
     copy_mfem_vector_to_host(lumped, host_lumped);
 }
 
@@ -553,19 +554,19 @@ bool apply_exchange_component_device(
     }
 
     const int ndofs = tmp.Size();
-    const double *tmp_read = tmp.Read();
-    const double *inv_mass_read = inv_lumped_mass.Read();
-    const double *ms_read = ms_field.Read();
-    double *h_write = h_component.Write();
-    mfem::forall(ndofs, [=] MFEM_HOST_DEVICE (int i) {
-        const double inv_mass = inv_mass_read[i];
-        const double Ms_i = ms_read[i];
+    const double *tmp_host = tmp.HostRead();
+    const double *inv_mass_host = inv_lumped_mass.HostRead();
+    const double *ms_host = ms_field.HostRead();
+    double *h_host = h_component.HostWrite();
+    for (int i = 0; i < ndofs; ++i) {
+        const double inv_mass = inv_mass_host[i];
+        const double Ms_i = ms_host[i];
         if (inv_mass <= 0.0 || Ms_i <= 0.0) {
-            h_write[i] = 0.0;
+            h_host[i] = 0.0;
         } else {
-            h_write[i] = -(2.0 / (kMu0 * Ms_i)) * tmp_read[i] * inv_mass;
+            h_host[i] = -(2.0 / (kMu0 * Ms_i)) * tmp_host[i] * inv_mass;
         }
-    });
+    }
     if (energy_out != nullptr) {
         *energy_out = m_component * tmp;
     }
@@ -2301,6 +2302,7 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
         auto *gf_mz = new mfem::GridFunction(fes);
         auto *gf_a = new mfem::GridFunction(fes);
         auto *gf_ms = new mfem::GridFunction(fes);
+        auto *a_coeff = new mfem::GridFunctionCoefficient(gf_a);
         // S09: enable device memory so that future GPU operators find data
         // already on device without extra H2D copies.
         gf_mx->UseDevice(true);
@@ -2378,6 +2380,7 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
                 delete inv_lumped_mass;
                 delete mass_lumped;
                 delete mass_ones;
+                delete a_coeff;
                 delete gf_ms;
                 delete gf_a;
                 delete gf_mx;
@@ -2392,7 +2395,7 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
 
         exchange_form->SetAssemblyLevel(mfem::AssemblyLevel::PARTIAL);
         exchange_form->AddDomainIntegrator(
-            new mfem::DiffusionIntegrator(new mfem::GridFunctionCoefficient(gf_a)),
+            new mfem::DiffusionIntegrator(*a_coeff),
             magnetic_attr_marker);
         exchange_form->Assemble();
 
@@ -2417,6 +2420,7 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
             delete inv_lumped_mass;
             delete mass_lumped;
             delete mass_ones;
+            delete a_coeff;
             delete gf_ms;
             delete gf_a;
             delete gf_mx;
@@ -2436,6 +2440,7 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
         ctx.mfem_gf_mz = gf_mz;
         ctx.mfem_gf_a = gf_a;
         ctx.mfem_gf_ms = gf_ms;
+        ctx.mfem_a_coeff = a_coeff;
         ctx.mfem_exchange_form = exchange_form;
         ctx.mfem_mass_form = mass_form;
         ctx.mfem_mass_ones = mass_ones;
@@ -2475,6 +2480,7 @@ void context_destroy_mfem(Context &ctx) {
     ctx.transfer_grid.kernel_yz_spectrum.clear();
     // NOTE: mfem::Device is a process-global singleton — do NOT delete it here,
     // because a subsequent NativeFemBackend may need the already-configured device.
+    delete static_cast<mfem::Coefficient *>(ctx.mfem_a_coeff);
     delete static_cast<mfem::Vector *>(ctx.mfem_exchange_out_vec);
     delete static_cast<mfem::Vector *>(ctx.mfem_exchange_tmp_vec);
     delete static_cast<mfem::Vector *>(ctx.mfem_inv_lumped_mass);
@@ -2493,6 +2499,7 @@ void context_destroy_mfem(Context &ctx) {
     ctx.mfem_device = nullptr;
     ctx.mfem_mass_form = nullptr;
     ctx.mfem_exchange_form = nullptr;
+    ctx.mfem_a_coeff = nullptr;
     ctx.mfem_exchange_out_vec = nullptr;
     ctx.mfem_exchange_tmp_vec = nullptr;
     ctx.mfem_inv_lumped_mass = nullptr;
