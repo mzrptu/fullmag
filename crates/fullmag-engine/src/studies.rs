@@ -73,6 +73,7 @@ pub fn run_exchange_density_study(
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
         );
         let fdm_state = fdm_problem.new_state(sample_fdm_magnetization(
@@ -108,6 +109,7 @@ pub fn run_exchange_density_study(
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
         );
         let fem_state = fem_problem.new_state(sample_fem_magnetization(&fem_mesh, box_size_m)?)?;
@@ -639,4 +641,23 @@ fn structured_periodic_pairs(
     }
 
     (boundary_pairs, node_pairs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_structured_box_tet_mesh;
+
+    #[test]
+    fn structured_box_mesh_exports_periodic_pairs_for_all_axes() {
+        let mesh = build_structured_box_tet_mesh([6.0, 8.0, 10.0], 2);
+        let mut pair_ids = mesh
+            .periodic_boundary_pairs
+            .iter()
+            .map(|pair| pair.pair_id.as_str())
+            .collect::<Vec<_>>();
+        pair_ids.sort_unstable();
+        assert_eq!(pair_ids, vec!["x_faces", "y_faces", "z_faces"]);
+        assert_eq!(mesh.periodic_node_pairs.len(), 27);
+        assert!(mesh.validate().is_ok());
+    }
 }

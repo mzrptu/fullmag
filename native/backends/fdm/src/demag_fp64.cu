@@ -257,7 +257,13 @@ __global__ void combine_effective_field_fp64_kernel(
     int nx, int ny, int nz,
     double inv_2dx, double inv_2dy, double inv_2dz,
     double thermal_sigma,
-    uint64_t thermal_seed)
+    uint64_t thermal_seed,
+    // Magnetoelastic (prescribed strain B1/B2)
+    int has_magnetoelastic,
+    double mel_b1,
+    double mel_b2,
+    double mel_e11, double mel_e22, double mel_e33,
+    double mel_e23, double mel_e13, double mel_e12)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;

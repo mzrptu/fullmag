@@ -81,21 +81,21 @@ function buildMagnetizationAsset(
     source_format: magnetization.source_format ?? null,
     dataset: magnetization.dataset ?? null,
     sample_index: magnetization.sample_index ?? null,
-    mapping: {
+    mapping: magnetization.mapping ?? {
       space: "object",
       projection: "object_local",
       clamp_mode: "clamp",
     },
-    texture_transform: {
+    texture_transform: magnetization.texture_transform ?? {
       translation: zeroVec3(),
       rotation_quat: identityQuat(),
       scale: oneVec3(),
       pivot: zeroVec3(),
     },
-    preset_kind: null,
-    preset_params: null,
-    preset_version: null,
-    ui_label: null,
+    preset_kind: magnetization.preset_kind ?? null,
+    preset_params: magnetization.preset_params ?? null,
+    preset_version: magnetization.preset_version ?? null,
+    ui_label: magnetization.ui_label ?? null,
   };
 }
 
@@ -201,6 +201,12 @@ function magnetizationForObject(
     source_format: asset.source_format,
     dataset: asset.dataset,
     sample_index: asset.sample_index,
+    mapping: asset.mapping,
+    texture_transform: asset.texture_transform,
+    preset_kind: asset.preset_kind,
+    preset_params: asset.preset_params,
+    preset_version: asset.preset_version,
+    ui_label: asset.ui_label,
   };
 }
 

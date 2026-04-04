@@ -960,12 +960,16 @@ function _buildObjectNode(objectNode: {
             icon: geo.magnetization.kind === "preset_texture" ? "◉" : "◢",
             status: "ready",
           },
-          {
-            id: `mag-${objectNode.name}-transform`,
-            label: "Texture Transform",
-            icon: "⟳",
-            status: "pending",
-          },
+          ...(geo.magnetization.kind === "preset_texture"
+            ? [
+                {
+                  id: `mag-${objectNode.name}-transform`,
+                  label: "Texture Transform",
+                  icon: "⟳",
+                  status: "ready" as const,
+                },
+              ]
+            : []),
         ],
       },
       meshNode,

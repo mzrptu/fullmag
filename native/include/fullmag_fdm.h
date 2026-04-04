@@ -132,6 +132,13 @@ typedef struct {
     int                        has_bulk_dmi;
     double                     dmi_D_bulk;            /* D_bulk (J/m^2) */
 
+    /* Magnetoelastic coupling — prescribed strain B1/B2 model */
+    int                        has_magnetoelastic;    /* 1 = enabled */
+    double                     mel_b1;                /* B1 coupling constant [Pa] */
+    double                     mel_b2;                /* B2 coupling constant [Pa] */
+    /* Uniform strain in Voigt order: [e11, e22, e33, 2e23, 2e13, 2e12] */
+    double                     mel_strain[6];
+
     double                     temperature;            /* Temperature in K (0 = no thermal noise) */
 
     /* Zhang-Li Spin-Transfer Torque (CIP) */

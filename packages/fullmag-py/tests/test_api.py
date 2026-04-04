@@ -22,6 +22,7 @@ from fullmag.runtime import cli as runtime_cli
 from fullmag.runtime import helper as runtime_helper
 from fullmag.runtime.loader import load_problem_from_script
 from fullmag.runtime.scene_document import build_scene_document_from_builder
+from fullmag.runtime.scene_document import build_builder_from_scene_document
 from fullmag.runtime.script_builder import export_builder_draft, rewrite_loaded_problem_script
 from fullmag.meshing.gmsh_bridge import MeshData
 
@@ -116,6 +117,78 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(
             ir["problem_meta"]["runtime_metadata"]["runtime_selection"]["device"], "auto"
         )
+
+    def test_problem_to_ir_materializes_preset_texture_for_fem_mesh(self) -> None:
+        geometry = fm.Box(size=(40e-9, 20e-9, 10e-9), name="film")
+        material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
+        magnet = fm.Ferromagnet(
+            name="film",
+            geometry=geometry,
+            material=material,
+            m0=fm.texture.vortex(core_polarity=1, circulation=1),
+        )
+        problem = fm.Problem(
+            name="preset_fem_materialization",
+            magnets=[magnet],
+            energy=[fm.Exchange()],
+            study=fm.TimeEvolution(dynamics=fm.LLG(), outputs=[fm.SaveScalar("E_total", every=1e-12)]),
+            discretization=fm.DiscretizationHints(fem=fm.FEM(order=1, hmax=10e-9)),
+        )
+
+        with patch(
+            "fullmag.model.problem.build_geometry_assets_for_request",
+            return_value={
+                "fdm_grid_assets": [],
+                "fem_mesh_assets": [
+                    {
+                        "geometry_name": "film",
+                        "mesh_source": None,
+                        "mesh": {
+                            "mesh_name": "film",
+                            "nodes": [
+                                [0.0, 0.0, 0.0],
+                                [10e-9, 0.0, 0.0],
+                                [0.0, 10e-9, 0.0],
+                                [0.0, 0.0, 10e-9],
+                            ],
+                            "elements": [[0, 1, 2, 3]],
+                            "element_markers": [1],
+                            "boundary_faces": [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]],
+                            "boundary_markers": [1, 1, 1, 1],
+                        },
+                    }
+                ],
+            },
+        ):
+            ir = problem.to_ir(requested_backend=fm.BackendTarget.FEM)
+        initial = ir["magnets"][0]["initial_magnetization"]
+
+        self.assertEqual(initial["kind"], "sampled_field")
+        self.assertGreater(len(initial["values"]), 0)
+        self.assertNotIn("preset_kind", initial)
+
+    def test_problem_to_ir_materializes_preset_texture_for_fdm_grid(self) -> None:
+        geometry = fm.Cylinder(radius=20e-9, height=10e-9, name="dot")
+        material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
+        magnet = fm.Ferromagnet(
+            name="dot",
+            geometry=geometry,
+            material=material,
+            m0=fm.texture.neel_skyrmion(radius=10e-9, wall_width=4e-9),
+        )
+        problem = fm.Problem(
+            name="preset_fdm_materialization",
+            magnets=[magnet],
+            energy=[fm.Exchange()],
+            study=fm.TimeEvolution(dynamics=fm.LLG(), outputs=[fm.SaveScalar("E_total", every=1e-12)]),
+            discretization=fm.DiscretizationHints(fdm=fm.FDM(cell=(5e-9, 5e-9, 5e-9))),
+        )
+
+        ir = problem.to_ir(requested_backend=fm.BackendTarget.FDM)
+        initial = ir["magnets"][0]["initial_magnetization"]
+
+        self.assertEqual(initial["kind"], "sampled_field")
+        self.assertGreater(len(initial["values"]), 0)
 
     def test_problem_runtime_selection_serializes_to_ir(self) -> None:
         problem = self._build_problem()
@@ -760,6 +833,64 @@ class ProblemApiTests(unittest.TestCase):
         self.assertIsNone(scene["editor"]["selected_entity_id"])
         self.assertIsNone(scene["editor"]["focused_entity_id"])
         self.assertEqual(scene["editor"]["mesh_entity_view_state"], {})
+
+    def test_scene_document_preserves_preset_texture_round_trip(self) -> None:
+        builder = {
+            "revision": 1,
+            "backend": "fem",
+            "demag_realization": "airbox_robin",
+            "solver": {},
+            "mesh": {},
+            "universe": None,
+            "stages": [],
+            "initial_state": None,
+            "geometries": [
+                {
+                    "name": "flower",
+                    "geometry_kind": "Box",
+                    "geometry_params": {"size": [20e-9, 20e-9, 10e-9]},
+                    "material": {"Ms": 800e3, "Aex": 13e-12, "alpha": 0.1},
+                    "magnetization": {
+                        "kind": "preset_texture",
+                        "value": None,
+                        "seed": None,
+                        "source_path": None,
+                        "mapping": {
+                            "space": "object",
+                            "projection": "object_local",
+                            "clamp_mode": "repeat",
+                        },
+                        "texture_transform": {
+                            "translation": [1e-9, 2e-9, 3e-9],
+                            "rotation_quat": [0.0, 0.0, 0.0, 1.0],
+                            "scale": [2.0, 1.5, 1.0],
+                            "pivot": [0.0, 0.0, 0.0],
+                        },
+                        "preset_kind": "vortex",
+                        "preset_params": {"core_polarity": 1, "circulation": -1},
+                        "preset_version": 1,
+                        "ui_label": "Test vortex",
+                    },
+                    "mesh": {"mode": "inherit", "hmax": ""},
+                }
+            ],
+            "current_modules": [],
+            "excitation_analysis": None,
+        }
+
+        scene = build_scene_document_from_builder(builder)
+        asset = scene["magnetization_assets"][0]
+        self.assertEqual(asset["kind"], "preset_texture")
+        self.assertEqual(asset["preset_kind"], "vortex")
+        self.assertEqual(asset["mapping"]["clamp_mode"], "repeat")
+        self.assertEqual(asset["texture_transform"]["translation"], [1e-9, 2e-9, 3e-9])
+
+        rebuilt = build_builder_from_scene_document(scene)
+        magnetization = rebuilt["geometries"][0]["magnetization"]
+        self.assertEqual(magnetization["kind"], "preset_texture")
+        self.assertEqual(magnetization["preset_kind"], "vortex")
+        self.assertEqual(magnetization["preset_params"]["circulation"], -1)
+        self.assertEqual(magnetization["mapping"]["clamp_mode"], "repeat")
 
     def test_legacy_dynamics_and_outputs_are_normalized_to_time_evolution(self) -> None:
         geometry = fm.Box(size=(100e-9, 20e-9, 5e-9), name="track")

@@ -15,6 +15,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 
 use crate::artifact_pipeline::ArtifactPipelineSender;
+use crate::capabilities::{capabilities_for_fdm_engine, capabilities_for_fem_engine};
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
 use crate::artifact_pipeline::ArtifactRecorder;
 use crate::cpu_reference;
@@ -100,6 +101,30 @@ fn unsupported_cpu_reference_terms(plan: &FemPlanIR) -> Vec<&'static str> {
     if plan.temperature.is_some_and(|t| t > 0.0) {
         unsupported.push("thermal");
     }
+    unsupported
+}
+
+fn unsupported_cpu_fdm_terms(plan: &FdmPlanIR, outputs: &[OutputIR]) -> Vec<&'static str> {
+    let mut unsupported = Vec::new();
+    if plan.has_oersted_cylinder {
+        unsupported.push("oersted");
+    }
+    if plan.boundary_geometry.is_some() || plan.boundary_correction.is_some() {
+        unsupported.push("boundary_correction");
+    }
+    if outputs.iter().any(|output| match output {
+        OutputIR::Field { name, .. } | OutputIR::Scalar { name, .. } => {
+            matches!(name.as_str(), "H_mel" | "u" | "u_dot" | "eps" | "sigma" | "E_mel" | "E_el" | "E_kin_el")
+        }
+        OutputIR::Snapshot { field, .. } => {
+            matches!(field.as_str(), "H_mel" | "u" | "u_dot" | "eps" | "sigma")
+        }
+        _ => false,
+    }) {
+        unsupported.push("unsupported_outputs");
+    }
+    unsupported.sort_unstable();
+    unsupported.dedup();
     unsupported
 }
 
@@ -399,7 +424,7 @@ fn snapshot_native_fdm_vector_fields(
 
     for quantity in quantities
         .iter()
-        .map(|quantity| crate::preview::normalize_quantity_id(quantity))
+        .filter_map(|quantity| normalized_quantity_name(quantity).ok())
     {
         if !seen.insert(quantity) {
             continue;
@@ -458,7 +483,7 @@ fn snapshot_native_fem_vector_fields(
 
     for quantity in quantities
         .iter()
-        .map(|quantity| crate::preview::normalize_quantity_id(quantity))
+        .filter_map(|quantity| normalized_quantity_name(quantity).ok())
     {
         if !seen.insert(quantity) {
             continue;
@@ -619,6 +644,17 @@ pub(crate) fn execute_fdm<'a>(
     live: Option<LiveStepConsumer<'a>>,
     artifact_writer: Option<ArtifactPipelineSender>,
 ) -> Result<ExecutedRun, RunError> {
+    if matches!(engine, FdmEngine::CpuReference) {
+        let unsupported = unsupported_cpu_fdm_terms(plan, outputs);
+        if !unsupported.is_empty() {
+            return Err(RunError {
+                message: format!(
+                    "CPU reference FDM engine cannot execute this plan faithfully; unsupported terms: [{}]",
+                    unsupported.join(", ")
+                ),
+            });
+        }
+    }
     match engine {
         FdmEngine::CpuReference => cpu_reference::execute_reference_fdm(
             plan,
@@ -712,6 +748,17 @@ pub(crate) fn execute_fem<'a>(
             )
         }
         FemEngine::NativeGpu => {
+            if normalized_plan.current_density.is_some()
+                || normalized_plan.stt_degree.is_some()
+                || normalized_plan.stt_beta.is_some()
+                || normalized_plan.stt_spin_polarization.is_some()
+                || normalized_plan.stt_lambda.is_some()
+                || normalized_plan.stt_epsilon_prime.is_some()
+            {
+                return Err(RunError {
+                    message: "FEM STT is not executable yet; refusing to run a semantically misleading fallback".to_string(),
+                });
+            }
             if let Some(min_nodes) = should_fallback_to_cpu_for_small_fem_gpu(&normalized_plan) {
                 eprintln!(
                     "warning: FEM plan has {} nodes, below FULLMAG_FEM_GPU_MIN_NODES={} — \
@@ -743,26 +790,10 @@ pub(crate) fn execute_fem_eigen(
     match engine {
         FemEngine::CpuReference => fem_eigen::execute_reference_fem_eigen(plan, outputs),
         FemEngine::NativeGpu => {
-            // GPU eigen solver is not yet implemented. If GPU was explicitly
-            // forced by the user, surface a clear error; otherwise fall back
-            // to the CPU reference solver with a diagnostic warning.
-            let gpu_forced = std::env::var("FULLMAG_FEM_EXECUTION")
-                .map(|v| v.trim().eq_ignore_ascii_case("gpu"))
-                .unwrap_or(false);
-            if gpu_forced {
-                return Err(RunError {
-                    message: "FULLMAG_FEM_EXECUTION=gpu but the native FEM GPU eigen solver is \
-                              not yet implemented; omit device selection or set device='cpu' for \
-                              eigenmode analysis (fallback_reason=fem_gpu_eigen_not_implemented)"
-                        .to_string(),
-                });
-            }
-            eprintln!(
-                "warning: native FEM GPU eigen execution is not yet available — \
-                 falling back to CPU reference eigen solver \
-                 (fallback_reason=fem_gpu_eigen_not_implemented)"
-            );
-            fem_eigen::execute_reference_fem_eigen(plan, outputs)
+            // GPU-accelerated dense eigensolver (Etap A4).
+            // `execute_gpu_fem_eigen` tries cuSolverDN on the GPU and falls back
+            // automatically to the CPU LAPACK path when the GPU is unavailable.
+            fem_eigen::execute_gpu_fem_eigen(plan, outputs)
         }
     }
 }
@@ -1676,3 +1707,4 @@ per_domain_quality: HashMap::new(),
         }
     }
 }
+use crate::quantities::{normalized_quantity_name, quantity_spec, QuantityId};

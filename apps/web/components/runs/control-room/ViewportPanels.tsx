@@ -4,7 +4,9 @@ import { useMemo, useCallback } from "react";
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
+import { MAGNETIC_PRESET_CATALOG } from "@/lib/magnetizationPresetCatalog";
 import { cn } from "@/lib/utils";
+import type { TextureTransform3D as PreviewTextureTransform3D } from "@/lib/textureTransform";
 import MagnetizationSlice2D from "../../preview/MagnetizationSlice2D";
 import MagnetizationView3D from "../../preview/MagnetizationView3D";
 import FemMeshView3D from "../../preview/FemMeshView3D";
@@ -24,7 +26,11 @@ import {
 } from "./shared";
 import { useControlRoom } from "./ControlRoomContext";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
-import type { FemMeshPart, MeshEntityViewState } from "../../../lib/session/types";
+import type {
+  FemMeshPart,
+  MeshEntityViewState,
+  TextureTransform3D as SceneTextureTransform3D,
+} from "../../../lib/session/types";
 
 function domainFrameSourceLabel(source: string | null): string {
   switch (source) {
@@ -62,6 +68,24 @@ function defaultMeshPartViewState(part: FemMeshPart): MeshEntityViewState {
     renderMode: part.role === "air" ? "wireframe" : "surface+edges",
     opacity: part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
     colorField: part.role === "magnetic_object" ? "orientation" : "none",
+  };
+}
+
+function toPreviewTextureTransform(value: SceneTextureTransform3D): PreviewTextureTransform3D {
+  return {
+    translation: [...value.translation] as [number, number, number],
+    rotationQuat: [...value.rotation_quat] as [number, number, number, number],
+    scale: [...value.scale] as [number, number, number],
+    pivot: [...value.pivot] as [number, number, number],
+  };
+}
+
+function toSceneTextureTransform(value: PreviewTextureTransform3D): SceneTextureTransform3D {
+  return {
+    translation: [...value.translation] as [number, number, number],
+    rotation_quat: [...value.rotationQuat] as [number, number, number, number],
+    scale: [...value.scale] as [number, number, number],
+    pivot: [...value.pivot] as [number, number, number],
   };
 }
 
@@ -391,6 +415,72 @@ export function ViewportCanvasArea() {
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
   const globalScalarPreview = ctx.preview?.kind === "global_scalar" ? ctx.preview : null;
   const hasVectorData = Boolean(ctx.selectedVectors && ctx.selectedVectors.length > 0);
+  const selectedMagnetizationAsset = useMemo(() => {
+    if (!ctx.sceneDocument || !ctx.selectedObjectId) {
+      return null;
+    }
+    const selectedObject = ctx.sceneDocument.objects.find(
+      (object) =>
+        object.id === ctx.selectedObjectId || object.name === ctx.selectedObjectId,
+    );
+    if (!selectedObject) {
+      return null;
+    }
+    return (
+      ctx.sceneDocument.magnetization_assets.find(
+        (asset) => asset.id === selectedObject.magnetization_ref,
+      ) ?? null
+    );
+  }, [ctx.sceneDocument, ctx.selectedObjectId]);
+  const activeTextureTransform =
+    selectedMagnetizationAsset?.kind === "preset_texture" && ctx.activeTransformScope === "texture"
+      ? toPreviewTextureTransform(selectedMagnetizationAsset.texture_transform)
+      : null;
+  const activeTexturePreviewProxy = useMemo(() => {
+    if (!selectedMagnetizationAsset?.preset_kind) {
+      return "box" as const;
+    }
+    return (
+      MAGNETIC_PRESET_CATALOG.find(
+        (descriptor) => descriptor.kind === selectedMagnetizationAsset.preset_kind,
+      )?.previewProxy ?? "box"
+    );
+  }, [selectedMagnetizationAsset?.preset_kind]);
+  const applyTextureTransform = useCallback(
+    (next: PreviewTextureTransform3D) => {
+      if (!ctx.selectedObjectId) {
+        return;
+      }
+      ctx.setSceneDocument((previousScene) => {
+        if (!previousScene) {
+          return previousScene;
+        }
+        const selectedObject = previousScene.objects.find(
+          (object) =>
+            object.id === ctx.selectedObjectId || object.name === ctx.selectedObjectId,
+        );
+        if (!selectedObject) {
+          return previousScene;
+        }
+        return {
+          ...previousScene,
+          magnetization_assets: previousScene.magnetization_assets.map((asset) =>
+            asset.id === selectedObject.magnetization_ref
+              ? {
+                  ...asset,
+                  texture_transform: toSceneTextureTransform(next),
+                }
+              : asset,
+          ),
+          editor: {
+            ...previousScene.editor,
+            active_transform_scope: "texture",
+          },
+        };
+      });
+    },
+    [ctx.selectedObjectId, ctx.setSceneDocument],
+  );
 
   const handleRequestObjectSelect = useCallback(
     (objectId: string) => {
@@ -866,6 +956,12 @@ export function ViewportCanvasArea() {
           onAntennaTranslate={ctx.applyAntennaTranslation}
           onGeometryTranslate={ctx.applyGeometryTranslation}
           onRequestObjectSelect={handleRequestObjectSelect}
+          activeTextureTransform={activeTextureTransform}
+          activeTexturePreviewProxy={activeTexturePreviewProxy}
+          onTextureTransformChange={applyTextureTransform}
+          onTextureTransformCommit={applyTextureTransform}
+          activeTransformScope={ctx.activeTransformScope}
+          onTransformScopeChange={(scope) => ctx.setActiveTransformScope(scope)}
         />
       </div>
 

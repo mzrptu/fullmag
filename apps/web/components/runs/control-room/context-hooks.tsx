@@ -286,6 +286,7 @@ export interface ModelContextValue {
   viewportScope: ViewportScope;
   focusObjectRequest: FocusObjectRequest | null;
   objectViewMode: ObjectViewMode;
+  activeTransformScope: "object" | "texture" | null;
   airMeshVisible: boolean;
   airMeshOpacity: number;
   meshEntityViewState: MeshEntityViewStateMap;
@@ -326,6 +327,7 @@ export interface ModelContextValue {
   setSelectedObjectId: React.Dispatch<React.SetStateAction<string | null>>;
   setViewportScope: React.Dispatch<React.SetStateAction<ViewportScope>>;
   setObjectViewMode: React.Dispatch<React.SetStateAction<ObjectViewMode>>;
+  setActiveTransformScope: React.Dispatch<React.SetStateAction<"object" | "texture" | null>>;
   setAirMeshVisible: React.Dispatch<React.SetStateAction<boolean>>;
   setAirMeshOpacity: React.Dispatch<React.SetStateAction<number>>;
   setMeshEntityViewState: React.Dispatch<React.SetStateAction<MeshEntityViewStateMap>>;

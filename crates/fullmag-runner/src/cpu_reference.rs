@@ -4,8 +4,9 @@
 //! into the native CUDA backend.
 
 use fullmag_engine::{
-    AdaptiveStepConfig, CellSize, EffectiveFieldTerms, ExchangeLlgProblem, ExchangeLlgState,
-    GridShape, LlgConfig, MaterialParameters, TimeIntegrator,
+    AdaptiveStepConfig, CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, ExchangeLlgProblem,
+    ExchangeLlgState, GridShape, LlgConfig, MaterialParameters, SlonczewskiSttConfig,
+    TimeIntegrator, UniaxialAnisotropyConfig, ZhangLiSttConfig,
 };
 use fullmag_ir::{
     ExecutionPrecision, FdmPlanIR, IntegratorChoice, OutputIR, RelaxationAlgorithmIR,
@@ -14,6 +15,7 @@ use fullmag_ir::{
 use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
 use crate::interactive_runtime::{display_is_global_scalar, display_refresh_due};
 use crate::preview::{build_grid_preview_field, flatten_vectors, select_observables};
+use crate::quantities::normalized_quantity_name;
 use crate::relaxation::{
     execute_nonlinear_cg, execute_projected_gradient_bb, llg_overdamped_uses_pure_damping,
     relaxation_converged,
@@ -32,6 +34,44 @@ use crate::types::{
 
 use std::time::Instant;
 
+/// Build a `ZhangLiSttConfig` from plan fields if ZL STT is requested.
+fn build_zl_stt(plan: &FdmPlanIR) -> Option<ZhangLiSttConfig> {
+    let j = plan.current_density?;
+    let p = plan.stt_degree?;
+    if j[0] == 0.0 && j[1] == 0.0 && j[2] == 0.0 || p <= 0.0 {
+        return None;
+    }
+    Some(ZhangLiSttConfig {
+        current_density: j,
+        spin_polarization: p,
+        non_adiabaticity: plan.stt_beta.unwrap_or(0.0),
+    })
+}
+
+/// Build a `SlonczewskiSttConfig` from plan fields if Slonczewski STT is requested.
+/// `cell_dz` is the cell thickness in z used as the layer thickness when none is
+/// provided elsewhere.
+fn build_slon_stt(plan: &FdmPlanIR, cell_dz: f64) -> Option<SlonczewskiSttConfig> {
+    let p_axis = plan.stt_spin_polarization?;
+    let lam = plan.stt_lambda?;
+    if lam <= 0.0 {
+        return None;
+    }
+    let j = plan.current_density?;
+    let j_mag = (j[0] * j[0] + j[1] * j[1] + j[2] * j[2]).sqrt();
+    if j_mag == 0.0 {
+        return None;
+    }
+    Some(SlonczewskiSttConfig {
+        current_density_magnitude: j_mag,
+        spin_polarization_axis: p_axis,
+        lambda: lam,
+        epsilon_prime: plan.stt_epsilon_prime.unwrap_or(0.0),
+        degree: plan.stt_degree.unwrap_or(1.0),
+        thickness: cell_dz,
+    })
+}
+
 pub(crate) fn snapshot_preview(
     plan: &FdmPlanIR,
     request: &LivePreviewRequest,
@@ -40,7 +80,7 @@ pub(crate) fn snapshot_preview(
     let observables = observe_state(&problem, &state)?;
     Ok(build_grid_preview_field(
         request,
-        select_observables(&observables, &request.quantity),
+        select_observables(&observables, &request.quantity)?,
         plan.grid.cells,
         plan.active_mask.as_deref(),
     ))
@@ -58,7 +98,7 @@ pub(crate) fn snapshot_vector_fields(
 
     for quantity in quantities
         .iter()
-        .map(|quantity| crate::preview::normalize_quantity_id(quantity))
+        .filter_map(|quantity| normalized_quantity_name(quantity).ok())
     {
         if !seen.insert(quantity) {
             continue;
@@ -67,7 +107,7 @@ pub(crate) fn snapshot_vector_fields(
         preview_request.quantity = quantity.to_string();
         cached.push(build_grid_preview_field(
             &preview_request,
-            select_observables(&observables, quantity),
+            select_observables(&observables, quantity)?,
             plan.grid.cells,
             plan.active_mask.as_deref(),
         ));
@@ -132,6 +172,25 @@ pub(crate) fn build_snapshot_problem_and_state(
             external_field: plan.external_field,
             per_node_field: None,
             magnetoelastic: None,
+            uniaxial_anisotropy: plan.material.uniaxial_anisotropy_ku1.map(|ku1| {
+                UniaxialAnisotropyConfig {
+                    ku1,
+                    ku2: plan.material.uniaxial_anisotropy_ku2.unwrap_or(0.0),
+                    axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
+                }
+            }),
+            cubic_anisotropy: plan.material.cubic_anisotropy_kc1.map(|kc1| {
+                CubicAnisotropyConfig {
+                    kc1,
+                    kc2: plan.material.cubic_anisotropy_kc2.unwrap_or(0.0),
+                    axis1: plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
+                    axis2: plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
+                }
+            }),
+            interfacial_dmi: plan.interfacial_dmi,
+            bulk_dmi: plan.bulk_dmi,
+            zhang_li_stt: build_zl_stt(plan),
+            slonczewski_stt: build_slon_stt(plan, plan.cell_size[2]),
         },
         plan.active_mask.clone(),
     )
@@ -236,6 +295,25 @@ pub(crate) fn execute_reference_fdm(
             external_field: plan.external_field,
             per_node_field: None,
             magnetoelastic: None,
+            uniaxial_anisotropy: plan.material.uniaxial_anisotropy_ku1.map(|ku1| {
+                UniaxialAnisotropyConfig {
+                    ku1,
+                    ku2: plan.material.uniaxial_anisotropy_ku2.unwrap_or(0.0),
+                    axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
+                }
+            }),
+            cubic_anisotropy: plan.material.cubic_anisotropy_kc1.map(|kc1| {
+                CubicAnisotropyConfig {
+                    kc1,
+                    kc2: plan.material.cubic_anisotropy_kc2.unwrap_or(0.0),
+                    axis1: plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
+                    axis2: plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
+                }
+            }),
+            interfacial_dmi: plan.interfacial_dmi,
+            bulk_dmi: plan.bulk_dmi,
+            zhang_li_stt: build_zl_stt(plan),
+            slonczewski_stt: build_slon_stt(plan, plan.cell_size[2]),
         },
         plan.active_mask.clone(),
     )

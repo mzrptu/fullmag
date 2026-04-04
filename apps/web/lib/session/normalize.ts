@@ -1022,6 +1022,18 @@ function normalizeSceneDocument(raw: any): SceneDocument | null {
             scale: normalizeVec3(asset?.texture_transform?.scale) ?? [1, 1, 1],
             pivot: normalizeVec3(asset?.texture_transform?.pivot) ?? [0, 0, 0],
           },
+          preset_kind:
+            typeof asset?.preset_kind === "string" ? asset.preset_kind : null,
+          preset_params:
+            asset?.preset_params != null &&
+            typeof asset.preset_params === "object" &&
+            !Array.isArray(asset.preset_params)
+              ? (asset.preset_params as Record<string, unknown>)
+              : null,
+          preset_version:
+            asset?.preset_version != null ? Number(asset.preset_version) : null,
+          ui_label:
+            typeof asset?.ui_label === "string" ? asset.ui_label : null,
         }))
       : [],
     current_modules: normalizeSceneCurrentModules(raw.current_modules),

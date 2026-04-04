@@ -439,6 +439,12 @@ export interface ScriptBuilderMagnetizationEntry {
   source_format?: string | null;
   dataset?: string | null;
   sample_index?: number | null;
+  mapping?: MagnetizationMapping | null;
+  texture_transform?: TextureTransform3D | null;
+  preset_kind?: string | null;
+  preset_params?: Record<string, unknown> | null;
+  preset_version?: number | null;
+  ui_label?: string | null;
 }
 
 export interface ScriptBuilderPerGeometryMeshEntry {

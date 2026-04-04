@@ -1,0 +1,171 @@
+export type MagneticPresetKind =
+  | "uniform"
+  | "random_seeded"
+  | "vortex"
+  | "antivortex"
+  | "bloch_skyrmion"
+  | "neel_skyrmion"
+  | "domain_wall"
+  | "two_domain"
+  | "helical"
+  | "conical";
+
+export interface MagneticPresetParameter {
+  key: string;
+  label: string;
+  type: "number" | "integer" | "vector3" | "enum" | "boolean";
+  unit?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: Array<{ value: string | number; label: string }>;
+}
+
+export interface MagneticPresetDescriptor {
+  kind: MagneticPresetKind;
+  label: string;
+  category: "basic" | "topological" | "domains" | "periodic";
+  icon: string;
+  previewProxy: "none" | "disc" | "box" | "cylinder";
+  defaultParams: Record<string, unknown>;
+  parameters: MagneticPresetParameter[];
+}
+
+export const MAGNETIC_PRESET_CATALOG: MagneticPresetDescriptor[] = [
+  {
+    kind: "uniform",
+    label: "Uniform",
+    category: "basic",
+    icon: "◢",
+    previewProxy: "none",
+    defaultParams: { direction: [1, 0, 0] },
+    parameters: [
+      { key: "direction", label: "Direction", type: "vector3" },
+    ],
+  },
+  {
+    kind: "random_seeded",
+    label: "Random",
+    category: "basic",
+    icon: "⋯",
+    previewProxy: "none",
+    defaultParams: { seed: 1 },
+    parameters: [
+      { key: "seed", label: "Seed", type: "integer", min: 1, step: 1 },
+    ],
+  },
+  {
+    kind: "vortex",
+    label: "Vortex",
+    category: "topological",
+    icon: "🌀",
+    previewProxy: "disc",
+    defaultParams: { circulation: 1, core_polarity: 1, core_radius: 10e-9, plane: "xy" },
+    parameters: [
+      { key: "circulation", label: "Circulation", type: "integer", options: [{ value: 1, label: "+1" }, { value: -1, label: "-1" }] },
+      { key: "core_polarity", label: "Core polarity", type: "integer", options: [{ value: 1, label: "+1" }, { value: -1, label: "-1" }] },
+      { key: "core_radius", label: "Core radius", type: "number", unit: "m", min: 0 },
+      { key: "plane", label: "Plane", type: "enum", options: [{ value: "xy", label: "XY" }, { value: "xz", label: "XZ" }, { value: "yz", label: "YZ" }] },
+    ],
+  },
+  {
+    kind: "antivortex",
+    label: "Antivortex",
+    category: "topological",
+    icon: "🌀",
+    previewProxy: "disc",
+    defaultParams: { core_polarity: 1, core_radius: 10e-9, plane: "xy" },
+    parameters: [
+      { key: "core_polarity", label: "Core polarity", type: "integer", options: [{ value: 1, label: "+1" }, { value: -1, label: "-1" }] },
+      { key: "core_radius", label: "Core radius", type: "number", unit: "m", min: 0 },
+      { key: "plane", label: "Plane", type: "enum", options: [{ value: "xy", label: "XY" }, { value: "xz", label: "XZ" }, { value: "yz", label: "YZ" }] },
+    ],
+  },
+  {
+    kind: "bloch_skyrmion",
+    label: "Bloch skyrmion",
+    category: "topological",
+    icon: "◎",
+    previewProxy: "disc",
+    defaultParams: { radius: 35e-9, wall_width: 10e-9, chirality: 1, core_polarity: -1, plane: "xy" },
+    parameters: [
+      { key: "radius", label: "Radius", type: "number", unit: "m", min: 0 },
+      { key: "wall_width", label: "Wall width", type: "number", unit: "m", min: 0 },
+      { key: "chirality", label: "Chirality", type: "integer", options: [{ value: 1, label: "+1" }, { value: -1, label: "-1" }] },
+      { key: "core_polarity", label: "Core polarity", type: "integer", options: [{ value: 1, label: "+1" }, { value: -1, label: "-1" }] },
+      { key: "plane", label: "Plane", type: "enum", options: [{ value: "xy", label: "XY" }, { value: "xz", label: "XZ" }, { value: "yz", label: "YZ" }] },
+    ],
+  },
+  {
+    kind: "neel_skyrmion",
+    label: "Néel skyrmion",
+    category: "topological",
+    icon: "◉",
+    previewProxy: "disc",
+    defaultParams: { radius: 35e-9, wall_width: 10e-9, chirality: 1, core_polarity: -1, plane: "xy" },
+    parameters: [
+      { key: "radius", label: "Radius", type: "number", unit: "m", min: 0 },
+      { key: "wall_width", label: "Wall width", type: "number", unit: "m", min: 0 },
+      { key: "chirality", label: "Chirality", type: "integer", options: [{ value: 1, label: "+1" }, { value: -1, label: "-1" }] },
+      { key: "core_polarity", label: "Core polarity", type: "integer", options: [{ value: 1, label: "+1" }, { value: -1, label: "-1" }] },
+      { key: "plane", label: "Plane", type: "enum", options: [{ value: "xy", label: "XY" }, { value: "xz", label: "XZ" }, { value: "yz", label: "YZ" }] },
+    ],
+  },
+  {
+    kind: "domain_wall",
+    label: "Domain wall",
+    category: "domains",
+    icon: "║",
+    previewProxy: "box",
+    defaultParams: { kind: "neel", width: 10e-9, center_offset: 0, normal_axis: "x" },
+    parameters: [
+      { key: "kind", label: "Type", type: "enum", options: [{ value: "neel", label: "Néel" }, { value: "bloch", label: "Bloch" }] },
+      { key: "width", label: "Width", type: "number", unit: "m", min: 0 },
+      { key: "center_offset", label: "Center offset", type: "number", unit: "m" },
+      { key: "normal_axis", label: "Normal axis", type: "enum", options: [{ value: "x", label: "X" }, { value: "y", label: "Y" }, { value: "z", label: "Z" }] },
+    ],
+  },
+  {
+    kind: "two_domain",
+    label: "Two domains",
+    category: "domains",
+    icon: "⊟",
+    previewProxy: "box",
+    defaultParams: { m_left: [1, 0, 0], m_right: [-1, 0, 0], wall_width: 10e-9, wall_center: 0, normal_axis: "x" },
+    parameters: [
+      { key: "m_left", label: "Left domain", type: "vector3" },
+      { key: "m_right", label: "Right domain", type: "vector3" },
+      { key: "wall_width", label: "Wall width", type: "number", unit: "m", min: 0 },
+      { key: "wall_center", label: "Wall center", type: "number", unit: "m" },
+      { key: "normal_axis", label: "Normal axis", type: "enum", options: [{ value: "x", label: "X" }, { value: "y", label: "Y" }, { value: "z", label: "Z" }] },
+    ],
+  },
+  {
+    kind: "helical",
+    label: "Helical",
+    category: "periodic",
+    icon: "≈",
+    previewProxy: "box",
+    defaultParams: { wavevector: [1e7, 0, 0], e1: [1, 0, 0], e2: [0, 1, 0], phase_rad: 0 },
+    parameters: [
+      { key: "wavevector", label: "Wavevector", type: "vector3" },
+      { key: "e1", label: "Basis e1", type: "vector3" },
+      { key: "e2", label: "Basis e2", type: "vector3" },
+      { key: "phase_rad", label: "Phase", type: "number", unit: "rad" },
+    ],
+  },
+  {
+    kind: "conical",
+    label: "Conical",
+    category: "periodic",
+    icon: "⌁",
+    previewProxy: "box",
+    defaultParams: { wavevector: [1e7, 0, 0], cone_axis: [0, 0, 1], cone_angle_rad: Math.PI / 4, phase_rad: 0 },
+    parameters: [
+      { key: "wavevector", label: "Wavevector", type: "vector3" },
+      { key: "cone_axis", label: "Cone axis", type: "vector3" },
+      { key: "cone_angle_rad", label: "Cone angle", type: "number", unit: "rad", min: 0, max: Math.PI },
+      { key: "phase_rad", label: "Phase", type: "number", unit: "rad" },
+    ],
+  },
+];

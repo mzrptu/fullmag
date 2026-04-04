@@ -236,6 +236,14 @@ fullmag_fdm_backend *fullmag_fdm_backend_create(
     ctx->has_bulk_dmi = plan->has_bulk_dmi != 0;
     ctx->D_bulk = plan->dmi_D_bulk;
 
+    // Magnetoelastic coupling (prescribed strain)
+    ctx->has_magnetoelastic = plan->has_magnetoelastic != 0;
+    ctx->mel_b1 = plan->mel_b1;
+    ctx->mel_b2 = plan->mel_b2;
+    for (int i = 0; i < 6; ++i) {
+        ctx->mel_strain[i] = plan->mel_strain[i];
+    }
+
     // Thermal noise
     ctx->temperature = plan->temperature;
 

@@ -175,6 +175,7 @@ pub(crate) fn diagnose_initial_fdm_plan(plan: &FdmPlanIR) -> Result<InitialState
             external_field: plan.external_field,
             per_node_field: None,
             magnetoelastic: None,
+            ..Default::default()
         },
         plan.active_mask.clone(),
     )
@@ -235,6 +236,7 @@ pub(crate) fn diagnose_initial_fem_plan(plan: &FemPlanIR) -> Result<InitialState
         external_field: plan.external_field,
         per_node_field: None,
         magnetoelastic: None,
+        ..Default::default()
     };
     let problem = if !plan.enable_demag {
         FemLlgProblem::with_terms(topology, material, dynamics, terms)

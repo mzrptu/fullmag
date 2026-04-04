@@ -312,6 +312,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [viewportScope, setViewportScope] = useState<ViewportScope>("universe");
   const [focusObjectRequest, setFocusObjectRequest] = useState<FocusObjectRequest | null>(null);
   const [objectViewMode, setObjectViewMode] = useState<ObjectViewMode>("context");
+  const [activeTransformScope, setActiveTransformScope] = useState<"object" | "texture" | null>(null);
   const [airMeshVisible, setAirMeshVisible] = useState(false);
   const [airMeshOpacity, setAirMeshOpacity] = useState(DEFAULT_AIR_MESH_OPACITY);
   const [meshEntityViewState, setMeshEntityViewState] = useState<MeshEntityViewStateMap>({});
@@ -507,6 +508,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setViewportScope("universe");
     setFocusObjectRequest(null);
     setObjectViewMode("context");
+    setActiveTransformScope(null);
     setAirMeshVisible(false);
     setAirMeshOpacity(DEFAULT_AIR_MESH_OPACITY);
     setMeshEntityViewState({});
@@ -979,6 +981,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         previousEditor.selected_entity_id === selectedEntityId &&
         previousEditor.focused_entity_id === focusedEntityId &&
         previousEditor.object_view_mode === objectViewMode &&
+        previousEditor.active_transform_scope === activeTransformScope &&
         previousEditor.air_mesh_visible === airMeshVisible &&
         previousEditor.air_mesh_opacity === nextAirMeshOpacity &&
         samePersistedMeshEntityViewState(
@@ -996,6 +999,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
           selected_entity_id: selectedEntityId,
           focused_entity_id: focusedEntityId,
           object_view_mode: objectViewMode,
+          active_transform_scope: activeTransformScope,
           air_mesh_visible: airMeshVisible,
           air_mesh_opacity: nextAirMeshOpacity,
           mesh_entity_view_state: persistedMeshEntityViewState,
@@ -1008,6 +1012,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     focusedEntityId,
     meshEntityViewState,
     objectViewMode,
+    activeTransformScope,
     selectedEntityId,
     selectedObjectId,
   ]);
@@ -2921,6 +2926,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     viewportScope,
     focusObjectRequest,
     objectViewMode,
+    activeTransformScope,
     airMeshVisible,
     airMeshOpacity,
     meshEntityViewState,
@@ -2937,7 +2943,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     analyzeSelection,
     setSolverSettings, setSceneDocument, setStudyStages, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
-    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, setAnalyzeSelection, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setActiveTransformScope, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, setAnalyzeSelection, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
     localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,

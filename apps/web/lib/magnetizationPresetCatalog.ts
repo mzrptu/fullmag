@@ -26,7 +26,7 @@ export interface MagneticPresetDescriptor {
   label: string;
   category: "basic" | "topological" | "domains" | "periodic";
   icon: string;
-  previewProxy: "none" | "disc" | "box" | "cylinder";
+  previewProxy: "none" | "disc" | "box" | "cylinder" | "wall" | "wave";
   defaultParams: Record<string, unknown>;
   parameters: MagneticPresetParameter[];
 }
@@ -116,7 +116,7 @@ export const MAGNETIC_PRESET_CATALOG: MagneticPresetDescriptor[] = [
     label: "Domain wall",
     category: "domains",
     icon: "║",
-    previewProxy: "box",
+    previewProxy: "wall",
     defaultParams: { kind: "neel", width: 10e-9, center_offset: 0, normal_axis: "x" },
     parameters: [
       { key: "kind", label: "Type", type: "enum", options: [{ value: "neel", label: "Néel" }, { value: "bloch", label: "Bloch" }] },
@@ -130,7 +130,7 @@ export const MAGNETIC_PRESET_CATALOG: MagneticPresetDescriptor[] = [
     label: "Two domains",
     category: "domains",
     icon: "⊟",
-    previewProxy: "box",
+    previewProxy: "wall",
     defaultParams: { m_left: [1, 0, 0], m_right: [-1, 0, 0], wall_width: 10e-9, wall_center: 0, normal_axis: "x" },
     parameters: [
       { key: "m_left", label: "Left domain", type: "vector3" },
@@ -145,7 +145,7 @@ export const MAGNETIC_PRESET_CATALOG: MagneticPresetDescriptor[] = [
     label: "Helical",
     category: "periodic",
     icon: "≈",
-    previewProxy: "box",
+    previewProxy: "wave",
     defaultParams: { wavevector: [1e7, 0, 0], e1: [1, 0, 0], e2: [0, 1, 0], phase_rad: 0 },
     parameters: [
       { key: "wavevector", label: "Wavevector", type: "vector3" },
@@ -159,7 +159,7 @@ export const MAGNETIC_PRESET_CATALOG: MagneticPresetDescriptor[] = [
     label: "Conical",
     category: "periodic",
     icon: "⌁",
-    previewProxy: "box",
+    previewProxy: "wave",
     defaultParams: { wavevector: [1e7, 0, 0], cone_axis: [0, 0, 1], cone_angle_rad: Math.PI / 4, phase_rad: 0 },
     parameters: [
       { key: "wavevector", label: "Wavevector", type: "vector3" },

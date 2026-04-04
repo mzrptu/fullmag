@@ -1,5 +1,6 @@
 use crate::types::{LivePreviewField, LivePreviewRequest, StateObservables};
 use fullmag_ir::MeshIR;
+use crate::quantities::{normalize_quantity_id, normalized_quantity_name, quantity_spatial_domain, quantity_unit, QuantityId};
 
 #[derive(Debug, Clone)]
 pub(crate) struct GridPreviewPlan {
@@ -15,55 +16,23 @@ pub(crate) struct GridPreviewPlan {
     pub auto_downscale_message: Option<String>,
 }
 
-pub(crate) fn normalize_quantity_id(requested: &str) -> &'static str {
-    match requested {
-        "H_ex" => "H_ex",
-        "H_demag" => "H_demag",
-        "H_ant" => "H_ant",
-        "H_ext" => "H_ext",
-        "H_eff" => "H_eff",
-        "H_ani" => "H_ani",
-        "H_dmi" => "H_dmi",
-        _ => "m",
-    }
-}
-
-pub(crate) fn quantity_unit(quantity: &str) -> &'static str {
-    match normalize_quantity_id(quantity) {
-        "m" => "dimensionless",
-        "H_ex" | "H_demag" | "H_ant" | "H_ext" | "H_eff" | "H_ani" | "H_dmi" => "A/m",
-        _ => "",
-    }
-}
-
-pub(crate) fn quantity_spatial_domain(quantity: &str) -> &'static str {
-    match normalize_quantity_id(quantity) {
-        "m" => "magnetic_only",
-        _ => "full_domain",
-    }
-}
-
 pub(crate) fn select_observables<'a>(
     observables: &'a StateObservables,
     quantity: &str,
-) -> &'a [[f64; 3]] {
-    match normalize_quantity_id(quantity) {
-        "H_ex" => observables.exchange_field.as_slice(),
-        "H_demag" => observables.demag_field.as_slice(),
-        "H_ant" => observables.antenna_field.as_slice(),
-        "H_ext" => observables.external_field.as_slice(),
-        "H_eff" => observables.effective_field.as_slice(),
-        "m" => observables.magnetization.as_slice(),
-        other => {
-            // F-13 fix: warn that the requested quantity is not available from
-            // the CPU reference engine and fall back to magnetization.
-            eprintln!(
-                "warning: preview quantity '{}' is not supported by the CPU reference engine — \
-                 returning magnetization instead",
-                other
-            );
-            observables.magnetization.as_slice()
-        }
+) -> Result<&'a [[f64; 3]], crate::RunError> {
+    match normalize_quantity_id(quantity)? {
+        QuantityId::HEx => Ok(observables.exchange_field.as_slice()),
+        QuantityId::HDemag => Ok(observables.demag_field.as_slice()),
+        QuantityId::HAnt => Ok(observables.antenna_field.as_slice()),
+        QuantityId::HExt => Ok(observables.external_field.as_slice()),
+        QuantityId::HEff => Ok(observables.effective_field.as_slice()),
+        QuantityId::M => Ok(observables.magnetization.as_slice()),
+        other => Err(crate::RunError {
+            message: format!(
+                "preview quantity '{}' is not available in this execution path",
+                other.as_str()
+            ),
+        }),
     }
 }
 
@@ -239,7 +208,7 @@ pub(crate) fn build_grid_preview_field(
     original_grid: [u32; 3],
     active_mask: Option<&[bool]>,
 ) -> LivePreviewField {
-    let quantity = normalize_quantity_id(&request.quantity);
+    let quantity = normalized_quantity_name(&request.quantity).unwrap_or("m");
     let plan = plan_grid_preview(request, original_grid);
     let sampled = resample_grid_vectors(values, &plan);
     let resampled_mask = active_mask.map(|mask| resample_grid_mask(mask, &plan));
@@ -290,7 +259,7 @@ pub(crate) fn build_grid_preview_field_from_flat_plan(
 }
 
 pub(crate) fn mesh_quantity_active_mask(quantity: &str, mesh: &MeshIR) -> Option<Vec<bool>> {
-    if normalize_quantity_id(quantity) != "m" {
+    if !matches!(normalize_quantity_id(quantity), Ok(QuantityId::M)) {
         return None;
     }
     let magnetic_element_mask = magnetic_element_mask_from_markers(&mesh.element_markers);
@@ -327,7 +296,7 @@ pub(crate) fn build_mesh_preview_field_with_active_mask(
     values: &[[f64; 3]],
     active_mask: Option<Vec<bool>>,
 ) -> LivePreviewField {
-    let quantity = normalize_quantity_id(&request.quantity);
+    let quantity = normalized_quantity_name(&request.quantity).unwrap_or("m");
     LivePreviewField {
         config_revision: request.revision,
         quantity: quantity.to_string(),

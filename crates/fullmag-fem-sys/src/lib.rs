@@ -316,3 +316,36 @@ extern "C" {
         uniform: i32,
     ) -> i32;
 }
+
+// ── GPU Dense Generalized Eigenvalue Solver (Etap A4) ────────────────────
+//
+// Descriptor for `fullmag_fem_eigen_dense`.  Mirrors the C struct exactly.
+
+#[repr(C)]
+pub struct fullmag_fem_eigen_dense_desc {
+    /// Stiffness matrix K — lower triangle, column-major, n*n f64.
+    pub k_lower_col_major: *const f64,
+    /// Mass matrix M — lower triangle, column-major, n*n f64.
+    pub m_lower_col_major: *const f64,
+    /// Matrix dimension (number of active DOF).
+    pub n: u32,
+    /// How many eigenvalues/vectors to return (≤ n).
+    pub n_eigenvalues: u32,
+    /// Caller-allocated output: `n_eigenvalues` eigenvalues.
+    pub out_eigenvalues: *mut f64,
+    /// Caller-allocated output: n * n_eigenvalues doubles, col-major.
+    pub out_eigenvectors: *mut f64,
+    /// Optional human-readable message buffer (may be null).
+    pub out_reason: *mut std::os::raw::c_char,
+    /// Capacity of `out_reason` including null terminator.
+    pub reason_len: u32,
+}
+
+extern "C" {
+    /// Solve K·x = λ·M·x on the GPU using cuSolverDN Dsygvd.
+    ///
+    /// Returns `FULLMAG_FEM_OK` on success.
+    /// Returns `FULLMAG_FEM_ERR_UNAVAILABLE` (-2) when the GPU/cuSolver stack
+    /// is not compiled in; the caller should fall back to the CPU path.
+    pub fn fullmag_fem_eigen_dense(desc: *mut fullmag_fem_eigen_dense_desc) -> i32;
+}

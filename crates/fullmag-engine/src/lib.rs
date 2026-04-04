@@ -279,6 +279,70 @@ pub struct EffectiveFieldTerms {
     pub per_node_field: Option<Vec<Vector3>>,
     /// Optional magnetoelastic prescribed-strain configuration.
     pub magnetoelastic: Option<MagnetoelasticTermConfig>,
+    /// Uniaxial magnetocrystalline anisotropy (Ku1 + optionally Ku2).
+    pub uniaxial_anisotropy: Option<UniaxialAnisotropyConfig>,
+    /// Cubic magnetocrystalline anisotropy (Kc1 + optionally Kc2).
+    pub cubic_anisotropy: Option<CubicAnisotropyConfig>,
+    /// Interfacial (Néel) DMI constant D [J/m²]. None = disabled.
+    pub interfacial_dmi: Option<f64>,
+    /// Bulk (Bloch) DMI constant D [J/m³]. None = disabled.
+    pub bulk_dmi: Option<f64>,
+    /// Zhang-Li (CIP) spin-transfer torque. None = disabled.
+    pub zhang_li_stt: Option<ZhangLiSttConfig>,
+    /// Slonczewski (CPP) spin-transfer torque. None = disabled.
+    pub slonczewski_stt: Option<SlonczewskiSttConfig>,
+}
+
+/// Uniaxial magnetocrystalline anisotropy configuration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UniaxialAnisotropyConfig {
+    /// First-order anisotropy constant Ku1 [J/m³].
+    pub ku1: f64,
+    /// Second-order anisotropy constant Ku2 [J/m³]. 0.0 = first-order only.
+    pub ku2: f64,
+    /// Easy-axis unit vector (automatically normalised at runtime).
+    pub axis: Vector3,
+}
+
+/// Cubic magnetocrystalline anisotropy configuration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CubicAnisotropyConfig {
+    /// First-order cubic constant Kc1 [J/m³].
+    pub kc1: f64,
+    /// Second-order cubic constant Kc2 [J/m³].
+    pub kc2: f64,
+    /// First crystal axis (unit vector). Third axis = axis1 × axis2.
+    pub axis1: Vector3,
+    /// Second crystal axis (unit vector).
+    pub axis2: Vector3,
+}
+
+/// Zhang-Li (CIP) spin-transfer torque configuration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZhangLiSttConfig {
+    /// Current density vector j [A/m²].
+    pub current_density: Vector3,
+    /// Spin polarization P (dimensionless, 0 < P ≤ 1).
+    pub spin_polarization: f64,
+    /// Non-adiabaticity parameter β (dimensionless).
+    pub non_adiabaticity: f64,
+}
+
+/// Slonczewski (CPP) spin-transfer torque configuration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlonczewskiSttConfig {
+    /// Current density magnitude |j| [A/m²].
+    pub current_density_magnitude: f64,
+    /// Spin-polarization axis (unit vector p̂).
+    pub spin_polarization_axis: Vector3,
+    /// Asymmetry parameter Λ (dimensionless, Λ ≥ 1).
+    pub lambda: f64,
+    /// Secondary spin-transfer parameter ε' (dimensionless).
+    pub epsilon_prime: f64,
+    /// Spin polarization degree P (dimensionless).
+    pub degree: f64,
+    /// Layer thickness d [m] (used in β_STT prefactor).
+    pub thickness: f64,
 }
 
 /// Configuration for the magnetoelastic effective field term.
@@ -296,6 +360,12 @@ impl Default for EffectiveFieldTerms {
             external_field: None,
             per_node_field: None,
             magnetoelastic: None,
+            uniaxial_anisotropy: None,
+            cubic_anisotropy: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
+            zhang_li_stt: None,
+            slonczewski_stt: None,
         }
     }
 }
@@ -2470,6 +2540,300 @@ impl ExchangeLlgProblem {
         }
     }
 
+    /// Compute uniaxial + cubic anisotropy effective field [A/m].
+    /// Returns zero vectors when no anisotropy is configured.
+    fn anisotropy_field(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
+        let ms = self.material.saturation_magnetisation;
+        let has_uni = self.terms.uniaxial_anisotropy.is_some();
+        let has_cub = self.terms.cubic_anisotropy.is_some();
+        if !has_uni && !has_cub {
+            return zero_vectors(self.grid.cell_count());
+        }
+        let ms_safe = ms.max(1e-30);
+        magnetization
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                if !self.is_active(i) {
+                    return [0.0, 0.0, 0.0];
+                }
+                let mut h = [0.0f64, 0.0, 0.0];
+                if let Some(ref uni) = self.terms.uniaxial_anisotropy {
+                    let n = norm(uni.axis).max(1e-30);
+                    let u = scale(uni.axis, 1.0 / n);
+                    let m_dot_u = dot(*m, u);
+                    let coeff = 2.0 * uni.ku1 / (MU0 * ms_safe) * m_dot_u
+                        + 4.0 * uni.ku2 / (MU0 * ms_safe) * m_dot_u * m_dot_u * m_dot_u;
+                    h = add(h, scale(u, coeff));
+                }
+                if let Some(ref cub) = self.terms.cubic_anisotropy {
+                    let n1 = norm(cub.axis1).max(1e-30);
+                    let n2 = norm(cub.axis2).max(1e-30);
+                    let c1 = scale(cub.axis1, 1.0 / n1);
+                    let c2 = scale(cub.axis2, 1.0 / n2);
+                    let c3 = cross(c1, c2);
+                    let m1 = dot(*m, c1);
+                    let m2 = dot(*m, c2);
+                    let m3 = dot(*m, c3);
+                    let pf = 2.0 / (MU0 * ms_safe);
+                    let g1 = -pf * (cub.kc1 * m1 * (m2 * m2 + m3 * m3)
+                        + cub.kc2 * m1 * m2 * m2 * m3 * m3);
+                    let g2 = -pf * (cub.kc1 * m2 * (m1 * m1 + m3 * m3)
+                        + cub.kc2 * m2 * m1 * m1 * m3 * m3);
+                    let g3 = -pf * (cub.kc1 * m3 * (m1 * m1 + m2 * m2)
+                        + cub.kc2 * m3 * m1 * m1 * m2 * m2);
+                    h = add(h, add(add(scale(c1, g1), scale(c2, g2)), scale(c3, g3)));
+                }
+                h
+            })
+            .collect()
+    }
+
+    /// Compute anisotropy energy [J] from anisotropy field.
+    fn anisotropy_energy(&self, magnetization: &[Vector3], ani_field: &[Vector3]) -> f64 {
+        let cell_volume = self.cell_size.volume();
+        let ms = self.material.saturation_magnetisation;
+        (0..magnetization.len())
+            .map(|i| -0.5 * MU0 * ms * dot(magnetization[i], ani_field[i]) * cell_volume)
+            .sum()
+    }
+
+    /// Compute interfacial (Néel) DMI effective field [A/m].
+    ///
+    /// $H_x = (2D / \mu_0 M_s) \partial m_z / \partial x$, etc. with Neumann BC
+    /// (ghost cells cloned from boundary).
+    fn interfacial_dmi_field(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
+        let d = match self.terms.interfacial_dmi {
+            Some(d) if d.abs() > 0.0 => d,
+            _ => return zero_vectors(self.grid.cell_count()),
+        };
+        let ms = self.material.saturation_magnetisation.max(1e-30);
+        let pf = 2.0 * d / (MU0 * ms);
+        let nx = self.grid.nx;
+        let ny = self.grid.ny;
+        let _nz = self.grid.nz;
+        let dx = self.cell_size.dx;
+        let dy = self.cell_size.dy;
+
+        (0..self.grid.cell_count())
+            .map(|flat| {
+                if !self.is_active(flat) {
+                    return [0.0, 0.0, 0.0];
+                }
+                let x = flat % nx;
+                let y = (flat / nx) % ny;
+                let z = flat / (nx * ny);
+
+                // Neumann BC: clamp neighbour indices to boundary
+                let xp = if x + 1 < nx { self.grid.index(x + 1, y, z) } else { flat };
+                let xm = if x > 0 { self.grid.index(x - 1, y, z) } else { flat };
+                let yp = if y + 1 < ny { self.grid.index(x, y + 1, z) } else { flat };
+                let ym = if y > 0 { self.grid.index(x, y - 1, z) } else { flat };
+
+                let dx_mz = (magnetization[xp][2] - magnetization[xm][2]) / (2.0 * dx);
+                let dy_mz = (magnetization[yp][2] - magnetization[ym][2]) / (2.0 * dy);
+                let dx_mx = (magnetization[xp][0] - magnetization[xm][0]) / (2.0 * dx);
+                let dy_my = (magnetization[yp][1] - magnetization[ym][1]) / (2.0 * dy);
+
+                [pf * dx_mz, pf * dy_mz, -pf * (dx_mx + dy_my)]
+            })
+            .collect()
+    }
+
+    /// Compute bulk (Bloch) DMI effective field [A/m] = -(2D / mu0 Ms) curl(m).
+    fn bulk_dmi_field(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
+        let d = match self.terms.bulk_dmi {
+            Some(d) if d.abs() > 0.0 => d,
+            _ => return zero_vectors(self.grid.cell_count()),
+        };
+        let ms = self.material.saturation_magnetisation.max(1e-30);
+        let pf = -2.0 * d / (MU0 * ms);
+        let nx = self.grid.nx;
+        let ny = self.grid.ny;
+        let nz = self.grid.nz;
+        let dx = self.cell_size.dx;
+        let dy = self.cell_size.dy;
+        let dz = self.cell_size.dz;
+
+        (0..self.grid.cell_count())
+            .map(|flat| {
+                if !self.is_active(flat) {
+                    return [0.0, 0.0, 0.0];
+                }
+                let x = flat % nx;
+                let y = (flat / nx) % ny;
+                let z = flat / (nx * ny);
+
+                let xp = if x + 1 < nx { self.grid.index(x + 1, y, z) } else { flat };
+                let xm = if x > 0 { self.grid.index(x - 1, y, z) } else { flat };
+                let yp = if y + 1 < ny { self.grid.index(x, y + 1, z) } else { flat };
+                let ym = if y > 0 { self.grid.index(x, y - 1, z) } else { flat };
+                let zp = if z + 1 < nz { self.grid.index(x, y, z + 1) } else { flat };
+                let zm = if z > 0 { self.grid.index(x, y, z - 1) } else { flat };
+
+                let curl_x = (magnetization[yp][2] - magnetization[ym][2]) / (2.0 * dy)
+                    - (magnetization[zp][1] - magnetization[zm][1]) / (2.0 * dz);
+                let curl_y = (magnetization[zp][0] - magnetization[zm][0]) / (2.0 * dz)
+                    - (magnetization[xp][2] - magnetization[xm][2]) / (2.0 * dx);
+                let curl_z = (magnetization[xp][1] - magnetization[xm][1]) / (2.0 * dx)
+                    - (magnetization[yp][0] - magnetization[ym][0]) / (2.0 * dy);
+
+                [pf * curl_x, pf * curl_y, pf * curl_z]
+            })
+            .collect()
+    }
+
+    /// Zhang-Li (CIP) STT torque per node.
+    ///
+    /// τ_ZL = −m×(m×u∇m) − β·m×(u∇m)
+    /// where u = b·j and b = P·μ_B / (e·M_s·(1+β²))
+    fn zhang_li_stt_torque(&self, magnetization: &[Vector3], cfg: &ZhangLiSttConfig) -> Vec<Vector3> {
+        const MU_B: f64 = 9.274009994e-24; // Bohr magneton [J/T]
+        const E_CHARGE: f64 = 1.60217662e-19; // Elementary charge [C]
+
+        let ms = self.material.saturation_magnetisation.max(1e-30);
+        let beta = cfg.non_adiabaticity;
+        let b = (cfg.spin_polarization * MU_B) / (E_CHARGE * ms * (1.0 + beta * beta));
+        let ux = b * cfg.current_density[0];
+        let uy = b * cfg.current_density[1];
+        let uz = b * cfg.current_density[2];
+
+        let nx = self.grid.nx;
+        let ny = self.grid.ny;
+        let nz = self.grid.nz;
+        let dx = self.cell_size.dx;
+        let dy = self.cell_size.dy;
+        let dz = self.cell_size.dz;
+        let n = self.grid.cell_count();
+
+        (0..n)
+            .map(|flat| {
+                if !self.is_active(flat) {
+                    return [0.0, 0.0, 0.0];
+                }
+                let x = flat % nx;
+                let y = (flat / nx) % ny;
+                let z = flat / (nx * ny);
+                let [m0, m1, m2] = magnetization[flat];
+
+                // Upwind finite differences for (u·∇)m — mirrors CUDA implementation
+                let mut dm0 = 0.0f64;
+                let mut dm1 = 0.0f64;
+                let mut dm2 = 0.0f64;
+
+                // x-direction
+                if ux > 0.0 && x > 0 {
+                    let prev = self.grid.index(x - 1, y, z);
+                    let [p0, p1, p2] = magnetization[prev];
+                    dm0 += ux * (m0 - p0) / dx;
+                    dm1 += ux * (m1 - p1) / dx;
+                    dm2 += ux * (m2 - p2) / dx;
+                } else if ux < 0.0 && x + 1 < nx {
+                    let next = self.grid.index(x + 1, y, z);
+                    let [n0, n1, n2] = magnetization[next];
+                    dm0 += ux * (n0 - m0) / dx;
+                    dm1 += ux * (n1 - m1) / dx;
+                    dm2 += ux * (n2 - m2) / dx;
+                }
+
+                // y-direction
+                if uy > 0.0 && y > 0 {
+                    let prev = self.grid.index(x, y - 1, z);
+                    let [p0, p1, p2] = magnetization[prev];
+                    dm0 += uy * (m0 - p0) / dy;
+                    dm1 += uy * (m1 - p1) / dy;
+                    dm2 += uy * (m2 - p2) / dy;
+                } else if uy < 0.0 && y + 1 < ny {
+                    let next = self.grid.index(x, y + 1, z);
+                    let [n0, n1, n2] = magnetization[next];
+                    dm0 += uy * (n0 - m0) / dy;
+                    dm1 += uy * (n1 - m1) / dy;
+                    dm2 += uy * (n2 - m2) / dy;
+                }
+
+                // z-direction
+                if uz > 0.0 && z > 0 {
+                    let prev = self.grid.index(x, y, z - 1);
+                    let [p0, p1, p2] = magnetization[prev];
+                    dm0 += uz * (m0 - p0) / dz;
+                    dm1 += uz * (m1 - p1) / dz;
+                    dm2 += uz * (m2 - p2) / dz;
+                } else if uz < 0.0 && z + 1 < nz {
+                    let next = self.grid.index(x, y, z + 1);
+                    let [n0, n1, n2] = magnetization[next];
+                    dm0 += uz * (n0 - m0) / dz;
+                    dm1 += uz * (n1 - m1) / dz;
+                    dm2 += uz * (n2 - m2) / dz;
+                }
+
+                // cross = m × (u·∇)m
+                let cx = m1 * dm2 - m2 * dm1;
+                let cy = m2 * dm0 - m0 * dm2;
+                let cz = m0 * dm1 - m1 * dm0;
+
+                // double_cross = m × cross
+                let dcx = m1 * cz - m2 * cy;
+                let dcy = m2 * cx - m0 * cz;
+                let dcz = m0 * cy - m1 * cx;
+
+                [-dcx - beta * cx, -dcy - beta * cy, -dcz - beta * cz]
+            })
+            .collect()
+    }
+
+    /// Slonczewski (CPP) STT torque per node.
+    ///
+    /// τ_Slon = β_STT · [m×(m×p̂) + ε'·m×p̂]
+    /// β_STT = |j|·ħ / (2·e·μ₀·M_s·d) · g(P, λ, m·p̂)
+    /// g = P·λ² / (λ²+1 + (λ²−1)·(m·p̂))
+    fn slonczewski_stt_torque(&self, magnetization: &[Vector3], cfg: &SlonczewskiSttConfig) -> Vec<Vector3> {
+        const HBAR: f64 = 1.054571817e-34; // Reduced Planck constant [J·s]
+        const E_CHARGE: f64 = 1.60217662e-19; // Elementary charge [C]
+        const MU0_CONST: f64 = 1.2566370614359173e-6; // Vacuum permeability [H/m]
+
+        let ms = self.material.saturation_magnetisation.max(1e-30);
+        let d = cfg.thickness.max(1e-30);
+        let js = cfg.current_density_magnitude;
+        let prefactor = (js * HBAR) / (2.0 * E_CHARGE * MU0_CONST * ms * d);
+
+        let lam = cfg.lambda;
+        let l2 = lam * lam;
+        let p_degree = if cfg.degree > 0.0 { cfg.degree } else { 1.0 };
+        let eps_prime = cfg.epsilon_prime;
+        let [px, py, pz] = cfg.spin_polarization_axis;
+
+        let n = self.grid.cell_count();
+
+        (0..n)
+            .map(|flat| {
+                if !self.is_active(flat) {
+                    return [0.0, 0.0, 0.0];
+                }
+                let [m0, m1, m2] = magnetization[flat];
+                let m_dot_p = m0 * px + m1 * py + m2 * pz;
+
+                let g = (p_degree * l2) / ((l2 + 1.0) + (l2 - 1.0) * m_dot_p);
+                let beta_stt = prefactor * g;
+
+                // m × p
+                let mcp_x = m1 * pz - m2 * py;
+                let mcp_y = m2 * px - m0 * pz;
+                let mcp_z = m0 * py - m1 * px;
+
+                // m × (m × p)
+                let mmcp_x = m1 * mcp_z - m2 * mcp_y;
+                let mmcp_y = m2 * mcp_x - m0 * mcp_z;
+                let mmcp_z = m0 * mcp_y - m1 * mcp_x;
+
+                [
+                    beta_stt * (mmcp_x + eps_prime * mcp_x),
+                    beta_stt * (mmcp_y + eps_prime * mcp_y),
+                    beta_stt * (mmcp_z + eps_prime * mcp_z),
+                ]
+            })
+            .collect()
+    }
+
     /// Compute effective field using a disposable FFT workspace.
     ///
     /// **Performance warning**: rebuilds the FFT workspace on every call.
@@ -2500,8 +2864,15 @@ impl ExchangeLlgProblem {
         };
         let external_field = self.external_field_vectors();
         let mel_field = self.magnetoelastic_field(magnetization);
+        let ani_field = self.anisotropy_field(magnetization);
+        let idmi_field = self.interfacial_dmi_field(magnetization);
+        let bdmi_field = self.bulk_dmi_field(magnetization);
         let mut h_eff =
             combine_fields_4(&exchange_field, &demag_field, &external_field, &mel_field);
+        // Add anisotropy + DMI
+        for (i, h) in h_eff.iter_mut().enumerate() {
+            *h = add(add(add(*h, ani_field[i]), idmi_field[i]), bdmi_field[i]);
+        }
 
         // Add Brown thermal field if temperature > 0
         if self.temperature > 0.0
@@ -2661,14 +3032,34 @@ impl ExchangeLlgProblem {
         };
         let external_field = self.external_field_vectors();
         let mel_field = self.magnetoelastic_field(magnetization);
-        let effective_field =
+        let ani_field = self.anisotropy_field(magnetization);
+        let idmi_field = self.interfacial_dmi_field(magnetization);
+        let bdmi_field = self.bulk_dmi_field(magnetization);
+        let mut effective_field =
             combine_fields_4(&exchange_field, &demag_field, &external_field, &mel_field);
+        for (i, h) in effective_field.iter_mut().enumerate() {
+            *h = add(add(add(*h, ani_field[i]), idmi_field[i]), bdmi_field[i]);
+        }
 
-        let rhs: Vec<Vector3> = magnetization
+        let mut rhs: Vec<Vector3> = magnetization
             .iter()
             .zip(effective_field.iter())
             .map(|(m, h)| self.llg_rhs_from_field(*m, *h))
             .collect();
+
+        // STT torques are added directly to dm/dt (not via effective field)
+        if let Some(ref zl) = self.terms.zhang_li_stt {
+            let zl_torque = self.zhang_li_stt_torque(magnetization, zl);
+            for (r, t) in rhs.iter_mut().zip(zl_torque.iter()) {
+                *r = add(*r, *t);
+            }
+        }
+        if let Some(ref slon) = self.terms.slonczewski_stt {
+            let slon_torque = self.slonczewski_stt_torque(magnetization, slon);
+            for (r, t) in rhs.iter_mut().zip(slon_torque.iter()) {
+                *r = add(*r, *t);
+            }
+        }
 
         let exchange_energy_joules = if self.terms.exchange {
             self.exchange_energy_from_field(magnetization, &exchange_field)
@@ -2686,6 +3077,7 @@ impl ExchangeLlgProblem {
             0.0
         };
         let mel_energy_joules = self.magnetoelastic_energy(magnetization);
+        let ani_energy_joules = self.anisotropy_energy(magnetization, &ani_field);
 
         let eval = RhsEvaluation {
             exchange_energy_joules,
@@ -2694,7 +3086,8 @@ impl ExchangeLlgProblem {
             total_energy_joules: exchange_energy_joules
                 + demag_energy_joules
                 + external_energy_joules
-                + mel_energy_joules,
+                + mel_energy_joules
+                + ani_energy_joules,
             max_effective_field_amplitude: max_norm(&effective_field),
             max_demag_field_amplitude: max_norm(&demag_field),
             max_rhs_amplitude: max_norm(&rhs),
@@ -2854,6 +3247,7 @@ pub fn run_reference_exchange_demo(steps: usize, dt: f64) -> Result<ReferenceDem
             external_field: None,
             per_node_field: None,
             magnetoelastic: None,
+            ..Default::default()
         },
     );
     let mut state = problem.new_state(vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]])?;
@@ -3022,6 +3416,7 @@ mod tests {
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
         )
     }
@@ -3039,6 +3434,7 @@ mod tests {
                 external_field: Some(field),
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
         )
     }
@@ -3064,6 +3460,7 @@ mod tests {
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
         )
     }
@@ -3081,6 +3478,7 @@ mod tests {
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
             Some(mask),
         )
@@ -3100,6 +3498,7 @@ mod tests {
                 external_field: Some([0.0, 0.0, 1.0]),
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
             Some(mask),
         )
@@ -3346,6 +3745,7 @@ mod tests {
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
         );
 

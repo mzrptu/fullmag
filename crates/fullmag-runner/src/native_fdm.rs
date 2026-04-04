@@ -1215,8 +1215,8 @@ fn snapshot_observable(name: &str) -> Option<ffi::fullmag_fdm_observable> {
 mod tests {
     use super::*;
     use fullmag_engine::{
-        CellSize, EffectiveFieldTerms, ExchangeLlgProblem, LlgConfig, MaterialParameters,
-        TimeIntegrator,
+        CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, ExchangeLlgProblem, LlgConfig,
+        MaterialParameters, TimeIntegrator, UniaxialAnisotropyConfig,
     };
     use fullmag_ir::{
         ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, FdmPlanIR, GridDimensions,
@@ -1444,6 +1444,23 @@ mod tests {
                 external_field: plan.external_field,
                 per_node_field: None,
                 magnetoelastic: None,
+                uniaxial_anisotropy: plan.material.uniaxial_anisotropy_ku1.map(|ku1| {
+                    UniaxialAnisotropyConfig {
+                        ku1,
+                        ku2: plan.material.uniaxial_anisotropy_ku2.unwrap_or(0.0),
+                        axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
+                    }
+                }),
+                cubic_anisotropy: plan.material.cubic_anisotropy_kc1.map(|kc1| {
+                    CubicAnisotropyConfig {
+                        kc1,
+                        kc2: plan.material.cubic_anisotropy_kc2.unwrap_or(0.0),
+                        axis1: plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
+                        axis2: plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
+                    }
+                }),
+                interfacial_dmi: plan.interfacial_dmi,
+                bulk_dmi: plan.bulk_dmi,
             },
             plan.active_mask.clone(),
         )

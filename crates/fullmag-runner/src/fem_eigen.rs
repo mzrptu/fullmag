@@ -11,6 +11,7 @@ use fullmag_ir::{
 use nalgebra::{DMatrix, DVector, SymmetricEigen};
 use num_complex::Complex64;
 
+use crate::native_fem;
 use crate::relaxation::relaxation_converged;
 use crate::types::{AuxiliaryArtifact, ExecutedRun, RunError, RunResult, RunStatus, StepStats};
 use crate::ExecutionProvenance;
@@ -40,9 +41,80 @@ struct ComplexEigenpair {
     vector: Vec<Complex64>,
 }
 
+// ---------------------------------------------------------------------------
+// ── GPU dense eigensolver helper (Etap A4) ─────────────────────────────────
+// ---------------------------------------------------------------------------
+
+/// Try to solve K·x = λ·M·x using the GPU (cuSolverDN Dsygvd).
+///
+/// Returns `Ok(Vec<RealEigenpair>)` on success.
+/// Returns `Err(String)` that begins with "UNAVAILABLE:" when the GPU stack is
+/// not compiled in, or a descriptive message on any other failure.
+/// Callers should fall back to the CPU LAPACK path on error.
+fn gpu_solve_real_symmetric_eigenpairs(
+    plan: &FemEigenPlanIR,
+    stiffness: &DMatrix<f64>,
+    mass: &DMatrix<f64>,
+) -> Result<Vec<RealEigenpair>, String> {
+    let n = stiffness.nrows();
+    if n == 0 {
+        return Err("UNAVAILABLE: empty matrix".to_string());
+    }
+    // nalgebra DMatrix<f64> is column-major; .as_slice() yields a column-major &[f64].
+    let gpu_result = native_fem::gpu_eigen_dense_solve(
+        stiffness.as_slice(),
+        mass.as_slice(),
+        n,
+        n,
+    )?;
+
+    let mut eigenpairs: Vec<RealEigenpair> = (0..gpu_result.eigenvalues.len())
+        .filter_map(|i| {
+            let val = gpu_result.eigenvalues[i];
+            if !val.is_finite() {
+                return None;
+            }
+            // Column i starts at offset i*n in the column-major eigenvector array.
+            let col_slice = &gpu_result.eigenvectors_col_major[i * n..(i + 1) * n];
+            let vector = DVector::from_column_slice(col_slice);
+            // cuSolverDn Dsygvd returns M-orthonormal vectors; apply plan normalization.
+            let normalized = normalize_real_mode(vector, mass, &plan.normalization);
+            Some(RealEigenpair {
+                eigenvalue_real: val,
+                eigenvalue_imag: 0.0,
+                vector: normalized,
+            })
+        })
+        .collect();
+
+    sort_and_truncate_real_modes(plan, &mut eigenpairs);
+    Ok(eigenpairs)
+}
+
 pub(crate) fn execute_reference_fem_eigen(
     plan: &FemEigenPlanIR,
     outputs: &[OutputIR],
+) -> Result<ExecutedRun, RunError> {
+    execute_fem_eigen_inner(plan, outputs, false)
+}
+
+/// GPU-accelerated FEM eigensolver (Etap A4).
+///
+/// Runs the same workflow as the CPU reference eigensolver but offloads the
+/// dense generalized eigenvalue problem K·x = λ·M·x to the GPU via
+/// `cuSolverDN Dsygvd`.  Falls back transparently to the CPU LAPACK path
+/// when the GPU is unavailable or returns an error.
+pub(crate) fn execute_gpu_fem_eigen(
+    plan: &FemEigenPlanIR,
+    outputs: &[OutputIR],
+) -> Result<ExecutedRun, RunError> {
+    execute_fem_eigen_inner(plan, outputs, true)
+}
+
+fn execute_fem_eigen_inner(
+    plan: &FemEigenPlanIR,
+    outputs: &[OutputIR],
+    try_gpu: bool,
 ) -> Result<ExecutedRun, RunError> {
     let resolved_demag_realization = plan.demag_realization.as_deref().unwrap_or("transfer_grid");
     if plan.enable_demag && resolved_demag_realization != "transfer_grid" {
@@ -79,7 +151,30 @@ pub(crate) fn execute_reference_fem_eigen(
             &observables,
             &equilibrium,
         );
-        solve_real_symmetric_eigenpairs(plan, stiffness, mass)?
+        if try_gpu {
+            // Attempt GPU dense generalized solve; fall back to CPU LAPACK on any error.
+            match gpu_solve_real_symmetric_eigenpairs(plan, &stiffness, &mass) {
+                Ok(pairs) => {
+                    eprintln!("info: FEM eigen GPU solve succeeded ({} modes)", pairs.len());
+                    pairs
+                }
+                Err(reason) => {
+                    if reason.contains("UNAVAILABLE") {
+                        eprintln!(
+                            "info: FEM eigen GPU unavailable — using CPU LAPACK solver"
+                        );
+                    } else {
+                        eprintln!(
+                            "warning: FEM eigen GPU failed — falling back to CPU LAPACK \
+                             (reason: {reason})"
+                        );
+                    }
+                    solve_real_symmetric_eigenpairs(plan, stiffness, mass)?
+                }
+            }
+        } else {
+            solve_real_symmetric_eigenpairs(plan, stiffness, mass)?
+        }
     };
     let complex_eigenpairs = if complex_reduction {
         let (stiffness, mass) = assemble_projected_scalar_operator_complex(
@@ -353,6 +448,24 @@ fn materialize_equilibrium(
             message: format!("LLG: {}", error),
         })?
         .with_precession_enabled(false);
+    // Compute volume anisotropy field at equilibrium guess so that the
+    // relaxation includes the anisotropy contribution.  Because the FEM
+    // engine treats per_node_field as static, we recompute it once after
+    // an initial relaxation pass (self-consistent field iteration).
+    let aniso_per_node: Option<Vec<Vector3>> = {
+        let has_uni = plan.material.uniaxial_anisotropy.map_or(false, |k| k.abs() > 0.0);
+        let has_cub = plan.material.cubic_anisotropy_kc1.map_or(false, |k| k.abs() > 0.0);
+        if has_uni || has_cub {
+            Some(
+                equilibrium_guess
+                    .iter()
+                    .map(|m| volume_anisotropy_field(*m, plan))
+                    .collect(),
+            )
+        } else {
+            None
+        }
+    };
     let problem = FemLlgProblem::with_terms_and_demag_transfer_grid(
         topology,
         material,
@@ -361,8 +474,14 @@ fn materialize_equilibrium(
             exchange: plan.enable_exchange,
             demag: plan.enable_demag,
             external_field: plan.external_field,
-            per_node_field: None,
+            per_node_field: aniso_per_node,
             magnetoelastic: None,
+            uniaxial_anisotropy: None,
+            cubic_anisotropy: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
+            zhang_li_stt: None,
+            slonczewski_stt: None,
         },
         Some([plan.hmax, plan.hmax, plan.hmax]),
     );
@@ -557,7 +676,17 @@ fn phase_reduction(
         return Ok(None);
     }
     if topology.periodic_node_pairs.is_empty() {
-        return Ok(None);
+        return Err(RunError {
+            message: format!(
+                "spin_wave_bc.kind='{kind}' requires mesh.periodic_node_pairs metadata — \
+                 the mesh contains no periodic node pairs; add periodic_node_pairs to the mesh IR \
+                 or use spin_wave_bc.kind='free'",
+                kind = match kind {
+                    SpinWaveBoundaryKindIR::Periodic => "periodic",
+                    _ => "floquet",
+                }
+            ),
+        });
     }
 
     let requested_pair = spin_wave_bc.boundary_pair_id();
@@ -687,6 +816,8 @@ fn assemble_projected_scalar_operator_real(
             if plan.external_field.is_some() {
                 selected_field = add_vector(selected_field, observables.external_field[index]);
             }
+            // Volume anisotropy (uniaxial + cubic) contribution to parallel field
+            selected_field = add_vector(selected_field, volume_anisotropy_field(*m, plan));
             dot(*m, selected_field).max(0.0)
         })
         .collect::<Vec<_>>();
@@ -777,6 +908,8 @@ fn assemble_projected_scalar_operator_complex(
             if plan.external_field.is_some() {
                 selected_field = add_vector(selected_field, observables.external_field[index]);
             }
+            // Volume anisotropy (uniaxial + cubic) contribution to parallel field
+            selected_field = add_vector(selected_field, volume_anisotropy_field(*m, plan));
             dot(*m, selected_field).max(0.0)
         })
         .collect::<Vec<_>>();
@@ -1178,6 +1311,65 @@ fn add_dmi_complex(
     for index in 0..reduction.active_nodes.len() {
         stiffness[index][index] += Complex64::new(nonreciprocal_shift, 0.0);
     }
+}
+
+/// Compute the uniaxial anisotropy effective field at a single node.
+///
+/// H_uni = (2 Ku1 / (mu0 Ms)) (m · u) u + (4 Ku2 / (mu0 Ms)) (m · u)^3 u
+fn uniaxial_anisotropy_field(m: Vector3, plan: &FemEigenPlanIR) -> Vector3 {
+    let ku1 = match plan.material.uniaxial_anisotropy {
+        Some(k) if k.abs() > 0.0 => k,
+        _ => return [0.0, 0.0, 0.0],
+    };
+    let axis = normalize_vector(plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]));
+    let ms = plan.material.saturation_magnetisation.max(1e-30);
+    let ku2 = plan.material.uniaxial_anisotropy_k2.unwrap_or(0.0);
+    let m_dot_u = dot(m, axis);
+    let coeff = 2.0 * ku1 / (MU0 * ms) * m_dot_u
+        + 4.0 * ku2 / (MU0 * ms) * m_dot_u * m_dot_u * m_dot_u;
+    scale_vector(axis, coeff)
+}
+
+/// Compute the cubic anisotropy effective field at a single node.
+///
+/// First-order cubic: H_c1 = -(2 Kc1 / (mu0 Ms)) ∂E/∂m  with the standard
+/// cubic energy density  E = Kc1 (m1² m2² + m2² m3² + m1² m3²) + ...
+fn cubic_anisotropy_field(m: Vector3, plan: &FemEigenPlanIR) -> Vector3 {
+    let kc1 = match plan.material.cubic_anisotropy_kc1 {
+        Some(k) if k.abs() > 0.0 => k,
+        _ => return [0.0, 0.0, 0.0],
+    };
+    let c1 = normalize_vector(plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]));
+    let c2 = normalize_vector(plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]));
+    let c3 = cross(c1, c2);
+    let kc2 = plan.material.cubic_anisotropy_kc2.unwrap_or(0.0);
+    let ms = plan.material.saturation_magnetisation.max(1e-30);
+
+    let m1 = dot(m, c1);
+    let m2 = dot(m, c2);
+    let m3 = dot(m, c3);
+
+    let pf = 2.0 / (MU0 * ms);
+
+    // dE/dm_i for cubic energy E = Kc1 (m1² m2² + m2² m3² + m1² m3²)
+    //                             + Kc2 (m1² m2² m3²)
+    let g1 = -pf * (kc1 * m1 * (m2 * m2 + m3 * m3) + kc2 * m1 * m2 * m2 * m3 * m3);
+    let g2 = -pf * (kc1 * m2 * (m1 * m1 + m3 * m3) + kc2 * m2 * m1 * m1 * m3 * m3);
+    let g3 = -pf * (kc1 * m3 * (m1 * m1 + m2 * m2) + kc2 * m3 * m1 * m1 * m2 * m2);
+
+    [
+        g1 * c1[0] + g2 * c2[0] + g3 * c3[0],
+        g1 * c1[1] + g2 * c2[1] + g3 * c3[1],
+        g1 * c1[2] + g2 * c2[2] + g3 * c3[2],
+    ]
+}
+
+/// Compute the total volume anisotropy field (uniaxial + cubic) at a node.
+fn volume_anisotropy_field(m: Vector3, plan: &FemEigenPlanIR) -> Vector3 {
+    add_vector(
+        uniaxial_anisotropy_field(m, plan),
+        cubic_anisotropy_field(m, plan),
+    )
 }
 
 fn surface_anisotropy_config(plan: &FemEigenPlanIR) -> Option<(Vector3, f64)> {

@@ -370,6 +370,86 @@ pub enum InitialMagnetizationIR {
     Uniform { value: [f64; 3] },
     RandomSeeded { seed: u64 },
     SampledField { values: Vec<[f64; 3]> },
+    PresetTexture {
+        preset_kind: String,
+        #[serde(default)]
+        params: BTreeMap<String, Value>,
+        #[serde(default)]
+        mapping: TextureMappingIR,
+        #[serde(default)]
+        texture_transform: TextureTransform3DIR,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TextureMappingIR {
+    #[serde(default = "default_texture_mapping_space")]
+    pub space: String,
+    #[serde(default = "default_texture_mapping_projection")]
+    pub projection: String,
+    #[serde(default = "default_texture_mapping_clamp_mode")]
+    pub clamp_mode: String,
+}
+
+impl Default for TextureMappingIR {
+    fn default() -> Self {
+        Self {
+            space: default_texture_mapping_space(),
+            projection: default_texture_mapping_projection(),
+            clamp_mode: default_texture_mapping_clamp_mode(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TextureTransform3DIR {
+    #[serde(default = "default_texture_translation")]
+    pub translation: [f64; 3],
+    #[serde(default = "default_texture_rotation_quat")]
+    pub rotation_quat: [f64; 4],
+    #[serde(default = "default_texture_scale")]
+    pub scale: [f64; 3],
+    #[serde(default = "default_texture_pivot")]
+    pub pivot: [f64; 3],
+}
+
+impl Default for TextureTransform3DIR {
+    fn default() -> Self {
+        Self {
+            translation: default_texture_translation(),
+            rotation_quat: default_texture_rotation_quat(),
+            scale: default_texture_scale(),
+            pivot: default_texture_pivot(),
+        }
+    }
+}
+
+fn default_texture_mapping_space() -> String {
+    "object".to_string()
+}
+
+fn default_texture_mapping_projection() -> String {
+    "object_local".to_string()
+}
+
+fn default_texture_mapping_clamp_mode() -> String {
+    "clamp".to_string()
+}
+
+fn default_texture_translation() -> [f64; 3] {
+    [0.0, 0.0, 0.0]
+}
+
+fn default_texture_rotation_quat() -> [f64; 4] {
+    [0.0, 0.0, 0.0, 1.0]
+}
+
+fn default_texture_scale() -> [f64; 3] {
+    [1.0, 1.0, 1.0]
+}
+
+fn default_texture_pivot() -> [f64; 3] {
+    [0.0, 0.0, 0.0]
 }
 
 /// Time-dependence envelope for fields and currents.
@@ -1583,6 +1663,17 @@ pub struct FdmPlanIR {
     /// Bulk (Bloch) DMI constant D [J/m³]. None = disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bulk_dmi: Option<f64>,
+
+    // ── Magnetoelastic coupling (prescribed strain) ──
+    /// First magnetoelastic coupling constant B₁ [Pa]. None = disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mel_b1: Option<f64>,
+    /// Second magnetoelastic coupling constant B₂ [Pa].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mel_b2: Option<f64>,
+    /// Uniform prescribed strain tensor in Voigt order [ε₁₁, ε₂₂, ε₃₃, 2ε₂₃, 2ε₁₃, 2ε₁₂].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mel_uniform_strain: Option<[f64; 6]>,
 }
 
 /// Sub-cell boundary geometry arrays computed from SDF during planning.
@@ -2305,6 +2396,14 @@ impl ProblemIR {
                             ));
                         }
                     }
+                    InitialMagnetizationIR::PresetTexture { preset_kind, .. } => {
+                        if preset_kind.trim().is_empty() {
+                            errors.push(format!(
+                                "magnet '{}': preset_texture preset_kind must not be empty",
+                                magnet.name
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -2482,6 +2581,14 @@ impl ProblemIR {
                         if values.is_empty() {
                             errors.push(format!(
                                 "magnet '{}' sampled_field values must not be empty",
+                                magnet.name
+                            ));
+                        }
+                    }
+                    InitialMagnetizationIR::PresetTexture { preset_kind, .. } => {
+                        if preset_kind.trim().is_empty() {
+                            errors.push(format!(
+                                "magnet '{}' preset_texture preset_kind must not be empty",
                                 magnet.name
                             ));
                         }
@@ -2796,6 +2903,24 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("sampled_field values must not be empty")));
+    }
+
+    #[test]
+    fn preset_texture_initial_magnetization_requires_preset_kind() {
+        let mut ir = ProblemIR::bootstrap_example();
+        ir.magnets[0].initial_magnetization = Some(InitialMagnetizationIR::PresetTexture {
+            preset_kind: String::new(),
+            params: BTreeMap::new(),
+            mapping: TextureMappingIR::default(),
+            texture_transform: TextureTransform3DIR::default(),
+        });
+
+        let errors = ir
+            .validate()
+            .expect_err("empty preset_kind must fail validation");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("preset_texture preset_kind must not be empty")));
     }
 
     #[test]

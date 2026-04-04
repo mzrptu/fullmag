@@ -10,6 +10,7 @@ from fullmag.init.magnetization import (
     SampledMagnetization,
     UniformMagnetization,
 )
+from fullmag.init.textures import PresetTexture
 from fullmag.init.state_io import infer_magnetization_state_format
 from fullmag.model.antenna import (
     AntennaFieldSource,
@@ -1554,6 +1555,31 @@ def _render_initial_magnetization(
         raise ValueError(
             "canonical flat-script rewrite requires sampled-field initial magnetization to come from loadfile(...)"
         )
+    if isinstance(initializer, PresetTexture):
+        params = _py_repr(dict(initializer.params))
+        mapping = (
+            "fm.TextureMapping("
+            f"space={_py_repr(initializer.mapping.space)}, "
+            f"projection={_py_repr(initializer.mapping.projection)}, "
+            f"clamp_mode={_py_repr(initializer.mapping.clamp_mode)})"
+        )
+        transform = (
+            "fm.TextureTransform3D("
+            f"translation={_py_repr(tuple(initializer.transform.translation))}, "
+            f"rotation_quat={_py_repr(tuple(initializer.transform.rotation_quat))}, "
+            f"scale={_py_repr(tuple(initializer.transform.scale))}, "
+            f"pivot={_py_repr(tuple(initializer.transform.pivot))})"
+        )
+        preset_expr = (
+            "fm.PresetTexture("
+            f"preset_kind={_py_repr(initializer.preset_kind)}, "
+            f"params={params}, "
+            f"mapping={mapping}, "
+            f"transform={transform}, "
+            f"ui_label={_py_repr(initializer.ui_label)}, "
+            f"preview_proxy={_py_repr(initializer.preview_proxy)})"
+        )
+        return f"{magnet_var}.m = {preset_expr}"
     raise ValueError(
         f"unsupported initial magnetization kind for canonical rewrite: {type(initializer).__name__}"
     )
@@ -1744,7 +1770,18 @@ def _export_geometry_entry(
         material["Dind"] = dmi_val
 
     # --- Magnetization ---
-    magnetization: dict[str, object] = {"kind": "uniform", "value": [1, 0, 0], "seed": None, "source_path": None}
+    magnetization: dict[str, object] = {
+        "kind": "uniform",
+        "value": [1, 0, 0],
+        "seed": None,
+        "source_path": None,
+        "mapping": None,
+        "texture_transform": None,
+        "preset_kind": None,
+        "preset_params": None,
+        "preset_version": None,
+        "ui_label": None,
+    }
     if magnet.m0 is not None:
         if isinstance(magnet.m0, UniformMagnetization):
             magnetization = {"kind": "uniform", "value": list(magnet.m0.value), "seed": None, "source_path": None}
@@ -1759,6 +1796,19 @@ def _export_geometry_entry(
                 "source_format": magnet.m0.source_format,
                 "dataset": magnet.m0.dataset,
                 "sample_index": magnet.m0.sample_index,
+            }
+        elif isinstance(magnet.m0, PresetTexture):
+            magnetization = {
+                "kind": "preset_texture",
+                "value": None,
+                "seed": None,
+                "source_path": None,
+                "mapping": magnet.m0.mapping.to_ir(),
+                "texture_transform": magnet.m0.transform.to_ir(),
+                "preset_kind": magnet.m0.preset_kind,
+                "preset_params": dict(magnet.m0.params),
+                "preset_version": 1,
+                "ui_label": magnet.m0.ui_label,
             }
 
     # --- Per-geometry mesh ---

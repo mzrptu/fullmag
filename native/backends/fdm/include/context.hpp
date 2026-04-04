@@ -82,6 +82,12 @@ struct Context {
     bool has_bulk_dmi = false;
     double D_bulk = 0.0;
 
+    // Magnetoelastic coupling (prescribed strain, B1/B2 model)
+    bool has_magnetoelastic = false;
+    double mel_b1 = 0.0;          // B1 coupling constant [Pa]
+    double mel_b2 = 0.0;          // B2 coupling constant [Pa]
+    double mel_strain[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};  // Voigt: [e11,e22,e33,2e23,2e13,2e12]
+
     // Thermal noise
     double temperature = 0.0;  // Kelvin
     double thermal_sigma = 0.0;  // Precomputed noise amplitude (A/m)

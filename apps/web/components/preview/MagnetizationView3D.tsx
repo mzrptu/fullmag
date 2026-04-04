@@ -11,7 +11,10 @@ import FdmInstances from "./r3f/FdmInstances";
 import { rotateCameraAroundTarget, focusCameraOnBounds } from "./camera/cameraHelpers";
 import FdmLighting from "./r3f/FdmLighting";
 import SceneAxes3D from "./r3f/SceneAxes3D";
-import TextureTransformGizmo, { type TextureGizmoMode } from "./TextureTransformGizmo";
+import TextureTransformGizmo, {
+  type TextureGizmoMode,
+  type TexturePreviewProxy,
+} from "./TextureTransformGizmo";
 import type { TextureTransform3D } from "@/lib/textureTransform";
 import type {
   AntennaOverlay,
@@ -61,7 +64,11 @@ interface Props {
   /** Active texture transform for the selected object (physical coords, metres) */
   activeTextureTransform?: TextureTransform3D | null;
   textureGizmoMode?: TextureGizmoMode;
+  activeTexturePreviewProxy?: TexturePreviewProxy;
+  onTextureTransformChange?: (next: TextureTransform3D) => void;
   onTextureTransformCommit?: (next: TextureTransform3D) => void;
+  activeTransformScope?: "object" | "texture" | null;
+  onTransformScopeChange?: (scope: "object" | "texture" | null) => void;
 }
 
 export type QualityLevel = "low" | "high" | "ultra";
@@ -375,9 +382,9 @@ function FdmObjectOverlayMeshes({
                 if (groupRef.current) {
                   const p = groupRef.current.position;
                   const physicalDx = p.x * cellX;
-                  const physicalDz = p.y * cellZ; 
-                  const physicalDy = p.z * cellY; 
-                  onGeometryTranslate(overlay.id, physicalDx, physicalDy, physicalDy);
+                  const physicalDz = p.y * cellZ;
+                  const physicalDy = p.z * cellY;
+                  onGeometryTranslate(overlay.id, physicalDx, physicalDy, physicalDz);
                   groupRef.current.position.set(0, 0, 0);
                 }
               }}
@@ -473,9 +480,9 @@ function FdmAntennaOverlayMeshes({
                 if (groupRef.current) {
                   const p = groupRef.current.position;
                   const physicalDx = p.x * cellX;
-                  const physicalDz = p.y * cellZ; 
-                  const physicalDy = p.z * cellY; 
-                  onAntennaTranslate(overlay.id, physicalDx, physicalDy, physicalDy);
+                  const physicalDz = p.y * cellZ;
+                  const physicalDy = p.z * cellY;
+                  onAntennaTranslate(overlay.id, physicalDx, physicalDy, physicalDz);
                   groupRef.current.position.set(0, 0, 0);
                 }
               }}
@@ -512,7 +519,11 @@ function MagnetizationView3DInner({
   onGeometryTranslate,
   activeTextureTransform = null,
   textureGizmoMode = "translate",
+  activeTexturePreviewProxy = "box",
+  onTextureTransformChange,
   onTextureTransformCommit,
+  activeTransformScope,
+  onTransformScopeChange,
 }: Props) {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [openPopover, setOpenPopover] = useState<"color" | "display" | "topo" | "camera" | null>(null);
@@ -527,6 +538,19 @@ function MagnetizationView3DInner({
   useEffect(() => {
     if (!activeTextureTransform) setInteractionMode("camera");
   }, [activeTextureTransform]);
+
+  useEffect(() => {
+    if (!activeTextureTransform) {
+      return;
+    }
+    setInteractionMode(
+      textureGizmoMode === "rotate"
+        ? "rotate"
+        : textureGizmoMode === "scale"
+          ? "scale"
+          : "move",
+    );
+  }, [activeTextureTransform, textureGizmoMode]);
 
   // Keyboard shortcuts: Q=camera, W=move, E=rotate, R=scale (only when gizmo available)
   useEffect(() => {
@@ -859,9 +883,24 @@ function MagnetizationView3DInner({
         </ViewportOverlayLayout.BottomLeft>
 
         {/* ── 3dsmax-style interaction mode toolbar (only when texture gizmo available) ── */}
-        {activeTextureTransform && (
+        {(activeTextureTransform || activeTransformScope === "texture") && (
           <ViewportOverlayLayout.BottomCenter>
             <div className="pointer-events-auto flex items-center gap-px rounded-lg border border-border/40 bg-background/80 backdrop-blur-md shadow-md px-1 py-1">
+              {/* Scope Toggle */}
+              {onTransformScopeChange && (
+                <>
+                  <button
+                    type="button"
+                    title="Close texture gizmo"
+                    onClick={() => onTransformScopeChange(null)}
+                    className="flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground hover:bg-rose-500/20 hover:text-rose-400 transition-colors"
+                  >
+                    <Box size={13} />
+                  </button>
+                  <div className="w-px h-4 bg-border/50 mx-1" />
+                </>
+              )}
+
               {/* Orbit / Camera */}
               <button
                 type="button"
@@ -1021,6 +1060,8 @@ function MagnetizationView3DInner({
             <TextureTransformGizmo
               transform={activeTextureTransform}
               mode={derivedGizmoMode}
+              previewProxy={activeTexturePreviewProxy}
+              onLiveChange={onTextureTransformChange}
               visible
               onCommit={onTextureTransformCommit}
             />

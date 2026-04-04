@@ -8,8 +8,8 @@
 
 use fullmag_engine::{
     multilayer::{FdmLayerRuntime, KernelPair, MultilayerDemagRuntime},
-    CellSize, EffectiveFieldTerms, ExchangeLlgProblem, ExchangeLlgState, GridShape, LlgConfig,
-    MaterialParameters, MU0,
+    CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, ExchangeLlgProblem, ExchangeLlgState,
+    GridShape, LlgConfig, MaterialParameters, MU0, UniaxialAnisotropyConfig,
 };
 use fullmag_fdm_demag::{compute_exact_self_kernel, compute_shifted_kernel};
 use fullmag_ir::{ExecutionPrecision, FdmMultilayerPlanIR, IntegratorChoice, OutputIR};
@@ -304,6 +304,25 @@ fn build_contexts_and_states(
                 external_field: plan.external_field,
                 per_node_field: None,
                 magnetoelastic: None,
+                uniaxial_anisotropy: layer.material.uniaxial_anisotropy_ku1.map(|ku1| {
+                    UniaxialAnisotropyConfig {
+                        ku1,
+                        ku2: layer.material.uniaxial_anisotropy_ku2.unwrap_or(0.0),
+                        axis: layer.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
+                    }
+                }),
+                cubic_anisotropy: layer.material.cubic_anisotropy_kc1.map(|kc1| {
+                    CubicAnisotropyConfig {
+                        kc1,
+                        kc2: layer.material.cubic_anisotropy_kc2.unwrap_or(0.0),
+                        axis1: layer.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
+                        axis2: layer.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
+                    }
+                }),
+                interfacial_dmi: None,
+                bulk_dmi: None,
+                zhang_li_stt: None,
+                slonczewski_stt: None,
             },
             layer.native_active_mask.clone(),
         )

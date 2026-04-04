@@ -2,6 +2,12 @@
 
 import { useCallback, useMemo } from "react";
 
+import MagneticTextureLibraryPanel from "../MagneticTextureLibraryPanel";
+import {
+  MAGNETIC_PRESET_CATALOG,
+  type MagneticPresetDescriptor,
+  type MagneticPresetKind,
+} from "../../../lib/magnetizationPresetCatalog";
 import { useModel } from "../../runs/control-room/ControlRoomContext";
 import { fmtSI } from "../../runs/control-room/shared";
 import { TextField } from "../../ui/TextField";
@@ -99,6 +105,53 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
     [model, sceneObject],
   );
 
+  const assignPresetTexture = useCallback(
+    (kind: MagneticPresetKind) => {
+      const descriptor = MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === kind);
+      if (!descriptor) return;
+      updateMagnetization((asset) => ({
+        ...asset,
+        kind: "preset_texture",
+        value: null,
+        seed: null,
+        source_path: null,
+        source_format: null,
+        dataset: null,
+        sample_index: null,
+        preset_kind: descriptor.kind,
+        preset_params: structuredClone(descriptor.defaultParams),
+        preset_version: 1,
+        ui_label: descriptor.label,
+      }));
+      model.setSceneDocument((prev) =>
+        prev
+          ? {
+              ...prev,
+              editor: {
+                ...prev.editor,
+                active_transform_scope: "texture",
+              },
+            }
+          : prev,
+      );
+    },
+    [model, updateMagnetization],
+  );
+
+  const updatePresetParam = useCallback(
+    (key: string, value: unknown) => {
+      updateMagnetization((asset) => ({
+        ...asset,
+        kind: "preset_texture",
+        preset_params: {
+          ...(asset.preset_params ?? {}),
+          [key]: value,
+        },
+      }));
+    },
+    [updateMagnetization],
+  );
+
   const handleMatNum = (
     key: keyof SceneMaterialAsset["properties"],
     valStr: string,
@@ -179,6 +232,14 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
   const mat = materialAsset.properties;
   const mag = magnetizationAsset;
   const value = Array.isArray(mag.value) ? mag.value : [0, 0, 1];
+  const selectedPresetDescriptor = useMemo<MagneticPresetDescriptor | null>(
+    () =>
+      mag.preset_kind
+        ? MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === mag.preset_kind) ?? null
+        : null,
+    [mag.preset_kind],
+  );
+  const presetParams = mag.preset_params ?? selectedPresetDescriptor?.defaultParams ?? {};
 
   return (
     <div className="flex flex-col px-2 pt-4">
@@ -209,6 +270,19 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
                 source_format: val === "file" || val === "sampled" ? asset.source_format ?? null : null,
                 dataset: val === "sampled" ? asset.dataset ?? null : null,
                 sample_index: val === "sampled" ? asset.sample_index ?? null : null,
+                preset_kind:
+                  val === "preset_texture"
+                    ? asset.preset_kind ?? "uniform"
+                    : null,
+                preset_params:
+                  val === "preset_texture"
+                    ? asset.preset_params ?? structuredClone(MAGNETIC_PRESET_CATALOG[0]?.defaultParams ?? {})
+                    : null,
+                preset_version: val === "preset_texture" ? asset.preset_version ?? 1 : null,
+                ui_label:
+                  val === "preset_texture"
+                    ? asset.ui_label ?? selectedPresetDescriptor?.label ?? "Preset texture"
+                    : null,
               }))
             }
             options={[
@@ -216,6 +290,7 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
               { label: "Random", value: "random" },
               { label: "File Source", value: "file" },
               { label: "Sampled Dataset", value: "sampled" },
+              { label: "Preset Texture", value: "preset_texture" },
             ]}
             tooltip="Spatial distribution of the starting magnetization vectors."
           />
@@ -243,6 +318,115 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
 
           {mag.kind === "random" && (
             <TextField label="Random Seed" placeholder="Random (Auto)" defaultValue={mag.seed?.toString() ?? ""} onBlur={(e) => handleMagNum("seed", e.target.value)} mono tooltip="Fixed integer seed to reproduce the exact same thermalized noise pattern." />
+          )}
+
+          {mag.kind === "preset_texture" && (
+            <div className="grid grid-cols-1 gap-4">
+              <div className="rounded-xl border border-border/30 bg-card/15 p-2">
+                <MagneticTextureLibraryPanel
+                  selectedKind={(mag.preset_kind as MagneticPresetKind | null | undefined) ?? null}
+                  onCreatePreset={assignPresetTexture}
+                  onSelectKind={assignPresetTexture}
+                />
+              </div>
+
+              {selectedPresetDescriptor && (
+                <div className="rounded-xl border border-border/30 bg-card/15 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-foreground">
+                        {selectedPresetDescriptor.label}
+                      </div>
+                      <div className="text-[0.72rem] text-muted-foreground">
+                        Proxy: {selectedPresetDescriptor.previewProxy}
+                      </div>
+                    </div>
+                    <div className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-primary">
+                      Live preset editor
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    {selectedPresetDescriptor.parameters.map((parameter) => {
+                      const rawValue =
+                        presetParams[parameter.key] ?? selectedPresetDescriptor.defaultParams[parameter.key];
+
+                      if (parameter.type === "vector3") {
+                        const vector = Array.isArray(rawValue) ? rawValue : [0, 0, 0];
+                        return (
+                          <div key={parameter.key} className="grid grid-cols-3 gap-2">
+                            {[0, 1, 2].map((axis) => (
+                              <TextField
+                                key={`${parameter.key}-${axis}`}
+                                label={`${parameter.label} ${["X", "Y", "Z"][axis]}`}
+                                defaultValue={String(Number(vector[axis] ?? 0))}
+                                onBlur={(event) => {
+                                  const next = [...vector] as [number, number, number];
+                                  const parsed = Number.parseFloat(event.target.value);
+                                  if (!Number.isFinite(parsed)) return;
+                                  next[axis] = parsed;
+                                  updatePresetParam(parameter.key, next);
+                                }}
+                                unit={parameter.unit}
+                                mono
+                              />
+                            ))}
+                          </div>
+                        );
+                      }
+
+                      if (parameter.type === "enum") {
+                        return (
+                          <SelectField
+                            key={parameter.key}
+                            label={parameter.label}
+                            value={String(rawValue)}
+                            onchange={(value) => updatePresetParam(parameter.key, value)}
+                            options={(parameter.options ?? []).map((option) => ({
+                              label: option.label,
+                              value: String(option.value),
+                            }))}
+                          />
+                        );
+                      }
+
+                      if (parameter.type === "boolean") {
+                        return (
+                          <SelectField
+                            key={parameter.key}
+                            label={parameter.label}
+                            value={rawValue ? "true" : "false"}
+                            onchange={(value) => updatePresetParam(parameter.key, value === "true")}
+                            options={[
+                              { label: "True", value: "true" },
+                              { label: "False", value: "false" },
+                            ]}
+                          />
+                        );
+                      }
+
+                      const isInteger = parameter.type === "integer";
+                      return (
+                        <TextField
+                          key={parameter.key}
+                          label={parameter.label}
+                          defaultValue={String(rawValue ?? "")}
+                          onBlur={(event) => {
+                            const parsed = isInteger
+                              ? Number.parseInt(event.target.value, 10)
+                              : Number.parseFloat(event.target.value);
+                            if (!Number.isFinite(parsed)) return;
+                            updatePresetParam(parameter.key, parsed);
+                          }}
+                          unit={parameter.unit}
+                          mono
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </SidebarSection>

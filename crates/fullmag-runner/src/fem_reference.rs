@@ -19,8 +19,9 @@ use crate::artifact_pipeline::{ArtifactPipelineSender, ArtifactRecorder};
 use crate::interactive_runtime::{display_is_global_scalar, display_refresh_due};
 use crate::preview::{
     build_mesh_preview_field_with_active_mask, flatten_vectors, mesh_quantity_active_mask,
-    normalize_quantity_id, select_observables,
+    select_observables,
 };
+use crate::quantities::normalized_quantity_name;
 use crate::relaxation::{llg_overdamped_uses_pure_damping, relaxation_converged};
 use crate::scalar_metrics::{
     apply_average_m_to_step_stats, scalar_outputs_request_average_m, scalar_row_due,
@@ -59,7 +60,7 @@ pub(crate) fn snapshot_preview(
     let observables = observe_state(&problem, &state, &antenna_field)?;
     Ok(build_mesh_preview_field_with_active_mask(
         request,
-        select_observables(&observables, &request.quantity),
+        select_observables(&observables, &request.quantity)?,
         mesh_quantity_active_mask(&request.quantity, &plan.mesh),
     ))
 }
@@ -80,7 +81,7 @@ pub(crate) fn snapshot_vector_fields(
     let mut seen = std::collections::HashSet::new();
     for quantity in quantities
         .iter()
-        .map(|quantity| normalize_quantity_id(quantity))
+        .filter_map(|quantity| normalized_quantity_name(quantity).ok())
     {
         if !seen.insert(quantity) {
             continue;
@@ -89,7 +90,7 @@ pub(crate) fn snapshot_vector_fields(
         preview_request.quantity = quantity.to_string();
         cached.push(build_mesh_preview_field_with_active_mask(
             &preview_request,
-            select_observables(&observables, quantity),
+            select_observables(&observables, quantity)?,
             mesh_quantity_active_mask(quantity, &plan.mesh),
         ));
     }
@@ -143,6 +144,12 @@ pub(crate) fn build_problem_and_state(
         external_field: plan.external_field,
         per_node_field: initial_antenna_field,
         magnetoelastic: None,
+        uniaxial_anisotropy: None,
+        cubic_anisotropy: None,
+        interfacial_dmi: None,
+        bulk_dmi: None,
+        zhang_li_stt: None,
+        slonczewski_stt: None,
     };
     let resolved_demag_realization = if !plan.enable_demag {
         None

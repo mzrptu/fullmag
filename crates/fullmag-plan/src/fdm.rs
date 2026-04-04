@@ -293,6 +293,14 @@ pub(crate) fn plan_fdm(
             vectors
         }
         Some(InitialMagnetizationIR::SampledField { values }) => values.clone(),
+        Some(InitialMagnetizationIR::PresetTexture { preset_kind, .. }) => {
+            return Err(PlanError {
+                reasons: vec![format!(
+                    "magnet '{}' uses preset_texture '{}' but FDM planning still requires runtime pre-sampling to sampled_field values",
+                    magnet.name, preset_kind
+                )],
+            });
+        }
         None => {
             if let Some(ref mask) = active_mask {
                 mask.iter()
@@ -763,6 +771,13 @@ pub(crate) fn plan_fdm_multilayer(
                     ));
                 }
                 values.clone()
+            }
+            Some(InitialMagnetizationIR::PresetTexture { preset_kind, .. }) => {
+                errors.push(format!(
+                    "magnet '{}' uses preset_texture '{}' but native FDM lowering still requires runtime pre-sampling to sampled_field values",
+                    magnet.name, preset_kind
+                ));
+                vec![[0.0, 0.0, 0.0]; n_cells]
             }
             None => {
                 if let Some(ref mask) = active_mask {

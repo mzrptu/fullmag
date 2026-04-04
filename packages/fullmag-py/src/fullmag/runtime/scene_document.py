@@ -23,6 +23,23 @@ def _identity_quat() -> list[float]:
     return [0.0, 0.0, 0.0, 1.0]
 
 
+def _default_mapping() -> dict[str, object]:
+    return {
+        "space": "object",
+        "projection": "object_local",
+        "clamp_mode": "clamp",
+    }
+
+
+def _default_texture_transform() -> dict[str, object]:
+    return {
+        "translation": _zero_vec3(),
+        "rotation_quat": _identity_quat(),
+        "scale": _one_vec3(),
+        "pivot": _zero_vec3(),
+    }
+
+
 def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]:
     geometries = builder.get("geometries") or []
     objects: list[dict[str, Any]] = []
@@ -84,17 +101,14 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
                 "source_format": magnetization.get("source_format"),
                 "dataset": magnetization.get("dataset"),
                 "sample_index": magnetization.get("sample_index"),
-                "mapping": {
-                    "space": "object",
-                    "projection": "object_local",
-                    "clamp_mode": "clamp",
-                },
-                "texture_transform": {
-                    "translation": _zero_vec3(),
-                    "rotation_quat": _identity_quat(),
-                    "scale": _one_vec3(),
-                    "pivot": _zero_vec3(),
-                },
+                "mapping": dict(magnetization.get("mapping") or _default_mapping()),
+                "texture_transform": dict(
+                    magnetization.get("texture_transform") or _default_texture_transform()
+                ),
+                "preset_kind": magnetization.get("preset_kind"),
+                "preset_params": magnetization.get("preset_params"),
+                "preset_version": magnetization.get("preset_version"),
+                "ui_label": magnetization.get("ui_label"),
             }
         )
 
@@ -136,6 +150,7 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
             "air_mesh_visible": True,
             "air_mesh_opacity": 28.0,
             "mesh_entity_view_state": {},
+            "active_transform_scope": None,
         },
     }
 
@@ -179,6 +194,14 @@ def build_builder_from_scene_document(scene: dict[str, Any]) -> dict[str, Any]:
             "source_format": magnetization_asset.get("source_format"),
             "dataset": magnetization_asset.get("dataset"),
             "sample_index": magnetization_asset.get("sample_index"),
+            "mapping": dict(magnetization_asset.get("mapping") or _default_mapping()),
+            "texture_transform": dict(
+                magnetization_asset.get("texture_transform") or _default_texture_transform()
+            ),
+            "preset_kind": magnetization_asset.get("preset_kind"),
+            "preset_params": magnetization_asset.get("preset_params"),
+            "preset_version": magnetization_asset.get("preset_version"),
+            "ui_label": magnetization_asset.get("ui_label"),
         }
 
         geometries.append(

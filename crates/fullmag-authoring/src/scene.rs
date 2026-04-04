@@ -274,6 +274,8 @@ pub struct SceneEditorState {
     pub air_mesh_opacity: Option<f64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub mesh_entity_view_state: BTreeMap<String, SceneMeshEntityViewState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_transform_scope: Option<String>,
 }
 
 impl Default for SceneEditorState {
@@ -288,6 +290,7 @@ impl Default for SceneEditorState {
             air_mesh_visible: Some(true),
             air_mesh_opacity: Some(28.0),
             mesh_entity_view_state: BTreeMap::new(),
+            active_transform_scope: None,
         }
     }
 }

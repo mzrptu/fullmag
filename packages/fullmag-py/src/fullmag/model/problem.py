@@ -12,6 +12,7 @@ from typing import Any, Sequence
 
 from fullmag._progress import emit_progress, emit_progress_event
 from fullmag._validation import ensure_unique_names, require_non_empty
+from fullmag.init.textures import PresetTexture
 from fullmag.model.antenna import AntennaFieldSource, SpinWaveExcitationAnalysis
 from fullmag.model.discretization import DiscretizationHints, FEM
 from fullmag.model.dynamics import LLG
@@ -40,6 +41,119 @@ API_VERSION = "0.2.0"
 SERIALIZER_VERSION = "0.2.0"
 
 _FEM_MESH_CACHE_VERSION = "v3"
+
+
+def _fdm_cell_centers_from_asset(asset: dict[str, Any]) -> list[list[float]]:
+    cells = [int(value) for value in asset.get("cells", [0, 0, 0])]
+    cell_size = [float(value) for value in asset.get("cell_size", [0.0, 0.0, 0.0])]
+    origin = [float(value) for value in asset.get("origin", [0.0, 0.0, 0.0])]
+    points: list[list[float]] = []
+    for kz in range(cells[2]):
+        z = origin[2] + (kz + 0.5) * cell_size[2]
+        for ky in range(cells[1]):
+            y = origin[1] + (ky + 0.5) * cell_size[1]
+            for kx in range(cells[0]):
+                x = origin[0] + (kx + 0.5) * cell_size[0]
+                points.append([x, y, z])
+    return points
+
+
+def _node_mask_for_region_marker(mesh_ir: dict[str, Any], marker: int) -> list[bool]:
+    nodes = mesh_ir.get("nodes") or []
+    elements = mesh_ir.get("elements") or []
+    element_markers = mesh_ir.get("element_markers") or []
+    active = [False] * len(nodes)
+    for element, element_marker in zip(elements, element_markers, strict=False):
+        if int(element_marker) != marker:
+            continue
+        for node_index in element:
+            index = int(node_index)
+            if 0 <= index < len(active):
+                active[index] = True
+    return active
+
+
+def _materialize_preset_texture_initial_conditions(
+    magnets_ir: list[dict[str, Any]],
+    magnets: Sequence["Ferromagnet"],
+    geometry_assets: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not geometry_assets:
+        return magnets_ir
+
+    from fullmag.runtime.initial_state import prepare_initial_magnetization
+
+    fdm_assets = {
+        str(asset.get("geometry_name")): dict(asset)
+        for asset in (geometry_assets.get("fdm_grid_assets") or [])
+    }
+    fem_assets = {
+        str(asset.get("geometry_name")): dict(asset)
+        for asset in (geometry_assets.get("fem_mesh_assets") or [])
+    }
+    domain_asset = geometry_assets.get("fem_domain_mesh_asset")
+    domain_mesh_ir = (
+        dict(domain_asset.get("mesh"))
+        if isinstance(domain_asset, dict) and isinstance(domain_asset.get("mesh"), dict)
+        else None
+    )
+    region_markers = {
+        str(entry.get("geometry_name")): int(entry.get("marker"))
+        for entry in ((domain_asset or {}).get("region_markers") or [])
+        if isinstance(entry, dict)
+        and isinstance(entry.get("geometry_name"), str)
+        and isinstance(entry.get("marker"), int)
+    }
+
+    materialized = copy.deepcopy(magnets_ir)
+    for magnet_ir, magnet in zip(materialized, magnets, strict=True):
+        initial = magnet_ir.get("initial_magnetization")
+        if not isinstance(initial, dict) or initial.get("kind") != "preset_texture":
+            continue
+
+        geometry_name = magnet.geometry.geometry_name
+        sampled_values: list[list[float]] | None = None
+
+        if geometry_name in fdm_assets:
+            asset = fdm_assets[geometry_name]
+            sample_points = _fdm_cell_centers_from_asset(asset)
+            sampled = prepare_initial_magnetization(initial, sample_points)
+            active_mask = asset.get("active_mask")
+            if isinstance(active_mask, list) and len(active_mask) == len(sampled):
+                sampled_values = [
+                    vector.tolist() if bool(active_mask[index]) else [0.0, 0.0, 0.0]
+                    for index, vector in enumerate(sampled)
+                ]
+            else:
+                sampled_values = sampled.tolist()
+        elif geometry_name in fem_assets:
+            mesh_wrapper = fem_assets[geometry_name]
+            mesh_ir = mesh_wrapper.get("mesh") if isinstance(mesh_wrapper.get("mesh"), dict) else None
+            if mesh_ir is not None:
+                sampled = prepare_initial_magnetization(initial, mesh_ir.get("nodes") or [])
+                sampled_values = sampled.tolist()
+        elif domain_mesh_ir is not None and geometry_name in region_markers:
+            marker = region_markers[geometry_name]
+            sample_points = domain_mesh_ir.get("nodes") or []
+            sampled = prepare_initial_magnetization(initial, sample_points)
+            mask = _node_mask_for_region_marker(domain_mesh_ir, marker)
+            if len(mask) == len(sampled):
+                sampled_values = [
+                    vector.tolist() if mask[index] else [0.0, 0.0, 0.0]
+                    for index, vector in enumerate(sampled)
+                ]
+
+        if sampled_values is None:
+            raise ValueError(
+                f"magnet '{magnet.name}' uses preset_texture but no executable mesh/grid assets were available for pre-sampling"
+            )
+
+        magnet_ir["initial_magnetization"] = {
+            "kind": "sampled_field",
+            "values": sampled_values,
+        }
+
+    return materialized
 
 
 def _fem_mesh_cache_dir() -> Path | None:
@@ -775,6 +889,12 @@ class Problem:
                 mesh_workflow=mesh_workflow,
                 asset_cache=effective_asset_cache,
             )
+        magnets_ir = [magnet.to_ir() for magnet in self.magnets]
+        magnets_ir = _materialize_preset_texture_initial_conditions(
+            magnets_ir,
+            self.magnets,
+            geometry_assets,
+        )
 
         return {
             "ir_version": IR_VERSION,
@@ -795,7 +915,7 @@ class Problem:
             "geometry_assets": geometry_assets,
             "regions": [region.to_ir() for region in regions],
             "materials": [material.to_ir() for material in materials],
-            "magnets": [magnet.to_ir() for magnet in self.magnets],
+            "magnets": magnets_ir,
             "energy_terms": [term.to_ir() for term in self.energy],
             "current_modules": [module.to_ir() for module in self.current_modules],
             "excitation_analysis": self.excitation_analysis.to_ir()

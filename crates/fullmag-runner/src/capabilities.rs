@@ -1,0 +1,228 @@
+use crate::dispatch::{FdmEngine, FemEngine};
+use crate::quantities::QuantityId;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeEngineId {
+    FdmCpuReference,
+    FdmCuda,
+    FemCpuReference,
+    FemNativeGpu,
+}
+
+impl RuntimeEngineId {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FdmCpuReference => "fdm_cpu_reference",
+            Self::FdmCuda => "fdm_cuda",
+            Self::FemCpuReference => "fem_cpu_reference",
+            Self::FemNativeGpu => "fem_native_gpu",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendCapabilities {
+    pub engine_id: RuntimeEngineId,
+    pub capability_profile_version: String,
+    pub supported_terms: Vec<String>,
+    pub supported_demag_realizations: Vec<String>,
+    pub preview_quantities: Vec<String>,
+    pub snapshot_quantities: Vec<String>,
+    pub scalar_outputs: Vec<String>,
+    pub approximate_operators: Vec<String>,
+    pub supports_lossy_fallback_override: bool,
+}
+
+fn quantity_names(ids: &[QuantityId]) -> Vec<String> {
+    ids.iter().map(|id| id.as_str().to_string()).collect()
+}
+
+pub fn capabilities_for_fdm_engine(engine: FdmEngine) -> BackendCapabilities {
+    match engine {
+        FdmEngine::CpuReference => BackendCapabilities {
+            engine_id: RuntimeEngineId::FdmCpuReference,
+            capability_profile_version: "2026-04-04".to_string(),
+            supported_terms: vec![
+                "exchange".to_string(),
+                "demag_tensor_fft_newell".to_string(),
+                "zeeman".to_string(),
+                "thermal".to_string(),
+                "uniaxial_anisotropy".to_string(),
+                "cubic_anisotropy".to_string(),
+                "interfacial_dmi".to_string(),
+                "bulk_dmi".to_string(),
+                "stt".to_string(),
+            ],
+            supported_demag_realizations: vec!["tensor_fft_newell".to_string()],
+            preview_quantities: quantity_names(&[
+                QuantityId::M,
+                QuantityId::HEx,
+                QuantityId::HDemag,
+                QuantityId::HExt,
+                QuantityId::HEff,
+                QuantityId::HAni,
+                QuantityId::HDmi,
+            ]),
+            snapshot_quantities: quantity_names(&[
+                QuantityId::M,
+                QuantityId::HEx,
+                QuantityId::HDemag,
+                QuantityId::HExt,
+                QuantityId::HEff,
+                QuantityId::HAni,
+                QuantityId::HDmi,
+            ]),
+            scalar_outputs: vec![
+                "E_ex".to_string(),
+                "E_demag".to_string(),
+                "E_ext".to_string(),
+                "E_total".to_string(),
+            ],
+            approximate_operators: Vec::new(),
+            supports_lossy_fallback_override: false,
+        },
+        FdmEngine::CudaFdm => BackendCapabilities {
+            engine_id: RuntimeEngineId::FdmCuda,
+            capability_profile_version: "2026-04-04".to_string(),
+            supported_terms: vec![
+                "exchange".to_string(),
+                "demag_tensor_fft_newell".to_string(),
+                "zeeman".to_string(),
+                "thermal".to_string(),
+                "uniaxial_anisotropy".to_string(),
+                "cubic_anisotropy".to_string(),
+                "interfacial_dmi".to_string(),
+                "bulk_dmi".to_string(),
+                "stt".to_string(),
+                "oersted".to_string(),
+                "boundary_correction".to_string(),
+            ],
+            supported_demag_realizations: vec!["tensor_fft_newell".to_string()],
+            preview_quantities: quantity_names(&[
+                QuantityId::M,
+                QuantityId::HEx,
+                QuantityId::HDemag,
+                QuantityId::HExt,
+                QuantityId::HAnt,
+                QuantityId::HEff,
+                QuantityId::HAni,
+                QuantityId::HDmi,
+            ]),
+            snapshot_quantities: quantity_names(&[
+                QuantityId::M,
+                QuantityId::HEx,
+                QuantityId::HDemag,
+                QuantityId::HExt,
+                QuantityId::HAnt,
+                QuantityId::HEff,
+                QuantityId::HAni,
+                QuantityId::HDmi,
+            ]),
+            scalar_outputs: vec![
+                "E_ex".to_string(),
+                "E_demag".to_string(),
+                "E_ext".to_string(),
+                "E_total".to_string(),
+            ],
+            approximate_operators: Vec::new(),
+            supports_lossy_fallback_override: false,
+        },
+    }
+}
+
+pub fn capabilities_for_fem_engine(engine: FemEngine) -> BackendCapabilities {
+    match engine {
+        FemEngine::CpuReference => BackendCapabilities {
+            engine_id: RuntimeEngineId::FemCpuReference,
+            capability_profile_version: "2026-04-04".to_string(),
+            supported_terms: vec![
+                "exchange".to_string(),
+                "zeeman".to_string(),
+                "demag_transfer_grid".to_string(),
+                "demag_poisson_robin".to_string(),
+                "demag_poisson_dirichlet".to_string(),
+            ],
+            supported_demag_realizations: vec![
+                "transfer_grid".to_string(),
+                "poisson_robin".to_string(),
+                "poisson_dirichlet".to_string(),
+            ],
+            preview_quantities: quantity_names(&[
+                QuantityId::M,
+                QuantityId::HEx,
+                QuantityId::HDemag,
+                QuantityId::HExt,
+                QuantityId::HAnt,
+                QuantityId::HEff,
+            ]),
+            snapshot_quantities: quantity_names(&[
+                QuantityId::M,
+                QuantityId::HEx,
+                QuantityId::HDemag,
+                QuantityId::HExt,
+                QuantityId::HAnt,
+                QuantityId::HEff,
+            ]),
+            scalar_outputs: vec![
+                "E_ex".to_string(),
+                "E_demag".to_string(),
+                "E_ext".to_string(),
+                "E_total".to_string(),
+            ],
+            approximate_operators: vec!["transfer_grid".to_string()],
+            supports_lossy_fallback_override: true,
+        },
+        FemEngine::NativeGpu => BackendCapabilities {
+            engine_id: RuntimeEngineId::FemNativeGpu,
+            capability_profile_version: "2026-04-04".to_string(),
+            supported_terms: vec![
+                "exchange".to_string(),
+                "zeeman".to_string(),
+                "demag_transfer_grid".to_string(),
+                "demag_poisson_robin".to_string(),
+                "demag_poisson_dirichlet".to_string(),
+                "uniaxial_anisotropy".to_string(),
+                "cubic_anisotropy".to_string(),
+                "interfacial_dmi".to_string(),
+                "magnetoelastic".to_string(),
+                "thermal".to_string(),
+                "oersted".to_string(),
+            ],
+            supported_demag_realizations: vec![
+                "transfer_grid".to_string(),
+                "poisson_robin".to_string(),
+                "poisson_dirichlet".to_string(),
+            ],
+            preview_quantities: quantity_names(&[
+                QuantityId::M,
+                QuantityId::HEx,
+                QuantityId::HDemag,
+                QuantityId::HExt,
+                QuantityId::HEff,
+                QuantityId::HAni,
+                QuantityId::HDmi,
+                QuantityId::HMel,
+            ]),
+            snapshot_quantities: quantity_names(&[
+                QuantityId::M,
+                QuantityId::HEx,
+                QuantityId::HDemag,
+                QuantityId::HExt,
+                QuantityId::HEff,
+                QuantityId::HAni,
+                QuantityId::HDmi,
+                QuantityId::HMel,
+            ]),
+            scalar_outputs: vec![
+                "E_ex".to_string(),
+                "E_demag".to_string(),
+                "E_ext".to_string(),
+                "E_total".to_string(),
+            ],
+            approximate_operators: vec!["transfer_grid".to_string()],
+            supports_lossy_fallback_override: false,
+        },
+    }
+}

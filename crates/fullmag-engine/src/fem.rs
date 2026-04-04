@@ -1235,6 +1235,7 @@ impl FemLlgProblem {
                         external_field: None,
                         per_node_field: None,
                         magnetoelastic: None,
+                        ..Default::default()
                     },
                     Some(rasterized.active_mask.clone()),
                 )?;
@@ -1982,6 +1983,7 @@ per_domain_quality: std::collections::HashMap::new(),
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
         )
     }
@@ -2038,6 +2040,7 @@ per_domain_quality: std::collections::HashMap::new(),
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
         )
     }
@@ -2094,6 +2097,7 @@ per_domain_quality: std::collections::HashMap::new(),
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
             Some([10e-9, 10e-9, 10e-9]),
         )
@@ -2134,6 +2138,7 @@ per_domain_quality: std::collections::HashMap::new(),
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
             true,
             None,
@@ -2272,6 +2277,7 @@ per_domain_quality: std::collections::HashMap::new(),
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
+                ..Default::default()
             },
         );
         let fdm_state = fdm_problem

@@ -282,6 +282,35 @@ const char *fullmag_fem_backend_last_error(fullmag_fem_backend *handle);
 
 void fullmag_fem_backend_destroy(fullmag_fem_backend *handle);
 
+/* ── GPU Dense Generalized Eigenvalue Solver (Etap A4) ────────────────────
+ *
+ * Solves the real symmetric generalized eigenproblem  K·x = λ·M·x  on the
+ * GPU using cuSolverDN `cusolverDnDsygvd`.  Both K and M must be supplied
+ * as packed, column-major, lower-triangular dense arrays of n×n doubles.
+ *
+ * On output, `out_eigenvalues` receives n eigenvalues in ascending order and
+ * `out_eigenvectors` receives the corresponding eigenvectors stored as
+ * column-major n×n matrix (column i = eigenvector i).
+ *
+ * When CUDA + cuSolver are not available at build time or at runtime this
+ * function returns FULLMAG_FEM_ERR_UNAVAILABLE, filling `out_reason` with a
+ * human-readable explanation (up to reason_len bytes including null terminator).
+ *
+ * Returns FULLMAG_FEM_OK on success, or a negative error code otherwise.
+ */
+typedef struct {
+    const double *k_lower_col_major;  /* stiffness matrix, lower triangle, col-major, n*n doubles */
+    const double *m_lower_col_major;  /* mass matrix,      lower triangle, col-major, n*n doubles */
+    uint32_t      n;                  /* matrix dimension (number of active DOF) */
+    uint32_t      n_eigenvalues;      /* how many eigenvalues/vectors to return (≤ n) */
+    double       *out_eigenvalues;    /* caller-allocated, n_eigenvalues doubles    */
+    double       *out_eigenvectors;   /* caller-allocated, n * n_eigenvalues doubles, col-major */
+    char         *out_reason;         /* optional: human-readable error/warning, may be NULL */
+    uint32_t      reason_len;         /* capacity of out_reason buffer (including null) */
+} fullmag_fem_eigen_dense_desc;
+
+int fullmag_fem_eigen_dense(fullmag_fem_eigen_dense_desc *desc);
+
 #ifdef __cplusplus
 }
 #endif

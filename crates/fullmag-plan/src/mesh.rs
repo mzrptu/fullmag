@@ -134,6 +134,12 @@ pub(crate) fn initial_vectors_for_magnet(
             }
             values.clone()
         }
+        Some(InitialMagnetizationIR::PresetTexture { preset_kind, .. }) => {
+            return Err(format!(
+                "magnet '{}' uses preset_texture '{}' but FEM planner still requires runtime pre-sampling to sampled_field vectors for mesh '{}'",
+                magnet_name, preset_kind, mesh_name
+            ));
+        }
         None => vec![[1.0, 0.0, 0.0]; n_nodes],
     })
 }

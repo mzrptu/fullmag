@@ -10,6 +10,7 @@
 mod antenna_fields;
 pub mod artifact_pipeline;
 mod artifacts;
+pub mod capabilities;
 mod cpu_reference;
 mod dispatch;
 mod fem_eigen;
@@ -42,6 +43,9 @@ pub use interactive::events::{
 };
 pub use interactive::runtime::InteractiveRuntime;
 pub use interactive_runtime::{InteractiveFdmPreviewRuntime, InteractiveFemPreviewRuntime};
+pub use capabilities::{
+    capabilities_for_fdm_engine, capabilities_for_fem_engine, BackendCapabilities, RuntimeEngineId,
+};
 pub use types::{
     ExecutionProvenance, FemEigenRunResult, FemMeshObjectSegment, FemMeshPartPayload,
     FemMeshPayload, LivePreviewField, LivePreviewRequest, LiveVectorFieldSnapshot, RunError,
