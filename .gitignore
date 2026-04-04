@@ -6,7 +6,13 @@ build/
 *.so
 *.a
 *.dylib
-
+*.md
+*.zip
+*.patch
+*.tar.gz
+*.egg-info/
+*.egg
+*.whl
 # === Rust ===
 # Cargo.lock is tracked — this monorepo contains binary crates.
 

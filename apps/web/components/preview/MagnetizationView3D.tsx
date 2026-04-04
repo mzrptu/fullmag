@@ -663,15 +663,17 @@ function MagnetizationView3DInner({
                     onClick={() => setOpenPopover(prev => prev === "color" ? null : "color")}
                     title="Color Field"
                   />
-                  <ViewportPopoverPanel anchorRef={{ current: null }} title="Color Mode">
-                     <ViewportPopoverRow label="Field">
-                      {(["orientation", "x", "y", "z"] as VoxelColorMode[]).map(v => (
-                         <button key={v} className={toolbarOptionClassName} data-active={settings.voxelColorMode === v} onClick={() => { update({ voxelColorMode: v }); setOpenPopover(null); }}>
-                           {v === "orientation" ? "ORI" : v.toUpperCase()}
-                         </button>
-                      ))}
-                    </ViewportPopoverRow>
-                  </ViewportPopoverPanel>
+                  {openPopover === "color" && (
+                    <ViewportPopoverPanel anchorRef={{ current: null }} title="Color Mode">
+                       <ViewportPopoverRow label="Field">
+                        {(["orientation", "x", "y", "z"] as VoxelColorMode[]).map(v => (
+                           <button key={v} className={toolbarOptionClassName} data-active={settings.voxelColorMode === v} onClick={() => { update({ voxelColorMode: v }); setOpenPopover(null); }}>
+                             {v === "orientation" ? "ORI" : v.toUpperCase()}
+                           </button>
+                        ))}
+                      </ViewportPopoverRow>
+                    </ViewportPopoverPanel>
+                  )}
                 </ViewportPopoverTrigger>
               </ViewportToolGroup>
             )}
@@ -692,39 +694,41 @@ function MagnetizationView3DInner({
                   onClick={() => setOpenPopover(prev => prev === "display" ? null : "display")}
                   title="Display Options"
                 />
-                <ViewportPopoverPanel anchorRef={{ current: null }} title="Display & Quality">
-                  <ViewportPopoverRow label="Quality">
-                     {(["low", "high", "ultra"] as QualityLevel[]).map(v => (
-                         <button key={v} className={toolbarOptionClassName} data-active={settings.quality === v} onClick={() => update({ quality: v })}>
-                           {v}
-                         </button>
-                      ))}
-                  </ViewportPopoverRow>
-                  <ViewportPopoverRow label="Brightness">
-                     <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.3} max={3.0} step={0.1} value={settings.brightness} onChange={(e) => update({ brightness: parseFloat(e.target.value) })} />
-                  </ViewportPopoverRow>
-                  {settings.renderMode === "voxel" && (
-                    <>
-                      <div className="h-px bg-border/20 my-1"/>
-                      <ViewportPopoverRow label="Opacity">
-                         <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.15} max={0.95} step={0.01} value={settings.voxelOpacity} onChange={(e) => update({ voxelOpacity: parseFloat(e.target.value) })} />
-                      </ViewportPopoverRow>
-                      <ViewportPopoverRow label="Spacing">
-                         <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.02} max={0.42} step={0.01} value={settings.voxelGap} onChange={(e) => update({ voxelGap: parseFloat(e.target.value) })} />
-                      </ViewportPopoverRow>
-                      <ViewportPopoverRow label="Min Str">
-                         <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0} max={0.95} step={0.01} value={settings.voxelThreshold} onChange={(e) => update({ voxelThreshold: parseFloat(e.target.value) })} />
-                      </ViewportPopoverRow>
-                      <ViewportPopoverRow label="Sampling">
-                         {(["1", "2", "4"]).map(v => (
-                           <button key={v} className={toolbarOptionClassName} data-active={String(settings.sampling) === v} onClick={() => update({ sampling: parseInt(v, 10) as VoxelSampling })}>
-                             {v}X
+                {openPopover === "display" && (
+                  <ViewportPopoverPanel anchorRef={{ current: null }} title="Display & Quality">
+                    <ViewportPopoverRow label="Quality">
+                       {(["low", "high", "ultra"] as QualityLevel[]).map(v => (
+                           <button key={v} className={toolbarOptionClassName} data-active={settings.quality === v} onClick={() => update({ quality: v })}>
+                             {v}
                            </button>
-                         ))}
-                      </ViewportPopoverRow>
-                    </>
-                  )}
-                </ViewportPopoverPanel>
+                        ))}
+                    </ViewportPopoverRow>
+                    <ViewportPopoverRow label="Brightness">
+                       <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.3} max={3.0} step={0.1} value={settings.brightness} onChange={(e) => update({ brightness: parseFloat(e.target.value) })} />
+                    </ViewportPopoverRow>
+                    {settings.renderMode === "voxel" && (
+                      <>
+                        <div className="h-px bg-border/20 my-1"/>
+                        <ViewportPopoverRow label="Opacity">
+                           <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.15} max={0.95} step={0.01} value={settings.voxelOpacity} onChange={(e) => update({ voxelOpacity: parseFloat(e.target.value) })} />
+                        </ViewportPopoverRow>
+                        <ViewportPopoverRow label="Spacing">
+                           <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.02} max={0.42} step={0.01} value={settings.voxelGap} onChange={(e) => update({ voxelGap: parseFloat(e.target.value) })} />
+                        </ViewportPopoverRow>
+                        <ViewportPopoverRow label="Min Str">
+                           <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0} max={0.95} step={0.01} value={settings.voxelThreshold} onChange={(e) => update({ voxelThreshold: parseFloat(e.target.value) })} />
+                        </ViewportPopoverRow>
+                        <ViewportPopoverRow label="Sampling">
+                           {(["1", "2", "4"]).map(v => (
+                             <button key={v} className={toolbarOptionClassName} data-active={String(settings.sampling) === v} onClick={() => update({ sampling: parseInt(v, 10) as VoxelSampling })}>
+                               {v}X
+                             </button>
+                           ))}
+                        </ViewportPopoverRow>
+                      </>
+                    )}
+                  </ViewportPopoverPanel>
+                )}
               </ViewportPopoverTrigger>
 
               {/* Topography */}
@@ -737,27 +741,29 @@ function MagnetizationView3DInner({
                     onClick={() => setOpenPopover(prev => prev === "topo" ? null : "topo")}
                     title="Topography"
                   />
-                  <ViewportPopoverPanel anchorRef={{ current: null }} title="Topography">
-                     <ViewportPopoverRow label="Enable">
-                        <button className={toolbarOptionClassName} data-active={settings.topoEnabled} onClick={() => update({ topoEnabled: !settings.topoEnabled })}>
-                          {settings.topoEnabled ? "ON" : "OFF"}
-                        </button>
-                     </ViewportPopoverRow>
-                     {settings.topoEnabled && (
-                       <>
-                          <ViewportPopoverRow label="Display">
-                            {(["x", "y", "z"] as TopoComponent[]).map(v => (
-                              <button key={v} className={toolbarOptionClassName} data-active={settings.topoComponent === v} onClick={() => update({ topoComponent: v })}>
-                                m{v.toUpperCase()}
-                              </button>
-                            ))}
-                          </ViewportPopoverRow>
-                          <ViewportPopoverRow label="Amplitude">
-                             <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.5} max={50} step={0.5} value={settings.topoMultiplier} onChange={(e) => update({ topoMultiplier: parseFloat(e.target.value) })} />
-                          </ViewportPopoverRow>
-                       </>
-                     )}
-                  </ViewportPopoverPanel>
+                  {openPopover === "topo" && (
+                    <ViewportPopoverPanel anchorRef={{ current: null }} title="Topography">
+                       <ViewportPopoverRow label="Enable">
+                          <button className={toolbarOptionClassName} data-active={settings.topoEnabled} onClick={() => update({ topoEnabled: !settings.topoEnabled })}>
+                            {settings.topoEnabled ? "ON" : "OFF"}
+                          </button>
+                       </ViewportPopoverRow>
+                       {settings.topoEnabled && (
+                         <>
+                            <ViewportPopoverRow label="Display">
+                              {(["x", "y", "z"] as TopoComponent[]).map(v => (
+                                <button key={v} className={toolbarOptionClassName} data-active={settings.topoComponent === v} onClick={() => update({ topoComponent: v })}>
+                                  m{v.toUpperCase()}
+                                </button>
+                              ))}
+                            </ViewportPopoverRow>
+                            <ViewportPopoverRow label="Amplitude">
+                               <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.5} max={50} step={0.5} value={settings.topoMultiplier} onChange={(e) => update({ topoMultiplier: parseFloat(e.target.value) })} />
+                            </ViewportPopoverRow>
+                         </>
+                       )}
+                    </ViewportPopoverPanel>
+                  )}
                 </ViewportPopoverTrigger>
               )}
 
@@ -770,14 +776,16 @@ function MagnetizationView3DInner({
                   onClick={() => setOpenPopover(prev => prev === "camera" ? null : "camera")}
                   title="Camera"
                 />
-                <ViewportPopoverPanel anchorRef={{ current: null }} title="Camera Presets">
-                  <div className="grid grid-cols-2 gap-1 px-1">
-                    {cameraPresets.map(p => (
-                      <button key={p.label} className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { p.fn(); setOpenPopover(null); }}>{p.label}</button>
-                    ))}
-                    <button className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { resetCamera(); setOpenPopover(null); }}>Reset</button>
-                  </div>
-                </ViewportPopoverPanel>
+                {openPopover === "camera" && (
+                  <ViewportPopoverPanel anchorRef={{ current: null }} title="Camera Presets">
+                    <div className="grid grid-cols-2 gap-1 px-1">
+                      {cameraPresets.map(p => (
+                        <button key={p.label} className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { p.fn(); setOpenPopover(null); }}>{p.label}</button>
+                      ))}
+                      <button className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { resetCamera(); setOpenPopover(null); }}>Reset</button>
+                    </div>
+                  </ViewportPopoverPanel>
+                )}
               </ViewportPopoverTrigger>
 
               <ViewportToolSeparator />

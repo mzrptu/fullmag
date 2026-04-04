@@ -2,6 +2,7 @@
 
 use fullmag_ir::{FemMeshPartRole, FemMeshPartSelector, MeshQualityIR};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::AtomicBool;
@@ -364,15 +365,51 @@ pub struct FemMeshPayload {
     pub per_domain_quality: HashMap<u32, MeshQualityPayload>,
 }
 
+fn normalized_payload_element_markers(
+    element_markers: &[u32],
+    magnetic_markers: Option<&BTreeSet<u32>>,
+) -> Vec<u32> {
+    if element_markers.is_empty() {
+        return Vec::new();
+    }
+
+    if let Some(magnetic_markers) = magnetic_markers {
+        return element_markers
+            .iter()
+            .map(|marker| u32::from(magnetic_markers.contains(marker)))
+            .collect();
+    }
+
+    let has_air = element_markers.contains(&0);
+    let has_magnetic = element_markers.iter().any(|marker| *marker != 0);
+    if has_air && has_magnetic {
+        element_markers
+            .iter()
+            .map(|marker| u32::from(*marker != 0))
+            .collect()
+    } else {
+        vec![1; element_markers.len()]
+    }
+}
+
 impl From<&fullmag_ir::FemPlanIR> for FemMeshPayload {
     fn from(plan: &fullmag_ir::FemPlanIR) -> Self {
         let generation_id = Uuid::new_v4().to_string();
+        let magnetic_markers = (!plan.region_materials.is_empty()).then(|| {
+            plan.region_materials
+                .iter()
+                .map(|region| region.element_marker)
+                .collect::<BTreeSet<_>>()
+        });
         Self {
             mesh_name: plan.mesh.mesh_name.clone(),
             mesh_id: format!("{}:{}", plan.mesh.mesh_name, generation_id),
             nodes: plan.mesh.nodes.clone(),
             elements: plan.mesh.elements.clone(),
-            element_markers: plan.mesh.element_markers.clone(),
+            element_markers: normalized_payload_element_markers(
+                &plan.mesh.element_markers,
+                magnetic_markers.as_ref(),
+            ),
             boundary_faces: plan.mesh.boundary_faces.clone(),
             boundary_markers: plan.mesh.boundary_markers.clone(),
             object_segments: plan
@@ -415,7 +452,7 @@ impl From<&fullmag_ir::FemEigenPlanIR> for FemMeshPayload {
             mesh_id: format!("{}:{}", plan.mesh.mesh_name, generation_id),
             nodes: plan.mesh.nodes.clone(),
             elements: plan.mesh.elements.clone(),
-            element_markers: plan.mesh.element_markers.clone(),
+            element_markers: normalized_payload_element_markers(&plan.mesh.element_markers, None),
             boundary_faces: plan.mesh.boundary_faces.clone(),
             boundary_markers: plan.mesh.boundary_markers.clone(),
             object_segments: plan
@@ -618,4 +655,35 @@ pub(crate) struct StateObservables {
     pub max_dm_dt: f64,
     pub max_h_eff: f64,
     pub max_h_demag: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalized_payload_element_markers;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn normalized_payload_markers_use_region_material_contract_when_available() {
+        let magnetic_markers = [7u32].into_iter().collect::<BTreeSet<_>>();
+        assert_eq!(
+            normalized_payload_element_markers(&[7, 99, 0], Some(&magnetic_markers)),
+            vec![1, 0, 0]
+        );
+    }
+
+    #[test]
+    fn normalized_payload_markers_preserve_simple_air_split_without_region_materials() {
+        assert_eq!(
+            normalized_payload_element_markers(&[2, 0], None),
+            vec![1, 0]
+        );
+    }
+
+    #[test]
+    fn normalized_payload_markers_treat_uniform_marker_mesh_as_fully_magnetic() {
+        assert_eq!(
+            normalized_payload_element_markers(&[5, 5], None),
+            vec![1, 1]
+        );
+    }
 }
