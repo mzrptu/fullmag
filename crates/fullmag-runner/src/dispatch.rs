@@ -15,7 +15,6 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 
 use crate::artifact_pipeline::ArtifactPipelineSender;
-use crate::capabilities::{capabilities_for_fdm_engine, capabilities_for_fem_engine};
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
 use crate::artifact_pipeline::ArtifactRecorder;
 use crate::cpu_reference;
@@ -1707,4 +1706,3 @@ per_domain_quality: HashMap::new(),
         }
     }
 }
-use crate::quantities::{normalized_quantity_name, quantity_spec, QuantityId};

@@ -150,6 +150,7 @@ pub(crate) fn build_problem_and_state(
         bulk_dmi: None,
         zhang_li_stt: None,
         slonczewski_stt: None,
+        sot: None,
     };
     let resolved_demag_realization = if !plan.enable_demag {
         None
@@ -331,7 +332,7 @@ fn execute_reference_fem_impl(
                     let request = display_selection.preview_request();
                     Some(build_mesh_preview_field_with_active_mask(
                         &request,
-                        select_observables(&current_observables, &request.quantity),
+                        select_observables(&current_observables, &request.quantity)?,
                         mesh_quantity_active_mask(&request.quantity, &plan.mesh),
                     ))
                 } else {
@@ -444,7 +445,7 @@ fn execute_reference_fem_impl(
                     let request = selection.preview_request();
                     Some(build_mesh_preview_field_with_active_mask(
                         &request,
-                        select_observables(observables, &request.quantity),
+                        select_observables(observables, &request.quantity)?,
                         mesh_quantity_active_mask(&request.quantity, &plan.mesh),
                     ))
                 } else {
@@ -513,7 +514,7 @@ fn execute_reference_fem_impl(
                 let request = selection.preview_request();
                 Some(build_mesh_preview_field_with_active_mask(
                     &request,
-                    select_observables(&observables, &request.quantity),
+                    select_observables(&observables, &request.quantity)?,
                     mesh_quantity_active_mask(&request.quantity, &plan.mesh),
                 ))
             } else {

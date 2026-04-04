@@ -11,8 +11,10 @@ use fullmag_fem_sys as ffi;
 
 #[cfg(feature = "fem-gpu")]
 use crate::preview::{
-    build_mesh_preview_field_with_active_mask, mesh_quantity_active_mask, normalize_quantity_id,
+    build_mesh_preview_field_with_active_mask, mesh_quantity_active_mask,
 };
+#[cfg(feature = "fem-gpu")]
+use crate::quantities::{normalize_quantity_id, QuantityId};
 #[cfg(feature = "fem-gpu")]
 use crate::types::{LivePreviewField, LivePreviewRequest, RunError, StepStats};
 
@@ -788,17 +790,25 @@ impl NativeFemBackend {
         request: &LivePreviewRequest,
         node_count: usize,
     ) -> Result<LivePreviewField, RunError> {
-        let values = match normalize_quantity_id(&request.quantity) {
-            "H_ex" => self.copy_h_ex(node_count)?,
-            "H_demag" => self.copy_h_demag(node_count)?,
-            "H_ext" => self.copy_h_ext(node_count)?,
-            "H_eff" => self.copy_h_eff(node_count)?,
-            "H_ani" => self.copy_h_ani(node_count)?,
-            "H_dmi" => self.copy_h_dmi(node_count)?,
-            "H_mel" => self.copy_h_mel(node_count)?,
-            _ => self.copy_m(node_count)?,
+        let values = match normalize_quantity_id(&request.quantity)? {
+            QuantityId::HEx => self.copy_h_ex(node_count)?,
+            QuantityId::HDemag => self.copy_h_demag(node_count)?,
+            QuantityId::HExt => self.copy_h_ext(node_count)?,
+            QuantityId::HEff => self.copy_h_eff(node_count)?,
+            QuantityId::HAni => self.copy_h_ani(node_count)?,
+            QuantityId::HDmi => self.copy_h_dmi(node_count)?,
+            QuantityId::HMel => self.copy_h_mel(node_count)?,
+            QuantityId::M => self.copy_m(node_count)?,
+            other => {
+                return Err(RunError {
+                    message: format!(
+                        "native FEM preview quantity '{}' is not supported",
+                        other.as_str()
+                    ),
+                })
+            }
         };
-        let active_mask = (normalize_quantity_id(&request.quantity) == "m")
+        let active_mask = matches!(normalize_quantity_id(&request.quantity)?, QuantityId::M)
             .then(|| self.magnetic_node_mask.clone());
         Ok(build_mesh_preview_field_with_active_mask(
             request,

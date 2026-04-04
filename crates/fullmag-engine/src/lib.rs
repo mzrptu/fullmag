@@ -291,6 +291,8 @@ pub struct EffectiveFieldTerms {
     pub zhang_li_stt: Option<ZhangLiSttConfig>,
     /// Slonczewski (CPP) spin-transfer torque. None = disabled.
     pub slonczewski_stt: Option<SlonczewskiSttConfig>,
+    /// Spin-Orbit Torque (SOT, damping-like + field-like). None = disabled.
+    pub sot: Option<SotConfig>,
 }
 
 /// Uniaxial magnetocrystalline anisotropy configuration.
@@ -345,6 +347,24 @@ pub struct SlonczewskiSttConfig {
     pub thickness: f64,
 }
 
+/// Spin-Orbit Torque (SOT) configuration.
+///
+/// Models the Spin Hall Effect torque on the FM layer from an adjacent HM layer.
+/// Both damping-like (DL) and field-like (FL) components are supported.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SotConfig {
+    /// Charge current density magnitude |Je| [A/m²] in the HM layer.
+    pub current_density: f64,
+    /// Damping-like efficiency ξ_DL (≈ spin Hall angle θ_SH, dimensionless).
+    pub xi_dl: f64,
+    /// Field-like efficiency ξ_FL (Rashba term, dimensionless, often ~0).
+    pub xi_fl: f64,
+    /// Spin polarisation unit vector σ̂ (normalised at runtime if needed).
+    pub sigma: Vector3,
+    /// FM layer thickness t_F [m] (used in amplitude prefactor).
+    pub thickness: f64,
+}
+
 /// Configuration for the magnetoelastic effective field term.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MagnetoelasticTermConfig {
@@ -366,6 +386,7 @@ impl Default for EffectiveFieldTerms {
             bulk_dmi: None,
             zhang_li_stt: None,
             slonczewski_stt: None,
+            sot: None,
         }
     }
 }
@@ -2834,6 +2855,59 @@ impl ExchangeLlgProblem {
             .collect()
     }
 
+    /// Compute SOT (Spin-Orbit Torque) contribution to dm/dt.
+    ///
+    /// Implements the Manchon-Zhang model with damping-like (DL) and field-like (FL) components:
+    ///
+    ///   dm/dt|_SOT = amp × [ −ξ_DL × m×(m×σ̂) + ξ_FL × m×σ̂ ]
+    ///
+    /// where  amp = (ℏ |Je|) / (2 e μ₀ Ms t_F).
+    fn sot_torque(&self, magnetization: &[Vector3], cfg: &SotConfig) -> Vec<Vector3> {
+        const HBAR: f64 = 1.054571817e-34;   // J·s
+        const E_CHARGE: f64 = 1.60217662e-19; // C
+        const MU0_CONST: f64 = 1.2566370614359173e-6; // H/m
+
+        let ms = self.material.saturation_magnetisation.max(1e-30);
+        let d = cfg.thickness.max(1e-30);
+        let amp = (cfg.current_density.abs() * HBAR) / (2.0 * E_CHARGE * MU0_CONST * ms * d);
+
+        let [sx, sy, sz] = cfg.sigma;
+        // Normalise σ̂ defensively
+        let snorm = (sx * sx + sy * sy + sz * sz).sqrt().max(1e-30);
+        let sx = sx / snorm;
+        let sy = sy / snorm;
+        let sz = sz / snorm;
+
+        let xi_dl = cfg.xi_dl;
+        let xi_fl = cfg.xi_fl;
+        let n = self.grid.cell_count();
+
+        (0..n)
+            .map(|flat| {
+                if !self.is_active(flat) {
+                    return [0.0, 0.0, 0.0];
+                }
+                let [m0, m1, m2] = magnetization[flat];
+
+                // m × σ̂  (field-like direction)
+                let mxs_x = m1 * sz - m2 * sy;
+                let mxs_y = m2 * sx - m0 * sz;
+                let mxs_z = m0 * sy - m1 * sx;
+
+                // m × (m × σ̂)  (damping-like direction, sign matches Slonczewski convention)
+                let mmxs_x = m1 * mxs_z - m2 * mxs_y;
+                let mmxs_y = m2 * mxs_x - m0 * mxs_z;
+                let mmxs_z = m0 * mxs_y - m1 * mxs_x;
+
+                [
+                    amp * (-xi_dl * mmxs_x + xi_fl * mxs_x),
+                    amp * (-xi_dl * mmxs_y + xi_fl * mxs_y),
+                    amp * (-xi_dl * mmxs_z + xi_fl * mxs_z),
+                ]
+            })
+            .collect()
+    }
+
     /// Compute effective field using a disposable FFT workspace.
     ///
     /// **Performance warning**: rebuilds the FFT workspace on every call.
@@ -3057,6 +3131,12 @@ impl ExchangeLlgProblem {
         if let Some(ref slon) = self.terms.slonczewski_stt {
             let slon_torque = self.slonczewski_stt_torque(magnetization, slon);
             for (r, t) in rhs.iter_mut().zip(slon_torque.iter()) {
+                *r = add(*r, *t);
+            }
+        }
+        if let Some(ref sot) = self.terms.sot {
+            let sot_torque = self.sot_torque(magnetization, sot);
+            for (r, t) in rhs.iter_mut().zip(sot_torque.iter()) {
                 *r = add(*r, *t);
             }
         }

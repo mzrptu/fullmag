@@ -39,7 +39,7 @@ fn quantity_names(ids: &[QuantityId]) -> Vec<String> {
     ids.iter().map(|id| id.as_str().to_string()).collect()
 }
 
-pub fn capabilities_for_fdm_engine(engine: FdmEngine) -> BackendCapabilities {
+pub(crate) fn capabilities_for_fdm_engine(engine: FdmEngine) -> BackendCapabilities {
     match engine {
         FdmEngine::CpuReference => BackendCapabilities {
             engine_id: RuntimeEngineId::FdmCpuReference,
@@ -132,7 +132,7 @@ pub fn capabilities_for_fdm_engine(engine: FdmEngine) -> BackendCapabilities {
     }
 }
 
-pub fn capabilities_for_fem_engine(engine: FemEngine) -> BackendCapabilities {
+pub(crate) fn capabilities_for_fem_engine(engine: FemEngine) -> BackendCapabilities {
     match engine {
         FemEngine::CpuReference => BackendCapabilities {
             engine_id: RuntimeEngineId::FemCpuReference,

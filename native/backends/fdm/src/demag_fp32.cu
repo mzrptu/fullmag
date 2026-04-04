@@ -244,7 +244,13 @@ __global__ void combine_effective_field_fp32_kernel(
     int nx, int ny, int nz,
     float inv_2dx, float inv_2dy, float inv_2dz,
     float thermal_sigma,
-    uint64_t thermal_seed)
+    uint64_t thermal_seed,
+    // Magnetoelastic (prescribed strain B1/B2)
+    int has_magnetoelastic,
+    float mel_b1,
+    float mel_b2,
+    float mel_e11, float mel_e22, float mel_e33,
+    float mel_e23, float mel_e13, float mel_e12)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
@@ -359,6 +365,15 @@ __global__ void combine_effective_field_fp32_kernel(
             hy += dmi_pf * D_bulk * (dmx_dz - dmz_dx);
             hz += dmi_pf * D_bulk * (dmy_dx - dmx_dy);
         }
+    }
+
+    // --- Magnetoelastic field (prescribed strain, B1/B2) ---
+    if (has_magnetoelastic && ms > 0.0f) {
+        const float mu0 = 4.0f * 3.14159265358979323846f * 1e-7f;
+        const float inv_mu0_ms = -1.0f / (mu0 * ms);
+        hx += inv_mu0_ms * (2.0f * mel_b1 * mx * mel_e11 + mel_b2 * (my * mel_e12 + mz * mel_e13));
+        hy += inv_mu0_ms * (2.0f * mel_b1 * my * mel_e22 + mel_b2 * (mx * mel_e12 + mz * mel_e23));
+        hz += inv_mu0_ms * (2.0f * mel_b1 * mz * mel_e33 + mel_b2 * (mx * mel_e13 + my * mel_e23));
     }
 
     if (enable_exchange) {
@@ -560,7 +575,12 @@ void launch_effective_field_fp32(Context &ctx) {
         static_cast<int>(ctx.nx), static_cast<int>(ctx.ny), static_cast<int>(ctx.nz),
         static_cast<float>(0.5 / ctx.dx), static_cast<float>(0.5 / ctx.dy), static_cast<float>(0.5 / ctx.dz),
         static_cast<float>(ctx.thermal_sigma),
-        ctx.step_count);
+        ctx.step_count,
+        ctx.has_magnetoelastic ? 1 : 0,
+        static_cast<float>(ctx.mel_b1),
+        static_cast<float>(ctx.mel_b2),
+        static_cast<float>(ctx.mel_strain[0]), static_cast<float>(ctx.mel_strain[1]), static_cast<float>(ctx.mel_strain[2]),
+        static_cast<float>(ctx.mel_strain[3] * 0.5), static_cast<float>(ctx.mel_strain[4] * 0.5), static_cast<float>(ctx.mel_strain[5] * 0.5));
 
     // ── Add Oersted field contribution: H_eff += I(t) * H_oe_static ──
     if (ctx.has_oersted_cylinder) {

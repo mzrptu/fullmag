@@ -13,9 +13,11 @@ use fullmag_fdm_sys as ffi;
 
 #[cfg(feature = "cuda")]
 use crate::preview::{
-    build_grid_preview_field_from_flat_plan, normalize_quantity_id, plan_grid_preview,
-    resample_grid_mask, GridPreviewPlan,
+    build_grid_preview_field_from_flat_plan, plan_grid_preview, resample_grid_mask,
+    GridPreviewPlan,
 };
+#[cfg(feature = "cuda")]
+use crate::quantities::normalized_quantity_name;
 #[cfg(feature = "cuda")]
 use crate::relaxation::llg_overdamped_uses_pure_damping;
 #[cfg(feature = "cuda")]
@@ -289,6 +291,11 @@ impl NativeFdmBackend {
             dmi_d_interfacial: plan.interfacial_dmi.unwrap_or(0.0),
             has_bulk_dmi: if plan.bulk_dmi.is_some() { 1 } else { 0 },
             dmi_d_bulk: plan.bulk_dmi.unwrap_or(0.0),
+
+            has_magnetoelastic: if plan.mel_b1.is_some() && plan.mel_uniform_strain.is_some() { 1 } else { 0 },
+            mel_b1: plan.mel_b1.unwrap_or(0.0),
+            mel_b2: plan.mel_b2.unwrap_or(0.0),
+            mel_strain: plan.mel_uniform_strain.unwrap_or([0.0; 6]),
 
             temperature: plan.temperature.unwrap_or(0.0),
 
@@ -680,7 +687,7 @@ impl NativeFdmBackend {
         original_grid: [u32; 3],
     ) -> Result<NativeFdmPreviewSnapshot, RunError> {
         let plan = plan_grid_preview(request, original_grid);
-        let quantity = normalize_quantity_id(&request.quantity).to_string();
+        let quantity = normalized_quantity_name(&request.quantity)?.to_string();
         let observable = snapshot_observable(&quantity).ok_or_else(|| RunError {
             message: format!("unsupported CUDA preview snapshot '{}'", request.quantity),
         })?;
@@ -714,7 +721,7 @@ impl NativeFdmBackend {
         active_mask: Option<&[bool]>,
     ) -> Result<LivePreviewField, RunError> {
         let plan = plan_grid_preview(request, original_grid);
-        let quantity = normalize_quantity_id(&request.quantity);
+        let quantity = normalized_quantity_name(&request.quantity)?;
         let preview_count = (plan.preview_grid[0] as usize)
             * (plan.preview_grid[1] as usize)
             * (plan.preview_grid[2] as usize);

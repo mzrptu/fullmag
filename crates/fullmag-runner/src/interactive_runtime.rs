@@ -14,8 +14,9 @@ use crate::native_fdm::{NativeFdmBackend, NativeFdmPreviewSnapshot};
 use crate::native_fem::{DeviceInfo as FemDeviceInfo, NativeFemBackend};
 use crate::preview::{
     build_grid_preview_field, build_mesh_preview_field_with_active_mask, mesh_quantity_active_mask,
-    normalize_quantity_id, select_observables,
+    select_observables,
 };
+use crate::quantities::normalized_quantity_name;
 use crate::relaxation::{llg_overdamped_uses_pure_damping, relaxation_converged};
 use crate::schedules::{
     advance_due_schedules, collect_field_schedules, collect_scalar_schedules, is_due, same_time,
@@ -74,21 +75,14 @@ fn build_cached_grid_preview_fields(
         return None;
     }
     let base_request = display_state.preview_request();
-    Some(
-        quantities
-            .into_iter()
-            .map(|quantity| {
-                let mut request = base_request.clone();
-                request.quantity = quantity.to_string();
-                build_grid_preview_field(
-                    &request,
-                    select_observables(observables, quantity),
-                    grid,
-                    active_mask,
-                )
-            })
-            .collect(),
-    )
+    let mut cached = Vec::new();
+    for quantity in quantities {
+        let mut request = base_request.clone();
+        request.quantity = quantity.to_string();
+        let values = select_observables(observables, quantity).ok()?;
+        cached.push(build_grid_preview_field(&request, values, grid, active_mask));
+    }
+    Some(cached)
 }
 
 fn build_cached_mesh_preview_fields(
@@ -101,20 +95,18 @@ fn build_cached_mesh_preview_fields(
         return None;
     }
     let base_request = display_state.preview_request();
-    Some(
-        quantities
-            .into_iter()
-            .map(|quantity| {
-                let mut request = base_request.clone();
-                request.quantity = quantity.to_string();
-                build_mesh_preview_field_with_active_mask(
-                    &request,
-                    select_observables(observables, quantity),
-                    mesh_quantity_active_mask(quantity, mesh),
-                )
-            })
-            .collect(),
-    )
+    let mut cached = Vec::new();
+    for quantity in quantities {
+        let mut request = base_request.clone();
+        request.quantity = quantity.to_string();
+        let values = select_observables(observables, quantity).ok()?;
+        cached.push(build_mesh_preview_field_with_active_mask(
+            &request,
+            values,
+            mesh_quantity_active_mask(quantity, mesh),
+        ));
+    }
+    Some(cached)
 }
 
 pub(crate) fn display_is_global_scalar(display_state: &DisplaySelectionState) -> bool {
@@ -602,7 +594,7 @@ impl CpuInteractiveFdmPreviewRuntime {
         let observables = cpu_reference::observe_state(&self.problem, &self.state)?;
         Ok(build_grid_preview_field(
             request,
-            select_observables(&observables, &request.quantity),
+            select_observables(&observables, &request.quantity)?,
             self.original_grid,
             self.plan_signature.active_mask.as_deref(),
         ))
@@ -618,7 +610,7 @@ impl CpuInteractiveFdmPreviewRuntime {
         let mut seen = HashSet::new();
         for quantity in quantities
             .iter()
-            .map(|quantity| normalize_quantity_id(quantity))
+            .filter_map(|quantity| normalized_quantity_name(quantity).ok())
         {
             if !seen.insert(quantity) {
                 continue;
@@ -627,7 +619,7 @@ impl CpuInteractiveFdmPreviewRuntime {
             preview_request.quantity = quantity.to_string();
             cached.push(build_grid_preview_field(
                 &preview_request,
-                select_observables(&observables, quantity),
+                select_observables(&observables, quantity)?,
                 self.original_grid,
                 self.plan_signature.active_mask.as_deref(),
             ));
@@ -732,7 +724,7 @@ impl CpuInteractiveFdmPreviewRuntime {
                 let preview_cfg = display_state.preview_request();
                 Some(build_grid_preview_field(
                     &preview_cfg,
-                    select_observables(&current_observables, &preview_cfg.quantity),
+                    select_observables(&current_observables, &preview_cfg.quantity)?,
                     grid,
                     self.plan_signature.active_mask.as_deref(),
                 ))
@@ -825,7 +817,7 @@ impl CpuInteractiveFdmPreviewRuntime {
                 let preview_cfg = display_state.preview_request();
                 Some(build_grid_preview_field(
                     &preview_cfg,
-                    select_observables(&observables, &preview_cfg.quantity),
+                    select_observables(&observables, &preview_cfg.quantity)?,
                     grid,
                     self.plan_signature.active_mask.as_deref(),
                 ))
@@ -1051,7 +1043,7 @@ impl CpuInteractiveFdmPreviewRuntime {
                 let preview_cfg = display_state.preview_request();
                 Some(build_grid_preview_field(
                     &preview_cfg,
-                    select_observables(&current_observables, &preview_cfg.quantity),
+                    select_observables(&current_observables, &preview_cfg.quantity)?,
                     grid,
                     self.plan_signature.active_mask.as_deref(),
                 ))
@@ -1139,7 +1131,7 @@ impl CpuInteractiveFdmPreviewRuntime {
                 let preview_cfg = display_state.preview_request();
                 Some(build_grid_preview_field(
                     &preview_cfg,
-                    select_observables(&observables, &preview_cfg.quantity),
+                    select_observables(&observables, &preview_cfg.quantity)?,
                     grid,
                     self.plan_signature.active_mask.as_deref(),
                 ))
@@ -1254,7 +1246,7 @@ impl CudaInteractiveFdmPreviewRuntime {
 
         for quantity in quantities
             .iter()
-            .map(|quantity| normalize_quantity_id(quantity))
+            .filter_map(|quantity| normalized_quantity_name(quantity).ok())
         {
             if !seen.insert(quantity) {
                 continue;
@@ -1831,7 +1823,7 @@ impl CpuInteractiveFemPreviewRuntime {
             fem_reference::observe_state(&self.problem, &self.state, &self.antenna_field)?;
         Ok(build_mesh_preview_field_with_active_mask(
             request,
-            select_observables(&observables, &request.quantity),
+            select_observables(&observables, &request.quantity)?,
             mesh_quantity_active_mask(&request.quantity, &self.plan_signature.mesh),
         ))
     }
@@ -1847,7 +1839,7 @@ impl CpuInteractiveFemPreviewRuntime {
         let mut seen = HashSet::new();
         for quantity in quantities
             .iter()
-            .map(|quantity| normalize_quantity_id(quantity))
+            .filter_map(|quantity| normalized_quantity_name(quantity).ok())
         {
             if !seen.insert(quantity) {
                 continue;
@@ -1856,7 +1848,7 @@ impl CpuInteractiveFemPreviewRuntime {
             preview_request.quantity = quantity.to_string();
             cached.push(build_mesh_preview_field_with_active_mask(
                 &preview_request,
-                select_observables(&observables, quantity),
+                select_observables(&observables, quantity)?,
                 mesh_quantity_active_mask(quantity, &self.plan_signature.mesh),
             ));
         }
@@ -1951,7 +1943,7 @@ impl CpuInteractiveFemPreviewRuntime {
                 let preview_cfg = display_state.preview_request();
                 Some(build_mesh_preview_field_with_active_mask(
                     &preview_cfg,
-                    select_observables(&current_observables, &preview_cfg.quantity),
+                    select_observables(&current_observables, &preview_cfg.quantity)?,
                     mesh_quantity_active_mask(&preview_cfg.quantity, &self.plan_signature.mesh),
                 ))
             } else {
@@ -2038,7 +2030,7 @@ impl CpuInteractiveFemPreviewRuntime {
                 let preview_cfg = display_state.preview_request();
                 Some(build_mesh_preview_field_with_active_mask(
                     &preview_cfg,
-                    select_observables(&observables, &preview_cfg.quantity),
+                    select_observables(&observables, &preview_cfg.quantity)?,
                     mesh_quantity_active_mask(&preview_cfg.quantity, &self.plan_signature.mesh),
                 ))
             } else {
@@ -2215,7 +2207,7 @@ impl CpuInteractiveFemPreviewRuntime {
                 let preview_cfg = display_state.preview_request();
                 Some(build_mesh_preview_field_with_active_mask(
                     &preview_cfg,
-                    select_observables(&current_observables, &preview_cfg.quantity),
+                    select_observables(&current_observables, &preview_cfg.quantity)?,
                     mesh_quantity_active_mask(&preview_cfg.quantity, &self.plan_signature.mesh),
                 ))
             } else {
@@ -2298,7 +2290,7 @@ impl CpuInteractiveFemPreviewRuntime {
                 let preview_cfg = display_state.preview_request();
                 Some(build_mesh_preview_field_with_active_mask(
                     &preview_cfg,
-                    select_observables(&observables, &preview_cfg.quantity),
+                    select_observables(&observables, &preview_cfg.quantity)?,
                     mesh_quantity_active_mask(&preview_cfg.quantity, &self.plan_signature.mesh),
                 ))
             } else {
@@ -2398,7 +2390,7 @@ impl GpuInteractiveFemPreviewRuntime {
         &mut self,
         request: &LivePreviewRequest,
     ) -> Result<LivePreviewField, RunError> {
-        if crate::preview::normalize_quantity_id(&request.quantity) == "H_ant" {
+        if normalized_quantity_name(&request.quantity).ok() == Some("H_ant") {
             return Ok(build_mesh_preview_field_with_active_mask(
                 request,
                 &self.antenna_field,
@@ -2419,7 +2411,7 @@ impl GpuInteractiveFemPreviewRuntime {
 
         for quantity in quantities
             .iter()
-            .map(|quantity| normalize_quantity_id(quantity))
+            .filter_map(|quantity| normalized_quantity_name(quantity).ok())
         {
             if !seen.insert(quantity) {
                 continue;

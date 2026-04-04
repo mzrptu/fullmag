@@ -420,6 +420,14 @@ pub(crate) fn plan_fdm(
         temperature: problem.temperature,
         interfacial_dmi: None,
         bulk_dmi: None,
+        mel_b1: None,
+        mel_b2: None,
+        mel_uniform_strain: None,
+        sot_current_density: None,
+        sot_xi_dl: None,
+        sot_xi_fl: None,
+        sot_sigma: None,
+        sot_thickness: None,
     };
 
     for term in &problem.energy_terms {

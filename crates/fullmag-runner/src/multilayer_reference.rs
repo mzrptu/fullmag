@@ -323,6 +323,7 @@ fn build_contexts_and_states(
                 bulk_dmi: None,
                 zhang_li_stt: None,
                 slonczewski_stt: None,
+                sot: None,
             },
             layer.native_active_mask.clone(),
         )

@@ -8,6 +8,7 @@ import SegmentedControl from "@/components/ui/SegmentedControl";
 import SelectField from "@/components/ui/SelectField";
 import FemMeshSlice2D from "@/components/preview/FemMeshSlice2D";
 import FemMeshView3D from "@/components/preview/FemMeshView3D";
+import { ViewportOverlayLayout } from "@/components/preview/ViewportOverlayLayout";
 
 import type { EigenModeArtifact, FemMeshPayload } from "./eigenTypes";
 
@@ -146,222 +147,102 @@ export default function EigenModeInspector({
     );
   }
 
-  const viewerClass = compact
-    ? "flex-1 min-h-0 min-w-0 overflow-hidden rounded-[14px] border border-border/30 bg-[rgba(3,9,20,0.72)]"
-    : "h-[34rem] overflow-hidden rounded-[18px] border border-[var(--ide-border-subtle)] bg-[rgba(3,9,20,0.72)]";
-
-  if (compact) {
-    // ── Compact layout: fills its flex parent ──────────────────────────────
-    return (
-      <div className="flex flex-col h-full min-h-0 gap-2">
-        {/* Compact header */}
-        <div className="flex flex-wrap items-center gap-2 px-1 shrink-0">
-          <Badge variant="secondary">Mode {mode.index}</Badge>
-          <span className="font-mono text-sm text-foreground/90">{formatGHz(mode.frequency_hz)}</span>
-          <Badge variant="outline">{mode.dominant_polarization}</Badge>
-          <Badge variant="outline">{mode.normalization}</Badge>
-          <div className="flex-1" />
-          <span className="font-mono text-[0.68rem] text-muted-foreground">
-            ω={mode.angular_frequency_rad_per_s.toExponential(2)} rad/s
-          </span>
-        </div>
-
-        {/* Controls bar */}
-        <div className="flex flex-wrap items-end gap-2 shrink-0">
-          <div className="min-w-[13rem]">
-            <SegmentedControl
-              label="Field"
-              value={fieldView}
-              onchange={(v) => setFieldView(v as ModeFieldView)}
-              options={[
-                { value: "real", label: "Re" },
-                { value: "imag", label: "Im" },
-                { value: "amplitude", label: "Amp" },
-                { value: "phase", label: "φ" },
-              ]}
-            />
+  const render3DControls = () => (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/40 bg-card/60 backdrop-blur-md px-3 py-2 shadow-sm pointer-events-auto">
+      <div className="flex rounded-md border border-border/50 bg-background/50 overflow-hidden">
+        {(["real", "imag", "amplitude", "phase"] as const).map((view) => (
+          <button
+            key={view}
+            className={`px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-wider transition-colors ${fieldView === view ? "bg-primary/20 text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+            onClick={() => setFieldView(view)}
+          >
+            {view === "amplitude" ? "AMP" : view === "phase" ? "PHASE" : view.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      {(fieldView === "real" || fieldView === "imag") && (
+        <>
+          <div className="w-[1px] h-4 bg-border/50 mx-1" />
+          <div className="flex rounded-md border border-border/50 bg-background/50 overflow-hidden">
+            {(["magnitude", "x", "y", "z"] as const).map((comp) => (
+              <button
+                key={comp}
+                className={`px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-wider transition-colors ${vectorComponent === comp ? "bg-primary/20 text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+                onClick={() => setVectorComponent(comp)}
+              >
+                {comp === "magnitude" ? "|M|" : comp.toUpperCase()}
+              </button>
+            ))}
           </div>
-          {(fieldView === "real" || fieldView === "imag") && (
-            <div className="min-w-[10rem]">
-              <SelectField
-                label="Component"
-                value={vectorComponent}
-                onchange={(v) => setVectorComponent(v as VectorComponent)}
-                options={[
-                  { value: "magnitude", label: "|m|" },
-                  { value: "x", label: "x" },
-                  { value: "y", label: "y" },
-                  { value: "z", label: "z" },
-                ]}
-              />
-            </div>
+        </>
+      )}
+    </div>
+  );
+
+  const containerClass = compact
+    ? "flex flex-col h-full min-h-0 gap-3"
+    : "flex flex-col space-y-4 h-[44rem]";
+
+  const headerBgClass = compact
+    ? "px-1"
+    : "rounded-[16px] border border-[var(--ide-border-subtle)] bg-[linear-gradient(135deg,rgba(38,65,140,0.12),rgba(11,18,35,0.78))] p-3.5";
+
+  return (
+    <div className={containerClass}>
+      <div className={`flex flex-wrap items-start justify-between gap-4 shrink-0 ${headerBgClass}`}>
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary">Mode {mode.index}</Badge>
+            <span className="font-mono text-sm font-semibold text-foreground/90">{formatGHz(mode.frequency_hz)}</span>
+            <Badge variant="outline">{mode.dominant_polarization}</Badge>
+            <Badge variant="outline">{mode.normalization}</Badge>
+            {!compact && <Badge variant="outline">{mode.damping_policy}</Badge>}
+          </div>
+          {!compact && (
+            <p className="max-w-2xl text-xs text-[var(--ide-text-3)] leading-relaxed">
+              Field view stays locked to explicit modal data. The 2D slice and 3D mesh share the same representation.
+            </p>
           )}
-          <div className="min-w-[6rem]">
-            <SelectField
-              label="Slice"
-              value={slicePlane}
-              onchange={(v) => setSlicePlane(v as SlicePlane)}
-              options={[
-                { value: "xy", label: "XY" },
-                { value: "xz", label: "XZ" },
-                { value: "yz", label: "YZ" },
-              ]}
-            />
-          </div>
-          <div className="flex flex-col gap-1 min-w-[7rem]">
-            <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
-              Idx {sliceIndex + 1}/25
-            </span>
-            <input
-              type="range" min={0} max={24} step={1} value={sliceIndex}
-              onChange={(e) => setSliceIndex(Number(e.target.value))}
-              className="h-[3px] accent-primary w-full"
-            />
-          </div>
         </div>
-
-        {/* Two-panel viewer — shares remaining height */}
-        <div className="flex gap-2 flex-1 min-h-0">
-          <div className={`flex-[1.3] ${viewerClass}`}>
-            <FemMeshView3D
-              meshData={meshData}
-              colorField={colorField}
-              fieldLabel={modeFieldLabel(fieldView, vectorComponent)}
-              toolbarMode="hidden"
-              topologyKey={`mode:${mode.index}:${meshData.nNodes}`}
-              showOrientationLegend={false}
-            />
-          </div>
-          <div className={`flex-[1] ${viewerClass} p-1`}>
-            <FemMeshSlice2D
-              meshData={meshData}
-              quantityLabel={modeFieldLabel(fieldView, vectorComponent)}
-              quantityId={fieldView === "phase" ? "phase" : "mode"}
-              component={sliceComponent}
-              plane={slicePlane}
-              sliceIndex={sliceIndex}
-              sliceCount={25}
-            />
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <StatChip label="omega" value={mode.angular_frequency_rad_per_s.toExponential(3)} />
+          <StatChip label="max amp" value={maxAmplitude.toExponential(3)} />
+          <StatChip label="k-vector" value={formatVec3(mode.k_vector)} />
+          {!compact && <StatChip label="nodes" value={meshData.nNodes.toLocaleString()} />}
         </div>
       </div>
-    );
-  }
 
-  // ── Full-page layout (original design) ────────────────────────────────────
-  return (
-    <div className="space-y-4">
-      <section className="rounded-[20px] border border-[var(--ide-border-subtle)] bg-[linear-gradient(135deg,rgba(38,65,140,0.22),rgba(11,18,35,0.78))] p-4">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary">Mode {mode.index}</Badge>
-              <Badge variant="outline">{mode.normalization}</Badge>
-              <Badge variant="outline">{mode.damping_policy}</Badge>
-              <Badge variant="outline">{mode.dominant_polarization}</Badge>
-            </div>
-            <h3 className="text-base font-semibold tracking-tight text-[var(--ide-text-1)]">
-              {formatGHz(mode.frequency_hz)}
-            </h3>
-            <p className="max-w-2xl text-sm text-[var(--ide-text-3)]">
-              Field view stays locked to explicit modal data, so the 2D slice and 3D mesh always show the same
-              representation and normalization.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <StatChip label="omega" value={mode.angular_frequency_rad_per_s.toExponential(3)} />
-            <StatChip label="max amp" value={maxAmplitude.toExponential(3)} />
-            <StatChip label="k-vector" value={formatVec3(mode.k_vector)} />
-            <StatChip label="nodes" value={meshData.nNodes.toLocaleString()} />
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)]">
-        <div className="rounded-[20px] border border-[var(--ide-border-subtle)] bg-[var(--ide-surface-raised)] p-4">
-          <div className="mb-4 flex flex-wrap items-end gap-3">
-            <div className="min-w-[14rem] flex-1">
-              <SegmentedControl
-                label="Field"
-                value={fieldView}
-                onchange={(value) => setFieldView(value as ModeFieldView)}
-                options={[
-                  { value: "real", label: "Real" },
-                  { value: "imag", label: "Imag" },
-                  { value: "amplitude", label: "Amp" },
-                  { value: "phase", label: "Phase" },
-                ]}
-              />
-            </div>
-            <div className="min-w-[12rem]">
-              <SelectField
-                label="Vector Component"
-                value={vectorComponent}
-                onchange={(value) => setVectorComponent(value as VectorComponent)}
-                options={[
-                  { value: "magnitude", label: "Magnitude" },
-                  { value: "x", label: "Cartesian X" },
-                  { value: "y", label: "Cartesian Y" },
-                  { value: "z", label: "Cartesian Z" },
-                ]}
-              />
-            </div>
-          </div>
-
-          <div className="h-[34rem] overflow-hidden rounded-[18px] border border-[var(--ide-border-subtle)] bg-[rgba(3,9,20,0.72)]">
-            <FemMeshView3D
-              meshData={meshData}
-              colorField={colorField}
-              fieldLabel={modeFieldLabel(fieldView, vectorComponent)}
-              toolbarMode="hidden"
-              topologyKey={`mode-mesh:${meshData.nNodes}:${meshData.boundaryFaces.length / 3}`}
-              showOrientationLegend={false}
-            />
-          </div>
+      <div className="flex gap-3 flex-1 min-h-0">
+        <div className="relative flex-[1.4] h-full w-full overflow-hidden rounded-[14px] border border-border/30 bg-[rgba(3,9,20,0.72)] shadow-lg">
+          <FemMeshView3D
+            meshData={meshData}
+            colorField={colorField}
+            fieldLabel={modeFieldLabel(fieldView, vectorComponent)}
+            topologyKey={`mode:${mode.index}:${meshData.nNodes}`}
+            showOrientationLegend={false}
+            toolbarMode="visible"
+          />
+          <ViewportOverlayLayout>
+            <ViewportOverlayLayout.BottomCenter>
+              {render3DControls()}
+            </ViewportOverlayLayout.BottomCenter>
+          </ViewportOverlayLayout>
         </div>
 
-        <div className="rounded-[20px] border border-[var(--ide-border-subtle)] bg-[var(--ide-surface-raised)] p-4">
-          <div className="mb-4 grid gap-3 sm:grid-cols-2">
-            <SelectField
-              label="Slice Plane"
-              value={slicePlane}
-              onchange={(value) => setSlicePlane(value as SlicePlane)}
-              options={[
-                { value: "xy", label: "XY" },
-                { value: "xz", label: "XZ" },
-                { value: "yz", label: "YZ" },
-              ]}
-            />
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-                Slice Index
-              </span>
-              <input
-                type="range"
-                min={0}
-                max={24}
-                step={1}
-                value={sliceIndex}
-                onChange={(event) => setSliceIndex(Number(event.target.value))}
-                className="accent-[var(--ide-accent)]"
-              />
-              <span className="text-xs text-[var(--ide-text-3)]">{sliceIndex + 1} / 25</span>
-            </div>
-          </div>
-
-          <div className="h-[34rem] overflow-hidden rounded-[18px] border border-[var(--ide-border-subtle)] bg-[rgba(3,9,20,0.72)] p-2">
-            <FemMeshSlice2D
-              meshData={meshData}
-              quantityLabel={modeFieldLabel(fieldView, vectorComponent)}
-              quantityId={fieldView === "phase" ? "phase" : "mode"}
-              component={sliceComponent}
-              plane={slicePlane}
-              sliceIndex={sliceIndex}
-              sliceCount={25}
-            />
-          </div>
+        <div className="relative flex-[1] h-full w-full overflow-hidden rounded-[14px] border border-border/30 shadow-lg p-0.5">
+          <FemMeshSlice2D
+            meshData={meshData}
+            quantityLabel={modeFieldLabel(fieldView, vectorComponent)}
+            quantityId={fieldView === "phase" ? "phase" : "mode"}
+            component={sliceComponent}
+            plane={slicePlane}
+            sliceIndex={sliceIndex}
+            sliceCount={25}
+            onPlaneChange={setSlicePlane}
+            onSliceIndexChange={setSliceIndex}
+          />
         </div>
-      </section>
+      </div>
     </div>
   );
 }

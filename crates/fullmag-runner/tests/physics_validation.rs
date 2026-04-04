@@ -119,6 +119,7 @@ fn sp4_plan(algorithm: RelaxationAlgorithmIR, damping: f64, enable_demag: bool) 
         temperature: None,
         interfacial_dmi: None,
         bulk_dmi: None,
+            ..Default::default()
     }
 }
 
@@ -181,6 +182,7 @@ fn uniform_field_alignment() {
         temperature: None,
         interfacial_dmi: None,
         bulk_dmi: None,
+            ..Default::default()
     };
 
     let result = fullmag_runner::run_reference_fdm(&plan, 1e-9, &[]).expect("run should succeed");
@@ -251,6 +253,7 @@ fn exchange_only_random_to_uniform() {
         temperature: None,
         interfacial_dmi: None,
         bulk_dmi: None,
+            ..Default::default()
     };
 
     let result = fullmag_runner::run_reference_fdm(&plan, 1e-9, &[]).expect("run should succeed");
@@ -336,6 +339,7 @@ fn thin_film_shape_anisotropy() {
         temperature: None,
         interfacial_dmi: None,
         bulk_dmi: None,
+            ..Default::default()
     };
 
     let result = fullmag_runner::run_reference_fdm(&plan, 10e-9, &[]).expect("run should succeed");
@@ -537,6 +541,7 @@ fn sp4_reversal_dynamics() {
         temperature: None,
         interfacial_dmi: None,
         bulk_dmi: None,
+            ..Default::default()
     };
 
     let dyn_result = fullmag_runner::run_reference_fdm(&dyn_plan, 1e-9, &[])

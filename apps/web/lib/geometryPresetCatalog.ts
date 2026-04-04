@@ -154,3 +154,96 @@ export const GEOMETRY_PRESET_CATALOG: GeometryPresetDescriptor[] = [
     ],
   },
 ];
+
+export function evaluateGeometryPreset(
+  presetKind: GeometryPresetKind,
+  params: Record<string, unknown>,
+): { geometry_kind: string; geometry_params: Record<string, unknown> } {
+  switch (presetKind) {
+    case "box":
+    case "mumax_standard_problem_3":
+      return {
+        geometry_kind: "Box",
+        geometry_params: { size: params.dimensions ?? [100e-9, 50e-9, 10e-9] },
+      };
+    case "cylinder":
+      return {
+        geometry_kind: "Cylinder",
+        geometry_params: {
+          radius: params.radius ?? 50e-9,
+          height: params.height ?? 10e-9,
+          // We can map axis in the future if we support different orientations in the backend. 
+          // For now, Fullmag cylinder is primitive on Z-axis natively except via rotation.
+          // In builder we can translate and rotate.
+        },
+      };
+    case "sphere":
+      return {
+        geometry_kind: "Ellipsoid",
+        geometry_params: {
+          rx: params.radius ?? 50e-9,
+          ry: params.radius ?? 50e-9,
+          rz: params.radius ?? 50e-9,
+        },
+      };
+    case "ring":
+      return {
+        geometry_kind: "Difference",
+        geometry_params: {
+          base: {
+            geometry_kind: "Cylinder",
+            geometry_params: { radius: params.outer_radius ?? 100e-9, height: params.height ?? 10e-9 },
+          },
+          tool: {
+            geometry_kind: "Cylinder",
+            geometry_params: { radius: params.inner_radius ?? 50e-9, height: (params.height as number ?? 10e-9) * 2 },
+          },
+        },
+      };
+    case "nanowire":
+      // assuming a box-based nanowire for now, depending on axis
+      const nL = (params.length as number) ?? 1000e-9;
+      const nW = (params.width as number) ?? 20e-9;
+      const nH = (params.height as number) ?? 5e-9;
+      const nAxis = params.axis ?? "x";
+      const sizeAxisN =
+        nAxis === "x" ? [nL, nW, nH] : nAxis === "y" ? [nW, nL, nH] : [nW, nH, nL];
+      return {
+        geometry_kind: "Box",
+        geometry_params: { size: sizeAxisN },
+      };
+    case "thin_film":
+    case "sp4":
+      return {
+        geometry_kind: "Box",
+        geometry_params: {
+          size: [
+            (params.length as number) ?? 1000e-9,
+            (params.width as number) ?? 1000e-9,
+            (params.thickness as number) ?? 1e-9,
+          ],
+        },
+      };
+    case "pillar":
+      return {
+        geometry_kind: "Cylinder",
+        geometry_params: {
+          radius: params.radius ?? 30e-9,
+          height: params.height ?? 100e-9,
+        },
+      };
+    case "disk":
+      return {
+        geometry_kind: "Cylinder",
+        geometry_params: {
+          radius: params.radius ?? 100e-9,
+          height: params.thickness ?? 5e-9,
+        },
+      };
+    default:
+      return {
+        geometry_kind: "Box",
+        geometry_params: { size: [20e-9, 20e-9, 10e-9] },
+      };
+  }
+}

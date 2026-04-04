@@ -1617,6 +1617,23 @@ pub struct FdmPlanIR {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_epsilon_prime: Option<f64>,
 
+    // ── Spin-Orbit Torque (SOT) ────────────────────────
+    /// Charge current density magnitude for SOT |Je| [A/m²]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sot_current_density: Option<f64>,
+    /// Damping-like efficiency ξ_DL (≈ spin Hall angle θ_SH)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sot_xi_dl: Option<f64>,
+    /// Field-like efficiency ξ_FL (Rashba term, often ~0)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sot_xi_fl: Option<f64>,
+    /// Spin polarisation unit vector σ̂ (normalised at runtime)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sot_sigma: Option<[f64; 3]>,
+    /// FM layer thickness t_F [m] (for SOT amplitude)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sot_thickness: Option<f64>,
+
     // ── Oersted field (cylindrical conductor) ──
     /// Whether to include the Oersted field from a cylindrical conductor.
     #[serde(default)]
@@ -3004,6 +3021,7 @@ mod tests {
                 temperature: None,
                 interfacial_dmi: None,
                 bulk_dmi: None,
+                    ..Default::default()
             }),
             output_plan: OutputPlanIR {
                 outputs: vec![OutputIR::Field {

@@ -3,7 +3,7 @@
 use crate::types::*;
 use fullmag_ir::{BackendPlanIR, ExecutionPlanIR};
 use fullmag_runner::quantities::{quantity_specs, QuantityKind};
-use fullmag_runner::FemMeshPayload;
+use fullmag_runner::{BackendCapabilities, FemMeshPayload};
 use serde_json::Value;
 
 pub(crate) fn build_quantities(
@@ -16,12 +16,24 @@ pub(crate) fn build_quantities(
     field_location: &str,
 ) -> Vec<QuantityDescriptor> {
     let dynamic_supported = metadata
-        .and_then(|value| value.get("live_preview"))
-        .and_then(|value| value.get("supported_quantities"))
-        .and_then(Value::as_array)
-        .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .and_then(|value| value.get("capabilities"))
+        .and_then(|value| serde_json::from_value::<BackendCapabilities>(value.clone()).ok())
+        .map(|caps| caps.preview_quantities)
+        .or_else(|| {
+            metadata
+                .and_then(|value| value.get("live_preview"))
+                .and_then(|value| value.get("supported_quantities"))
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+        })
         .unwrap_or_default();
-    let dynamic_available = |quantity_id: &str| dynamic_supported.contains(&quantity_id);
+    let dynamic_available = |quantity_id: &str| dynamic_supported.iter().any(|id| id == quantity_id);
     let scalar_available = |run_value: Option<f64>| {
         !scalar_rows.is_empty() || live_state.is_some() || run_value.is_some()
     };
@@ -31,19 +43,19 @@ pub(crate) fn build_quantities(
         .filter(|spec| spec.ui_exposed)
         .map(|spec| {
             let interactive_preview = spec.interactive_preview
-                && (dynamic_supported.is_empty() || dynamic_available(spec.id));
+                && (dynamic_supported.is_empty() || dynamic_available(spec.id.as_str()));
             let available = match spec.kind {
                 QuantityKind::VectorField | QuantityKind::SpatialScalar => {
-                    dynamic_available(spec.id)
-                        || latest_fields.get(spec.id).is_some()
-                        || preview_cache.get(spec.id).is_some()
-                        || (spec.id == "m"
+                    dynamic_available(spec.id.as_str())
+                        || latest_fields.get(spec.id.as_str()).is_some()
+                        || preview_cache.get(spec.id.as_str()).is_some()
+                        || (spec.id.as_str() == "m"
                             && live_state
                                 .and_then(|state| state.latest_step.magnetization.as_ref())
                                 .is_some())
                         || live_state
                             .and_then(|state| state.latest_step.preview_field.as_ref())
-                            .is_some_and(|field| field.quantity == spec.id)
+                            .is_some_and(|field| field.quantity == spec.id.as_str())
                 }
                 QuantityKind::GlobalScalar => scalar_available(
                     spec.scalar_metric_key
@@ -52,7 +64,7 @@ pub(crate) fn build_quantities(
             };
 
             QuantityDescriptor {
-                id: spec.id.to_string(),
+                id: spec.id.as_str().to_string(),
                 label: spec.label.to_string(),
                 kind: spec.kind.as_api_kind().to_string(),
                 unit: spec.unit.to_string(),

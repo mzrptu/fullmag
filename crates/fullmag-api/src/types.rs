@@ -2,8 +2,8 @@
 
 use fullmag_authoring::{SceneDocument, ScriptBuilderState};
 use fullmag_runner::{
-    DisplaySelectionState, FemMeshPayload, LivePreviewField, LivePreviewRequest, RuntimeStatus,
-    StepUpdate,
+    BackendCapabilities, DisplaySelectionState, FemMeshPayload, LivePreviewField,
+    LivePreviewRequest, RuntimeStatus, StepUpdate,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -208,10 +208,14 @@ pub(crate) struct StepUpdateView {
 
 #[derive(Debug, Serialize, Clone)]
 pub(crate) struct SessionStateResponse {
+    pub session_protocol_version: String,
+    pub capability_profile_version: String,
     pub session: SessionManifest,
     pub run: Option<RunManifest>,
     pub live_state: Option<LiveState>,
     pub runtime_status: RuntimeStatusView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<BackendCapabilities>,
     pub metadata: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mesh_workspace: Option<Value>,
@@ -241,10 +245,13 @@ pub(crate) enum CurrentLiveEvent<'a> {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SessionStateEventView<'a> {
+    pub session_protocol_version: &'a str,
+    pub capability_profile_version: &'a str,
     pub session: &'a SessionManifest,
     pub run: Option<&'a RunManifest>,
     pub live_state: Option<&'a LiveState>,
     pub runtime_status: &'a RuntimeStatusView,
+    pub capabilities: Option<&'a BackendCapabilities>,
     pub metadata: Option<&'a Value>,
     pub mesh_workspace: Option<&'a Value>,
     pub scene_document: Option<&'a SceneDocument>,

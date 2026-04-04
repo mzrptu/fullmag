@@ -55,19 +55,27 @@ pub(crate) fn ir_to_shape(entry: &GeometryEntryIR) -> GeometryShape {
             base: std::boxed::Box::new(ir_to_shape(base)),
             tool: std::boxed::Box::new(ir_to_shape(tool)),
         },
-        GeometryEntryIR::Union { a, .. } => ir_to_shape(a),
-        GeometryEntryIR::Intersection { a, .. } => ir_to_shape(a),
+        GeometryEntryIR::Union { name, .. } => panic!(
+            "unsupported geometry lowering: union '{}' must fail in planner before ir_to_shape",
+            name
+        ),
+        GeometryEntryIR::Intersection { name, .. } => panic!(
+            "unsupported geometry lowering: intersection '{}' must fail in planner before ir_to_shape",
+            name
+        ),
         GeometryEntryIR::Translate { base, .. } => ir_to_shape(base),
-        GeometryEntryIR::Ellipsoid { radii, .. } => GeometryShape::Box {
-            size: [radii[0] * 2.0, radii[1] * 2.0, radii[2] * 2.0],
-        },
-        GeometryEntryIR::Sphere { radius, .. } => GeometryShape::Box {
-            size: [*radius * 2.0, *radius * 2.0, *radius * 2.0],
-        },
-        GeometryEntryIR::Ellipse { radii, height, .. } => GeometryShape::Cylinder {
-            radius: radii[0].max(radii[1]),
-            height: *height,
-        },
+        GeometryEntryIR::Ellipsoid { name, .. } => panic!(
+            "unsupported geometry lowering: ellipsoid '{}' must fail in planner before ir_to_shape",
+            name
+        ),
+        GeometryEntryIR::Sphere { name, .. } => panic!(
+            "unsupported geometry lowering: sphere '{}' must fail in planner before ir_to_shape",
+            name
+        ),
+        GeometryEntryIR::Ellipse { name, .. } => panic!(
+            "unsupported geometry lowering: ellipse '{}' must fail in planner before ir_to_shape",
+            name
+        ),
     }
 }
 

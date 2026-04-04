@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FemMeshData } from "./FemMeshView3D";
 import { DIVERGING_PALETTE, POSITIVE_PALETTE } from "../../lib/colorPalettes";
 import type { AntennaOverlay } from "../runs/control-room/shared";
+import { ViewportOverlayLayout } from "./ViewportOverlayLayout";
 
 type SlicePlane = "xy" | "xz" | "yz";
 type VectorComponent = "x" | "y" | "z" | "magnitude";
@@ -18,6 +19,8 @@ interface Props {
   sliceCount?: number;
   antennaOverlays?: AntennaOverlay[];
   selectedAntennaId?: string | null;
+  onPlaneChange?: (plane: SlicePlane) => void;
+  onSliceIndexChange?: (index: number) => void;
 }
 
 type Point3 = [number, number, number];
@@ -689,6 +692,8 @@ export default function FemMeshSlice2D({
   sliceCount = 25,
   antennaOverlays = [],
   selectedAntennaId,
+  onPlaneChange,
+  onSliceIndexChange,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<SliceRenderFrame | null>(null);
@@ -980,33 +985,72 @@ export default function FemMeshSlice2D({
           setPinnedProbe(probe);
         }}
       />
-      {(hoverProbe || pinnedProbe) && (
-        <div className="pointer-events-none absolute right-3 top-3 z-10 min-w-[190px] rounded-xl border border-border/30 bg-background/78 px-3 py-2 text-[0.68rem] font-mono text-slate-200 shadow-lg backdrop-blur-md">
-          <div className="mb-1 flex items-center justify-between text-[0.58rem] font-semibold uppercase tracking-[0.14em] text-slate-400">
-            <span>Probe</span>
-            {pinnedProbe && (
-              <span className="rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-cyan-100">
-                pinned
-              </span>
-            )}
-          </div>
-          {([["Hover", hoverProbe], ["Pinned", pinnedProbe]] as const)
-            .filter(([, probe]) => probe != null)
-            .map(([label, probe]) => (
-              <div key={label} className="mb-1 last:mb-0">
-                <div className="text-[0.56rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                  {label}
-                </div>
-                <div>u {probe!.u.toExponential(3)} m</div>
-                <div>v {probe!.v.toExponential(3)} m</div>
-                <div>
-                  value {formatProbeValue(probe!.value)}
-                  {probe!.source ? ` (${probe!.source})` : ""}
-                </div>
+      <ViewportOverlayLayout>
+        {(hoverProbe || pinnedProbe) && (
+          <ViewportOverlayLayout.TopRight>
+            <div className="min-w-[190px] rounded-xl border border-border/30 bg-background/78 px-3 py-2 text-[0.68rem] font-mono text-slate-200 shadow-lg backdrop-blur-md pointer-events-auto">
+              <div className="mb-1 flex items-center justify-between text-[0.58rem] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                <span>Probe</span>
+                {pinnedProbe && (
+                  <span className="rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-cyan-100">
+                    pinned
+                  </span>
+                )}
               </div>
-            ))}
-        </div>
-      )}
+              {([["Hover", hoverProbe], ["Pinned", pinnedProbe]] as const)
+                .filter(([, probe]) => probe != null)
+                .map(([label, probe]) => (
+                  <div key={label} className="mb-1 last:mb-0">
+                    <div className="text-[0.56rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      {label}
+                    </div>
+                    <div>u {probe!.u.toExponential(3)} m</div>
+                    <div>v {probe!.v.toExponential(3)} m</div>
+                    <div>
+                      value {formatProbeValue(probe!.value)}
+                      {probe!.source ? ` (${probe!.source})` : ""}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </ViewportOverlayLayout.TopRight>
+        )}
+
+        {(onPlaneChange || onSliceIndexChange) && (
+          <ViewportOverlayLayout.BottomCenter>
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border/40 bg-card/60 backdrop-blur-md px-4 py-2 shadow-sm pointer-events-auto">
+              {onPlaneChange && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Plane</span>
+                  <div className="flex rounded-md border border-border/50 bg-background/50 overflow-hidden">
+                    {(["xy", "xz", "yz"] as const).map((p) => (
+                      <button
+                        key={p}
+                        className={`px-2 py-1 text-xs font-mono transition-colors ${plane === p ? "bg-primary/20 text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+                        onClick={() => onPlaneChange(p)}
+                      >
+                        {p.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {onSliceIndexChange && (
+                <div className="flex items-center gap-3">
+                  <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground w-12 text-right">
+                    Id {sliceIndex + 1}/{sliceCount}
+                  </span>
+                  <input
+                    type="range" min={0} max={sliceCount - 1} step={1} value={sliceIndex}
+                    onChange={(e) => onSliceIndexChange(Number(e.target.value))}
+                    className="w-32 h-[3px] accent-primary"
+                  />
+                </div>
+              )}
+            </div>
+          </ViewportOverlayLayout.BottomCenter>
+        )}
+      </ViewportOverlayLayout>
     </div>
   );
 }

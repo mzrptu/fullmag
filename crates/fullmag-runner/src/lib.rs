@@ -43,9 +43,7 @@ pub use interactive::events::{
 };
 pub use interactive::runtime::InteractiveRuntime;
 pub use interactive_runtime::{InteractiveFdmPreviewRuntime, InteractiveFemPreviewRuntime};
-pub use capabilities::{
-    capabilities_for_fdm_engine, capabilities_for_fem_engine, BackendCapabilities, RuntimeEngineId,
-};
+pub use capabilities::{BackendCapabilities, RuntimeEngineId};
 pub use types::{
     ExecutionProvenance, FemEigenRunResult, FemMeshObjectSegment, FemMeshPartPayload,
     FemMeshPayload, LivePreviewField, LivePreviewRequest, LiveVectorFieldSnapshot, RunError,
@@ -55,6 +53,7 @@ pub use types::{
 use fullmag_ir::{BackendPlanIR, FdmMultilayerPlanIR, FdmPlanIR, OutputIR, ProblemIR};
 use interactive::InteractiveBackend;
 use serde_json::Value;
+use crate::capabilities::{capabilities_for_fdm_engine, capabilities_for_fem_engine};
 
 use std::path::Path;
 
@@ -907,6 +906,24 @@ pub fn resolve_runtime_engine(problem: &ProblemIR) -> Result<RuntimeEngineInfo, 
     }
 }
 
+pub fn resolve_runtime_capabilities(problem: &ProblemIR) -> Result<BackendCapabilities, RunError> {
+    let plan = fullmag_plan::plan(problem)?;
+    match &plan.backend_plan {
+        BackendPlanIR::Fdm(_) => Ok(capabilities_for_fdm_engine(dispatch::resolve_fdm_engine(
+            problem,
+        )?)),
+        BackendPlanIR::Fem(_) => Ok(capabilities_for_fem_engine(dispatch::resolve_fem_engine(
+            problem,
+        )?)),
+        BackendPlanIR::FdmMultilayer(_) => Ok(capabilities_for_fdm_engine(
+            dispatch::resolve_fdm_engine(problem)?,
+        )),
+        BackendPlanIR::FemEigen(_) => Ok(capabilities_for_fem_engine(
+            dispatch::resolve_fem_engine(problem)?,
+        )),
+    }
+}
+
 fn configured_cpu_threads(problem: &ProblemIR) -> usize {
     problem
         .problem_meta
@@ -1061,6 +1078,7 @@ mod tests {
             temperature: None,
             interfacial_dmi: None,
             bulk_dmi: None,
+                ..Default::default()
         }
     }
 

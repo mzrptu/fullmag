@@ -262,13 +262,6 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
     [magnetization, material, sceneObject],
   );
 
-  const isGeometryPreset = sceneObject?.geometry.preset_kind != null;
-  const geometryPresetDescriptor = useMemo(
-    () => isGeometryPreset ? GEOMETRY_PRESET_CATALOG.find((d) => d.kind === sceneObject?.geometry.preset_kind) : null,
-    [isGeometryPreset, sceneObject?.geometry.preset_kind]
-  );
-  const [geometryPresetLibraryOpen, setGeometryPresetLibraryOpen] = useState(false);
-
   const updateObject = useCallback(
     (updater: (object: SceneObject) => SceneObject) => {
       if (objectIndex < 0) return;
@@ -353,42 +346,6 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
         geometry: {
           ...object.geometry,
           geometry_params: { ...object.geometry.geometry_params, scale },
-        },
-      };
-    });
-  };
-
-  const assignGeometryPreset = (presetKind: GeometryPresetKind) => {
-    setGeometryPresetLibraryOpen(false);
-    updateObject((object) => {
-      const descriptor = GEOMETRY_PRESET_CATALOG.find((d) => d.kind === presetKind);
-      if (!descriptor) return object;
-      const evaluated = evaluateGeometryPreset(presetKind, descriptor.defaultParams);
-      return {
-        ...object,
-        geometry: {
-          ...object.geometry,
-          preset_kind: presetKind,
-          preset_params: { ...descriptor.defaultParams },
-          geometry_kind: evaluated.geometry_kind,
-          geometry_params: { ...evaluated.geometry_params, name: object.name },
-        },
-      };
-    });
-  };
-
-  const updateGeometryPresetParam = (key: string, value: unknown) => {
-    updateObject((object) => {
-      if (!object.geometry.preset_kind || !object.geometry.preset_params) return object;
-      const nextParams = { ...object.geometry.preset_params, [key]: value };
-      const evaluated = evaluateGeometryPreset(object.geometry.preset_kind as GeometryPresetKind, nextParams);
-      return {
-        ...object,
-        geometry: {
-          ...object.geometry,
-          preset_params: nextParams,
-          geometry_kind: evaluated.geometry_kind,
-          geometry_params: { ...evaluated.geometry_params, name: object.name },
         },
       };
     });
@@ -596,60 +553,32 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
           )}
 
           {/* Dimensions sub-section */}
-          <div className="flex items-center justify-between pb-1 mt-4">
-            <SubSectionHeader title="Dimensions" icon="📏" />
-            <Button
-              variant={isGeometryPreset ? "secondary" : "outline"}
-              size="sm"
-              className="h-6 text-[0.6rem] uppercase tracking-wider"
-              onClick={() => setGeometryPresetLibraryOpen((v) => !v)}
-            >
-              {isGeometryPreset ? "Change Preset" : "Browse Presets"}
-            </Button>
-          </div>
-
-          {geometryPresetLibraryOpen && (
-            <div className="mb-3 rounded-lg border border-border/40 bg-card/20 p-2">
-              <GeometryPresetLibraryPanel
-                selectedKind={sceneObject.geometry.preset_kind as GeometryPresetKind | null}
-                onSelectKind={(kind) => assignGeometryPreset(kind)}
-                onAssignPreset={(kind) => assignGeometryPreset(kind)}
-              />
-              {isGeometryPreset && (
-                <Button variant="ghost" size="sm" className="w-full mt-2 h-7 text-xs" onClick={() => updateObject(o => ({ ...o, geometry: { ...o.geometry, preset_kind: null, preset_params: null } }))}>
-                  Detach preset (Convert to custom)
-                </Button>
-              )}
-            </div>
-          )}
-
-          {!isGeometryPreset ? (
-            <>
-              <SelectField
-                label="Geometry Kind"
-                value={geo.geometry_kind}
-                onchange={(nextKind) =>
-                  updateObject((current) => ({
-                    ...current,
-                    geometry: {
-                      ...current.geometry,
-                      geometry_kind: nextKind,
-                      geometry_params: defaultGeometryParams(nextKind, current.name),
-                    },
-                  }))
-                }
-                options={[
-                  { label: "Box", value: "Box" },
-                  { label: "Cylinder", value: "Cylinder" },
-                  { label: "Ellipsoid", value: "Ellipsoid" },
-                  { label: "Ellipse", value: "Ellipse" },
-                  { label: "Imported Mesh", value: "ImportedGeometry" },
-                  { label: "Difference (CSG)", value: "Difference" },
-                  { label: "Union (CSG)", value: "Union" },
-                  { label: "Intersection (CSG)", value: "Intersection" },
-                ]}
-                tooltip="Choose the underlying geometry recipe for this object."
-              />
+          <SubSectionHeader title="Dimensions" icon="📏" />
+          <SelectField
+            label="Geometry Kind"
+            value={geo.geometry_kind}
+            onchange={(nextKind) =>
+              updateObject((current) => ({
+                ...current,
+                geometry: {
+                  ...current.geometry,
+                  geometry_kind: nextKind,
+                  geometry_params: defaultGeometryParams(nextKind, current.name),
+                },
+              }))
+            }
+            options={[
+              { label: "Box", value: "Box" },
+              { label: "Cylinder", value: "Cylinder" },
+              { label: "Ellipsoid", value: "Ellipsoid" },
+              { label: "Ellipse", value: "Ellipse" },
+              { label: "Imported Mesh", value: "ImportedGeometry" },
+              { label: "Difference (CSG)", value: "Difference" },
+              { label: "Union (CSG)", value: "Union" },
+              { label: "Intersection (CSG)", value: "Intersection" },
+            ]}
+            tooltip="Choose the underlying geometry recipe for this object."
+          />
           {geo.geometry_kind === "Box" && (
             <div className="grid grid-cols-3 gap-3">
               <TextField key={`${geo.name}-size-x`} label="X Length" defaultValue={(size[0] * 1e9).toFixed(1)} onBlur={(e) => handleBoxSize(0, e.target.value)} unit="nm" mono />
@@ -720,25 +649,9 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
               />
             </div>
           )}
-              {csgSummary && (
-                <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-                  {csgSummary}
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary/80">
-                Using geometry preset: <strong className="font-semibold">{geometryPresetDescriptor?.label}</strong>
-              </div>
-              {geometryPresetDescriptor?.parameters.map((parameter) => (
-                <PresetParameterField
-                  key={parameter.key}
-                  parameter={parameter}
-                  value={sceneObject.geometry.preset_params?.[parameter.key]}
-                  onChange={(val) => updateGeometryPresetParam(parameter.key, val)}
-                />
-              ))}
+          {csgSummary && (
+            <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+              {csgSummary}
             </div>
           )}
         </div>

@@ -2,17 +2,23 @@ import type React from "react";
 import { TextField } from "./TextField";
 import SelectField from "./SelectField";
 import { Vector3Field } from "./Vector3Field";
-import type { MagneticPresetParameterDescriptor } from "../../lib/magnetizationPresetCatalog";
+export interface BasePresetParameterDescriptor {
+  key: string;
+  label: string;
+  type: string;
+  unit?: string;
+  options?: Array<{ value: string | number; label: string }>;
+}
 
 interface PresetParameterFieldProps {
-  parameter: MagneticPresetParameterDescriptor;
+  parameter: BasePresetParameterDescriptor;
   value: unknown;
   onChange: (value: unknown) => void;
 }
 
 export function PresetParameterField({ parameter, value, onChange }: PresetParameterFieldProps) {
   if (parameter.type === "vector3") {
-    const vector = Array.isArray(value) ? (value as [number, number, number]) : [0, 0, 0];
+    const vector: [number, number, number] = Array.isArray(value) ? (value as [number, number, number]) : [0, 0, 0];
     const isDirection = parameter.key.includes("axis") || parameter.key.includes("direction");
     return (
       <Vector3Field

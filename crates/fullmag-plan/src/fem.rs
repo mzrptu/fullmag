@@ -749,10 +749,11 @@ pub(crate) fn plan_fem(
                 let (b1, b2) = match law_ir {
                     MagnetostrictionLawIR::Cubic { b1, b2, .. } => (*b1, *b2),
                     MagnetostrictionLawIR::Isotropic { lambda_s, .. } => {
-                        // Isotropic approximation: B₁ ≈ -3/2 λ_s (C₁₁ - C₁₂), B₂ ≈ -3 λ_s C₄₄
-                        // Without elastic constants, use simplified B₁ = B₂ = 0 and log warning.
-                        eprintln!("FEM planner: isotropic magnetostriction (λ_s={lambda_s}) not yet mapped to B₁/B₂ without elastic constants; setting B₁=B₂=0");
-                        (0.0, 0.0)
+                        return Err(PlanError {
+                            reasons: vec![format!(
+                                "isotropic magnetostriction (lambda_s={lambda_s}) is not executable for FEM without a physically justified B1/B2 mapping; refusing lossy fallback"
+                            )],
+                        });
                     }
                 };
                 // Find prescribed strain from mechanical loads

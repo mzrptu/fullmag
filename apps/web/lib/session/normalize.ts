@@ -1382,10 +1382,18 @@ export function normalizeSessionState(
     : null;
 
   return {
+    session_protocol_version:
+      typeof raw.session_protocol_version === "string" ? raw.session_protocol_version : undefined,
+    capability_profile_version:
+      typeof raw.capability_profile_version === "string"
+        ? raw.capability_profile_version
+        : undefined,
     session: raw.session,
     run: raw.run ?? null,
     live_state: liveState,
     runtime_status: normalizeRuntimeStatus(raw.runtime_status),
+    capabilities:
+      raw.capabilities && typeof raw.capabilities === "object" ? raw.capabilities : null,
     metadata: raw.metadata ?? null,
     mesh_workspace: normalizeMeshWorkspace(raw.mesh_workspace),
     scene_document: sceneDocument,

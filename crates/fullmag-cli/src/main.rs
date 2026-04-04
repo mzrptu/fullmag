@@ -410,6 +410,7 @@ mod tests {
             interfacial_dmi: None,
             bulk_dmi: None,
             inter_region_exchange: vec![],
+                ..Default::default()
         });
 
         let update = initial_step_update(&plan);
@@ -569,6 +570,7 @@ mod tests {
             interfacial_dmi: None,
             bulk_dmi: None,
             inter_region_exchange: vec![],
+                ..Default::default()
         };
 
         let diagnostic = diagnose_initial_fdm_plan(&plan).expect("diagnostic should succeed");
@@ -643,6 +645,7 @@ mod tests {
             interfacial_dmi: None,
             bulk_dmi: None,
             inter_region_exchange: vec![],
+                ..Default::default()
         };
 
         let diagnostic = diagnose_initial_fdm_plan(&plan).expect("diagnostic should succeed");

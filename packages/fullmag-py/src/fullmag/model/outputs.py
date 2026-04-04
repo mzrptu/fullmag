@@ -13,6 +13,8 @@ class SaveField:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "field", require_non_empty(self.field, "field"))
+        if self.field not in _KNOWN_FIELDS:
+            raise ValueError(f"unsupported field quantity '{self.field}'")
         require_positive(self.every, "every")
 
     def to_ir(self) -> dict[str, object]:
@@ -26,13 +28,15 @@ class SaveScalar:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scalar", require_non_empty(self.scalar, "scalar"))
+        if self.scalar not in {"E_ex", "E_demag", "E_ext", "E_total"}:
+            raise ValueError(f"unsupported scalar quantity '{self.scalar}'")
         require_positive(self.every, "every")
 
     def to_ir(self) -> dict[str, object]:
         return {"kind": "scalar", "name": self.scalar, "every_seconds": self.every}
 
 
-_KNOWN_FIELDS = {"m", "H_demag", "H_eff", "H_ex", "H_ext"}
+_KNOWN_FIELDS = {"m", "H_demag", "H_eff", "H_ex", "H_ext", "H_ant", "H_ani", "H_dmi", "H_mel"}
 _COMPONENTS = {"x", "y", "z"}
 
 # Short aliases: "mz" → ("m", "z"), "mx" → ("m", "x"), etc.
@@ -66,8 +70,7 @@ def parse_snapshot_quantity(raw: str) -> tuple[str, str]:
     if raw in _KNOWN_FIELDS:
         return (raw, "3D")
 
-    # 4. Fallback — treat the whole string as a field name
-    return (raw, "3D")
+    raise ValueError(f"unsupported snapshot quantity '{raw}'")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +95,8 @@ class Snapshot:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "field", require_non_empty(self.field, "field"))
+        if self.field not in _KNOWN_FIELDS:
+            raise ValueError(f"unsupported snapshot field '{self.field}'")
         require_positive(self.every, "every")
         if self.component not in ("x", "y", "z", "3D"):
             raise ValueError(

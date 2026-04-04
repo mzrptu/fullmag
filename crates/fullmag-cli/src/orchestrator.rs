@@ -25,21 +25,17 @@ fn current_live_metadata(
     plan: &ExecutionPlanIR,
     status: &str,
 ) -> serde_json::Value {
-    let live_preview_supported_quantities = match &plan.backend_plan {
-        BackendPlanIR::Fdm(_) => fullmag_runner::quantities::interactive_preview_quantity_ids()
-            .into_iter()
-            .filter(|quantity| *quantity != "H_ant")
-            .collect::<Vec<_>>(),
-        BackendPlanIR::Fem(_) => fullmag_runner::quantities::interactive_preview_quantity_ids()
-            .into_iter()
-            .filter(|quantity| *quantity != "H_ant" || !problem.current_modules.is_empty())
-            .collect::<Vec<_>>(),
-        BackendPlanIR::FdmMultilayer(_) => vec!["m"],
-        BackendPlanIR::FemEigen(_) => vec![],
-    };
-    let runtime_engine = fullmag_runner::resolve_runtime_engine(problem)
-        .ok()
-        .map(|engine| {
+    let runtime_engine_info = fullmag_runner::resolve_runtime_engine(problem).ok();
+    let capabilities = fullmag_runner::resolve_runtime_capabilities(problem).ok();
+    let live_preview_supported_quantities = capabilities
+        .as_ref()
+        .map(|caps| caps.preview_quantities.clone())
+        .unwrap_or_else(|| match &plan.backend_plan {
+            BackendPlanIR::FdmMultilayer(_) => vec!["m".to_string()],
+            BackendPlanIR::FemEigen(_) => vec![],
+            _ => vec![],
+        });
+    let runtime_engine = runtime_engine_info.map(|engine| {
             serde_json::json!({
                 "backend_family": engine.backend_family,
                 "engine_id": engine.engine_id,
@@ -48,12 +44,15 @@ fn current_live_metadata(
             })
         });
     serde_json::json!({
+        "session_protocol_version": "2026-04-04",
+        "capability_profile_version": capabilities.as_ref().map(|caps| caps.capability_profile_version.clone()).unwrap_or_else(|| "2026-04-04".to_string()),
         "problem_name": &problem.problem_meta.name,
         "ir_version": &problem.ir_version,
         "source_hash": &problem.problem_meta.source_hash,
         "problem_meta": &problem.problem_meta,
         "execution_plan": plan,
         "runtime_engine": runtime_engine,
+        "capabilities": capabilities,
         "artifact_layout": current_artifact_layout(problem, plan),
         "meshing_capabilities": current_meshing_capabilities(plan),
         "live_preview": {
@@ -3768,6 +3767,7 @@ mod tests {
             interfacial_dmi: None,
             bulk_dmi: None,
             inter_region_exchange: vec![],
+                ..Default::default()
         })
     }
 

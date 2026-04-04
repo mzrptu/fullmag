@@ -176,6 +176,18 @@ export interface QuantityDescriptor {
   scalar_metric_key: string | null;
 }
 
+export interface BackendCapabilities {
+  engine_id: string;
+  capability_profile_version: string;
+  supported_terms: string[];
+  supported_demag_realizations: string[];
+  preview_quantities: string[];
+  snapshot_quantities: string[];
+  scalar_outputs: string[];
+  approximate_operators: string[];
+  supports_lossy_fallback_override: boolean;
+}
+
 export interface ArtifactEntry {
   path: string;
   kind: string;
@@ -249,6 +261,13 @@ export interface PreviewConfig {
   y_chosen_size: number;
   auto_scale_enabled: boolean;
   max_points: number;
+}
+
+export interface SessionMetadata {
+  session_protocol_version?: string;
+  capability_profile_version?: string;
+  capabilities?: BackendCapabilities | null;
+  [key: string]: unknown;
 }
 
 export type DisplayKind = "vector_field" | "spatial_scalar" | "global_scalar";
@@ -632,6 +651,9 @@ export interface SceneGeometry {
   geometry_params: Record<string, unknown>;
   bounds_min?: [number, number, number] | null;
   bounds_max?: [number, number, number] | null;
+  preset_kind?: string | null;
+  preset_params?: Record<string, unknown> | null;
+  preset_version?: number | null;
 }
 
 export interface SceneObject {
@@ -850,11 +872,14 @@ export interface MeshWorkspaceState {
 }
 
 export interface SessionState {
+  session_protocol_version?: string;
+  capability_profile_version?: string;
   session: SessionManifest;
   run: RunManifest | null;
   live_state: LiveState | null;
   runtime_status: RuntimeStatusState | null;
-  metadata: Record<string, unknown> | null;
+  capabilities?: BackendCapabilities | null;
+  metadata: SessionMetadata | null;
   mesh_workspace: MeshWorkspaceState | null;
   scene_document: SceneDocument | null;
   script_builder: ScriptBuilderState | null;

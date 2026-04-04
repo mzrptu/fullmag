@@ -1802,10 +1802,13 @@ fn serialize_current_live_session_event(
 ) -> Result<String, ApiError> {
     serde_json::to_string(&CurrentLiveEvent::SessionState {
         state: SessionStateEventView {
+            session_protocol_version: &snapshot.session_protocol_version,
+            capability_profile_version: &snapshot.capability_profile_version,
             session: &snapshot.session,
             run: snapshot.run.as_ref(),
             live_state: snapshot.live_state.as_ref(),
             runtime_status: &snapshot.runtime_status,
+            capabilities: snapshot.capabilities.as_ref(),
             metadata: snapshot.metadata.as_ref(),
             mesh_workspace: snapshot.mesh_workspace.as_ref(),
             scene_document: snapshot.scene_document.as_ref(),

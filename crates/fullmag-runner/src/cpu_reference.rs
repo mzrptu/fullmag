@@ -4,9 +4,10 @@
 //! into the native CUDA backend.
 
 use fullmag_engine::{
+    magnetoelastic::{MagnetoelasticParams, PrescribedStrainField},
     AdaptiveStepConfig, CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, ExchangeLlgProblem,
-    ExchangeLlgState, GridShape, LlgConfig, MaterialParameters, SlonczewskiSttConfig,
-    TimeIntegrator, UniaxialAnisotropyConfig, ZhangLiSttConfig,
+    ExchangeLlgState, GridShape, LlgConfig, MaterialParameters, MagnetoelasticTermConfig,
+    SlonczewskiSttConfig, SotConfig, TimeIntegrator, UniaxialAnisotropyConfig, ZhangLiSttConfig,
 };
 use fullmag_ir::{
     ExecutionPrecision, FdmPlanIR, IntegratorChoice, OutputIR, RelaxationAlgorithmIR,
@@ -35,6 +36,35 @@ use crate::types::{
 use std::time::Instant;
 
 /// Build a `ZhangLiSttConfig` from plan fields if ZL STT is requested.
+fn build_mel(plan: &FdmPlanIR) -> Option<MagnetoelasticTermConfig> {
+    let b1 = plan.mel_b1?;
+    let strain = plan.mel_uniform_strain?;
+    Some(MagnetoelasticTermConfig {
+        params: MagnetoelasticParams {
+            b1,
+            b2: plan.mel_b2.unwrap_or(0.0),
+            ms: plan.material.saturation_magnetisation,
+        },
+        strain: PrescribedStrainField::Uniform(strain),
+    })
+}
+
+fn build_sot(plan: &FdmPlanIR) -> Option<SotConfig> {
+    let je = plan.sot_current_density?;
+    let sigma = plan.sot_sigma?;
+    let thickness = plan.sot_thickness?;
+    if je == 0.0 || thickness <= 0.0 {
+        return None;
+    }
+    Some(SotConfig {
+        current_density: je,
+        xi_dl: plan.sot_xi_dl.unwrap_or(0.0),
+        xi_fl: plan.sot_xi_fl.unwrap_or(0.0),
+        sigma,
+        thickness,
+    })
+}
+
 fn build_zl_stt(plan: &FdmPlanIR) -> Option<ZhangLiSttConfig> {
     let j = plan.current_density?;
     let p = plan.stt_degree?;
@@ -171,7 +201,7 @@ pub(crate) fn build_snapshot_problem_and_state(
             demag: plan.enable_demag,
             external_field: plan.external_field,
             per_node_field: None,
-            magnetoelastic: None,
+            magnetoelastic: build_mel(plan),
             uniaxial_anisotropy: plan.material.uniaxial_anisotropy_ku1.map(|ku1| {
                 UniaxialAnisotropyConfig {
                     ku1,
@@ -191,6 +221,7 @@ pub(crate) fn build_snapshot_problem_and_state(
             bulk_dmi: plan.bulk_dmi,
             zhang_li_stt: build_zl_stt(plan),
             slonczewski_stt: build_slon_stt(plan, plan.cell_size[2]),
+            sot: build_sot(plan),
         },
         plan.active_mask.clone(),
     )
@@ -294,7 +325,7 @@ pub(crate) fn execute_reference_fdm(
             demag: plan.enable_demag,
             external_field: plan.external_field,
             per_node_field: None,
-            magnetoelastic: None,
+            magnetoelastic: build_mel(plan),
             uniaxial_anisotropy: plan.material.uniaxial_anisotropy_ku1.map(|ku1| {
                 UniaxialAnisotropyConfig {
                     ku1,
@@ -314,6 +345,7 @@ pub(crate) fn execute_reference_fdm(
             bulk_dmi: plan.bulk_dmi,
             zhang_li_stt: build_zl_stt(plan),
             slonczewski_stt: build_slon_stt(plan, plan.cell_size[2]),
+            sot: build_sot(plan),
         },
         plan.active_mask.clone(),
     )
@@ -473,7 +505,7 @@ pub(crate) fn execute_reference_fdm(
                         let request = display_selection.preview_request();
                         Some(build_grid_preview_field(
                             &request,
-                            select_observables(&current_observables, &request.quantity),
+                            select_observables(&current_observables, &request.quantity)?,
                             live.grid,
                             plan.active_mask.as_deref(),
                         ))
@@ -573,7 +605,7 @@ pub(crate) fn execute_reference_fdm(
                     let request = selection.preview_request();
                     Some(build_grid_preview_field(
                         &request,
-                        select_observables(&observables, &request.quantity),
+                        select_observables(&observables, &request.quantity)?,
                         live.grid,
                         plan.active_mask.as_deref(),
                     ))
@@ -950,6 +982,7 @@ mod tests {
             temperature: None,
             interfacial_dmi: None,
             bulk_dmi: None,
+                ..Default::default()
         }
     }
 
@@ -1005,6 +1038,7 @@ mod tests {
             temperature: None,
             interfacial_dmi: None,
             bulk_dmi: None,
+                ..Default::default()
         }
     }
 

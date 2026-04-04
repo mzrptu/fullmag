@@ -61,6 +61,8 @@ pub(crate) fn default_current_live_state(req: &CurrentLivePublishRequest) -> Ses
         .unwrap_or_default();
 
     SessionStateResponse {
+        session_protocol_version: "2026-04-04".to_string(),
+        capability_profile_version: "2026-04-04".to_string(),
         session: req.session.clone().unwrap_or(SessionManifest {
             session_id: req.session_id.clone(),
             run_id,
@@ -79,6 +81,7 @@ pub(crate) fn default_current_live_state(req: &CurrentLivePublishRequest) -> Ses
         run: None,
         live_state: None,
         runtime_status: build_runtime_status_view(&status),
+        capabilities: None,
         metadata: None,
         mesh_workspace: None,
         scene_document: None,
@@ -110,6 +113,23 @@ pub(crate) fn apply_current_live_publish(
     }
     if let Some(metadata) = req.metadata {
         current.metadata = Some(metadata);
+    }
+    if let Some(metadata) = current.metadata.as_ref() {
+        if let Some(value) = metadata.get("capabilities") {
+            current.capabilities = serde_json::from_value(value.clone()).ok();
+        }
+        if let Some(value) = metadata
+            .get("capability_profile_version")
+            .and_then(serde_json::Value::as_str)
+        {
+            current.capability_profile_version = value.to_string();
+        }
+        if let Some(value) = metadata
+            .get("session_protocol_version")
+            .and_then(serde_json::Value::as_str)
+        {
+            current.session_protocol_version = value.to_string();
+        }
     }
     if let Some(mesh_workspace) = req.mesh_workspace {
         current.mesh_workspace = Some(mesh_workspace);

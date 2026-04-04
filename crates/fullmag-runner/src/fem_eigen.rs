@@ -482,6 +482,7 @@ fn materialize_equilibrium(
             bulk_dmi: None,
             zhang_li_stt: None,
             slonczewski_stt: None,
+            sot: None,
         },
         Some([plan.hmax, plan.hmax, plan.hmax]),
     );
