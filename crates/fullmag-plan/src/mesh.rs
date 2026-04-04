@@ -544,6 +544,8 @@ pub(crate) fn pack_mesh_by_analysis(
         element_markers: reordered_markers,
         boundary_faces: reordered_boundary_faces,
         boundary_markers: reordered_boundary_markers,
+        periodic_boundary_pairs: mesh.periodic_boundary_pairs.clone(),
+        periodic_node_pairs: mesh.periodic_node_pairs.clone(),
         per_domain_quality: Default::default(),
     };
     reordered_mesh.validate().map_err(|errors| {
@@ -1050,6 +1052,8 @@ pub(crate) fn merge_fem_meshes(
         element_markers,
         boundary_faces,
         boundary_markers,
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
         per_domain_quality: Default::default(),
     };
     merged.validate().map_err(|errors| {

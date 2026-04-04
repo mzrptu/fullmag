@@ -2086,7 +2086,7 @@ def _build_problem(
     eigen_normalization: str = "unit_l2",
     eigen_damping_policy: str = "ignore",
     eigen_k_vector: tuple[float, float, float] | None = None,
-    eigen_spin_wave_bc: str = "free",
+    eigen_spin_wave_bc: str | dict[str, object] = "free",
 ) -> Problem:
     """Construct a Problem from the current world state."""
     s = _state
@@ -2322,7 +2322,7 @@ def eigenmodes(
     normalization: str = "unit_l2",
     damping_policy: str = "ignore",
     k_vector: tuple[float, float, float] | None = None,
-    bc: str = "free",
+    bc: str | dict[str, object] = "free",
 ) -> Any:
     """Build the problem and queue/run an eigenmodes analysis.
 

@@ -672,6 +672,54 @@ class MeshScaffoldTests(unittest.TestCase):
         if fullmag_core.validate_mesh_ir(mesh_ir) is not None:
             self.assertTrue(fullmag_core.validate_mesh_ir(mesh_ir))
 
+    def test_meshdata_to_ir_infers_axis_aligned_periodic_pairs(self) -> None:
+        mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [1.0, 0.0, 1.0],
+                    [1.0, 1.0, 1.0],
+                    [0.0, 1.0, 1.0],
+                ],
+                dtype=np.float64,
+            ),
+            elements=np.asarray(
+                [
+                    [0, 1, 3, 4],
+                    [1, 2, 3, 6],
+                    [1, 3, 4, 6],
+                    [1, 4, 5, 6],
+                    [3, 4, 6, 7],
+                ],
+                dtype=np.int32,
+            ),
+            element_markers=np.ones((5,), dtype=np.int32),
+            boundary_faces=np.asarray(
+                [
+                    [0, 3, 7], [0, 4, 7],
+                    [1, 2, 6], [1, 5, 6],
+                    [0, 1, 5], [0, 4, 5],
+                    [3, 2, 6], [3, 7, 6],
+                    [0, 1, 2], [0, 3, 2],
+                    [4, 5, 6], [4, 7, 6],
+                ],
+                dtype=np.int32,
+            ),
+            boundary_markers=np.full((12,), 99, dtype=np.int32),
+        )
+
+        mesh_ir = mesh.to_ir("cube")
+
+        self.assertEqual(
+            sorted(pair["pair_id"] for pair in mesh_ir["periodic_boundary_pairs"]),
+            ["x_faces", "y_faces", "z_faces"],
+        )
+        self.assertEqual(len(mesh_ir["periodic_node_pairs"]), 12)
+
     def test_extract_gmsh_connectivity_uses_primary_nodes_for_higher_order_elements(self) -> None:
         class _FakeMeshApi:
             @staticmethod

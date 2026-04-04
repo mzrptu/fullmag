@@ -207,3 +207,135 @@ class Magnetoelastic:
             "body": self.body,
             "law": self.law,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class UniaxialAnisotropy:
+    """Uniaxial magnetocrystalline anisotropy energy.
+
+    The anisotropy energy density is::
+
+        e = Ku1 * sin²(θ) + Ku2 * sin⁴(θ)
+
+    where θ is the angle between the magnetization and the easy axis.
+
+    Parameters
+    ----------
+    ku1 : float
+        First-order uniaxial anisotropy constant [J/m³].
+        Positive = easy axis, negative = easy plane.
+    ku2 : float, optional
+        Second-order uniaxial anisotropy constant [J/m³].  Default: 0.
+    axis : sequence of 3 floats, optional
+        Easy axis direction (unit vector).  Default: (0, 0, 1).
+    """
+
+    ku1: float
+    ku2: float = 0.0
+    axis: tuple[float, float, float] = (0.0, 0.0, 1.0)
+
+    def __init__(
+        self,
+        ku1: float,
+        ku2: float = 0.0,
+        axis: Sequence[float] = (0.0, 0.0, 1.0),
+    ) -> None:
+        object.__setattr__(self, "ku1", float(ku1))
+        object.__setattr__(self, "ku2", float(ku2))
+        object.__setattr__(self, "axis", as_vector3(axis, "axis"))
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "kind": "uniaxial_anisotropy",
+            "ku1": self.ku1,
+            "ku2": self.ku2,
+            "axis": list(self.axis),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CubicAnisotropy:
+    """Cubic magnetocrystalline anisotropy energy.
+
+    The anisotropy energy density is::
+
+        e = Kc1*(α₁²α₂² + α₂²α₃² + α₃²α₁²) + Kc2*(α₁²α₂²α₃²) + Kc3*(…)
+
+    where α₁, α₂, α₃ are the direction cosines with respect to the crystal axes.
+
+    Parameters
+    ----------
+    kc1 : float
+        First cubic anisotropy constant [J/m³].
+    kc2 : float, optional
+        Second cubic anisotropy constant [J/m³].  Default: 0.
+    kc3 : float, optional
+        Third cubic anisotropy constant [J/m³].  Default: 0.
+    axis1 : sequence of 3 floats, optional
+        First crystal axis (unit vector).  Default: (1, 0, 0).
+    axis2 : sequence of 3 floats, optional
+        Second crystal axis (unit vector, perpendicular to axis1).  Default: (0, 1, 0).
+    """
+
+    kc1: float
+    kc2: float = 0.0
+    kc3: float = 0.0
+    axis1: tuple[float, float, float] = (1.0, 0.0, 0.0)
+    axis2: tuple[float, float, float] = (0.0, 1.0, 0.0)
+
+    def __init__(
+        self,
+        kc1: float,
+        kc2: float = 0.0,
+        kc3: float = 0.0,
+        axis1: Sequence[float] = (1.0, 0.0, 0.0),
+        axis2: Sequence[float] = (0.0, 1.0, 0.0),
+    ) -> None:
+        object.__setattr__(self, "kc1", float(kc1))
+        object.__setattr__(self, "kc2", float(kc2))
+        object.__setattr__(self, "kc3", float(kc3))
+        object.__setattr__(self, "axis1", as_vector3(axis1, "axis1"))
+        object.__setattr__(self, "axis2", as_vector3(axis2, "axis2"))
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "kind": "cubic_anisotropy",
+            "kc1": self.kc1,
+            "kc2": self.kc2,
+            "kc3": self.kc3,
+            "axis1": list(self.axis1),
+            "axis2": list(self.axis2),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ThermalNoise:
+    """Stochastic thermal fluctuations (Brown noise) in the LLG equation.
+
+    The stochastic field amplitude follows the fluctuation-dissipation theorem::
+
+        σ = sqrt(2 α k_B T / (γ μ₀ M_s V Δt))
+
+    Parameters
+    ----------
+    temperature : float
+        Temperature in Kelvin.  Must be positive.
+    seed : int, optional
+        Random number generator seed for reproducibility.  If ``None`` a
+        time-dependent seed is used.
+    """
+
+    temperature: float
+    seed: int | None = None
+
+    def __post_init__(self) -> None:
+        require_positive(self.temperature, "temperature")
+
+    def to_ir(self) -> dict[str, object]:
+        ir: dict[str, object] = {
+            "kind": "thermal_noise",
+            "temperature": self.temperature,
+        }
+        if self.seed is not None:
+            ir["seed"] = self.seed
+        return ir

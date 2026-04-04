@@ -82,6 +82,9 @@ pub(crate) struct RemeshCliResponse {
     pub boundary_faces: Vec<[u32; 3]>,
     pub boundary_markers: Vec<u32>,
     #[serde(default)]
+    pub periodic_boundary_pairs: Vec<fullmag_ir::MeshPeriodicBoundaryPairIR>,
+    #[serde(default)]
+    pub periodic_node_pairs: Vec<fullmag_ir::MeshPeriodicNodePairIR>,
     pub quality: Option<RemeshQualitySummary>,
     #[serde(default)]
     pub generation_mode: Option<String>,
@@ -110,6 +113,8 @@ impl RemeshCliResponse {
             element_markers: self.element_markers,
             boundary_faces: self.boundary_faces,
             boundary_markers: self.boundary_markers,
+            periodic_boundary_pairs: self.periodic_boundary_pairs,
+            periodic_node_pairs: self.periodic_node_pairs,
             per_domain_quality,
         }
     }

@@ -486,7 +486,9 @@ mod tests {
             element_markers,
             boundary_faces: vec![[0, 1, 2]],
             boundary_markers: vec![1],
-            per_domain_quality: Default::default(),
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+per_domain_quality: Default::default(),
         }
     }
 

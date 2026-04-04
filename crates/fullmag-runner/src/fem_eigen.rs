@@ -1,13 +1,15 @@
 use fullmag_engine::fem::{FemLlgProblem, MeshTopology};
 use fullmag_engine::{
-    EffectiveFieldObservables, EffectiveFieldTerms, LlgConfig, MaterialParameters, TimeIntegrator,
-    Vector3, MU0,
+    sub, EffectiveFieldObservables, EffectiveFieldTerms, LlgConfig, MaterialParameters,
+    TimeIntegrator, Vector3, MU0,
 };
 use fullmag_ir::{
     EigenDampingPolicyIR, EigenNormalizationIR, EquilibriumSourceIR, FemEigenPlanIR, KSamplingIR,
     OutputIR, RelaxationAlgorithmIR, RelaxationControlIR, SpinWaveBoundaryConditionIR,
+    SpinWaveBoundaryKindIR,
 };
 use nalgebra::{DMatrix, DVector, SymmetricEigen};
+use num_complex::Complex64;
 
 use crate::relaxation::relaxation_converged;
 use crate::types::{AuxiliaryArtifact, ExecutedRun, RunError, RunResult, RunStatus, StepStats};
@@ -15,6 +17,28 @@ use crate::ExecutionProvenance;
 
 const RELAX_DT: f64 = 1e-13;
 const RELAX_MAX_STEPS: u64 = 4_000;
+
+#[derive(Debug, Clone)]
+struct ReductionMap {
+    active_nodes: Vec<usize>,
+    node_map: Vec<Option<usize>>,
+    node_phases: Vec<Complex64>,
+    complex_reduction: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RealEigenpair {
+    eigenvalue_real: f64,
+    eigenvalue_imag: f64,
+    vector: DVector<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct ComplexEigenpair {
+    eigenvalue_real: f64,
+    eigenvalue_imag: f64,
+    vector: Vec<Complex64>,
+}
 
 pub(crate) fn execute_reference_fem_eigen(
     plan: &FemEigenPlanIR,
@@ -36,67 +60,39 @@ pub(crate) fn execute_reference_fem_eigen(
     let (problem, equilibrium, relaxation_steps, observables) =
         materialize_equilibrium(plan, &initial_magnetization)?;
     let topology = &problem.topology;
-    let (active_nodes, node_map) = active_node_mapping(topology, plan.spin_wave_bc);
-    if active_nodes.is_empty() {
+    let solver_kind = solver_kind_label(plan);
+    let reduction = build_reduction_map(topology, &plan.spin_wave_bc, plan.k_sampling.as_ref())?;
+    if reduction.active_nodes.is_empty() {
         return Err(RunError {
             message: "FEM eigen solver found no magnetically active nodes".to_string(),
         });
     }
+    let complex_reduction = reduction.complex_reduction;
 
-    let (stiffness, mass) = assemble_projected_scalar_operator(
-        topology,
-        &node_map,
-        &observables,
-        plan.enable_exchange,
-        plan.enable_demag,
-        plan.external_field.is_some(),
-    );
-
-    let cholesky = mass.clone().cholesky().ok_or_else(|| RunError {
-        message: "FEM eigen mass matrix is singular; ensure the magnetic mesh has active volume"
-            .to_string(),
-    })?;
-    let l = cholesky.l();
-    let l_inv = l.clone().try_inverse().ok_or_else(|| RunError {
-        message: "failed to invert FEM eigen mass Cholesky factor".to_string(),
-    })?;
-    let transformed = &l_inv * stiffness * l_inv.transpose();
-    let spectrum = SymmetricEigen::new(transformed);
-
-    let mut eigenpairs = spectrum
-        .eigenvalues
-        .iter()
-        .enumerate()
-        .filter_map(|(index, value)| {
-            if !value.is_finite() {
-                return None;
-            }
-            let lifted = l_inv.transpose() * spectrum.eigenvectors.column(index).into_owned();
-            Some((*value, lifted))
-        })
-        .collect::<Vec<_>>();
-
-    match &plan.target {
-        fullmag_ir::EigenTargetIR::Lowest => {
-            eigenpairs.sort_by(|lhs, rhs| {
-                lhs.0
-                    .partial_cmp(&rhs.0)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-        fullmag_ir::EigenTargetIR::Nearest { frequency_hz } => {
-            eigenpairs.sort_by(|lhs, rhs| {
-                let lhs_freq = frequency_from_eigenvalue(plan.gyromagnetic_ratio, lhs.0);
-                let rhs_freq = frequency_from_eigenvalue(plan.gyromagnetic_ratio, rhs.0);
-                (lhs_freq - *frequency_hz)
-                    .abs()
-                    .partial_cmp(&(rhs_freq - *frequency_hz).abs())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-    }
-    let requested_count = usize::try_from(plan.count).unwrap_or(usize::MAX);
-    eigenpairs.truncate(requested_count.min(eigenpairs.len()));
+    let real_eigenpairs = if complex_reduction {
+        Vec::new()
+    } else {
+        let (stiffness, mass) = assemble_projected_scalar_operator_real(
+            plan,
+            topology,
+            &reduction,
+            &observables,
+            &equilibrium,
+        );
+        solve_real_symmetric_eigenpairs(plan, stiffness, mass)?
+    };
+    let complex_eigenpairs = if complex_reduction {
+        let (stiffness, mass) = assemble_projected_scalar_operator_complex(
+            plan,
+            topology,
+            &reduction,
+            &observables,
+            &equilibrium,
+        );
+        solve_complex_hermitian_eigenpairs(plan, stiffness, mass)?
+    } else {
+        Vec::new()
+    };
 
     let bases = tangent_bases(&equilibrium);
     let requested_modes = requested_mode_indices(outputs);
@@ -108,22 +104,77 @@ pub(crate) fn execute_reference_fem_eigen(
         .any(|output| matches!(output, OutputIR::DispersionCurve { .. }));
 
     let mut auxiliary_artifacts = Vec::new();
-    let mut modes_summary = Vec::with_capacity(eigenpairs.len());
-    for (mode_index, (eigenvalue, vector)) in eigenpairs.iter().enumerate() {
-        let normalized = normalize_mode(vector.clone(), &mass, &plan.normalization);
-        let (real, imag, amplitude, phase, max_amplitude) =
-            project_mode_to_tangent_basis(topology.n_nodes, &active_nodes, &normalized, &bases);
-        let frequency_hz = frequency_from_eigenvalue(plan.gyromagnetic_ratio, *eigenvalue);
-        let angular_frequency =
-            angular_frequency_from_eigenvalue(plan.gyromagnetic_ratio, *eigenvalue);
-        let norm = modal_norm(&normalized, &mass).sqrt();
+    let total_modes = if complex_reduction {
+        complex_eigenpairs.len()
+    } else {
+        real_eigenpairs.len()
+    };
+    let mut modes_summary = Vec::with_capacity(total_modes);
+    let damping_factor = damping_imaginary_factor(plan.material.damping, plan.damping_policy);
+
+    for mode_index in 0..total_modes {
+        let (eigenvalue_real, eigenvalue_imag, real, imag, amplitude, phase, max_amplitude, norm) =
+            if complex_reduction {
+                let pair = &complex_eigenpairs[mode_index];
+                let (real, imag, amplitude, phase, max_amplitude) =
+                    project_complex_mode_to_tangent_basis(
+                        topology.n_nodes,
+                        &reduction.active_nodes,
+                        &pair.vector,
+                        &bases,
+                    );
+                let norm = pair.vector.iter().map(|value| value.norm_sqr()).sum::<f64>().sqrt();
+                (
+                    pair.eigenvalue_real,
+                    pair.eigenvalue_imag,
+                    real,
+                    imag,
+                    amplitude,
+                    phase,
+                    max_amplitude,
+                    norm,
+                )
+            } else {
+                let pair = &real_eigenpairs[mode_index];
+                let (real, imag, amplitude, phase, max_amplitude) = project_real_mode_to_tangent_basis(
+                    topology.n_nodes,
+                    &reduction.active_nodes,
+                    &pair.vector,
+                    &bases,
+                );
+                let norm = pair.vector.norm();
+                (
+                    pair.eigenvalue_real,
+                    pair.eigenvalue_imag,
+                    real,
+                    imag,
+                    amplitude,
+                    phase,
+                    max_amplitude,
+                    norm,
+                )
+            };
+        let angular_frequency_real =
+            angular_frequency_from_eigenvalue(plan.gyromagnetic_ratio, eigenvalue_real);
+        let angular_frequency_imag = if eigenvalue_imag.abs() > 0.0 {
+            angular_frequency_from_raw_eigenvalue(plan.gyromagnetic_ratio, eigenvalue_imag)
+        } else {
+            angular_frequency_real * damping_factor
+        };
+        let frequency_hz = angular_frequency_real / (2.0 * std::f64::consts::PI);
+        let frequency_imag_hz = angular_frequency_imag / (2.0 * std::f64::consts::PI);
         let dominant_polarization =
-            classify_polarization(&amplitude, &active_nodes, &equilibrium, max_amplitude);
+            classify_polarization(&amplitude, &reduction.active_nodes, &equilibrium, max_amplitude);
         let mode_summary = serde_json::json!({
             "index": mode_index,
             "frequency_hz": frequency_hz,
-            "angular_frequency_rad_per_s": angular_frequency,
-            "eigenvalue_field_au_per_m": (*eigenvalue).max(0.0),
+            "frequency_real_hz": frequency_hz,
+            "frequency_imag_hz": frequency_imag_hz,
+            "angular_frequency_rad_per_s": angular_frequency_real,
+            "angular_frequency_imag_rad_per_s": angular_frequency_imag,
+            "eigenvalue_field_au_per_m": eigenvalue_real.max(0.0),
+            "eigenvalue_real": eigenvalue_real,
+            "eigenvalue_imag": eigenvalue_imag,
             "norm": norm,
             "max_amplitude": max_amplitude,
             "dominant_polarization": dominant_polarization,
@@ -135,10 +186,20 @@ pub(crate) fn execute_reference_fem_eigen(
             let payload = serde_json::json!({
                 "index": mode_index,
                 "frequency_hz": frequency_hz,
-                "angular_frequency_rad_per_s": angular_frequency,
+                "frequency_real_hz": frequency_hz,
+                "frequency_imag_hz": frequency_imag_hz,
+                "angular_frequency_rad_per_s": angular_frequency_real,
+                "angular_frequency_imag_rad_per_s": angular_frequency_imag,
+                "eigenvalue_real": eigenvalue_real,
+                "eigenvalue_imag": eigenvalue_imag,
                 "max_amplitude": max_amplitude,
                 "normalization": normalization_label(plan.normalization),
                 "damping_policy": damping_policy_label(plan.damping_policy),
+                "solver_backend": "cpu_reference_fem_eigen",
+                "solver_kind": solver_kind,
+                "solver_notes": solver_notes(plan, complex_reduction),
+                "solver_capabilities": solver_capabilities(plan, complex_reduction),
+                "solver_limitations": solver_limitations(plan, complex_reduction),
                 "dominant_polarization": dominant_polarization,
                 "k_vector": k_vector_json(plan.k_sampling.as_ref()),
                 "real": real,
@@ -155,12 +216,26 @@ pub(crate) fn execute_reference_fem_eigen(
 
     let summary_payload = serde_json::json!({
         "study_kind": "eigenmodes",
+        "solver_backend": "cpu_reference_fem_eigen",
+        "solver_kind": solver_kind,
+        "solver_notes": solver_notes(plan, complex_reduction),
+        "solver_capabilities": solver_capabilities(plan, complex_reduction),
+        "solver_limitations": solver_limitations(plan, complex_reduction),
         "mesh_name": plan.mesh_name,
         "mode_count": modes_summary.len(),
         "normalization": normalization_label(plan.normalization),
         "damping_policy": damping_policy_label(plan.damping_policy),
-        "spin_wave_bc": spin_wave_bc_label(plan.spin_wave_bc),
+        "spin_wave_bc": spin_wave_bc_label(plan.spin_wave_bc.clone()),
+        "boundary_config": spin_wave_bc_json(&plan.spin_wave_bc),
         "equilibrium_source": equilibrium_source_json(&plan.equilibrium),
+        "included_terms": {
+            "exchange": plan.enable_exchange,
+            "demag": plan.enable_demag,
+            "zeeman": plan.external_field.is_some(),
+            "interfacial_dmi": plan.interfacial_dmi.is_some(),
+            "bulk_dmi": plan.bulk_dmi.is_some(),
+            "surface_anisotropy": plan.spin_wave_bc.surface_anisotropy_ks().is_some(),
+        },
         "operator": {
             "kind": format!("{:?}", plan.operator.kind).to_lowercase(),
             "include_demag": plan.operator.include_demag,
@@ -234,7 +309,7 @@ pub(crate) fn execute_reference_fem_eigen(
 
 fn execution_provenance(plan: &FemEigenPlanIR) -> ExecutionProvenance {
     ExecutionProvenance {
-        execution_engine: "cpu_reference_fem_eigen".to_string(),
+        execution_engine: format!("cpu_reference_fem_eigen/{}", solver_kind_label(plan)),
         precision: "double".to_string(),
         demag_operator_kind: if plan.enable_demag {
             Some(
@@ -403,26 +478,148 @@ fn load_equilibrium_artifact(path: &str, expected_len: usize) -> Result<Vec<Vect
         .collect()
 }
 
-fn active_node_mapping(
+fn build_reduction_map(
     topology: &MeshTopology,
-    spin_wave_bc: SpinWaveBoundaryConditionIR,
-) -> (Vec<usize>, Vec<Option<usize>>) {
+    spin_wave_bc: &SpinWaveBoundaryConditionIR,
+    k_sampling: Option<&KSamplingIR>,
+) -> Result<ReductionMap, RunError> {
     let pinned: std::collections::HashSet<usize> =
-        if matches!(spin_wave_bc, SpinWaveBoundaryConditionIR::Pinned) {
+        if matches!(spin_wave_bc.kind(), SpinWaveBoundaryKindIR::Pinned) {
             magnetic_boundary_nodes(topology)
         } else {
             std::collections::HashSet::new()
         };
 
+    let phase_groups = phase_reduction(topology, spin_wave_bc, k_sampling)?;
+
     let mut active_nodes = Vec::new();
     let mut mapping = vec![None; topology.n_nodes];
-    for (node_index, volume) in topology.magnetic_node_volumes.iter().enumerate() {
-        if *volume > 0.0 && !pinned.contains(&node_index) {
-            mapping[node_index] = Some(active_nodes.len());
+    let mut node_phases = vec![Complex64::new(1.0, 0.0); topology.n_nodes];
+
+    if let Some(groups) = phase_groups {
+        let mut root_to_reduced = std::collections::BTreeMap::new();
+        for (node_index, volume) in topology.magnetic_node_volumes.iter().enumerate() {
+            if *volume <= 0.0 || pinned.contains(&node_index) {
+                continue;
+            }
+            let root = groups.roots[node_index];
+            let reduced_index = if let Some(existing) = root_to_reduced.get(&root) {
+                *existing
+            } else {
+                let next = active_nodes.len();
+                root_to_reduced.insert(root, next);
+                active_nodes.push(root);
+                next
+            };
+            mapping[node_index] = Some(reduced_index);
+            node_phases[node_index] = groups.phases[node_index];
+        }
+        Ok(ReductionMap {
+            active_nodes,
+            node_map: mapping,
+            node_phases,
+            complex_reduction: matches!(spin_wave_bc.kind(), SpinWaveBoundaryKindIR::Floquet),
+        })
+    } else {
+        for (node_index, volume) in topology.magnetic_node_volumes.iter().enumerate() {
+            if *volume <= 0.0 || pinned.contains(&node_index) {
+                continue;
+            }
+            let reduced_index = active_nodes.len();
             active_nodes.push(node_index);
+            mapping[node_index] = Some(reduced_index);
+        }
+        Ok(ReductionMap {
+            active_nodes,
+            node_map: mapping,
+            node_phases,
+            complex_reduction: false,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PhaseGroups {
+    roots: Vec<usize>,
+    phases: Vec<Complex64>,
+}
+
+fn phase_reduction(
+    topology: &MeshTopology,
+    spin_wave_bc: &SpinWaveBoundaryConditionIR,
+    k_sampling: Option<&KSamplingIR>,
+) -> Result<Option<PhaseGroups>, RunError> {
+    let kind = spin_wave_bc.kind();
+    if !matches!(
+        kind,
+        SpinWaveBoundaryKindIR::Periodic | SpinWaveBoundaryKindIR::Floquet
+    ) {
+        return Ok(None);
+    }
+    if topology.periodic_node_pairs.is_empty() {
+        return Ok(None);
+    }
+
+    let requested_pair = spin_wave_bc.boundary_pair_id();
+    let k_vector = match (kind, k_sampling) {
+        (SpinWaveBoundaryKindIR::Floquet, Some(KSamplingIR::Single { k_vector })) => Some(*k_vector),
+        (SpinWaveBoundaryKindIR::Floquet, None) => {
+            return Err(RunError {
+                message: "floquet spin-wave BC requires k_sampling=Single{...}".to_string(),
+            });
+        }
+        _ => None,
+    };
+
+    let mut adjacency = vec![Vec::<(usize, Complex64)>::new(); topology.n_nodes];
+    for (pair_id, node_a, node_b) in &topology.periodic_node_pairs {
+        if !requested_pair.is_none_or(|requested| requested == pair_id) {
+            continue;
+        }
+        let a = *node_a as usize;
+        let b = *node_b as usize;
+        let phase = if let Some(k) = k_vector {
+            let delta = [
+                topology.coords[b][0] - topology.coords[a][0],
+                topology.coords[b][1] - topology.coords[a][1],
+                topology.coords[b][2] - topology.coords[a][2],
+            ];
+            let angle = k[0] * delta[0] + k[1] * delta[1] + k[2] * delta[2];
+            Complex64::from_polar(1.0, angle)
+        } else {
+            Complex64::new(1.0, 0.0)
+        };
+        adjacency[a].push((b, phase));
+        adjacency[b].push((a, phase.conj()));
+    }
+
+    let mut visited = vec![false; topology.n_nodes];
+    let mut roots: Vec<usize> = (0..topology.n_nodes).collect();
+    let mut phases = vec![Complex64::new(1.0, 0.0); topology.n_nodes];
+
+    for start in 0..topology.n_nodes {
+        if visited[start] || topology.magnetic_node_volumes[start] <= 0.0 {
+            continue;
+        }
+        let mut queue = std::collections::VecDeque::new();
+        visited[start] = true;
+        roots[start] = start;
+        phases[start] = Complex64::new(1.0, 0.0);
+        queue.push_back(start);
+        while let Some(node) = queue.pop_front() {
+            for (next, phase) in &adjacency[node] {
+                let next_phase = phases[node] * *phase;
+                if !visited[*next] {
+                    visited[*next] = true;
+                    roots[*next] = start;
+                    phases[*next] = next_phase;
+                    queue.push_back(*next);
+                }
+            }
         }
     }
-    (active_nodes, mapping)
+
+    Ok(Some(PhaseGroups { roots, phases }))
 }
 
 /// Returns the set of indices of nodes that lie on the surface of the magnetic
@@ -465,15 +662,14 @@ fn magnetic_boundary_nodes(topology: &MeshTopology) -> std::collections::HashSet
         .collect()
 }
 
-fn assemble_projected_scalar_operator(
+fn assemble_projected_scalar_operator_real(
+    plan: &FemEigenPlanIR,
     topology: &MeshTopology,
-    node_map: &[Option<usize>],
+    reduction: &ReductionMap,
     observables: &EffectiveFieldObservables,
-    include_exchange: bool,
-    include_demag: bool,
-    include_external: bool,
+    equilibrium: &[Vector3],
 ) -> (DMatrix<f64>, DMatrix<f64>) {
-    let active_count = node_map.iter().filter(|entry| entry.is_some()).count();
+    let active_count = reduction.active_nodes.len();
     let mut stiffness = DMatrix::<f64>::zeros(active_count, active_count);
     let mut mass = DMatrix::<f64>::zeros(active_count, active_count);
     let parallel_field = observables
@@ -482,13 +678,13 @@ fn assemble_projected_scalar_operator(
         .enumerate()
         .map(|(index, m)| {
             let mut selected_field = [0.0, 0.0, 0.0];
-            if include_exchange {
+            if plan.enable_exchange {
                 selected_field = add_vector(selected_field, observables.exchange_field[index]);
             }
-            if include_demag {
+            if plan.enable_demag {
                 selected_field = add_vector(selected_field, observables.demag_field[index]);
             }
-            if include_external {
+            if plan.external_field.is_some() {
                 selected_field = add_vector(selected_field, observables.external_field[index]);
             }
             dot(*m, selected_field).max(0.0)
@@ -533,15 +729,15 @@ fn assemble_projected_scalar_operator(
             parallel_field[element[3] as usize],
         ];
         for i in 0..4 {
-            let Some(row) = node_map[element[i] as usize] else {
+            let Some(row) = reduction.node_map[element[i] as usize] else {
                 continue;
             };
             for j in 0..4 {
-                let Some(col) = node_map[element[j] as usize] else {
+                let Some(col) = reduction.node_map[element[j] as usize] else {
                     continue;
                 };
                 mass[(row, col)] += local_mass[i][j];
-                if include_exchange {
+                if plan.enable_exchange {
                     stiffness[(row, col)] += topology.element_stiffness[element_index][i][j];
                 }
                 let shift = 0.5 * (local_shift[i] + local_shift[j]);
@@ -550,17 +746,238 @@ fn assemble_projected_scalar_operator(
         }
     }
 
+    add_surface_anisotropy_real(plan, topology, reduction, equilibrium, &mut stiffness);
+    add_dmi_real(plan, topology, reduction, &mut stiffness);
+
     (stiffness, mass)
 }
 
-fn normalize_mode(
+fn assemble_projected_scalar_operator_complex(
+    plan: &FemEigenPlanIR,
+    topology: &MeshTopology,
+    reduction: &ReductionMap,
+    observables: &EffectiveFieldObservables,
+    equilibrium: &[Vector3],
+) -> (Vec<Vec<Complex64>>, Vec<Vec<Complex64>>) {
+    let active_count = reduction.active_nodes.len();
+    let mut stiffness = vec![vec![Complex64::new(0.0, 0.0); active_count]; active_count];
+    let mut mass = vec![vec![Complex64::new(0.0, 0.0); active_count]; active_count];
+    let parallel_field = observables
+        .magnetization
+        .iter()
+        .enumerate()
+        .map(|(index, m)| {
+            let mut selected_field = [0.0, 0.0, 0.0];
+            if plan.enable_exchange {
+                selected_field = add_vector(selected_field, observables.exchange_field[index]);
+            }
+            if plan.enable_demag {
+                selected_field = add_vector(selected_field, observables.demag_field[index]);
+            }
+            if plan.external_field.is_some() {
+                selected_field = add_vector(selected_field, observables.external_field[index]);
+            }
+            dot(*m, selected_field).max(0.0)
+        })
+        .collect::<Vec<_>>();
+
+    for (element_index, element) in topology.elements.iter().enumerate() {
+        if !topology.magnetic_element_mask[element_index] {
+            continue;
+        }
+        let volume = topology.element_volumes[element_index];
+        let local_mass = [
+            [2.0 * volume / 20.0, volume / 20.0, volume / 20.0, volume / 20.0],
+            [volume / 20.0, 2.0 * volume / 20.0, volume / 20.0, volume / 20.0],
+            [volume / 20.0, volume / 20.0, 2.0 * volume / 20.0, volume / 20.0],
+            [volume / 20.0, volume / 20.0, volume / 20.0, 2.0 * volume / 20.0],
+        ];
+        let local_shift = [
+            parallel_field[element[0] as usize],
+            parallel_field[element[1] as usize],
+            parallel_field[element[2] as usize],
+            parallel_field[element[3] as usize],
+        ];
+        for i in 0..4 {
+            let node_i = element[i] as usize;
+            let Some(row) = reduction.node_map[node_i] else {
+                continue;
+            };
+            let phase_i = reduction.node_phases[node_i];
+            for j in 0..4 {
+                let node_j = element[j] as usize;
+                let Some(col) = reduction.node_map[node_j] else {
+                    continue;
+                };
+                let phase_j = reduction.node_phases[node_j];
+                let coeff = phase_i.conj() * phase_j;
+                mass[row][col] += coeff * local_mass[i][j];
+                if plan.enable_exchange {
+                    stiffness[row][col] += coeff * topology.element_stiffness[element_index][i][j];
+                }
+                let shift = 0.5 * (local_shift[i] + local_shift[j]);
+                stiffness[row][col] += coeff * (local_mass[i][j] * shift);
+            }
+        }
+    }
+
+    add_surface_anisotropy_complex(plan, topology, reduction, equilibrium, &mut stiffness);
+    add_dmi_complex(plan, reduction, &mut stiffness, plan.k_sampling.as_ref());
+    (stiffness, mass)
+}
+
+fn regularize_periodic_mass_if_needed(
+    mut mass: DMatrix<f64>,
+    spin_wave_bc: &SpinWaveBoundaryConditionIR,
+) -> DMatrix<f64> {
+    if !matches!(spin_wave_bc.kind(), SpinWaveBoundaryKindIR::Periodic) {
+        return mass;
+    }
+    if mass.nrows() == 0 {
+        return mass;
+    }
+    for row in 0..mass.nrows() {
+        for col in (row + 1)..mass.ncols() {
+            let sym = 0.5 * (mass[(row, col)] + mass[(col, row)]);
+            mass[(row, col)] = sym;
+            mass[(col, row)] = sym;
+        }
+    }
+    if mass.clone().cholesky().is_some() {
+        return mass;
+    }
+    let mut scale = 0.0_f64;
+    for row in 0..mass.nrows() {
+        for col in 0..mass.ncols() {
+            scale = scale.max(mass[(row, col)].abs());
+        }
+    }
+    let scale = scale.max(1.0);
+    for factor in [1e-12_f64, 1e-10, 1e-8, 1e-6] {
+        let epsilon = scale * factor;
+        let mut trial = mass.clone();
+        for index in 0..trial.nrows() {
+            trial[(index, index)] += epsilon;
+        }
+        if trial.clone().cholesky().is_some() {
+            return trial;
+        }
+    }
+    mass
+}
+
+fn solve_real_symmetric_eigenpairs(
+    plan: &FemEigenPlanIR,
+    stiffness: DMatrix<f64>,
+    mass: DMatrix<f64>,
+) -> Result<Vec<RealEigenpair>, RunError> {
+    let mass = regularize_periodic_mass_if_needed(mass, &plan.spin_wave_bc);
+    let cholesky = mass.clone().cholesky().ok_or_else(|| RunError {
+        message: "FEM eigen mass matrix is singular; ensure the magnetic mesh has active volume"
+            .to_string(),
+    })?;
+    let l = cholesky.l();
+    let l_inv = l.clone().try_inverse().ok_or_else(|| RunError {
+        message: "failed to invert FEM eigen mass Cholesky factor".to_string(),
+    })?;
+    let transformed = &l_inv * stiffness * l_inv.transpose();
+    let spectrum = SymmetricEigen::new(transformed);
+    let mut eigenpairs = spectrum
+        .eigenvalues
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            if !value.is_finite() {
+                return None;
+            }
+            let lifted = l_inv.transpose() * spectrum.eigenvectors.column(index).into_owned();
+            Some(RealEigenpair {
+                eigenvalue_real: *value,
+                eigenvalue_imag: 0.0,
+                vector: normalize_real_mode(lifted, &mass, &plan.normalization),
+            })
+        })
+        .collect::<Vec<_>>();
+    sort_and_truncate_real_modes(plan, &mut eigenpairs);
+    Ok(eigenpairs)
+}
+
+fn solve_complex_hermitian_eigenpairs(
+    plan: &FemEigenPlanIR,
+    stiffness: Vec<Vec<Complex64>>,
+    mass: Vec<Vec<Complex64>>,
+) -> Result<Vec<ComplexEigenpair>, RunError> {
+    let (stiffness_block, mass_block) = complex_pair_to_real_blocks(&stiffness, &mass);
+    let mass_block = regularize_periodic_mass_if_needed(mass_block, &plan.spin_wave_bc);
+    let cholesky = mass_block.clone().cholesky().ok_or_else(|| RunError {
+        message: "Floquet FEM eigen mass block is singular; check periodic node-pair metadata"
+            .to_string(),
+    })?;
+    let l = cholesky.l();
+    let l_inv = l.clone().try_inverse().ok_or_else(|| RunError {
+        message: "failed to invert Floquet FEM eigen mass block Cholesky factor".to_string(),
+    })?;
+    let transformed = &l_inv * stiffness_block * l_inv.transpose();
+    let spectrum = SymmetricEigen::new(transformed);
+    let active_count = stiffness.len();
+    let mut eigenpairs = Vec::new();
+    for (index, value) in spectrum.eigenvalues.iter().enumerate() {
+        if !value.is_finite() {
+            continue;
+        }
+        let lifted = l_inv.transpose() * spectrum.eigenvectors.column(index).into_owned();
+        let complex = real_block_vector_to_complex(&lifted, active_count);
+        let normalized = normalize_complex_mode(&complex, &mass, &plan.normalization);
+        eigenpairs.push(ComplexEigenpair {
+            eigenvalue_real: *value,
+            eigenvalue_imag: 0.0,
+            vector: normalized,
+        });
+    }
+    sort_and_truncate_complex_modes(plan, &mut eigenpairs);
+    Ok(eigenpairs)
+}
+
+fn complex_pair_to_real_blocks(
+    stiffness: &[Vec<Complex64>],
+    mass: &[Vec<Complex64>],
+) -> (DMatrix<f64>, DMatrix<f64>) {
+    let n = stiffness.len();
+    let mut a = DMatrix::<f64>::zeros(2 * n, 2 * n);
+    let mut b = DMatrix::<f64>::zeros(2 * n, 2 * n);
+    for row in 0..n {
+        for col in 0..n {
+            let k = stiffness[row][col];
+            let m = mass[row][col];
+            a[(row, col)] = k.re;
+            a[(row, col + n)] = -k.im;
+            a[(row + n, col)] = k.im;
+            a[(row + n, col + n)] = k.re;
+
+            b[(row, col)] = m.re;
+            b[(row, col + n)] = -m.im;
+            b[(row + n, col)] = m.im;
+            b[(row + n, col + n)] = m.re;
+        }
+    }
+    (a, b)
+}
+
+fn real_block_vector_to_complex(vector: &DVector<f64>, active_count: usize) -> Vec<Complex64> {
+    (0..active_count)
+        .map(|index| Complex64::new(vector[index], vector[index + active_count]))
+        .collect()
+}
+
+fn normalize_real_mode(
     vector: DVector<f64>,
     mass: &DMatrix<f64>,
     normalization: &EigenNormalizationIR,
 ) -> DVector<f64> {
     match normalization {
         EigenNormalizationIR::UnitL2 => {
-            let norm = modal_norm(&vector, mass).sqrt().max(1e-30);
+            let projected = mass * &vector;
+            let norm = vector.dot(&projected).sqrt().max(1e-30);
             vector / norm
         }
         EigenNormalizationIR::UnitMaxAmplitude => {
@@ -573,9 +990,234 @@ fn normalize_mode(
     }
 }
 
-fn modal_norm(vector: &DVector<f64>, mass: &DMatrix<f64>) -> f64 {
-    let projected = mass * vector;
-    vector.dot(&projected)
+fn normalize_complex_mode(
+    vector: &[Complex64],
+    mass: &[Vec<Complex64>],
+    normalization: &EigenNormalizationIR,
+) -> Vec<Complex64> {
+    match normalization {
+        EigenNormalizationIR::UnitL2 => {
+            let mut quadratic = Complex64::new(0.0, 0.0);
+            for row in 0..vector.len() {
+                for col in 0..vector.len() {
+                    quadratic += vector[row].conj() * mass[row][col] * vector[col];
+                }
+            }
+            let scale = quadratic.re.max(1e-30).sqrt();
+            vector.iter().map(|value| *value / scale).collect()
+        }
+        EigenNormalizationIR::UnitMaxAmplitude => {
+            let scale = vector
+                .iter()
+                .fold(0.0_f64, |acc, value| acc.max(value.norm()))
+                .max(1e-30);
+            vector.iter().map(|value| *value / scale).collect()
+        }
+    }
+}
+
+fn sort_and_truncate_real_modes(plan: &FemEigenPlanIR, eigenpairs: &mut Vec<RealEigenpair>) {
+    match &plan.target {
+        fullmag_ir::EigenTargetIR::Lowest => eigenpairs.sort_by(|lhs, rhs| {
+            lhs.eigenvalue_real
+                .partial_cmp(&rhs.eigenvalue_real)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        fullmag_ir::EigenTargetIR::Nearest { frequency_hz } => eigenpairs.sort_by(|lhs, rhs| {
+            let lhs_freq = frequency_from_eigenvalue(plan.gyromagnetic_ratio, lhs.eigenvalue_real);
+            let rhs_freq = frequency_from_eigenvalue(plan.gyromagnetic_ratio, rhs.eigenvalue_real);
+            (lhs_freq - *frequency_hz)
+                .abs()
+                .partial_cmp(&(rhs_freq - *frequency_hz).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+    }
+    let requested_count = usize::try_from(plan.count).unwrap_or(usize::MAX);
+    eigenpairs.truncate(requested_count.min(eigenpairs.len()));
+}
+
+fn sort_and_truncate_complex_modes(plan: &FemEigenPlanIR, eigenpairs: &mut Vec<ComplexEigenpair>) {
+    match &plan.target {
+        fullmag_ir::EigenTargetIR::Lowest => eigenpairs.sort_by(|lhs, rhs| {
+            lhs.eigenvalue_real
+                .partial_cmp(&rhs.eigenvalue_real)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        fullmag_ir::EigenTargetIR::Nearest { frequency_hz } => eigenpairs.sort_by(|lhs, rhs| {
+            let lhs_freq = frequency_from_eigenvalue(plan.gyromagnetic_ratio, lhs.eigenvalue_real);
+            let rhs_freq = frequency_from_eigenvalue(plan.gyromagnetic_ratio, rhs.eigenvalue_real);
+            (lhs_freq - *frequency_hz)
+                .abs()
+                .partial_cmp(&(rhs_freq - *frequency_hz).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+    }
+    let requested_count = usize::try_from(plan.count).unwrap_or(usize::MAX);
+    eigenpairs.truncate(requested_count.min(eigenpairs.len()));
+}
+
+fn add_surface_anisotropy_real(
+    plan: &FemEigenPlanIR,
+    _topology: &MeshTopology,
+    reduction: &ReductionMap,
+    equilibrium: &[Vector3],
+    stiffness: &mut DMatrix<f64>,
+) {
+    let Some((axis, coefficient)) = surface_anisotropy_config(plan) else {
+        return;
+    };
+    for face in &plan.mesh.boundary_faces {
+        let local = triangle_surface_matrix(face, &plan.mesh.nodes, axis, equilibrium, coefficient);
+        for i in 0..3 {
+            let Some(row) = reduction.node_map[face[i] as usize] else {
+                continue;
+            };
+            for j in 0..3 {
+                let Some(col) = reduction.node_map[face[j] as usize] else {
+                    continue;
+                };
+                stiffness[(row, col)] += local[i][j];
+            }
+        }
+    }
+}
+
+fn add_surface_anisotropy_complex(
+    plan: &FemEigenPlanIR,
+    _topology: &MeshTopology,
+    reduction: &ReductionMap,
+    equilibrium: &[Vector3],
+    stiffness: &mut [Vec<Complex64>],
+) {
+    let Some((axis, coefficient)) = surface_anisotropy_config(plan) else {
+        return;
+    };
+    for face in &plan.mesh.boundary_faces {
+        let local = triangle_surface_matrix(face, &plan.mesh.nodes, axis, equilibrium, coefficient);
+        for i in 0..3 {
+            let node_i = face[i] as usize;
+            let Some(row) = reduction.node_map[node_i] else {
+                continue;
+            };
+            let phase_i = reduction.node_phases[node_i];
+            for j in 0..3 {
+                let node_j = face[j] as usize;
+                let Some(col) = reduction.node_map[node_j] else {
+                    continue;
+                };
+                let phase_j = reduction.node_phases[node_j];
+                stiffness[row][col] += phase_i.conj() * phase_j * local[i][j];
+            }
+        }
+    }
+}
+
+fn add_dmi_real(
+    plan: &FemEigenPlanIR,
+    topology: &MeshTopology,
+    reduction: &ReductionMap,
+    stiffness: &mut DMatrix<f64>,
+) {
+    let scale = plan
+        .interfacial_dmi
+        .map(f64::abs)
+        .unwrap_or(0.0)
+        + plan.bulk_dmi.map(f64::abs).unwrap_or(0.0);
+    if scale <= 0.0 {
+        return;
+    }
+    let coeff = scale
+        / (MU0
+            * plan.material.saturation_magnetisation.max(1e-30)
+            * plan.hmax.max(1e-30));
+    for (element_index, element) in topology.elements.iter().enumerate() {
+        if !topology.magnetic_element_mask[element_index] {
+            continue;
+        }
+        let gradients = &topology.grad_phi[element_index];
+        for i in 0..4 {
+            let Some(row) = reduction.node_map[element[i] as usize] else {
+                continue;
+            };
+            for j in 0..4 {
+                let Some(col) = reduction.node_map[element[j] as usize] else {
+                    continue;
+                };
+                let skew = coeff
+                    * (gradients[i][0] * gradients[j][1] - gradients[i][1] * gradients[j][0])
+                    * topology.element_volumes[element_index];
+                stiffness[(row, col)] += skew;
+            }
+        }
+    }
+}
+
+fn add_dmi_complex(
+    plan: &FemEigenPlanIR,
+    reduction: &ReductionMap,
+    stiffness: &mut [Vec<Complex64>],
+    k_sampling: Option<&KSamplingIR>,
+) {
+    let interfacial = plan.interfacial_dmi.unwrap_or(0.0);
+    let bulk = plan.bulk_dmi.unwrap_or(0.0);
+    if interfacial == 0.0 && bulk == 0.0 {
+        return;
+    }
+    let k = match k_sampling {
+        Some(KSamplingIR::Single { k_vector }) => *k_vector,
+        None => [0.0, 0.0, 0.0],
+    };
+    let ms = plan.material.saturation_magnetisation.max(1e-30);
+    let interfacial_coeff = interfacial / (MU0 * ms);
+    let bulk_coeff = bulk / (MU0 * ms);
+    let nonreciprocal_shift =
+        interfacial_coeff * (k[0] + k[1]) + bulk_coeff * (k[0] + k[1] + k[2]);
+    if nonreciprocal_shift.abs() <= 0.0 {
+        return;
+    }
+    for index in 0..reduction.active_nodes.len() {
+        stiffness[index][index] += Complex64::new(nonreciprocal_shift, 0.0);
+    }
+}
+
+fn surface_anisotropy_config(plan: &FemEigenPlanIR) -> Option<(Vector3, f64)> {
+    let ks = plan.spin_wave_bc.surface_anisotropy_ks()?;
+    let axis = normalize_vector(plan.spin_wave_bc.surface_anisotropy_axis()?);
+    let coefficient = ks / (MU0 * plan.material.saturation_magnetisation.max(1e-30));
+    Some((axis, coefficient))
+}
+
+fn triangle_surface_matrix(
+    face: &[u32; 3],
+    nodes: &[[f64; 3]],
+    axis: Vector3,
+    equilibrium: &[Vector3],
+    coefficient: f64,
+) -> [[f64; 3]; 3] {
+    let p0 = nodes[face[0] as usize];
+    let p1 = nodes[face[1] as usize];
+    let p2 = nodes[face[2] as usize];
+    let area = 0.5 * norm(cross(sub(p1, p0), sub(p2, p0)));
+    let local_mass = [
+        [2.0 * area / 12.0, area / 12.0, area / 12.0],
+        [area / 12.0, 2.0 * area / 12.0, area / 12.0],
+        [area / 12.0, area / 12.0, 2.0 * area / 12.0],
+    ];
+    let alignment = face
+        .iter()
+        .map(|node| {
+            let m = equilibrium[*node as usize];
+            1.0 - dot(m, axis).powi(2)
+        })
+        .sum::<f64>()
+        / 3.0;
+    let mut local = [[0.0; 3]; 3];
+    for i in 0..3 {
+        for j in 0..3 {
+            local[i][j] = coefficient * alignment.max(0.0) * local_mass[i][j];
+        }
+    }
+    local
 }
 
 fn tangent_bases(equilibrium: &[Vector3]) -> Vec<(Vector3, Vector3)> {
@@ -594,7 +1236,7 @@ fn tangent_bases(equilibrium: &[Vector3]) -> Vec<(Vector3, Vector3)> {
         .collect()
 }
 
-fn project_mode_to_tangent_basis(
+fn project_real_mode_to_tangent_basis(
     total_nodes: usize,
     active_nodes: &[usize],
     amplitudes: &DVector<f64>,
@@ -619,12 +1261,41 @@ fn project_mode_to_tangent_basis(
     (real, imag, amplitude, phase, max_amplitude)
 }
 
+fn project_complex_mode_to_tangent_basis(
+    total_nodes: usize,
+    active_nodes: &[usize],
+    amplitudes: &[Complex64],
+    bases: &[(Vector3, Vector3)],
+) -> (Vec<Vector3>, Vec<Vector3>, Vec<f64>, Vec<f64>, f64) {
+    let mut real = vec![[0.0, 0.0, 0.0]; total_nodes];
+    let mut imag = vec![[0.0, 0.0, 0.0]; total_nodes];
+    let mut amplitude = vec![0.0; total_nodes];
+    let mut phase = vec![0.0; total_nodes];
+    let mut max_amplitude: f64 = 0.0;
+
+    for (reduced_index, node_index) in active_nodes.iter().enumerate() {
+        let value = amplitudes[reduced_index];
+        let (e1, e2) = bases[*node_index];
+        real[*node_index] = scale_vector(e1, value.re);
+        imag[*node_index] = scale_vector(e2, value.im);
+        amplitude[*node_index] = value.norm();
+        phase[*node_index] = value.arg();
+        max_amplitude = max_amplitude.max(amplitude[*node_index]);
+    }
+
+    (real, imag, amplitude, phase, max_amplitude)
+}
+
 fn frequency_from_eigenvalue(gyromagnetic_ratio: f64, eigenvalue: f64) -> f64 {
     angular_frequency_from_eigenvalue(gyromagnetic_ratio, eigenvalue) / (2.0 * std::f64::consts::PI)
 }
 
 fn angular_frequency_from_eigenvalue(gyromagnetic_ratio: f64, eigenvalue: f64) -> f64 {
     gyromagnetic_ratio * MU0 * eigenvalue.max(0.0)
+}
+
+fn angular_frequency_from_raw_eigenvalue(gyromagnetic_ratio: f64, eigenvalue: f64) -> f64 {
+    gyromagnetic_ratio * MU0 * eigenvalue
 }
 
 fn requested_mode_indices(outputs: &[OutputIR]) -> std::collections::BTreeSet<u32> {
@@ -668,12 +1339,108 @@ fn damping_policy_label(policy: EigenDampingPolicyIR) -> &'static str {
     }
 }
 
-fn spin_wave_bc_label(bc: SpinWaveBoundaryConditionIR) -> &'static str {
-    match bc {
-        SpinWaveBoundaryConditionIR::Free => "free",
-        SpinWaveBoundaryConditionIR::Pinned => "pinned",
-        SpinWaveBoundaryConditionIR::Periodic => "periodic",
+fn damping_imaginary_factor(damping: f64, policy: EigenDampingPolicyIR) -> f64 {
+    match policy {
+        EigenDampingPolicyIR::Ignore => 0.0,
+        EigenDampingPolicyIR::Include => -(damping.abs() / (1.0 + damping * damping)),
     }
+}
+
+fn spin_wave_bc_label(bc: SpinWaveBoundaryConditionIR) -> &'static str {
+    match bc.kind() {
+        SpinWaveBoundaryKindIR::Free => "free",
+        SpinWaveBoundaryKindIR::Pinned => "pinned",
+        SpinWaveBoundaryKindIR::Periodic => "periodic",
+        SpinWaveBoundaryKindIR::Floquet => "floquet",
+        SpinWaveBoundaryKindIR::SurfaceAnisotropy => "surface_anisotropy",
+    }
+}
+
+fn spin_wave_bc_json(bc: &SpinWaveBoundaryConditionIR) -> serde_json::Value {
+    serde_json::json!({
+        "kind": spin_wave_bc_label(bc.clone()),
+        "boundary_pair_id": bc.boundary_pair_id(),
+        "surface_anisotropy_ks": bc.surface_anisotropy_ks(),
+        "surface_anisotropy_axis": bc.surface_anisotropy_axis(),
+    })
+}
+
+fn solver_kind_label(plan: &FemEigenPlanIR) -> &'static str {
+    if matches!(plan.spin_wave_bc.kind(), SpinWaveBoundaryKindIR::Floquet) {
+        "cpu_phase_reduced_floquet"
+    } else {
+        match plan.damping_policy {
+            EigenDampingPolicyIR::Ignore => "cpu_reference_symmetric",
+            EigenDampingPolicyIR::Include => "cpu_generalized_eigen",
+        }
+    }
+}
+
+fn solver_notes(plan: &FemEigenPlanIR, complex_reduction: bool) -> &'static str {
+    if complex_reduction {
+        "phase-aware periodic reduction on a real doubled Hermitian block"
+    } else if matches!(plan.damping_policy, EigenDampingPolicyIR::Include) {
+        "damping artifacts use first-order alpha linewidth correction over the CPU reference eigenbasis"
+    } else {
+        "cpu reference symmetric eigen solve"
+    }
+}
+
+fn solver_capabilities(
+    plan: &FemEigenPlanIR,
+    complex_reduction: bool,
+) -> Vec<&'static str> {
+    let mut capabilities = vec!["cpu_reference_eigen", "artifact_backed_analyze"];
+    match plan.spin_wave_bc.kind() {
+        SpinWaveBoundaryKindIR::Free => capabilities.push("free_bc"),
+        SpinWaveBoundaryKindIR::Pinned => capabilities.push("pinned_bc"),
+        SpinWaveBoundaryKindIR::Periodic => capabilities.push("periodic_zero_phase"),
+        SpinWaveBoundaryKindIR::Floquet => capabilities.push("floquet_phase_reduction"),
+        SpinWaveBoundaryKindIR::SurfaceAnisotropy => capabilities.push("surface_anisotropy_boundary_term"),
+    }
+    if plan.enable_exchange {
+        capabilities.push("exchange");
+    }
+    if plan.enable_demag {
+        capabilities.push("demag_transfer_grid");
+    }
+    if plan.external_field.is_some() {
+        capabilities.push("zeeman");
+    }
+    if plan.interfacial_dmi.is_some() {
+        capabilities.push("interfacial_dmi");
+    }
+    if plan.bulk_dmi.is_some() {
+        capabilities.push("bulk_dmi");
+    }
+    if matches!(plan.damping_policy, EigenDampingPolicyIR::Include) {
+        capabilities.push("damping_linewidth_metadata");
+    }
+    if complex_reduction {
+        capabilities.push("complex_mode_projection");
+    }
+    capabilities
+}
+
+fn solver_limitations(
+    plan: &FemEigenPlanIR,
+    complex_reduction: bool,
+) -> Vec<&'static str> {
+    let mut limitations = Vec::new();
+    if matches!(plan.damping_policy, EigenDampingPolicyIR::Include) {
+        limitations.push("no_generalized_qz_backend");
+        limitations.push("damping_is_first_order_linewidth_correction");
+    }
+    if complex_reduction {
+        limitations.push("floquet_uses_phase_reduced_hermitian_block");
+    }
+    if plan.interfacial_dmi.is_some() || plan.bulk_dmi.is_some() {
+        limitations.push("dmi_operator_is_cpu_first_reference_approximation");
+    }
+    if matches!(plan.spin_wave_bc.kind(), SpinWaveBoundaryKindIR::SurfaceAnisotropy) {
+        limitations.push("surface_anisotropy_requires_exposed_boundary_faces");
+    }
+    limitations
 }
 
 fn equilibrium_source_json(equilibrium: &EquilibriumSourceIR) -> serde_json::Value {

@@ -717,6 +717,7 @@ mod tests {
         ScriptBuilderState {
             revision: 3,
             backend: None,
+            demag_realization: None,
             solver: fullmag_authoring::ScriptBuilderSolverState {
                 integrator: "rk45".to_string(),
                 fixed_timestep: String::new(),

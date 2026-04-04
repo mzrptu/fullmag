@@ -21,7 +21,7 @@ from fullmag.model.antenna import (
 from fullmag.model.discretization import FDM, FEM
 from fullmag.model.domain_frame import build_domain_frame, geometry_bounds as shared_geometry_bounds
 from fullmag.model.dynamics import DEFAULT_GAMMA, LLG
-from fullmag.model.energy import Demag, Exchange, InterfacialDMI, Pulse, Zeeman
+from fullmag.model.energy import BulkDMI, CubicAnisotropy, Demag, Exchange, InterfacialDMI, Magnetoelastic, OerstedCylinder, Pulse, ThermalNoise, UniaxialAnisotropy, Zeeman
 from fullmag.model.geometry import (
     Box,
     Cylinder,
@@ -273,9 +273,14 @@ def _export_stage_draft(stage: LoadedStage) -> dict[str, object]:
             "max_steps": "",
             "eigen_count": str(study.count),
             "eigen_target": study.target,
+            "eigen_target_frequency": _text_number(study.target_frequency),
             "eigen_include_demag": study.include_demag,
             "eigen_equilibrium_source": study.equilibrium_source,
             "eigen_normalization": study.normalization,
+            "eigen_damping_policy": study.damping_policy,
+            "eigen_k_vector": ",".join(str(component) for component in study.k_vector) if study.k_vector is not None else "",
+            "eigen_spin_wave_bc": study.spin_wave_bc if isinstance(study.spin_wave_bc, str) else str(study.spin_wave_bc.get("kind", "")),
+            "eigen_spin_wave_bc_config": study.spin_wave_bc if isinstance(study.spin_wave_bc, dict) else None,
         }
     return {
         "kind": "run",
@@ -426,12 +431,11 @@ def _render_geometry_and_materials(
         lines.append(f"{var_name}.Aex = {_py_number(magnet.material.A)}")
         lines.append(f"{var_name}.alpha = {_py_number(magnet.material.alpha)}")
         if magnet.material.Ku1 is not None:
-            raise ValueError(
-                "canonical flat-script rewrite does not yet support Ku1 material terms"
-            )
+            lines.append(f"{var_name}.Ku1 = {_py_number(magnet.material.Ku1)}")
         if magnet.material.anisU is not None:
-            raise ValueError(
-                "canonical flat-script rewrite does not yet support anisotropy axis terms"
+            lines.append(
+                f"{var_name}.anisU = ({_py_number(magnet.material.anisU[0])}, "
+                f"{_py_number(magnet.material.anisU[1])}, {_py_number(magnet.material.anisU[2])})"
             )
         rendered_initial_override = _render_initial_state_override(
             initial_state_override,
@@ -1075,21 +1079,46 @@ def _render_stages(
             include_demag = bool(include_demag_ov) if isinstance(include_demag_ov, bool) else study.include_demag
             equilibrium_source = _override_string(stage_override, "eigen_equilibrium_source", study.equilibrium_source) or study.equilibrium_source
             normalization = _override_string(stage_override, "eigen_normalization", study.normalization) or study.normalization
+            damping_policy = _override_string(stage_override, "eigen_damping_policy", study.damping_policy) or study.damping_policy
             call_parts = [
                 f"count={count}",
                 f"target={_py_repr(target)}",
             ]
-            if study.target_frequency is not None:
-                call_parts.append(f"target_frequency={_py_number(study.target_frequency)}")
+            target_frequency = _override_number(stage_override, "eigen_target_frequency", study.target_frequency)
+            if target_frequency is not None:
+                call_parts.append(f"target_frequency={_py_number(target_frequency)}")
             call_parts.append(f"include_demag={include_demag!r}")
             call_parts.append(f"equilibrium_source={_py_repr(equilibrium_source)}")
             if study.equilibrium_artifact is not None:
                 call_parts.append(f"equilibrium_artifact={_py_repr(study.equilibrium_artifact)}")
             call_parts.append(f"normalization={_py_repr(normalization)}")
-            call_parts.append(f"damping_policy={_py_repr(study.damping_policy)}")
-            if study.spin_wave_bc != "free":
-                call_parts.append(f"bc={_py_repr(study.spin_wave_bc)}")
-            if study.k_vector is not None:
+            call_parts.append(f"damping_policy={_py_repr(damping_policy)}")
+            spin_wave_bc_config = stage_override.get("eigen_spin_wave_bc_config")
+            if isinstance(spin_wave_bc_config, dict):
+                spin_wave_bc = dict(spin_wave_bc_config)
+                spin_wave_bc_kind = _override_string(
+                    stage_override,
+                    "eigen_spin_wave_bc",
+                    spin_wave_bc.get("kind"),
+                )
+                if spin_wave_bc_kind:
+                    spin_wave_bc["kind"] = spin_wave_bc_kind
+            else:
+                spin_wave_bc = (
+                    _override_string(stage_override, "eigen_spin_wave_bc", None)
+                    or study.spin_wave_bc
+                )
+            if spin_wave_bc != "free":
+                call_parts.append(f"bc={_py_repr(spin_wave_bc)}")
+            k_vector_raw = _override_string(stage_override, "eigen_k_vector", None)
+            if k_vector_raw is not None and k_vector_raw.strip():
+                try:
+                    parsed = tuple(float(component.strip()) for component in k_vector_raw.split(","))
+                    if len(parsed) == 3:
+                        call_parts.append(f"k_vector={parsed!r}")
+                except ValueError:
+                    pass
+            elif study.k_vector is not None:
                 call_parts.append(f"k_vector={study.k_vector!r}")
             lines.append(f"{_surface_call(surface, 'eigenmodes')}({', '.join(call_parts)})")
             continue
@@ -2274,6 +2303,8 @@ def _validate_energy_terms(problem: Problem) -> None:
                 raise ValueError(
                     "canonical flat-script rewrite does not yet support explicit demag realizations"
                 )
+            continue
+        if isinstance(term, (BulkDMI, OerstedCylinder, Magnetoelastic, UniaxialAnisotropy, CubicAnisotropy, ThermalNoise)):
             continue
         raise ValueError(
             f"canonical flat-script rewrite does not yet support energy term {type(term).__name__}"

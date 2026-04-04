@@ -568,6 +568,8 @@ mod tests {
                 center: Some([0.0, 0.0, 0.0]),
                 padding: Some([100e-9, 120e-9, 140e-9]),
                 airbox_hmax: Some(60e-9),
+                airbox_hmin: None,
+                airbox_growth_rate: None,
             }),
             domain_frame: None,
             stages: vec![ScriptBuilderStageState {
@@ -585,6 +587,11 @@ mod tests {
                 eigen_include_demag: false,
                 eigen_equilibrium_source: String::new(),
                 eigen_normalization: String::new(),
+                eigen_target_frequency: String::new(),
+                eigen_damping_policy: String::new(),
+                eigen_k_vector: String::new(),
+                eigen_spin_wave_bc: String::new(),
+                eigen_spin_wave_bc_config: None,
             }],
             initial_state: Some(ScriptBuilderInitialState {
                 magnet_name: Some("flower".to_string()),
@@ -636,6 +643,12 @@ mod tests {
                     optimize_iterations: Some(4),
                     compute_quality: Some(true),
                     per_element_quality: Some(false),
+                    bulk_hmax: None,
+                    bulk_hmin: None,
+                    interface_hmax: None,
+                    interface_thickness: None,
+                    transition_distance: None,
+                    transition_growth: None,
                     size_fields: vec![ScriptBuilderMeshSizeFieldState {
                         kind: "Ball".to_string(),
                         params: serde_json::json!({ "VIn": 1e-9 }),

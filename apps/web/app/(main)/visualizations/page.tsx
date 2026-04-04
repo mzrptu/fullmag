@@ -6,7 +6,8 @@ import DispersionBranchPlot from "@/components/analyze/DispersionBranchPlot";
 import EigenModeInspector from "@/components/analyze/EigenModeInspector";
 import ModeSpectrumPlot from "@/components/analyze/ModeSpectrumPlot";
 import type { FemMeshPayload } from "@/components/analyze/eigenTypes";
-import { useCurrentAnalyzeArtifacts } from "@/components/runs/control-room/useCurrentAnalyzeArtifacts";
+import type { AnalyzeSelectionState } from "@/components/runs/control-room/analyzeSelection";
+import { useAnalyzeWorkspaceState } from "@/components/runs/control-room/useAnalyzeWorkspaceState";
 import { Badge } from "@/components/ui/badge";
 import EmptyState from "@/components/ui/EmptyState";
 import SelectField from "@/components/ui/SelectField";
@@ -86,6 +87,35 @@ function formatKVector(value: [number, number, number] | null): string {
   return value.map((entry) => entry.toExponential(2)).join(", ");
 }
 
+function formatIncludedTerms(
+  includedTerms:
+    | {
+        exchange?: boolean;
+        demag?: boolean;
+        zeeman?: boolean;
+        interfacial_dmi?: boolean;
+        bulk_dmi?: boolean;
+        surface_anisotropy?: boolean;
+      }
+    | undefined,
+): string {
+  if (!includedTerms) return "n/a";
+  const labels = [
+    includedTerms.exchange ? "exchange" : null,
+    includedTerms.demag ? "demag" : null,
+    includedTerms.zeeman ? "zeeman" : null,
+    includedTerms.interfacial_dmi ? "iDMI" : null,
+    includedTerms.bulk_dmi ? "bDMI" : null,
+    includedTerms.surface_anisotropy ? "surface-K" : null,
+  ].filter(Boolean);
+  return labels.length > 0 ? labels.join(", ") : "none";
+}
+
+function formatJoinedList(values: string[] | undefined): string {
+  if (!values || values.length === 0) return "n/a";
+  return values.join(", ");
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
@@ -98,9 +128,12 @@ export default function VisualizationsPage() {
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [session, setSession] = useState<SessionSummary | null>(null);
   const [energy, setEnergy] = useState<StepSnapshot | null>(null);
-  const [selectedMode, setSelectedMode] = useState<number | null>(null);
+  const [analyzeSelection, setAnalyzeSelection] = useState<AnalyzeSelectionState>({
+    tab: "spectrum",
+    selectedModeIndex: null,
+    refreshNonce: 0,
+  });
 
-  // Use the shared hook for all eigen data (spectrum, mesh, dispersion, modes)
   const {
     loadState,
     modeLoadState,
@@ -109,13 +142,21 @@ export default function VisualizationsPage() {
     mesh,
     spectrum,
     dispersionRows,
-    modeCache,
     hasEigenArtifacts,
     modeArtifactMap,
     savedModeIndices,
     refresh: refreshEigen,
-    ensureMode,
-  } = useCurrentAnalyzeArtifacts(refreshNonce);
+    selectedMode,
+    selectedModeArtifact,
+    selectedModeSummary,
+    selectMode,
+    selectTab,
+  } = useAnalyzeWorkspaceState({
+    analyzeSelection,
+    setSelectedModeIndex: (index) =>
+      setAnalyzeSelection((prev) => ({ ...prev, selectedModeIndex: index })),
+    setTab: (tab) => setAnalyzeSelection((prev) => ({ ...prev, tab })),
+  });
 
   // Lightweight session+energy fetch (not provided by the shared hook)
   useEffect(() => {
@@ -134,33 +175,12 @@ export default function VisualizationsPage() {
 
   const handleRefresh = useCallback(() => {
     setRefreshNonce((n) => n + 1);
+    setAnalyzeSelection((prev) => ({ ...prev, refreshNonce: prev.refreshNonce + 1 }));
     refreshEigen();
   }, [refreshEigen]);
 
-  // Auto-select first available mode when spectrum loads
-  useEffect(() => {
-    const validIndices = spectrum?.modes.map((mode) => mode.index) ?? savedModeIndices;
-    if (validIndices.length === 0) {
-      setSelectedMode(null);
-      return;
-    }
-    if (selectedMode === null || !validIndices.includes(selectedMode)) {
-      setSelectedMode(savedModeIndices[0] ?? validIndices[0] ?? null);
-    }
-  }, [savedModeIndices, selectedMode, spectrum]);
-
-  // Ensure mode field is loaded when selection changes
-  useEffect(() => {
-    if (selectedMode != null && modeArtifactMap.has(selectedMode)) {
-      void ensureMode(selectedMode);
-    }
-  }, [ensureMode, modeArtifactMap, selectedMode]);
-
   const selectedModePath = selectedMode !== null ? modeArtifactMap.get(selectedMode) ?? null : null;
-  const selectedModeArtifact = selectedMode !== null ? modeCache[selectedMode] ?? null : null;
   const availableModeCount = spectrum?.modes.length ?? 0;
-  const selectedModeSummary =
-    selectedMode !== null ? spectrum?.modes.find((mode) => mode.index === selectedMode) ?? null : null;
 
   return (
     <>
@@ -178,6 +198,8 @@ export default function VisualizationsPage() {
                 <Badge variant="accent">FEM Analyze</Badge>
                 {hasEigenArtifacts ? <Badge variant="success">Eigen artifacts ready</Badge> : <Badge variant="warn">No eigen dataset</Badge>}
                 {session && <Badge variant="outline">{session.requested_backend.toUpperCase()}</Badge>}
+                {spectrum?.solver_kind && <Badge variant="outline">{spectrum.solver_kind}</Badge>}
+                {spectrum?.boundary_config?.kind && <Badge variant="outline">bc: {spectrum.boundary_config.kind}</Badge>}
               </div>
               <div className="space-y-2">
                 <h2 className="text-lg font-semibold tracking-tight text-[var(--ide-text-1)]">
@@ -200,6 +222,8 @@ export default function VisualizationsPage() {
             <MetricCard label="Saved mode files" value={savedModeIndices.length.toLocaleString()} />
             <MetricCard label="Normalization" value={spectrum?.normalization ?? "n/a"} />
             <MetricCard label="Equilibrium" value={spectrum?.equilibrium_source.kind ?? "n/a"} />
+            <MetricCard label="Capabilities" value={formatJoinedList(spectrum?.solver_capabilities)} />
+            <MetricCard label="Limitations" value={formatJoinedList(spectrum?.solver_limitations)} />
             <MetricCard label="Mesh nodes" value={(mesh?.nodes.length ?? 0).toLocaleString()} />
             <MetricCard label="Mesh elements" value={(mesh?.elements.length ?? 0).toLocaleString()} />
             <MetricCard label="Started" value={session ? fmtTimestamp(session.started_at_unix_ms) : "Pending"} />
@@ -229,7 +253,7 @@ export default function VisualizationsPage() {
               <SelectField
                 label="Mode"
                 value={selectedMode ?? ""}
-                onchange={(value) => setSelectedMode(Number(value))}
+                onchange={(value) => selectMode(Number(value))}
                 options={(spectrum?.modes ?? []).map((mode) => ({
                   value: String(mode.index),
                   label: `#${mode.index} · ${formatFrequencyGHz(mode.frequency_hz)}${modeArtifactMap.has(mode.index) ? "" : " · summary only"}`,
@@ -274,7 +298,11 @@ export default function VisualizationsPage() {
         )}
 
         {loadState === "loaded" && hasEigenArtifacts && spectrum && (
-          <Tabs defaultValue="spectrum" className="space-y-4">
+          <Tabs
+            value={analyzeSelection.tab}
+            onValueChange={(value) => selectTab(value as AnalyzeSelectionState["tab"])}
+            className="space-y-4"
+          >
             <TabsList>
               <TabsTrigger value="spectrum">Spectrum</TabsTrigger>
               <TabsTrigger value="modes">Modes</TabsTrigger>
@@ -298,7 +326,7 @@ export default function VisualizationsPage() {
                     <ModeSpectrumPlot
                       modes={spectrum.modes}
                       selectedMode={selectedMode}
-                      onSelectMode={setSelectedMode}
+                      onSelectMode={selectMode}
                     />
                   </div>
                 </section>
@@ -337,7 +365,7 @@ export default function VisualizationsPage() {
                                   ? "bg-[rgba(59,102,220,0.18)]"
                                   : "hover:bg-[rgba(28,38,66,0.34)]"
                               }`}
-                              onClick={() => setSelectedMode(mode.index)}
+                            onClick={() => selectMode(mode.index)}
                             >
                               <td className="px-3 py-2 font-mono text-[var(--ide-text-1)]">{mode.index}</td>
                               <td className="px-3 py-2 font-mono text-[var(--ide-text-1)]">
@@ -402,7 +430,7 @@ export default function VisualizationsPage() {
                       <DispersionBranchPlot
                         rows={dispersionRows}
                         selectedMode={selectedMode}
-                        onSelectMode={setSelectedMode}
+                        onSelectMode={selectMode}
                       />
                     </div>
                   </section>
@@ -434,7 +462,7 @@ export default function VisualizationsPage() {
                                   ? "bg-[rgba(59,102,220,0.18)]"
                                   : "hover:bg-[rgba(28,38,66,0.34)]"
                               }`}
-                              onClick={() => setSelectedMode(row.modeIndex)}
+                              onClick={() => selectMode(row.modeIndex)}
                             >
                               <td className="px-3 py-2 font-mono text-[var(--ide-text-1)]">{row.modeIndex}</td>
                               <td className="px-3 py-2 font-mono text-[var(--ide-text-2)]">{row.kx.toExponential(2)}</td>
@@ -466,13 +494,21 @@ export default function VisualizationsPage() {
                   <div className="grid gap-3 sm:grid-cols-2">
                     <MetricCard label="Study" value={spectrum.study_kind} />
                     <MetricCard label="Operator" value={spectrum.operator.kind} />
+                    <MetricCard label="Solver kind" value={spectrum.solver_kind ?? "cpu_reference_symmetric"} />
                     <MetricCard label="Include demag" value={spectrum.operator.include_demag ? "yes" : "no"} />
                     <MetricCard label="Damping policy" value={spectrum.damping_policy} />
                     <MetricCard label="Equilibrium source" value={spectrum.equilibrium_source.kind} />
+                    <MetricCard label="Boundary" value={spectrum.boundary_config?.kind ?? spectrum.spin_wave_bc ?? "free"} />
+                    <MetricCard label="Terms" value={formatIncludedTerms(spectrum.included_terms)} />
                     <MetricCard label="Relax steps" value={spectrum.relaxation_steps.toLocaleString()} />
                     <MetricCard label="k sampling" value={formatKVector(spectrum.k_sampling)} />
                     <MetricCard label="Artifacts" value={savedModeIndices.length.toLocaleString()} />
                   </div>
+                  {spectrum.solver_notes && (
+                    <div className="mt-4 rounded-[16px] border border-[var(--ide-border-subtle)] bg-[rgba(9,14,26,0.5)] px-4 py-3 text-sm text-[var(--ide-text-2)]">
+                      {spectrum.solver_notes}
+                    </div>
+                  )}
                 </section>
 
                 <section className="rounded-[24px] border border-[var(--ide-border-subtle)] bg-[var(--ide-surface-raised)] p-4">

@@ -3,23 +3,49 @@
 export interface EigenModeSummary {
   index: number;
   frequency_hz: number;
+  frequency_real_hz?: number;
+  frequency_imag_hz?: number;
   angular_frequency_rad_per_s: number;
   eigenvalue_field_au_per_m: number;
+  eigenvalue_real?: number;
+  eigenvalue_imag?: number;
   norm: number;
   max_amplitude: number;
   dominant_polarization: string;
   k_vector: [number, number, number] | null;
 }
 
+export interface SpinWaveBoundaryConfig {
+  kind: string;
+  boundary_pair_id?: string | null;
+  surface_anisotropy_ks?: number | null;
+  surface_anisotropy_axis?: [number, number, number] | null;
+}
+
 export interface EigenSpectrumArtifact {
   study_kind: string;
+  solver_backend?: string;
+  solver_kind?: string;
+  solver_notes?: string;
+  solver_capabilities?: string[];
+  solver_limitations?: string[];
   mesh_name: string | null;
   mode_count: number;
   normalization: string;
   damping_policy: string;
+  spin_wave_bc?: string;
+  boundary_config?: SpinWaveBoundaryConfig;
   equilibrium_source: {
     kind: string;
     path?: string;
+  };
+  included_terms?: {
+    exchange?: boolean;
+    demag?: boolean;
+    zeeman?: boolean;
+    interfacial_dmi?: boolean;
+    bulk_dmi?: boolean;
+    surface_anisotropy?: boolean;
   };
   operator: {
     kind: string;
@@ -33,9 +59,18 @@ export interface EigenSpectrumArtifact {
 export interface EigenModeArtifact {
   index: number;
   frequency_hz: number;
+  frequency_real_hz?: number;
+  frequency_imag_hz?: number;
   angular_frequency_rad_per_s: number;
+  eigenvalue_real?: number;
+  eigenvalue_imag?: number;
   normalization: string;
   damping_policy: string;
+  solver_backend?: string;
+  solver_kind?: string;
+  solver_notes?: string;
+  solver_capabilities?: string[];
+  solver_limitations?: string[];
   dominant_polarization: string;
   k_vector: [number, number, number] | null;
   real: [number, number, number][];

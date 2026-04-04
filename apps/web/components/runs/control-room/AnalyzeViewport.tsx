@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { RefreshCw } from "lucide-react";
 
 import DispersionBranchPlot from "@/components/analyze/DispersionBranchPlot";
@@ -12,11 +12,40 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AnalyzeDiagnosticsPanel from "./AnalyzeDiagnosticsPanel";
 import AnalyzeRuntimeBadges from "./AnalyzeRuntimeBadges";
 import { useCommand, useModel } from "./ControlRoomContext";
-import { useCurrentAnalyzeArtifacts } from "./useCurrentAnalyzeArtifacts";
+import { useAnalyzeWorkspaceState } from "./useAnalyzeWorkspaceState";
 import { useAnalyzeRuntimeDiagnostics } from "./useAnalyzeRuntimeDiagnostics";
 
 function fmtGHz(hz: number): string {
   return `${(hz / 1e9).toFixed(4)} GHz`;
+}
+
+function includedTermsLabel(
+  includedTerms:
+    | {
+        exchange?: boolean;
+        demag?: boolean;
+        zeeman?: boolean;
+        interfacial_dmi?: boolean;
+        bulk_dmi?: boolean;
+        surface_anisotropy?: boolean;
+      }
+    | undefined,
+): string | null {
+  if (!includedTerms) return null;
+  const labels = [
+    includedTerms.exchange ? "exchange" : null,
+    includedTerms.demag ? "demag" : null,
+    includedTerms.zeeman ? "zeeman" : null,
+    includedTerms.interfacial_dmi ? "iDMI" : null,
+    includedTerms.bulk_dmi ? "bDMI" : null,
+    includedTerms.surface_anisotropy ? "surface-K" : null,
+  ].filter(Boolean);
+  return labels.length > 0 ? labels.join(" · ") : null;
+}
+
+function compactList(values: string[] | undefined): string | null {
+  if (!values || values.length === 0) return null;
+  return values.join(" · ");
 }
 
 export default function AnalyzeViewport() {
@@ -30,11 +59,18 @@ export default function AnalyzeViewport() {
     mesh,
     spectrum,
     dispersionRows,
-    modeCache,
     hasEigenArtifacts,
     refresh,
-    ensureMode,
-  } = useCurrentAnalyzeArtifacts(model.analyzeSelection.refreshNonce);
+    selectedMode,
+    selectedModeArtifact,
+    selectedModeSummary,
+    selectMode,
+  } = useAnalyzeWorkspaceState({
+    analyzeSelection: model.analyzeSelection,
+    setSelectedModeIndex: (index) =>
+      model.setAnalyzeSelection((prev) => ({ ...prev, selectedModeIndex: index })),
+    setTab: (tab) => model.selectAnalyzeTab(tab),
+  });
 
   const diagnostics = useAnalyzeRuntimeDiagnostics({
     runtimeEngineLabel: cmd.runtimeEngineLabel,
@@ -45,26 +81,6 @@ export default function AnalyzeViewport() {
     interfaceParts: model.interfaceParts,
     metadata: cmd.metadata,
   });
-
-  const selectedMode = model.analyzeSelection.selectedModeIndex;
-  const selectedModeArtifact =
-    selectedMode != null ? (modeCache[selectedMode] ?? null) : null;
-  const selectedModeSummary = useMemo(
-    () => spectrum?.modes.find((mode) => mode.index === selectedMode) ?? null,
-    [selectedMode, spectrum],
-  );
-
-  useEffect(() => {
-    if (!spectrum || spectrum.modes.length === 0) {
-      return;
-    }
-    if (model.analyzeSelection.selectedModeIndex == null) {
-      model.setAnalyzeSelection((prev) => ({
-        ...prev,
-        selectedModeIndex: spectrum.modes[0].index,
-      }));
-    }
-  }, [model, spectrum]);
 
   // ← / → keyboard shortcuts to navigate between eigen modes
   useEffect(() => {
@@ -83,19 +99,13 @@ export default function AnalyzeViewport() {
           ? sortedModes[Math.min(pos + 1, sortedModes.length - 1)]
           : sortedModes[Math.max(pos - 1, 0)];
       if (next && next.index !== currentIndex) {
-        model.selectAnalyzeMode(next.index);
+        selectMode(next.index);
         e.preventDefault();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [model, spectrum]);
-
-  useEffect(() => {
-    if (selectedMode != null) {
-      void ensureMode(selectedMode);
-    }
-  }, [ensureMode, selectedMode]);
+  }, [model.analyzeSelection.selectedModeIndex, selectMode, spectrum]);
 
   if (loadState === "loading") {
     return (
@@ -144,6 +154,21 @@ export default function AnalyzeViewport() {
             Analyze
           </span>
           <AnalyzeRuntimeBadges badges={diagnostics.badges} />
+          {spectrum.solver_kind && (
+            <span className="rounded-sm border border-sky-500/25 bg-sky-500/10 px-1.5 py-0.5 text-[0.62rem] font-bold uppercase tracking-widest text-sky-200">
+              {spectrum.solver_kind}
+            </span>
+          )}
+          {spectrum.boundary_config?.kind && (
+            <span className="rounded-sm border border-violet-500/25 bg-violet-500/10 px-1.5 py-0.5 text-[0.62rem] font-bold uppercase tracking-widest text-violet-200">
+              bc: {spectrum.boundary_config.kind}
+            </span>
+          )}
+          {includedTermsLabel(spectrum.included_terms) && (
+            <span className="rounded-sm border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[0.62rem] font-bold tracking-widest text-emerald-200">
+              {includedTermsLabel(spectrum.included_terms)}
+            </span>
+          )}
           <div className="flex-1" />
           <button
             type="button"
@@ -163,6 +188,19 @@ export default function AnalyzeViewport() {
           <div className="mt-2 text-sm text-foreground/90">
             Mode {selectedModeSummary.index} · {fmtGHz(selectedModeSummary.frequency_hz)} ·{" "}
             {selectedModeSummary.dominant_polarization}
+          </div>
+        )}
+        {spectrum.solver_notes && (
+          <div className="mt-1 text-xs text-muted-foreground">{spectrum.solver_notes}</div>
+        )}
+        {compactList(spectrum.solver_capabilities) && (
+          <div className="mt-1 text-xs text-emerald-300/90">
+            Capabilities: {compactList(spectrum.solver_capabilities)}
+          </div>
+        )}
+        {compactList(spectrum.solver_limitations) && (
+          <div className="mt-1 text-xs text-amber-300/90">
+            Limitations: {compactList(spectrum.solver_limitations)}
           </div>
         )}
       </div>
@@ -194,7 +232,7 @@ export default function AnalyzeViewport() {
               <ModeSpectrumPlot
                 modes={spectrum.modes}
                 selectedMode={selectedMode}
-                onSelectMode={(modeIndex) => model.selectAnalyzeMode(modeIndex)}
+                onSelectMode={(modeIndex) => selectMode(modeIndex)}
               />
             </TabsContent>
 
@@ -232,7 +270,7 @@ export default function AnalyzeViewport() {
                 <DispersionBranchPlot
                   rows={dispersionRows}
                   selectedMode={selectedMode}
-                  onSelectMode={(modeIndex) => model.selectAnalyzeMode(modeIndex)}
+                  onSelectMode={(modeIndex) => selectMode(modeIndex)}
                 />
               </TabsContent>
             )}

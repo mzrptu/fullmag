@@ -409,6 +409,11 @@ export interface ScriptBuilderStageState {
   eigen_include_demag: boolean;
   eigen_equilibrium_source: string;
   eigen_normalization: string;
+  eigen_target_frequency: string;
+  eigen_damping_policy: string;
+  eigen_k_vector: string;
+  eigen_spin_wave_bc: string;
+  eigen_spin_wave_bc_config: Record<string, unknown> | null;
 }
 
 export interface ScriptBuilderInitialState {

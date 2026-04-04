@@ -267,30 +267,28 @@ impl NativeFdmBackend {
             oersted_time_dep_t_on: plan.oersted_time_dep_t_on,
             oersted_time_dep_t_off: plan.oersted_time_dep_t_off,
 
-            // The current FDM IR does not yet expose anisotropy or DMI terms, so we
-            // explicitly zero-initialize the native descriptor to stay aligned with it.
-            has_uniaxial_anisotropy: 0,
-            uniaxial_anisotropy_constant: 0.0,
-            uniaxial_anisotropy_k2: 0.0,
-            anisotropy_axis: [0.0, 0.0, 1.0],
+            has_uniaxial_anisotropy: if plan.material.uniaxial_anisotropy_ku1.is_some() { 1 } else { 0 },
+            uniaxial_anisotropy_constant: plan.material.uniaxial_anisotropy_ku1.unwrap_or(0.0),
+            uniaxial_anisotropy_k2: plan.material.uniaxial_anisotropy_ku2.unwrap_or(0.0),
+            anisotropy_axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
 
             ku1_field: std::ptr::null(),
             ku2_field: std::ptr::null(),
 
-            has_cubic_anisotropy: 0,
-            cubic_kc1: 0.0,
-            cubic_kc2: 0.0,
-            cubic_kc3: 0.0,
-            cubic_axis1: [1.0, 0.0, 0.0],
-            cubic_axis2: [0.0, 1.0, 0.0],
+            has_cubic_anisotropy: if plan.material.cubic_anisotropy_kc1.is_some() { 1 } else { 0 },
+            cubic_kc1: plan.material.cubic_anisotropy_kc1.unwrap_or(0.0),
+            cubic_kc2: plan.material.cubic_anisotropy_kc2.unwrap_or(0.0),
+            cubic_kc3: plan.material.cubic_anisotropy_kc3.unwrap_or(0.0),
+            cubic_axis1: plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
+            cubic_axis2: plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
             kc1_field: std::ptr::null(),
             kc2_field: std::ptr::null(),
             kc3_field: std::ptr::null(),
 
-            has_interfacial_dmi: 0,
-            dmi_d_interfacial: 0.0,
-            has_bulk_dmi: 0,
-            dmi_d_bulk: 0.0,
+            has_interfacial_dmi: if plan.interfacial_dmi.is_some() { 1 } else { 0 },
+            dmi_d_interfacial: plan.interfacial_dmi.unwrap_or(0.0),
+            has_bulk_dmi: if plan.bulk_dmi.is_some() { 1 } else { 0 },
+            dmi_d_bulk: plan.bulk_dmi.unwrap_or(0.0),
 
             temperature: plan.temperature.unwrap_or(0.0),
 

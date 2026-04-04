@@ -1087,6 +1087,7 @@ fn single_layer_cuda_plan(plan: &FdmMultilayerPlanIR, layer: &FdmLayerPlanIR) ->
             saturation_magnetisation: layer.material.saturation_magnetisation,
             exchange_stiffness: layer.material.exchange_stiffness,
             damping: layer.material.damping,
+            ..Default::default()
         },
         enable_exchange: plan.enable_exchange,
         enable_demag: false,
@@ -2266,6 +2267,7 @@ mod tests {
                         saturation_magnetisation: 800e3,
                         exchange_stiffness: 13e-12,
                         damping: 0.1,
+                        ..Default::default()
                     },
                     convolution_grid: [4, 4, 1],
                     convolution_cell_size: [2e-9, 2e-9, 1e-9],
@@ -2284,6 +2286,7 @@ mod tests {
                         saturation_magnetisation: 800e3,
                         exchange_stiffness: 13e-12,
                         damping: 0.1,
+                        ..Default::default()
                     },
                     convolution_grid: [4, 4, 1],
                     convolution_cell_size: [2e-9, 2e-9, 1e-9],
@@ -2343,6 +2346,7 @@ mod tests {
                         saturation_magnetisation: 800e3,
                         exchange_stiffness: 13e-12,
                         damping: 0.1,
+                        ..Default::default()
                     },
                     convolution_grid: [2, 1, 1],
                     convolution_cell_size: [2e-9, 2e-9, 2e-9],
@@ -2361,6 +2365,7 @@ mod tests {
                         saturation_magnetisation: 800e3,
                         exchange_stiffness: 13e-12,
                         damping: 0.1,
+                        ..Default::default()
                     },
                     convolution_grid: [2, 1, 1],
                     convolution_cell_size: [2e-9, 2e-9, 2e-9],

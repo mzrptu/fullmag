@@ -189,7 +189,15 @@ pub struct ScriptBuilderStageState {
     #[serde(default)]
     pub eigen_normalization: String,
     #[serde(default)]
+    pub eigen_target_frequency: String,
+    #[serde(default)]
+    pub eigen_damping_policy: String,
+    #[serde(default)]
+    pub eigen_k_vector: String,
+    #[serde(default)]
     pub eigen_spin_wave_bc: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eigen_spin_wave_bc_config: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

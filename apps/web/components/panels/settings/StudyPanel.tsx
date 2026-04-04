@@ -23,6 +23,28 @@ import SelectField from "../../ui/SelectField";
 
 const EDITABLE_STAGE_STATES = new Set(["relax", "run", "eigenmodes"]);
 
+function eigenBcConfig(stage: ScriptBuilderStageState): Record<string, unknown> {
+  const config =
+    stage.eigen_spin_wave_bc_config && typeof stage.eigen_spin_wave_bc_config === "object"
+      ? { ...stage.eigen_spin_wave_bc_config }
+      : {};
+  if (typeof config.kind !== "string" || !config.kind) {
+    config.kind = stage.eigen_spin_wave_bc || "free";
+  }
+  return config;
+}
+
+function patchEigenBcConfig(
+  stage: ScriptBuilderStageState,
+  patch: Record<string, unknown>,
+): Partial<ScriptBuilderStageState> {
+  const next = { ...eigenBcConfig(stage), ...patch };
+  return {
+    eigen_spin_wave_bc: String(next.kind ?? stage.eigen_spin_wave_bc ?? "free"),
+    eigen_spin_wave_bc_config: next,
+  };
+}
+
 function stageTitle(stage: ScriptBuilderStageState, index: number): string {
   switch (stage.kind) {
     case "relax":
@@ -342,6 +364,17 @@ export default function StudyPanel() {
                         tooltip="Which part of the spectrum to extract."
                       />
                     </div>
+                    <div>
+                      <TextField
+                        label="Target freq. [Hz]"
+                        value={stage.eigen_target_frequency || ""}
+                        onchange={(e) => updateStage(index, { eigen_target_frequency: e.target.value })}
+                        placeholder="required for nearest"
+                        disabled={stageEditingDisabled || (stage.eigen_target || "lowest") !== "nearest"}
+                        mono
+                        tooltip="Frequency target used when the eigen extraction mode is 'nearest'."
+                      />
+                    </div>
                     <div className="col-span-2">
                       <SelectField
                         label="Equilibrium source"
@@ -350,25 +383,141 @@ export default function StudyPanel() {
                         disabled={stageEditingDisabled}
                         options={[
                           { value: "relax", label: "From relaxation stage" },
-                          { value: "supplied", label: "Supplied initial state" },
+                          { value: "provided", label: "Supplied initial state" },
+                          { value: "artifact", label: "Artifact file" },
                         ]}
                         tooltip="Origin of the equilibrium magnetization used to linearise the LLG."
                       />
                     </div>
-                    <div className="col-span-2">
+                    <div>
                       <SelectField
                         label="Normalization"
-                        value={stage.eigen_normalization || "max_amplitude"}
+                        value={stage.eigen_normalization || "unit_l2"}
                         onchange={(val) => updateStage(index, { eigen_normalization: val })}
                         disabled={stageEditingDisabled}
                         options={[
-                          { value: "max_amplitude", label: "Max amplitude" },
-                          { value: "unit_norm", label: "Unit norm" },
-                          { value: "none", label: "None (raw eigenvector)" },
+                          { value: "unit_l2", label: "Unit L2" },
+                          { value: "unit_max_amplitude", label: "Unit max amplitude" },
                         ]}
                         tooltip="How the computed eigenvectors are normalised before output."
                       />
                     </div>
+                    <div>
+                      <SelectField
+                        label="Damping"
+                        value={stage.eigen_damping_policy || "ignore"}
+                        onchange={(val) => updateStage(index, { eigen_damping_policy: val })}
+                        disabled={stageEditingDisabled}
+                        options={[
+                          { value: "ignore", label: "Ignore damping" },
+                          { value: "include", label: "Include damping" },
+                        ]}
+                        tooltip="Whether damping should be incorporated into the linearized eigen operator."
+                      />
+                    </div>
+                    <div>
+                      <TextField
+                        label="k-vector"
+                        value={stage.eigen_k_vector || ""}
+                        onchange={(e) => updateStage(index, { eigen_k_vector: e.target.value })}
+                        placeholder="kx, ky, kz"
+                        disabled={stageEditingDisabled}
+                        mono
+                        tooltip="Single Bloch wave-vector sample written as comma-separated components."
+                      />
+                    </div>
+                    <div>
+                      <SelectField
+                        label="Spin-wave BC"
+                        value={stage.eigen_spin_wave_bc || "free"}
+                        onchange={(val) => updateStage(index, patchEigenBcConfig(stage, { kind: val }))}
+                        disabled={stageEditingDisabled}
+                        options={[
+                          { value: "free", label: "Free" },
+                          { value: "pinned", label: "Pinned" },
+                          { value: "periodic", label: "Periodic" },
+                          { value: "floquet", label: "Floquet" },
+                          { value: "surface_anisotropy", label: "Surface anisotropy" },
+                        ]}
+                        tooltip="Boundary semantics for the linearized spin-wave eigenproblem."
+                      />
+                    </div>
+                    {(stage.eigen_spin_wave_bc === "periodic" || stage.eigen_spin_wave_bc === "floquet") && (
+                      <div>
+                        <TextField
+                          label="Boundary pair id"
+                          value={typeof eigenBcConfig(stage).boundary_pair_id === "string" ? String(eigenBcConfig(stage).boundary_pair_id) : ""}
+                          onchange={(e) =>
+                            updateStage(
+                              index,
+                              patchEigenBcConfig(stage, {
+                                boundary_pair_id: e.target.value.trim() || null,
+                              }),
+                            )
+                          }
+                          placeholder="x_faces"
+                          disabled={stageEditingDisabled}
+                          mono
+                          tooltip="Pair id of the periodic/Floquet boundary relation on the mesh."
+                        />
+                      </div>
+                    )}
+                    {stage.eigen_spin_wave_bc === "surface_anisotropy" && (
+                      <>
+                        <div>
+                          <TextField
+                            label="Surface Ks"
+                            value={
+                              typeof eigenBcConfig(stage).surface_anisotropy_ks === "number"
+                                ? String(eigenBcConfig(stage).surface_anisotropy_ks)
+                                : ""
+                            }
+                            onchange={(e) =>
+                              updateStage(
+                                index,
+                                patchEigenBcConfig(stage, {
+                                  surface_anisotropy_ks:
+                                    e.target.value.trim().length > 0 ? Number(e.target.value) : null,
+                                }),
+                              )
+                            }
+                            placeholder="5e-4"
+                            disabled={stageEditingDisabled}
+                            mono
+                            tooltip="Surface anisotropy constant Ks for the boundary operator."
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <TextField
+                            label="Surface axis"
+                            value={
+                              Array.isArray(eigenBcConfig(stage).surface_anisotropy_axis)
+                                ? (eigenBcConfig(stage).surface_anisotropy_axis as number[]).join(", ")
+                                : ""
+                            }
+                            onchange={(e) => {
+                              const raw = e.target.value.trim();
+                              const parsed = raw
+                                ? raw.split(",").map((component) => Number(component.trim()))
+                                : [];
+                              updateStage(
+                                index,
+                                patchEigenBcConfig(stage, {
+                                  surface_anisotropy_axis:
+                                    parsed.length === 3 && parsed.every(Number.isFinite)
+                                      ? [parsed[0], parsed[1], parsed[2]]
+                                      : null,
+                                }),
+                              );
+                            }}
+                            placeholder="0, 0, 1"
+                            disabled={stageEditingDisabled}
+                            mono
+                            tooltip="Surface anisotropy axis as comma-separated xyz components."
+                          />
+                        </div>
+                      </>
+                    )}
                     <div className="col-span-2 flex items-center gap-2 rounded-lg border border-border/30 bg-background/20 p-2.5">
                       <input
                         type="checkbox"

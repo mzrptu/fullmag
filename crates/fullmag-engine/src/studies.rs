@@ -3,7 +3,7 @@ use crate::{
     norm, normalized, sub, CellSize, EffectiveFieldTerms, EngineError, ExchangeLlgProblem,
     GridShape, LlgConfig, MaterialParameters, TimeIntegrator, Vector3, DEFAULT_GYROMAGNETIC_RATIO,
 };
-use fullmag_ir::MeshIR;
+use fullmag_ir::{MeshIR, MeshPeriodicBoundaryPairIR, MeshPeriodicNodePairIR};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
@@ -555,6 +555,7 @@ pub(crate) fn build_structured_box_tet_mesh(box_size_m: [f64; 3], divisions: usi
     let boundary_faces = collect_boundary_faces(&elements);
     let element_count = elements.len();
     let boundary_face_count = boundary_faces.len();
+    let (periodic_boundary_pairs, periodic_node_pairs) = structured_periodic_pairs(divisions);
     MeshIR {
         mesh_name: format!("structured_box_{}", divisions),
         nodes,
@@ -562,6 +563,8 @@ pub(crate) fn build_structured_box_tet_mesh(box_size_m: [f64; 3], divisions: usi
         element_markers: vec![1; element_count],
         boundary_faces,
         boundary_markers: vec![1; boundary_face_count],
+        periodic_boundary_pairs,
+        periodic_node_pairs,
         per_domain_quality: Default::default(),
     }
 }
@@ -593,4 +596,47 @@ fn collect_boundary_faces(elements: &[[u32; 4]]) -> Vec<[u32; 3]> {
         .into_iter()
         .filter_map(|(_, (face, count))| (count == 1).then_some(face))
         .collect()
+}
+
+fn structured_periodic_pairs(
+    divisions: usize,
+) -> (Vec<MeshPeriodicBoundaryPairIR>, Vec<MeshPeriodicNodePairIR>) {
+    let mut boundary_pairs = Vec::with_capacity(3);
+    let mut node_pairs = Vec::new();
+    let pair_specs = [
+        ("x_faces", 0usize),
+        ("y_faces", 1usize),
+        ("z_faces", 2usize),
+    ];
+
+    for (pair_id, axis) in pair_specs {
+        boundary_pairs.push(MeshPeriodicBoundaryPairIR {
+            pair_id: pair_id.to_string(),
+            marker_a: 1,
+            marker_b: 1,
+        });
+        for k in 0..=divisions {
+            for j in 0..=divisions {
+                match axis {
+                    0 => node_pairs.push(MeshPeriodicNodePairIR {
+                        pair_id: pair_id.to_string(),
+                        node_a: structured_node_index(0, j, k, divisions) as u32,
+                        node_b: structured_node_index(divisions, j, k, divisions) as u32,
+                    }),
+                    1 => node_pairs.push(MeshPeriodicNodePairIR {
+                        pair_id: pair_id.to_string(),
+                        node_a: structured_node_index(j, 0, k, divisions) as u32,
+                        node_b: structured_node_index(j, divisions, k, divisions) as u32,
+                    }),
+                    _ => node_pairs.push(MeshPeriodicNodePairIR {
+                        pair_id: pair_id.to_string(),
+                        node_a: structured_node_index(j, k, 0, divisions) as u32,
+                        node_b: structured_node_index(j, k, divisions, divisions) as u32,
+                    }),
+                }
+            }
+        }
+    }
+
+    (boundary_pairs, node_pairs)
 }

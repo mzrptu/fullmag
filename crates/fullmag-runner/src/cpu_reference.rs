@@ -837,6 +837,7 @@ mod tests {
                 saturation_magnetisation: 800e3,
                 exchange_stiffness: 13e-12,
                 damping: 0.5,
+                ..Default::default()
             },
             gyromagnetic_ratio: 2.211e5,
             precision: ExecutionPrecision::Double,
@@ -869,6 +870,8 @@ mod tests {
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             temperature: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
         }
     }
 
@@ -884,6 +887,7 @@ mod tests {
                 saturation_magnetisation: 800e3,
                 exchange_stiffness: 13e-12,
                 damping: 0.1,
+                ..Default::default()
             },
             gyromagnetic_ratio: 2.211e5,
             precision: ExecutionPrecision::Double,
@@ -921,6 +925,8 @@ mod tests {
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             temperature: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
         }
     }
 

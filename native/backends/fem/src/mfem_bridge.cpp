@@ -2876,10 +2876,13 @@ bool context_compute_demag_poisson(
     gf_potential->GetTrueDofs(solution);  // warm-start
 
 #ifdef MFEM_USE_MPI
-    // Prefer the simpler MFEM CG path by default. The managed host runtime is
-    // currently more stable there than on the Hypre GPU path during preview
-    // snapshots. Hypre can still be re-enabled explicitly for triage.
-    if (env_flag_enabled("FULLMAG_FEM_ENABLE_HYPRE_POISSON")) {
+    // Use the Hypre GPU CG+BoomerAMG path when running with a GPU device unless
+    // the caller explicitly opts out.  The CPU hand-written CG is still the
+    // default when no GPU device is active (e.g. during unit tests or CPU-only
+    // runs) or when FULLMAG_FEM_DISABLE_HYPRE_POISSON=1 is set for debugging.
+    const bool use_hypre = mfem_device_requests_gpu()
+        && !env_flag_enabled("FULLMAG_FEM_DISABLE_HYPRE_POISSON");
+    if (use_hypre || env_flag_enabled("FULLMAG_FEM_ENABLE_HYPRE_POISSON")) {
         if (!solve_poisson_hypre(ctx, rhs, solution, error)) {
             return false;
         }

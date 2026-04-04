@@ -607,6 +607,14 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
           eigen_include_demag: Boolean(stage?.eigen_include_demag ?? false),
           eigen_equilibrium_source: String(stage?.eigen_equilibrium_source ?? ""),
           eigen_normalization: String(stage?.eigen_normalization ?? ""),
+          eigen_target_frequency: String(stage?.eigen_target_frequency ?? ""),
+          eigen_damping_policy: String(stage?.eigen_damping_policy ?? ""),
+          eigen_k_vector: String(stage?.eigen_k_vector ?? ""),
+          eigen_spin_wave_bc: String(stage?.eigen_spin_wave_bc ?? ""),
+          eigen_spin_wave_bc_config:
+            stage?.eigen_spin_wave_bc_config && typeof stage.eigen_spin_wave_bc_config === "object"
+              ? stage.eigen_spin_wave_bc_config
+              : null,
         }))
       : [],
     initial_state:

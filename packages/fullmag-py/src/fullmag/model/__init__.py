@@ -16,6 +16,7 @@ from .dynamics import (
 from .energy import (
     BulkDMI,
     Constant,
+    CubicAnisotropy,
     Demag,
     Exchange,
     InterfacialDMI,
@@ -23,6 +24,8 @@ from .energy import (
     OerstedCylinder,
     Pulse,
     Sinusoidal,
+    ThermalNoise,
+    UniaxialAnisotropy,
     Zeeman,
 )
 from .mechanics import (
@@ -59,6 +62,9 @@ from .study import Eigenmodes, Relaxation, TimeEvolution
 
 __all__ = [
     "BackendTarget",
+    "CubicAnisotropy",
+    "ThermalNoise",
+    "UniaxialAnisotropy",
     "AdaptiveTimestep",
     "AntennaFieldSource",
     "Box",

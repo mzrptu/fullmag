@@ -21,16 +21,18 @@ pub enum BackendTarget {
     Hybrid,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionPrecision {
     Single,
+    #[default]
     Double,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum IntegratorChoice {
+    #[default]
     Heun,
     Rk4,
     Rk23,
@@ -113,9 +115,10 @@ pub enum RelaxationAlgorithmIR {
     TangentPlaneImplicit,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExchangeBoundaryCondition {
+    #[default]
     Neumann,
 }
 
@@ -132,11 +135,67 @@ pub enum ExchangeBoundaryCondition {
 ///   node pairs; the runner will return an error until that is implemented.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum SpinWaveBoundaryConditionIR {
+pub enum SpinWaveBoundaryKindIR {
     #[default]
     Free,
     Pinned,
     Periodic,
+    Floquet,
+    SurfaceAnisotropy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SpinWaveBoundaryConfigIR {
+    pub kind: SpinWaveBoundaryKindIR,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_pair_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_anisotropy_ks: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_anisotropy_axis: Option<[f64; 3]>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum SpinWaveBoundaryConditionIR {
+    Legacy(SpinWaveBoundaryKindIR),
+    Config(SpinWaveBoundaryConfigIR),
+}
+
+impl Default for SpinWaveBoundaryConditionIR {
+    fn default() -> Self {
+        Self::Legacy(SpinWaveBoundaryKindIR::Free)
+    }
+}
+
+impl SpinWaveBoundaryConditionIR {
+    pub fn kind(&self) -> SpinWaveBoundaryKindIR {
+        match self {
+            Self::Legacy(kind) => *kind,
+            Self::Config(config) => config.kind,
+        }
+    }
+
+    pub fn boundary_pair_id(&self) -> Option<&str> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Config(config) => config.boundary_pair_id.as_deref(),
+        }
+    }
+
+    pub fn surface_anisotropy_ks(&self) -> Option<f64> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Config(config) => config.surface_anisotropy_ks,
+        }
+    }
+
+    pub fn surface_anisotropy_axis(&self) -> Option<[f64; 3]> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Config(config) => config.surface_anisotropy_axis,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -771,8 +830,26 @@ pub struct MeshIR {
     pub element_markers: Vec<u32>,
     pub boundary_faces: Vec<[u32; 3]>,
     pub boundary_markers: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub periodic_boundary_pairs: Vec<MeshPeriodicBoundaryPairIR>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub periodic_node_pairs: Vec<MeshPeriodicNodePairIR>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub per_domain_quality: HashMap<u32, MeshQualityIR>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MeshPeriodicBoundaryPairIR {
+    pub pair_id: String,
+    pub marker_a: u32,
+    pub marker_b: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MeshPeriodicNodePairIR {
+    pub pair_id: String,
+    pub node_a: u32,
+    pub node_b: u32,
 }
 
 impl MeshIR {
@@ -807,6 +884,45 @@ impl MeshIR {
             if face.iter().any(|node| *node >= node_count) {
                 errors.push(format!(
                     "mesh boundary face {index} contains invalid node index"
+                ));
+            }
+        }
+
+        let mut periodic_pair_ids = BTreeSet::new();
+        for (index, pair) in self.periodic_boundary_pairs.iter().enumerate() {
+            if pair.pair_id.trim().is_empty() {
+                errors.push(format!(
+                    "mesh periodic boundary pair {index} must have a non-empty pair_id"
+                ));
+            }
+            if !periodic_pair_ids.insert(pair.pair_id.clone()) {
+                errors.push(format!(
+                    "mesh periodic boundary pair id '{}' is duplicated",
+                    pair.pair_id
+                ));
+            }
+        }
+
+        for (index, pair) in self.periodic_node_pairs.iter().enumerate() {
+            if pair.pair_id.trim().is_empty() {
+                errors.push(format!(
+                    "mesh periodic node pair {index} must have a non-empty pair_id"
+                ));
+            }
+            if !periodic_pair_ids.contains(&pair.pair_id) {
+                errors.push(format!(
+                    "mesh periodic node pair {index} references unknown pair_id '{}'",
+                    pair.pair_id
+                ));
+            }
+            if pair.node_a >= node_count || pair.node_b >= node_count {
+                errors.push(format!(
+                    "mesh periodic node pair {index} contains invalid node index"
+                ));
+            }
+            if pair.node_a == pair.node_b {
+                errors.push(format!(
+                    "mesh periodic node pair {index} must connect two distinct nodes"
                 ));
             }
         }
@@ -1362,12 +1478,12 @@ pub enum BackendPlanIR {
     FemEigen(FemEigenPlanIR),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct GridDimensions {
     pub cells: [u32; 3],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FdmPlanIR {
     pub grid: GridDimensions,
     pub cell_size: [f64; 3],
@@ -1459,6 +1575,14 @@ pub struct FdmPlanIR {
     /// Temperature in Kelvin for Brown thermal field (sLLG). None or 0 = no thermal noise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
+
+    // ── Dzyaloshinskii-Moriya interaction ──
+    /// Interfacial DMI constant D [J/m²]. None = disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interfacial_dmi: Option<f64>,
+    /// Bulk (Bloch) DMI constant D [J/m³]. None = disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bulk_dmi: Option<f64>,
 }
 
 /// Sub-cell boundary geometry arrays computed from SDF during planning.
@@ -1491,12 +1615,30 @@ pub struct BoundaryGeometryIR {
     pub demag_corr_stencil_size: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FdmMaterialIR {
     pub name: String,
     pub saturation_magnetisation: f64,
     pub exchange_stiffness: f64,
     pub damping: f64,
+    // ── Uniaxial anisotropy ──
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uniaxial_anisotropy_ku1: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uniaxial_anisotropy_ku2: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anisotropy_axis: Option<[f64; 3]>,
+    // ── Cubic anisotropy ──
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cubic_anisotropy_kc1: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cubic_anisotropy_kc2: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cubic_anisotropy_kc3: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cubic_anisotropy_axis1: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cubic_anisotropy_axis2: Option<[f64; 3]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1714,12 +1856,18 @@ pub struct FemEigenPlanIR {
     pub damping_policy: EigenDampingPolicyIR,
     pub enable_exchange: bool,
     pub enable_demag: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interfacial_dmi: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bulk_dmi: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_field: Option<[f64; 3]>,
     pub gyromagnetic_ratio: f64,
     pub precision: ExecutionPrecision,
     pub exchange_bc: ExchangeBoundaryCondition,
-    /// Spin-wave boundary condition: `free` (default), `pinned`, or `periodic`.
+    /// Spin-wave boundary condition. Legacy values (`free`, `pinned`, `periodic`)
+    /// remain supported for backward compatibility; structured configs enable
+    /// richer boundary metadata such as periodic pair ids and surface terms.
     #[serde(default)]
     pub spin_wave_bc: SpinWaveBoundaryConditionIR,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2689,6 +2837,14 @@ mod tests {
                     saturation_magnetisation: 800e3,
                     exchange_stiffness: 13e-12,
                     damping: 0.02,
+                    uniaxial_anisotropy_ku1: None,
+                    uniaxial_anisotropy_ku2: None,
+                    anisotropy_axis: None,
+                    cubic_anisotropy_kc1: None,
+                    cubic_anisotropy_kc2: None,
+                    cubic_anisotropy_kc3: None,
+                    cubic_anisotropy_axis1: None,
+                    cubic_anisotropy_axis2: None,
                 },
                 enable_exchange: true,
                 enable_demag: false,
@@ -2721,6 +2877,8 @@ mod tests {
                 oersted_time_dep_t_on: 0.0,
                 oersted_time_dep_t_off: 0.0,
                 temperature: None,
+                interfacial_dmi: None,
+                bulk_dmi: None,
             }),
             output_plan: OutputPlanIR {
                 outputs: vec![OutputIR::Field {
@@ -2775,6 +2933,7 @@ mod tests {
             }),
             normalization: EigenNormalizationIR::UnitL2,
             damping_policy: EigenDampingPolicyIR::Ignore,
+            spin_wave_bc: SpinWaveBoundaryConditionIR::default(),
             sampling: SamplingIR {
                 outputs: vec![
                     OutputIR::EigenSpectrum {
@@ -2789,6 +2948,58 @@ mod tests {
         };
 
         assert!(ir.validate().is_ok());
+    }
+
+    #[test]
+    fn spin_wave_boundary_condition_accepts_legacy_and_structured_forms() {
+        let legacy: SpinWaveBoundaryConditionIR =
+            serde_json::from_str("\"periodic\"").expect("legacy spin-wave BC should deserialize");
+        assert_eq!(legacy.kind(), SpinWaveBoundaryKindIR::Periodic);
+        assert_eq!(legacy.boundary_pair_id(), None);
+
+        let structured: SpinWaveBoundaryConditionIR = serde_json::from_str(
+            r#"{
+                "kind": "floquet",
+                "boundary_pair_id": "x_faces",
+                "surface_anisotropy_ks": 0.002,
+                "surface_anisotropy_axis": [0.0, 0.0, 1.0]
+            }"#,
+        )
+        .expect("structured spin-wave BC should deserialize");
+        assert_eq!(structured.kind(), SpinWaveBoundaryKindIR::Floquet);
+        assert_eq!(structured.boundary_pair_id(), Some("x_faces"));
+        assert_eq!(structured.surface_anisotropy_ks(), Some(0.002));
+        assert_eq!(structured.surface_anisotropy_axis(), Some([0.0, 0.0, 1.0]));
+    }
+
+    #[test]
+    fn mesh_periodic_pair_validation_allows_shared_boundary_marker_pairs() {
+        let mesh = MeshIR {
+            mesh_name: "box".to_string(),
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            elements: vec![[0, 1, 2, 3]],
+            element_markers: vec![1],
+            boundary_faces: vec![[0, 1, 2], [0, 1, 3]],
+            boundary_markers: vec![99, 99],
+            periodic_boundary_pairs: vec![MeshPeriodicBoundaryPairIR {
+                pair_id: "x_faces".to_string(),
+                marker_a: 99,
+                marker_b: 99,
+            }],
+            periodic_node_pairs: vec![MeshPeriodicNodePairIR {
+                pair_id: "x_faces".to_string(),
+                node_a: 0,
+                node_b: 1,
+            }],
+            per_domain_quality: HashMap::new(),
+        };
+
+        assert!(mesh.validate().is_ok());
     }
 
     #[test]
@@ -2807,6 +3018,7 @@ mod tests {
             k_sampling: None,
             normalization: EigenNormalizationIR::UnitL2,
             damping_policy: EigenDampingPolicyIR::Ignore,
+            spin_wave_bc: SpinWaveBoundaryConditionIR::default(),
             sampling: SamplingIR {
                 outputs: vec![OutputIR::DispersionCurve {
                     name: "dispersion".to_string(),

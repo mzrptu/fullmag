@@ -1006,6 +1006,8 @@ pub(crate) fn plan_fem_eigen(
     let mut enable_demag = false;
     let mut external_field = None;
     let mut demag_realization: Option<String> = None;
+    let mut interfacial_dmi: Option<f64> = None;
+    let mut bulk_dmi: Option<f64> = None;
     for term in &problem.energy_terms {
         match term {
             fullmag_ir::EnergyTermIR::Exchange => {
@@ -1027,6 +1029,18 @@ pub(crate) fn plan_fem_eigen(
                 }
                 external_field = Some([b[0] / MU0, b[1] / MU0, b[2] / MU0]);
             }
+            fullmag_ir::EnergyTermIR::InterfacialDmi { d } => {
+                if interfacial_dmi.is_some() {
+                    errors.push("InterfacialDmi is declared more than once".to_string());
+                }
+                interfacial_dmi = Some(*d);
+            }
+            fullmag_ir::EnergyTermIR::BulkDmi { d } => {
+                if bulk_dmi.is_some() {
+                    errors.push("BulkDmi is declared more than once".to_string());
+                }
+                bulk_dmi = Some(*d);
+            }
             other => {
                 errors.push(format!(
                     "energy term '{:?}' is not yet executable in the FEM eigen baseline",
@@ -1035,9 +1049,14 @@ pub(crate) fn plan_fem_eigen(
             }
         }
     }
-    if !(enable_exchange || enable_demag || external_field.is_some()) {
+    if !(enable_exchange
+        || enable_demag
+        || external_field.is_some()
+        || interfacial_dmi.is_some()
+        || bulk_dmi.is_some())
+    {
         errors.push(
-            "the current FEM eigen baseline requires at least one of Exchange, Demag, or Zeeman"
+            "the current FEM eigen baseline requires at least one of Exchange, Demag, Zeeman, InterfacialDmi, or BulkDmi"
                 .to_string(),
         );
     }
@@ -1047,13 +1066,88 @@ pub(crate) fn plan_fem_eigen(
                 .to_string(),
         );
     }
-    if matches!(spin_wave_bc, fullmag_ir::SpinWaveBoundaryConditionIR::Periodic) {
-        errors.push(
-            "spin_wave_bc='periodic' is not yet executable in the FEM eigen baseline; \
-             periodic Bloch BC requires a mesh with matched periodic node pairs which \
-             is not yet supported by the mesh generator."
-                .to_string(),
-        );
+    match spin_wave_bc.kind() {
+        fullmag_ir::SpinWaveBoundaryKindIR::Periodic => {
+            let has_pairs = if let Some(pair_id) = spin_wave_bc.boundary_pair_id() {
+                mesh_parts.iter().any(|(_, mesh)| {
+                    mesh.periodic_node_pairs
+                        .iter()
+                        .any(|pair| pair.pair_id == pair_id)
+                })
+            } else if let Some(domain_asset) = resolved_domain_mesh_asset.as_ref() {
+                !domain_asset.mesh.periodic_node_pairs.is_empty()
+            } else {
+                mesh_parts
+                    .iter()
+                    .any(|(_, mesh)| !mesh.periodic_node_pairs.is_empty())
+            };
+            if !has_pairs {
+                errors.push(
+                    "spin_wave_bc.kind='periodic' requires mesh.periodic_node_pairs metadata"
+                        .to_string(),
+                );
+            }
+        }
+        fullmag_ir::SpinWaveBoundaryKindIR::Floquet => {
+            let has_pairs = if let Some(pair_id) = spin_wave_bc.boundary_pair_id() {
+                mesh_parts.iter().any(|(_, mesh)| {
+                    mesh.periodic_node_pairs
+                        .iter()
+                        .any(|pair| pair.pair_id == pair_id)
+                })
+            } else if let Some(domain_asset) = resolved_domain_mesh_asset.as_ref() {
+                !domain_asset.mesh.periodic_node_pairs.is_empty()
+            } else {
+                mesh_parts
+                    .iter()
+                    .any(|(_, mesh)| !mesh.periodic_node_pairs.is_empty())
+            };
+            if !has_pairs {
+                errors.push(
+                    "spin_wave_bc.kind='floquet' requires mesh.periodic_node_pairs metadata"
+                        .to_string(),
+                );
+            }
+            if !matches!(k_sampling, Some(fullmag_ir::KSamplingIR::Single { .. })) {
+                errors.push(
+                    "spin_wave_bc.kind='floquet' requires k_sampling=Single{ k_vector = [...] }"
+                        .to_string(),
+                );
+            }
+        }
+        fullmag_ir::SpinWaveBoundaryKindIR::SurfaceAnisotropy => {
+            if spin_wave_bc.surface_anisotropy_ks().is_none_or(|ks| !ks.is_finite() || ks <= 0.0) {
+                errors.push(
+                    "spin_wave_bc.kind='surface_anisotropy' requires surface_anisotropy_ks > 0"
+                        .to_string(),
+                );
+            }
+            if spin_wave_bc
+                .surface_anisotropy_axis()
+                .is_none_or(|axis| axis.iter().all(|component| component.abs() <= 1e-30))
+            {
+                errors.push(
+                    "spin_wave_bc.kind='surface_anisotropy' requires a non-zero surface_anisotropy_axis"
+                        .to_string(),
+                );
+            }
+            if mesh_parts.iter().any(|(_, mesh)| {
+                mesh.element_markers.iter().any(|&marker| marker == 0)
+                    && mesh.element_markers.iter().any(|&marker| marker != 0)
+            }) || resolved_domain_mesh_asset
+                .as_ref()
+                .is_some_and(|domain| {
+                    domain.mesh.element_markers.iter().any(|&marker| marker == 0)
+                        && domain.mesh.element_markers.iter().any(|&marker| marker != 0)
+                })
+            {
+                errors.push(
+                    "spin_wave_bc.kind='surface_anisotropy' currently requires a standalone magnetic mesh; shared-domain airbox meshes do not yet expose magnetic interface faces"
+                        .to_string(),
+                );
+            }
+        }
+        _ => {}
     }
 
     validate_eigen_outputs(&problem.study.sampling().outputs, &mut errors);
@@ -1218,11 +1312,13 @@ pub(crate) fn plan_fem_eigen(
         damping_policy: *damping_policy,
         enable_exchange,
         enable_demag: enable_demag && operator.include_demag,
+        interfacial_dmi,
+        bulk_dmi,
         external_field,
         gyromagnetic_ratio,
         precision: problem.backend_policy.execution_precision,
         exchange_bc: ExchangeBoundaryCondition::Neumann,
-        spin_wave_bc: *spin_wave_bc,
+        spin_wave_bc: spin_wave_bc.clone(),
         demag_realization: resolved_demag_realization,
     };
 

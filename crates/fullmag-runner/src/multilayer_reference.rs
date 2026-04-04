@@ -880,6 +880,7 @@ mod tests {
                         saturation_magnetisation: 800e3,
                         exchange_stiffness: 13e-12,
                         damping: 0.1,
+                        ..Default::default()
                     },
                     convolution_grid: [4, 4, 1],
                     convolution_cell_size: [2e-9, 2e-9, 1e-9],
@@ -898,6 +899,7 @@ mod tests {
                         saturation_magnetisation: 800e3,
                         exchange_stiffness: 13e-12,
                         damping: 0.1,
+                        ..Default::default()
                     },
                     convolution_grid: [4, 4, 1],
                     convolution_cell_size: [2e-9, 2e-9, 1e-9],

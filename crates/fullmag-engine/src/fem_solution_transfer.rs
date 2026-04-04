@@ -402,6 +402,7 @@ mod tests {
             magnetic_element_mask: vec![true; n_elements],
             boundary_faces: vec![],
             boundary_nodes: vec![],
+            periodic_node_pairs: Vec::new(),
             element_volumes: vec![0.0; n_elements],
             node_volumes: vec![0.0; n_nodes],
             magnetic_node_volumes: vec![0.0; n_nodes],

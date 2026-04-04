@@ -1022,6 +1022,7 @@ mod tests {
                 saturation_magnetisation: 800e3,
                 exchange_stiffness: 13e-12,
                 damping: 0.5,
+                ..Default::default()
             },
             gyromagnetic_ratio: 2.211e5,
             precision: ExecutionPrecision::Double,
@@ -1054,6 +1055,8 @@ mod tests {
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             temperature: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
         }
     }
 
@@ -1364,7 +1367,9 @@ mod tests {
             element_markers: vec![1, 0],
             boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
             boundary_markers: vec![1, 99],
-            per_domain_quality: std::collections::HashMap::new(),
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+per_domain_quality: std::collections::HashMap::new(),
         };
 
         let magnetization_mask = crate::preview::mesh_quantity_active_mask("m", &mesh)

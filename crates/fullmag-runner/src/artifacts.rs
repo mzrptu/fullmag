@@ -318,6 +318,7 @@ mod tests {
                     saturation_magnetisation: 800e3,
                     exchange_stiffness: 13e-12,
                     damping: 0.02,
+                    ..Default::default()
                 },
                 enable_exchange: true,
                 enable_demag: true,
@@ -350,6 +351,8 @@ mod tests {
                 oersted_time_dep_t_on: 0.0,
                 oersted_time_dep_t_off: 0.0,
                 temperature: None,
+                interfacial_dmi: None,
+                bulk_dmi: None,
             }),
             output_plan: OutputPlanIR {
                 outputs: Vec::new(),

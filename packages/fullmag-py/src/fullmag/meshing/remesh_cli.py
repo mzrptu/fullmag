@@ -146,6 +146,7 @@ def _mesh_result_payload(
     size_field_stats: dict[str, Any] | None = None,
     region_markers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    mesh_ir = mesh_data.to_ir(mesh_name)
     result: dict[str, Any] = {
         "mesh_name": mesh_name,
         "nodes": mesh_data.nodes.tolist(),
@@ -153,6 +154,8 @@ def _mesh_result_payload(
         "element_markers": mesh_data.element_markers.tolist(),
         "boundary_faces": mesh_data.boundary_faces.tolist(),
         "boundary_markers": mesh_data.boundary_markers.tolist(),
+        "periodic_boundary_pairs": list(mesh_ir.get("periodic_boundary_pairs", [])),
+        "periodic_node_pairs": list(mesh_ir.get("periodic_node_pairs", [])),
         "generation_mode": generation_mode,
         "mesh_provenance": mesh_provenance,
     }

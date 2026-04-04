@@ -3733,6 +3733,7 @@ mod tests {
                 saturation_magnetisation: 800e3,
                 exchange_stiffness: 13e-12,
                 damping: 0.5,
+                ..Default::default()
             },
             enable_exchange: true,
             enable_demag: false,
@@ -3764,6 +3765,8 @@ mod tests {
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             temperature: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
             inter_region_exchange: vec![],
         })
     }
@@ -3784,6 +3787,9 @@ mod tests {
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
+                periodic_boundary_pairs: Vec::new(),
+                periodic_node_pairs: Vec::new(),
+                per_domain_quality: Default::default(),
             },
             object_segments: Vec::new(),
             mesh_parts: Vec::new(),
@@ -3874,6 +3880,9 @@ mod tests {
                 element_markers: vec![1, 2],
                 boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
                 boundary_markers: vec![1, 2],
+                periodic_boundary_pairs: Vec::new(),
+                periodic_node_pairs: Vec::new(),
+                per_domain_quality: Default::default(),
             },
             object_segments: vec![
                 FemObjectSegmentIR {
@@ -4005,7 +4014,10 @@ mod tests {
                         element_markers: Vec::new(),
                         boundary_faces: Vec::new(),
                         boundary_markers: Vec::new(),
-                    }),
+                    periodic_boundary_pairs: Vec::new(),
+                    periodic_node_pairs: Vec::new(),
+                    per_domain_quality: Default::default(),
+                }),
                     region_markers: Vec::new(),
                 }),
             }),
@@ -4121,6 +4133,9 @@ mod tests {
             element_markers: vec![1],
             boundary_faces: vec![[0, 1, 2]],
             boundary_markers: vec![7],
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+            per_domain_quality: Default::default(),
         };
 
         apply_current_fem_overrides(&mut problem, Some(&new_mesh), Some(2.5), None);

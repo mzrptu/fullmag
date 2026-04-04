@@ -357,6 +357,8 @@ class MeshData:
     element_markers: NDArray[np.int32]
     boundary_faces: NDArray[np.int32]
     boundary_markers: NDArray[np.int32]
+    periodic_boundary_pairs: list[dict[str, object]] = field(default_factory=list)
+    periodic_node_pairs: list[dict[str, object]] = field(default_factory=list)
     quality: MeshQualityReport | None = None
     per_domain_quality: dict[int, MeshQualityReport] | None = None
 
@@ -366,6 +368,16 @@ class MeshData:
         object.__setattr__(self, "element_markers", np.asarray(self.element_markers, dtype=np.int32))
         object.__setattr__(self, "boundary_faces", np.asarray(self.boundary_faces, dtype=np.int32))
         object.__setattr__(self, "boundary_markers", np.asarray(self.boundary_markers, dtype=np.int32))
+        object.__setattr__(
+            self,
+            "periodic_boundary_pairs",
+            [dict(pair) for pair in self.periodic_boundary_pairs],
+        )
+        object.__setattr__(
+            self,
+            "periodic_node_pairs",
+            [dict(pair) for pair in self.periodic_node_pairs],
+        )
         self.validate()
 
     @property
@@ -399,6 +411,19 @@ class MeshData:
             self.boundary_faces.min() < 0 or self.boundary_faces.max() >= self.n_nodes
         ):
             raise ValueError("boundary_faces contain invalid node indices")
+        for index, pair in enumerate(self.periodic_boundary_pairs):
+            if not isinstance(pair.get("pair_id"), str) or not str(pair.get("pair_id")).strip():
+                raise ValueError(f"periodic_boundary_pairs[{index}] must define a non-empty pair_id")
+        for index, pair in enumerate(self.periodic_node_pairs):
+            pair_id = pair.get("pair_id")
+            if not isinstance(pair_id, str) or not pair_id.strip():
+                raise ValueError(f"periodic_node_pairs[{index}] must define a non-empty pair_id")
+            node_a = int(pair.get("node_a", -1))
+            node_b = int(pair.get("node_b", -1))
+            if node_a < 0 or node_a >= self.n_nodes or node_b < 0 or node_b >= self.n_nodes:
+                raise ValueError(f"periodic_node_pairs[{index}] contain invalid node indices")
+            if node_a == node_b:
+                raise ValueError(f"periodic_node_pairs[{index}] must connect distinct nodes")
 
     def save(self, path: str | Path) -> None:
         target = Path(path)
@@ -413,6 +438,8 @@ class MeshData:
                         "element_markers": self.element_markers.tolist(),
                         "boundary_faces": self.boundary_faces.tolist(),
                         "boundary_markers": self.boundary_markers.tolist(),
+                        "periodic_boundary_pairs": self.periodic_boundary_pairs,
+                        "periodic_node_pairs": self.periodic_node_pairs,
                     },
                     indent=2,
                 ),
@@ -516,6 +543,8 @@ class MeshData:
                 element_markers=np.asarray(payload["element_markers"], dtype=np.int32),
                 boundary_faces=np.asarray(payload["boundary_faces"], dtype=np.int32),
                 boundary_markers=np.asarray(payload["boundary_markers"], dtype=np.int32),
+                periodic_boundary_pairs=[dict(pair) for pair in payload.get("periodic_boundary_pairs", [])],
+                periodic_node_pairs=[dict(pair) for pair in payload.get("periodic_node_pairs", [])],
             )
 
         data = np.load(source)
@@ -536,6 +565,14 @@ class MeshData:
             "boundary_faces": self.boundary_faces.tolist(),
             "boundary_markers": self.boundary_markers.tolist(),
         }
+        periodic_boundary_pairs = self.periodic_boundary_pairs
+        periodic_node_pairs = self.periodic_node_pairs
+        if not periodic_boundary_pairs and not periodic_node_pairs:
+            periodic_boundary_pairs, periodic_node_pairs = _infer_axis_aligned_periodic_pairs(self)
+        if periodic_boundary_pairs:
+            ir["periodic_boundary_pairs"] = periodic_boundary_pairs
+        if periodic_node_pairs:
+            ir["periodic_node_pairs"] = periodic_node_pairs
         if self.per_domain_quality is not None:
             ir["per_domain_quality"] = {
                 str(marker): {
@@ -557,6 +594,104 @@ class MeshData:
                 for marker, q in self.per_domain_quality.items()
             }
         return ir
+
+
+def _infer_axis_aligned_periodic_pairs(
+    mesh: MeshData,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    if mesh.boundary_faces.size == 0 or mesh.nodes.size == 0:
+        return [], []
+
+    boundary_node_indices = np.unique(mesh.boundary_faces.reshape(-1))
+    boundary_nodes = mesh.nodes[boundary_node_indices]
+    if boundary_nodes.size == 0:
+        return [], []
+
+    bounds_min = boundary_nodes.min(axis=0)
+    bounds_max = boundary_nodes.max(axis=0)
+    span = bounds_max - bounds_min
+    tol = max(float(np.max(span)) * 1e-6, 1e-12)
+
+    periodic_boundary_pairs: list[dict[str, object]] = []
+    periodic_node_pairs: list[dict[str, object]] = []
+    axis_labels = ("x", "y", "z")
+
+    face_marker_map: dict[tuple[int, ...], int] = {}
+    for face, marker in zip(mesh.boundary_faces, mesh.boundary_markers, strict=False):
+        face_marker_map[tuple(sorted(int(node) for node in face.tolist()))] = int(marker)
+
+    for axis, axis_label in enumerate(axis_labels):
+        if not np.isfinite(span[axis]) or span[axis] <= tol:
+            continue
+
+        min_mask = np.abs(boundary_nodes[:, axis] - bounds_min[axis]) <= tol
+        max_mask = np.abs(boundary_nodes[:, axis] - bounds_max[axis]) <= tol
+        if not np.any(min_mask) or not np.any(max_mask):
+            continue
+
+        min_nodes = boundary_node_indices[min_mask]
+        max_nodes = boundary_node_indices[max_mask]
+        if len(min_nodes) != len(max_nodes):
+            continue
+
+        other_axes = [candidate for candidate in range(3) if candidate != axis]
+        min_map: dict[tuple[int, int], int] = {}
+        max_map: dict[tuple[int, int], int] = {}
+        key_tol_0 = max(float(span[other_axes[0]]) * 1e-6, tol)
+        key_tol_1 = max(float(span[other_axes[1]]) * 1e-6, tol)
+
+        for node in min_nodes:
+            coord = mesh.nodes[int(node)]
+            key = (
+                int(round(coord[other_axes[0]] / key_tol_0)),
+                int(round(coord[other_axes[1]] / key_tol_1)),
+            )
+            min_map[key] = int(node)
+        for node in max_nodes:
+            coord = mesh.nodes[int(node)]
+            key = (
+                int(round(coord[other_axes[0]] / key_tol_0)),
+                int(round(coord[other_axes[1]] / key_tol_1)),
+            )
+            max_map[key] = int(node)
+
+        shared_keys = sorted(set(min_map).intersection(max_map))
+        if len(shared_keys) != len(min_nodes) or len(shared_keys) != len(max_nodes):
+            continue
+
+        min_marker_values = {
+            face_marker_map[tuple(sorted(int(node) for node in face.tolist()))]
+            for face in mesh.boundary_faces
+            if np.all(np.abs(mesh.nodes[face, axis] - bounds_min[axis]) <= tol)
+            and tuple(sorted(int(node) for node in face.tolist())) in face_marker_map
+        }
+        max_marker_values = {
+            face_marker_map[tuple(sorted(int(node) for node in face.tolist()))]
+            for face in mesh.boundary_faces
+            if np.all(np.abs(mesh.nodes[face, axis] - bounds_max[axis]) <= tol)
+            and tuple(sorted(int(node) for node in face.tolist())) in face_marker_map
+        }
+        marker_a = min(min_marker_values) if min_marker_values else int(mesh.boundary_markers.min())
+        marker_b = min(max_marker_values) if max_marker_values else int(mesh.boundary_markers.max())
+
+        pair_id = f"{axis_label}_faces"
+        periodic_boundary_pairs.append(
+            {
+                "pair_id": pair_id,
+                "marker_a": marker_a,
+                "marker_b": marker_b,
+            }
+        )
+        for key in shared_keys:
+            periodic_node_pairs.append(
+                {
+                    "pair_id": pair_id,
+                    "node_a": min_map[key],
+                    "node_b": max_map[key],
+                }
+            )
+
+    return periodic_boundary_pairs, periodic_node_pairs
 
 
 def _add_airbox_geo(

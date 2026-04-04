@@ -18,6 +18,7 @@ fullmag-ir = { path = "../fullmag-ir" }
 fullmag-plan = { path = "../fullmag-plan" }
 rayon = "1.10"
 nalgebra = "0.33"
+num-complex = "0.4"
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }

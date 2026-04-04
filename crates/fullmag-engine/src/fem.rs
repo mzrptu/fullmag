@@ -17,6 +17,7 @@ pub struct MeshTopology {
     pub magnetic_element_mask: Vec<bool>,
     pub boundary_faces: Vec<[u32; 3]>,
     pub boundary_nodes: Vec<u32>,
+    pub periodic_node_pairs: Vec<(String, u32, u32)>,
     pub element_volumes: Vec<f64>,
     pub node_volumes: Vec<f64>,
     pub magnetic_node_volumes: Vec<f64>,
@@ -143,6 +144,11 @@ impl MeshTopology {
             magnetic_element_mask,
             boundary_faces: mesh.boundary_faces.clone(),
             boundary_nodes,
+            periodic_node_pairs: mesh
+                .periodic_node_pairs
+                .iter()
+                .map(|pair| (pair.pair_id.clone(), pair.node_a, pair.node_b))
+                .collect(),
             total_volume,
             magnetic_total_volume,
             robin_beta,
@@ -1961,7 +1967,9 @@ mod tests {
             element_markers: vec![1],
             boundary_faces: vec![[0, 1, 2]],
             boundary_markers: vec![1],
-            per_domain_quality: std::collections::HashMap::new(),
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+per_domain_quality: std::collections::HashMap::new(),
         };
         let topology = MeshTopology::from_ir(&mesh).expect("unit tet topology");
         FemLlgProblem::with_terms(
@@ -2015,7 +2023,9 @@ mod tests {
                 [1, 5, 6],
             ],
             boundary_markers: vec![1; 12],
-            per_domain_quality: std::collections::HashMap::new(),
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+per_domain_quality: std::collections::HashMap::new(),
         };
         let topology = MeshTopology::from_ir(&mesh).expect("coarse box topology");
         FemLlgProblem::with_terms(
@@ -2069,7 +2079,9 @@ mod tests {
                 [1, 5, 6],
             ],
             boundary_markers: vec![1; 12],
-            per_domain_quality: std::collections::HashMap::new(),
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+per_domain_quality: std::collections::HashMap::new(),
         };
         let topology = MeshTopology::from_ir(&mesh).expect("coarse box topology");
         FemLlgProblem::with_terms_and_demag_transfer_grid(

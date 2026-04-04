@@ -46,6 +46,10 @@ pub(crate) fn plan_fdm(
                 }
                 external_field = Some([b[0] / MU0, b[1] / MU0, b[2] / MU0]);
             }
+            // Terms handled in the post-plan mapping loop below:
+            EnergyTermIR::OerstedCylinder { .. }
+            | EnergyTermIR::InterfacialDmi { .. }
+            | EnergyTermIR::BulkDmi { .. } => {}
             other => {
                 errors.push(format!(
                     "energy term '{:?}' is semantic-only in the current FDM executable path",
@@ -361,6 +365,14 @@ pub(crate) fn plan_fdm(
             saturation_magnetisation: material.saturation_magnetisation,
             exchange_stiffness: material.exchange_stiffness,
             damping: material.damping,
+            uniaxial_anisotropy_ku1: material.uniaxial_anisotropy,
+            uniaxial_anisotropy_ku2: material.uniaxial_anisotropy_k2,
+            anisotropy_axis: material.anisotropy_axis,
+            cubic_anisotropy_kc1: material.cubic_anisotropy_kc1,
+            cubic_anisotropy_kc2: material.cubic_anisotropy_kc2,
+            cubic_anisotropy_kc3: material.cubic_anisotropy_kc3,
+            cubic_anisotropy_axis1: material.cubic_anisotropy_axis1,
+            cubic_anisotropy_axis2: material.cubic_anisotropy_axis2,
         },
         enable_exchange,
         enable_demag,
@@ -398,48 +410,57 @@ pub(crate) fn plan_fdm(
         oersted_time_dep_t_on: 0.0,
         oersted_time_dep_t_off: 0.0,
         temperature: problem.temperature,
+        interfacial_dmi: None,
+        bulk_dmi: None,
     };
 
     for term in &problem.energy_terms {
-        if let EnergyTermIR::OerstedCylinder {
-            current,
-            radius,
-            center,
-            axis,
-            time_dependence,
-        } = term
-        {
-            fdm_plan.has_oersted_cylinder = true;
-            fdm_plan.oersted_current = Some(*current);
-            fdm_plan.oersted_radius = Some(*radius);
-            fdm_plan.oersted_center = Some(*center);
-            fdm_plan.oersted_axis = Some(*axis);
-            if let Some(td) = time_dependence {
-                match td {
-                    TimeDependenceIR::Constant => {
-                        fdm_plan.oersted_time_dep_kind = 0;
-                    }
-                    TimeDependenceIR::Sinusoidal {
-                        frequency_hz,
-                        phase_rad,
-                        offset,
-                    } => {
-                        fdm_plan.oersted_time_dep_kind = 1;
-                        fdm_plan.oersted_time_dep_freq = *frequency_hz;
-                        fdm_plan.oersted_time_dep_phase = *phase_rad;
-                        fdm_plan.oersted_time_dep_offset = *offset;
-                    }
-                    TimeDependenceIR::Pulse { t_on, t_off } => {
-                        fdm_plan.oersted_time_dep_kind = 2;
-                        fdm_plan.oersted_time_dep_t_on = *t_on;
-                        fdm_plan.oersted_time_dep_t_off = *t_off;
-                    }
-                    TimeDependenceIR::PiecewiseLinear { .. } => {
-                        fdm_plan.oersted_time_dep_kind = 0;
+        match term {
+            EnergyTermIR::OerstedCylinder {
+                current,
+                radius,
+                center,
+                axis,
+                time_dependence,
+            } => {
+                fdm_plan.has_oersted_cylinder = true;
+                fdm_plan.oersted_current = Some(*current);
+                fdm_plan.oersted_radius = Some(*radius);
+                fdm_plan.oersted_center = Some(*center);
+                fdm_plan.oersted_axis = Some(*axis);
+                if let Some(td) = time_dependence {
+                    match td {
+                        TimeDependenceIR::Constant => {
+                            fdm_plan.oersted_time_dep_kind = 0;
+                        }
+                        TimeDependenceIR::Sinusoidal {
+                            frequency_hz,
+                            phase_rad,
+                            offset,
+                        } => {
+                            fdm_plan.oersted_time_dep_kind = 1;
+                            fdm_plan.oersted_time_dep_freq = *frequency_hz;
+                            fdm_plan.oersted_time_dep_phase = *phase_rad;
+                            fdm_plan.oersted_time_dep_offset = *offset;
+                        }
+                        TimeDependenceIR::Pulse { t_on, t_off } => {
+                            fdm_plan.oersted_time_dep_kind = 2;
+                            fdm_plan.oersted_time_dep_t_on = *t_on;
+                            fdm_plan.oersted_time_dep_t_off = *t_off;
+                        }
+                        TimeDependenceIR::PiecewiseLinear { .. } => {
+                            fdm_plan.oersted_time_dep_kind = 0;
+                        }
                     }
                 }
             }
-            break;
+            EnergyTermIR::InterfacialDmi { d } => {
+                fdm_plan.interfacial_dmi = Some(*d);
+            }
+            EnergyTermIR::BulkDmi { d } => {
+                fdm_plan.bulk_dmi = Some(*d);
+            }
+            _ => {}
         }
     }
 
@@ -773,6 +794,14 @@ pub(crate) fn plan_fdm_multilayer(
                 saturation_magnetisation: material.saturation_magnetisation,
                 exchange_stiffness: material.exchange_stiffness,
                 damping: material.damping,
+                uniaxial_anisotropy_ku1: material.uniaxial_anisotropy,
+                uniaxial_anisotropy_ku2: material.uniaxial_anisotropy_k2,
+                anisotropy_axis: material.anisotropy_axis,
+                cubic_anisotropy_kc1: material.cubic_anisotropy_kc1,
+                cubic_anisotropy_kc2: material.cubic_anisotropy_kc2,
+                cubic_anisotropy_kc3: material.cubic_anisotropy_kc3,
+                cubic_anisotropy_axis1: material.cubic_anisotropy_axis1,
+                cubic_anisotropy_axis2: material.cubic_anisotropy_axis2,
             },
         });
     }

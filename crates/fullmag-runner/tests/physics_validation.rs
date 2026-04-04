@@ -27,6 +27,7 @@ fn permalloy() -> FdmMaterialIR {
         saturation_magnetisation: 800e3, // A/m
         exchange_stiffness: 13e-12,      // J/m
         damping: 0.5,                    // overdamped for relaxation
+        ..Default::default()
     }
 }
 
@@ -116,6 +117,8 @@ fn sp4_plan(algorithm: RelaxationAlgorithmIR, damping: f64, enable_demag: bool) 
         oersted_time_dep_t_on: 0.0,
         oersted_time_dep_t_off: 0.0,
         temperature: None,
+        interfacial_dmi: None,
+        bulk_dmi: None,
     }
 }
 
@@ -176,6 +179,8 @@ fn uniform_field_alignment() {
         oersted_time_dep_t_on: 0.0,
         oersted_time_dep_t_off: 0.0,
         temperature: None,
+        interfacial_dmi: None,
+        bulk_dmi: None,
     };
 
     let result = fullmag_runner::run_reference_fdm(&plan, 1e-9, &[]).expect("run should succeed");
@@ -244,6 +249,8 @@ fn exchange_only_random_to_uniform() {
         oersted_time_dep_t_on: 0.0,
         oersted_time_dep_t_off: 0.0,
         temperature: None,
+        interfacial_dmi: None,
+        bulk_dmi: None,
     };
 
     let result = fullmag_runner::run_reference_fdm(&plan, 1e-9, &[]).expect("run should succeed");
@@ -327,6 +334,8 @@ fn thin_film_shape_anisotropy() {
         oersted_time_dep_t_on: 0.0,
         oersted_time_dep_t_off: 0.0,
         temperature: None,
+        interfacial_dmi: None,
+        bulk_dmi: None,
     };
 
     let result = fullmag_runner::run_reference_fdm(&plan, 10e-9, &[]).expect("run should succeed");
@@ -526,6 +535,8 @@ fn sp4_reversal_dynamics() {
         oersted_time_dep_t_on: 0.0,
         oersted_time_dep_t_off: 0.0,
         temperature: None,
+        interfacial_dmi: None,
+        bulk_dmi: None,
     };
 
     let dyn_result = fullmag_runner::run_reference_fdm(&dyn_plan, 1e-9, &[])
@@ -639,6 +650,8 @@ fn cube_mesh(side_nm: f64) -> MeshIR {
         element_markers,
         boundary_faces,
         boundary_markers,
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
         per_domain_quality: std::collections::HashMap::new(),
     }
 }
@@ -702,10 +715,13 @@ fn fem_eigen_smoke_completes_without_errors() {
         damping_policy: EigenDampingPolicyIR::Ignore,
         enable_exchange: true,
         enable_demag: false,
+        interfacial_dmi: None,
+        bulk_dmi: None,
         external_field: Some([39_789.0, 0.0, 0.0]), // ≈ 50 mT
         gyromagnetic_ratio: 2.211e5,
         precision: ExecutionPrecision::Double,
         exchange_bc: ExchangeBoundaryCondition::Neumann,
+        spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
         demag_realization: None,
     };
 
@@ -789,10 +805,13 @@ fn fem_eigen_lowest_mode_order_of_magnitude() {
         damping_policy: EigenDampingPolicyIR::Ignore,
         enable_exchange: true,
         enable_demag: false,
+        interfacial_dmi: None,
+        bulk_dmi: None,
         external_field: Some([h_x, 0.0, 0.0]),
         gyromagnetic_ratio: gamma,
         precision: ExecutionPrecision::Double,
         exchange_bc: ExchangeBoundaryCondition::Neumann,
+        spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
         demag_realization: None,
     };
 
@@ -854,10 +873,13 @@ fn fem_eigen_modes_are_non_trivial() {
         damping_policy: EigenDampingPolicyIR::Ignore,
         enable_exchange: true,
         enable_demag: false,
+        interfacial_dmi: None,
+        bulk_dmi: None,
         external_field: Some([39_789.0, 0.0, 0.0]),
         gyromagnetic_ratio: 2.211e5,
         precision: ExecutionPrecision::Double,
         exchange_bc: ExchangeBoundaryCondition::Neumann,
+        spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
         demag_realization: None,
     };
 
@@ -947,10 +969,13 @@ fn fem_eigen_frequency_is_stable_across_resolutions() {
             damping_policy: EigenDampingPolicyIR::Ignore,
             enable_exchange: true,
             enable_demag: false,
+            interfacial_dmi: None,
+            bulk_dmi: None,
             external_field: Some([h_x, 0.0, 0.0]),
             gyromagnetic_ratio: gamma,
             precision: ExecutionPrecision::Double,
             exchange_bc: ExchangeBoundaryCondition::Neumann,
+            spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
             demag_realization: None,
         };
         let outputs = vec![OutputIR::EigenSpectrum {
@@ -982,6 +1007,413 @@ fn fem_eigen_frequency_is_stable_across_resolutions() {
     assert!(
         ratio > 0.8 && ratio < 1.25,
         "20nm/40nm frequency ratio is {ratio:.3} — expected ~1.0 (uniform FMR mode is mesh-invariant)"
+    );
+}
+
+#[test]
+fn fem_eigen_periodic_k_zero_runs_with_periodic_node_pairs() {
+    let mut mesh = cube_mesh(20.0);
+    mesh.mesh_name = "periodic_cube".to_string();
+    mesh.periodic_boundary_pairs = vec![fullmag_ir::MeshPeriodicBoundaryPairIR {
+        pair_id: "x_faces".to_string(),
+        marker_a: 10,
+        marker_b: 11,
+    }];
+    mesh.periodic_node_pairs = vec![
+        fullmag_ir::MeshPeriodicNodePairIR {
+            pair_id: "x_faces".to_string(),
+            node_a: 0,
+            node_b: 1,
+        },
+        fullmag_ir::MeshPeriodicNodePairIR {
+            pair_id: "x_faces".to_string(),
+            node_a: 2,
+            node_b: 3,
+        },
+        fullmag_ir::MeshPeriodicNodePairIR {
+            pair_id: "x_faces".to_string(),
+            node_a: 4,
+            node_b: 5,
+        },
+        fullmag_ir::MeshPeriodicNodePairIR {
+            pair_id: "x_faces".to_string(),
+            node_a: 6,
+            node_b: 7,
+        },
+    ];
+    let plan = FemEigenPlanIR {
+        mesh_name: "periodic_cube".to_string(),
+        mesh_source: None,
+        mesh,
+        object_segments: Vec::new(),
+        mesh_parts: Vec::new(),
+        domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+        domain_frame: None,
+        fe_order: 1,
+        hmax: 20e-9,
+        equilibrium_magnetization: vec![[1.0, 0.0, 0.0]; 8],
+        material: fem_permalloy(),
+        operator: EigenOperatorConfigIR {
+            kind: EigenOperatorIR::LinearizedLlg,
+            include_demag: false,
+        },
+        count: 2,
+        target: EigenTargetIR::Lowest,
+        equilibrium: EquilibriumSourceIR::Provided,
+        k_sampling: Some(fullmag_ir::KSamplingIR::Single {
+            k_vector: [0.0, 0.0, 0.0],
+        }),
+        normalization: EigenNormalizationIR::UnitL2,
+        damping_policy: EigenDampingPolicyIR::Ignore,
+        enable_exchange: true,
+        enable_demag: false,
+        interfacial_dmi: None,
+        bulk_dmi: None,
+        external_field: Some([39_789.0, 0.0, 0.0]),
+        gyromagnetic_ratio: 2.211e5,
+        precision: ExecutionPrecision::Double,
+        exchange_bc: ExchangeBoundaryCondition::Neumann,
+        spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::Config(
+            fullmag_ir::SpinWaveBoundaryConfigIR {
+                kind: fullmag_ir::SpinWaveBoundaryKindIR::Periodic,
+                boundary_pair_id: Some("x_faces".to_string()),
+                surface_anisotropy_ks: None,
+                surface_anisotropy_axis: None,
+            },
+        ),
+        demag_realization: None,
+    };
+
+    let result = fullmag_runner::run_reference_fem_eigen(
+        &plan,
+        &[OutputIR::EigenSpectrum {
+            quantity: "eigenfrequency".to_string(),
+        }],
+    )
+    .expect("periodic k=0 FEM eigen solve should execute");
+
+    let spectrum = result
+        .artifact_bytes("eigen/spectrum.json")
+        .expect("spectrum artifact must exist");
+    let value: serde_json::Value = serde_json::from_slice(spectrum).expect("valid spectrum json");
+    assert_eq!(value["boundary_config"]["kind"].as_str(), Some("periodic"));
+    assert!(
+        value["solver_capabilities"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item.as_str() == Some("periodic_zero_phase")))
+    );
+}
+
+#[test]
+fn fem_eigen_floquet_runs_with_phase_aware_metadata() {
+    let mut mesh = cube_mesh(20.0);
+    mesh.mesh_name = "floquet_cube".to_string();
+    mesh.periodic_boundary_pairs = vec![fullmag_ir::MeshPeriodicBoundaryPairIR {
+        pair_id: "x_faces".to_string(),
+        marker_a: 10,
+        marker_b: 11,
+    }];
+    mesh.periodic_node_pairs = vec![
+        fullmag_ir::MeshPeriodicNodePairIR {
+            pair_id: "x_faces".to_string(),
+            node_a: 0,
+            node_b: 1,
+        },
+        fullmag_ir::MeshPeriodicNodePairIR {
+            pair_id: "x_faces".to_string(),
+            node_a: 2,
+            node_b: 3,
+        },
+        fullmag_ir::MeshPeriodicNodePairIR {
+            pair_id: "x_faces".to_string(),
+            node_a: 4,
+            node_b: 5,
+        },
+        fullmag_ir::MeshPeriodicNodePairIR {
+            pair_id: "x_faces".to_string(),
+            node_a: 6,
+            node_b: 7,
+        },
+    ];
+    let plan = FemEigenPlanIR {
+        mesh_name: "floquet_cube".to_string(),
+        mesh_source: None,
+        mesh,
+        object_segments: Vec::new(),
+        mesh_parts: Vec::new(),
+        domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+        domain_frame: None,
+        fe_order: 1,
+        hmax: 20e-9,
+        equilibrium_magnetization: vec![[1.0, 0.0, 0.0]; 8],
+        material: fem_permalloy(),
+        operator: EigenOperatorConfigIR {
+            kind: EigenOperatorIR::LinearizedLlg,
+            include_demag: false,
+        },
+        count: 2,
+        target: EigenTargetIR::Lowest,
+        equilibrium: EquilibriumSourceIR::Provided,
+        k_sampling: Some(fullmag_ir::KSamplingIR::Single {
+            k_vector: [5.0e7, 0.0, 0.0],
+        }),
+        normalization: EigenNormalizationIR::UnitL2,
+        damping_policy: EigenDampingPolicyIR::Ignore,
+        enable_exchange: true,
+        enable_demag: false,
+        interfacial_dmi: None,
+        bulk_dmi: None,
+        external_field: Some([39_789.0, 0.0, 0.0]),
+        gyromagnetic_ratio: 2.211e5,
+        precision: ExecutionPrecision::Double,
+        exchange_bc: ExchangeBoundaryCondition::Neumann,
+        spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::Config(
+            fullmag_ir::SpinWaveBoundaryConfigIR {
+                kind: fullmag_ir::SpinWaveBoundaryKindIR::Floquet,
+                boundary_pair_id: Some("x_faces".to_string()),
+                surface_anisotropy_ks: None,
+                surface_anisotropy_axis: None,
+            },
+        ),
+        demag_realization: None,
+    };
+
+    let result = fullmag_runner::run_reference_fem_eigen(
+        &plan,
+        &[OutputIR::EigenSpectrum {
+            quantity: "eigenfrequency".to_string(),
+        }],
+    )
+    .expect("floquet FEM eigen solve should execute");
+
+    let spectrum = result
+        .artifact_bytes("eigen/spectrum.json")
+        .expect("spectrum artifact must exist");
+    let value: serde_json::Value = serde_json::from_slice(spectrum).expect("valid spectrum json");
+    assert_eq!(value["boundary_config"]["kind"].as_str(), Some("floquet"));
+    assert_eq!(
+        value["solver_kind"].as_str(),
+        Some("cpu_phase_reduced_floquet")
+    );
+    assert!(
+        value["solver_limitations"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item.as_str() == Some("floquet_uses_phase_reduced_hermitian_block")))
+    );
+}
+
+#[test]
+fn fem_eigen_damping_include_emits_nonzero_imaginary_frequency() {
+    let mesh = cube_mesh(20.0);
+    let plan = FemEigenPlanIR {
+        mesh_name: mesh.mesh_name.clone(),
+        mesh_source: None,
+        mesh,
+        object_segments: Vec::new(),
+        mesh_parts: Vec::new(),
+        domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+        domain_frame: None,
+        fe_order: 1,
+        hmax: 20e-9,
+        equilibrium_magnetization: vec![[1.0, 0.0, 0.0]; 8],
+        material: fem_permalloy(),
+        operator: EigenOperatorConfigIR {
+            kind: EigenOperatorIR::LinearizedLlg,
+            include_demag: false,
+        },
+        count: 1,
+        target: EigenTargetIR::Lowest,
+        equilibrium: EquilibriumSourceIR::Provided,
+        k_sampling: None,
+        normalization: EigenNormalizationIR::UnitL2,
+        damping_policy: EigenDampingPolicyIR::Include,
+        enable_exchange: true,
+        enable_demag: false,
+        interfacial_dmi: None,
+        bulk_dmi: None,
+        external_field: Some([39_789.0, 0.0, 0.0]),
+        gyromagnetic_ratio: 2.211e5,
+        precision: ExecutionPrecision::Double,
+        exchange_bc: ExchangeBoundaryCondition::Neumann,
+        spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
+        demag_realization: None,
+    };
+    let result = fullmag_runner::run_reference_fem_eigen(
+        &plan,
+        &[OutputIR::EigenSpectrum {
+            quantity: "eigenfrequency".to_string(),
+        }],
+    )
+    .expect("damped FEM eigen solve should execute");
+
+    let spectrum = result
+        .artifact_bytes("eigen/spectrum.json")
+        .expect("spectrum artifact must exist");
+    let value: serde_json::Value = serde_json::from_slice(spectrum).expect("valid spectrum json");
+    let first_mode = &value["modes"][0];
+    assert!(first_mode["frequency_imag_hz"].as_f64().unwrap_or(0.0) < 0.0);
+}
+
+#[test]
+fn fem_eigen_surface_anisotropy_runs_and_reports_term() {
+    let mesh = cube_mesh(20.0);
+    let plan = FemEigenPlanIR {
+        mesh_name: mesh.mesh_name.clone(),
+        mesh_source: None,
+        mesh,
+        object_segments: Vec::new(),
+        mesh_parts: Vec::new(),
+        domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+        domain_frame: None,
+        fe_order: 1,
+        hmax: 20e-9,
+        equilibrium_magnetization: vec![[1.0, 0.0, 0.0]; 8],
+        material: fem_permalloy(),
+        operator: EigenOperatorConfigIR {
+            kind: EigenOperatorIR::LinearizedLlg,
+            include_demag: false,
+        },
+        count: 1,
+        target: EigenTargetIR::Lowest,
+        equilibrium: EquilibriumSourceIR::Provided,
+        k_sampling: None,
+        normalization: EigenNormalizationIR::UnitL2,
+        damping_policy: EigenDampingPolicyIR::Ignore,
+        enable_exchange: true,
+        enable_demag: false,
+        interfacial_dmi: None,
+        bulk_dmi: None,
+        external_field: Some([39_789.0, 0.0, 0.0]),
+        gyromagnetic_ratio: 2.211e5,
+        precision: ExecutionPrecision::Double,
+        exchange_bc: ExchangeBoundaryCondition::Neumann,
+        spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::Config(
+            fullmag_ir::SpinWaveBoundaryConfigIR {
+                kind: fullmag_ir::SpinWaveBoundaryKindIR::SurfaceAnisotropy,
+                boundary_pair_id: None,
+                surface_anisotropy_ks: Some(5.0e-4),
+                surface_anisotropy_axis: Some([0.0, 0.0, 1.0]),
+            },
+        ),
+        demag_realization: None,
+    };
+    let result = fullmag_runner::run_reference_fem_eigen(
+        &plan,
+        &[OutputIR::EigenSpectrum {
+            quantity: "eigenfrequency".to_string(),
+        }],
+    )
+    .expect("surface anisotropy FEM eigen solve should execute");
+
+    let spectrum = result
+        .artifact_bytes("eigen/spectrum.json")
+        .expect("spectrum artifact must exist");
+    let value: serde_json::Value = serde_json::from_slice(spectrum).expect("valid spectrum json");
+    assert_eq!(
+        value["included_terms"]["surface_anisotropy"].as_bool(),
+        Some(true)
+    );
+}
+
+#[test]
+fn fem_eigen_floquet_bulk_dmi_is_nonreciprocal_for_plus_minus_k() {
+    let build_plan = |kx: f64| {
+        let mut mesh = cube_mesh(20.0);
+        mesh.mesh_name = format!("floquet_bulk_dmi_{}", if kx >= 0.0 { "plus" } else { "minus" });
+        mesh.periodic_boundary_pairs = vec![fullmag_ir::MeshPeriodicBoundaryPairIR {
+            pair_id: "x_faces".to_string(),
+            marker_a: 10,
+            marker_b: 11,
+        }];
+        mesh.periodic_node_pairs = vec![
+            fullmag_ir::MeshPeriodicNodePairIR {
+                pair_id: "x_faces".to_string(),
+                node_a: 0,
+                node_b: 1,
+            },
+            fullmag_ir::MeshPeriodicNodePairIR {
+                pair_id: "x_faces".to_string(),
+                node_a: 2,
+                node_b: 3,
+            },
+            fullmag_ir::MeshPeriodicNodePairIR {
+                pair_id: "x_faces".to_string(),
+                node_a: 4,
+                node_b: 5,
+            },
+            fullmag_ir::MeshPeriodicNodePairIR {
+                pair_id: "x_faces".to_string(),
+                node_a: 6,
+                node_b: 7,
+            },
+        ];
+        FemEigenPlanIR {
+            mesh_name: mesh.mesh_name.clone(),
+            mesh_source: None,
+            mesh,
+            object_segments: Vec::new(),
+            mesh_parts: Vec::new(),
+            domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::MergedMagneticMesh,
+            domain_frame: None,
+            fe_order: 1,
+            hmax: 20e-9,
+            equilibrium_magnetization: vec![[1.0, 0.0, 0.0]; 8],
+            material: fem_permalloy(),
+            operator: EigenOperatorConfigIR {
+                kind: EigenOperatorIR::LinearizedLlg,
+                include_demag: false,
+            },
+            count: 1,
+            target: EigenTargetIR::Lowest,
+            equilibrium: EquilibriumSourceIR::Provided,
+            k_sampling: Some(fullmag_ir::KSamplingIR::Single {
+                k_vector: [kx, 0.0, 0.0],
+            }),
+            normalization: EigenNormalizationIR::UnitL2,
+            damping_policy: EigenDampingPolicyIR::Ignore,
+            enable_exchange: true,
+            enable_demag: false,
+            interfacial_dmi: None,
+            bulk_dmi: Some(2.5e-3),
+            external_field: Some([39_789.0, 0.0, 0.0]),
+            gyromagnetic_ratio: 2.211e5,
+            precision: ExecutionPrecision::Double,
+            exchange_bc: ExchangeBoundaryCondition::Neumann,
+            spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::Config(
+                fullmag_ir::SpinWaveBoundaryConfigIR {
+                    kind: fullmag_ir::SpinWaveBoundaryKindIR::Floquet,
+                    boundary_pair_id: Some("x_faces".to_string()),
+                    surface_anisotropy_ks: None,
+                    surface_anisotropy_axis: None,
+                },
+            ),
+            demag_realization: None,
+        }
+    };
+
+    let run_freq = |kx: f64| {
+        let plan = build_plan(kx);
+        let result = fullmag_runner::run_reference_fem_eigen(
+            &plan,
+            &[OutputIR::EigenSpectrum {
+                quantity: "eigenfrequency".to_string(),
+            }],
+        )
+        .expect("floquet bulk DMI FEM eigen solve should execute");
+        let spectrum = result
+            .artifact_bytes("eigen/spectrum.json")
+            .expect("spectrum artifact must exist");
+        let value: serde_json::Value = serde_json::from_slice(spectrum).expect("valid spectrum json");
+        value["modes"][0]["frequency_real_hz"]
+            .as_f64()
+            .expect("first mode frequency")
+    };
+
+    let f_plus = run_freq(5.0e7);
+    let f_minus = run_freq(-5.0e7);
+    assert!(
+        (f_plus - f_minus).abs() > 1.0,
+        "bulk DMI Floquet spectrum should be non-reciprocal, got f(+k)={f_plus:.6e}, f(-k)={f_minus:.6e}"
     );
 }
 
@@ -1031,10 +1463,13 @@ fn fem_eigen_demag_lowers_frequency() {
             damping_policy: EigenDampingPolicyIR::Ignore,
             enable_exchange: true,
             enable_demag: include_demag,
+            interfacial_dmi: None,
+            bulk_dmi: None,
             external_field: Some([h_x, 0.0, 0.0]),
             gyromagnetic_ratio: 2.211e5,
             precision: ExecutionPrecision::Double,
             exchange_bc: ExchangeBoundaryCondition::Neumann,
+            spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
             demag_realization: None,
         }
     };

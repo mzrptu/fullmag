@@ -375,6 +375,7 @@ mod tests {
                 saturation_magnetisation: 800e3,
                 exchange_stiffness: 13e-12,
                 damping: 0.5,
+                ..Default::default()
             },
             enable_exchange: true,
             enable_demag: false,
@@ -406,6 +407,8 @@ mod tests {
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             temperature: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
             inter_region_exchange: vec![],
         });
 
@@ -431,7 +434,10 @@ mod tests {
             element_markers: vec![1],
             boundary_faces: vec![[0, 1, 2]],
             boundary_markers: vec![1],
-        };
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: Default::default(),
+    };
         let plan = BackendPlanIR::Fem(FemPlanIR {
             mesh_name: mesh.mesh_name.clone(),
             mesh_source: None,
@@ -528,6 +534,7 @@ mod tests {
                 saturation_magnetisation: 800e3,
                 exchange_stiffness: 13e-12,
                 damping: 0.5,
+                ..Default::default()
             },
             enable_exchange: true,
             enable_demag: false,
@@ -559,6 +566,8 @@ mod tests {
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             temperature: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
             inter_region_exchange: vec![],
         };
 
@@ -594,6 +603,7 @@ mod tests {
                 saturation_magnetisation: 800e3,
                 exchange_stiffness: 13e-12,
                 damping: 0.0,
+                ..Default::default()
             },
             enable_exchange: false,
             enable_demag: false,
@@ -630,6 +640,8 @@ mod tests {
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             temperature: None,
+            interfacial_dmi: None,
+            bulk_dmi: None,
             inter_region_exchange: vec![],
         };
 

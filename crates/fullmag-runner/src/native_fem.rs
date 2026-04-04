@@ -173,7 +173,9 @@ impl NativeFemBackend {
             boundary_faces: boundary_flat.as_ptr(),
             n_boundary_faces: plan.mesh.boundary_faces.len() as u32,
             boundary_markers: plan.mesh.boundary_markers.as_ptr(),
-        };
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+};
 
         let material = ffi::fullmag_fem_material_desc {
             saturation_magnetisation: plan.material.saturation_magnetisation,
@@ -903,7 +905,9 @@ mod tests {
                 element_markers: vec![1],
                 boundary_faces: vec![[0, 1, 2]],
                 boundary_markers: vec![1],
-                per_domain_quality: std::collections::HashMap::new(),
+                periodic_boundary_pairs: Vec::new(),
+                periodic_node_pairs: Vec::new(),
+per_domain_quality: std::collections::HashMap::new(),
             },
             object_segments: Vec::new(),
             mesh_parts: Vec::new(),
@@ -998,7 +1002,9 @@ mod tests {
                     [4, 2, 3],
                 ],
                 boundary_markers: vec![1; 6],
-                per_domain_quality: std::collections::HashMap::new(),
+                periodic_boundary_pairs: Vec::new(),
+                periodic_node_pairs: Vec::new(),
+per_domain_quality: std::collections::HashMap::new(),
             },
             object_segments: Vec::new(),
             mesh_parts: Vec::new(),
