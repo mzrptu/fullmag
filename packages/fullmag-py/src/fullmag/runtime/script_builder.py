@@ -271,6 +271,11 @@ def _export_stage_draft(stage: LoadedStage) -> dict[str, object]:
             "torque_tolerance": "",
             "energy_tolerance": "",
             "max_steps": "",
+            "eigen_count": str(study.count),
+            "eigen_target": study.target,
+            "eigen_include_demag": study.include_demag,
+            "eigen_equilibrium_source": study.equilibrium_source,
+            "eigen_normalization": study.normalization,
         }
     return {
         "kind": "run",
@@ -1058,17 +1063,29 @@ def _render_stages(
         study = stage.problem.study
         stage_override = _stage_override_for(stage_overrides, index=index, stage=stage)
         if isinstance(study, Eigenmodes):
+            count_raw = _override_string(stage_override, "eigen_count", None)
+            count = study.count
+            if count_raw is not None:
+                try:
+                    count = int(count_raw)
+                except ValueError:
+                    pass
+            target = _override_string(stage_override, "eigen_target", study.target) or study.target
+            include_demag_ov = stage_override.get("eigen_include_demag")
+            include_demag = bool(include_demag_ov) if isinstance(include_demag_ov, bool) else study.include_demag
+            equilibrium_source = _override_string(stage_override, "eigen_equilibrium_source", study.equilibrium_source) or study.equilibrium_source
+            normalization = _override_string(stage_override, "eigen_normalization", study.normalization) or study.normalization
             call_parts = [
-                f"count={study.count}",
-                f"target={_py_repr(study.target)}",
+                f"count={count}",
+                f"target={_py_repr(target)}",
             ]
             if study.target_frequency is not None:
                 call_parts.append(f"target_frequency={_py_number(study.target_frequency)}")
-            call_parts.append(f"include_demag={study.include_demag!r}")
-            call_parts.append(f"equilibrium_source={_py_repr(study.equilibrium_source)}")
+            call_parts.append(f"include_demag={include_demag!r}")
+            call_parts.append(f"equilibrium_source={_py_repr(equilibrium_source)}")
             if study.equilibrium_artifact is not None:
                 call_parts.append(f"equilibrium_artifact={_py_repr(study.equilibrium_artifact)}")
-            call_parts.append(f"normalization={_py_repr(study.normalization)}")
+            call_parts.append(f"normalization={_py_repr(normalization)}")
             call_parts.append(f"damping_policy={_py_repr(study.damping_policy)}")
             if study.k_vector is not None:
                 call_parts.append(f"k_vector={study.k_vector!r}")

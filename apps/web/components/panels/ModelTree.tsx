@@ -357,6 +357,7 @@ export function buildFullmagModelTree(opts: {
   eigenModeCount?: number | null;
   /** Short summary labels for each computed eigenmode (e.g. "0 · 12.3 GHz · ip"). */
   eigenModeSummaries?: { index: number; label: string }[];
+  eigenHasDispersion?: boolean;
 }): TreeNodeData[] {
   const graph = opts.graph ?? null;
   const sceneDocument = opts.sceneDocument ?? null;
@@ -639,6 +640,14 @@ export function buildFullmagModelTree(opts: {
                     icon: "📊",
                     status: "ready" as const,
                   },
+                  ...(opts.eigenHasDispersion
+                    ? [{
+                        id: "res-eigenmodes-dispersion",
+                        label: "Dispersion",
+                        icon: "≈",
+                        status: "ready" as const,
+                      }]
+                    : []),
                   ...(opts.eigenModeSummaries ?? []).map((m) => ({
                     id: `res-eigenmode-${m.index}`,
                     label: m.label,

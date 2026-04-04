@@ -120,6 +120,12 @@ import {
   deriveMeshWorkspacePreset,
   type MeshWorkspacePresetId,
 } from "./meshWorkspace";
+import {
+  DEFAULT_ANALYZE_SELECTION,
+  nextAnalyzeRefresh,
+  type AnalyzeSelectionState,
+  type AnalyzeTab,
+} from "./analyzeSelection";
 export type {
   ActivityInfo,
   BackendErrorInfo,
@@ -284,6 +290,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [meshShowArrows, setMeshShowArrows] = useState(true);
   const [runUntilInput, setRunUntilInput] = useState("1e-12");
   const [selectedSidebarNodeId, setSelectedSidebarNodeId] = useState<string | null>(null);
+  const [analyzeSelection, setAnalyzeSelection] =
+    useState<AnalyzeSelectionState>(DEFAULT_ANALYZE_SELECTION);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [viewportScope, setViewportScope] = useState<ViewportScope>("universe");
   const [focusObjectRequest, setFocusObjectRequest] = useState<FocusObjectRequest | null>(null);
@@ -339,6 +347,31 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const workspaceHydrationKey = session
     ? `${session.started_at_unix_ms}:${session.run_id}:${session.script_path}:${sourceHash ?? "no-source-hash"}`
     : null;
+  const openAnalyze = useCallback((next?: Partial<AnalyzeSelectionState>) => {
+    startTransition(() => {
+      setViewMode("Analyze");
+    });
+    setAnalyzeSelection((prev) => ({
+      ...prev,
+      ...next,
+    }));
+  }, []);
+  const selectAnalyzeTab = useCallback((tab: AnalyzeTab) => {
+    setAnalyzeSelection((prev) => ({
+      ...prev,
+      tab,
+    }));
+  }, []);
+  const selectAnalyzeMode = useCallback((index: number | null) => {
+    setAnalyzeSelection((prev) => ({
+      ...prev,
+      tab: "modes",
+      selectedModeIndex: index,
+    }));
+  }, []);
+  const refreshAnalyze = useCallback(() => {
+    setAnalyzeSelection((prev) => nextAnalyzeRefresh(prev));
+  }, []);
   const run = state?.run ?? null;
   const liveState = state?.live_state ?? null;
   const displaySelection = state?.display_selection ?? null;
@@ -409,6 +442,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setSelectedSidebarNodeId(null);
+    setAnalyzeSelection(DEFAULT_ANALYZE_SELECTION);
     setSelectedObjectId(null);
     setViewportScope("universe");
     setFocusObjectRequest(null);
@@ -2818,9 +2852,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     magneticParts,
     airPart,
     interfaceParts,
+    analyzeSelection,
     setSolverSettings, setSceneDocument, setStudyStages, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
-    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, setAnalyzeSelection, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
     localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
@@ -2832,9 +2867,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder, liveMeshName,
     domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
-    selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart, magneticParts, airPart, interfaceParts, requestFocusObject,
+    selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart, magneticParts, airPart, interfaceParts, analyzeSelection, requestFocusObject,
     setSceneDocument, setStudyStages, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
-    handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze,
   ]);
 
   if (!state) {

@@ -11,6 +11,7 @@ import {
 import ModelTree, { buildFullmagModelTree } from "../../panels/ModelTree";
 import SettingsPanel from "../../panels/SettingsPanel";
 import { useCommand, useModel, useTransport, useViewport } from "./ControlRoomContext";
+import { parseAnalyzeTreeNode } from "./analyzeSelection";
 import {
   findTreeNodeById,
   previewQuantityForTreeNode,
@@ -18,6 +19,7 @@ import {
   resolveSelectedObjectId,
 } from "./shared";
 import { meshWorkspaceNodeToDockTab, meshWorkspaceNodeToPreset } from "./meshWorkspace";
+import { useCurrentAnalyzeArtifacts } from "./useCurrentAnalyzeArtifacts";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
@@ -113,9 +115,13 @@ export default function RunSidebar() {
     }
   }, [cmd.isFemBackend, model.worldExtentSource]);
   const runtimeDeclaredUniverse = model.domainFrame?.declared_universe ?? null;
+  const analyzeArtifacts = useCurrentAnalyzeArtifacts(model.analyzeSelection.refreshNonce);
 
   /* ── Derive eigen state from artifacts ── */
   const eigenModeCount = useMemo(() => {
+    if (analyzeArtifacts.spectrum) {
+      return analyzeArtifacts.spectrum.modes.length;
+    }
     const artifacts = cmd.artifacts ?? [];
     const hasSpectrum = artifacts.some(
       (a) => a.path === "eigen/spectrum.json" || a.path.startsWith("eigen/spectrum"),
@@ -123,7 +129,15 @@ export default function RunSidebar() {
     if (!hasSpectrum) return null;
     const modeCount = artifacts.filter((a) => a.path.startsWith("eigen/modes/mode_")).length;
     return modeCount > 0 ? modeCount : null;
-  }, [cmd.artifacts]);
+  }, [analyzeArtifacts.spectrum, cmd.artifacts]);
+  const eigenModeSummaries = useMemo(
+    () =>
+      analyzeArtifacts.spectrum?.modes.map((mode) => ({
+        index: mode.index,
+        label: `Mode ${mode.index} · ${(mode.frequency_hz / 1e9).toFixed(3)} GHz · ${mode.dominant_polarization}`,
+      })) ?? [],
+    [analyzeArtifacts.spectrum],
+  );
 
   /* ── Build model tree nodes ── */
   const modelTreeNodes = useMemo(
@@ -169,6 +183,8 @@ export default function RunSidebar() {
               : undefined,
         scalarRowCount: tp.scalarRows.length,
         eigenModeCount,
+        eigenModeSummaries,
+        eigenHasDispersion: analyzeArtifacts.dispersionRows.length > 0,
       }),
     [
       model.modelBuilderGraph, model.sceneDocument, model.effectiveFemMesh, tp.hasSolverTelemetry, cmd.isFemBackend, model.material,
@@ -176,7 +192,7 @@ export default function RunSidebar() {
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm,
       tp.effectiveDmDt, tp.scalarRows.length, model.worldCenter, model.worldExtent, runtimeDeclaredUniverse?.mode, runtimeDeclaredUniverse?.padding, runtimeDeclaredUniverse?.size,
-      universeRole, eigenModeCount, cmd.artifacts,
+      universeRole, eigenModeCount, eigenModeSummaries, analyzeArtifacts.dispersionRows.length, cmd.artifacts,
     ],
   );
 
@@ -243,6 +259,12 @@ export default function RunSidebar() {
       : activeAntennaName ?? "Workspace"));
 
   const selectModelNode = useCallback((id: string) => {
+    const analyzeTarget = parseAnalyzeTreeNode(id);
+    if (analyzeTarget) {
+      model.setSelectedSidebarNodeId(id);
+      model.openAnalyze(analyzeTarget);
+      return;
+    }
     const objectId = resolveSelectedObjectId(id, model.sceneDocument ?? model.modelBuilderGraph);
     model.setSelectedSidebarNodeId(id);
     model.setSelectedObjectId(objectId);
@@ -268,6 +290,9 @@ export default function RunSidebar() {
   /* ── Tree click handler ── */
   const handleTreeClick = useCallback((id: string) => {
     selectModelNode(id);
+    if (parseAnalyzeTreeNode(id)) {
+      return;
+    }
     // Ensure inspector is visible when a node is clicked
     const panel = inspectorPanelRef.current;
     if (panel?.isCollapsed()) {
@@ -321,10 +346,6 @@ export default function RunSidebar() {
       case "results": case "res-fields":
         if (cmd.isFemBackend && vp.effectiveViewMode === "Mesh") vp.setViewMode("3D");
         return;
-      case "res-eigenmodes":
-      case "res-eigenmodes-spectrum":
-        vp.setViewMode("Analyze");
-        return;
       case "antennas":
         // Show the inspector with AntennaPanel
         return;
@@ -336,11 +357,6 @@ export default function RunSidebar() {
             vp.requestPreviewQuantity("H_ant");
           }
           vp.setViewMode("3D");
-          return;
-        }
-        // Eigenmode nodes → switch to Analyze viewport
-        if (id.startsWith("res-eigenmode")) {
-          vp.setViewMode("Analyze");
           return;
         }
         // Per-object mesh nodes (e.g. "geo-nanoflower-mesh") → open mesh workspace

@@ -76,6 +76,7 @@ import type {
   SolverPlanSummary,
 } from "./types";
 import type { MeshWorkspacePresetId } from "./meshWorkspace";
+import type { AnalyzeSelectionState, AnalyzeTab } from "./analyzeSelection";
 
 /* ── Transport: high-frequency telemetry ── */
 export interface TransportContextValue {
@@ -295,6 +296,7 @@ export interface ModelContextValue {
   magneticParts: FemMeshPart[];
   airPart: FemMeshPart | null;
   interfaceParts: FemMeshPart[];
+  analyzeSelection: AnalyzeSelectionState;
   /* Actions */
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
   setSceneDocument: React.Dispatch<React.SetStateAction<SceneDocument | null>>;
@@ -326,6 +328,11 @@ export interface ModelContextValue {
   setMeshEntityViewState: React.Dispatch<React.SetStateAction<MeshEntityViewStateMap>>;
   setSelectedEntityId: (id: string | null) => void;
   setFocusedEntityId: (id: string | null) => void;
+  setAnalyzeSelection: React.Dispatch<React.SetStateAction<AnalyzeSelectionState>>;
+  openAnalyze: (next?: Partial<AnalyzeSelectionState>) => void;
+  selectAnalyzeTab: (tab: AnalyzeTab) => void;
+  selectAnalyzeMode: (index: number | null) => void;
+  refreshAnalyze: () => void;
   requestFocusObject: (objectId: string) => void;
   handleStudyDomainMeshGenerate: (meshReason?: string) => Promise<void>;
   handleAirboxMeshGenerate: () => Promise<void>;
