@@ -15,6 +15,7 @@ import {
   type GpuTelemetryResponse,
 } from "../../../lib/liveApiClient";
 import { useCurrentLiveStream } from "../../../lib/useSessionStream";
+import { useWorkspaceStore } from "../../../lib/workspace/workspace-store";
 import type {
   ArtifactEntry,
   CommandStatus,
@@ -271,6 +272,7 @@ export type {
   CommandContextValue,
   ModelContextValue,
   ControlRoomContextValue,
+  WorkspaceMode,
 } from "./context-hooks";
 import {
   TransportCtx,
@@ -283,6 +285,7 @@ import type {
   ViewportContextValue,
   CommandContextValue,
   ModelContextValue,
+  WorkspaceMode,
 } from "./context-hooks";
 
 /* ── Provider ── */
@@ -290,6 +293,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const { state, connection, error } = useCurrentLiveStream();
 
   /* ── Local UI state ── */
+  const workspaceMode = useWorkspaceStore((s) => s.mode);
+  const _setMode = useWorkspaceStore((s) => s.setMode);
+  const setWorkspaceMode = useCallback(
+    (v: WorkspaceMode | ((prev: WorkspaceMode) => WorkspaceMode)) => {
+      _setMode(typeof v === "function" ? v(workspaceMode) : v);
+    },
+    [_setMode, workspaceMode],
+  );
   const [viewMode, setViewMode] = useState<ViewportMode>("3D");
   const [component, setComponent] = useState<VectorComponent>("magnitude");
   const [plane, setPlane] = useState<SlicePlane>("xy");
@@ -2839,6 +2850,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   ]);
 
   const viewportValue = useMemo<ViewportContextValue>(() => ({
+    workspaceMode, setWorkspaceMode,
     viewMode, effectiveViewMode, component, plane, sliceIndex, selectedQuantity,
     consoleCollapsed, sidebarCollapsed,
     quantityOptions, previewQuantityOptions, quantityDescriptor, isVectorQuantity,
@@ -2856,6 +2868,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setConsoleCollapsed, setSidebarCollapsed,
     updatePreview, handleViewModeChange, handleCapture, handleExport, requestPreviewQuantity,
   }), [
+    workspaceMode,
     viewMode, effectiveViewMode, component, plane, sliceIndex, selectedQuantity,
     consoleCollapsed, sidebarCollapsed,
     quantityOptions, previewQuantityOptions, quantityDescriptor, isVectorQuantity,

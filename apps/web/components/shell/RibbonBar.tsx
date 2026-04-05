@@ -12,6 +12,7 @@ import {
   Tooltip, TooltipTrigger, TooltipContent, TooltipProvider,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import type { WorkspaceMode } from "../runs/control-room/context-hooks";
 
 /* ── Types ──────────────────────────────────────── */
 
@@ -98,6 +99,7 @@ interface RibbonBarProps {
   canSyncScriptBuilder?: boolean;
   scriptSyncBusy?: boolean;
   onSyncScriptBuilder?: () => void;
+  workspaceMode?: WorkspaceMode;
 }
 
 /* ── Tab inference from tree node ── */
@@ -511,11 +513,30 @@ RibbonActionTrigger.displayName = "RibbonActionTrigger";
 
 const TABS: RibbonTab[] = ["Home", "Mesh", "Study", "Results", "Builder"];
 
+/** Map workspace mode to its default ribbon tab (when no manual override). */
+function defaultTabForMode(mode: WorkspaceMode | undefined): RibbonTab {
+  switch (mode) {
+    case "build": return "Home";
+    case "study": return "Study";
+    case "runs": return "Results";
+    case "analyze":
+    default: return "Results";
+  }
+}
+
 /* ── Component ──────────────────────────────────── */
 
 export default function RibbonBar(props: RibbonBarProps) {
+  const modeDefaultTab = defaultTabForMode(props.workspaceMode);
   const inferredTab = inferTab(props.selectedNodeId);
+  // workspaceMode-driven default wins over tree-inferred tab, unless user has explicitly clicked a tab
+  const baseTab: RibbonTab = inferredTab !== "Home" ? inferredTab : modeDefaultTab;
   const [manualTab, setManualTab] = useState<RibbonTab | null>(null);
+
+  // Reset manual override when workspace mode changes
+  useEffect(() => {
+    setManualTab(null);
+  }, [props.workspaceMode]);
 
   useEffect(() => {
     if (manualTab && inferredTab !== manualTab) {
@@ -523,7 +544,7 @@ export default function RibbonBar(props: RibbonBarProps) {
     }
   }, [inferredTab, manualTab]);
 
-  const activeTab = manualTab ?? inferredTab;
+  const activeTab = manualTab ?? baseTab;
 
   const groups = useMemo(() => {
     switch (activeTab) {
@@ -536,6 +557,7 @@ export default function RibbonBar(props: RibbonBarProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeTab,
+    props.workspaceMode,
     props.viewMode,
     props.isFemBackend,
     props.solverRunning,

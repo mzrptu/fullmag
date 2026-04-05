@@ -1,0 +1,7 @@
+{
+  "include": ["examples", "packages/fullmag-py/src"],
+  "extraPaths": ["packages/fullmag-py/src"],
+  "pythonVersion": "3.11",
+  "venvPath": ".",
+  "venv": ".venv"
+}

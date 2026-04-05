@@ -34,6 +34,14 @@ import {
   meshBuildIntentForNode,
   meshWorkspaceNodeToDockTab,
 } from "./control-room/meshWorkspace";
+import {
+  BuildRightInspector,
+  StudyRightInspector,
+  AnalyzeRightInspector,
+  RunsRightInspector,
+} from "../workspace/modes/WorkspaceModeInspectors";
+import SettingsDialog from "../workspace/overlays/SettingsDialog";
+import PhysicsDocsDrawer from "../workspace/overlays/PhysicsDocsDrawer";
 
 function nextAntennaName(
   prefix: string,
@@ -467,8 +475,11 @@ function ControlRoomShell() {
         viewMode={ctx.effectiveViewMode}
         onViewChange={ctx.handleViewModeChange}
         onSidebarToggle={() => ctx.setSidebarCollapsed((v) => !v)}
+        workspaceMode={ctx.workspaceMode}
+        onWorkspaceModeChange={ctx.setWorkspaceMode}
       />
       <RibbonBar
+        workspaceMode={ctx.workspaceMode}
         viewMode={ctx.effectiveViewMode}
         isFemBackend={ctx.isFemBackend}
         solverRunning={ctx.workspaceStatus === "running"}
@@ -600,6 +611,22 @@ function ControlRoomShell() {
             </Panel>
           </PanelGroup>
         </Panel>
+
+        {/* ── Right inspector (mode-specific) ── */}
+        <PanelResizeHandle className="h-full w-2 bg-transparent cursor-ew-resize flex items-center justify-center transition-colors relative hover:bg-muted/50 active:bg-muted/50 after:content-[''] after:absolute after:top-1/2 after:left-1/2 after:-translate-x-1/2 after:-translate-y-1/2 after:w-[2px] after:h-9 after:rounded-full after:bg-border hover:after:bg-primary active:after:bg-primary z-50" />
+        <Panel
+          id="workspace-right-inspector"
+          defaultSize={18}
+          minSize={14}
+          maxSize={30}
+          collapsible
+          collapsedSize={0}
+        >
+          {ctx.workspaceMode === "build" && <BuildRightInspector />}
+          {ctx.workspaceMode === "study" && <StudyRightInspector />}
+          {ctx.workspaceMode === "analyze" && <AnalyzeRightInspector />}
+          {ctx.workspaceMode === "runs" && <RunsRightInspector />}
+        </Panel>
       </PanelGroup>
 
       <StatusBar
@@ -663,6 +690,10 @@ function ControlRoomShell() {
         onBackground={handleBackgroundMeshBuild}
         onClose={handleCloseMeshBuildDialog}
       />
+
+      {/* ── Workspace overlays (settings, docs) ── */}
+      <SettingsDialog />
+      <PhysicsDocsDrawer />
     </div>
   );
 }

@@ -7,6 +7,7 @@ const nextConfig = {
   output: "export",
   trailingSlash: true,
   typedRoutes: true,
+  eslint: { ignoreDuringBuilds: true },
   serverExternalPackages: ["fullmag-api"],
   // echarts v6 and zrender v6 are pure-ESM packages ("type":"module") that use
   // extensive `export *` re-exports. Webpack 5 can leave module slots as

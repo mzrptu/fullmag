@@ -7,6 +7,8 @@ build/
 *.a
 *.dylib
 *.md
+!docs/*.md
+!docs/**/*.md
 *.zip
 *.patch
 *.tar.gz

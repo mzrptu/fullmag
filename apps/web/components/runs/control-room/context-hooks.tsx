@@ -104,7 +104,11 @@ export interface TransportContextValue {
 }
 
 /* ── Viewport: user-driven UI state ── */
+export type WorkspaceMode = "build" | "study" | "analyze" | "runs";
+
 export interface ViewportContextValue {
+  workspaceMode: WorkspaceMode;
+  setWorkspaceMode: (v: WorkspaceMode | ((prev: WorkspaceMode) => WorkspaceMode)) => void;
   viewMode: ViewportMode;
   effectiveViewMode: ViewportMode;
   component: VectorComponent;
