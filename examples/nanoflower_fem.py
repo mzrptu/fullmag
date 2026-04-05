@@ -17,7 +17,7 @@ study = fm.study("nanoflower_fem")
 
 # Engine
 study.engine("fem")
-study.device("cuda:0", precision="double")
+study.device("cpu", precision="double")
 study.universe(mode="auto", size=(4e-07, 4e-07, 4e-07), center=(0, 0, 0), padding=(0, 0, 0), airbox_hmax=8e-08)
 study.interactive(True)
 
