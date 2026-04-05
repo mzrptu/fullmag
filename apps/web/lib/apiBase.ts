@@ -1,6 +1,6 @@
 "use client";
 
-const DEFAULT_API_BASE = "http://localhost:3000";
+const DEFAULT_API_BASE = "http://localhost:3001";
 const LOOPBACK_V4_RE = /^127(?:\.\d{1,3}){3}$/;
 
 function normalizeHostname(hostname: string): string {

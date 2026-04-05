@@ -11,6 +11,7 @@ import FemMeshView3D from "@/components/preview/FemMeshView3D";
 import { ViewportOverlayLayout } from "@/components/preview/ViewportOverlayLayout";
 
 import type { EigenModeArtifact, FemMeshPayload } from "./eigenTypes";
+import { fmtSI, fmtExp } from "@/lib/format";
 
 type ModeFieldView = "real" | "imag" | "amplitude" | "phase";
 type VectorComponent = "x" | "y" | "z" | "magnitude";
@@ -45,12 +46,12 @@ function zeroArray(length: number): number[] {
 }
 
 function formatGHz(valueHz: number): string {
-  return `${(valueHz / 1e9).toFixed(4)} GHz`;
+  return fmtSI(valueHz, "Hz");
 }
 
 function formatVec3(value: [number, number, number] | null): string {
   if (!value) return "Γ";
-  return `(${value.map((v) => v.toExponential(2)).join(", ")})`;
+  return `(${value.map((v) => fmtExp(v)).join(", ")})`;
 }
 
 function StatChip({ label, value }: { label: string; value: string }) {
@@ -213,8 +214,8 @@ export default function EigenModeInspector({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <StatChip label="omega" value={mode.angular_frequency_rad_per_s.toExponential(3)} />
-          <StatChip label="max amp" value={maxAmplitude.toExponential(3)} />
+          <StatChip label="omega" value={fmtExp(mode.angular_frequency_rad_per_s)} />
+          <StatChip label="max amp" value={fmtExp(maxAmplitude)} />
           <StatChip label="k-vector" value={formatVec3(mode.k_vector)} />
           {!compact && <StatChip label="nodes" value={meshData.nNodes.toLocaleString()} />}
         </div>

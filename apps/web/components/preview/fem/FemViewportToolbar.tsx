@@ -286,7 +286,7 @@ export function FemViewportToolbar({
       {!compact ? <ViewportToolSeparator /> : null}
 
       {hasField && (
-        <ViewportStatusChip color="cyan">{fieldLabel ?? "M"}</ViewportStatusChip>
+        <ViewportStatusChip color="info">{fieldLabel ?? "M"}</ViewportStatusChip>
       )}
 
       {!compact ? <ViewportToolSeparator /> : null}

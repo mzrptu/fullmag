@@ -14,8 +14,9 @@ interface AnalyzeWorkspaceController {
 export function useAnalyzeWorkspaceState(
   controller: AnalyzeWorkspaceController,
 ) {
-  const artifacts = useCurrentAnalyzeArtifacts(controller.analyzeSelection.refreshNonce);
-  const selectedMode = controller.analyzeSelection.selectedModeIndex;
+  const { analyzeSelection, setSelectedModeIndex, setTab } = controller;
+  const artifacts = useCurrentAnalyzeArtifacts(analyzeSelection.refreshNonce);
+  const selectedMode = analyzeSelection.selectedModeIndex;
 
   const selectedModeArtifact =
     selectedMode != null ? (artifacts.modeCache[selectedMode] ?? null) : null;
@@ -30,10 +31,10 @@ export function useAnalyzeWorkspaceState(
     if (!artifacts.spectrum || artifacts.spectrum.modes.length === 0) {
       return;
     }
-    if (controller.analyzeSelection.selectedModeIndex == null) {
-      controller.setSelectedModeIndex(artifacts.spectrum.modes[0].index);
+    if (analyzeSelection.selectedModeIndex == null) {
+      setSelectedModeIndex(artifacts.spectrum.modes[0].index);
     }
-  }, [artifacts.spectrum, controller]);
+  }, [artifacts.spectrum, analyzeSelection.selectedModeIndex, setSelectedModeIndex]);
 
   useEffect(() => {
     if (selectedMode != null) {
@@ -46,7 +47,7 @@ export function useAnalyzeWorkspaceState(
     selectedMode,
     selectedModeArtifact,
     selectedModeSummary,
-    selectMode: controller.setSelectedModeIndex,
-    selectTab: controller.setTab,
+    selectMode: setSelectedModeIndex,
+    selectTab: setTab,
   };
 }

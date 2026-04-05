@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { resolveApiBase } from "@/lib/apiBase";
+import { apiGet, resolveRuntimeHttpBase, currentLiveUrl, ApiError, NetworkError } from "@/lib/api";
 
 interface ServerConfig {
   backend: string;
@@ -28,30 +28,31 @@ function useServerConfig() {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    const base = resolveApiBase();
     setConnection("loading");
     setError(null);
-    fetch(`${base}/v1/live/current/bootstrap`, { cache: "no-store" })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
+    apiGet<{ session?: Record<string, unknown>; live_state?: Record<string, unknown> }>(
+      currentLiveUrl('/bootstrap'),
+    )
       .then((data) => {
         const session = data?.session;
         setConfig({
-          backend: session?.requested_backend ?? "unknown",
-          execution_mode: session?.execution_mode ?? "unknown",
-          precision: session?.precision ?? "unknown",
-          problem_name: session?.problem_name ?? "—",
-          script_path: session?.script_path ?? null,
-          artifact_dir: session?.artifact_dir ?? null,
-          status: session?.status ?? data?.live_state?.status ?? "idle",
-          plan_summary: session?.plan_summary ?? null,
+          backend: (session?.requested_backend as string) ?? "unknown",
+          execution_mode: (session?.execution_mode as string) ?? "unknown",
+          precision: (session?.precision as string) ?? "unknown",
+          problem_name: (session?.problem_name as string) ?? "—",
+          script_path: (session?.script_path as string | null) ?? null,
+          artifact_dir: (session?.artifact_dir as string | null) ?? null,
+          status: (session?.status as string) ?? (data?.live_state?.status as string) ?? "idle",
+          plan_summary: (session?.plan_summary as Record<string, unknown> | null) ?? null,
         });
         setConnection("connected");
       })
       .catch((err) => {
-        setError(err instanceof Error ? err.message : "Connection failed");
+        setError(
+          err instanceof ApiError || err instanceof NetworkError
+            ? err.message
+            : "Connection failed",
+        );
         setConnection("error");
       });
   }, []);
@@ -115,7 +116,7 @@ export default function SettingsPage() {
               }
               tone={connection === "connected" ? "success" : connection === "error" ? "error" : undefined}
             />
-            <SettingRow label="API Endpoint" value={resolveApiBase()} />
+            <SettingRow label="API Endpoint" value={resolveRuntimeHttpBase()} />
             {error && <SettingRow label="Error" value={error} tone="error" />}
           </div>
         </section>

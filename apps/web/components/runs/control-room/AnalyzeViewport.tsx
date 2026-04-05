@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { RefreshCw } from "lucide-react";
 
 import DispersionBranchPlot from "@/components/analyze/DispersionBranchPlot";
@@ -51,6 +51,16 @@ function compactList(values: string[] | undefined): string | null {
 export default function AnalyzeViewport() {
   const model = useModel();
   const cmd = useCommand();
+  const setSelectedModeIndex = useCallback(
+    (index: number | null) =>
+      model.setAnalyzeSelection((prev) => ({ ...prev, selectedModeIndex: index })),
+    [model.setAnalyzeSelection],
+  );
+  const setAnalyzeTab = useCallback(
+    (tab: Parameters<typeof model.selectAnalyzeTab>[0]) => model.selectAnalyzeTab(tab),
+    [model.selectAnalyzeTab],
+  );
+
   const {
     loadState,
     modeLoadState,
@@ -67,9 +77,8 @@ export default function AnalyzeViewport() {
     selectMode,
   } = useAnalyzeWorkspaceState({
     analyzeSelection: model.analyzeSelection,
-    setSelectedModeIndex: (index) =>
-      model.setAnalyzeSelection((prev) => ({ ...prev, selectedModeIndex: index })),
-    setTab: (tab) => model.selectAnalyzeTab(tab),
+    setSelectedModeIndex,
+    setTab: setAnalyzeTab,
   });
 
   const diagnostics = useAnalyzeRuntimeDiagnostics({

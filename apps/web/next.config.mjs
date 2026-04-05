@@ -14,9 +14,6 @@ const nextConfig = {
   // a function` at runtime. Listing them here forces Next.js's SWC pipeline to
   // transpile them to CJS-compatible modules that webpack handles reliably.
   transpilePackages: ["echarts", "zrender"],
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
 };
 
 export default nextConfig;

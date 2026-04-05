@@ -5,7 +5,7 @@ import { GitCommitHorizontal, Layers, MemoryStick, Triangle } from "lucide-react
 
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
 import type { ScriptBuilderUniverseState } from "../../../lib/session/types";
-import { fmtSI } from "../../runs/control-room/shared";
+import { fmtSI } from "@/lib/format";
 import SelectField from "../../ui/SelectField";
 import { TextField } from "../../ui/TextField";
 import { Button } from "../../ui/button";

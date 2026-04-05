@@ -16,6 +16,8 @@ import { buildScriptBuilderFromSceneDocument } from "@/lib/session/sceneDocument
 
 export type NodeStatus = "ready" | "active" | "pending" | "error";
 
+export type NodeDomain = "build" | "study" | "analyze" | "results";
+
 export interface TreeNodeData {
   id: string;
   label: string;
@@ -23,6 +25,7 @@ export interface TreeNodeData {
   badge?: string;
   status?: NodeStatus;
   defaultOpen?: boolean;
+  domain?: NodeDomain;
   children?: TreeNodeData[];
   onClick?: () => void;
 }

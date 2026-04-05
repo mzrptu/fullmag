@@ -750,7 +750,7 @@ function MagnetizationView3DInner({
 
             {settings.renderMode === "voxel" && <ViewportToolSeparator />}
 
-            <ViewportStatusChip color="cyan">{fieldLabel ?? "M"}</ViewportStatusChip>
+            <ViewportStatusChip color="info">{fieldLabel ?? "M"}</ViewportStatusChip>
 
             <ViewportToolSeparator />
 
@@ -830,6 +830,9 @@ function MagnetizationView3DInner({
                             <ViewportPopoverRow label="Amplitude">
                                <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.5} max={50} step={0.5} value={settings.topoMultiplier} onChange={(e) => update({ topoMultiplier: parseFloat(e.target.value) })} />
                             </ViewportPopoverRow>
+                            <ViewportStatusChip color="error">
+                              Active Mask: {activeMask}
+                            </ViewportStatusChip>
                          </>
                        )}
                     </ViewportPopoverPanel>

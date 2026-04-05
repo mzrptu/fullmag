@@ -32,7 +32,8 @@ import MeshSettingsPanel, {
 import MeshSequenceEditor from "./MeshSequenceEditor";
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
 import { useModel } from "../../runs/control-room/ControlRoomContext";
-import { fmtExp, fmtSI, type ViewportMode } from "../../runs/control-room/shared";
+import { type ViewportMode } from "../../runs/control-room/shared";
+import { fmtExp, fmtSI } from "@/lib/format";
 import {
   MESH_RENDER_MODE_OPTIONS,
   MESH_WORKSPACE_PRESETS,

@@ -1,13 +1,13 @@
-'use client';
-
 import type { ReactNode } from 'react';
-import { usePathname } from 'next/navigation';
 import { AppLayout } from '../../components/layout';
 
+/**
+ * Main layout — wraps pages that use the AppLayout shell (sidebar + topbar).
+ * Docs, Settings and similar non-workspace pages live here.
+ *
+ * Workspace pages (Build / Study / Analyze / Runs) live under (workspace)
+ * and use WorkspaceShell instead.
+ */
 export default function MainLayout({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
-  if (pathname === '/') {
-    return <>{children}</>;
-  }
   return <AppLayout>{children}</AppLayout>;
 }

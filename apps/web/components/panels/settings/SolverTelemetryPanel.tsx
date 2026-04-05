@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
-import { fmtExpOrDash, fmtSIOrDash, fmtStepValue } from "../../runs/control-room/shared";
+import { fmtExpOrDash, fmtSIOrDash, fmtStepValue } from "@/lib/format";
 import { MetricField, buildSparkSeries, SidebarSection } from "./primitives";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../SolverSettingsPanel";
 

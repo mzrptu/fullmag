@@ -70,7 +70,6 @@ pub(crate) struct NativeFieldSnapshotInfo {
     pub component_count: usize,
     pub scalar_bytes: usize,
     pub scalar_type: NativeFieldSnapshotScalarType,
-    pub len_bytes: usize,
 }
 
 #[cfg(feature = "cuda")]
@@ -999,7 +998,6 @@ impl NativeFdmFieldSnapshot {
                     component_count: desc.component_count as usize,
                     scalar_bytes: desc.scalar_bytes as usize,
                     scalar_type,
-                    len_bytes: len,
                 },
             });
         }
@@ -1074,7 +1072,6 @@ impl NativeFdmPreviewSnapshot {
                     component_count: desc.component_count as usize,
                     scalar_bytes: desc.scalar_bytes as usize,
                     scalar_type,
-                    len_bytes: len_bytes as usize,
                 },
             });
         }

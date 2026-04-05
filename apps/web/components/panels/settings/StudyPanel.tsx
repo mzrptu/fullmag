@@ -2,7 +2,7 @@
 
 import type { ScriptBuilderStageState } from "../../../lib/useSessionStream";
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
-import { fmtExp, fmtSI, fmtSIOrDash } from "../../runs/control-room/shared";
+import { fmtExp, fmtSI, fmtSIOrDash } from "@/lib/format";
 import {
   BACKEND_PROFILES,
   INTEGRATOR_PROFILES,

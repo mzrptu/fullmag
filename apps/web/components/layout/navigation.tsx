@@ -1,40 +1,15 @@
 import { type ReactNode } from 'react';
 import { type NavItem } from './Sidebar';
 
-/* ── Inline SVG Icons (no external library) ── */
+/* ── Inline SVG Icons ── */
 
-function DashboardIcon(): ReactNode {
+function WorkspaceIcon(): ReactNode {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="7" height="7" rx="1" />
       <rect x="14" y="3" width="7" height="7" rx="1" />
       <rect x="3" y="14" width="7" height="7" rx="1" />
       <rect x="14" y="14" width="7" height="7" rx="1" />
-    </svg>
-  );
-}
-
-function RunsIcon(): ReactNode {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="5,3 19,12 5,21" />
-    </svg>
-  );
-}
-
-function SimulationsIcon(): ReactNode {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-    </svg>
-  );
-}
-
-function ViewIcon(): ReactNode {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-      <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }
@@ -57,13 +32,17 @@ function SettingsIcon(): ReactNode {
   );
 }
 
-/* ── Navigation items ── */
-
+/* ── Navigation items ──
+ *
+ * These items are rendered in the AppLayout sidebar, which is exclusive to
+ * (main) route-group pages (docs, settings, etc.).
+ *
+ * Workspace pages (/build, /study, /analyze, /runs) live under the
+ * (workspace) route group with their own WorkspaceShell tab bar and do NOT
+ * render AppLayout at all.
+ */
 export const navigationItems: NavItem[] = [
-  { href: '/', label: 'Dashboard', icon: <DashboardIcon /> },
-  { href: '/runs', label: 'Runs', icon: <RunsIcon />, section: 'Execution' },
-  { href: '/simulations', label: 'Simulations', icon: <SimulationsIcon />, section: 'Execution' },
-  { href: '/visualizations', label: 'Analyze', icon: <ViewIcon />, section: 'Analysis' },
+  { href: '/analyze', label: 'Workspace', icon: <WorkspaceIcon /> },
   { href: '/docs/physics', label: 'Physics Docs', icon: <DocsIcon />, section: 'Reference' },
   { href: '/settings', label: 'Settings', icon: <SettingsIcon />, section: 'System' },
 ];
