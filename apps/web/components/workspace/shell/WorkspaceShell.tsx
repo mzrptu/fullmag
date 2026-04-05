@@ -23,27 +23,18 @@ interface WorkspaceShellProps {
 /**
  * WorkspaceShell — wraps all workspace pages (Build / Study / Analyze / Runs).
  *
- * The tab bar floats above the content using absolute positioning so that
- * full-viewport children (like the RunControlRoom) can extend to the full
- * viewport height without layout shifts.  The `pt-[36px]` on the inner
- * wrapper pushes content below the bar.
+ * Uses a flex-column layout: the tab bar takes a fixed 36 px row at the top,
+ * and children get the remaining viewport height. This means children must use
+ * `h-full` (not `position: fixed`) to fill the available space.
  */
 export function WorkspaceShell({ children }: WorkspaceShellProps) {
   const pathname = usePathname();
 
   return (
-    <div className="relative h-screen overflow-hidden">
-      {/* Content area — padding-top clears the overlay tab bar */}
-      <div
-        className="h-full"
-        style={{ paddingTop: TAB_BAR_H }}
-      >
-        {children}
-      </div>
-
-      {/* Tab bar — absolute overlay so full-height children don't need layout changes */}
+    <div className="flex flex-col h-screen overflow-hidden">
+      {/* Tab bar — normal flow, takes TAB_BAR_H px, children start below it */}
       <nav
-        className="absolute inset-x-0 top-0 z-50 flex items-center gap-0.5 border-b border-[var(--ide-border-subtle)] bg-[var(--surface-1)]/95 backdrop-blur-sm px-3"
+        className="shrink-0 z-50 flex items-center gap-0.5 border-b border-[var(--ide-border-subtle)] bg-[var(--surface-1)]/95 backdrop-blur-sm px-3"
         style={{ height: TAB_BAR_H }}
         aria-label="Workspace sections"
       >
@@ -65,6 +56,11 @@ export function WorkspaceShell({ children }: WorkspaceShellProps) {
           );
         })}
       </nav>
+
+      {/* Content area — fills remaining height below the tab bar */}
+      <div className="flex-1 min-h-0 relative overflow-hidden">
+        {children}
+      </div>
     </div>
   );
 }

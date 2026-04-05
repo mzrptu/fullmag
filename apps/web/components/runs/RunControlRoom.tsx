@@ -446,7 +446,7 @@ function ControlRoomShell() {
   );
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
+    <div className="h-full flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
       <TopHeader
         problemName={ctx.session?.problem_name ?? "Local Live Workspace"}
         backend={ctx.session?.requested_backend ?? ""}
