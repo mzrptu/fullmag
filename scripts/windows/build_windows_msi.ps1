@@ -16,6 +16,28 @@ function Require-Command {
   }
 }
 
+function Import-VsEnvironment {
+  $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+  if (-not (Test-Path $vswhere)) {
+    Write-Warning "vswhere.exe not found - assuming MSVC tools are already on PATH (e.g. inside container)."
+    return
+  }
+  $vsPath = & $vswhere -latest -property installationPath 2>$null
+  if (-not $vsPath) {
+    throw "Visual Studio / Build Tools installation not found. Install VS Build Tools with the C++ workload."
+  }
+  $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+  if (-not (Test-Path $vcvars)) {
+    throw "vcvars64.bat not found at $vcvars"
+  }
+  cmd /c "`"$vcvars`" && set" | ForEach-Object {
+    if ($_ -match "^(.+?)=(.*)$") {
+      [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+    }
+  }
+  Write-Host "Imported MSVC environment from $vcvars"
+}
+
 function Ensure-Dir {
   param([string]$Path)
   New-Item -ItemType Directory -Force -Path $Path | Out-Null
@@ -173,15 +195,21 @@ function Harvest-Directory {
     -sfrag `
     -srd `
     -var "var.StageRoot" `
-    -out $OutFile | Out-Null
+    -out $OutFile
+  if ($LASTEXITCODE -ne 0) {
+    throw "heat.exe failed for $GroupName with exit code $LASTEXITCODE"
+  }
 }
 
 Require-Command cargo
+Require-Command rustup
 Require-Command pnpm
 Require-Command heat.exe
 Require-Command candle.exe
 Require-Command light.exe
 Require-Command git
+
+Import-VsEnvironment
 
 Push-Location $RepoRoot
 try {
