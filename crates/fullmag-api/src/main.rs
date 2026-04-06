@@ -94,6 +94,10 @@ async fn main() {
         .route("/v1/live/current/events", get(get_current_live_events))
         .route("/v1/live/current/publish", post(publish_current_live_state))
         .route(
+            "/v1/live/current/create",
+            post(create_current_live_workspace),
+        )
+        .route(
             "/v1/live/current/preview/selection",
             get(get_current_display_selection).post(set_current_preview_selection),
         )
@@ -347,20 +351,83 @@ fn sample_gpu_telemetry() -> Result<GpuTelemetryResponse, ApiError> {
 async fn get_current_live_bootstrap(
     State(state): State<Arc<AppState>>,
 ) -> Result<Response, ApiError> {
-    let json = if let Some(snapshot) = state.current_live_public_snapshot.read().await.as_ref() {
-        bootstrap_workspace_payload(snapshot)?
-    } else {
-        let runtimes_dir = state.repo_root.join("runtimes");
-        let capabilities =
-            fullmag_runner::RuntimeRegistry::discover(&runtimes_dir).capability_matrix();
-        serde_json::to_string(&json!({
-            "mode": "hub",
-            "session": serde_json::Value::Null,
-            "capabilities": capabilities,
-        }))
-        .map_err(|error| ApiError::internal(format!("failed to encode hub bootstrap: {error}")))?
+    // If a live workspace exists, return its bootstrap payload.
+    if let Some(snapshot) = state.current_live_public_snapshot.read().await.as_ref() {
+        let json = bootstrap_workspace_payload(snapshot)?;
+        return Ok(([(CONTENT_TYPE, "application/json")], json).into_response());
+    }
+
+    // No live workspace — auto-create a bootstrapping interactive workspace
+    // so the control room can immediately transition out of the loading state.
+    let json = auto_create_workspace(&state).await?;
+    let payload = bootstrap_workspace_payload(&json)?;
+    Ok(([(CONTENT_TYPE, "application/json")], payload).into_response())
+}
+
+/// Create an empty interactive workspace and publish it to the live state.
+/// Returns the serialized public snapshot JSON.
+async fn auto_create_workspace(state: &AppState) -> Result<String, ApiError> {
+    let now = unix_time_millis_now();
+    let session_id = format!("ui-session-{}-{}", now, std::process::id());
+    let run_id = format!("run-{}", &session_id);
+    let artifact_dir = state
+        .repo_root
+        .join(".fullmag")
+        .join("local-live")
+        .join("history")
+        .join(&session_id)
+        .join("artifacts");
+    let _ = std::fs::create_dir_all(&artifact_dir);
+
+    let publish_req = CurrentLivePublishRequest {
+        session_id: session_id.clone(),
+        session: Some(SessionManifest {
+            session_id: session_id.clone(),
+            run_id,
+            status: "interactive".to_string(),
+            interactive_session_requested: true,
+            script_path: String::new(),
+            problem_name: "New Simulation".to_string(),
+            requested_backend: "auto".to_string(),
+            explicit_selection: false,
+            requested_device: "auto".to_string(),
+            requested_precision: "double".to_string(),
+            requested_mode: "strict".to_string(),
+            execution_mode: "strict".to_string(),
+            precision: "double".to_string(),
+            resolved_backend: None,
+            resolved_device: None,
+            resolved_precision: None,
+            resolved_mode: None,
+            resolved_runtime_family: None,
+            resolved_engine_id: None,
+            resolved_worker: None,
+            resolved_fallback: None,
+            artifact_dir: artifact_dir.display().to_string(),
+            started_at_unix_ms: now,
+            finished_at_unix_ms: now,
+            plan_summary: json!({}),
+        }),
+        session_status: None,
+        metadata: None,
+        mesh_workspace: None,
+        run: None,
+        live_state: None,
+        latest_scalar_row: None,
+        latest_fields: None,
+        preview_fields: None,
+        clear_preview_cache: false,
+        engine_log: None,
+        fem_mesh: None,
     };
-    Ok(([(CONTENT_TYPE, "application/json")], json).into_response())
+
+    let next = default_current_live_state(&publish_req);
+    let ws_messages = build_current_live_ws_messages(state, &next)?;
+    let public_json = serialize_current_live_response(&next, true)?;
+    *state.current_live_state.write().await = Some(next);
+    *state.current_live_public_snapshot.write().await = Some(public_json.clone());
+    send_current_live_ws_messages(state, ws_messages);
+    Ok(public_json)
 }
 
 fn bootstrap_workspace_payload(snapshot_json: &str) -> Result<String, ApiError> {
@@ -377,6 +444,35 @@ fn bootstrap_workspace_payload(snapshot_json: &str) -> Result<String, ApiError> 
     serde_json::to_string(&Value::Object(object)).map_err(|error| {
         ApiError::internal(format!("failed to encode workspace bootstrap: {error}"))
     })
+}
+
+/// POST /v1/live/current/create — create a bootstrapping workspace in-process.
+///
+/// Called by the web UI when the user clicks "Create New Simulation" and no
+/// live workspace exists yet (hub mode). Creates a minimal bootstrapping
+/// `SessionStateResponse`, publishes it, and returns the bootstrap payload so
+/// the client can immediately transition out of the loading state.
+#[derive(Debug, Deserialize)]
+struct CreateWorkspaceRequest {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    backend: Option<String>,
+}
+
+async fn create_current_live_workspace(
+    State(state): State<Arc<AppState>>,
+    Json(_req): Json<CreateWorkspaceRequest>,
+) -> Result<Response, ApiError> {
+    // If a workspace already exists, just return its bootstrap payload.
+    if let Some(snapshot) = state.current_live_public_snapshot.read().await.as_ref() {
+        let json = bootstrap_workspace_payload(snapshot)?;
+        return Ok(([(CONTENT_TYPE, "application/json")], json).into_response());
+    }
+
+    let json = auto_create_workspace(&state).await?;
+    let payload = bootstrap_workspace_payload(&json)?;
+    Ok(([(CONTENT_TYPE, "application/json")], payload).into_response())
 }
 
 async fn get_current_live_state(State(state): State<Arc<AppState>>) -> Result<Response, ApiError> {

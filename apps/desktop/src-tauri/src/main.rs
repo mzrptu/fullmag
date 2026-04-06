@@ -1,25 +1,49 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod api_sidecar;
 mod commands;
 
+use api_sidecar::ApiSidecar;
 use commands::AppConfig;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 fn main() {
-    let url = std::env::var("FULLMAG_UI_URL").unwrap_or_else(|_| "http://localhost:3000".into());
-    let api_base =
-        std::env::var("FULLMAG_API_BASE").unwrap_or_else(|_| "http://localhost:8083".into());
     let launch_intent =
         std::env::var("FULLMAG_LAUNCH_INTENT").unwrap_or_else(|_| "hub".to_string());
+
+    // If FULLMAG_UI_URL is set, use it directly (managed by fullmag CLI).
+    // Otherwise, start fullmag-api as a sidecar and serve the web UI from it.
+    let external_url = std::env::var("FULLMAG_UI_URL").ok();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
-            let parsed_url = url.parse().map_err(|error| {
+            let (url, sidecar) = if let Some(ref url) = external_url {
+                let api_base = std::env::var("FULLMAG_API_BASE")
+                    .unwrap_or_else(|_| "http://localhost:8083".into());
+                app.manage(AppConfig {
+                    api_base,
+                    ui_url: url.clone(),
+                    launch_intent: launch_intent.clone(),
+                });
+                (url.clone(), None)
+            } else {
+                let sidecar = ApiSidecar::start()
+                    .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+                let base = sidecar.base_url();
+                app.manage(AppConfig {
+                    api_base: base.clone(),
+                    ui_url: base.clone(),
+                    launch_intent: launch_intent.clone(),
+                });
+                (base, Some(sidecar))
+            };
+
+            let parsed_url: url::Url = url.parse().map_err(|error| {
                 Box::<dyn std::error::Error>::from(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!("invalid FULLMAG_UI_URL: {error}"),
+                    format!("invalid UI URL: {error}"),
                 ))
             })?;
 
@@ -30,11 +54,10 @@ fn main() {
                 .center()
                 .build()?;
 
-            app.manage(AppConfig {
-                api_base: api_base.clone(),
-                ui_url: url.clone(),
-                launch_intent: launch_intent.clone(),
-            });
+            if let Some(sidecar) = sidecar {
+                app.manage(sidecar);
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
