@@ -553,14 +553,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
         for (double &value : ctx.oersted_axis) {
             value /= axis_norm;
         }
-        if (std::abs(ctx.oersted_axis[0]) > 1e-6 ||
-            std::abs(ctx.oersted_axis[1]) > 1e-6 ||
-            std::abs(ctx.oersted_axis[2] - 1.0) > 1e-6) {
-            error =
-                "Only Oersted cylinders aligned with +Z are currently implemented; "
-                "requested oersted_axis is not supported";
-            return false;
-        }
+        // Arbitrary axis is now supported – no +Z restriction.
     }
     ctx.oersted_time_dep_kind = plan.oersted_time_dep_kind;
     ctx.oersted_time_dep_freq = plan.oersted_time_dep_freq;
@@ -571,39 +564,59 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
 
     if (ctx.has_oersted_cylinder && ctx.oersted_radius > 0.0) {
         // Precompute static Oersted field for I = 1 A on FEM node coordinates.
-        // Ampère's law for infinite cylinder:
-        //   inside (r < R):  H_phi = r / (2 pi R^2)
-        //   outside (r >= R): H_phi = 1 / (2 pi r)
+        // Ampère's law for infinite cylinder along arbitrary axis â:
+        //   inside  (r_perp < R):  |H| = r_perp / (2π R²)
+        //   outside (r_perp >= R): |H| = 1 / (2π r_perp)
+        // Direction: H = |H| * (â × r̂_perp), where r̂_perp is the unit radial vector
+        // perpendicular to the axis.
         const double inv_2pi = 1.0 / (2.0 * kPi);
         const double R = ctx.oersted_radius;
         const double R2 = R * R;
         const double cx = ctx.oersted_center[0];
         const double cy = ctx.oersted_center[1];
+        const double cz = ctx.oersted_center[2];
+        const double ax = ctx.oersted_axis[0];
+        const double ay = ctx.oersted_axis[1];
+        const double az = ctx.oersted_axis[2];
 
         ctx.h_oe_xyz.resize(static_cast<size_t>(ctx.n_nodes) * 3u, 0.0);
         for (uint32_t i = 0; i < ctx.n_nodes; ++i) {
-            const double nx = ctx.nodes_xyz[i * 3 + 0];
-            const double ny = ctx.nodes_xyz[i * 3 + 1];
+            const double px = ctx.nodes_xyz[i * 3 + 0] - cx;
+            const double py = ctx.nodes_xyz[i * 3 + 1] - cy;
+            const double pz = ctx.nodes_xyz[i * 3 + 2] - cz;
 
-            const double dx = nx - cx;
-            const double dy = ny - cy;
-            const double r = std::sqrt(dx * dx + dy * dy);
+            // Project p onto axis: p_parallel = (p·â) â
+            const double p_dot_a = px * ax + py * ay + pz * az;
+            // Perpendicular component: r_perp = p - p_parallel
+            const double rx = px - p_dot_a * ax;
+            const double ry = py - p_dot_a * ay;
+            const double rz = pz - p_dot_a * az;
+            const double r_perp = std::sqrt(rx * rx + ry * ry + rz * rz);
 
-            double H_phi;
-            if (r < 1e-30) {
-                H_phi = 0.0;
-            } else if (r < R) {
-                H_phi = inv_2pi * r / R2;
+            double H_mag;
+            if (r_perp < 1e-30) {
+                H_mag = 0.0;
+            } else if (r_perp < R) {
+                H_mag = inv_2pi * r_perp / R2;
             } else {
-                H_phi = inv_2pi / r;
+                H_mag = inv_2pi / r_perp;
             }
 
-            double sin_phi = (r < 1e-30) ? 0.0 : dy / r;
-            double cos_phi = (r < 1e-30) ? 0.0 : dx / r;
-
-            ctx.h_oe_xyz[i * 3 + 0] = -H_phi * sin_phi;
-            ctx.h_oe_xyz[i * 3 + 1] =  H_phi * cos_phi;
-            ctx.h_oe_xyz[i * 3 + 2] =  0.0;
+            if (r_perp < 1e-30) {
+                ctx.h_oe_xyz[i * 3 + 0] = 0.0;
+                ctx.h_oe_xyz[i * 3 + 1] = 0.0;
+                ctx.h_oe_xyz[i * 3 + 2] = 0.0;
+            } else {
+                // Direction: â × r̂_perp (tangential to circle around axis)
+                const double inv_r = 1.0 / r_perp;
+                const double rx_hat = rx * inv_r;
+                const double ry_hat = ry * inv_r;
+                const double rz_hat = rz * inv_r;
+                // H = H_mag * (â × r̂)
+                ctx.h_oe_xyz[i * 3 + 0] = H_mag * (ay * rz_hat - az * ry_hat);
+                ctx.h_oe_xyz[i * 3 + 1] = H_mag * (az * rx_hat - ax * rz_hat);
+                ctx.h_oe_xyz[i * 3 + 2] = H_mag * (ax * ry_hat - ay * rx_hat);
+            }
         }
     }
 

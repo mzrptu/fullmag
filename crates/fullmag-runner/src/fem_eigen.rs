@@ -42,7 +42,9 @@ struct ComplexEigenpair {
 }
 
 // ---------------------------------------------------------------------------
-// ── GPU dense eigensolver helper (Etap A4) ─────────────────────────────────
+// ── GPU dense eigensolver helper (Etap A4) — TRANSITIONAL ─────────────────
+// This is a dense O(n³) path suitable for small problems.  A future
+// sparse/Krylov/shift-invert solver will replace it for large meshes.
 // ---------------------------------------------------------------------------
 
 /// Try to solve K·x = λ·M·x using the GPU (cuSolverDN Dsygvd).
@@ -94,12 +96,16 @@ pub(crate) fn execute_reference_fem_eigen(
     execute_fem_eigen_inner(plan, outputs, false)
 }
 
-/// GPU-accelerated FEM eigensolver (Etap A4).
+/// GPU-accelerated FEM eigensolver (Etap A4) — TRANSITIONAL dense path.
 ///
-/// Runs the same workflow as the CPU reference eigensolver but offloads the
-/// dense generalized eigenvalue problem K·x = λ·M·x to the GPU via
-/// `cuSolverDN Dsygvd`.  Falls back transparently to the CPU LAPACK path
-/// when the GPU is unavailable or returns an error.
+/// This implementation uses dense generalized eigenvalue decomposition
+/// (cuSolverDN Dsygvd on GPU, LAPACK on CPU).  It is practical for small-
+/// to medium-sized problems (≲ a few thousand DOF) but scales as O(n³).
+/// A future sparse/Krylov/shift-invert eigensolver will replace this path
+/// for large meshes.
+///
+/// When `try_gpu` is true and the GPU is unavailable or fails, returns an
+/// error — no silent fallback to CPU.
 pub(crate) fn execute_gpu_fem_eigen(
     plan: &FemEigenPlanIR,
     outputs: &[OutputIR],
@@ -141,6 +147,16 @@ fn execute_fem_eigen_inner(
         });
     }
     let complex_reduction = reduction.complex_reduction;
+
+    // Warn about dense O(n³) scaling for large problems (transitional path).
+    let active_n = reduction.active_nodes.len();
+    if active_n > 3000 {
+        eprintln!(
+            "warning: FEM eigen dense solver has {} active DOF — O(n³) scaling; \
+             consider reducing mesh size or awaiting future sparse/Krylov eigensolver",
+            active_n
+        );
+    }
 
     let real_eigenpairs = if complex_reduction {
         Vec::new()
@@ -498,9 +514,6 @@ fn materialize_equilibrium(
             external_field: plan.external_field,
             per_node_field: aniso_per_node,
             magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
             uniaxial_anisotropy: None,
             cubic_anisotropy: None,
             interfacial_dmi: None,

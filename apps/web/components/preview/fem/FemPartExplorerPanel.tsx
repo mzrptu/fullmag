@@ -292,26 +292,27 @@ function PartListRow({
 
 /* ── Panel ── */
 
-export function FemPartExplorerPanel({
-  meshParts,
-  meshEntityViewState,
-  partQualityById,
-  partExplorerGroups,
-  roleVisibilitySummary,
-  inspectedMeshPart,
-  inspectedPartQuality,
-  selectedEntityId,
-  focusedEntityId,
-  visiblePartsCount,
-  onClose,
-  onPartSelect,
-  onEntityFocus,
-  onPatchPart,
-  onRoleVisibility,
-  className,
-  headerAccessory,
-  dragHandleProps,
-}: FemPartExplorerPanelProps) {
+export function FemPartExplorerPanel(props: FemPartExplorerPanelProps) {
+  const {
+    meshParts,
+    meshEntityViewState,
+    partQualityById,
+    partExplorerGroups,
+    roleVisibilitySummary,
+    inspectedMeshPart,
+    inspectedPartQuality,
+    selectedEntityId,
+    focusedEntityId,
+    visiblePartsCount,
+    onClose,
+    onPartSelect,
+    onEntityFocus,
+    onPatchPart,
+    onRoleVisibility,
+    className,
+    headerAccessory,
+    dragHandleProps,
+  } = props;
   const headerLabel = inspectedMeshPart
     ? "Selected submesh"
     : "Mesh parts";

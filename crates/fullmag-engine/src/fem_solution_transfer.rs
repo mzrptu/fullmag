@@ -4,7 +4,7 @@
 //! to locate each new node efficiently, then performs barycentric
 //! interpolation of the P1 solution.
 
-use crate::fem::{barycentric_coordinates_tet, MeshTopology};
+use crate::fem::{barycentric_coordinates_tet, CsrMatrix, MeshTopology};
 use crate::Vector3;
 
 // ---------------------------------------------------------------------------
@@ -411,6 +411,10 @@ mod tests {
             stiffness_system: vec![],
             boundary_mass_system: vec![],
             demag_system: vec![],
+            stiffness_csr: CsrMatrix::new(n_nodes),
+            boundary_mass_csr: CsrMatrix::new(n_nodes),
+            demag_csr: CsrMatrix::new(n_nodes),
+            magnetic_stiffness_csr: CsrMatrix::new(n_nodes),
             total_volume: 0.0,
             magnetic_total_volume: 0.0,
             robin_beta: 0.0,

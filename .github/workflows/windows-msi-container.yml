@@ -1,0 +1,39 @@
+name: windows-msi-container
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, main]
+    paths:
+      - "apps/desktop/**"
+      - "crates/**"
+      - "packages/**"
+      - "scripts/windows/**"
+      - "docker/windows-msi/**"
+      - ".github/workflows/windows-msi-container.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "pnpm-lock.yaml"
+
+jobs:
+  build-windows-msi:
+    runs-on: [self-hosted, windows, x64, docker]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build MSI inside Windows container
+        shell: powershell
+        run: .\scripts\windows\build_installer_windows_container.ps1
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fullmag-windows-msi
+          path: .fullmag\dist\fullmag.msi
+
+      - name: Upload Windows stage manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: fullmag-windows-msi-manifest
+          path: .fullmag\dist\windows-msi-manifest.json

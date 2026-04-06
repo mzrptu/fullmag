@@ -102,7 +102,6 @@ import {
   buildObjectOverlays,
   combineBounds,
   computeMeshFaceDetail,
-  fmtDuration,
   fmtSI,
   materializationProgressFromMessage,
   parseOptionalNumber,
@@ -135,7 +134,7 @@ import {
   type AnalyzeSelectionState,
   type AnalyzeTab,
 } from "./analyzeSelection";
-export type {
+import type {
   ActivityInfo,
   BackendErrorInfo,
   FieldStats,
@@ -148,21 +147,12 @@ export type {
   SolverPlanSummary,
   SolverRelaxationSummary,
 } from "./types";
-import type {
-  ActivityInfo,
-  BackendErrorInfo,
-  FieldStats,
-  MaterialSummary,
-  MeshQualitySummary,
-  PreviewOption,
-  QuickPreviewTarget,
-  SessionFooterData,
-  SolverPlanSummary,
-} from "./types";
 
 /* ── Stable empty arrays ── */
 const EMPTY_SCALAR_ROWS: ScalarRow[] = [];
 const EMPTY_ENGINE_LOG: EngineLogEntry[] = [];
+const EMPTY_QUANTITIES: QuantityDescriptor[] = [];
+const EMPTY_ARTIFACTS: ArtifactEntry[] = [];
 const DEFAULT_AIR_MESH_OPACITY = 28;
 const GPU_TELEMETRY_POLL_MS = 1000;
 
@@ -453,8 +443,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const commandStatus = state?.command_status ?? null;
   const scalarRows = state?.scalar_rows ?? EMPTY_SCALAR_ROWS;
   const engineLog = state?.engine_log ?? EMPTY_ENGINE_LOG;
-  const quantities = state?.quantities ?? [];
-  const artifactsArr = state?.artifacts ?? [];
+  const quantities = state?.quantities ?? EMPTY_QUANTITIES;
+  const artifactsArr = state?.artifacts ?? EMPTY_ARTIFACTS;
   const meshWorkspace = (state?.mesh_workspace as MeshWorkspaceState | null) ?? null;
   const runtimeEngine = (metadata?.runtime_engine as Record<string, unknown> | undefined) ?? undefined;
   const runtimeEngineLabel = typeof runtimeEngine?.engine_label === "string" ? runtimeEngine.engine_label : null;
@@ -625,7 +615,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     [quantities],
   );
   const kindForQuantity = useCallback((quantity: string): DisplaySelection["kind"] => {
-    switch (quantityDescriptorById.get(quantity)?.kind) {
+    const desc = quantityDescriptorById.get(quantity);
+    if (!desc) return "vector_field";
+    switch (desc.kind) {
       case "spatial_scalar":
         return "spatial_scalar";
       case "global_scalar":
@@ -3067,6 +3059,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart, magneticParts, airPart, interfaceParts, analyzeSelection, requestFocusObject,
     setSceneDocument, setRequestedRuntimeSelection, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze,
+    requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, setMeshOptions, setSolverSettings, activeTransformScope,
   ]);
 
   if (!state) {

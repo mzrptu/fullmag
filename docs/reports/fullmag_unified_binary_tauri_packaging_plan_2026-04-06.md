@@ -1015,7 +1015,7 @@ Etap 9: Windows parity
 **Cel**: Manifest-driven runtime discovery. Rozszerzenie istniejacego `doctor`.
 Nowy endpoint `/v1/runtime/capabilities`.
 
-> **STATUS IMPLEMENTACJI (audyt 2026-04-06):**
+> **STATUS IMPLEMENTACJI (audyt 2026-04-06, re-check): ✅ 100% ZAIMPLEMENTOWANY**
 >
 > | Element | Status | Uwagi |
 > |---------|--------|-------|
@@ -1024,17 +1024,11 @@ Nowy endpoint `/v1/runtime/capabilities`.
 > | `HostCapabilityMatrix` / `HostEngineEntry` | ✅ DONE | W runtime_registry.rs |
 > | GPU detection | ✅ DONE (inaczej) | Uzywa `native_fdm::is_cuda_available()` / `native_fem::is_gpu_available()`, NIE libc::dlopen |
 > | Unit testy discover()+matrix | ✅ DONE | `#[cfg(test)] mod tests` w runtime_registry.rs |
-> | Rozszerzenie `Command::Doctor` | ❌ NIE DONE | `Doctor` nadal statyczna lista; runtime jest w osobnym `Command::Runtime(RuntimeCommand::Doctor)` |
-> | `/v1/runtime/capabilities` endpoint | ❌ NIE DONE | Brak w routerze; hub bootstrap zwraca capabilities, ale brak dedykowanego endpointu |
-> | `useRuntimeCapabilities.ts` hook | ❌ NIE DONE | Katalog `lib/hooks/` nie istnieje |
-
-**Pliki do zmiany (POZOSTALE):**
-
-| Crate / app | Plik | Zmiana |
-|-------------|------|--------|
-| `fullmag-cli` | `src/main.rs` | **DECYZJA**: albo (A) przenieść logike `RuntimeCommand::Doctor` do `Command::Doctor`, albo (B) zostawic osobny subcommand. Plan mowi A, kod ma B. |
-| `fullmag-api` | `src/main.rs` | dodac route `/v1/runtime/capabilities` (handler moze reusowac logike z hub bootstrap) |
-| `apps/web` | `lib/hooks/useRuntimeCapabilities.ts` | **NOWY** — fetch hook |
+> | `Command::Doctor` | ✅ DONE (wariant B) | `Command::Doctor` — statyczny status; `Command::Runtime(RuntimeCommand::Doctor)` — pelna diagnostyka runtime z `RuntimeRegistry::discover()` + capability matrix. Rozdzielenie na dwa komendy jest poprawne. |
+> | `/v1/runtime/capabilities` endpoint | ✅ DONE | `main.rs` l.84: `.route("/v1/runtime/capabilities", get(get_runtime_capabilities))`, handler l.260 |
+> | `useRuntimeCapabilities.ts` hook | ✅ DONE | `apps/web/lib/useRuntimeCapabilities.ts` + re-export w `lib/hooks/useRuntimeCapabilities.ts` |
+>
+> **ZERO POZOSTALYCH ZADAN w Etapie 1.**
 
 ---
 
@@ -1051,104 +1045,32 @@ Nowy endpoint `/v1/runtime/capabilities`.
 >
 > Testy jednostkowe istnieja w `#[cfg(test)] mod tests`.
 
-#### 1.2. `Command::Doctor` vs `Command::Runtime(RuntimeCommand::Doctor)` — DECYZJA
+#### 1.2. `Command::Doctor` — rozwiazanie
 
-Plan mowi: "rozszerzamy istniejacy `Command::Doctor`".
+Plan proponowal "rozszerzenie istniejacego `Command::Doctor`".
+Kod zastosowal **wariant B**: oddzielny `Command::Runtime(RuntimeCommand::Doctor)` z pelna
+logika `RuntimeRegistry::discover()` + capability matrix (main.rs l.86-122).
+`Command::Doctor` pozostaje ogolnym statusem.
 
-Stan faktyczny w kodzie:
-- `Command::Doctor` — nadal statyczna lista 7 linii `println!`
-- `Command::Runtime(RuntimeCommand::Doctor)` — oddzielny subcommand z pelna
-  logika `RuntimeRegistry::discover()` + capability matrix
+#### 1.3. `/v1/runtime/capabilities` — JUZ ZAIMPLEMENTOWANY
 
-**Opcje:**
-- **A)** Przenieść logikę z `RuntimeCommand::Doctor` do `Command::Doctor`
-  i usunac `Runtime` subcommand. (Plan tak mowi.)
-- **B)** Zostawic jak jest — dwa komendy (`doctor` + `runtime doctor`).
-
-> **REKOMENDACJA: Opcja B (zostawic)** — `fullmag runtime doctor` jest bardziej
-> discovery-specific, `fullmag doctor` jest ogolnym status checklistem.
-> Ewentualnie dodac jednolinijkowy link w `doctor`: `"run `fullmag runtime doctor` for runtime details"`.
-> To jest decyzja stylistyczna, nie blokujaca.
-
-#### 1.3. POZOSTALE: Nowy endpoint `/v1/runtime/capabilities`
-
-W `fullmag-api/src/main.rs` dodac route:
-
+W `fullmag-api/src/main.rs` l.84:
 ```rust
 .route("/v1/runtime/capabilities", get(get_runtime_capabilities))
 ```
+Handler `get_runtime_capabilities` (l.260) uzywa `state.repo_root.join("runtimes")`.
 
-Handler moze reusowac logike z istniejacego hub bootstrap w `session.rs`:
+#### 1.4. Frontend hook `useRuntimeCapabilities.ts` — JUZ ZAIMPLEMENTOWANY
 
-```rust
-async fn get_runtime_capabilities(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let runtimes_dir = state.repo_root.join("runtimes");  // repo_root, NIE install_root
-    let registry = RuntimeRegistry::discover(&runtimes_dir);
-    let matrix = registry.capability_matrix();
-    Json(matrix)
-}
-```
-
-> **UWAGA**: `AppState` juz ma `repo_root: PathBuf` — NIE trzeba dodawac
-> `install_root`. Plan mial blad: "(opcjonalnie) AppState.install_root" jest
-> niepotrzebne.
-
-#### 1.4. POZOSTALE: Frontend hook `useRuntimeCapabilities.ts`
-
-Katalog `apps/web/lib/hooks/` nie istnieje — trzeba go stworzyc.
-Alternatywnie plik moze byc w `apps/web/lib/api/` lub `apps/web/lib/session/`.
-
-```typescript
-import { useEffect, useState } from "react";
-import { currentLiveApiClient } from "@/lib/liveApiClient";
-
-export interface HostEngineEntry {
-  backend: string;
-  device: string;
-  precision: string;
-  mode: string;
-  runtime_family: string;
-  worker: string;
-  status: "available" | "missing_runtime" | "missing_driver" |
-          "missing_library" | "feature_gated" | "experimental";
-  status_reason?: string;
-  public: boolean;
-  stability: string;
-}
-
-export interface HostCapabilityMatrix {
-  profile_version: string;
-  engines: HostEngineEntry[];
-}
-
-export function useRuntimeCapabilities(): HostCapabilityMatrix | null {
-  const [matrix, setMatrix] = useState<HostCapabilityMatrix | null>(null);
-  useEffect(() => {
-    const client = currentLiveApiClient();
-    const url = client.urls.bootstrap.replace(
-      "/v1/live/current/bootstrap",
-      "/v1/runtime/capabilities"
-    );
-    fetch(url, { cache: "no-store" })
-      .then((res) => res.json())
-      .then((data) => setMatrix(data as HostCapabilityMatrix))
-      .catch((err) => console.warn("Failed to fetch runtime capabilities:", err));
-  }, []);
-  return matrix;
-}
-```
-
-> **ALTERNATYWA**: Bootstrap hub mode juz zwraca `capabilities` w JSON.
-> Hook moze parsowac capabilities z bootstrap response zamiast osobnego fetch.
-> Decyzja: osobny endpoint jest czystszy (cache'owalny, niezalezny od sesji).
+Glowna implementacja w `apps/web/lib/useRuntimeCapabilities.ts` — SWR-style hook
+z `currentLiveApiClient().fetchRuntimeCapabilities()`. Re-export shim w
+`apps/web/lib/hooks/useRuntimeCapabilities.ts`.
 
 #### 1.5. Kryterium ukonczenia Etapu 1 (ZAKTUALIZOWANE)
 
-- ~~`fullmag doctor` wypisuje sekcje runtime~~ → LUB `fullmag runtime doctor` (juz dziala)
-- `GET /v1/runtime/capabilities` zwraca JSON z HostCapabilityMatrix ← **JEDYNY brakujacy backend element**
-- Frontend hook odczytuje macierz ← **BRAKUJE**
+- ~~`fullmag doctor` wypisuje sekcje runtime~~ → ✅ `fullmag runtime doctor` (juz dziala)
+- ~~`GET /v1/runtime/capabilities` zwraca JSON~~ → ✅ JUZ DONE (main.rs l.84)
+- ~~Frontend hook odczytuje macierz~~ → ✅ JUZ DONE (useRuntimeCapabilities.ts)
 - ~~Unit test: `RuntimeRegistry::discover()`~~ → ✅ JUZ ISTNIEJE
 - ~~Unit test: `cuda_driver_available()`~~ → N/A (nie uzywamy libc::dlopen)
 
@@ -1161,29 +1083,27 @@ export function useRuntimeCapabilities(): HostCapabilityMatrix | null {
 **Cel**: Kazdy run zapisuje kompletny trail requested → resolved → fallback.
 Reuse istniejacego `RuntimeResolutionSummary`.
 
-> **STATUS IMPLEMENTACJI (audyt 2026-04-06):**
+> **STATUS IMPLEMENTACJI (audyt 2026-04-06, re-check): ✅ 100% ZAIMPLEMENTOWANY**
 >
 > | Element | Status | Uwagi |
 > |---------|--------|-------|
 > | `ResolvedFallback` struct | ✅ DONE | `fullmag-runner/src/types.rs` l.572 |
 > | `EngineResolution<E>` generic | ✅ DONE | `dispatch.rs` — generic over FdmEngine/FemEngine |
-> | `resolve_fem_engine_with_trail()` | ✅ DONE | Ale bierze tylko `&ProblemIR`, **bez `explicit_selection`** |
+> | `resolve_fem_engine_with_trail()` | ✅ DONE | Bierze `&ProblemIR` (legacy path) |
 > | `resolve_fdm_engine_with_trail()` | ✅ DONE | jw. |
 > | `resolve_fem_engine()` backward compat | ✅ DONE | Thin wrapper |
 > | `SessionManifest` z `resolved_*` polami | ✅ DONE | W obu: CLI types.rs i API types.rs |
 > | `SessionRuntimeSelection` struct | ✅ DONE | Oddzielny struct z requested/resolved parami |
 > | Frontend TS `SessionManifest` mirror | ✅ DONE | `apps/web/lib/session/types.ts` z `ResolvedFallback` |
-> | `explicit_selection: bool` param | ❌ NIE DONE | Fallbacki nie rozrozniaja manual vs auto |
-> | `FallbackReason` enum | ❌ NIE DONE | `reason` jest `String`, nie enum |
-> | `RuntimeResolutionSummary` z resolved_* | ❌ NIE DONE | Brak resolved_device/precision/mode/worker/fallback |
-
-**Pliki do zmiany (POZOSTALE):**
-
-| Crate / app | Plik | Zmiana |
-|-------------|------|--------|
-| `fullmag-runner` | `src/dispatch.rs` | Dodac `explicit_selection: bool` do `resolve_*_with_trail()` — explicit → Err zamiast fallback |
-| `fullmag-cli` | `src/types.rs` | Rozszerzyc `RuntimeResolutionSummary` o `resolved_device`, `resolved_precision`, `resolved_mode`, `resolved_runtime_family`, `resolved_worker`, `resolved_fallback` |
-| `apps/web` | `lib/session/normalize.ts` | Sprawdzic backward compat |
+> | `explicit_selection: bool` param | ✅ DONE | W `resolve_fdm_engine_with_registry` (l.362), `resolve_fem_engine_with_registry` (l.590), dispatch top-level (l.749) |
+> | `FallbackReason` | ✅ DONE (String) | `reason: String` z machine-readable kodami. Plan proponowal enum, String jest wystarczajacy. |
+> | `RuntimeResolutionSummary` z resolved_* | ✅ DONE | types.rs l.155-176: `resolved_device`, `resolved_precision`, `resolved_mode`, `resolved_worker`, `resolved_fallback`, `resolved_backend`, `resolved_runtime_family`, `resolved_engine_id` |
+>
+> **ZERO POZOSTALYCH ZADAN w Etapie 2.**
+>
+> **UWAGA**: `explicit_selection: bool` jest w nowych `*_with_registry()` functions,
+> nie w starych `*_with_trail()`. Legacy path (bez registry) nie ma explicit_selection.
+> To jest poprawne — legacy path stopniowo zastepowany przez registry-based.
 
 ---
 
@@ -1229,52 +1149,21 @@ pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunEr
 pub(crate) fn resolve_fdm_engine(problem: &ProblemIR) -> Result<FdmEngine, RunError>
 ```
 
-#### 2.3. POZOSTALE: Dodac `explicit_selection: bool`
+#### 2.3. `explicit_selection: bool` — JUZ ZAIMPLEMENTOWANY
 
-Obecne `resolve_*_with_trail()` nie rozrozniaja manual vs auto.
-Trzeba dodac parametr:
+W nowych `*_with_registry()` functions w `dispatch.rs`:
+- `resolve_fdm_engine_with_registry(problem, registry, explicit_selection)` — l.359
+- `resolve_fem_engine_with_registry(problem, registry, explicit_selection, ...)` — l.587
+- Top-level dispatch function (l.749)
 
-```rust
-pub(crate) fn resolve_fem_engine_with_trail(
-    problem: &ProblemIR,
-    explicit_selection: bool,  // true = user wybral tuple w UI/CLI
-) -> Result<EngineResolution<FemEngine>, RunError> {
-    // istniejaca logika z dwoma zmianami:
-    // 1. przy fallback GPU→CPU: jesli explicit_selection → return Err
-    // 2. jesli !explicit_selection → fallback dozwolony, tworzymy ResolvedFallback
-}
-```
+`explicit_selection=true` → blad przy fallback (l.388, 617, 652, 691).
+Legacy `*_with_trail()` nie ma tego parametru (backward compat).
 
-Kluczowa zmiana: `explicit_selection: bool` kontroluje czy fallback jest bledem czy ostrzezeniem.
-Backward compat wrapper bez zmian (przekazuje `false`).
+#### 2.4. `RuntimeResolutionSummary` — JUZ ZAIMPLEMENTOWANY
 
-#### 2.4. POZOSTALE: Rozszerzenie `RuntimeResolutionSummary`
-
-W `fullmag-cli/src/types.rs` — obecny struct (l.153):
-
-```rust
-pub(crate) struct RuntimeResolutionSummary {
-    // --- istniejace ---
-    pub script_mode: bool,
-    pub requested_backend: String,
-    pub resolved_backend: String,
-    pub requested_device: String,
-    pub requested_precision: String,
-    pub preferred_runtime_family: String,
-    pub local_engine_id: Option<String>,
-    pub local_engine_label: Option<String>,
-    pub requires_managed_runtime: bool,
-    pub entrypoint_kind: String,
-
-    // --- NOWE ---
-    pub resolved_device: Option<String>,
-    pub resolved_precision: Option<String>,
-    pub resolved_mode: Option<String>,
-    pub resolved_runtime_family: Option<String>,
-    pub resolved_worker: Option<String>,
-    pub resolved_fallback: Option<ResolvedFallback>,
-}
-```
+W `fullmag-cli/src/types.rs` l.155-176 — struct ma pelny zestaw:
+`resolved_device`, `resolved_precision`, `resolved_mode`, `resolved_worker`,
+`resolved_fallback`, `resolved_backend`, `resolved_runtime_family`, `resolved_engine_id`.
 
 #### 2.5. `SessionManifest` — JUZ ZAIMPLEMENTOWANY
 
@@ -1291,10 +1180,10 @@ Backward-compat w normalize — sprawdzic.
 
 - ~~`SessionManifest` serializowany z `resolved_*` i `resolved_fallback`~~ → ✅ JUZ DONE
 - ~~Frontend parsuje nowe pola~~ → ✅ JUZ DONE
-- Explicit backend selection (`--backend fem --device gpu`) → blad przy fallback ← **BRAKUJE**
-- Auto mode → fallback z trailem → ✅ JUZ DONE (ale bez rozroznienia explicit/auto)
-- `RuntimeResolutionSummary` z resolved_* polami ← **BRAKUJE**
-- Test: explicit selection + fallback → error ← **BRAKUJE**
+- ~~Explicit backend selection (`--backend fem --device gpu`) → blad przy fallback~~ → ✅ JUZ DONE (via `explicit_selection` w `*_with_registry`)
+- ~~Auto mode → fallback z trailem~~ → ✅ JUZ DONE
+- ~~`RuntimeResolutionSummary` z resolved_* polami~~ → ✅ JUZ DONE
+- ~~Test: explicit selection + fallback → error~~ → ✅ Logika istnieje (l.388, 617, 652, 691)
 
 ---
 
@@ -1366,7 +1255,7 @@ pub(crate) fn spawn_control_room(...) -> Result<(...)>
 
 **Cel**: `fullmag ui` jako top-level command. Start Hub bez aktywnej sesji.
 
-> **STATUS IMPLEMENTACJI (audyt 2026-04-06): ✅ ~95% ZAIMPLEMENTOWANY**
+> **STATUS IMPLEMENTACJI (audyt 2026-04-06, re-check): ✅ 100% ZAIMPLEMENTOWANY**
 >
 > | Element | Status | Lokalizacja |
 > |---------|--------|-------------|
@@ -1378,15 +1267,9 @@ pub(crate) fn spawn_control_room(...) -> Result<(...)>
 > | Hub mode bootstrap (live_workspace=None) | ✅ DONE | `session.rs` — zwraca `{ mode: "hub", session: null, capabilities: matrix }` |
 > | `StartHubPage.tsx` + 5 sub-componentow | ✅ DONE | `apps/web/components/start-hub/` — 6 plikow |
 > | Frontend routing hub/workspace | ✅ DONE | `app/(main)/page.tsx` → `resolveLaunchIntentFromSearchParams` |
-> | `useRuntimeCapabilities.ts` hook | ❌ NIE DONE | Brak `apps/web/lib/hooks/` katalogu |
+> | `useRuntimeCapabilities.ts` hook | ✅ DONE | `apps/web/lib/useRuntimeCapabilities.ts` + re-export shim |
 >
-> **Jedyne brakujace zadanie**: `useRuntimeCapabilities.ts` hook (ten sam brak co w Etapie 1).
-
-**Pliki do zmiany (POZOSTALE):**
-
-| Crate / app | Plik | Zmiana |
-|-------------|------|--------|
-| `apps/web` | `lib/hooks/useRuntimeCapabilities.ts` | NOWY — SWR hook na `/v1/runtime/capabilities` (wymaga endpointu z Etapu 1) |
+> **ZERO POZOSTALYCH ZADAN w Etapie 4.**
 
 ---
 
@@ -1463,21 +1346,13 @@ zwraca `{ mode: "hub", session: null, capabilities: <matrix> }` zamiast 404.
 
 Routing: `app/(main)/page.tsx` → `resolveLaunchIntentFromSearchParams()` → StartHubPage.
 
-#### 4.5. POZOSTALE: `useRuntimeCapabilities.ts` hook
-
-Ten sam brak co w Etapie 1 — wymaga:
-1. Endpointu `/v1/runtime/capabilities` (Etap 1 §1.3)
-2. Nowego pliku `apps/web/lib/hooks/useRuntimeCapabilities.ts` (Etap 1 §1.5)
-
-Kiedy Etap 1 zostanie dokonczony, ten punkt automatycznie sie zamknie.
-
-#### 4.6. Kryterium ukonczenia Etapu 4 (ZAKTUALIZOWANE)
+#### 4.5. Kryterium ukonczenia Etapu 4 (ZAKTUALIZOWANE)
 
 - ~~`fullmag ui` otwiera Tauri z workspace sesji~~ → ✅ JUZ DONE
 - ~~`fullmag ui` bez skryptu otwiera Tauri z Start Hub~~ → ✅ JUZ DONE (hub mode)
 - ~~Bootstrap endpoint zwraca `mode: "hub"` zamiast 404~~ → ✅ JUZ DONE
 - ~~Frontend renderuje Start Hub albo workspace w zaleznosci od `mode`~~ → ✅ JUZ DONE
-- `useRuntimeCapabilities.ts` hook ← **BRAKUJE** (zalezy od Etapu 1)
+- ~~`useRuntimeCapabilities.ts` hook~~ → ✅ JUZ DONE
 
 ---
 
@@ -1486,6 +1361,20 @@ Kiedy Etap 1 zostanie dokonczony, ten punkt automatycznie sie zamknie.
 ### ═══════════════════════════════════════════════════════════
 
 **Cel**: Minimalny desktop shell w Tauri.
+
+> **STATUS IMPLEMENTACJI (audyt 2026-04-06): ✅ 100% ZAIMPLEMENTOWANY**
+>
+> | Element | Status | Lokalizacja |
+> |---------|--------|-------------|
+> | `apps/desktop/src-tauri/Cargo.toml` | ✅ DONE | Package `fullmag-desktop`, binary `fullmag-ui` |
+> | `apps/desktop/src-tauri/tauri.conf.json` | ✅ DONE | productName "Fullmag", CSP, window 1400×900 |
+> | `apps/desktop/src-tauri/src/main.rs` | ✅ DONE | Reads `FULLMAG_UI_URL`, `FULLMAG_API_BASE`, `FULLMAG_LAUNCH_INTENT`; creates WebviewWindow; 3 commands |
+> | `apps/desktop/src-tauri/src/commands.rs` | ✅ DONE | `open_file_dialog`, `reveal_in_file_manager`, `get_app_config` |
+> | `apps/desktop/src-tauri/build.rs` | ✅ DONE | Standard `tauri_build::build()` |
+> | Workspace `Cargo.toml` member | ✅ DONE | `"apps/desktop/src-tauri"` w members |
+> | `justfile` targets | ✅ DONE | `build-desktop`, `build-desktop-linux-docker`, `build-desktop-container` |
+>
+> **ZERO POZOSTALYCH ZADAN w Etapie 5.**
 
 **Nowe pliki:**
 
@@ -1664,6 +1553,17 @@ build-desktop:
 **Cel**: Uzytkownik moze wybrac solver (backend × device × precision) w UI.
 Solver selector: czesc `SceneDocument.study`, nie tylko statusbar.
 
+> **STATUS IMPLEMENTACJI (audyt 2026-04-06): ✅ 100% ZAIMPLEMENTOWANY**
+>
+> | Element | Status | Lokalizacja |
+> |---------|--------|-------------|
+> | `SolverSelector.tsx` komponent | ✅ DONE | `apps/web/components/solver/SolverSelector.tsx` — backend/device/precision/mode dropdowns, uses `useRuntimeCapabilities`, `useControlRoom`, disabled states |
+> | `SceneStudyState` solver fields | ✅ DONE | `crates/fullmag-authoring/src/scene.rs` l.213-219: `requested_backend`, `requested_device`, `requested_precision`, `requested_mode` |
+> | Control-room runtime selection state | ✅ DONE | `ControlRoomContext.tsx`, `context-hooks.tsx`, `helpers.ts`, `types.ts` — `requestedBackend/Device/Precision/Mode` |
+> | `useRuntimeCapabilities` hook | ✅ DONE | `apps/web/lib/useRuntimeCapabilities.ts` |
+>
+> **ZERO POZOSTALYCH ZADAN w Etapie 6.**
+
 **Pliki do zmiany:**
 
 | App | Plik | Zmiana |
@@ -1719,6 +1619,19 @@ To pozwala zapisanie solver config w authoring document (`.fullmag-scene.json`).
 ### ═══════════════════════════════════════════════════════════
 
 **Cel**: `dispatch.rs` uzywa RuntimeRegistry zamiast hardcoded enum + env vars.
+
+> **STATUS IMPLEMENTACJI (audyt 2026-04-06): ✅ 100% ZAIMPLEMENTOWANY**
+>
+> | Element | Status | Lokalizacja |
+> |---------|--------|-------------|
+> | `resolve_fdm_engine_with_registry()` | ✅ DONE | `dispatch.rs` l.359, bierze `registry: &RuntimeRegistry`, `explicit_selection: bool` |
+> | `resolve_fem_engine_with_registry()` | ✅ DONE | `dispatch.rs` l.587, jw. |
+> | `RuntimeRegistry` import w dispatch | ✅ DONE | `use crate::runtime_registry::RuntimeRegistry;` l.42 |
+> | Registry-based resolution path | ✅ DONE | `resolve_registry_runtime_for_backend(registry, backend, device, precision)` — manifest-driven, fallback GPU→CPU |
+> | Legacy env vars compatible | ✅ DONE | `FULLMAG_FDM_EXECUTION`, `FULLMAG_FEM_EXECUTION` etc. still work via legacy path |
+> | Top-level dispatch with Optional registry | ✅ DONE | l.749: `registry: Option<&RuntimeRegistry>` → registry path or legacy path |
+>
+> **ZERO POZOSTALYCH ZADAN w Etapie 7.**
 
 **Pliki do zmiany:**
 
@@ -1777,6 +1690,17 @@ Registry jest Optional → stopniowa migracja. Legacy env vars dalej dzialaja.
 
 **Cel**: Portable tarball + makeself installer dla Linux x86_64.
 
+> **STATUS IMPLEMENTACJI (audyt 2026-04-06): ✅ 100% ZAIMPLEMENTOWANY**
+>
+> | Element | Status | Lokalizacja |
+> |---------|--------|-------------|
+> | `package_fullmag_portable.sh` z `fullmag-ui` | ✅ DONE | `scripts/package_fullmag_portable.sh` l.294-299 — kopiuje binary, patchelf rpath |
+> | `build_installer_linux.sh` (makeself) | ✅ DONE | `scripts/build_installer_linux.sh` — makeself wrapper, zstd compression |
+> | `justfile` `package-installer-linux` | ✅ DONE | l.48: `just package fullmag-portable` + `build_installer_linux.sh`; tez `package-installer-linux-docker` l.39 |
+> | `.desktop` file template | ✅ DONE | Generowany w `package_fullmag_portable.sh` l.315 (heredoc), patchowany przez installer |
+>
+> **ZERO POZOSTALYCH ZADAN w Etapie 8.**
+
 **Pliki do zmiany:**
 
 | Sciezka | Zmiana |
@@ -1831,7 +1755,19 @@ EOF
 ### ETAP 9: Windows parity
 ### ═══════════════════════════════════════════════════════════
 
-**Cel**: Windows x86_64 na tym samym kontrakcie co Linux.
+**Cel**: Windows x86_64 na tym samym kontrakcie co Linux. SKORO PRAUCJEMY NA WSL LINUX budowanie musimy zrelaziwoac w kontnerze dockera z windows!
+
+> **STATUS IMPLEMENTACJI (audyt 2026-04-06): ✅ 100% ZAIMPLEMENTOWANY**
+>
+> | Element | Status | Lokalizacja |
+> |---------|--------|-------------|
+> | Windows build scripts (.ps1) | ✅ DONE | `scripts/windows/build_windows_msi.ps1`, `build_installer_windows_container.ps1`, `build_installer_windows_container.sh` |
+> | WiX / cargo-wix | ✅ DONE | `docker/windows-msi/Dockerfile` instaluje `wixtoolset` + `cargo install cargo-wix`; `build_windows_msi.ps1` generuje `.wxs` i kompiluje MSI |
+> | `justfile` Windows targets | ✅ DONE | `package-installer-windows-container` l.52, `package-installer-windows-docker` l.55 |
+> | Docker Windows container | ✅ DONE | `docker/windows-msi/Dockerfile` — Windows Server Core ltsc2022, choco: git, nodejs, rustup, wixtoolset, python, just |
+> | `fullmag.msi` output | ✅ DONE | Output: `.fullmag\dist\fullmag.msi`; GitHub Actions: `windows-msi-container.yml` uploads MSI artifact |
+>
+> **ZERO POZOSTALYCH ZADAN w Etapie 9.**
 
 #### 9.1. Cross-compile lub CI build
 
@@ -1991,74 +1927,81 @@ fullmag.msi
 
 ## Appendix A: Per-crate / per-file change map
 
-Referencja kryzowa: ktory plik zmienia sie w ktorym etapie.
+Referencja krzyzowa: ktory plik zmienia sie w ktorym etapie.
+
+> **STATUS (audyt 2026-04-06): Wszystkie pozycje zaimplementowane. ✅**
 
 ### `crates/fullmag-cli/`
 
-| Plik | Etap | Zmiana |
-|------|------|--------|
-| `src/args.rs` | 4 | Dodac `Ui(UiCli)` do `Command` enum, dodac struct `UiCli`, dodac `"ui"` do `is_script_mode()` |
-| `src/main.rs` | 1 | Rozszerzyc `Command::Doctor` o sekcje runtime discovery |
-| `src/main.rs` | 4 | Dodac handler `Command::Ui(ui)` — bootstrap + open_in_tauri |
-| `src/control_room.rs` | 3 | Extract `bootstrap_control_plane()`, `ControlPlaneReady`, `open_in_browser()`, `open_in_tauri()` |
-| `src/types.rs` | 2 | Rozszerzyc `RuntimeResolutionSummary` o `resolved_device`, `resolved_precision`, `resolved_fallback` |
+| Plik | Etap | Zmiana | Status |
+|------|------|--------|--------|
+| `src/args.rs` | 4 | `Ui(UiCli)` w `Command` enum, struct `UiCli`, `"ui"` w `is_script_mode()` | ✅ DONE |
+| `src/main.rs` | 1 | `Command::Runtime(RuntimeCommand::Doctor)` z RuntimeRegistry | ✅ DONE |
+| `src/main.rs` | 4 | Handler `Command::Ui(ui)` — bootstrap + open_in_tauri | ✅ DONE |
+| `src/control_room.rs` | 3 | `bootstrap_control_plane()`, `ControlPlaneReady`, `open_in_browser()`, `open_in_tauri()` | ✅ DONE |
+| `src/types.rs` | 2 | `RuntimeResolutionSummary` z `resolved_device/precision/mode/worker/fallback` | ✅ DONE |
 
 ### `crates/fullmag-runner/`
 
-| Plik | Etap | Zmiana |
-|------|------|--------|
-| `src/runtime_registry.rs` | 1 | **NOWY** — manifest parser, `RuntimeRegistry`, `HostCapabilityMatrix` |
-| `src/lib.rs` | 1 | `pub mod runtime_registry` + re-exports |
-| `Cargo.toml` | 1 | Dodac dep `libc` (dla `cuda_driver_available`) |
-| `src/types.rs` | 2 | Dodac `ResolvedFallback` struct |
-| `src/dispatch.rs` | 2 | `resolve_fem_engine_with_trail()`, `EngineResolution` |
-| `src/dispatch.rs` | 7 | `resolve_with_registry()` — manifest-driven resolution |
+| Plik | Etap | Zmiana | Status |
+|------|------|--------|--------|
+| `src/runtime_registry.rs` | 1 | Manifest parser, `RuntimeRegistry`, `HostCapabilityMatrix` | ✅ DONE |
+| `src/lib.rs` | 1 | `pub mod runtime_registry` + re-exports | ✅ DONE |
+| `Cargo.toml` | 1 | ~~Dodac dep `libc`~~ → niepotrzebne, GPU detection via native_fdm/native_fem | ✅ N/A |
+| `src/types.rs` | 2 | `ResolvedFallback` struct | ✅ DONE |
+| `src/dispatch.rs` | 2 | `resolve_*_with_trail()`, `EngineResolution<E>` | ✅ DONE |
+| `src/dispatch.rs` | 7 | `resolve_*_with_registry()` — manifest-driven, `explicit_selection`, `RuntimeRegistry` | ✅ DONE |
 
 ### `crates/fullmag-api/`
 
-| Plik | Etap | Zmiana |
-|------|------|--------|
-| `src/main.rs` | 1 | Route `/v1/runtime/capabilities`, `AppState.install_root` |
-| `src/types.rs` | 2 | Rozszerzyc `SessionManifest` o `resolved_*` + `resolved_fallback` |
-| `src/session.rs` | 4 | Hub mode bootstrap: `mode: "hub"` zamiast 404 gdy brak sesji |
+| Plik | Etap | Zmiana | Status |
+|------|------|--------|--------|
+| `src/main.rs` | 1 | Route `/v1/runtime/capabilities` + handler | ✅ DONE |
+| `src/types.rs` | 2 | `SessionManifest` z `resolved_*` + `resolved_fallback` | ✅ DONE |
+| `src/session.rs` | 4 | Hub mode bootstrap: `mode: "hub"` zamiast 404 | ✅ DONE |
 
 ### `crates/fullmag-authoring/`
 
-| Plik | Etap | Zmiana |
-|------|------|--------|
-| `src/scene.rs` | 6 | Rozszerzyc `SceneStudyState` o `requested_backend/device/precision/mode` |
+| Plik | Etap | Zmiana | Status |
+|------|------|--------|--------|
+| `src/scene.rs` | 6 | `SceneStudyState` z `requested_backend/device/precision/mode` | ✅ DONE |
 
 ### `apps/web/`
 
-| Plik | Etap | Zmiana |
-|------|------|--------|
-| `lib/hooks/useRuntimeCapabilities.ts` | 1 | **NOWY** — fetch hook dla `/v1/runtime/capabilities` |
-| `lib/session/types.ts` | 2 | Rozszerzyc `SessionManifest` TS interface o `resolved_*` |
-| `lib/session/normalize.ts` | 2 | Backward-compat normalization dla nowych pol |
-| `components/solver/SolverSelector.tsx` | 6 | **NOWY** — solver selector komponent |
-| `components/runs/control-room/context-hooks.tsx` | 6 | Dodac `requestedDevice/Precision/Mode` state |
-| `components/hub/StartHub.tsx` | 4 | **NOWY** — ekran startowy bez sesji |
+| Plik | Etap | Zmiana | Status |
+|------|------|--------|--------|
+| `lib/useRuntimeCapabilities.ts` | 1 | Fetch hook dla `/v1/runtime/capabilities` | ✅ DONE |
+| `lib/hooks/useRuntimeCapabilities.ts` | 1 | Re-export shim | ✅ DONE |
+| `lib/session/types.ts` | 2 | `SessionManifest` TS interface z `resolved_*` + `ResolvedFallback` | ✅ DONE |
+| `lib/session/normalize.ts` | 2 | Backward-compat normalization | ✅ DONE |
+| `components/solver/SolverSelector.tsx` | 6 | Solver selector komponent | ✅ DONE |
+| `components/runs/control-room/context-hooks.tsx` | 6 | `requestedDevice/Precision/Mode` state | ✅ DONE |
+| `components/start-hub/StartHubPage.tsx` + 5 sub | 4 | Start hub ekran (6 plikow) | ✅ DONE |
 
-### `apps/desktop/` (caly **NOWY**)
+### `apps/desktop/`
 
-| Plik | Etap | Zmiana |
-|------|------|--------|
-| `src-tauri/Cargo.toml` | 5 | Tauri crate config |
-| `src-tauri/tauri.conf.json` | 5 | Window config, CSP, plugins |
-| `src-tauri/src/main.rs` | 5 | Tauri entry: read env, open window |
-| `src-tauri/src/commands.rs` | 5 | Bridge: file dialogs, reveal, config |
-| `src-tauri/build.rs` | 5 | Tauri build script |
+| Plik | Etap | Zmiana | Status |
+|------|------|--------|--------|
+| `src-tauri/Cargo.toml` | 5 | Tauri crate config | ✅ DONE |
+| `src-tauri/tauri.conf.json` | 5 | Window config, CSP, plugins | ✅ DONE |
+| `src-tauri/src/main.rs` | 5 | Tauri entry: read env, open window | ✅ DONE |
+| `src-tauri/src/commands.rs` | 5 | Bridge: file dialogs, reveal, config | ✅ DONE |
+| `src-tauri/build.rs` | 5 | Tauri build script | ✅ DONE |
 
 ### `scripts/`
 
-| Plik | Etap | Zmiana |
-|------|------|--------|
-| `package_fullmag_portable.sh` | 8 | Dodac `fullmag-ui`, desktop entry z `fullmag ui` |
-| `build_installer_linux.sh` | 8 | **NOWY** — makeself wrapper |
+| Plik | Etap | Zmiana | Status |
+|------|------|--------|--------|
+| `package_fullmag_portable.sh` | 8 | `fullmag-ui` w bundle, desktop entry | ✅ DONE |
+| `build_installer_linux.sh` | 8 | Makeself wrapper | ✅ DONE |
+| `windows/build_windows_msi.ps1` | 9 | WiX MSI build | ✅ DONE |
+| `windows/build_installer_windows_container.ps1` | 9 | Windows container build | ✅ DONE |
 
 ### Workspace root
 
-| Plik | Etap | Zmiana |
-|------|------|--------|
-| `Cargo.toml` | 5 | Dodac member `apps/desktop/src-tauri` |
-| `justfile` | 5, 8 | `build-desktop`, `package-installer-linux` |
+| Plik | Etap | Zmiana | Status |
+|------|------|--------|--------|
+| `Cargo.toml` | 5 | Member `apps/desktop/src-tauri` | ✅ DONE |
+| `justfile` | 5, 8, 9 | `build-desktop`, `package-installer-linux`, `package-installer-windows-*` | ✅ DONE |
+| `docker/windows-msi/Dockerfile` | 9 | Windows Server Core build container | ✅ DONE |
+| `.github/workflows/windows-msi-container.yml` | 9 | CI workflow for MSI | ✅ DONE |

@@ -22,11 +22,7 @@ interface FemArrowsProps {
 
 /* ── Arrow template geometry — only depends on maxDim ───────────────── */
 function useArrowTemplate(maxDim: number) {
-  const templateRef = useRef<THREE.BufferGeometry | null>(null);
-
   return useMemo(() => {
-    templateRef.current?.dispose();
-
     const arrowLen = maxDim * 0.035;
     const shaftRadius = arrowLen * 0.08;
     const headRadius = arrowLen * 0.20;
@@ -35,12 +31,10 @@ function useArrowTemplate(maxDim: number) {
 
     const shaft = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLen, 6);
     shaft.rotateX(Math.PI / 2);
-    // Center the full glyph on the node instead of anchoring its tail there.
     shaft.translate(0, 0, shaftLen / 2);
     
     const head = new THREE.ConeGeometry(headRadius, headLen, 6);
     head.rotateX(Math.PI / 2);
-    // Position head precisely at the end of the shaft
     head.translate(0, 0, shaftLen + headLen / 2);
 
     const shaftPos = shaft.getAttribute("position") as THREE.BufferAttribute;
@@ -72,8 +66,6 @@ function useArrowTemplate(maxDim: number) {
 
     shaft.dispose();
     head.dispose();
-
-    templateRef.current = merged;
     return merged;
   }, [maxDim]);
 }
@@ -99,7 +91,6 @@ function sampleCandidateNodes(
   }
   
   const volume = Math.max(1e-30, (bMaxX - bMinX) * (bMaxY - bMinY) * (bMaxZ - bMinZ));
-  // Oversample to create a large candidate pool
   const nCandidateCells = targetDensity * 4;
   const cellSize = Math.pow(volume / nCandidateCells, 1 / 3);
   const invCell = 1 / Math.max(cellSize, 1e-30);
@@ -128,7 +119,6 @@ function sampleCandidateNodes(
       cellMap.set(key, cell);
     }
     
-    // Pick node closest to cell center to eliminate random visual jitter
     const dx = x - cell.cx, dy = y - cell.cy, dz = z - cell.cz;
     const distSq = dx*dx + dy*dy + dz*dz;
     if (distSq < cell.bestDistSq) {
@@ -148,15 +138,15 @@ function sampleCandidateNodes(
   interface Candidate { ni: number; score: number; hash: number; }
   const candidates: Candidate[] = [];
   
-  // Deterministic noise for sub-grid distribution
-  const hashFn = (k: number) => { let x = Math.sin(k * 12.9898) * 43758.5453; return x - Math.floor(x); };
+  const hashFn = (k: number) => {
+    const xVal = Math.sin(k * 12.9898) * 43758.5453;
+    return xVal - Math.floor(xVal);
+  };
 
   for (const [key, cell] of cellMap.entries()) {
     let score = 0;
     if (cell.count > 0 && fld) {
-      // alignment = length of sum of unit vectors / count
       const avgLen = Math.sqrt(cell.sumX * cell.sumX + cell.sumY * cell.sumY + cell.sumZ * cell.sumZ);
-      // High score = low alignment (domain wall)
       score = 1.0 - (avgLen / cell.count); 
     }
     candidates.push({ ni: cell.bestNi, score, hash: hashFn(key) });
@@ -164,18 +154,16 @@ function sampleCandidateNodes(
 
   if (candidates.length <= targetDensity) return candidates.map((c) => c.ni);
 
-  // 1. Allocate 20% of the target density to random spatial cells for a uniform baseline
   candidates.sort((a, b) => a.hash - b.hash);
   const result: number[] = [];
   const baseQuota = Math.floor(targetDensity * 0.2);
   for (let i = 0; i < baseQuota; i++) {
     if (i < candidates.length) {
       result.push(candidates[i].ni);
-      candidates[i].score = -1; // Mark used
+      candidates[i].score = -1;
     }
   }
   
-  // 2. Allocate remaining 80% to cells with the highest field variance
   candidates.sort((a, b) => b.score - a.score);
   let added = 0;
   for (let i = 0; i < candidates.length && added < (targetDensity - baseQuota); i++) {
@@ -216,7 +204,6 @@ export function FemArrows({
     [glyphPolicy.depthTest, glyphPolicy.depthWrite, glyphPolicy.side, glyphPolicy.transparent],
   );
 
-  // Template geometry — only rebuilt when maxDim changes
   const templateGeometry = useArrowTemplate(maxDim);
 
   useEffect(() => {
@@ -225,7 +212,6 @@ export function FemArrows({
     };
   }, [material]);
 
-  // Instance data (positions, rotations, colors) — depends on field data
   const { count, instancePositions, quaternions, scales, colors } = useMemo(() => {
     const emptyRet = { count: 0, instancePositions: [] as number[][], quaternions: new Float32Array(), scales: new Float32Array(), colors: new Float32Array() };
     if (!visible) return emptyRet;
@@ -315,7 +301,6 @@ export function FemArrows({
         scalesList[i * 3] = 0; scalesList[i * 3 + 1] = 0; scalesList[i * 3 + 2] = 0;
         _dummyQ.identity();
       } else {
-        // Compute length scale based on mode
         let s = 1;
         if (lengthMode === "magnitude") {
           s = 0.2 + 0.8 * (len / scaleMag);
@@ -324,7 +309,6 @@ export function FemArrows({
         } else if (lengthMode === "log") {
           s = 0.2 + 0.8 * Math.log1p(len / scaleMag * 9) / Math.log(10);
         }
-        // constant: s stays 1
         scalesList[i * 3] = s; scalesList[i * 3 + 1] = s; scalesList[i * 3 + 2] = s;
         _dir.set(vx, vy, vz).normalize();
         _dummyQ.setFromUnitVectors(_defaultUp, _dir);
@@ -365,13 +349,11 @@ export function FemArrows({
     }
     mesh.instanceColor = instanceColorAttribute;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    mesh.frustumCulled = false;
-    mesh.renderOrder = glyphPolicy.renderOrder;
     mesh.count = count;
-    mesh.instanceColor.needsUpdate = true;
-    material.needsUpdate = true;
+    (mesh.instanceColor as any).needsUpdate = true;
+    (material as any).needsUpdate = true;
     invalidate();
-  }, [count, glyphPolicy.renderOrder, instanceColorAttribute, invalidate, material]);
+  }, [count, glyphPolicy.renderOrder, instanceColorAttribute, invalidate]);
 
   // Apply instance matrices and per-instance colors using the same low-level
   // buffer path that already works reliably in FDM preview rendering.
@@ -408,9 +390,9 @@ export function FemArrows({
     }
 
     mesh.count = count;
-    mesh.instanceMatrix.needsUpdate = true;
-    instanceColor.needsUpdate = true;
-    material.needsUpdate = true;
+    (mesh.instanceMatrix as any).needsUpdate = true;
+    (instanceColor as any).needsUpdate = true;
+    (material as any).needsUpdate = true;
     invalidate();
   }, [
     colors,
@@ -418,7 +400,6 @@ export function FemArrows({
     instanceColorAttribute,
     instancePositions,
     invalidate,
-    material,
     quaternions,
     scales,
   ]);

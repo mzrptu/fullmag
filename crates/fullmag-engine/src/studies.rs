@@ -73,9 +73,6 @@ pub fn run_exchange_density_study(
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
         );
@@ -112,9 +109,6 @@ pub fn run_exchange_density_study(
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
         );

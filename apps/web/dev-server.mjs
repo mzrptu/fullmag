@@ -264,7 +264,7 @@ async function main() {
   });
 
   server.listen(port, hostname, () => {
-    // eslint-disable-next-line no-console
+     
     console.log(
       useStaticServer
         ? `fullmag static control room ready on http://${hostname}:${port} (api proxy ${apiUrl.origin}, static root ${resolvedStaticRoot})`
@@ -274,7 +274,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  // eslint-disable-next-line no-console
+   
   console.error(error);
   process.exit(1);
 });

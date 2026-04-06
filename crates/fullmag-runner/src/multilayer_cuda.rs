@@ -225,9 +225,6 @@ fn build_contexts_and_states(
                 external_field: plan.external_field,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 uniaxial_anisotropy: layer.material.uniaxial_anisotropy_ku1.map(|ku1| {
                     UniaxialAnisotropyConfig {
                         ku1,

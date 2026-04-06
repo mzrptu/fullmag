@@ -21,13 +21,9 @@ interface StatusBarProps {
   status: string;
   activityLabel?: string;
   activityDetail?: string;
-  progressMode?: "idle" | "indeterminate" | "determinate";
-  progressValue?: number;
-  nodeCount?: string;
+  nodeCount?: number;
   commandMessage?: string | null;
-  commandState?: string | null;
-  displayLabel?: string | null;
-  displayDetail?: string | null;
+  commandState?: "idle" | "progress" | "error" | "success" | "rejected";
   previewPending?: boolean;
   runtimeCanAcceptCommands?: boolean;
   pipelineLabel?: string | null;
@@ -153,7 +149,6 @@ export default function StatusBar({
   stepDisplay,
   simTime,
   wallTime,
-  throughput,
   backend,
   runtimeEngine,
   runtimeGpuLabel,
@@ -161,13 +156,9 @@ export default function StatusBar({
   status,
   activityLabel,
   activityDetail,
-  progressMode: _progressMode = "idle",
-  progressValue: _progressValue,
   nodeCount,
   commandMessage,
   commandState,
-  displayLabel,
-  displayDetail,
   previewPending = false,
   runtimeCanAcceptCommands = false,
   pipelineLabel,

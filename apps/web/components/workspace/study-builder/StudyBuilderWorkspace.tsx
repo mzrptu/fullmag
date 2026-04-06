@@ -78,18 +78,19 @@ export default function StudyBuilderWorkspace({
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const next = (pipeline as StudyPipelineDocument | null) ?? migrateFlatStagesToStudyPipeline(stages);
-    setDocument(next);
-  }, [pipeline, stages]);
+  // Sync document state with pipeline/stages props during render (React 19 recommended pattern for resets)
+  const [prevPipeline, setPrevPipeline] = useState(pipeline);
+  const [prevStages, setPrevStages] = useState(stages);
 
-  useEffect(() => {
-    if (!selectedNodeId) return;
-    const exists = findNodeById(document.nodes, selectedNodeId);
-    if (!exists) {
-      setSelectedNodeId(null);
-    }
-  }, [document.nodes, selectedNodeId]);
+  if (pipeline !== prevPipeline || stages !== prevStages) {
+    setPrevPipeline(pipeline);
+    setPrevStages(stages);
+    setDocument((pipeline as StudyPipelineDocument | null) ?? migrateFlatStagesToStudyPipeline(stages));
+  }
+
+  // Derive selection validity during render to avoid secondary effects
+  const nodeExists = selectedNodeId ? findNodeById(document.nodes, selectedNodeId) : null;
+  const effectiveSelectedNodeId = nodeExists ? selectedNodeId : null;
 
   const materialized = useMemo(() => materializeStudyPipeline(document), [document]);
   const selectedNode = useMemo(

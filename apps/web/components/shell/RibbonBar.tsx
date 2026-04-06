@@ -468,13 +468,14 @@ const RibbonActionTrigger = React.forwardRef<
     previewPending?: boolean;
   } & React.ButtonHTMLAttributes<HTMLButtonElement>
 >(({ action, previewPending, ...props }, ref) => {
+  const propsOnClick = props.onClick;
   const handleClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
-    props.onClick?.(e);
+    propsOnClick?.(e);
     if (e.defaultPrevented) {
       return;
     }
     action.action?.();
-  }, [action, props.onClick]);
+  }, [action, propsOnClick]);
   return (
     <button
       ref={ref}

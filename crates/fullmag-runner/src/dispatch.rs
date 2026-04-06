@@ -1357,9 +1357,9 @@ pub(crate) fn execute_fem_eigen(
     match engine {
         FemEngine::CpuReference => fem_eigen::execute_reference_fem_eigen(plan, outputs),
         FemEngine::NativeGpu => {
-            // GPU-accelerated dense eigensolver (Etap A4).
-            // `execute_gpu_fem_eigen` tries cuSolverDN on the GPU and falls back
-            // automatically to the CPU LAPACK path when the GPU is unavailable.
+            // GPU-accelerated dense eigensolver (Etap A4) — TRANSITIONAL.
+            // `execute_gpu_fem_eigen` uses cuSolverDN; returns error if GPU
+            // is unavailable (no silent fallback to CPU).
             fem_eigen::execute_gpu_fem_eigen(plan, outputs)
         }
     }

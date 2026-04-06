@@ -527,7 +527,6 @@ function MagnetizationView3DInner({
 }: Props) {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [openPopover, setOpenPopover] = useState<"color" | "display" | "topo" | "camera" | null>(null);
-  const [visibleCount, setVisibleCount] = useState(0);
 
   // ── 3dsmax-style interaction mode (camera / move / rotate / scale) ──
   type InteractionMode = "camera" | "move" | "rotate" | "scale";
@@ -1013,7 +1012,6 @@ function MagnetizationView3DInner({
             activeMask={activeMask}
             settings={deferredSettings}
             sceneOpacityMultiplier={sceneOpacityMultiplier}
-            onVisibleCount={setVisibleCount}
           />
 
           {worldExtent && objectOverlays.length > 0 ? (

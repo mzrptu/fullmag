@@ -381,9 +381,6 @@ impl Default for EffectiveFieldTerms {
             external_field: None,
             per_node_field: None,
             magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
             uniaxial_anisotropy: None,
             cubic_anisotropy: None,
             interfacial_dmi: None,
@@ -3331,9 +3328,6 @@ pub fn run_reference_exchange_demo(steps: usize, dt: f64) -> Result<ReferenceDem
             external_field: None,
             per_node_field: None,
             magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
             ..Default::default()
         },
     );
@@ -3503,9 +3497,6 @@ mod tests {
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
         )
@@ -3524,9 +3515,6 @@ mod tests {
                 external_field: Some(field),
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
         )
@@ -3553,9 +3541,6 @@ mod tests {
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
         )
@@ -3574,9 +3559,6 @@ mod tests {
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
             Some(mask),
@@ -3597,9 +3579,6 @@ mod tests {
                 external_field: Some([0.0, 0.0, 1.0]),
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
             Some(mask),
@@ -3847,9 +3826,6 @@ mod tests {
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
         );

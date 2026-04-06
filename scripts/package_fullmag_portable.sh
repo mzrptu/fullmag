@@ -16,6 +16,14 @@ require_file() {
   }
 }
 
+require_tool() {
+  local tool="$1"
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "Missing required tool: $tool" >&2
+    exit 1
+  }
+}
+
 copy_cuda_runtime_libs() {
   local dst_lib="$1"
   shift
@@ -244,6 +252,7 @@ require_file "${REPO_ROOT}/.fullmag/local/web/index.html"
 require_file "${REPO_ROOT}/.fullmag/local/python/bin/python"
 require_file "${REPO_ROOT}/packages/fullmag-py/src/fullmag/__init__.py"
 require_file "${REPO_ROOT}/examples/exchange_relax.py"
+require_tool "$PATCHELF_BIN"
 
 mapfile -t PY_RUNTIME_META < <(
   "${REPO_ROOT}/.fullmag/local/python/bin/python" - <<'PY'
@@ -269,6 +278,7 @@ mkdir -p \
   "${BUNDLE_ROOT}/share/licenses" \
   "${BUNDLE_ROOT}/.fullmag/local" \
   "${BUNDLE_ROOT}/.fullmag/local/cache/fem_mesh_assets"
+rm -rf "${BUNDLE_ROOT}/.fullmag/local-live"
 
 cp -a "${REPO_ROOT}/.fullmag/local/bin/fullmag-bin" "${BUNDLE_ROOT}/bin/"
 cp -a "${REPO_ROOT}/.fullmag/local/bin/fullmag-api" "${BUNDLE_ROOT}/bin/"
@@ -281,12 +291,37 @@ tar --exclude='__pycache__' -C "${REPO_ROOT}/packages/fullmag-py" -cf - src \
   | tar -C "${BUNDLE_ROOT}/packages/fullmag-py" -xf -
 cp -a "${REPO_ROOT}/examples" "${BUNDLE_ROOT}/examples"
 
+if [[ -x "${REPO_ROOT}/target/release/fullmag-ui" ]]; then
+  echo "  including fullmag-ui (Tauri desktop shell)"
+  cp -a "${REPO_ROOT}/target/release/fullmag-ui" "${BUNDLE_ROOT}/bin/"
+  "$PATCHELF_BIN" --set-rpath '$ORIGIN/../lib' "${BUNDLE_ROOT}/bin/fullmag-ui"
+else
+  echo "  skipping fullmag-ui (not built)"
+fi
+
 ln -s ../../web "${BUNDLE_ROOT}/.fullmag/local/web"
 ln -s ../../python "${BUNDLE_ROOT}/.fullmag/local/python"
 
 write_wrapper "${BUNDLE_ROOT}/bin/fullmag"
 write_version_metadata "${BUNDLE_ROOT}/share/version.json"
 write_runtime_manifests
+
+if [[ -f "${REPO_ROOT}/external_solvers/tetrax/logo_large.png" ]]; then
+  mkdir -p "${BUNDLE_ROOT}/share/icons"
+  cp -a "${REPO_ROOT}/external_solvers/tetrax/logo_large.png" \
+    "${BUNDLE_ROOT}/share/icons/fullmag.png"
+fi
+
+cat > "${BUNDLE_ROOT}/share/fullmag.desktop" <<'EOF'
+[Desktop Entry]
+Name=Fullmag
+Comment=Micromagnetic simulation environment
+Exec=__INSTALL_PREFIX__/bin/fullmag ui
+Icon=__INSTALL_PREFIX__/share/icons/fullmag.png
+Terminal=false
+Type=Application
+Categories=Science;Physics;Simulation;
+EOF
 
 cat > "${BUNDLE_ROOT}/share/licenses/README.md" <<'EOF'
 Third-party license aggregation is not bundled yet in this preproduction artifact.

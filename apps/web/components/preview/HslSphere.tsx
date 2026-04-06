@@ -17,7 +17,7 @@
  * reference sphere must swap Y/Z when sampling the HSL map for FEM/FDM.
  */
 
-import { useRef, useMemo } from "react";
+import { useMemo } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Text, Billboard, Line } from "@react-three/drei";

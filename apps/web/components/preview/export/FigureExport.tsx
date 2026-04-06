@@ -24,7 +24,6 @@ export function exportCanvasAsImage(
   options: FigureExportOptions = {},
 ) {
   const {
-    pixelRatio = 2,
     backgroundColor = null,
     format = "png",
     quality = 0.95,

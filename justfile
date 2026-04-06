@@ -33,6 +33,28 @@ build-desktop:
     mkdir -p "{{local_bin}}"
     cp target/release/fullmag-ui "{{local_bin}}/"
 
+build-desktop-linux-docker:
+    ./scripts/build_desktop_linux_container.sh
+
+package-installer-linux-docker:
+    ./scripts/build_installer_linux_container.sh
+
+check-desktop-linux-deps:
+    ./scripts/check_linux_desktop_deps.sh
+
+build-desktop-container:
+    ./scripts/build_desktop_linux_container.sh
+
+package-installer-linux:
+    just package fullmag-portable
+    ./scripts/build_installer_linux.sh
+
+package-installer-windows-container:
+    ./scripts/windows/build_installer_windows_container.sh
+
+package-installer-windows-docker:
+    ./scripts/windows/build_installer_windows_container.sh
+
 package target="fullmag":
     if [ "{{target}}" = "fullmag" ] || [ "{{target}}" = "fullmag-host" ]; then ./scripts/package_fullmag_host.sh; \
     elif [ "{{target}}" = "fullmag-portable" ]; then \

@@ -231,11 +231,42 @@ impl NativeFemBackend {
             enable_demag: if plan.enable_demag { 1 } else { 0 },
             has_external_field: if plan.external_field.is_some() { 1 } else { 0 },
             external_field_am: plan.external_field.unwrap_or([0.0, 0.0, 0.0]),
-            demag_solver: ffi::fullmag_fem_solver_config {
-                solver: ffi::fullmag_fem_linear_solver::FULLMAG_FEM_LINEAR_SOLVER_CG,
-                preconditioner: ffi::fullmag_fem_preconditioner::FULLMAG_FEM_PRECONDITIONER_AMG,
-                relative_tolerance: 1e-8,
-                max_iterations: 500,
+            demag_solver: {
+                let policy = plan.demag_solver_policy.as_ref().cloned()
+                    .unwrap_or_default();
+                let solver = match policy.solver.as_str() {
+                    "CG" => ffi::fullmag_fem_linear_solver::FULLMAG_FEM_LINEAR_SOLVER_CG,
+                    "GMRES" => ffi::fullmag_fem_linear_solver::FULLMAG_FEM_LINEAR_SOLVER_GMRES,
+                    other => {
+                        return Err(RunError {
+                            message: format!(
+                                "native FEM: unsupported demag linear solver '{}'; \
+                                 supported: CG, GMRES",
+                                other
+                            ),
+                        });
+                    }
+                };
+                let preconditioner = match policy.preconditioner.as_str() {
+                    "AMG" => ffi::fullmag_fem_preconditioner::FULLMAG_FEM_PRECONDITIONER_AMG,
+                    "JACOBI" => ffi::fullmag_fem_preconditioner::FULLMAG_FEM_PRECONDITIONER_JACOBI,
+                    "NONE" => ffi::fullmag_fem_preconditioner::FULLMAG_FEM_PRECONDITIONER_NONE,
+                    other => {
+                        return Err(RunError {
+                            message: format!(
+                                "native FEM: unsupported demag preconditioner '{}'; \
+                                 supported: AMG, JACOBI, NONE",
+                                other
+                            ),
+                        });
+                    }
+                };
+                ffi::fullmag_fem_solver_config {
+                    solver,
+                    preconditioner,
+                    relative_tolerance: policy.rtol,
+                    max_iterations: policy.max_iterations as i32,
+                }
             },
             air_box_factor: plan.air_box_config.as_ref().map_or(0.0, |c| c.factor),
             demag_realization: match resolved_demag_realization {
@@ -1268,9 +1299,6 @@ mod tests {
                 external_field: plan.external_field,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
             },
         );
         let mut state =

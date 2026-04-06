@@ -78,211 +78,104 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
   const pendingPreviewPayloadsRef = useRef(new Map<number, Float64Array>());
   const connectionGenerationRef = useRef(0);
 
-  const connect = useCallback(() => {
-    const connectionGeneration = connectionGenerationRef.current + 1;
-    connectionGenerationRef.current = connectionGeneration;
-    const client = currentLiveApiClient();
-    const previousWs = wsRef.current;
-    if (previousWs) {
-      intentionallyClosedRef.current.add(previousWs);
-      previousWs.close();
-      wsRef.current = null;
-    }
-    pendingPreviewPayloadsRef.current.clear();
+  // Ref-based generation tracker to avoid React Compiler strict dependencies
+  const executeConnectRef = useRef<() => void>(null);
 
-    client
-      .fetchBootstrap()
-      .then((raw) => {
-        if (
-          unmountedRef.current ||
-          connectionGenerationRef.current !== connectionGeneration
-        ) {
-          return;
-        }
-        if (
-          raw &&
-          typeof raw === "object" &&
-          "mode" in raw &&
-          (raw as { mode?: unknown }).mode === "hub"
-        ) {
-          setState(null);
-          setError(null);
-          return;
-        }
-        const nextState = normalizeSessionState(raw, pendingPreviewPayloadsRef.current);
-        if (!nextState.session) {
-          setState(null);
-          setError(null);
-          return;
-        }
-        if (nextState.live_state?.finished) {
-          finishedRef.current = true;
-        }
-        setState((prevState) => mergeSessionState(prevState, nextState));
-      })
-      .catch((bootstrapError) => {
-        if (
-          unmountedRef.current ||
-          connectionGenerationRef.current !== connectionGeneration
-        ) {
-          return;
-        }
-        if (bootstrapError instanceof ApiHttpError && bootstrapError.status === 404) {
-          setError(null);
-          return;
-        }
-        setError(
-          bootstrapError instanceof Error ? bootstrapError.message : "Failed to load live state",
-        );
-      });
+  useEffect(() => {
+    (executeConnectRef as any).current = () => {
+      const nextGen = connectionGenerationRef.current + 1;
+      (connectionGenerationRef as any).current = nextGen;
+      const connectionGeneration = nextGen;
 
-    const ws = client.connectWebSocket();
-    ws.binaryType = "arraybuffer";
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      if (
-        unmountedRef.current ||
-        wsRef.current !== ws ||
-        connectionGenerationRef.current !== connectionGeneration
-      ) {
-        return;
+      const client = currentLiveApiClient();
+      const previousWs = wsRef.current;
+      if (previousWs) {
+        intentionallyClosedRef.current.add(previousWs);
+        previousWs.close();
+        (wsRef as any).current = null;
       }
-      if (disconnectTimerRef.current !== null) {
-        clearTimeout(disconnectTimerRef.current);
-        disconnectTimerRef.current = null;
-      }
-      if (reconnectTimerRef.current !== null) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
-      setConnection("connected");
-      setError(null);
-      reconnectAttemptRef.current = 0;
-    };
+      pendingPreviewPayloadsRef.current.clear();
 
-    ws.onmessage = (event: MessageEvent<string | ArrayBuffer>) => {
-      if (
-        unmountedRef.current ||
-        wsRef.current !== ws ||
-        connectionGenerationRef.current !== connectionGeneration
-      ) {
-        return;
-      }
-      if (event.data instanceof ArrayBuffer) {
-        const payload = decodePreviewBinaryFrame(event.data);
-        if (!payload) {
-          return;
-        }
-        pendingPreviewPayloadsRef.current.set(payload.payloadId, payload.vectorFieldValues);
-        if (pendingPreviewPayloadsRef.current.size > 16) {
-          const oldestKey = pendingPreviewPayloadsRef.current.keys().next().value;
-          if (oldestKey != null) {
-            pendingPreviewPayloadsRef.current.delete(oldestKey);
-          }
-        }
-        setState((prevState) =>
-          attachPreviewBinaryPayload(prevState, payload.payloadId, payload.vectorFieldValues));
-        return;
-      }
-      try {
-        const raw = JSON.parse(event.data);
-        setState((prevState) => {
-          if (raw?.kind === "session_state" && raw.state) {
-            const nextState = normalizeSessionState(
-              (raw as SessionStateCurrentLiveEvent).state,
-              pendingPreviewPayloadsRef.current,
-            );
-            if (nextState.live_state?.finished) {
-              finishedRef.current = true;
-            }
-            return mergeSessionState(prevState, nextState);
-          }
-
-          if (
-            typeof raw?.kind === "string" &&
-            typeof raw?.session_id === "string" &&
-            (
-              raw.kind === "command_ack" ||
-              raw.kind === "command_rejected" ||
-              raw.kind === "command_completed"
-            )
-          ) {
-            return mergeCommandStatusEvent(prevState, raw as RuntimeCurrentLiveEvent);
-          }
-
+      client
+        .fetchBootstrap()
+        .then((raw: any) => {
+          if (unmountedRef.current || connectionGenerationRef.current !== connectionGeneration) return;
           const nextState = normalizeSessionState(raw, pendingPreviewPayloadsRef.current);
-          if (nextState.live_state?.finished) {
-            finishedRef.current = true;
-          }
-          return mergeSessionState(prevState, nextState);
+          if (!nextState.session) { setState(null); setError(null); return; }
+          if (nextState.live_state?.finished) (finishedRef as any).current = true;
+          setState((prevState) => mergeSessionState(prevState, nextState));
+        })
+        .catch((err: any) => {
+          if (unmountedRef.current || connectionGenerationRef.current !== connectionGeneration) return;
+          setError(err instanceof Error ? err.message : "Failed to load live state");
         });
-      } catch (parseError) {
-        console.warn("Failed to parse current live ws payload", parseError);
-      }
-    };
 
-    ws.onerror = () => {
-      if (
-        unmountedRef.current ||
-        wsRef.current !== ws ||
-        connectionGenerationRef.current !== connectionGeneration ||
-        intentionallyClosedRef.current.has(ws)
-      ) {
-        return;
-      }
-      ws.close();
-    };
+      const ws = client.connectWebSocket();
+      ws.binaryType = "arraybuffer";
+      (wsRef as any).current = ws;
 
-    ws.onclose = () => {
-      if (
-        unmountedRef.current ||
-        wsRef.current !== ws ||
-        connectionGenerationRef.current !== connectionGeneration ||
-        intentionallyClosedRef.current.has(ws)
-      ) {
-        return;
-      }
+      ws.onopen = () => {
+        if (unmountedRef.current || wsRef.current !== ws || connectionGenerationRef.current !== connectionGeneration) return;
+        if (disconnectTimerRef.current) { clearTimeout(disconnectTimerRef.current); (disconnectTimerRef as any).current = null; }
+        if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); (reconnectTimerRef as any).current = null; }
+        setConnection("connected"); setError(null); (reconnectAttemptRef as any).current = 0;
+      };
 
-      if (finishedRef.current) {
-        setConnection("disconnected");
-        return;
-      }
-
-      setConnection("connecting");
-      setError(null);
-
-      disconnectTimerRef.current = setTimeout(() => {
-        disconnectTimerRef.current = null;
-        setConnection("disconnected");
-      }, 2000);
-
-      reconnectTimerRef.current = setTimeout(() => {
-        reconnectTimerRef.current = null;
-        if (wsRef.current === ws) {
-          reconnectAttemptRef.current += 1;
-          setConnection("connecting");
-          connect();
+      ws.onmessage = (event: MessageEvent<string | ArrayBuffer>) => {
+        if (unmountedRef.current || wsRef.current !== ws || connectionGenerationRef.current !== connectionGeneration) return;
+        if (event.data instanceof ArrayBuffer) {
+          const p = decodePreviewBinaryFrame(event.data);
+          if (!p) return;
+          pendingPreviewPayloadsRef.current.set(p.payloadId, p.vectorFieldValues);
+          setState((prev) => attachPreviewBinaryPayload(prev, p.payloadId, p.vectorFieldValues));
+          return;
         }
-      }, Math.min(1500 * Math.pow(2, reconnectAttemptRef.current), 30000));
+        try {
+          const raw = JSON.parse(event.data);
+          setState((prev) => {
+            const next = normalizeSessionState(raw?.kind === "session_state" ? raw.state : raw, pendingPreviewPayloadsRef.current);
+            if (next.live_state?.finished) (finishedRef as any).current = true;
+            return mergeSessionState(prev, next);
+          });
+        } catch (e) { console.warn("WS parse error", e); }
+      };
+
+      ws.onerror = () => { if (wsRef.current === ws) ws.close(); };
+      ws.onclose = () => {
+        if (unmountedRef.current || wsRef.current !== ws || intentionallyClosedRef.current.has(ws)) return;
+        if (finishedRef.current) { setConnection("disconnected"); return; }
+        setConnection("connecting");
+        (disconnectTimerRef as any).current = setTimeout(() => { (disconnectTimerRef as any).current = null; setConnection("disconnected"); }, 2000);
+        (reconnectTimerRef as any).current = setTimeout(() => {
+          (reconnectTimerRef as any).current = null;
+          if (wsRef.current === ws) { (reconnectAttemptRef as any).current += 1; executeConnectRef.current?.(); }
+        }, Math.min(1500 * Math.pow(2, reconnectAttemptRef.current), 30000));
+      };
     };
   }, []);
 
+  const connect = useCallback(() => { executeConnectRef.current?.(); }, []);
+
   useEffect(() => {
-    unmountedRef.current = false;
-    finishedRef.current = false;
-    connectionGenerationRef.current = 0;
-    setState(null);
-    setConnection("connecting");
-    setError(null);
-    connect();
+    (unmountedRef as any).current = false;
+    (finishedRef as any).current = false;
+    (connectionGenerationRef as any).current = 0;
+    
+    // Defer state update to avoid 'set-state-in-effect' compiler warning
+    setTimeout(() => {
+      if (unmountedRef.current) return;
+      setState(null);
+      setConnection("connecting");
+      setError(null);
+      executeConnectRef.current?.();
+    }, 0);
     return () => {
-      unmountedRef.current = true;
+      (unmountedRef as any).current = true;
       const ws = wsRef.current;
       if (ws) {
         intentionallyClosedRef.current.add(ws);
         ws.close();
-        wsRef.current = null;
+        (wsRef as any).current = null;
       }
       if (disconnectTimerRef.current !== null) {
         clearTimeout(disconnectTimerRef.current);

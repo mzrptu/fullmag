@@ -3,7 +3,8 @@
 //   - LLG RHS (cross-product + damping + block-max reduction)
 //   - Vector normalization
 //   - Effective field accumulation (h_eff = h_ex + h_demag + h_ext)
-// All kernels operate on AOS-3 layout: contiguous [x,y,z] per node.
+// All kernels operate on SoA (Structure-of-Arrays) layout:
+// separate contiguous arrays for x, y, z components.
 
 #include "kernels.h"
 

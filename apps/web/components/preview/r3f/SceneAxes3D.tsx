@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import * as THREE from "three";
 import { Text, Line, Billboard } from "@react-three/drei";
 import { pickUnitScale } from "../../../lib/units";
 
@@ -195,15 +194,14 @@ export default function SceneAxes3D({
           </Billboard>
         </group>
       ))}
-      {/* X axis unit label */}
+      {/* X axis unit label centered along axis */}
       {showLabels && (
-      <Billboard position={[cx + max[0] + labelOffset * 1.5, cy + min[1] - labelOffset, cz + min[2]]}>
+      <Billboard position={[cx, cy + min[1] - labelOffset * 2.2, cz + min[2]]}>
         <Text
-          fontSize={fontSize * 1.15}
+          fontSize={fontSize * 1.2}
           color={UNIT_COLOR}
           anchorX="center"
           anchorY="top"
-
         >
           {`${axisLabels[0]} (${unit})`}
         </Text>
@@ -233,15 +231,14 @@ export default function SceneAxes3D({
           </Billboard>
         </group>
       ))}
-      {/* Y axis unit label */}
+      {/* Y axis unit label centered along axis */}
       {showLabels && (
-      <Billboard position={[cx + min[0] - labelOffset, cy + max[1] + labelOffset * 1.5, cz + min[2]]}>
+      <Billboard position={[cx + min[0] - labelOffset * 2.2, cy, cz + min[2]]}>
         <Text
-          fontSize={fontSize * 1.15}
+          fontSize={fontSize * 1.2}
           color={UNIT_COLOR}
-          anchorX="center"
-          anchorY="bottom"
-
+          anchorX="right"
+          anchorY="middle"
         >
           {`${axisLabels[1]} (${unit})`}
         </Text>
@@ -271,15 +268,14 @@ export default function SceneAxes3D({
           </Billboard>
         </group>
       ))}
-      {/* Z axis unit label */}
+      {/* Z axis unit label centered along axis */}
       {showLabels && (
-      <Billboard position={[cx + min[0], cy + min[1] - labelOffset, cz + max[2] + labelOffset * 1.5]}>
+      <Billboard position={[cx + min[0], cy + min[1] - labelOffset * 2.2, cz]}>
         <Text
-          fontSize={fontSize * 1.15}
+          fontSize={fontSize * 1.2}
           color={UNIT_COLOR}
           anchorX="center"
           anchorY="top"
-
         >
           {`${axisLabels[2]} (${unit})`}
         </Text>

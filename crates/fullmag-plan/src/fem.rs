@@ -686,9 +686,9 @@ pub(crate) fn plan_fem(
         oersted_time_dep_t_on: 0.0,
         oersted_time_dep_t_off: 0.0,
         magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
+        demag_solver_policy: None,
+        thermal_seed_config: None,
+        oersted_realization: None,
     };
 
     // ── Extract Oersted cylinder from energy terms ──

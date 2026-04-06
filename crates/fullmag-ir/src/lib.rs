@@ -2178,6 +2178,12 @@ pub struct AirBoxConfigIR {
     /// Airbox shape: `"bbox"` or `"sphere"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shape: Option<String>,
+    /// How the air-box factor was derived: `"user"`, `"study_universe"`, `"mesh_auto"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub factor_source: Option<String>,
+    /// How the boundary marker was selected: `"mesh_marker_99"`, `"mesh_max_marker"`, `"fallback_99"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_marker_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

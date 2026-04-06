@@ -567,7 +567,7 @@ pub(crate) fn pack_mesh_by_analysis(
         FemDomainMeshModeIR::SharedDomainMeshWithAir,
     );
 
-    let outer_boundary_marker = select_airbox_boundary_marker(&reordered_mesh);
+    let (outer_boundary_marker, _marker_source) = select_airbox_boundary_marker(&reordered_mesh);
     let outer_boundary_face_indices = reordered_mesh
         .boundary_markers
         .iter()
@@ -782,16 +782,19 @@ fn extent_from_bounds(bounds: ([f64; 3], [f64; 3])) -> [f64; 3] {
     ]
 }
 
-fn select_airbox_boundary_marker(mesh: &MeshIR) -> u32 {
+fn select_airbox_boundary_marker(mesh: &MeshIR) -> (u32, &'static str) {
     if mesh.boundary_markers.iter().any(|&marker| marker == 99) {
-        99
+        (99, "mesh_marker_99")
     } else {
-        mesh.boundary_markers
+        let max = mesh.boundary_markers
             .iter()
             .copied()
             .filter(|&marker| marker > 0)
-            .max()
-            .unwrap_or(99)
+            .max();
+        match max {
+            Some(m) => (m, "mesh_max_marker"),
+            None => (99, "fallback_99"),
+        }
     }
 }
 
@@ -861,15 +864,24 @@ pub(crate) fn build_air_box_config(
 
     let study_universe = study_universe_metadata(problem);
     let factor = derive_air_box_factor(mesh, study_universe.as_ref());
+    let factor_source = if study_universe.is_some() {
+        "study_universe"
+    } else {
+        "mesh_auto"
+    };
+
+    let (boundary_marker, boundary_marker_source) = select_airbox_boundary_marker(mesh);
 
     Some(AirBoxConfigIR {
         factor,
         grading: 1.4,
-        boundary_marker: select_airbox_boundary_marker(mesh),
+        boundary_marker,
         bc_kind: Some(bc_kind.to_string()),
         robin_beta_mode: (bc_kind == "robin").then_some("dipole".to_string()),
         robin_beta_factor: (bc_kind == "robin").then_some(2.0),
         shape: Some("bbox".to_string()),
+        factor_source: Some(factor_source.to_string()),
+        boundary_marker_source: Some(boundary_marker_source.to_string()),
     })
 }
 

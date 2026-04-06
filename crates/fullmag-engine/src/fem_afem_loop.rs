@@ -4,7 +4,7 @@
 //! gradation) into a single step that returns enough information for the
 //! caller to decide whether to remesh (via Gmsh / E5) and transfer (E6).
 
-use crate::fem::MeshTopology;
+use crate::fem::{CsrMatrix, MeshTopology};
 use crate::fem_error_estimator::{
     compute_h1_error_indicators, doerfler_marking, ErrorIndicators, H1EstimatorParams,
     MarkingResult,
@@ -399,7 +399,7 @@ pub fn afem_step_vector_field(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fem::MeshTopology;
+    use crate::fem::{CsrMatrix, MeshTopology};
 
     /// Build a minimal MeshTopology for testing.
     fn make_topo(coords: Vec<[f64; 3]>, elements: Vec<[u32; 4]>) -> MeshTopology {
@@ -470,6 +470,10 @@ mod tests {
             stiffness_system: vec![],
             boundary_mass_system: vec![],
             demag_system: vec![],
+            stiffness_csr: CsrMatrix::new(n_nodes),
+            boundary_mass_csr: CsrMatrix::new(n_nodes),
+            demag_csr: CsrMatrix::new(n_nodes),
+            magnetic_stiffness_csr: CsrMatrix::new(n_nodes),
             total_volume: 0.0,
             magnetic_total_volume: 0.0,
             robin_beta: 0.0,

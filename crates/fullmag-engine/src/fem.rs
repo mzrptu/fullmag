@@ -6,8 +6,244 @@ use crate::{
 use fullmag_ir::MeshIR;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::f64::consts::PI;
+
+// ── Centralised numeric thresholds (FEM-017) ──
+
+/// Absolute threshold for treating a floating-point value as zero.
+const ZERO_THRESHOLD: f64 = 1e-30;
+/// Default relative tolerance for the sparse CG demag solver.
+const SPARSE_CG_TOL: f64 = 1e-10;
+/// Default maximum CG iterations for the sparse demag solver.
+const SPARSE_CG_MAX_ITER: usize = 1000;
+/// Node count above which dense O(n²) assembly is skipped (FEM-003).
+const DENSE_NODE_LIMIT: usize = 5_000;
+
+// ── Sparse CSR matrix for FEM operators ──
+
+/// Compressed Sparse Row matrix.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CsrMatrix {
+    /// Row pointers: row_ptr[i]..row_ptr[i+1] indexes into col_idx/values.
+    pub row_ptr: Vec<usize>,
+    /// Column indices for each non-zero.
+    pub col_idx: Vec<usize>,
+    /// Non-zero values.
+    pub values: Vec<f64>,
+    /// Number of rows (== columns for square).
+    pub n: usize,
+}
+
+impl CsrMatrix {
+    /// Create a new empty CSR matrix of dimension n.
+    pub fn new(n: usize) -> Self {
+        Self {
+            row_ptr: vec![0; n + 1],
+            col_idx: Vec::new(),
+            values: Vec::new(),
+            n,
+        }
+    }
+
+    /// Build a CSR matrix from a dense n×n matrix (row-major).
+    pub fn from_dense(dense: &[f64], n: usize) -> Self {
+        let mut row_ptr = Vec::with_capacity(n + 1);
+        let mut col_idx = Vec::new();
+        let mut values = Vec::new();
+        row_ptr.push(0);
+        for row in 0..n {
+            for col in 0..n {
+                let val = dense[row * n + col];
+                if val.abs() > ZERO_THRESHOLD {
+                    col_idx.push(col);
+                    values.push(val);
+                }
+            }
+            row_ptr.push(col_idx.len());
+        }
+        Self { row_ptr, col_idx, values, n }
+    }
+
+    /// Build CSR directly from tetrahedral mesh assembly without intermediate dense matrix.
+    pub fn from_tet_assembly(
+        n_nodes: usize,
+        elements: &[[u32; 4]],
+        element_stiffness: &[[[f64; 4]; 4]],
+    ) -> Self {
+        // Collect non-zero entries using coordinate (COO) format, then convert to CSR
+        let mut entries: HashMap<(usize, usize), f64> = HashMap::new();
+        for (element, stiffness) in elements.iter().zip(element_stiffness.iter()) {
+            for i in 0..4 {
+                for j in 0..4 {
+                    let row = element[i] as usize;
+                    let col = element[j] as usize;
+                    *entries.entry((row, col)).or_insert(0.0) += stiffness[i][j];
+                }
+            }
+        }
+        Self::from_entries(n_nodes, &entries)
+    }
+
+    /// Build CSR from a map of (row, col) -> value entries.
+    fn from_entries(n: usize, entries: &HashMap<(usize, usize), f64>) -> Self {
+        // Group by row
+        let mut rows: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
+        for (&(row, col), &val) in entries {
+            if val.abs() > ZERO_THRESHOLD {
+                rows[row].push((col, val));
+            }
+        }
+        let mut row_ptr = Vec::with_capacity(n + 1);
+        let mut col_idx = Vec::new();
+        let mut values = Vec::new();
+        row_ptr.push(0);
+        for row in &mut rows {
+            row.sort_by_key(|&(col, _)| col);
+            for &(col, val) in row.iter() {
+                col_idx.push(col);
+                values.push(val);
+            }
+            row_ptr.push(col_idx.len());
+        }
+        Self { row_ptr, col_idx, values, n }
+    }
+
+    /// Build CSR from boundary face mass assembly.
+    pub fn from_boundary_mass_assembly(
+        n_nodes: usize,
+        boundary_faces: &[[u32; 3]],
+        coords: &[[f64; 3]],
+    ) -> Self {
+        let mut entries: HashMap<(usize, usize), f64> = HashMap::new();
+        for face in boundary_faces {
+            let p0 = coords[face[0] as usize];
+            let p1 = coords[face[1] as usize];
+            let p2 = coords[face[2] as usize];
+            let area = triangle_area(p0, p1, p2);
+            let local = [
+                [2.0 * area / 12.0, area / 12.0, area / 12.0],
+                [area / 12.0, 2.0 * area / 12.0, area / 12.0],
+                [area / 12.0, area / 12.0, 2.0 * area / 12.0],
+            ];
+            for i in 0..3 {
+                for j in 0..3 {
+                    *entries.entry((face[i] as usize, face[j] as usize)).or_insert(0.0) += local[i][j];
+                }
+            }
+        }
+        Self::from_entries(n_nodes, &entries)
+    }
+
+    /// Sparse matrix-vector multiply: y = A * x
+    pub fn spmv(&self, x: &[f64]) -> Vec<f64> {
+        let mut y = vec![0.0; self.n];
+        for row in 0..self.n {
+            let start = self.row_ptr[row];
+            let end = self.row_ptr[row + 1];
+            let mut sum = 0.0;
+            for idx in start..end {
+                sum += self.values[idx] * x[self.col_idx[idx]];
+            }
+            y[row] = sum;
+        }
+        y
+    }
+
+    /// Add scaled boundary mass: self += beta * other.
+    /// Both matrices must have the same sparsity pattern or the result
+    /// will be a superset pattern (using COO merge).
+    pub fn add_scaled(&self, other: &CsrMatrix, beta: f64) -> Self {
+        let mut entries: HashMap<(usize, usize), f64> = HashMap::new();
+        for row in 0..self.n {
+            for idx in self.row_ptr[row]..self.row_ptr[row + 1] {
+                *entries.entry((row, self.col_idx[idx])).or_insert(0.0) += self.values[idx];
+            }
+        }
+        for row in 0..other.n {
+            for idx in other.row_ptr[row]..other.row_ptr[row + 1] {
+                *entries.entry((row, other.col_idx[idx])).or_insert(0.0) += beta * other.values[idx];
+            }
+        }
+        Self::from_entries(self.n, &entries)
+    }
+
+    /// Number of non-zero elements.
+    pub fn nnz(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Diagonal preconditioner (Jacobi).
+    pub fn diagonal(&self) -> Vec<f64> {
+        let mut diag = vec![0.0; self.n];
+        for row in 0..self.n {
+            for idx in self.row_ptr[row]..self.row_ptr[row + 1] {
+                if self.col_idx[idx] == row {
+                    diag[row] = self.values[idx];
+                }
+            }
+        }
+        diag
+    }
+}
+
+/// Solve Ax = b using preconditioned Conjugate Gradient (Jacobi preconditioner).
+pub fn solve_sparse_cg(
+    matrix: &CsrMatrix,
+    rhs: &[f64],
+    tol: f64,
+    max_iter: usize,
+) -> Result<Vec<f64>> {
+    let n = matrix.n;
+    if rhs.len() != n {
+        return Err(EngineError::new("sparse CG: rhs length mismatch"));
+    }
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+
+    let diag = matrix.diagonal();
+    let inv_diag: Vec<f64> = diag.iter().map(|&d| {
+        if d.abs() > ZERO_THRESHOLD { 1.0 / d } else { 1.0 }
+    }).collect();
+
+    let mut x = vec![0.0; n];
+    let mut r: Vec<f64> = rhs.to_vec(); // r = b - A*x, but x=0 so r=b
+    let mut z: Vec<f64> = r.iter().zip(inv_diag.iter()).map(|(&ri, &mi)| ri * mi).collect();
+    let mut p = z.clone();
+    let mut rz: f64 = r.iter().zip(z.iter()).map(|(&ri, &zi)| ri * zi).sum();
+
+    let b_norm: f64 = rhs.iter().map(|&v| v * v).sum::<f64>().sqrt();
+    let tol_abs = tol * b_norm.max(ZERO_THRESHOLD);
+
+    for _iter in 0..max_iter {
+        let ap = matrix.spmv(&p);
+        let pap: f64 = p.iter().zip(ap.iter()).map(|(&pi, &api)| pi * api).sum();
+        if pap.abs() <= ZERO_THRESHOLD {
+            break; // breakdown
+        }
+        let alpha = rz / pap;
+        for i in 0..n {
+            x[i] += alpha * p[i];
+            r[i] -= alpha * ap[i];
+        }
+        let r_norm: f64 = r.iter().map(|&v| v * v).sum::<f64>().sqrt();
+        if r_norm < tol_abs {
+            break;
+        }
+        for i in 0..n {
+            z[i] = r[i] * inv_diag[i];
+        }
+        let rz_new: f64 = r.iter().zip(z.iter()).map(|(&ri, &zi)| ri * zi).sum();
+        let beta = rz_new / rz.max(ZERO_THRESHOLD);
+        for i in 0..n {
+            p[i] = z[i] + beta * p[i];
+        }
+        rz = rz_new;
+    }
+
+    Ok(x)
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeshTopology {
@@ -26,6 +262,14 @@ pub struct MeshTopology {
     pub stiffness_system: Vec<f64>,
     pub boundary_mass_system: Vec<f64>,
     pub demag_system: Vec<f64>,
+    /// Sparse CSR stiffness operator (same data as stiffness_system but O(nnz) memory).
+    pub stiffness_csr: CsrMatrix,
+    /// Sparse CSR boundary mass operator.
+    pub boundary_mass_csr: CsrMatrix,
+    /// Sparse CSR demag system (stiffness + robin_beta * boundary_mass).
+    pub demag_csr: CsrMatrix,
+    /// Sparse CSR stiffness built from magnetic elements only (for exchange field SpMV).
+    pub magnetic_stiffness_csr: CsrMatrix,
     pub total_volume: f64,
     pub magnetic_total_volume: f64,
     pub robin_beta: f64,
@@ -44,12 +288,22 @@ impl MeshTopology {
         let n_elements = elements.len();
         let magnetic_element_mask = magnetic_element_mask_from_markers(&mesh.element_markers);
 
+        // Dense O(n²) matrices are only built for small meshes (guard: FEM-003).
+        // Above this threshold, only sparse CSR operators are available.
+        let build_dense = n_nodes <= DENSE_NODE_LIMIT;
+        if !build_dense {
+            eprintln!(
+                "[fullmag-engine] mesh has {} nodes (> {}): skipping dense O(n²) assembly, using sparse CSR only",
+                n_nodes, DENSE_NODE_LIMIT,
+            );
+        }
+
         let mut element_volumes = Vec::with_capacity(n_elements);
         let mut node_volumes = vec![0.0; n_nodes];
         let mut magnetic_node_volumes = vec![0.0; n_nodes];
         let mut grad_phi = Vec::with_capacity(n_elements);
         let mut element_stiffness = Vec::with_capacity(n_elements);
-        let mut global_stiffness = vec![0.0; n_nodes * n_nodes];
+        let mut global_stiffness = if build_dense { vec![0.0; n_nodes * n_nodes] } else { Vec::new() };
         let mut magnetic_total_volume = 0.0;
 
         for (element_index, element) in elements.iter().enumerate() {
@@ -62,7 +316,7 @@ impl MeshTopology {
             let d2 = sub(p2, p0);
             let d3 = sub(p3, p0);
             let det = dot(d1, cross(d2, d3));
-            if det.abs() <= 1e-30 {
+            if det.abs() <= ZERO_THRESHOLD {
                 return Err(EngineError::new(
                     "degenerate tetrahedral element encountered in MeshIR",
                 ));
@@ -83,7 +337,7 @@ impl MeshTopology {
                 }
             }
 
-            add_tet_local_matrix(&mut global_stiffness, n_nodes, element, &stiffness);
+            add_tet_local_matrix_if(&mut global_stiffness, build_dense, n_nodes, element, &stiffness);
 
             for &node in element {
                 node_volumes[node as usize] += volume / 4.0;
@@ -109,33 +363,59 @@ impl MeshTopology {
             .into_iter()
             .collect::<Vec<_>>();
 
-        let mut boundary_mass = vec![0.0; n_nodes * n_nodes];
-        for face in &mesh.boundary_faces {
-            let p0 = coords[face[0] as usize];
-            let p1 = coords[face[1] as usize];
-            let p2 = coords[face[2] as usize];
-            let area = triangle_area(p0, p1, p2);
-            let local = [
-                [2.0 * area / 12.0, area / 12.0, area / 12.0],
-                [area / 12.0, 2.0 * area / 12.0, area / 12.0],
-                [area / 12.0, area / 12.0, 2.0 * area / 12.0],
-            ];
-            add_triangle_local_matrix(&mut boundary_mass, n_nodes, face, &local);
+        let mut boundary_mass = if build_dense { vec![0.0; n_nodes * n_nodes] } else { Vec::new() };
+        if build_dense {
+            for face in &mesh.boundary_faces {
+                let p0 = coords[face[0] as usize];
+                let p1 = coords[face[1] as usize];
+                let p2 = coords[face[2] as usize];
+                let area = triangle_area(p0, p1, p2);
+                let local = [
+                    [2.0 * area / 12.0, area / 12.0, area / 12.0],
+                    [area / 12.0, 2.0 * area / 12.0, area / 12.0],
+                    [area / 12.0, area / 12.0, 2.0 * area / 12.0],
+                ];
+                add_triangle_local_matrix(&mut boundary_mass, n_nodes, face, &local);
+            }
         }
 
         let total_volume: f64 = element_volumes.iter().sum();
-        let equivalent_radius = equivalent_radius(total_volume.max(1e-30));
+        let equivalent_radius = equivalent_radius(total_volume.max(ZERO_THRESHOLD));
         let robin_beta = if boundary_nodes.is_empty() {
             0.0
         } else {
-            1.0 / equivalent_radius.max(1e-30)
+            1.0 / equivalent_radius.max(ZERO_THRESHOLD)
         };
         let mut demag_system = global_stiffness.clone();
-        if robin_beta > 0.0 {
+        if build_dense && robin_beta > 0.0 {
             for (value, boundary) in demag_system.iter_mut().zip(boundary_mass.iter()) {
                 *value += robin_beta * *boundary;
             }
         }
+
+        // Build sparse CSR representations for the operators
+        let stiffness_csr = CsrMatrix::from_tet_assembly(n_nodes, &elements, &element_stiffness);
+        let boundary_mass_csr = CsrMatrix::from_boundary_mass_assembly(
+            n_nodes, &mesh.boundary_faces, &coords,
+        );
+        let demag_csr = if robin_beta > 0.0 {
+            stiffness_csr.add_scaled(&boundary_mass_csr, robin_beta)
+        } else {
+            stiffness_csr.clone()
+        };
+
+        // Build magnetic-only stiffness CSR (only magnetic elements contribute)
+        let magnetic_elements: Vec<[u32; 4]> = elements.iter().zip(magnetic_element_mask.iter())
+            .filter(|(_, &is_mag)| is_mag)
+            .map(|(el, _)| *el)
+            .collect();
+        let magnetic_element_stiffness: Vec<[[f64; 4]; 4]> = element_stiffness.iter().zip(magnetic_element_mask.iter())
+            .filter(|(_, &is_mag)| is_mag)
+            .map(|(st, _)| *st)
+            .collect();
+        let magnetic_stiffness_csr = CsrMatrix::from_tet_assembly(
+            n_nodes, &magnetic_elements, &magnetic_element_stiffness,
+        );
 
         Ok(Self {
             coords,
@@ -160,6 +440,10 @@ impl MeshTopology {
             stiffness_system: global_stiffness.clone(),
             boundary_mass_system: boundary_mass,
             demag_system,
+            stiffness_csr,
+            boundary_mass_csr,
+            demag_csr,
+            magnetic_stiffness_csr,
             n_nodes,
             n_elements,
         })
@@ -227,6 +511,7 @@ pub struct FemLlgProblem {
     pub terms: EffectiveFieldTerms,
     pub demag_transfer_cell_size_hint: Option<[f64; 3]>,
     demag_linear_system: Vec<f64>,
+    demag_csr: CsrMatrix,
     demag_dirichlet_boundary: bool,
 }
 
@@ -238,6 +523,7 @@ impl FemLlgProblem {
         terms: EffectiveFieldTerms,
     ) -> Self {
         let demag_linear_system = topology.demag_system.clone();
+        let demag_csr = topology.demag_csr.clone();
         Self {
             topology,
             material,
@@ -245,6 +531,7 @@ impl FemLlgProblem {
             terms,
             demag_transfer_cell_size_hint: None,
             demag_linear_system,
+            demag_csr,
             demag_dirichlet_boundary: false,
         }
     }
@@ -257,6 +544,7 @@ impl FemLlgProblem {
         demag_transfer_cell_size_hint: Option<[f64; 3]>,
     ) -> Self {
         let demag_linear_system = topology.demag_system.clone();
+        let demag_csr = topology.demag_csr.clone();
         Self {
             topology,
             material,
@@ -264,6 +552,7 @@ impl FemLlgProblem {
             terms,
             demag_transfer_cell_size_hint,
             demag_linear_system,
+            demag_csr,
             demag_dirichlet_boundary: false,
         }
     }
@@ -284,6 +573,14 @@ impl FemLlgProblem {
                 robin_beta_factor.map(|factor| factor * topology.robin_beta),
             )
         };
+        let demag_csr = if dirichlet_boundary {
+            build_dirichlet_demag_csr(&topology)
+        } else {
+            build_robin_demag_csr(
+                &topology,
+                robin_beta_factor.map(|factor| factor * topology.robin_beta),
+            )
+        };
         Self {
             topology,
             material,
@@ -291,6 +588,7 @@ impl FemLlgProblem {
             terms,
             demag_transfer_cell_size_hint: None,
             demag_linear_system,
+            demag_csr,
             demag_dirichlet_boundary: dirichlet_boundary,
         }
     }
@@ -539,7 +837,7 @@ impl FemLlgProblem {
                 state.magnetization = y3;
                 state.time_seconds += dt;
                 let dt_next =
-                    (cfg.headroom * dt * (cfg.max_error / error.max(1e-30)).powf(1.0 / 3.0))
+                    (cfg.headroom * dt * (cfg.max_error / error.max(ZERO_THRESHOLD)).powf(1.0 / 3.0))
                         .max(cfg.dt_min)
                         .min(cfg.dt_max);
                 let observables = self.observe_vectors(state.magnetization())?;
@@ -720,7 +1018,7 @@ impl FemLlgProblem {
                 state.magnetization = y5;
                 state.time_seconds += dt;
                 state.k_fsal = Some(k7);
-                let dt_next = (cfg.headroom * dt * (cfg.max_error / error.max(1e-30)).powf(0.2))
+                let dt_next = (cfg.headroom * dt * (cfg.max_error / error.max(ZERO_THRESHOLD)).powf(0.2))
                     .max(cfg.dt_min)
                     .min(cfg.dt_max);
                 let observables = self.observe_vectors(state.magnetization())?;
@@ -974,90 +1272,34 @@ impl FemLlgProblem {
     fn exchange_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
         let coeff =
             2.0 * self.material.exchange_stiffness / (MU0 * self.material.saturation_magnetisation);
+        let n_nodes = self.topology.n_nodes;
+        let csr = &self.topology.magnetic_stiffness_csr;
 
-        #[cfg(feature = "parallel")]
-        let mut field = {
-            let n_nodes = self.topology.n_nodes;
-            let elements = &self.topology.elements;
-            let element_stiffness = &self.topology.element_stiffness;
-            let magnetic_element_mask = &self.topology.magnetic_element_mask;
+        // Extract per-component vectors for SpMV
+        let mut mx = vec![0.0; n_nodes];
+        let mut my = vec![0.0; n_nodes];
+        let mut mz = vec![0.0; n_nodes];
+        for (i, m) in magnetization.iter().enumerate() {
+            mx[i] = m[0];
+            my[i] = m[1];
+            mz[i] = m[2];
+        }
 
-            // Parallel element assembly: each thread accumulates into a local buffer,
-            // then local buffers are merged with elementwise summation.
-            (0..elements.len())
-                .into_par_iter()
-                .fold(
-                    || vec![[0.0, 0.0, 0.0]; n_nodes],
-                    |mut local_field, element_index| {
-                        if magnetic_element_mask[element_index] {
-                            let element = &elements[element_index];
-                            let stiffness = &element_stiffness[element_index];
-                            let local_m = [
-                                magnetization[element[0] as usize],
-                                magnetization[element[1] as usize],
-                                magnetization[element[2] as usize],
-                                magnetization[element[3] as usize],
-                            ];
-                            for i in 0..4 {
-                                let mut contribution = [0.0, 0.0, 0.0];
-                                for j in 0..4 {
-                                    contribution =
-                                        add(contribution, scale(local_m[j], stiffness[i][j]));
-                                }
-                                let node = element[i] as usize;
-                                local_field[node] =
-                                    add(local_field[node], scale(contribution, -coeff));
-                            }
-                        }
-                        local_field
-                    },
-                )
-                .reduce(
-                    || vec![[0.0, 0.0, 0.0]; n_nodes],
-                    |mut acc, partial| {
-                        for (a, b) in acc.iter_mut().zip(partial.iter()) {
-                            *a = add(*a, *b);
-                        }
-                        acc
-                    },
-                )
-        };
+        // H_ex = -coeff * K_mag * m / lumped_mass (per component)
+        let kx = csr.spmv(&mx);
+        let ky = csr.spmv(&my);
+        let kz = csr.spmv(&mz);
 
-        #[cfg(not(feature = "parallel"))]
-        let mut field = {
-            let mut field = vec![[0.0, 0.0, 0.0]; self.topology.n_nodes];
-            for (element_index, (element, stiffness)) in self
-                .topology
-                .elements
-                .iter()
-                .zip(self.topology.element_stiffness.iter())
-                .enumerate()
-            {
-                if !self.topology.magnetic_element_mask[element_index] {
-                    continue;
-                }
-                let local_m = [
-                    magnetization[element[0] as usize],
-                    magnetization[element[1] as usize],
-                    magnetization[element[2] as usize],
-                    magnetization[element[3] as usize],
-                ];
-                for i in 0..4 {
-                    let mut contribution = [0.0, 0.0, 0.0];
-                    for j in 0..4 {
-                        contribution = add(contribution, scale(local_m[j], stiffness[i][j]));
-                    }
-                    let node = element[i] as usize;
-                    field[node] = add(field[node], scale(contribution, -coeff));
-                }
-            }
-            field
-        };
-
-        for (index, value) in field.iter_mut().enumerate() {
-            let lumped_mass = self.topology.magnetic_node_volumes[index];
+        let mut field = vec![[0.0, 0.0, 0.0]; n_nodes];
+        for i in 0..n_nodes {
+            let lumped_mass = self.topology.magnetic_node_volumes[i];
             if lumped_mass > 0.0 {
-                *value = scale(*value, 1.0 / lumped_mass);
+                let inv_mass = 1.0 / lumped_mass;
+                field[i] = [
+                    -coeff * kx[i] * inv_mass,
+                    -coeff * ky[i] * inv_mass,
+                    -coeff * kz[i] * inv_mass,
+                ];
             }
         }
 
@@ -1162,7 +1404,7 @@ impl FemLlgProblem {
                 }
             }
         }
-        let potential = solve_dense_linear_system(&self.demag_linear_system, &rhs)?;
+        let potential = solve_sparse_cg(&self.demag_csr, &rhs, SPARSE_CG_TOL, SPARSE_CG_MAX_ITER)?;
         let field = self.demag_field_from_potential(&potential);
         let energy = 0.5
             * MU0
@@ -1235,9 +1477,6 @@ impl FemLlgProblem {
                         external_field: None,
                         per_node_field: None,
                         magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                         ..Default::default()
                     },
                     Some(rasterized.active_mask.clone()),
@@ -1500,7 +1739,7 @@ impl FemLlgProblem {
             (bbox_max[1] - bbox_min[1]).abs().max(1e-12),
             (bbox_max[2] - bbox_min[2]).abs().max(1e-12),
         ];
-        let characteristic_volume = (self.topology.magnetic_total_volume.max(1e-30)
+        let characteristic_volume = (self.topology.magnetic_total_volume.max(ZERO_THRESHOLD)
             / self.topology.n_nodes.max(1) as f64)
             .cbrt();
         let h = characteristic_volume.max(extent[2].min(extent[0].min(extent[1])) * 0.25);
@@ -1708,6 +1947,52 @@ fn build_dirichlet_demag_system(topology: &MeshTopology) -> Vec<f64> {
     system
 }
 
+fn build_robin_demag_csr(topology: &MeshTopology, beta_override: Option<f64>) -> CsrMatrix {
+    let beta = beta_override.unwrap_or(topology.robin_beta);
+    if beta > 0.0 {
+        topology.stiffness_csr.add_scaled(&topology.boundary_mass_csr, beta)
+    } else {
+        topology.stiffness_csr.clone()
+    }
+}
+
+fn build_dirichlet_demag_csr(topology: &MeshTopology) -> CsrMatrix {
+    if topology.boundary_nodes.is_empty() {
+        return topology.stiffness_csr.clone();
+    }
+    let boundary_set: BTreeSet<usize> = topology.boundary_nodes.iter().map(|&n| n as usize).collect();
+    let n = topology.n_nodes;
+    let src = &topology.stiffness_csr;
+
+    let mut row_ptr = Vec::with_capacity(n + 1);
+    let mut col_idx = Vec::new();
+    let mut values = Vec::new();
+    row_ptr.push(0);
+
+    for row in 0..n {
+        if boundary_set.contains(&row) {
+            // Dirichlet row: only diagonal = 1.0
+            col_idx.push(row);
+            values.push(1.0);
+        } else {
+            let start = src.row_ptr[row];
+            let end = src.row_ptr[row + 1];
+            for idx in start..end {
+                let col = src.col_idx[idx];
+                if boundary_set.contains(&col) {
+                    // Zero out columns corresponding to boundary nodes
+                    continue;
+                }
+                col_idx.push(col);
+                values.push(src.values[idx]);
+            }
+        }
+        row_ptr.push(col_idx.len());
+    }
+
+    CsrMatrix { row_ptr, col_idx, values, n }
+}
+
 fn magnetic_element_mask_from_markers(markers: &[u32]) -> Vec<bool> {
     let has_air = markers.iter().any(|&marker| marker == 0);
     let has_magnetic = markers.iter().any(|&marker| marker != 0);
@@ -1730,6 +2015,20 @@ fn add_tet_local_matrix(
             let col = element[j] as usize;
             matrix[dense_index(n_nodes, row, col)] += local[i][j];
         }
+    }
+}
+
+/// Conditionally add tet-local matrix only when dense assembly is enabled.
+#[inline]
+fn add_tet_local_matrix_if(
+    matrix: &mut [f64],
+    enabled: bool,
+    n_nodes: usize,
+    element: &[u32; 4],
+    local: &[[f64; 4]; 4],
+) {
+    if enabled {
+        add_tet_local_matrix(matrix, n_nodes, element, local);
     }
 }
 
@@ -1986,9 +2285,6 @@ per_domain_quality: std::collections::HashMap::new(),
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
         )
@@ -2046,9 +2342,6 @@ per_domain_quality: std::collections::HashMap::new(),
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
         )
@@ -2106,9 +2399,6 @@ per_domain_quality: std::collections::HashMap::new(),
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
             Some([10e-9, 10e-9, 10e-9]),
@@ -2150,9 +2440,6 @@ per_domain_quality: std::collections::HashMap::new(),
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
             true,
@@ -2292,9 +2579,6 @@ per_domain_quality: std::collections::HashMap::new(),
                 external_field: None,
                 per_node_field: None,
                 magnetoelastic: None,
-            demag_solver_policy: None,
-            thermal_seed_config: None,
-            oersted_realization: None,
                 ..Default::default()
             },
         );
