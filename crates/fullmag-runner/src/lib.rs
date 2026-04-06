@@ -25,11 +25,13 @@ mod native_fem;
 mod preview;
 pub mod quantities;
 mod relaxation;
+pub mod runtime_registry;
 mod scalar_metrics;
 mod schedules;
 mod types;
 
 // Public re-exports (unchanged API surface).
+pub use capabilities::{BackendCapabilities, RuntimeEngineId};
 pub use interactive::backend::BackendGeometry;
 pub use interactive::checkpoints::RunOutcome;
 pub use interactive::commands::{parse_session_command, LiveControlCommand, RuntimeControlOutcome};
@@ -43,19 +45,46 @@ pub use interactive::events::{
 };
 pub use interactive::runtime::InteractiveRuntime;
 pub use interactive_runtime::{InteractiveFdmPreviewRuntime, InteractiveFemPreviewRuntime};
-pub use capabilities::{BackendCapabilities, RuntimeEngineId};
+pub use runtime_registry::{
+    EngineAvailabilityStatus, HostCapabilityMatrix, HostEngineEntry, RuntimeManifest,
+    RuntimeRegistry,
+};
 pub use types::{
     ExecutionProvenance, FemEigenRunResult, FemMeshObjectSegment, FemMeshPartPayload,
-    FemMeshPayload, LivePreviewField, LivePreviewRequest, LiveVectorFieldSnapshot, RunError,
-    RunResult, RunStatus, RuntimeEngineInfo, StepAction, StepStats, StepUpdate,
+    FemMeshPayload, LivePreviewField, LivePreviewRequest, LiveVectorFieldSnapshot,
+    ResolvedFallback, RunError, RunResult, RunStatus, RuntimeEngineInfo, StepAction, StepStats,
+    StepUpdate,
 };
 
+use crate::capabilities::{capabilities_for_fdm_engine, capabilities_for_fem_engine};
 use fullmag_ir::{BackendPlanIR, FdmMultilayerPlanIR, FdmPlanIR, OutputIR, ProblemIR};
 use interactive::InteractiveBackend;
 use serde_json::Value;
-use crate::capabilities::{capabilities_for_fdm_engine, capabilities_for_fem_engine};
 
 use std::path::Path;
+
+#[derive(Debug, Clone)]
+pub struct ResolvedSessionRuntime {
+    pub resolved_backend: String,
+    pub resolved_device: String,
+    pub resolved_precision: String,
+    pub resolved_mode: String,
+    pub resolved_runtime_family: Option<String>,
+    pub resolved_engine_id: Option<String>,
+    pub resolved_worker: Option<String>,
+    pub resolved_fallback: Option<ResolvedFallback>,
+}
+
+fn explicit_selection_from_problem(problem: &ProblemIR) -> bool {
+    problem
+        .problem_meta
+        .runtime_metadata
+        .get("runtime_selection")
+        .and_then(Value::as_object)
+        .and_then(|selection| selection.get("explicit_selection"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
 
 pub fn is_native_fdm_cuda_available() -> bool {
     native_fdm::is_cuda_available()
@@ -106,7 +135,7 @@ pub fn run_problem(
             )
         }
         BackendPlanIR::Fem(fem) => {
-            let engine = dispatch::resolve_fem_engine(problem)?;
+            let engine = dispatch::resolve_fem_engine_for_plan_with_trail(problem, fem)?.engine;
             dispatch::execute_fem(
                 engine,
                 fem,
@@ -208,7 +237,7 @@ pub fn run_problem_with_callback(
             )
         }
         BackendPlanIR::Fem(fem) => {
-            let engine = dispatch::resolve_fem_engine(problem)?;
+            let engine = dispatch::resolve_fem_engine_for_plan_with_trail(problem, fem)?.engine;
             dispatch::execute_fem(
                 engine,
                 fem,
@@ -888,7 +917,7 @@ pub fn resolve_runtime_engine(problem: &ProblemIR) -> Result<RuntimeEngineInfo, 
             })
         }
         BackendPlanIR::Fem(_) => {
-            let engine = dispatch::resolve_fem_engine(problem)?;
+            let engine = dispatch::resolve_fem_engine_with_trail(problem)?.engine;
             let (engine_id, engine_label, accelerator) = match engine {
                 dispatch::FemEngine::CpuReference => ("fem_cpu_reference", "CPU FEM", "cpu"),
                 dispatch::FemEngine::NativeGpu => ("fem_native_gpu", "GPU FEM", "gpu"),
@@ -909,18 +938,140 @@ pub fn resolve_runtime_engine(problem: &ProblemIR) -> Result<RuntimeEngineInfo, 
 pub fn resolve_runtime_capabilities(problem: &ProblemIR) -> Result<BackendCapabilities, RunError> {
     let plan = fullmag_plan::plan(problem)?;
     match &plan.backend_plan {
-        BackendPlanIR::Fdm(_) => Ok(capabilities_for_fdm_engine(dispatch::resolve_fdm_engine(
-            problem,
-        )?)),
-        BackendPlanIR::Fem(_) => Ok(capabilities_for_fem_engine(dispatch::resolve_fem_engine(
-            problem,
-        )?)),
+        BackendPlanIR::Fdm(_) => Ok(capabilities_for_fdm_engine(
+            dispatch::resolve_fdm_engine_with_trail(problem)?.engine,
+        )),
+        BackendPlanIR::Fem(fem) => Ok(capabilities_for_fem_engine(
+            dispatch::resolve_fem_engine_for_plan_with_trail(problem, fem)?.engine,
+        )),
         BackendPlanIR::FdmMultilayer(_) => Ok(capabilities_for_fdm_engine(
-            dispatch::resolve_fdm_engine(problem)?,
+            dispatch::resolve_fdm_engine_with_trail(problem)?.engine,
         )),
         BackendPlanIR::FemEigen(_) => Ok(capabilities_for_fem_engine(
-            dispatch::resolve_fem_engine(problem)?,
+            dispatch::resolve_fem_engine_with_trail(problem)?.engine,
         )),
+    }
+}
+
+pub fn resolve_session_runtime(problem: &ProblemIR) -> Result<ResolvedSessionRuntime, RunError> {
+    resolve_session_runtime_with_registry(problem, None)
+}
+
+pub fn resolve_session_runtime_with_registry(
+    problem: &ProblemIR,
+    registry: Option<&RuntimeRegistry>,
+) -> Result<ResolvedSessionRuntime, RunError> {
+    let plan = fullmag_plan::plan(problem)?;
+    let requested_mode = match problem.validation_profile.execution_mode {
+        fullmag_ir::ExecutionMode::Strict => "strict".to_string(),
+        fullmag_ir::ExecutionMode::Extended => "extended".to_string(),
+        fullmag_ir::ExecutionMode::Hybrid => "hybrid".to_string(),
+    };
+    let dispatch_resolution = dispatch::resolve_with_registry(
+        problem,
+        registry,
+        explicit_selection_from_problem(problem),
+    )?;
+
+    match (&plan.backend_plan, dispatch_resolution.engine) {
+        (BackendPlanIR::Fdm(_), dispatch::DispatchEngine::Fdm(engine)) => {
+            let (default_family, engine_id, default_worker) = match engine {
+                dispatch::FdmEngine::CpuReference => (
+                    "cpu-reference",
+                    "fdm_cpu_reference",
+                    "../../bin/fullmag-bin",
+                ),
+                dispatch::FdmEngine::CudaFdm => {
+                    ("fdm-cuda", "fdm_cuda", "bin/fullmag-fdm-cuda-bin")
+                }
+            };
+            Ok(ResolvedSessionRuntime {
+                resolved_backend: dispatch_resolution.resolved_backend,
+                resolved_device: dispatch_resolution.resolved_device,
+                resolved_precision: dispatch_resolution.resolved_precision,
+                resolved_mode: requested_mode,
+                resolved_runtime_family: Some(
+                    dispatch_resolution
+                        .runtime_family
+                        .unwrap_or_else(|| default_family.to_string()),
+                ),
+                resolved_engine_id: Some(engine_id.to_string()),
+                resolved_worker: Some(
+                    dispatch_resolution
+                        .worker
+                        .unwrap_or_else(|| default_worker.to_string()),
+                ),
+                resolved_fallback: dispatch_resolution.fallback,
+            })
+        }
+        (BackendPlanIR::FdmMultilayer(_), dispatch::DispatchEngine::Fdm(engine)) => {
+            let (default_family, engine_id, default_worker) = match engine {
+                dispatch::FdmEngine::CpuReference => (
+                    "cpu-reference",
+                    "fdm_multilayer_cpu_reference",
+                    "../../bin/fullmag-bin",
+                ),
+                dispatch::FdmEngine::CudaFdm => (
+                    "fdm-cuda",
+                    "fdm_multilayer_cuda",
+                    "bin/fullmag-fdm-cuda-bin",
+                ),
+            };
+            Ok(ResolvedSessionRuntime {
+                resolved_backend: dispatch_resolution.resolved_backend,
+                resolved_device: dispatch_resolution.resolved_device,
+                resolved_precision: dispatch_resolution.resolved_precision,
+                resolved_mode: requested_mode,
+                resolved_runtime_family: Some(
+                    dispatch_resolution
+                        .runtime_family
+                        .unwrap_or_else(|| default_family.to_string()),
+                ),
+                resolved_engine_id: Some(engine_id.to_string()),
+                resolved_worker: Some(
+                    dispatch_resolution
+                        .worker
+                        .unwrap_or_else(|| default_worker.to_string()),
+                ),
+                resolved_fallback: dispatch_resolution.fallback,
+            })
+        }
+        (BackendPlanIR::Fem(_), dispatch::DispatchEngine::Fem(engine))
+        | (BackendPlanIR::FemEigen(_), dispatch::DispatchEngine::Fem(engine)) => {
+            let (default_family, engine_id, default_worker) = match engine {
+                dispatch::FemEngine::CpuReference => (
+                    "cpu-reference",
+                    "fem_cpu_reference",
+                    "../../bin/fullmag-bin",
+                ),
+                dispatch::FemEngine::NativeGpu => {
+                    ("fem-gpu", "fem_native_gpu", "bin/fullmag-fem-gpu-bin")
+                }
+            };
+            Ok(ResolvedSessionRuntime {
+                resolved_backend: dispatch_resolution.resolved_backend,
+                resolved_device: dispatch_resolution.resolved_device,
+                resolved_precision: dispatch_resolution.resolved_precision,
+                resolved_mode: requested_mode,
+                resolved_runtime_family: Some(
+                    dispatch_resolution
+                        .runtime_family
+                        .unwrap_or_else(|| default_family.to_string()),
+                ),
+                resolved_engine_id: Some(engine_id.to_string()),
+                resolved_worker: Some(
+                    dispatch_resolution
+                        .worker
+                        .unwrap_or_else(|| default_worker.to_string()),
+                ),
+                resolved_fallback: dispatch_resolution.fallback,
+            })
+        }
+        _ => Err(RunError {
+            message:
+                "runtime registry resolved an engine family incompatible with the planned backend"
+                    .to_string(),
+        }),
     }
 }
 
@@ -1078,7 +1229,7 @@ mod tests {
             temperature: None,
             interfacial_dmi: None,
             bulk_dmi: None,
-                ..Default::default()
+            ..Default::default()
         }
     }
 
@@ -1149,7 +1300,9 @@ mod tests {
         });
         problem.energy_terms = vec![
             fullmag_ir::EnergyTermIR::Exchange,
-            fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
+            fullmag_ir::EnergyTermIR::Demag {
+                realization: fullmag_ir::RequestedFemDemagIR::Auto,
+            },
         ];
         problem.problem_meta.runtime_metadata.insert(
             "runtime_selection".to_string(),
@@ -1391,7 +1544,7 @@ mod tests {
             boundary_markers: vec![1, 99],
             periodic_boundary_pairs: Vec::new(),
             periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+            per_domain_quality: std::collections::HashMap::new(),
         };
 
         let magnetization_mask = crate::preview::mesh_quantity_active_mask("m", &mesh)

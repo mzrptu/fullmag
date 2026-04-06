@@ -1,6 +1,9 @@
+use crate::quantities::{
+    normalize_quantity_id, normalized_quantity_name, quantity_spatial_domain, quantity_unit,
+    QuantityId,
+};
 use crate::types::{LivePreviewField, LivePreviewRequest, StateObservables};
 use fullmag_ir::MeshIR;
-use crate::quantities::{normalize_quantity_id, normalized_quantity_name, quantity_spatial_domain, quantity_unit, QuantityId};
 
 #[derive(Debug, Clone)]
 pub(crate) struct GridPreviewPlan {
@@ -457,7 +460,7 @@ mod tests {
             boundary_markers: vec![1],
             periodic_boundary_pairs: Vec::new(),
             periodic_node_pairs: Vec::new(),
-per_domain_quality: Default::default(),
+            per_domain_quality: Default::default(),
         }
     }
 

@@ -1,0 +1,19 @@
+[package]
+name = "fullmag-desktop"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true
+tauri-plugin-dialog.workspace = true
+tauri-plugin-shell.workspace = true
+
+[[bin]]
+name = "fullmag-ui"
+path = "src/main.rs"

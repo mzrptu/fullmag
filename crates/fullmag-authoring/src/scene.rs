@@ -209,6 +209,14 @@ pub struct SceneCurrentModulesState {
 pub struct SceneStudyState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
+    #[serde(default = "default_auto")]
+    pub requested_backend: String,
+    #[serde(default = "default_auto")]
+    pub requested_device: String,
+    #[serde(default = "default_double")]
+    pub requested_precision: String,
+    #[serde(default = "default_strict")]
+    pub requested_mode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demag_realization: Option<String>,
     #[serde(default = "default_solver")]
@@ -349,6 +357,18 @@ const fn default_scene_mesh_opacity() -> f64 {
 
 fn default_scene_mesh_color_field() -> String {
     "orientation".to_string()
+}
+
+fn default_auto() -> String {
+    "auto".to_string()
+}
+
+fn default_double() -> String {
+    "double".to_string()
+}
+
+fn default_strict() -> String {
+    "strict".to_string()
 }
 
 fn default_solver() -> ScriptBuilderSolverState {

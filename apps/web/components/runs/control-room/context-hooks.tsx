@@ -235,6 +235,12 @@ export interface CommandContextValue {
 export interface ModelContextValue {
   sceneDocument: SceneDocument | null;
   modelBuilderGraph: ModelBuilderGraphV2 | null;
+  requestedRuntimeSelection: {
+    requested_backend: string;
+    requested_device: string;
+    requested_precision: string;
+    requested_mode: string;
+  };
   material: MaterialSummary | null;
   solverPlan: SolverPlanSummary | null;
   solverSettings: SolverSettingsState;
@@ -310,6 +316,14 @@ export interface ModelContextValue {
   /* Actions */
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
   setSceneDocument: React.Dispatch<React.SetStateAction<SceneDocument | null>>;
+  setRequestedRuntimeSelection: React.Dispatch<
+    React.SetStateAction<{
+      requested_backend: string;
+      requested_device: string;
+      requested_precision: string;
+      requested_mode: string;
+    }>
+  >;
   setStudyStages: React.Dispatch<React.SetStateAction<ScriptBuilderStageState[]>>;
   setStudyPipeline: React.Dispatch<React.SetStateAction<StudyPipelineDocumentState | null>>;
   setScriptBuilderDemagRealization: React.Dispatch<React.SetStateAction<string | null>>;

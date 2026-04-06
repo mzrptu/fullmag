@@ -103,6 +103,10 @@ export function createModelBuilderGraphV2(
       kind: "study",
       label: "Simulation",
       backend: builder?.backend ?? null,
+      requested_backend: "auto",
+      requested_device: "auto",
+      requested_precision: "double",
+      requested_mode: "strict",
       demag_realization: builder?.demag_realization ?? null,
       solver: builder?.solver ?? EMPTY_SOLVER,
       universe_mesh: builder?.universe ?? null,
@@ -266,6 +270,35 @@ export function setModelBuilderDemagRealization(
     study: {
       ...ensured.study,
       demag_realization: nextValue,
+    },
+  };
+}
+
+export function setModelBuilderRequestedRuntime(
+  graph: ModelBuilderGraphV2 | null | undefined,
+  action: SetStateAction<{
+    requested_backend: string;
+    requested_device: string;
+    requested_precision: string;
+    requested_mode: string;
+  }>,
+  defaults?: ModelBuilderGraphDefaults,
+): ModelBuilderGraphV2 {
+  const ensured = ensureModelBuilderGraphV2(graph, defaults);
+  const nextRuntime = applyStateAction(
+    {
+      requested_backend: ensured.study.requested_backend,
+      requested_device: ensured.study.requested_device,
+      requested_precision: ensured.study.requested_precision,
+      requested_mode: ensured.study.requested_mode,
+    },
+    action,
+  );
+  return {
+    ...ensured,
+    study: {
+      ...ensured.study,
+      ...nextRuntime,
     },
   };
 }

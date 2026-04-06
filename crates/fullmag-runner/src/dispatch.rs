@@ -10,7 +10,9 @@
 //! - `cpu`: force CPU reference
 //! - `gpu`: force native FEM GPU, fail if unavailable
 
-use fullmag_ir::{FdmMultilayerPlanIR, FdmPlanIR, FemEigenPlanIR, FemPlanIR, OutputIR, ProblemIR};
+use fullmag_ir::{
+    BackendPlanIR, FdmMultilayerPlanIR, FdmPlanIR, FemEigenPlanIR, FemPlanIR, OutputIR, ProblemIR,
+};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -31,11 +33,13 @@ use crate::native_fdm::NativeFdmBackend;
 use crate::native_fem;
 #[cfg(feature = "fem-gpu")]
 use crate::native_fem::NativeFemBackend;
+#[cfg(any(feature = "cuda", feature = "fem-gpu"))]
 use crate::quantities::normalized_quantity_name;
 #[cfg(feature = "cuda")]
 use crate::relaxation::llg_overdamped_uses_pure_damping;
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
 use crate::relaxation::relaxation_converged;
+use crate::runtime_registry::RuntimeRegistry;
 #[cfg(feature = "cuda")]
 use crate::scalar_metrics::{
     apply_average_m_to_step_stats, scalar_outputs_request_average_m, scalar_row_due,
@@ -48,7 +52,8 @@ use crate::schedules::{
 #[cfg(all(feature = "fem-gpu", not(feature = "cuda")))]
 use crate::schedules::{collect_field_schedules, collect_scalar_schedules};
 use crate::types::{
-    ExecutedRun, LivePreviewRequest, LiveStepConsumer, RunError, StepAction, StepUpdate,
+    ExecutedRun, LivePreviewRequest, LiveStepConsumer, ResolvedFallback, RunError, StepAction,
+    StepUpdate,
 };
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
 use crate::types::{ExecutionProvenance, FieldSnapshot, RunResult, RunStatus, StepStats};
@@ -69,6 +74,58 @@ pub(crate) enum FemEngine {
     CpuReference,
     /// Native GPU FEM backend scaffold / future MFEM backend.
     NativeGpu,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EngineResolution<E> {
+    pub engine: E,
+    pub fallback: Option<ResolvedFallback>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DispatchEngine {
+    Fdm(FdmEngine),
+    Fem(FemEngine),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DispatchEngineResolution {
+    pub engine: DispatchEngine,
+    pub fallback: Option<ResolvedFallback>,
+    pub runtime_family: Option<String>,
+    pub worker: Option<String>,
+    pub resolved_backend: String,
+    pub resolved_device: String,
+    pub resolved_precision: String,
+}
+
+fn fdm_engine_id(engine: FdmEngine) -> &'static str {
+    match engine {
+        FdmEngine::CpuReference => "fdm_cpu_reference",
+        FdmEngine::CudaFdm => "fdm_cuda",
+    }
+}
+
+fn fem_engine_id(engine: FemEngine) -> &'static str {
+    match engine {
+        FemEngine::CpuReference => "fem_cpu_reference",
+        FemEngine::NativeGpu => "fem_native_gpu",
+    }
+}
+
+fn runtime_fallback(
+    original_engine: &str,
+    fallback_engine: &str,
+    reason: &str,
+    message: String,
+) -> ResolvedFallback {
+    ResolvedFallback {
+        occurred: true,
+        original_engine: original_engine.to_string(),
+        fallback_engine: fallback_engine.to_string(),
+        reason: reason.to_string(),
+        message,
+    }
 }
 
 fn unsupported_cpu_reference_terms(plan: &FemPlanIR) -> Vec<&'static str> {
@@ -118,15 +175,13 @@ fn unsupported_cpu_fdm_terms(plan: &FdmPlanIR, outputs: &[OutputIR]) -> Vec<&'st
         OutputIR::Field { name, .. } | OutputIR::Scalar { name, .. } => {
             matches!(
                 name.as_str(),
-                "H_mel" | "u" | "u_dot" | "eps" | "sigma"
-                    | "E_mel" | "E_el" | "E_kin_el"
+                "H_mel" | "u" | "u_dot" | "eps" | "sigma" | "E_mel" | "E_el" | "E_kin_el"
             )
         }
         OutputIR::Snapshot { field, .. } => {
             matches!(
                 field.as_str(),
-                "H_mel" | "u" | "u_dot" | "eps" | "sigma"
-                    | "H_ani" | "H_dmi" | "H_ant"
+                "H_mel" | "u" | "u_dot" | "eps" | "sigma" | "H_ani" | "H_dmi" | "H_ant"
             )
         }
         _ => false,
@@ -217,7 +272,9 @@ fn normalized_fem_plan_for_runtime(plan: &FemPlanIR) -> Result<FemPlanIR, RunErr
 }
 
 /// Resolve which FDM engine to use based on environment and availability.
-pub(crate) fn resolve_fdm_engine(problem: &ProblemIR) -> Result<FdmEngine, RunError> {
+pub(crate) fn resolve_fdm_engine_with_trail(
+    problem: &ProblemIR,
+) -> Result<EngineResolution<FdmEngine>, RunError> {
     apply_runtime_gpu_index(problem, "fdm");
     let ir_policy = runtime_fdm_policy(problem);
     let (policy, env_override) = match std::env::var("FULLMAG_FDM_EXECUTION") {
@@ -233,42 +290,142 @@ pub(crate) fn resolve_fdm_engine(problem: &ProblemIR) -> Result<FdmEngine, RunEr
         Err(_) => (ir_policy.to_string(), false),
     };
 
-    let engine = match policy.as_str() {
-        "cpu" => Ok(FdmEngine::CpuReference),
+    let resolution = match policy.as_str() {
+        "cpu" => Ok(EngineResolution {
+            engine: FdmEngine::CpuReference,
+            fallback: None,
+        }),
         "cuda" => {
             if native_fdm::is_cuda_available() {
-                Ok(FdmEngine::CudaFdm)
+                Ok(EngineResolution {
+                    engine: FdmEngine::CudaFdm,
+                    fallback: None,
+                })
             } else if env_override {
                 Err(RunError {
                     message: "FULLMAG_FDM_EXECUTION=cuda but CUDA backend is not available"
                         .to_string(),
                 })
             } else {
-                eprintln!(
-                    "warning: script requested CUDA FDM execution, but the CUDA backend is not available — falling back to CPU"
-                );
-                Ok(FdmEngine::CpuReference)
+                let message = "script requested CUDA FDM execution, but the CUDA backend is not available — falling back to CPU".to_string();
+                eprintln!("warning: {}", message);
+                Ok(EngineResolution {
+                    engine: FdmEngine::CpuReference,
+                    fallback: Some(runtime_fallback(
+                        fdm_engine_id(FdmEngine::CudaFdm),
+                        fdm_engine_id(FdmEngine::CpuReference),
+                        "fdm_cuda_unavailable",
+                        message,
+                    )),
+                })
             }
         }
         "auto" | _ => {
             if native_fdm::is_cuda_available() {
-                Ok(FdmEngine::CudaFdm)
+                Ok(EngineResolution {
+                    engine: FdmEngine::CudaFdm,
+                    fallback: None,
+                })
             } else {
-                Ok(FdmEngine::CpuReference)
+                Ok(EngineResolution {
+                    engine: FdmEngine::CpuReference,
+                    fallback: runtime_device(problem)
+                        .filter(|device| matches!(*device, "gpu" | "cuda"))
+                        .map(|_| {
+                            runtime_fallback(
+                                fdm_engine_id(FdmEngine::CudaFdm),
+                                fdm_engine_id(FdmEngine::CpuReference),
+                                "fdm_cuda_unavailable",
+                                "preferred CUDA FDM runtime is unavailable; using CPU reference engine".to_string(),
+                            )
+                        }),
+                })
             }
         }
     }?;
 
     // Reject direct-minimization algorithms (BB/NCG) on CUDA — not yet ported
-    if engine == FdmEngine::CudaFdm {
+    if resolution.engine == FdmEngine::CudaFdm {
         reject_direct_minimization_on_cuda(problem)?;
     }
 
-    Ok(engine)
+    Ok(resolution)
+}
+
+pub(crate) fn resolve_fdm_engine(problem: &ProblemIR) -> Result<FdmEngine, RunError> {
+    resolve_fdm_engine_with_trail(problem).map(|resolution| resolution.engine)
+}
+
+fn resolve_fdm_engine_with_registry(
+    problem: &ProblemIR,
+    registry: &RuntimeRegistry,
+    explicit_selection: bool,
+) -> Result<DispatchEngineResolution, RunError> {
+    apply_runtime_gpu_index(problem, "fdm");
+    let requested_device = requested_registry_device_for_fdm(problem);
+    let requested_precision = runtime_precision(problem).to_string();
+    let resolved = resolve_registry_runtime_for_backend(
+        registry,
+        "fdm",
+        &requested_device,
+        &requested_precision,
+    )
+    .ok_or_else(|| RunError {
+        message: format!(
+            "no advertised FDM runtime matches device={} precision={}",
+            requested_device, requested_precision
+        ),
+    })?;
+
+    let mut engine = match resolved.device.as_str() {
+        "gpu" => FdmEngine::CudaFdm,
+        _ => FdmEngine::CpuReference,
+    };
+    let mut fallback = resolved.fallback;
+
+    if engine == FdmEngine::CudaFdm {
+        if let Err(error) = reject_direct_minimization_on_cuda(problem) {
+            if explicit_selection {
+                return Err(error);
+            }
+            let cpu_resolved =
+                resolve_registry_runtime_for_backend(registry, "fdm", "cpu", &requested_precision)
+                    .ok_or(error)?;
+            let message = "CUDA FDM does not support direct-minimization relax algorithms; using CPU reference engine".to_string();
+            engine = FdmEngine::CpuReference;
+            fallback = Some(runtime_fallback(
+                fdm_engine_id(FdmEngine::CudaFdm),
+                fdm_engine_id(FdmEngine::CpuReference),
+                "fdm_cuda_direct_minimization_unsupported",
+                message,
+            ));
+            return Ok(DispatchEngineResolution {
+                engine: DispatchEngine::Fdm(engine),
+                fallback,
+                runtime_family: Some(cpu_resolved.runtime_family),
+                worker: Some(cpu_resolved.worker),
+                resolved_backend: "fdm".to_string(),
+                resolved_device: "cpu".to_string(),
+                resolved_precision: requested_precision,
+            });
+        }
+    }
+
+    Ok(DispatchEngineResolution {
+        engine: DispatchEngine::Fdm(engine),
+        fallback,
+        runtime_family: Some(resolved.runtime_family),
+        worker: Some(resolved.worker),
+        resolved_backend: "fdm".to_string(),
+        resolved_device: resolved.device,
+        resolved_precision: requested_precision,
+    })
 }
 
 /// Resolve which FEM engine to use based on environment and availability.
-pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunError> {
+pub(crate) fn resolve_fem_engine_with_trail(
+    problem: &ProblemIR,
+) -> Result<EngineResolution<FemEngine>, RunError> {
     apply_runtime_gpu_index(problem, "fem");
     let ir_policy = runtime_fem_policy(problem);
     let fe_order = runtime_fem_order(problem);
@@ -293,17 +450,26 @@ pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunEr
                         .to_string(),
             });
         }
-        eprintln!(
-            "warning: FEM engine falling back to CPU reference — \
-             native FEM GPU does not support active current_modules (fallback_reason=current_modules_force_cpu)"
-        );
-        return Ok(FemEngine::CpuReference);
+        let message = "FEM engine falling back to CPU reference — native FEM GPU does not support active current_modules (fallback_reason=current_modules_force_cpu)".to_string();
+        eprintln!("warning: {}", message);
+        return Ok(EngineResolution {
+            engine: FemEngine::CpuReference,
+            fallback: Some(runtime_fallback(
+                fem_engine_id(FemEngine::NativeGpu),
+                fem_engine_id(FemEngine::CpuReference),
+                "current_modules_force_cpu",
+                message,
+            )),
+        });
     }
 
     let availability = native_fem::gpu_availability();
 
     match policy.as_str() {
-        "cpu" => Ok(FemEngine::CpuReference),
+        "cpu" => Ok(EngineResolution {
+            engine: FemEngine::CpuReference,
+            fallback: None,
+        }),
         "gpu" => {
             if !availability.available {
                 if env_override {
@@ -314,11 +480,20 @@ pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunEr
                         ),
                     })
                 } else {
-                    eprintln!(
-                        "warning: script requested FEM GPU execution, but the native FEM GPU backend is not available: {} — falling back to CPU reference engine",
+                    let message = format!(
+                        "script requested FEM GPU execution, but the native FEM GPU backend is not available: {} — falling back to CPU reference engine",
                         availability.reason
                     );
-                    Ok(FemEngine::CpuReference)
+                    eprintln!("warning: {}", message);
+                    Ok(EngineResolution {
+                        engine: FemEngine::CpuReference,
+                        fallback: Some(runtime_fallback(
+                            fem_engine_id(FemEngine::NativeGpu),
+                            fem_engine_id(FemEngine::CpuReference),
+                            "native_fem_gpu_unavailable",
+                            message,
+                        )),
+                    })
                 }
             } else if fe_order != 1 {
                 if env_override {
@@ -331,40 +506,333 @@ pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunEr
                         ),
                     })
                 } else {
-                    eprintln!(
-                        "warning: native FEM GPU backend currently supports fe_order=1 only; \
-                         falling back to CPU for requested fe_order={} \
-                         (fallback_reason=fem_gpu_fe_order_unsupported)",
+                    let message = format!(
+                        "native FEM GPU backend currently supports fe_order=1 only; falling back to CPU for requested fe_order={} (fallback_reason=fem_gpu_fe_order_unsupported)",
                         fe_order
                     );
-                    Ok(FemEngine::CpuReference)
+                    eprintln!("warning: {}", message);
+                    Ok(EngineResolution {
+                        engine: FemEngine::CpuReference,
+                        fallback: Some(runtime_fallback(
+                            fem_engine_id(FemEngine::NativeGpu),
+                            fem_engine_id(FemEngine::CpuReference),
+                            "fem_gpu_fe_order_unsupported",
+                            message,
+                        )),
+                    })
                 }
             } else {
-                Ok(FemEngine::NativeGpu)
+                Ok(EngineResolution {
+                    engine: FemEngine::NativeGpu,
+                    fallback: None,
+                })
             }
         }
         "auto" | _ => {
             if availability.available && fe_order == 1 {
-                Ok(FemEngine::NativeGpu)
+                Ok(EngineResolution {
+                    engine: FemEngine::NativeGpu,
+                    fallback: None,
+                })
             } else {
                 if availability.available && fe_order != 1 {
-                    eprintln!(
-                        "warning: native FEM GPU backend currently supports fe_order=1 only; \
-                         falling back to CPU for requested fe_order={} \
-                         (fallback_reason=fem_gpu_fe_order_unsupported)",
+                    let message = format!(
+                        "native FEM GPU backend currently supports fe_order=1 only; falling back to CPU for requested fe_order={} (fallback_reason=fem_gpu_fe_order_unsupported)",
                         fe_order
                     );
+                    eprintln!("warning: {}", message);
+                    Ok(EngineResolution {
+                        engine: FemEngine::CpuReference,
+                        fallback: Some(runtime_fallback(
+                            fem_engine_id(FemEngine::NativeGpu),
+                            fem_engine_id(FemEngine::CpuReference),
+                            "fem_gpu_fe_order_unsupported",
+                            message,
+                        )),
+                    })
                 } else if !availability.available {
-                    eprintln!(
-                        "info: native FEM GPU backend is not available — using CPU reference engine \
-                         (fallback_reason=native_fem_gpu_unavailable; reason={})",
+                    let message = format!(
+                        "native FEM GPU backend is not available — using CPU reference engine (fallback_reason=native_fem_gpu_unavailable; reason={})",
                         availability.reason
                     );
+                    eprintln!("info: {}", message);
+                    Ok(EngineResolution {
+                        engine: FemEngine::CpuReference,
+                        fallback: runtime_device(problem)
+                            .filter(|device| matches!(*device, "gpu" | "cuda"))
+                            .map(|_| {
+                                runtime_fallback(
+                                    fem_engine_id(FemEngine::NativeGpu),
+                                    fem_engine_id(FemEngine::CpuReference),
+                                    "native_fem_gpu_unavailable",
+                                    message,
+                                )
+                            }),
+                    })
+                } else {
+                    Ok(EngineResolution {
+                        engine: FemEngine::CpuReference,
+                        fallback: None,
+                    })
                 }
-                Ok(FemEngine::CpuReference)
             }
         }
     }
+}
+
+pub(crate) fn resolve_fem_engine(problem: &ProblemIR) -> Result<FemEngine, RunError> {
+    resolve_fem_engine_with_trail(problem).map(|resolution| resolution.engine)
+}
+
+fn resolve_fem_engine_with_registry(
+    problem: &ProblemIR,
+    registry: &RuntimeRegistry,
+    explicit_selection: bool,
+    plan: Option<&FemPlanIR>,
+) -> Result<DispatchEngineResolution, RunError> {
+    apply_runtime_gpu_index(problem, "fem");
+    let requested_device = requested_registry_device_for_fem(problem);
+    let requested_precision = runtime_precision(problem).to_string();
+    let resolved = resolve_registry_runtime_for_backend(
+        registry,
+        "fem",
+        &requested_device,
+        &requested_precision,
+    )
+    .ok_or_else(|| RunError {
+        message: format!(
+            "no advertised FEM runtime matches device={} precision={}",
+            requested_device, requested_precision
+        ),
+    })?;
+
+    let engine = match resolved.device.as_str() {
+        "gpu" => FemEngine::NativeGpu,
+        _ => FemEngine::CpuReference,
+    };
+    let mut fallback = resolved.fallback;
+
+    if engine == FemEngine::NativeGpu {
+        if !problem.current_modules.is_empty() {
+            if explicit_selection {
+                return Err(RunError {
+                    message:
+                        "FEM GPU execution was requested, but native FEM GPU currently does not support active current_modules (fallback_reason=current_modules_force_cpu)"
+                            .to_string(),
+                });
+            }
+            let cpu_resolved =
+                resolve_registry_runtime_for_backend(registry, "fem", "cpu", &requested_precision)
+                    .ok_or_else(|| {
+                        RunError {
+                message: "FEM GPU runtime cannot fall back because no CPU FEM runtime is advertised"
+                    .to_string(),
+            }
+                    })?;
+            let message = "FEM engine falling back to CPU reference — native FEM GPU does not support active current_modules (fallback_reason=current_modules_force_cpu)".to_string();
+            fallback = Some(runtime_fallback(
+                fem_engine_id(FemEngine::NativeGpu),
+                fem_engine_id(FemEngine::CpuReference),
+                "current_modules_force_cpu",
+                message,
+            ));
+            return Ok(DispatchEngineResolution {
+                engine: DispatchEngine::Fem(FemEngine::CpuReference),
+                fallback,
+                runtime_family: Some(cpu_resolved.runtime_family),
+                worker: Some(cpu_resolved.worker),
+                resolved_backend: "fem".to_string(),
+                resolved_device: "cpu".to_string(),
+                resolved_precision: requested_precision,
+            });
+        }
+
+        let fe_order = runtime_fem_order(problem);
+        if fe_order != 1 {
+            if explicit_selection {
+                return Err(RunError {
+                    message: format!(
+                        "native FEM GPU execution was requested, but the current native backend supports fe_order=1 only (requested order={}, fallback_reason=fem_gpu_fe_order_unsupported)",
+                        fe_order
+                    ),
+                });
+            }
+            let cpu_resolved =
+                resolve_registry_runtime_for_backend(registry, "fem", "cpu", &requested_precision)
+                    .ok_or_else(|| {
+                        RunError {
+                message: "FEM GPU runtime cannot fall back because no CPU FEM runtime is advertised"
+                    .to_string(),
+            }
+                    })?;
+            let message = format!(
+                "native FEM GPU backend currently supports fe_order=1 only; falling back to CPU for requested fe_order={} (fallback_reason=fem_gpu_fe_order_unsupported)",
+                fe_order
+            );
+            fallback = Some(runtime_fallback(
+                fem_engine_id(FemEngine::NativeGpu),
+                fem_engine_id(FemEngine::CpuReference),
+                "fem_gpu_fe_order_unsupported",
+                message,
+            ));
+            return Ok(DispatchEngineResolution {
+                engine: DispatchEngine::Fem(FemEngine::CpuReference),
+                fallback,
+                runtime_family: Some(cpu_resolved.runtime_family),
+                worker: Some(cpu_resolved.worker),
+                resolved_backend: "fem".to_string(),
+                resolved_device: "cpu".to_string(),
+                resolved_precision: requested_precision,
+            });
+        }
+
+        if let Some(fem_plan) = plan {
+            if let Some(min_nodes) = should_fallback_to_cpu_for_small_fem_gpu(fem_plan) {
+                if explicit_selection {
+                    return Err(RunError {
+                        message: format!(
+                            "native FEM GPU execution was requested, but plan has {} nodes below FULLMAG_FEM_GPU_MIN_NODES={} (fallback_reason=fem_gpu_small_mesh_policy)",
+                            fem_plan.mesh.nodes.len(),
+                            min_nodes
+                        ),
+                    });
+                }
+                let cpu_resolved = resolve_registry_runtime_for_backend(
+                    registry,
+                    "fem",
+                    "cpu",
+                    &requested_precision,
+                )
+                .ok_or_else(|| RunError {
+                    message:
+                        "FEM GPU runtime cannot fall back because no CPU FEM runtime is advertised"
+                            .to_string(),
+                })?;
+                let message = format!(
+                    "FEM plan has {} nodes, below FULLMAG_FEM_GPU_MIN_NODES={} — falling back to CPU reference engine",
+                    fem_plan.mesh.nodes.len(),
+                    min_nodes
+                );
+                fallback = Some(runtime_fallback(
+                    fem_engine_id(FemEngine::NativeGpu),
+                    fem_engine_id(FemEngine::CpuReference),
+                    "fem_gpu_small_mesh_policy",
+                    message,
+                ));
+                return Ok(DispatchEngineResolution {
+                    engine: DispatchEngine::Fem(FemEngine::CpuReference),
+                    fallback,
+                    runtime_family: Some(cpu_resolved.runtime_family),
+                    worker: Some(cpu_resolved.worker),
+                    resolved_backend: "fem".to_string(),
+                    resolved_device: "cpu".to_string(),
+                    resolved_precision: requested_precision,
+                });
+            }
+        }
+    }
+
+    Ok(DispatchEngineResolution {
+        engine: DispatchEngine::Fem(engine),
+        fallback,
+        runtime_family: Some(resolved.runtime_family),
+        worker: Some(resolved.worker),
+        resolved_backend: "fem".to_string(),
+        resolved_device: resolved.device,
+        resolved_precision: requested_precision,
+    })
+}
+
+pub(crate) fn resolve_with_registry(
+    problem: &ProblemIR,
+    registry: Option<&RuntimeRegistry>,
+    explicit_selection: bool,
+) -> Result<DispatchEngineResolution, RunError> {
+    let plan = fullmag_plan::plan(problem)?;
+    match registry {
+        Some(registry) => match &plan.backend_plan {
+            BackendPlanIR::Fdm(_) | BackendPlanIR::FdmMultilayer(_) => {
+                resolve_fdm_engine_with_registry(problem, registry, explicit_selection)
+            }
+            BackendPlanIR::Fem(fem) => {
+                resolve_fem_engine_with_registry(problem, registry, explicit_selection, Some(fem))
+            }
+            BackendPlanIR::FemEigen(_) => {
+                resolve_fem_engine_with_registry(problem, registry, explicit_selection, None)
+            }
+        },
+        None => match &plan.backend_plan {
+            BackendPlanIR::Fdm(_) | BackendPlanIR::FdmMultilayer(_) => {
+                let resolution = resolve_fdm_engine_with_trail(problem)?;
+                Ok(DispatchEngineResolution {
+                    engine: DispatchEngine::Fdm(resolution.engine),
+                    fallback: resolution.fallback,
+                    runtime_family: None,
+                    worker: None,
+                    resolved_backend: "fdm".to_string(),
+                    resolved_device: match resolution.engine {
+                        FdmEngine::CudaFdm => "gpu".to_string(),
+                        FdmEngine::CpuReference => "cpu".to_string(),
+                    },
+                    resolved_precision: runtime_precision(problem).to_string(),
+                })
+            }
+            BackendPlanIR::Fem(fem) => {
+                let resolution = resolve_fem_engine_for_plan_with_trail(problem, fem)?;
+                Ok(DispatchEngineResolution {
+                    engine: DispatchEngine::Fem(resolution.engine),
+                    fallback: resolution.fallback,
+                    runtime_family: None,
+                    worker: None,
+                    resolved_backend: "fem".to_string(),
+                    resolved_device: match resolution.engine {
+                        FemEngine::NativeGpu => "gpu".to_string(),
+                        FemEngine::CpuReference => "cpu".to_string(),
+                    },
+                    resolved_precision: runtime_precision(problem).to_string(),
+                })
+            }
+            BackendPlanIR::FemEigen(_) => {
+                let resolution = resolve_fem_engine_with_trail(problem)?;
+                Ok(DispatchEngineResolution {
+                    engine: DispatchEngine::Fem(resolution.engine),
+                    fallback: resolution.fallback,
+                    runtime_family: None,
+                    worker: None,
+                    resolved_backend: "fem".to_string(),
+                    resolved_device: match resolution.engine {
+                        FemEngine::NativeGpu => "gpu".to_string(),
+                        FemEngine::CpuReference => "cpu".to_string(),
+                    },
+                    resolved_precision: runtime_precision(problem).to_string(),
+                })
+            }
+        },
+    }
+}
+
+pub(crate) fn resolve_fem_engine_for_plan_with_trail(
+    problem: &ProblemIR,
+    plan: &FemPlanIR,
+) -> Result<EngineResolution<FemEngine>, RunError> {
+    let mut resolution = resolve_fem_engine_with_trail(problem)?;
+    if resolution.engine == FemEngine::NativeGpu {
+        if let Some(min_nodes) = should_fallback_to_cpu_for_small_fem_gpu(plan) {
+            let message = format!(
+                "FEM plan has {} nodes, below FULLMAG_FEM_GPU_MIN_NODES={} — falling back to CPU reference engine",
+                plan.mesh.nodes.len(),
+                min_nodes
+            );
+            resolution.engine = FemEngine::CpuReference;
+            resolution.fallback = Some(runtime_fallback(
+                fem_engine_id(FemEngine::NativeGpu),
+                fem_engine_id(FemEngine::CpuReference),
+                "fem_gpu_small_mesh_policy",
+                message,
+            ));
+        }
+    }
+    Ok(resolution)
 }
 
 pub(crate) fn snapshot_fdm_preview(
@@ -541,6 +1009,89 @@ fn runtime_device(problem: &ProblemIR) -> Option<&str> {
     runtime_selection(problem)
         .and_then(|selection| selection.get("device"))
         .and_then(Value::as_str)
+}
+
+fn runtime_precision(problem: &ProblemIR) -> &str {
+    runtime_selection(problem)
+        .and_then(|selection| selection.get("precision"))
+        .and_then(Value::as_str)
+        .unwrap_or(match problem.backend_policy.execution_precision {
+            fullmag_ir::ExecutionPrecision::Single => "single",
+            fullmag_ir::ExecutionPrecision::Double => "double",
+        })
+}
+
+fn requested_registry_device_for_fdm(problem: &ProblemIR) -> String {
+    match std::env::var("FULLMAG_FDM_EXECUTION").ok().as_deref() {
+        Some("cpu") => "cpu".to_string(),
+        Some("cuda") => "gpu".to_string(),
+        Some("auto") | None => runtime_device(problem)
+            .unwrap_or("auto")
+            .replace("cuda", "gpu"),
+        Some(other) => other.replace("cuda", "gpu"),
+    }
+}
+
+fn requested_registry_device_for_fem(problem: &ProblemIR) -> String {
+    match std::env::var("FULLMAG_FEM_EXECUTION").ok().as_deref() {
+        Some("cpu") => "cpu".to_string(),
+        Some("gpu") | Some("cuda") => "gpu".to_string(),
+        Some("auto") | None => runtime_device(problem)
+            .unwrap_or("auto")
+            .replace("cuda", "gpu"),
+        Some(other) => other.replace("cuda", "gpu"),
+    }
+}
+
+struct RegistryRuntimeMatch {
+    runtime_family: String,
+    worker: String,
+    device: String,
+    fallback: Option<ResolvedFallback>,
+}
+
+fn resolve_registry_runtime_for_backend(
+    registry: &RuntimeRegistry,
+    backend: &str,
+    requested_device: &str,
+    precision: &str,
+) -> Option<RegistryRuntimeMatch> {
+    if requested_device != "auto" {
+        let resolved = registry.resolve(backend, requested_device, precision)?;
+        return Some(RegistryRuntimeMatch {
+            runtime_family: resolved.runtime_family,
+            worker: resolved.worker,
+            device: requested_device.to_string(),
+            fallback: None,
+        });
+    }
+
+    if let Some(resolved) = registry.resolve(backend, "gpu", precision) {
+        return Some(RegistryRuntimeMatch {
+            runtime_family: resolved.runtime_family,
+            worker: resolved.worker,
+            device: "gpu".to_string(),
+            fallback: None,
+        });
+    }
+
+    registry.resolve(backend, "cpu", precision).map(|resolved| RegistryRuntimeMatch {
+        runtime_family: resolved.runtime_family,
+        worker: resolved.worker,
+        device: "cpu".to_string(),
+        fallback: Some(runtime_fallback(
+            &format!("{backend}_gpu"),
+            &format!("{backend}_cpu"),
+            match backend {
+                "fdm" => "fdm_cuda_unavailable",
+                "fem" => "native_fem_gpu_unavailable",
+                _ => "runtime_unavailable",
+            },
+            format!(
+                "preferred {backend} GPU runtime is unavailable in the runtime registry; using CPU runtime"
+            ),
+        )),
+    })
 }
 
 fn runtime_device_index(problem: &ProblemIR) -> Option<u32> {
@@ -787,7 +1338,13 @@ pub(crate) fn execute_fem<'a>(
                     artifact_writer,
                 );
             }
-            execute_native_fem(&normalized_plan, until_seconds, outputs, live, artifact_writer)
+            execute_native_fem(
+                &normalized_plan,
+                until_seconds,
+                outputs,
+                live,
+                artifact_writer,
+            )
         }
     }
 }
@@ -1546,17 +2103,14 @@ mod tests {
             }),
             hybrid: None,
         });
-        problem
-            .problem_meta
-            .runtime_metadata
-            .insert(
-                "runtime_selection".to_string(),
-                Value::Object(
-                    [("device".to_string(), Value::String("gpu".to_string()))]
-                        .into_iter()
-                        .collect(),
-                ),
-            );
+        problem.problem_meta.runtime_metadata.insert(
+            "runtime_selection".to_string(),
+            Value::Object(
+                [("device".to_string(), Value::String("gpu".to_string()))]
+                    .into_iter()
+                    .collect(),
+            ),
+        );
         problem
     }
 
@@ -1578,7 +2132,7 @@ mod tests {
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: HashMap::new(),
+                per_domain_quality: HashMap::new(),
             },
             object_segments: Vec::new(),
             mesh_parts: Vec::new(),
@@ -1646,6 +2200,9 @@ per_domain_quality: HashMap::new(),
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
         }
     }
 
@@ -1663,32 +2220,54 @@ per_domain_quality: HashMap::new(),
             std::env::remove_var("FULLMAG_FEM_EXECUTION");
         }
         let err = result.expect_err("missing fem-gpu backend should be surfaced");
-        assert!(err.message.contains("native FEM GPU backend is not available"));
+        assert!(err
+            .message
+            .contains("native FEM GPU backend is not available"));
         assert!(err.message.contains("reason") || err.message.contains("without"));
+    }
+
+    #[test]
+    fn requested_fem_gpu_without_backend_records_fallback_trail() {
+        let _guard = env_lock().lock().expect("env mutex");
+        unsafe {
+            std::env::remove_var("FULLMAG_FEM_EXECUTION");
+            std::env::remove_var("FULLMAG_FEM_GPU_INDEX");
+            std::env::remove_var("FULLMAG_CUDA_DEVICE_INDEX");
+        }
+        let resolution = resolve_fem_engine_with_trail(&fem_policy_problem())
+            .expect("resolution should succeed");
+        assert_eq!(resolution.engine, FemEngine::CpuReference);
+        let fallback = resolution.fallback.expect("fallback should be present");
+        assert!(fallback.occurred);
+        assert_eq!(fallback.original_engine, "fem_native_gpu");
+        assert_eq!(fallback.fallback_engine, "fem_cpu_reference");
+        assert_eq!(fallback.reason, "native_fem_gpu_unavailable");
     }
 
     #[test]
     fn forced_fem_gpu_rejects_current_modules() {
         let _guard = env_lock().lock().expect("env mutex");
         let mut problem = fem_policy_problem();
-        problem.current_modules.push(CurrentModuleIR::AntennaFieldSource {
-            name: "src".to_string(),
-            solver: "fdtd".to_string(),
-            antenna: AntennaIR::Microstrip {
-                width: 1.0,
-                thickness: 1.0,
-                height_above_magnet: 1.0,
-                preview_length: 1.0,
-                center_x: 0.0,
-                center_y: 0.0,
-                current_distribution: "uniform".to_string(),
-            },
-            drive: RfDriveIR {
-                current_a: 1.0,
-                waveform: None,
-            },
-            air_box_factor: 2.0,
-        });
+        problem
+            .current_modules
+            .push(CurrentModuleIR::AntennaFieldSource {
+                name: "src".to_string(),
+                solver: "fdtd".to_string(),
+                antenna: AntennaIR::Microstrip {
+                    width: 1.0,
+                    thickness: 1.0,
+                    height_above_magnet: 1.0,
+                    preview_length: 1.0,
+                    center_x: 0.0,
+                    center_y: 0.0,
+                    current_distribution: "uniform".to_string(),
+                },
+                drive: RfDriveIR {
+                    current_a: 1.0,
+                    waveform: None,
+                },
+                air_box_factor: 2.0,
+            });
         unsafe {
             std::env::set_var("FULLMAG_FEM_EXECUTION", "gpu");
         }
@@ -1707,12 +2286,18 @@ per_domain_quality: HashMap::new(),
             std::env::remove_var("FULLMAG_FEM_EXECUTION");
             std::env::remove_var("FULLMAG_FEM_GPU_MIN_NODES");
         }
-        assert_eq!(should_fallback_to_cpu_for_small_fem_gpu(&tiny_fem_plan()), None);
+        assert_eq!(
+            should_fallback_to_cpu_for_small_fem_gpu(&tiny_fem_plan()),
+            None
+        );
 
         unsafe {
             std::env::set_var("FULLMAG_FEM_GPU_MIN_NODES", "10");
         }
-        assert_eq!(should_fallback_to_cpu_for_small_fem_gpu(&tiny_fem_plan()), Some(10));
+        assert_eq!(
+            should_fallback_to_cpu_for_small_fem_gpu(&tiny_fem_plan()),
+            Some(10)
+        );
 
         unsafe {
             std::env::remove_var("FULLMAG_FEM_GPU_MIN_NODES");

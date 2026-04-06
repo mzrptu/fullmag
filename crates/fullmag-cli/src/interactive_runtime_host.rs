@@ -507,7 +507,8 @@ impl InteractiveRuntimeHost {
         let Some(runtime) = self.runtime.as_ref() else {
             return;
         };
-        let runtime_engine = runtime_engine_metadata_from_provenance(&runtime.execution_provenance());
+        let runtime_engine =
+            runtime_engine_metadata_from_provenance(&runtime.execution_provenance());
         live_workspace.update(|state| {
             upsert_runtime_engine_metadata(&mut state.metadata, runtime_engine.clone());
         });

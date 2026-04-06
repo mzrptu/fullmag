@@ -22,6 +22,7 @@ import TextField from "../../ui/TextField";
 import SelectField from "../../ui/SelectField";
 import { Button } from "../../ui/button";
 import StudyBuilderWorkspace from "@/components/workspace/study-builder/StudyBuilderWorkspace";
+import SolverSelector from "../../solver/SolverSelector";
 
 const EDITABLE_STAGE_STATES = new Set(["relax", "run", "eigenmodes"]);
 
@@ -216,6 +217,8 @@ export default function StudyPanel() {
       </SidebarSection>
 
       <SidebarSection title="Backend Configuration" icon="⚙" defaultOpen={true}>
+        <SolverSelector />
+        <div className="h-px bg-border/40" />
         <div className="flex flex-col gap-1">
           <InfoRow label="State" value={ctx.workspaceStatus} />
           <InfoRow label="Study" value={studyKindForPlan(solverPlan)} />

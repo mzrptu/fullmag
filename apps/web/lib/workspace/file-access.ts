@@ -1,12 +1,39 @@
 export interface PickFileResult {
+  path?: string | null;
   name: string;
   text: string;
 }
 
 const STAGED_FILE_PREFIX = "fullmag.launch_asset.";
 
+type TauriInvoke = <T = unknown>(command: string, args?: Record<string, unknown>) => Promise<T>;
+
+declare global {
+  interface Window {
+    __TAURI__?: {
+      core?: {
+        invoke?: TauriInvoke;
+      };
+    };
+  }
+}
+
+function tauriInvoke(): TauriInvoke | null {
+  if (typeof window === "undefined") return null;
+  return typeof window.__TAURI__?.core?.invoke === "function"
+    ? window.__TAURI__.core.invoke
+    : null;
+}
+
 export async function pickTextFile(): Promise<PickFileResult | null> {
   if (typeof window === "undefined") return null;
+  const invoke = tauriInvoke();
+  if (invoke) {
+    const selected = await invoke<PickFileResult | null>("open_file_dialog");
+    if (selected) {
+      return selected;
+    }
+  }
   const input = document.createElement("input");
   input.type = "file";
   input.accept = ".py,.json,.fm,.yaml,.yml,.txt";
@@ -20,7 +47,7 @@ export async function pickTextFile(): Promise<PickFileResult | null> {
         return;
       }
       const text = await file.text();
-      resolve({ name: file.name, text });
+      resolve({ path: null, name: file.name, text });
     };
     input.click();
   });

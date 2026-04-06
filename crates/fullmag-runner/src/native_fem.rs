@@ -10,9 +10,7 @@
 use fullmag_fem_sys as ffi;
 
 #[cfg(feature = "fem-gpu")]
-use crate::preview::{
-    build_mesh_preview_field_with_active_mask, mesh_quantity_active_mask,
-};
+use crate::preview::{build_mesh_preview_field_with_active_mask, mesh_quantity_active_mask};
 #[cfg(feature = "fem-gpu")]
 use crate::quantities::{normalize_quantity_id, QuantityId};
 #[cfg(feature = "fem-gpu")]
@@ -181,7 +179,8 @@ impl NativeFemBackend {
             damping: plan.material.damping,
             gyromagnetic_ratio: plan.gyromagnetic_ratio,
         };
-        let resolved_demag_realization = plan.demag_realization
+        let resolved_demag_realization = plan
+            .demag_realization
             .unwrap_or(fullmag_ir::ResolvedFemDemagIR::TransferGrid);
 
         // Let the native FDM backend build its own Newell tensor for FEM
@@ -219,11 +218,13 @@ impl NativeFemBackend {
                     ffi::fullmag_fem_integrator::FULLMAG_FEM_INTEGRATOR_RK45_DP54
                 }
                 other => {
-                    eprintln!(
-                        "native FEM backend: unsupported integrator {:?}, falling back to Heun",
-                        other
-                    );
-                    ffi::fullmag_fem_integrator::FULLMAG_FEM_INTEGRATOR_HEUN
+                    return Err(RunError {
+                        message: format!(
+                            "native FEM backend does not support integrator {:?}; \
+                             supported integrators: Heun, Rk4, Rk23, Rk45",
+                            other
+                        ),
+                    });
                 }
             },
             enable_exchange: if plan.enable_exchange { 1 } else { 0 },
@@ -291,7 +292,15 @@ impl NativeFemBackend {
                 .map_or(0, |kernels| kernels.n_xx.len() as u64),
             initial_magnetization_xyz: m_flat.as_ptr(),
             initial_magnetization_len: m_flat.len() as u64,
-            dt_seconds: plan.fixed_timestep.unwrap_or(1e-13),
+            dt_seconds: plan.fixed_timestep.unwrap_or_else(|| {
+                let fallback_dt = 1e-13;
+                eprintln!(
+                    "warning: native FEM: no fixed_timestep specified; \
+                     using fallback dt={:.0e} s (dt_policy=fallback)",
+                    fallback_dt
+                );
+                fallback_dt
+            }),
             adaptive_config: std::ptr::null(),
             // F-05 fix: enable uniaxial anisotropy when ANY of the relevant
             // parameters are set (Ku, Ku2, Ku_field, Ku2_field).
@@ -308,18 +317,14 @@ impl NativeFemBackend {
             uniaxial_anisotropy_k2: plan.material.uniaxial_anisotropy_k2.unwrap_or(0.0),
             anisotropy_axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
             // F-05 fix: enable interfacial DMI when D or dind_field is present.
-            has_interfacial_dmi: if plan.interfacial_dmi.is_some()
-                || plan.dind_field.is_some()
-            {
+            has_interfacial_dmi: if plan.interfacial_dmi.is_some() || plan.dind_field.is_some() {
                 1
             } else {
                 0
             },
             dmi_constant: plan.interfacial_dmi.unwrap_or(0.0),
             // F-05 fix: enable bulk DMI when D or dbulk_field is present.
-            has_bulk_dmi: if plan.bulk_dmi.is_some()
-                || plan.dbulk_field.is_some()
-            {
+            has_bulk_dmi: if plan.bulk_dmi.is_some() || plan.dbulk_field.is_some() {
                 1
             } else {
                 0
@@ -468,13 +473,41 @@ impl NativeFemBackend {
         };
 
         // Build adaptive config if present
+        if let Some(ref a) = plan.adaptive_timestep {
+            // Reject adaptive fields not supported by the native FEM backend FFI.
+            let mut unsupported = Vec::new();
+            if a.max_spin_rotation.is_some() {
+                unsupported.push("max_spin_rotation".to_string());
+            }
+            if a.norm_tolerance.is_some() {
+                unsupported.push("norm_tolerance".to_string());
+            }
+            if !unsupported.is_empty() {
+                return Err(RunError {
+                    message: format!(
+                        "native FEM backend does not support adaptive parameters: {}; \
+                         supported: atol, rtol, dt_initial, dt_min, dt_max, safety, \
+                         growth_limit, shrink_limit",
+                        unsupported.join(", ")
+                    ),
+                });
+            }
+        }
         let adaptive_cfg =
             plan.adaptive_timestep
                 .as_ref()
                 .map(|a| ffi::fullmag_fem_adaptive_config {
                     atol: a.atol,
                     rtol: a.rtol,
-                    dt_initial: a.dt_initial.unwrap_or(plan.fixed_timestep.unwrap_or(1e-13)),
+                    dt_initial: a.dt_initial.unwrap_or_else(|| {
+                        plan.fixed_timestep.unwrap_or_else(|| {
+                            eprintln!(
+                                "warning: native FEM adaptive: no dt_initial or fixed_timestep; \
+                                 using fallback 1e-13 s"
+                            );
+                            1e-13
+                        })
+                    }),
                     dt_min: a.dt_min,
                     dt_max: a.dt_max.unwrap_or(1e-10),
                     safety: a.safety,
@@ -994,7 +1027,7 @@ mod tests {
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             },
             object_segments: Vec::new(),
             mesh_parts: Vec::new(),
@@ -1062,6 +1095,9 @@ per_domain_quality: std::collections::HashMap::new(),
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
         }
     }
 
@@ -1091,7 +1127,7 @@ per_domain_quality: std::collections::HashMap::new(),
                 boundary_markers: vec![1; 6],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             },
             object_segments: Vec::new(),
             mesh_parts: Vec::new(),
@@ -1165,6 +1201,9 @@ per_domain_quality: std::collections::HashMap::new(),
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
         }
     }
 
@@ -1229,6 +1268,9 @@ per_domain_quality: std::collections::HashMap::new(),
                 external_field: plan.external_field,
                 per_node_field: None,
                 magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
             },
         );
         let mut state =
@@ -1253,8 +1295,7 @@ per_domain_quality: std::collections::HashMap::new(),
             Err(err) => {
                 if !is_gpu_available() {
                     assert!(
-                        err.message.contains("MFEM")
-                            || err.message.contains("scaffold"),
+                        err.message.contains("MFEM") || err.message.contains("scaffold"),
                         "unexpected unavailable create message: {}",
                         err.message
                     );
@@ -1325,8 +1366,7 @@ per_domain_quality: std::collections::HashMap::new(),
             Err(err) => {
                 if !is_gpu_available() {
                     assert!(
-                        err.message.contains("MFEM")
-                            || err.message.contains("scaffold"),
+                        err.message.contains("MFEM") || err.message.contains("scaffold"),
                         "unexpected unavailable create message: {}",
                         err.message
                     );

@@ -51,6 +51,10 @@ pub(crate) struct ScriptCli {
 #[derive(Subcommand)]
 pub(crate) enum Command {
     Doctor,
+    /// Launch desktop UI shell
+    Ui(UiCli),
+    #[command(subcommand)]
+    Runtime(RuntimeCommand),
     ExampleIr,
     ReferenceExchangeDemo {
         #[arg(long, default_value_t = 10)]
@@ -80,6 +84,32 @@ pub(crate) enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         raw_args: Vec<OsString>,
     },
+}
+
+#[derive(Parser, Debug)]
+pub(crate) struct UiCli {
+    /// Optional script to open directly in workspace
+    pub script: Option<PathBuf>,
+    #[arg(long, value_enum)]
+    pub backend: Option<BackendArg>,
+    #[arg(long, value_enum)]
+    pub mode: Option<ModeArg>,
+    #[arg(long, value_enum)]
+    pub precision: Option<PrecisionArg>,
+    /// Use web dev server instead of static assets
+    #[arg(long, default_value_t = false)]
+    pub dev: bool,
+    #[arg(
+        long,
+        help = "Port for the dev control room frontend (auto-selects 3000-3010 if omitted)"
+    )]
+    pub web_port: Option<u16>,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum RuntimeCommand {
+    /// Diagnose installed runtime packs and host capabilities
+    Doctor,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, ValueEnum)]

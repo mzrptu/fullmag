@@ -175,6 +175,9 @@ pub(crate) fn diagnose_initial_fdm_plan(plan: &FdmPlanIR) -> Result<InitialState
             external_field: plan.external_field,
             per_node_field: None,
             magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
             ..Default::default()
         },
         plan.active_mask.clone(),
@@ -236,37 +239,39 @@ pub(crate) fn diagnose_initial_fem_plan(plan: &FemPlanIR) -> Result<InitialState
         external_field: plan.external_field,
         per_node_field: None,
         magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
         ..Default::default()
     };
     let problem = if !plan.enable_demag {
         FemLlgProblem::with_terms(topology, material, dynamics, terms)
     } else {
         match plan.demag_realization {
-            Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid) => FemLlgProblem::with_terms_and_demag_transfer_grid(
-                topology,
-                material,
-                dynamics,
-                terms,
-                Some([plan.hmax, plan.hmax, plan.hmax]),
-            ),
-            Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin) => FemLlgProblem::with_terms_and_demag_airbox(
-                topology,
-                material,
-                dynamics,
-                terms,
-                false,
-                plan.air_box_config
-                    .as_ref()
-                    .and_then(|config| config.robin_beta_factor),
-            ),
-            Some(fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet) => {
+            Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid) => {
+                FemLlgProblem::with_terms_and_demag_transfer_grid(
+                    topology,
+                    material,
+                    dynamics,
+                    terms,
+                    Some([plan.hmax, plan.hmax, plan.hmax]),
+                )
+            }
+            Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin) => {
                 FemLlgProblem::with_terms_and_demag_airbox(
                     topology,
                     material,
                     dynamics,
                     terms,
-                    true,
-                    None,
+                    false,
+                    plan.air_box_config
+                        .as_ref()
+                        .and_then(|config| config.robin_beta_factor),
+                )
+            }
+            Some(fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet) => {
+                FemLlgProblem::with_terms_and_demag_airbox(
+                    topology, material, dynamics, terms, true, None,
                 )
             }
             None => FemLlgProblem::with_terms_and_demag_transfer_grid(

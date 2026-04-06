@@ -86,16 +86,15 @@ impl Drop for ControlRoomGuard {
     }
 }
 
-pub(crate) fn spawn_control_room(
-    _session_id: &str,
-    dev_mode: bool,
-    requested_port: Option<u16>,
-    live_workspace: &LocalLiveWorkspace,
-) -> Result<(u16, std::process::Child, Option<std::process::Child>)> {
-    let root = repo_root();
-    let log_dir = root.join(".fullmag").join("logs");
-    let url_file = root.join(".fullmag").join("control-room-url.txt");
-    let mode_file = root.join(".fullmag").join("control-room-mode.txt");
+pub(crate) struct ControlPlaneReady {
+    pub api_port: u16,
+    pub web_url: String,
+    pub web_port: u16,
+    pub api_child: std::process::Child,
+    pub frontend_child: Option<std::process::Child>,
+}
+
+fn browser_control_room_assets(root: &Path, dev_mode: bool) -> (PathBuf, PathBuf, PathBuf, bool) {
     let web_dir = root.join("apps").join("web");
     let static_web_root = root.join(".fullmag").join("local").join("web");
     let external_control_room_available = if dev_mode {
@@ -105,6 +104,25 @@ pub(crate) fn spawn_control_room(
             && web_dir.join("dev-server.mjs").is_file()
             && static_web_root.join("index.html").is_file()
     };
+    (
+        web_dir,
+        static_web_root,
+        root.join(".fullmag").join("control-room-mode.txt"),
+        external_control_room_available,
+    )
+}
+
+pub(crate) fn bootstrap_control_plane(
+    _session_id: &str,
+    dev_mode: bool,
+    requested_port: Option<u16>,
+    live_workspace: Option<&LocalLiveWorkspace>,
+) -> Result<ControlPlaneReady> {
+    let root = repo_root();
+    let log_dir = root.join(".fullmag").join("logs");
+    let url_file = root.join(".fullmag").join("control-room-url.txt");
+    let (web_dir, static_web_root, mode_file, external_control_room_available) =
+        browser_control_room_assets(&root, dev_mode);
     fs::create_dir_all(&log_dir)?;
 
     eprintln!("  starting fullmag-api on :{} ...", api_port());
@@ -113,16 +131,19 @@ pub(crate) fn spawn_control_room(
     let api_err = api_log.try_clone()?;
 
     let self_exe = std::env::current_exe().unwrap_or_default();
-    let mut child = spawn_fullmag_api(
+    let mut api_child = spawn_fullmag_api(
         &root,
         &self_exe,
         api_log,
         api_err,
         external_control_room_available,
     )?;
-    wait_for_api_ready(api_port(), &mut child, Duration::from_secs(60))?;
-    publish_current_live_workspace_snapshot(live_workspace)?;
-    live_workspace.publish_snapshot();
+    wait_for_api_ready(api_port(), &mut api_child, Duration::from_secs(60))?;
+
+    if let Some(live_workspace) = live_workspace {
+        publish_current_live_workspace_snapshot(live_workspace)?;
+        live_workspace.publish_snapshot();
+    }
 
     let web_port = resolve_web_port(requested_port, &url_file)?;
     let desired_mode = if dev_mode { "dev" } else { "static" };
@@ -174,9 +195,11 @@ pub(crate) fn spawn_control_room(
                     .env("FULLMAG_STATIC_WEB_ROOT", &static_web_root);
             }
 
-            frontend_child = Some(command
-                .spawn()
-                .context("failed to spawn control room server")?);
+            frontend_child = Some(
+                command
+                    .spawn()
+                    .context("failed to spawn control room server")?,
+            );
 
             let _ = fs::write(&url_file, format!("http://localhost:{}", web_port));
             let _ = fs::write(&mode_file, desired_mode);
@@ -194,17 +217,13 @@ pub(crate) fn spawn_control_room(
             eprintln!("  reusing control room on :{}", web_port);
         }
 
-        let url = format!("http://localhost:{web_port}/");
-        eprintln!("  gui server: {}", url);
-        if let Ok(opener) = which_opener() {
-            let _ = ProcessCommand::new(opener)
-                .arg(&url)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn();
-        }
-        return Ok((web_port, child, frontend_child));
+        return Ok(ControlPlaneReady {
+            api_port: api_port(),
+            web_url: format!("http://localhost:{web_port}/"),
+            web_port,
+            api_child,
+            frontend_child,
+        });
     }
 
     if !dev_mode {
@@ -215,22 +234,83 @@ pub(crate) fn spawn_control_room(
             );
         }
 
-        let url = format!("http://{LOCALHOST_HTTP_HOST}:{}/", api_port());
-        eprintln!("  gui server: {}", url);
-        if let Ok(opener) = which_opener() {
-            let _ = ProcessCommand::new(opener)
-                .arg(&url)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn();
-        }
-        return Ok((web_port, child, None));
+        return Ok(ControlPlaneReady {
+            api_port: api_port(),
+            web_url: format!("http://{LOCALHOST_HTTP_HOST}:{}/", api_port()),
+            web_port,
+            api_child,
+            frontend_child: None,
+        });
     }
 
     bail!(
         "control room dev mode requires a local Node frontend; run `just build-static-control-room` and omit `--dev`, or install Node and keep `apps/web/dev-server.mjs` available"
     )
+}
+
+pub(crate) fn open_in_browser(ready: &ControlPlaneReady) {
+    eprintln!("  gui server: {}", ready.web_url);
+    if let Ok(opener) = which_opener() {
+        let _ = ProcessCommand::new(opener)
+            .arg(&ready.web_url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+}
+
+fn find_fullmag_ui_binary() -> Result<PathBuf> {
+    let root = repo_root();
+    let self_exe = std::env::current_exe().unwrap_or_default();
+    let candidates = [
+        self_exe.with_file_name("fullmag-ui"),
+        root.join(".fullmag")
+            .join("local")
+            .join("bin")
+            .join("fullmag-ui"),
+        root.join("target").join("debug").join("fullmag-ui"),
+        root.join("target").join("release").join("fullmag-ui"),
+    ];
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| anyhow::anyhow!("fullmag-ui not built yet"))
+}
+
+pub(crate) fn open_in_tauri(
+    ready: &ControlPlaneReady,
+    intent: &str,
+) -> Result<std::process::Child> {
+    let ui_exe = find_fullmag_ui_binary()?;
+    let mut command = ProcessCommand::new(&ui_exe);
+    command
+        .env("FULLMAG_UI_URL", &ready.web_url)
+        .env(
+            "FULLMAG_API_BASE",
+            format!("http://localhost:{}/", ready.api_port),
+        )
+        .env("FULLMAG_LAUNCH_INTENT", intent)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    configure_child_process(&mut command);
+    let child = command
+        .spawn()
+        .with_context(|| format!("failed to launch fullmag-ui: {}", ui_exe.display()))?;
+    Ok(child)
+}
+
+pub(crate) fn spawn_control_room(
+    session_id: &str,
+    dev_mode: bool,
+    requested_port: Option<u16>,
+    live_workspace: &LocalLiveWorkspace,
+) -> Result<(u16, std::process::Child, Option<std::process::Child>)> {
+    let ready =
+        bootstrap_control_plane(session_id, dev_mode, requested_port, Some(live_workspace))?;
+    open_in_browser(&ready);
+    Ok((ready.web_port, ready.api_child, ready.frontend_child))
 }
 
 pub(crate) fn publish_current_live_workspace_snapshot(

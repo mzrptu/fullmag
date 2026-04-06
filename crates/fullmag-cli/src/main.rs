@@ -43,6 +43,81 @@ fn main() -> Result<()> {
             println!("- reference LLG + exchange engine: CPU/FDM slice");
             println!("- CUDA FDM backend: native source present, calibration still in progress");
         }
+        Command::Ui(ui) => {
+            crate::control_room::init_api_port()?;
+            let (session_id, live_workspace) = if let Some(script) = ui.script.as_ref() {
+                let (session_id, live_workspace) = orchestrator::prepare_live_workspace_for_ui(
+                    script,
+                    ui.backend,
+                    ui.mode,
+                    ui.precision,
+                )?;
+                (session_id, Some(live_workspace))
+            } else {
+                (
+                    format!(
+                        "hub-{}-{}",
+                        std::process::id(),
+                        formatting::unix_time_millis()?
+                    ),
+                    None,
+                )
+            };
+
+            let intent = if live_workspace.is_some() {
+                "workspace"
+            } else {
+                "hub"
+            };
+            let ready = crate::control_room::bootstrap_control_plane(
+                &session_id,
+                ui.dev,
+                ui.web_port,
+                live_workspace.as_ref(),
+            )?;
+            let mut ui_child = crate::control_room::open_in_tauri(&ready, intent)?;
+            let _control_room_guard = crate::control_room::ControlRoomGuard::active(
+                ready.web_port,
+                ready.api_child,
+                ready.frontend_child,
+            );
+            let _ = ui_child.wait();
+        }
+        Command::Runtime(RuntimeCommand::Doctor) => {
+            let runtimes_dir = crate::control_room::repo_root().join("runtimes");
+            let registry = fullmag_runner::RuntimeRegistry::discover(&runtimes_dir);
+            let matrix = registry.capability_matrix();
+
+            println!("Fullmag Runtime Doctor");
+            println!("======================");
+            println!("Runtimes directory: {}", runtimes_dir.display());
+            println!();
+
+            if matrix.engines.is_empty() {
+                println!("No runtime packs found.");
+            } else {
+                for engine in &matrix.engines {
+                    println!(
+                        "{} {} {}/{}/{} ({})",
+                        status_marker(engine.status),
+                        engine.runtime_family,
+                        engine.backend,
+                        engine.device,
+                        engine.precision,
+                        engine.mode
+                    );
+                    println!("  version: {}", engine.runtime_version);
+                    println!("  status: {}", status_name(engine.status));
+                    if let Some(reason) = &engine.status_reason {
+                        println!("  reason: {}", reason);
+                    }
+                    println!("  worker: {}", engine.worker);
+                    println!("  public: {}", engine.public);
+                    println!("  stability: {}", engine.stability);
+                    println!();
+                }
+            }
+        }
         Command::ExampleIr => {
             let example = ProblemIR::bootstrap_example();
             println!("{}", serde_json::to_string_pretty(&example)?);
@@ -103,12 +178,40 @@ fn main() -> Result<()> {
             if shell {
                 println!("script_mode={}", if resolution.script_mode { 1 } else { 0 });
                 println!("requested_backend={}", resolution.requested_backend);
+                println!(
+                    "explicit_selection={}",
+                    if resolution.explicit_selection { 1 } else { 0 }
+                );
+                println!("requested_mode={}", resolution.requested_mode);
                 println!("resolved_backend={}", resolution.resolved_backend);
                 println!("requested_device={}", resolution.requested_device);
                 println!("requested_precision={}", resolution.requested_precision);
+                println!("resolved_device={}", resolution.resolved_device);
+                println!("resolved_precision={}", resolution.resolved_precision);
+                println!("resolved_mode={}", resolution.resolved_mode);
                 println!(
                     "preferred_runtime_family={}",
                     resolution.preferred_runtime_family
+                );
+                println!(
+                    "resolved_runtime_family={}",
+                    resolution.resolved_runtime_family.as_deref().unwrap_or("")
+                );
+                println!(
+                    "resolved_engine_id={}",
+                    resolution.resolved_engine_id.as_deref().unwrap_or("")
+                );
+                println!(
+                    "resolved_worker={}",
+                    resolution.resolved_worker.as_deref().unwrap_or("")
+                );
+                println!(
+                    "resolved_fallback_occurred={}",
+                    if resolution.resolved_fallback.is_some() {
+                        1
+                    } else {
+                        0
+                    }
                 );
                 println!(
                     "local_engine_id={}",
@@ -139,6 +242,8 @@ fn main() -> Result<()> {
 fn is_script_mode(raw_args: &[OsString]) -> bool {
     const SUBCOMMANDS: &[&str] = &[
         "doctor",
+        "ui",
+        "runtime",
         "example-ir",
         "reference-exchange-demo",
         "validate-json",
@@ -192,6 +297,24 @@ fn is_script_mode(raw_args: &[OsString]) -> bool {
     false
 }
 
+fn status_marker(status: fullmag_runner::EngineAvailabilityStatus) -> &'static str {
+    match status {
+        fullmag_runner::EngineAvailabilityStatus::Available => "OK",
+        _ => "ERR",
+    }
+}
+
+fn status_name(status: fullmag_runner::EngineAvailabilityStatus) -> &'static str {
+    match status {
+        fullmag_runner::EngineAvailabilityStatus::Available => "available",
+        fullmag_runner::EngineAvailabilityStatus::MissingRuntime => "missing_runtime",
+        fullmag_runner::EngineAvailabilityStatus::MissingDriver => "missing_driver",
+        fullmag_runner::EngineAvailabilityStatus::MissingLibrary => "missing_library",
+        fullmag_runner::EngineAvailabilityStatus::FeatureGated => "feature_gated",
+        fullmag_runner::EngineAvailabilityStatus::Experimental => "experimental",
+    }
+}
+
 fn resolve_runtime_invocation(raw_args: Vec<OsString>) -> Result<RuntimeResolutionSummary> {
     let mut invocation_args = vec![OsString::from("fullmag")];
     invocation_args.extend(raw_args.iter().cloned());
@@ -199,10 +322,19 @@ fn resolve_runtime_invocation(raw_args: Vec<OsString>) -> Result<RuntimeResoluti
         return Ok(RuntimeResolutionSummary {
             script_mode: false,
             requested_backend: String::new(),
+            explicit_selection: false,
+            requested_mode: String::new(),
             resolved_backend: String::new(),
             requested_device: String::new(),
             requested_precision: String::new(),
+            resolved_device: String::new(),
+            resolved_precision: String::new(),
+            resolved_mode: String::new(),
             preferred_runtime_family: String::new(),
+            resolved_runtime_family: None,
+            resolved_engine_id: None,
+            resolved_worker: None,
+            resolved_fallback: None,
             local_engine_id: None,
             local_engine_label: None,
             requires_managed_runtime: false,
@@ -223,22 +355,64 @@ fn resolve_runtime_invocation(raw_args: Vec<OsString>) -> Result<RuntimeResoluti
         .last()
         .map(|stage| &stage.ir)
         .unwrap_or(&config.ir);
+    let explicit_selection = problem
+        .problem_meta
+        .runtime_metadata
+        .get("runtime_selection")
+        .and_then(Value::as_object)
+        .and_then(|selection| selection.get("explicit_selection"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let resolved_backend = resolved_backend_from_problem(problem);
+    let requested_mode = runtime_selection_string(
+        problem,
+        "mode",
+        execution_mode_name(problem.validation_profile.execution_mode),
+    );
     let requested_device = runtime_selection_string(problem, "device", "auto");
     let preferred_runtime_family =
         preferred_runtime_family_for_problem(problem, resolved_backend, &requested_device);
     let (local_engine_id, local_engine_label, requires_managed_runtime) =
         local_engine_resolution(problem, resolved_backend, &preferred_runtime_family);
+    let resolved_session_runtime = fullmag_runner::resolve_session_runtime(problem).ok();
 
     Ok(RuntimeResolutionSummary {
         script_mode: true,
         requested_backend: backend_target_name(problem.backend_policy.requested_backend)
             .to_string(),
+        explicit_selection,
+        requested_mode,
         resolved_backend: backend_target_name(resolved_backend).to_string(),
         requested_device,
         requested_precision: execution_precision_name(problem.backend_policy.execution_precision)
             .to_string(),
+        resolved_device: resolved_session_runtime
+            .as_ref()
+            .map(|runtime| runtime.resolved_device.clone())
+            .unwrap_or_else(|| "auto".to_string()),
+        resolved_precision: resolved_session_runtime
+            .as_ref()
+            .map(|runtime| runtime.resolved_precision.clone())
+            .unwrap_or_else(|| {
+                execution_precision_name(problem.backend_policy.execution_precision).to_string()
+            }),
+        resolved_mode: resolved_session_runtime
+            .as_ref()
+            .map(|runtime| runtime.resolved_mode.clone())
+            .unwrap_or_else(|| {
+                execution_mode_name(problem.validation_profile.execution_mode).to_string()
+            }),
         preferred_runtime_family,
+        resolved_runtime_family: resolved_session_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.resolved_runtime_family.clone()),
+        resolved_engine_id: resolved_session_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.resolved_engine_id.clone()),
+        resolved_worker: resolved_session_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.resolved_worker.clone()),
+        resolved_fallback: resolved_session_runtime.and_then(|runtime| runtime.resolved_fallback),
         local_engine_id,
         local_engine_label,
         requires_managed_runtime,
@@ -410,7 +584,7 @@ mod tests {
             interfacial_dmi: None,
             bulk_dmi: None,
             inter_region_exchange: vec![],
-                ..Default::default()
+            ..Default::default()
         });
 
         let update = initial_step_update(&plan);
@@ -435,10 +609,10 @@ mod tests {
             element_markers: vec![1],
             boundary_faces: vec![[0, 1, 2]],
             boundary_markers: vec![1],
-        periodic_boundary_pairs: Vec::new(),
-        periodic_node_pairs: Vec::new(),
-        per_domain_quality: Default::default(),
-    };
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+            per_domain_quality: Default::default(),
+        };
         let plan = BackendPlanIR::Fem(FemPlanIR {
             mesh_name: mesh.mesh_name.clone(),
             mesh_source: None,
@@ -509,6 +683,9 @@ mod tests {
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
         });
 
         let update = initial_step_update(&plan);
@@ -570,7 +747,7 @@ mod tests {
             interfacial_dmi: None,
             bulk_dmi: None,
             inter_region_exchange: vec![],
-                ..Default::default()
+            ..Default::default()
         };
 
         let diagnostic = diagnose_initial_fdm_plan(&plan).expect("diagnostic should succeed");
@@ -645,7 +822,7 @@ mod tests {
             interfacial_dmi: None,
             bulk_dmi: None,
             inter_region_exchange: vec![],
-                ..Default::default()
+            ..Default::default()
         };
 
         let diagnostic = diagnose_initial_fdm_plan(&plan).expect("diagnostic should succeed");
@@ -657,5 +834,36 @@ mod tests {
             "expected alpha=0 warning, got {:?}",
             diagnostic.warnings
         );
+    }
+
+    #[test]
+    fn cli_parses_runtime_doctor_subcommand() {
+        let cli = Cli::try_parse_from(["fullmag", "runtime", "doctor"]).expect("cli parse");
+        assert!(matches!(
+            cli.command,
+            Command::Runtime(RuntimeCommand::Doctor)
+        ));
+    }
+
+    #[test]
+    fn runtime_subcommand_is_not_treated_as_script_mode() {
+        let args = vec![
+            OsString::from("fullmag"),
+            OsString::from("runtime"),
+            OsString::from("doctor"),
+        ];
+        assert!(!is_script_mode(&args));
+    }
+
+    #[test]
+    fn cli_parses_ui_subcommand() {
+        let cli = Cli::try_parse_from(["fullmag", "ui"]).expect("cli parse");
+        assert!(matches!(cli.command, Command::Ui(_)));
+    }
+
+    #[test]
+    fn ui_subcommand_is_not_treated_as_script_mode() {
+        let args = vec![OsString::from("fullmag"), OsString::from("ui")];
+        assert!(!is_script_mode(&args));
     }
 }

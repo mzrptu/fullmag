@@ -9,7 +9,7 @@
 use fullmag_engine::{
     multilayer::{FdmLayerRuntime, KernelPair, MultilayerDemagRuntime},
     CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, ExchangeLlgProblem, ExchangeLlgState,
-    GridShape, LlgConfig, MaterialParameters, MU0, UniaxialAnisotropyConfig,
+    GridShape, LlgConfig, MaterialParameters, UniaxialAnisotropyConfig, MU0,
 };
 use fullmag_fdm_demag::{compute_exact_self_kernel, compute_shifted_kernel};
 use fullmag_ir::{ExecutionPrecision, FdmMultilayerPlanIR, IntegratorChoice, OutputIR};
@@ -98,8 +98,14 @@ pub(crate) fn execute_reference_fdm_multilayer(
         cuda_driver_version: None,
         cuda_runtime_version: None,
         lossy_fallback_used: false,
+        resolved_fallback: None,
         ignored_terms: Vec::new(),
         random_seed: None,
+        requested_integrator: None,
+        resolved_integrator: None,
+        requested_demag_realization: None,
+        resolved_demag_realization: None,
+        dt_policy: None,
     };
     let mut artifacts = if let Some(writer) = artifact_writer {
         ArtifactRecorder::streaming(provenance.clone(), writer)
@@ -307,6 +313,9 @@ fn build_contexts_and_states(
                 external_field: plan.external_field,
                 per_node_field: None,
                 magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
                 uniaxial_anisotropy: layer.material.uniaxial_anisotropy_ku1.map(|ku1| {
                     UniaxialAnisotropyConfig {
                         ku1,
@@ -318,8 +327,14 @@ fn build_contexts_and_states(
                     CubicAnisotropyConfig {
                         kc1,
                         kc2: layer.material.cubic_anisotropy_kc2.unwrap_or(0.0),
-                        axis1: layer.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
-                        axis2: layer.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
+                        axis1: layer
+                            .material
+                            .cubic_anisotropy_axis1
+                            .unwrap_or([1.0, 0.0, 0.0]),
+                        axis2: layer
+                            .material
+                            .cubic_anisotropy_axis2
+                            .unwrap_or([0.0, 1.0, 0.0]),
                     }
                 }),
                 interfacial_dmi: None,

@@ -161,10 +161,7 @@ pub(crate) fn parse_python_progress_event(message: &str) -> PythonProgressEvent 
                 );
             }
             if let Some(message) = envelope.message {
-                payload.insert(
-                    "message".to_string(),
-                    serde_json::Value::String(message),
-                );
+                payload.insert("message".to_string(), serde_json::Value::String(message));
             }
             if let Some(fem_mesh) = envelope.fem_mesh {
                 if let Ok(value) = serde_json::to_value(fem_mesh) {

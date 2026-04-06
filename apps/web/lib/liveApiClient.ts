@@ -27,6 +27,33 @@ export interface GpuTelemetryResponse {
   devices: GpuTelemetryDevice[];
 }
 
+export type EngineAvailabilityStatus =
+  | "available"
+  | "missing_runtime"
+  | "missing_driver"
+  | "missing_library"
+  | "feature_gated"
+  | "experimental";
+
+export interface HostEngineEntry {
+  backend: string;
+  device: string;
+  precision: string;
+  mode: string;
+  runtime_family: string;
+  runtime_version: string;
+  worker: string;
+  status: EngineAvailabilityStatus;
+  status_reason?: string | null;
+  public: boolean;
+  stability: string;
+}
+
+export interface HostCapabilityMatrix {
+  profile_version: string;
+  engines: HostEngineEntry[];
+}
+
 export class ApiHttpError extends Error {
   status: number;
 
@@ -57,6 +84,7 @@ export function currentLiveApiClient() {
   return {
     urls: {
       bootstrap: `${baseUrl}/v1/live/current/bootstrap`,
+      runtimeCapabilities: `${baseUrl}/v1/runtime/capabilities`,
       ws: `${wsBaseUrl}/ws/live/current`,
       commands: `${baseUrl}/v1/live/current/commands`,
       preview: (path: string) => `${baseUrl}/v1/live/current/preview${path}`,
@@ -70,6 +98,11 @@ export function currentLiveApiClient() {
     },
     fetchBootstrap() {
       return requestJson<JsonObject>(`${baseUrl}/v1/live/current/bootstrap`, {
+        cache: "no-store",
+      });
+    },
+    fetchRuntimeCapabilities() {
+      return requestJson<HostCapabilityMatrix>(`${baseUrl}/v1/runtime/capabilities`, {
         cache: "no-store",
       });
     },

@@ -353,7 +353,7 @@ mod tests {
                 temperature: None,
                 interfacial_dmi: None,
                 bulk_dmi: None,
-                    ..Default::default()
+                ..Default::default()
             }),
             output_plan: OutputPlanIR {
                 outputs: Vec::new(),

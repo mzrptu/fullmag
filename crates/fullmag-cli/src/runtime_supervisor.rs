@@ -44,6 +44,13 @@ impl InteractiveSessionContext {
         plan_summary: &serde_json::Value,
         now_unix_ms: u128,
     ) -> SessionManifest {
+        let runtime = crate::orchestrator::requested_runtime_selection(
+            backend_target_name(self.requested_backend),
+            false,
+            "auto",
+            execution_precision_name(self.precision),
+            execution_mode_name(self.execution_mode),
+        );
         crate::orchestrator::build_session_manifest(
             &self.session_id,
             &self.run_id,
@@ -51,9 +58,7 @@ impl InteractiveSessionContext {
             self.interactive_requested,
             &self.script_path,
             &self.final_problem_name,
-            backend_target_name(self.requested_backend),
-            execution_mode_name(self.execution_mode),
-            execution_precision_name(self.precision),
+            &runtime,
             &self.artifact_dir,
             self.started_at_unix_ms,
             now_unix_ms,

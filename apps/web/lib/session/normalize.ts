@@ -27,6 +27,46 @@ import {
   buildScriptBuilderFromSceneDocument,
 } from "./sceneDocument";
 
+function normalizeSessionManifest(raw: any) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  return {
+    ...raw,
+    explicit_selection: Boolean(raw.explicit_selection),
+    requested_device:
+      typeof raw.requested_device === "string" ? raw.requested_device : "auto",
+    requested_precision:
+      typeof raw.requested_precision === "string"
+        ? raw.requested_precision
+        : typeof raw.precision === "string"
+          ? raw.precision
+          : "double",
+    requested_mode:
+      typeof raw.requested_mode === "string"
+        ? raw.requested_mode
+        : typeof raw.execution_mode === "string"
+          ? raw.execution_mode
+          : "strict",
+    resolved_backend:
+      typeof raw.resolved_backend === "string" ? raw.resolved_backend : null,
+    resolved_device:
+      typeof raw.resolved_device === "string" ? raw.resolved_device : null,
+    resolved_precision:
+      typeof raw.resolved_precision === "string" ? raw.resolved_precision : null,
+    resolved_mode: typeof raw.resolved_mode === "string" ? raw.resolved_mode : null,
+    resolved_runtime_family:
+      typeof raw.resolved_runtime_family === "string" ? raw.resolved_runtime_family : null,
+    resolved_engine_id:
+      typeof raw.resolved_engine_id === "string" ? raw.resolved_engine_id : null,
+    resolved_worker: typeof raw.resolved_worker === "string" ? raw.resolved_worker : null,
+    resolved_fallback:
+      raw.resolved_fallback && typeof raw.resolved_fallback === "object"
+        ? raw.resolved_fallback
+        : undefined,
+  };
+}
+
 /* ── Field helpers ── */
 
 function flattenField(raw: any): Float64Array | null {
@@ -789,7 +829,18 @@ function normalizeModelBuilderGraph(raw: any): ModelBuilderGraphV2 | null {
   if (!projectedBuilder) {
     return null;
   }
-  return createModelBuilderGraphV2(projectedBuilder);
+  const graph = createModelBuilderGraphV2(projectedBuilder);
+  graph.study.requested_backend =
+    typeof raw.study?.requested_backend === "string" ? raw.study.requested_backend : "auto";
+  graph.study.requested_device =
+    typeof raw.study?.requested_device === "string" ? raw.study.requested_device : "auto";
+  graph.study.requested_precision =
+    typeof raw.study?.requested_precision === "string"
+      ? raw.study.requested_precision
+      : "double";
+  graph.study.requested_mode =
+    typeof raw.study?.requested_mode === "string" ? raw.study.requested_mode : "strict";
+  return graph;
 }
 
 function emptyScriptBuilderState(): ScriptBuilderState {
@@ -884,6 +935,14 @@ function normalizeSceneStudy(raw: any) {
   });
   return {
     backend: normalized?.backend ?? null,
+    requested_backend:
+      typeof raw?.requested_backend === "string" ? raw.requested_backend : "auto",
+    requested_device:
+      typeof raw?.requested_device === "string" ? raw.requested_device : "auto",
+    requested_precision:
+      typeof raw?.requested_precision === "string" ? raw.requested_precision : "double",
+    requested_mode:
+      typeof raw?.requested_mode === "string" ? raw.requested_mode : "strict",
     demag_realization: normalized?.demag_realization ?? null,
     solver: normalized?.solver ?? defaults.solver,
     universe_mesh:
@@ -1398,7 +1457,7 @@ export function normalizeSessionState(
       typeof raw.capability_profile_version === "string"
         ? raw.capability_profile_version
         : undefined,
-    session: raw.session,
+    session: normalizeSessionManifest(raw.session),
     run: raw.run ?? null,
     live_state: liveState,
     runtime_status: normalizeRuntimeStatus(raw.runtime_status),

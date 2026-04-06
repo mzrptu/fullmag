@@ -686,6 +686,9 @@ pub(crate) fn plan_fem(
         oersted_time_dep_t_on: 0.0,
         oersted_time_dep_t_off: 0.0,
         magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
     };
 
     // ── Extract Oersted cylinder from energy terms ──
@@ -724,7 +727,13 @@ pub(crate) fn plan_fem(
                         fem_plan.oersted_time_dep_t_off = *t_off;
                     }
                     TimeDependenceIR::PiecewiseLinear { .. } => {
-                        fem_plan.oersted_time_dep_kind = 0;
+                        return Err(PlanError {
+                            reasons: vec![
+                                "Oersted time dependence 'PiecewiseLinear' is not yet supported \
+                                 by the FEM backend; use 'Constant', 'Sinusoidal', or 'Pulse' instead"
+                                    .to_string(),
+                            ],
+                        });
                     }
                 }
             }

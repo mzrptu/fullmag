@@ -9,12 +9,32 @@ export interface SessionManifest {
   script_path: string;
   problem_name: string;
   requested_backend: string;
+  explicit_selection?: boolean;
+  requested_device?: string;
+  requested_precision?: string;
+  requested_mode?: string;
   execution_mode: string;
   precision: string;
+  resolved_backend?: string | null;
+  resolved_device?: string | null;
+  resolved_precision?: string | null;
+  resolved_mode?: string | null;
+  resolved_runtime_family?: string | null;
+  resolved_engine_id?: string | null;
+  resolved_worker?: string | null;
+  resolved_fallback?: ResolvedFallback;
   artifact_dir: string;
   started_at_unix_ms: number;
   finished_at_unix_ms: number;
   plan_summary?: Record<string, unknown>;
+}
+
+export interface ResolvedFallback {
+  occurred: boolean;
+  original_engine: string;
+  fallback_engine: string;
+  reason: string;
+  message: string;
 }
 
 export interface RunManifest {
@@ -618,6 +638,10 @@ export interface ModelBuilderGraphStudyNode {
   kind: "study";
   label: string;
   backend: string | null;
+  requested_backend: string;
+  requested_device: string;
+  requested_precision: string;
+  requested_mode: string;
   demag_realization: string | null;
   solver: ScriptBuilderSolverState;
   universe_mesh: ScriptBuilderUniverseState | null;
@@ -757,6 +781,10 @@ export interface SceneCurrentModulesState {
 
 export interface SceneStudyState {
   backend: string | null;
+  requested_backend: string;
+  requested_device: string;
+  requested_precision: string;
+  requested_mode: string;
   demag_realization: string | null;
   solver: ScriptBuilderSolverState;
   universe_mesh: ScriptBuilderUniverseState | null;

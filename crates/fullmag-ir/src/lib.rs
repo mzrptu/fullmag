@@ -622,6 +622,123 @@ pub struct AdaptiveTimeStepIR {
     pub norm_tolerance: Option<f64>,
 }
 
+// ── Capability matrix for backend/device/precision/integrator/demag mode ──
+
+/// Describes what a specific FEM backend actually supports.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemBackendCapability {
+    pub backend: String,
+    #[serde(default)]
+    pub supported_precisions: Vec<ExecutionPrecision>,
+    #[serde(default)]
+    pub supported_integrators: Vec<IntegratorChoice>,
+    #[serde(default)]
+    pub supported_demag_realizations: Vec<ResolvedFemDemagIR>,
+    #[serde(default)]
+    pub supports_thermal: bool,
+    #[serde(default)]
+    pub supports_magnetoelastic: bool,
+    #[serde(default)]
+    pub supports_oersted: bool,
+    #[serde(default)]
+    pub supports_interfacial_dmi: bool,
+    #[serde(default)]
+    pub supports_bulk_dmi: bool,
+    #[serde(default)]
+    pub supports_cubic_anisotropy: bool,
+    #[serde(default)]
+    pub supports_uniaxial_anisotropy: bool,
+    #[serde(default)]
+    pub supports_periodic_bc: bool,
+    #[serde(default)]
+    pub supports_stt: bool,
+    #[serde(default)]
+    pub supports_sot: bool,
+}
+
+/// Policy for the linear solver used in FEM Poisson/demag/mechanics.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemLinearSolverPolicy {
+    #[serde(default = "default_linear_solver")]
+    pub solver: String,
+    #[serde(default = "default_preconditioner")]
+    pub preconditioner: String,
+    #[serde(default = "default_rtol")]
+    pub rtol: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub atol: Option<f64>,
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: u32,
+    #[serde(default)]
+    pub print_level: u32,
+}
+
+fn default_linear_solver() -> String { "CG".to_string() }
+fn default_preconditioner() -> String { "AMG".to_string() }
+fn default_rtol() -> f64 { 1e-8 }
+fn default_max_iterations() -> u32 { 500 }
+
+impl Default for FemLinearSolverPolicy {
+    fn default() -> Self {
+        Self {
+            solver: default_linear_solver(),
+            preconditioner: default_preconditioner(),
+            rtol: default_rtol(),
+            atol: None,
+            max_iterations: default_max_iterations(),
+            print_level: 0,
+        }
+    }
+}
+
+/// Seed policy for stochastic fields (thermal noise).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SeedPolicy {
+    /// Use system entropy — non-reproducible across runs.
+    SystemEntropy,
+    /// Use a fixed seed value — fully reproducible.
+    Fixed,
+}
+
+impl Default for SeedPolicy {
+    fn default() -> Self {
+        Self::SystemEntropy
+    }
+}
+
+/// Stochastic/thermal configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ThermalSeedConfig {
+    #[serde(default)]
+    pub policy: SeedPolicy,
+    /// Seed value; used only when policy = Fixed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+}
+
+impl Default for ThermalSeedConfig {
+    fn default() -> Self {
+        Self {
+            policy: SeedPolicy::SystemEntropy,
+            seed: None,
+        }
+    }
+}
+
+/// Oersted realization variant; currently only InfiniteCylinder is implemented.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OerstedRealization {
+    InfiniteCylinder,
+}
+
+impl Default for OerstedRealization {
+    fn default() -> Self {
+        Self::InfiniteCylinder
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SamplingIR {
     pub outputs: Vec<OutputIR>,
@@ -1971,6 +2088,18 @@ pub struct FemPlanIR {
     /// Prescribed-strain magnetoelastic coupling
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub magnetoelastic: Option<FemMagnetoelasticPlanIR>,
+
+    /// Policy for the demag linear solver (CG+AMG etc.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demag_solver_policy: Option<FemLinearSolverPolicy>,
+
+    /// Seed/stochastic policy for thermal noise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thermal_seed_config: Option<ThermalSeedConfig>,
+
+    /// Oersted field realization model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oersted_realization: Option<OerstedRealization>,
 }
 
 /// Prescribed-strain magnetoelastic coupling plan for FEM backend.

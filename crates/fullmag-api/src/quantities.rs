@@ -33,7 +33,8 @@ pub(crate) fn build_quantities(
                 })
         })
         .unwrap_or_default();
-    let dynamic_available = |quantity_id: &str| dynamic_supported.iter().any(|id| id == quantity_id);
+    let dynamic_available =
+        |quantity_id: &str| dynamic_supported.iter().any(|id| id == quantity_id);
     let scalar_available = |run_value: Option<f64>| {
         !scalar_rows.is_empty() || live_state.is_some() || run_value.is_some()
     };

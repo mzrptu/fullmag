@@ -568,6 +568,15 @@ impl From<fullmag_plan::PlanError> for RunError {
 
 // ----- execution provenance -----
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResolvedFallback {
+    pub occurred: bool,
+    pub original_engine: String,
+    pub fallback_engine: String,
+    pub reason: String,
+    pub message: String,
+}
+
 /// Records which engine and device produced a run.
 /// Included in artifact metadata for reproducibility.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -605,6 +614,23 @@ pub struct ExecutionProvenance {
     /// RNG seed used for stochastic initialisations, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub random_seed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_fallback: Option<ResolvedFallback>,
+    /// Integrator that was requested by the user/plan.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_integrator: Option<String>,
+    /// Integrator actually used for execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_integrator: Option<String>,
+    /// Demag realization requested by the user/plan.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_demag_realization: Option<String>,
+    /// Demag realization actually used for execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_demag_realization: Option<String>,
+    /// Timestep policy: "user", "adaptive", or "fallback".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dt_policy: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

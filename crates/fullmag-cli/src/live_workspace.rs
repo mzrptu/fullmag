@@ -590,9 +590,7 @@ pub(crate) fn apply_python_progress_event(
                             state,
                             None,
                             payload.get("effective_airbox_target").cloned(),
-                            payload
-                                .get("effective_per_object_targets")
-                                .cloned(),
+                            payload.get("effective_per_object_targets").cloned(),
                             Some(payload.clone()),
                             None,
                             Some("ready"),
@@ -610,9 +608,7 @@ pub(crate) fn apply_python_progress_event(
                             state,
                             None,
                             payload.get("effective_airbox_target").cloned(),
-                            payload
-                                .get("effective_per_object_targets")
-                                .cloned(),
+                            payload.get("effective_per_object_targets").cloned(),
                             Some(payload.clone()),
                             Some(error_text),
                             payload

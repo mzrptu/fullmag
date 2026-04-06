@@ -5,7 +5,7 @@ use fullmag_ir::{
 };
 use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,13 +36,13 @@ fn current_live_metadata(
             _ => vec![],
         });
     let runtime_engine = runtime_engine_info.map(|engine| {
-            serde_json::json!({
-                "backend_family": engine.backend_family,
-                "engine_id": engine.engine_id,
-                "engine_label": engine.engine_label,
-                "accelerator": engine.accelerator,
-            })
-        });
+        serde_json::json!({
+            "backend_family": engine.backend_family,
+            "engine_id": engine.engine_id,
+            "engine_label": engine.engine_label,
+            "accelerator": engine.accelerator,
+        })
+    });
     serde_json::json!({
         "session_protocol_version": "2026-04-04",
         "capability_profile_version": capabilities.as_ref().map(|caps| caps.capability_profile_version.clone()).unwrap_or_else(|| "2026-04-04".to_string()),
@@ -63,6 +63,91 @@ fn current_live_metadata(
         "engine_version": env!("CARGO_PKG_VERSION"),
         "status": status,
     })
+}
+
+fn requested_device_from_problem(problem: &ProblemIR) -> String {
+    problem
+        .problem_meta
+        .runtime_metadata
+        .get("runtime_selection")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|selection| selection.get("device"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("auto")
+        .to_string()
+}
+
+fn explicit_selection_from_problem(problem: &ProblemIR) -> bool {
+    problem
+        .problem_meta
+        .runtime_metadata
+        .get("runtime_selection")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|selection| selection.get("explicit_selection"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+pub(crate) fn requested_runtime_selection(
+    requested_backend: &str,
+    explicit_selection: bool,
+    requested_device: &str,
+    requested_precision: &str,
+    requested_mode: &str,
+) -> SessionRuntimeSelection {
+    SessionRuntimeSelection {
+        requested_backend: requested_backend.to_string(),
+        explicit_selection,
+        requested_device: requested_device.to_string(),
+        requested_precision: requested_precision.to_string(),
+        requested_mode: requested_mode.to_string(),
+        resolved_backend: None,
+        resolved_device: None,
+        resolved_precision: None,
+        resolved_mode: None,
+        resolved_runtime_family: None,
+        resolved_engine_id: None,
+        resolved_worker: None,
+        resolved_fallback: None,
+    }
+}
+
+fn session_runtime_selection_for_problem(
+    problem: &ProblemIR,
+    fallback_requested_backend: &str,
+    fallback_requested_mode: &str,
+    fallback_requested_precision: &str,
+) -> SessionRuntimeSelection {
+    let requested_backend = backend_target_name(problem.backend_policy.requested_backend);
+    let requested_mode = execution_mode_name(problem.validation_profile.execution_mode);
+    let requested_precision = execution_precision_name(problem.backend_policy.execution_precision);
+    let explicit_selection = explicit_selection_from_problem(problem);
+    let requested_device = requested_device_from_problem(problem);
+    let mut selection = requested_runtime_selection(
+        requested_backend,
+        explicit_selection,
+        &requested_device,
+        requested_precision,
+        requested_mode,
+    );
+    match fullmag_runner::resolve_session_runtime(problem) {
+        Ok(resolved) => {
+            selection.resolved_backend = Some(resolved.resolved_backend);
+            selection.resolved_device = Some(resolved.resolved_device);
+            selection.resolved_precision = Some(resolved.resolved_precision);
+            selection.resolved_mode = Some(resolved.resolved_mode);
+            selection.resolved_runtime_family = resolved.resolved_runtime_family;
+            selection.resolved_engine_id = resolved.resolved_engine_id;
+            selection.resolved_worker = resolved.resolved_worker;
+            selection.resolved_fallback = resolved.resolved_fallback;
+        }
+        Err(_) => {
+            selection.requested_backend = fallback_requested_backend.to_string();
+            selection.requested_precision = fallback_requested_precision.to_string();
+            selection.requested_mode = fallback_requested_mode.to_string();
+        }
+    }
+    selection
 }
 
 fn fem_mesh_payload_from_backend_plan(
@@ -310,10 +395,7 @@ struct CurrentMeshBuildOverlay {
     failed: bool,
 }
 
-fn mesh_build_intent_json(
-    mesh_target: &MeshCommandTarget,
-    mesh_reason: &str,
-) -> serde_json::Value {
+fn mesh_build_intent_json(mesh_target: &MeshCommandTarget, mesh_reason: &str) -> serde_json::Value {
     match mesh_target {
         MeshCommandTarget::StudyDomain => serde_json::json!({
             "mode": if mesh_reason.contains("_all") { "all" } else { "selected" },
@@ -784,48 +866,51 @@ fn execute_manual_interactive_remesh(
                         if message.trim_start().starts_with("json:") {
                             None
                         } else {
-                        match map_remesh_progress_message(message) {
-                            Some(stage) => {
-                                let mut guard = remesh_progress_stage
-                                    .lock()
-                                    .expect("remesh progress mutex poisoned");
-                                if guard
-                                    .map(|current| current == stage.percent)
-                                    .unwrap_or(false)
-                                {
-                                    None
-                                } else {
-                                    *guard = Some(stage.percent);
-                                    let next_phase = if stage.percent >= 92 {
-                                        "postprocessing"
-                                    } else if stage.percent >= 75 {
-                                        "meshing"
-                                    } else if stage.percent >= 15 {
-                                        "preparing_domain"
+                            match map_remesh_progress_message(message) {
+                                Some(stage) => {
+                                    let mut guard = remesh_progress_stage
+                                        .lock()
+                                        .expect("remesh progress mutex poisoned");
+                                    if guard
+                                        .map(|current| current == stage.percent)
+                                        .unwrap_or(false)
+                                    {
+                                        None
                                     } else {
-                                        "queued"
-                                    };
-                                    if let Ok(mut overlay) = build_overlay.lock() {
-                                        overlay.active_phase = Some(next_phase.to_string());
-                                        overlay.failed = false;
-                                        let overlay_snapshot = overlay.clone();
-                                        live_workspace.update(|state| {
-                                            let mut workspace = state
-                                                .mesh_workspace
-                                                .clone()
-                                                .unwrap_or_else(|| serde_json::json!({}));
-                                            overlay_mesh_workspace(&mut workspace, &overlay_snapshot);
-                                            state.mesh_workspace = Some(workspace);
-                                        });
+                                        *guard = Some(stage.percent);
+                                        let next_phase = if stage.percent >= 92 {
+                                            "postprocessing"
+                                        } else if stage.percent >= 75 {
+                                            "meshing"
+                                        } else if stage.percent >= 15 {
+                                            "preparing_domain"
+                                        } else {
+                                            "queued"
+                                        };
+                                        if let Ok(mut overlay) = build_overlay.lock() {
+                                            overlay.active_phase = Some(next_phase.to_string());
+                                            overlay.failed = false;
+                                            let overlay_snapshot = overlay.clone();
+                                            live_workspace.update(|state| {
+                                                let mut workspace = state
+                                                    .mesh_workspace
+                                                    .clone()
+                                                    .unwrap_or_else(|| serde_json::json!({}));
+                                                overlay_mesh_workspace(
+                                                    &mut workspace,
+                                                    &overlay_snapshot,
+                                                );
+                                                state.mesh_workspace = Some(workspace);
+                                            });
+                                        }
+                                        Some(format!(
+                                            "[fullmag] remesh {:02}% - {}",
+                                            stage.percent, stage.label
+                                        ))
                                     }
-                                    Some(format!(
-                                        "[fullmag] remesh {:02}% - {}",
-                                        stage.percent, stage.label
-                                    ))
                                 }
+                                None => Some(format!("[fullmag] remesh info - {}", message)),
                             }
-                            None => Some(format!("[fullmag] remesh info - {}", message)),
-                        }
                         }
                     }
                     PythonProgressEvent::FemSurfacePreview { .. } => None,
@@ -1448,9 +1533,7 @@ pub(crate) fn build_session_manifest(
     interactive_session_requested: bool,
     script_path: &Path,
     problem_name: &str,
-    requested_backend: &str,
-    execution_mode: &str,
-    precision: &str,
+    runtime: &SessionRuntimeSelection,
     artifact_dir: &Path,
     started_at_unix_ms: u128,
     finished_at_unix_ms: u128,
@@ -1463,9 +1546,21 @@ pub(crate) fn build_session_manifest(
         interactive_session_requested,
         script_path: script_path.display().to_string(),
         problem_name: problem_name.to_string(),
-        requested_backend: requested_backend.to_string(),
-        execution_mode: execution_mode.to_string(),
-        precision: precision.to_string(),
+        requested_backend: runtime.requested_backend.clone(),
+        explicit_selection: runtime.explicit_selection,
+        requested_device: runtime.requested_device.clone(),
+        requested_precision: runtime.requested_precision.clone(),
+        requested_mode: runtime.requested_mode.clone(),
+        execution_mode: runtime.requested_mode.clone(),
+        precision: runtime.requested_precision.clone(),
+        resolved_backend: runtime.resolved_backend.clone(),
+        resolved_device: runtime.resolved_device.clone(),
+        resolved_precision: runtime.resolved_precision.clone(),
+        resolved_mode: runtime.resolved_mode.clone(),
+        resolved_runtime_family: runtime.resolved_runtime_family.clone(),
+        resolved_engine_id: runtime.resolved_engine_id.clone(),
+        resolved_worker: runtime.resolved_worker.clone(),
+        resolved_fallback: runtime.resolved_fallback.clone(),
         artifact_dir: artifact_dir.display().to_string(),
         started_at_unix_ms,
         finished_at_unix_ms,
@@ -1667,6 +1762,13 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         .with_context(|| format!("failed to create workspace dir {}", workspace_dir.display()))?;
     let field_every_n = 10;
     let current_live_publisher = CurrentLivePublisher::spawn(&session_id);
+    let bootstrapping_runtime = requested_runtime_selection(
+        &requested_backend_name,
+        false,
+        "auto",
+        &requested_precision_name,
+        &requested_mode_name,
+    );
     let bootstrapping_session_manifest = build_session_manifest(
         &session_id,
         &run_id,
@@ -1677,9 +1779,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or("fullmag_script"),
-        &requested_backend_name,
-        &requested_mode_name,
-        &requested_precision_name,
+        &bootstrapping_runtime,
         &artifact_dir,
         started_at_unix_ms,
         started_at_unix_ms,
@@ -1763,15 +1863,13 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             let live_workspace = live_workspace.clone();
             Arc::new(move |event: PythonProgressEvent| {
                 let terminal_line = match &event {
-                    PythonProgressEvent::Message(message) => (!message
-                        .trim_start()
-                        .starts_with("json:"))
-                    .then(|| format!("[fullmag] materialize - {}", message)),
-                    PythonProgressEvent::FemSurfacePreview { message, .. } => {
-                        message
-                            .as_ref()
-                            .map(|text| format!("[fullmag] materialize - {}", text))
+                    PythonProgressEvent::Message(message) => {
+                        (!message.trim_start().starts_with("json:"))
+                            .then(|| format!("[fullmag] materialize - {}", message))
                     }
+                    PythonProgressEvent::FemSurfacePreview { message, .. } => message
+                        .as_ref()
+                        .map(|text| format!("[fullmag] materialize - {}", text)),
                     PythonProgressEvent::Structured { payload, .. } => payload
                         .get("message")
                         .and_then(|value| value.as_str())
@@ -1788,6 +1886,13 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         Err(error) => {
             let failed_at_unix_ms = unix_time_millis()?;
             let previous_engine_log = live_workspace.snapshot().engine_log;
+            let failed_runtime = requested_runtime_selection(
+                &requested_backend_name,
+                false,
+                "auto",
+                &requested_precision_name,
+                &requested_mode_name,
+            );
             live_workspace.replace(LocalLiveWorkspaceState {
                 session: build_session_manifest(
                     &session_id,
@@ -1799,9 +1904,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                         .file_stem()
                         .and_then(|stem| stem.to_str())
                         .unwrap_or("fullmag_script"),
-                    &requested_backend_name,
-                    &requested_mode_name,
-                    &requested_precision_name,
+                    &failed_runtime,
                     &artifact_dir,
                     started_at_unix_ms,
                     failed_at_unix_ms,
@@ -1892,8 +1995,33 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
     let interactive_requested = args.interactive || script_requested_interactive;
+    let final_session_runtime = stages
+        .last()
+        .map(|stage| {
+            session_runtime_selection_for_problem(
+                &stage.ir,
+                backend_target_name(final_requested_backend),
+                execution_mode_name(final_execution_mode),
+                execution_precision_name(final_precision),
+            )
+        })
+        .unwrap_or_else(|| {
+            requested_runtime_selection(
+                backend_target_name(final_requested_backend),
+                false,
+                "auto",
+                execution_precision_name(final_precision),
+                execution_mode_name(final_execution_mode),
+            )
+        });
 
     let previous_engine_log = live_workspace.snapshot().engine_log;
+    let initial_runtime = session_runtime_selection_for_problem(
+        &stages[0].ir,
+        backend_target_name(final_requested_backend),
+        execution_mode_name(final_execution_mode),
+        execution_precision_name(final_precision),
+    );
     live_workspace.replace(LocalLiveWorkspaceState {
         session: build_session_manifest(
             &session_id,
@@ -1902,9 +2030,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             interactive_requested,
             &script_path,
             &final_problem_name,
-            backend_target_name(final_requested_backend),
-            execution_mode_name(final_execution_mode),
-            execution_precision_name(final_precision),
+            &initial_runtime,
             &artifact_dir,
             started_at_unix_ms,
             started_at_unix_ms,
@@ -2429,6 +2555,12 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             ),
         );
         live_workspace.update(|state| {
+            let stage_runtime = session_runtime_selection_for_problem(
+                &stage.ir,
+                backend_target_name(stage.ir.backend_policy.requested_backend),
+                execution_mode_name(stage.ir.validation_profile.execution_mode),
+                execution_precision_name(stage.ir.backend_policy.execution_precision),
+            );
             state.session = build_session_manifest(
                 &session_id,
                 &run_id,
@@ -2436,9 +2568,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 interactive_requested,
                 &script_path,
                 &stage.ir.problem_meta.name,
-                backend_target_name(stage.ir.backend_policy.requested_backend),
-                execution_mode_name(stage.ir.validation_profile.execution_mode),
-                execution_precision_name(stage.ir.backend_policy.execution_precision),
+                &stage_runtime,
                 &artifact_dir,
                 started_at_unix_ms,
                 started_at_unix_ms,
@@ -2607,6 +2737,12 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             Err(error) => {
                 let failed_at_unix_ms = unix_time_millis()?;
                 let mut snapshot = live_workspace.snapshot();
+                let failed_runtime = session_runtime_selection_for_problem(
+                    &stage.ir,
+                    backend_target_name(final_requested_backend),
+                    execution_mode_name(final_execution_mode),
+                    execution_precision_name(final_precision),
+                );
                 snapshot.session = build_session_manifest(
                     &session_id,
                     &run_id,
@@ -2614,9 +2750,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                     interactive_requested,
                     &script_path,
                     &final_problem_name,
-                    backend_target_name(final_requested_backend),
-                    execution_mode_name(final_execution_mode),
-                    execution_precision_name(final_precision),
+                    &failed_runtime,
                     &artifact_dir,
                     started_at_unix_ms,
                     failed_at_unix_ms,
@@ -3652,9 +3786,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             interactive_requested,
             &script_path,
             &summary.problem_name,
-            &summary.backend,
-            &summary.mode,
-            &summary.precision,
+            &final_session_runtime,
             &artifact_dir,
             started_at_unix_ms,
             finished_at_unix_ms,
@@ -3703,6 +3835,103 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub(crate) fn prepare_live_workspace_for_ui(
+    script: &Path,
+    backend: Option<BackendArg>,
+    mode: Option<ModeArg>,
+    precision: Option<PrecisionArg>,
+) -> Result<(String, LocalLiveWorkspace)> {
+    let started_at_unix_ms = unix_time_millis()?;
+    let script_path = script
+        .canonicalize()
+        .with_context(|| format!("failed to resolve script path {}", script.display()))?;
+    check_script_syntax_via_python(&script_path)?;
+
+    let requested_backend_name = backend
+        .map(|value| value.to_possible_value().unwrap().get_name().to_string())
+        .unwrap_or_else(|| "auto".to_string());
+    let requested_mode_name = mode
+        .map(|value| value.to_possible_value().unwrap().get_name().to_string())
+        .unwrap_or_else(|| "strict".to_string());
+    let requested_precision_name = precision
+        .map(|value| value.to_possible_value().unwrap().get_name().to_string())
+        .unwrap_or_else(|| "double".to_string());
+
+    let session_id = format!("session-{}-{}", started_at_unix_ms, std::process::id());
+    let run_id = format!("run-{}", session_id);
+    let workspace_dir = PathBuf::from(".fullmag")
+        .join("local-live")
+        .join("history")
+        .join(&session_id);
+    let artifact_dir = workspace_dir.join("artifacts");
+
+    fs::create_dir_all(&workspace_dir)
+        .with_context(|| format!("failed to create workspace dir {}", workspace_dir.display()))?;
+
+    let current_live_publisher = CurrentLivePublisher::spawn(&session_id);
+    let bootstrapping_runtime = requested_runtime_selection(
+        &requested_backend_name,
+        false,
+        "auto",
+        &requested_precision_name,
+        &requested_mode_name,
+    );
+    let bootstrapping_session_manifest = build_session_manifest(
+        &session_id,
+        &run_id,
+        "bootstrapping",
+        true,
+        &script_path,
+        script_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("fullmag_script"),
+        &bootstrapping_runtime,
+        &artifact_dir,
+        started_at_unix_ms,
+        started_at_unix_ms,
+        serde_json::json!({ "status": "bootstrapping", "launch_mode": "ui" }),
+    );
+    let bootstrapping_run_manifest =
+        build_run_manifest(&run_id, &session_id, "bootstrapping", &artifact_dir);
+    let bootstrap_live_state_manifest = bootstrap_live_state("bootstrapping");
+    let live_workspace = LocalLiveWorkspace::new(
+        LocalLiveWorkspaceState {
+            session: bootstrapping_session_manifest,
+            run: bootstrapping_run_manifest,
+            live_state: bootstrap_live_state_manifest,
+            metadata: None,
+            mesh_workspace: None,
+            latest_scalar_row: None,
+            latest_fields: CurrentLiveLatestFields::default(),
+            preview_fields: CurrentLivePreviewFieldCache::default(),
+            pending_preview_fields: CurrentLivePreviewFieldCache::default(),
+            clear_preview_cache: false,
+            engine_log: Vec::new(),
+        },
+        current_live_publisher,
+    );
+    live_workspace.push_log(
+        "system",
+        format!(
+            "Workspace prepared for {}",
+            script_path
+                .file_name()
+                .and_then(|file_name| file_name.to_str())
+                .unwrap_or("script.py")
+        ),
+    );
+    live_workspace.push_log(
+        "info",
+        format!(
+            "Requested backend: {} · mode: {} · precision: {}",
+            requested_backend_name, requested_mode_name, requested_precision_name
+        ),
+    );
+    live_workspace.publish_snapshot();
+    Ok((session_id, live_workspace))
 }
 
 #[cfg(test)]
@@ -3767,7 +3996,7 @@ mod tests {
             interfacial_dmi: None,
             bulk_dmi: None,
             inter_region_exchange: vec![],
-                ..Default::default()
+            ..Default::default()
         })
     }
 
@@ -3857,6 +4086,9 @@ mod tests {
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
         })
     }
 
@@ -3971,6 +4203,9 @@ mod tests {
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
         })
     }
 
@@ -4014,10 +4249,10 @@ mod tests {
                         element_markers: Vec::new(),
                         boundary_faces: Vec::new(),
                         boundary_markers: Vec::new(),
-                    periodic_boundary_pairs: Vec::new(),
-                    periodic_node_pairs: Vec::new(),
-                    per_domain_quality: Default::default(),
-                }),
+                        periodic_boundary_pairs: Vec::new(),
+                        periodic_node_pairs: Vec::new(),
+                        per_domain_quality: Default::default(),
+                    }),
                     region_markers: Vec::new(),
                 }),
             }),

@@ -125,6 +125,32 @@ pub(crate) fn build_problem_and_state(
         })?
         .with_precession_enabled(!pure_damping_relax);
     if let Some(adaptive) = plan.adaptive_timestep.as_ref() {
+        // Reject adaptive fields not supported by the CPU reference engine.
+        let mut unsupported = Vec::new();
+        if adaptive.rtol != 0.0 && adaptive.rtol != adaptive.atol {
+            unsupported.push(format!("rtol={}", adaptive.rtol));
+        }
+        if adaptive.growth_limit != 0.0 && adaptive.growth_limit != f64::INFINITY {
+            unsupported.push(format!("growth_limit={}", adaptive.growth_limit));
+        }
+        if adaptive.shrink_limit != 0.0 {
+            unsupported.push(format!("shrink_limit={}", adaptive.shrink_limit));
+        }
+        if adaptive.max_spin_rotation.is_some() {
+            unsupported.push("max_spin_rotation".to_string());
+        }
+        if adaptive.norm_tolerance.is_some() {
+            unsupported.push("norm_tolerance".to_string());
+        }
+        if !unsupported.is_empty() {
+            return Err(RunError {
+                message: format!(
+                    "CPU reference FEM engine does not support adaptive parameters: {}; \
+                     supported: atol, dt_min, dt_max, safety",
+                    unsupported.join(", ")
+                ),
+            });
+        }
         dynamics = dynamics.with_adaptive(AdaptiveStepConfig {
             max_error: adaptive.atol,
             dt_min: adaptive.dt_min,
@@ -144,6 +170,9 @@ pub(crate) fn build_problem_and_state(
         external_field: plan.external_field,
         per_node_field: initial_antenna_field,
         magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
         uniaxial_anisotropy: None,
         cubic_anisotropy: None,
         interfacial_dmi: None,
@@ -158,29 +187,32 @@ pub(crate) fn build_problem_and_state(
         plan.demag_realization
     };
     let problem = match resolved_demag_realization {
-        Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid) => FemLlgProblem::with_terms_and_demag_transfer_grid(
-            topology,
-            material,
-            dynamics,
-            terms,
-            Some([plan.hmax, plan.hmax, plan.hmax]),
-        ),
-        Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin) => FemLlgProblem::with_terms_and_demag_airbox(
-            topology,
-            material,
-            dynamics,
-            terms,
-            false,
-            plan.air_box_config.as_ref().and_then(|config| config.robin_beta_factor),
-        ),
-        Some(fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet) => FemLlgProblem::with_terms_and_demag_airbox(
-            topology,
-            material,
-            dynamics,
-            terms,
-            true,
-            None,
-        ),
+        Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid) => {
+            FemLlgProblem::with_terms_and_demag_transfer_grid(
+                topology,
+                material,
+                dynamics,
+                terms,
+                Some([plan.hmax, plan.hmax, plan.hmax]),
+            )
+        }
+        Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin) => {
+            FemLlgProblem::with_terms_and_demag_airbox(
+                topology,
+                material,
+                dynamics,
+                terms,
+                false,
+                plan.air_box_config
+                    .as_ref()
+                    .and_then(|config| config.robin_beta_factor),
+            )
+        }
+        Some(fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet) => {
+            FemLlgProblem::with_terms_and_demag_airbox(
+                topology, material, dynamics, terms, true, None,
+            )
+        }
         _ => FemLlgProblem::with_terms(topology, material, dynamics, terms),
     };
     let state = problem
@@ -202,6 +234,13 @@ pub(crate) fn execution_provenance(plan: &FemPlanIR) -> ExecutionProvenance {
                 .to_string(),
         )
     };
+    let dt_policy = if plan.adaptive_timestep.is_some() {
+        Some("adaptive".to_string())
+    } else if plan.fixed_timestep.is_some() {
+        Some("user".to_string())
+    } else {
+        Some("fallback".to_string())
+    };
     ExecutionProvenance {
         execution_engine: "cpu_reference_fem".to_string(),
         precision: "double".to_string(),
@@ -211,6 +250,15 @@ pub(crate) fn execution_provenance(plan: &FemPlanIR) -> ExecutionProvenance {
         compute_capability: None,
         cuda_driver_version: None,
         cuda_runtime_version: None,
+        requested_integrator: Some(format!("{:?}", plan.integrator)),
+        resolved_integrator: Some(format!("{:?}", plan.integrator)),
+        requested_demag_realization: plan
+            .demag_realization
+            .map(|r| r.provenance_name().to_string()),
+        resolved_demag_realization: plan
+            .demag_realization
+            .map(|r| r.provenance_name().to_string()),
+        dt_policy,
         ..Default::default()
     }
 }
@@ -253,7 +301,15 @@ fn execute_reference_fem_impl(
     let mut dt = plan
         .fixed_timestep
         .or_else(|| plan.adaptive_timestep.as_ref().and_then(|a| a.dt_initial))
-        .unwrap_or(1e-13);
+        .unwrap_or_else(|| {
+            let fallback_dt = 1e-13;
+            eprintln!(
+                "warning: no fixed_timestep or adaptive.dt_initial specified; \
+                 using fallback dt={:.0e} s (dt_policy=fallback)",
+                fallback_dt
+            );
+            fallback_dt
+        });
     let mut steps = Vec::new();
     let mut step_count = 0u64;
     let provenance = execution_provenance(plan);
@@ -844,8 +900,8 @@ fn select_base_field(
 mod tests {
     use super::*;
     use fullmag_ir::{
-        AirBoxConfigIR, ExchangeBoundaryCondition, ExecutionPrecision, FemPlanIR,
-        IntegratorChoice, MaterialIR, MeshIR, RelaxationAlgorithmIR, RelaxationControlIR,
+        AirBoxConfigIR, ExchangeBoundaryCondition, ExecutionPrecision, FemPlanIR, IntegratorChoice,
+        MaterialIR, MeshIR, RelaxationAlgorithmIR, RelaxationControlIR,
     };
 
     fn make_test_plan(enable_demag: bool) -> FemPlanIR {
@@ -866,7 +922,7 @@ mod tests {
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             },
             object_segments: Vec::new(),
             mesh_parts: Vec::new(),
@@ -934,6 +990,9 @@ per_domain_quality: std::collections::HashMap::new(),
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
         }
     }
 
@@ -979,7 +1038,7 @@ per_domain_quality: std::collections::HashMap::new(),
                 boundary_markers: vec![1; 12],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             },
             object_segments: Vec::new(),
             mesh_parts: Vec::new(),
@@ -1047,6 +1106,9 @@ per_domain_quality: std::collections::HashMap::new(),
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
         }
     }
 
@@ -1119,11 +1181,7 @@ per_domain_quality: std::collections::HashMap::new(),
                 let coord = nodes[*node as usize];
                 [acc[0] + coord[0], acc[1] + coord[1], acc[2] + coord[2]]
             });
-            let centroid = [
-                centroid[0] * 0.25,
-                centroid[1] * 0.25,
-                centroid[2] * 0.25,
-            ];
+            let centroid = [centroid[0] * 0.25, centroid[1] * 0.25, centroid[2] * 0.25];
             if centroid[0] < -1.0 && centroid[1] < -1.0 && centroid[2] < -1.0 {
                 element_markers[element_index] = 1;
             }
@@ -1224,6 +1282,9 @@ per_domain_quality: std::collections::HashMap::new(),
             oersted_time_dep_t_on: 0.0,
             oersted_time_dep_t_off: 0.0,
             magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
         }
     }
 
@@ -1306,8 +1367,9 @@ per_domain_quality: std::collections::HashMap::new(),
             Some("fem_poisson_robin"),
         );
 
-        let fields = snapshot_vector_fields(&plan, &["H_demag"], &crate::LivePreviewRequest::default())
-            .expect("shared-domain FEM demag preview should succeed");
+        let fields =
+            snapshot_vector_fields(&plan, &["H_demag"], &crate::LivePreviewRequest::default())
+                .expect("shared-domain FEM demag preview should succeed");
         let h_demag = fields
             .iter()
             .find(|field| field.quantity == "H_demag")

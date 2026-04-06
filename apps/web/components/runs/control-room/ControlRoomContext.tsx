@@ -60,6 +60,7 @@ import {
   setModelBuilderExcitationAnalysis as applyModelBuilderExcitationAnalysis,
   setModelBuilderGeometries as applyModelBuilderGeometries,
   setModelBuilderMeshDefaults as applyModelBuilderMeshDefaults,
+  setModelBuilderRequestedRuntime as applyModelBuilderRequestedRuntime,
   setModelBuilderSolver as applyModelBuilderSolver,
   setModelBuilderStudyPipeline as applyModelBuilderStudyPipeline,
   setModelBuilderStages as applyModelBuilderStages,
@@ -685,6 +686,43 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     },
     [modelBuilderDefaults],
   );
+  const setRequestedRuntimeSelection = useCallback<
+    Dispatch<
+      SetStateAction<{
+        requested_backend: string;
+        requested_device: string;
+        requested_precision: string;
+        requested_mode: string;
+      }>
+    >
+  >(
+    (update) => {
+      setModelBuilderGraph((currentGraph) =>
+        applyModelBuilderRequestedRuntime(currentGraph, update, modelBuilderDefaults),
+      );
+      setSceneDocumentDraft((previousScene) => {
+        if (!previousScene) {
+          return previousScene;
+        }
+        const currentRuntime = {
+          requested_backend: previousScene.study.requested_backend,
+          requested_device: previousScene.study.requested_device,
+          requested_precision: previousScene.study.requested_precision,
+          requested_mode: previousScene.study.requested_mode,
+        };
+        const nextRuntime =
+          typeof update === "function" ? update(currentRuntime) : update;
+        return {
+          ...previousScene,
+          study: {
+            ...previousScene.study,
+            ...nextRuntime,
+          },
+        };
+      });
+    },
+    [modelBuilderDefaults],
+  );
   const setScriptBuilderDemagRealization = useCallback<
     Dispatch<SetStateAction<string | null>>
   >(
@@ -802,9 +840,20 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
           ? (update as (current: SceneDocument | null) => SceneDocument | null)(baseScene)
           : update;
       setSceneDocumentDraft(nextScene);
-      setModelBuilderGraph(
-        nextScene ? buildModelBuilderGraphV2(buildScriptBuilderFromSceneDocument(nextScene)) : null,
-      );
+      setModelBuilderGraph(() => {
+        if (!nextScene) {
+          return null;
+        }
+        const nextGraph = buildModelBuilderGraphV2(buildScriptBuilderFromSceneDocument(nextScene));
+        if (!nextGraph) {
+          return null;
+        }
+        nextGraph.study.requested_backend = nextScene.study.requested_backend;
+        nextGraph.study.requested_device = nextScene.study.requested_device;
+        nextGraph.study.requested_precision = nextScene.study.requested_precision;
+        nextGraph.study.requested_mode = nextScene.study.requested_mode;
+        return nextGraph;
+      });
     },
     [localBuilderDraft, sceneDocumentDraft],
   );
@@ -949,6 +998,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         initial_state: incomingGraph.study.initial_state,
         ...serializeModelBuilderGraphV2(incomingGraph),
       });
+    hydratedScene.study.requested_backend =
+      remoteSceneDocument?.study.requested_backend ?? incomingGraph.study.requested_backend;
+    hydratedScene.study.requested_device =
+      remoteSceneDocument?.study.requested_device ?? incomingGraph.study.requested_device;
+    hydratedScene.study.requested_precision =
+      remoteSceneDocument?.study.requested_precision ?? incomingGraph.study.requested_precision;
+    hydratedScene.study.requested_mode =
+      remoteSceneDocument?.study.requested_mode ?? incomingGraph.study.requested_mode;
     setSceneDocumentDraft(hydratedScene);
     setLastBuiltMeshConfigSignature(buildMeshConfigurationSignature(hydratedScene));
     pendingMeshConfigSignatureRef.current = null;
@@ -1054,6 +1111,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       initial_state: modelBuilderGraph.study.initial_state,
       ...serializeModelBuilderGraphV2(modelBuilderGraph),
     });
+    projectedScene.study.requested_backend = modelBuilderGraph.study.requested_backend;
+    projectedScene.study.requested_device = modelBuilderGraph.study.requested_device;
+    projectedScene.study.requested_precision = modelBuilderGraph.study.requested_precision;
+    projectedScene.study.requested_mode = modelBuilderGraph.study.requested_mode;
     setSceneDocumentDraft((previousScene) => {
       if (!previousScene) {
         return projectedScene;
@@ -2931,6 +2992,24 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const modelValue = useMemo<ModelContextValue>(() => ({
     sceneDocument: localBuilderDraft,
     modelBuilderGraph,
+    requestedRuntimeSelection: {
+      requested_backend:
+        localBuilderDraft?.study.requested_backend ??
+        modelBuilderGraph?.study.requested_backend ??
+        "auto",
+      requested_device:
+        localBuilderDraft?.study.requested_device ??
+        modelBuilderGraph?.study.requested_device ??
+        "auto",
+      requested_precision:
+        localBuilderDraft?.study.requested_precision ??
+        modelBuilderGraph?.study.requested_precision ??
+        "double",
+      requested_mode:
+        localBuilderDraft?.study.requested_mode ??
+        modelBuilderGraph?.study.requested_mode ??
+        "strict",
+    },
     material, solverPlan, solverSettings, studyStages, studyPipeline, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
@@ -2971,7 +3050,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     airPart,
     interfaceParts,
     analyzeSelection,
-    setSolverSettings, setSceneDocument, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
+    setSolverSettings, setSceneDocument, setRequestedRuntimeSelection, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
     setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setActiveTransformScope, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, setAnalyzeSelection, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
@@ -2986,7 +3065,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
     selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart, magneticParts, airPart, interfaceParts, analyzeSelection, requestFocusObject,
-    setSceneDocument, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
+    setSceneDocument, setRequestedRuntimeSelection, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze,
   ]);
 

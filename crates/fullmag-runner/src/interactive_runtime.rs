@@ -80,7 +80,12 @@ fn build_cached_grid_preview_fields(
         let mut request = base_request.clone();
         request.quantity = quantity.to_string();
         let values = select_observables(observables, quantity).ok()?;
-        cached.push(build_grid_preview_field(&request, values, grid, active_mask));
+        cached.push(build_grid_preview_field(
+            &request,
+            values,
+            grid,
+            active_mask,
+        ));
     }
     Some(cached)
 }
@@ -3374,8 +3379,14 @@ fn cpu_execution_provenance(plan: &FdmPlanIR) -> ExecutionProvenance {
         cuda_driver_version: None,
         cuda_runtime_version: None,
         lossy_fallback_used: false,
+        resolved_fallback: None,
         ignored_terms: Vec::new(),
         random_seed: None,
+        requested_integrator: None,
+        resolved_integrator: None,
+        requested_demag_realization: None,
+        resolved_demag_realization: None,
+        dt_policy: None,
     }
 }
 
@@ -3431,8 +3442,7 @@ fn fem_gpu_execution_provenance(
         } else {
             None
         },
-        fft_backend: if plan.enable_demag
-            && !plan.demag_realization.is_some_and(|r| r.is_poisson())
+        fft_backend: if plan.enable_demag && !plan.demag_realization.is_some_and(|r| r.is_poisson())
         {
             Some("cuFFT".to_string())
         } else {

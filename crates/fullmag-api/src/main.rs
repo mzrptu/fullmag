@@ -12,12 +12,12 @@ use axum::{
 use base64::Engine;
 use fullmag_authoring::{SceneDocument, ScriptBuilderInitialState};
 use serde::Deserialize;
-use serde_json::Value;
-use std::process::Command;
+use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, watch, Mutex, RwLock};
@@ -81,6 +81,7 @@ async fn main() {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/meta/vision", get(vision))
+        .route("/v1/runtime/capabilities", get(get_runtime_capabilities))
         .route(
             "/v1/live/current/gpu/telemetry",
             get(get_current_gpu_telemetry),
@@ -256,10 +257,19 @@ async fn vision() -> Json<VisionResponse> {
     })
 }
 
+async fn get_runtime_capabilities(
+    State(state): State<Arc<AppState>>,
+) -> Json<fullmag_runner::HostCapabilityMatrix> {
+    let runtimes_dir = state.repo_root.join("runtimes");
+    Json(fullmag_runner::RuntimeRegistry::discover(&runtimes_dir).capability_matrix())
+}
+
 async fn get_current_gpu_telemetry() -> Result<Json<GpuTelemetryResponse>, ApiError> {
     let output = tokio::task::spawn_blocking(sample_gpu_telemetry)
         .await
-        .map_err(|error| ApiError::internal(format!("gpu telemetry task join failed: {error}")))??;
+        .map_err(|error| {
+            ApiError::internal(format!("gpu telemetry task join failed: {error}"))
+        })??;
     Ok(Json(output))
 }
 
@@ -284,8 +294,9 @@ fn sample_gpu_telemetry() -> Result<GpuTelemetryResponse, ApiError> {
         )));
     }
 
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|error| ApiError::internal(format!("nvidia-smi emitted invalid UTF-8: {error}")))?;
+    let stdout = String::from_utf8(output.stdout).map_err(|error| {
+        ApiError::internal(format!("nvidia-smi emitted invalid UTF-8: {error}"))
+    })?;
 
     let mut devices = Vec::new();
     for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
@@ -311,7 +322,9 @@ fn sample_gpu_telemetry() -> Result<GpuTelemetryResponse, ApiError> {
                 ))
             })?,
             memory_used_mb: parts[4].parse().map_err(|error| {
-                ApiError::internal(format!("failed to parse GPU memory used from '{line}': {error}"))
+                ApiError::internal(format!(
+                    "failed to parse GPU memory used from '{line}': {error}"
+                ))
             })?,
             memory_total_mb: parts[5].parse().map_err(|error| {
                 ApiError::internal(format!(
@@ -334,14 +347,36 @@ fn sample_gpu_telemetry() -> Result<GpuTelemetryResponse, ApiError> {
 async fn get_current_live_bootstrap(
     State(state): State<Arc<AppState>>,
 ) -> Result<Response, ApiError> {
-    let json = state
-        .current_live_public_snapshot
-        .read()
-        .await
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| ApiError::not_found("no active local live workspace"))?;
+    let json = if let Some(snapshot) = state.current_live_public_snapshot.read().await.as_ref() {
+        bootstrap_workspace_payload(snapshot)?
+    } else {
+        let runtimes_dir = state.repo_root.join("runtimes");
+        let capabilities =
+            fullmag_runner::RuntimeRegistry::discover(&runtimes_dir).capability_matrix();
+        serde_json::to_string(&json!({
+            "mode": "hub",
+            "session": serde_json::Value::Null,
+            "capabilities": capabilities,
+        }))
+        .map_err(|error| ApiError::internal(format!("failed to encode hub bootstrap: {error}")))?
+    };
     Ok(([(CONTENT_TYPE, "application/json")], json).into_response())
+}
+
+fn bootstrap_workspace_payload(snapshot_json: &str) -> Result<String, ApiError> {
+    let value: Value = serde_json::from_str(snapshot_json).map_err(|error| {
+        ApiError::internal(format!(
+            "failed to parse workspace bootstrap snapshot: {error}"
+        ))
+    })?;
+    let mut object = value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::internal("workspace bootstrap snapshot must be a JSON object"))?;
+    object.insert("mode".to_string(), Value::String("workspace".to_string()));
+    serde_json::to_string(&Value::Object(object)).map_err(|error| {
+        ApiError::internal(format!("failed to encode workspace bootstrap: {error}"))
+    })
 }
 
 async fn get_current_live_state(State(state): State<Arc<AppState>>) -> Result<Response, ApiError> {
@@ -2421,5 +2456,30 @@ fn scalar_row_metric_value(row: &ScalarRow, metric_key: &str) -> Option<f64> {
         "e_ext" => Some(row.e_ext),
         "e_total" => Some(row.e_total),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bootstrap_workspace_payload;
+
+    #[test]
+    fn workspace_bootstrap_payload_injects_mode() {
+        let payload = bootstrap_workspace_payload(r#"{"session":{"session_id":"s1"},"run":null}"#)
+            .expect("workspace bootstrap payload should encode");
+        let value: serde_json::Value =
+            serde_json::from_str(&payload).expect("payload should be valid json");
+        assert_eq!(
+            value.get("mode").and_then(serde_json::Value::as_str),
+            Some("workspace")
+        );
+        assert_eq!(
+            value
+                .get("session")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|session| session.get("session_id"))
+                .and_then(serde_json::Value::as_str),
+            Some("s1")
+        );
     }
 }

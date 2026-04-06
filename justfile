@@ -28,6 +28,11 @@ build target="fullmag":
 build-static-control-room:
     make web-build-static-if-needed
 
+build-desktop:
+    cargo build --release -p fullmag-desktop
+    mkdir -p "{{local_bin}}"
+    cp target/release/fullmag-ui "{{local_bin}}/"
+
 package target="fullmag":
     if [ "{{target}}" = "fullmag" ] || [ "{{target}}" = "fullmag-host" ]; then ./scripts/package_fullmag_host.sh; \
     elif [ "{{target}}" = "fullmag-portable" ]; then \

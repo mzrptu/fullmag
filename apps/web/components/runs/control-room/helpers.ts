@@ -313,11 +313,16 @@ export function buildScriptBuilderUpdatePayload(
   },
 ) {
   if (modelBuilderGraph) {
-    return buildSceneDocumentFromScriptBuilder({
+    const scene = buildSceneDocumentFromScriptBuilder({
       revision: modelBuilderGraph.revision,
       initial_state: modelBuilderGraph.study.initial_state,
       ...serializeModelBuilderGraphV2(modelBuilderGraph),
     });
+    scene.study.requested_backend = modelBuilderGraph.study.requested_backend;
+    scene.study.requested_device = modelBuilderGraph.study.requested_device;
+    scene.study.requested_precision = modelBuilderGraph.study.requested_precision;
+    scene.study.requested_mode = modelBuilderGraph.study.requested_mode;
+    return scene;
   }
   return buildLegacyScriptBuilderUpdatePayload(
     fallback.solverSettings,

@@ -119,7 +119,7 @@ fn sp4_plan(algorithm: RelaxationAlgorithmIR, damping: f64, enable_demag: bool) 
         temperature: None,
         interfacial_dmi: None,
         bulk_dmi: None,
-            ..Default::default()
+        ..Default::default()
     }
 }
 
@@ -182,7 +182,7 @@ fn uniform_field_alignment() {
         temperature: None,
         interfacial_dmi: None,
         bulk_dmi: None,
-            ..Default::default()
+        ..Default::default()
     };
 
     let result = fullmag_runner::run_reference_fdm(&plan, 1e-9, &[]).expect("run should succeed");
@@ -253,7 +253,7 @@ fn exchange_only_random_to_uniform() {
         temperature: None,
         interfacial_dmi: None,
         bulk_dmi: None,
-            ..Default::default()
+        ..Default::default()
     };
 
     let result = fullmag_runner::run_reference_fdm(&plan, 1e-9, &[]).expect("run should succeed");
@@ -339,7 +339,7 @@ fn thin_film_shape_anisotropy() {
         temperature: None,
         interfacial_dmi: None,
         bulk_dmi: None,
-            ..Default::default()
+        ..Default::default()
     };
 
     let result = fullmag_runner::run_reference_fdm(&plan, 10e-9, &[]).expect("run should succeed");
@@ -541,7 +541,7 @@ fn sp4_reversal_dynamics() {
         temperature: None,
         interfacial_dmi: None,
         bulk_dmi: None,
-            ..Default::default()
+        ..Default::default()
     };
 
     let dyn_result = fullmag_runner::run_reference_fdm(&dyn_plan, 1e-9, &[])
@@ -680,11 +680,13 @@ fn cube_mesh(side_nm: f64) -> MeshIR {
         ("z_faces", 3, 7),
     ]
     .into_iter()
-    .map(|(pair_id, node_a, node_b)| fullmag_ir::MeshPeriodicNodePairIR {
-        pair_id: pair_id.to_string(),
-        node_a,
-        node_b,
-    })
+    .map(
+        |(pair_id, node_a, node_b)| fullmag_ir::MeshPeriodicNodePairIR {
+            pair_id: pair_id.to_string(),
+            node_a,
+            node_b,
+        },
+    )
     .collect();
     MeshIR {
         mesh_name: format!("cube_{side_nm}nm"),
@@ -1113,11 +1115,11 @@ fn fem_eigen_periodic_k_zero_runs_with_periodic_node_pairs() {
         .expect("spectrum artifact must exist");
     let value: serde_json::Value = serde_json::from_slice(spectrum).expect("valid spectrum json");
     assert_eq!(value["boundary_config"]["kind"].as_str(), Some("periodic"));
-    assert!(
-        value["solver_capabilities"]
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| item.as_str() == Some("periodic_zero_phase")))
-    );
+    assert!(value["solver_capabilities"]
+        .as_array()
+        .is_some_and(|items| items
+            .iter()
+            .any(|item| item.as_str() == Some("periodic_zero_phase"))));
 }
 
 #[test]
@@ -1184,11 +1186,11 @@ fn fem_eigen_floquet_runs_with_phase_aware_metadata() {
         value["solver_kind"].as_str(),
         Some("cpu_phase_reduced_floquet")
     );
-    assert!(
-        value["solver_limitations"]
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| item.as_str() == Some("floquet_uses_phase_reduced_hermitian_block")))
-    );
+    assert!(value["solver_limitations"]
+        .as_array()
+        .is_some_and(|items| items
+            .iter()
+            .any(|item| item.as_str() == Some("floquet_uses_phase_reduced_hermitian_block"))));
 }
 
 #[test]
@@ -1308,7 +1310,10 @@ fn fem_eigen_surface_anisotropy_runs_and_reports_term() {
 fn fem_eigen_floquet_bulk_dmi_is_nonreciprocal_for_plus_minus_k() {
     let build_plan = |kx: f64| {
         let mut mesh = cube_mesh(20.0);
-        mesh.mesh_name = format!("floquet_bulk_dmi_{}", if kx >= 0.0 { "plus" } else { "minus" });
+        mesh.mesh_name = format!(
+            "floquet_bulk_dmi_{}",
+            if kx >= 0.0 { "plus" } else { "minus" }
+        );
         FemEigenPlanIR {
             mesh_name: mesh.mesh_name.clone(),
             mesh_source: None,
@@ -1365,7 +1370,8 @@ fn fem_eigen_floquet_bulk_dmi_is_nonreciprocal_for_plus_minus_k() {
         let spectrum = result
             .artifact_bytes("eigen/spectrum.json")
             .expect("spectrum artifact must exist");
-        let value: serde_json::Value = serde_json::from_slice(spectrum).expect("valid spectrum json");
+        let value: serde_json::Value =
+            serde_json::from_slice(spectrum).expect("valid spectrum json");
         value["modes"][0]["frequency_real_hz"]
             .as_f64()
             .expect("first mode frequency")
@@ -1623,16 +1629,20 @@ fn eigen_bc_pinned_higher_frequency() {
         }
     };
 
-    let result_free =
-        fullmag_runner::run_reference_fem_eigen(&make_plan(false), &[OutputIR::EigenSpectrum {
+    let result_free = fullmag_runner::run_reference_fem_eigen(
+        &make_plan(false),
+        &[OutputIR::EigenSpectrum {
             quantity: "eigenfrequency".to_string(),
-        }])
-        .expect("Free BC eigen solve must succeed");
+        }],
+    )
+    .expect("Free BC eigen solve must succeed");
 
-    let result_pinned =
-        fullmag_runner::run_reference_fem_eigen(&make_plan(true), &[OutputIR::EigenSpectrum {
+    let result_pinned = fullmag_runner::run_reference_fem_eigen(
+        &make_plan(true),
+        &[OutputIR::EigenSpectrum {
             quantity: "eigenfrequency".to_string(),
-        }]);
+        }],
+    );
 
     // On a 2×2×2 mesh all 8 nodes are surface nodes; Pinned BC eliminates
     // all of them and returns zero active modes → expect an error, not a solve.
@@ -1807,24 +1817,31 @@ fn eigen_bc_periodic_k_zero_matches_free() {
         }
     };
 
-    let result_free =
-        fullmag_runner::run_reference_fem_eigen(&make_plan(false), &[OutputIR::EigenSpectrum {
+    let result_free = fullmag_runner::run_reference_fem_eigen(
+        &make_plan(false),
+        &[OutputIR::EigenSpectrum {
             quantity: "eigenfrequency".to_string(),
-        }])
-        .expect("Free BC must succeed");
+        }],
+    )
+    .expect("Free BC must succeed");
 
-    let result_periodic =
-        fullmag_runner::run_reference_fem_eigen(&make_plan(true), &[OutputIR::EigenSpectrum {
+    let result_periodic = fullmag_runner::run_reference_fem_eigen(
+        &make_plan(true),
+        &[OutputIR::EigenSpectrum {
             quantity: "eigenfrequency".to_string(),
-        }])
-        .expect("Periodic k=0 must succeed");
+        }],
+    )
+    .expect("Periodic k=0 must succeed");
 
-    let f_free = extract_lowest_frequency(&result_free)
-        .expect("Free BC must return a lowest frequency");
+    let f_free =
+        extract_lowest_frequency(&result_free).expect("Free BC must return a lowest frequency");
     let f_periodic = extract_lowest_frequency(&result_periodic)
         .expect("Periodic k=0 must return a lowest frequency");
 
-    assert!(f_free.is_finite() && f_free > 0.0, "Free BC f={f_free:.3e} must be positive");
+    assert!(
+        f_free.is_finite() && f_free > 0.0,
+        "Free BC f={f_free:.3e} must be positive"
+    );
     assert!(
         f_periodic.is_finite() && f_periodic > 0.0,
         "Periodic k=0 f={f_periodic:.3e} must be positive"

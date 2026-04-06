@@ -61,12 +61,8 @@ fn gpu_solve_real_symmetric_eigenpairs(
         return Err("UNAVAILABLE: empty matrix".to_string());
     }
     // nalgebra DMatrix<f64> is column-major; .as_slice() yields a column-major &[f64].
-    let gpu_result = native_fem::gpu_eigen_dense_solve(
-        stiffness.as_slice(),
-        mass.as_slice(),
-        n,
-        n,
-    )?;
+    let gpu_result =
+        native_fem::gpu_eigen_dense_solve(stiffness.as_slice(), mass.as_slice(), n, n)?;
 
     let mut eigenpairs: Vec<RealEigenpair> = (0..gpu_result.eigenvalues.len())
         .filter_map(|i| {
@@ -117,7 +113,12 @@ fn execute_fem_eigen_inner(
     try_gpu: bool,
 ) -> Result<ExecutedRun, RunError> {
     let resolved_demag_realization = plan.demag_realization.as_ref();
-    if plan.enable_demag && !matches!(resolved_demag_realization, None | Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)) {
+    if plan.enable_demag
+        && !matches!(
+            resolved_demag_realization,
+            None | Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)
+        )
+    {
         return Err(RunError {
             message: "FEM eigen runner supports demag_realization='transfer_grid' only".to_string(),
         });
@@ -152,24 +153,28 @@ fn execute_fem_eigen_inner(
             &equilibrium,
         );
         if try_gpu {
-            // Attempt GPU dense generalized solve; fall back to CPU LAPACK on any error.
+            // Attempt GPU dense generalized solve; return error if GPU was
+            // explicitly requested but is unavailable or fails.
             match gpu_solve_real_symmetric_eigenpairs(plan, &stiffness, &mass) {
                 Ok(pairs) => {
-                    eprintln!("info: FEM eigen GPU solve succeeded ({} modes)", pairs.len());
+                    eprintln!(
+                        "info: FEM eigen GPU solve succeeded ({} modes)",
+                        pairs.len()
+                    );
                     pairs
                 }
                 Err(reason) => {
                     if reason.contains("UNAVAILABLE") {
-                        eprintln!(
-                            "info: FEM eigen GPU unavailable — using CPU LAPACK solver"
-                        );
+                        return Err(RunError {
+                            message: format!(
+                                "FEM eigen GPU was explicitly requested but is unavailable: {reason}"
+                            ),
+                        });
                     } else {
-                        eprintln!(
-                            "warning: FEM eigen GPU failed — falling back to CPU LAPACK \
-                             (reason: {reason})"
-                        );
+                        return Err(RunError {
+                            message: format!("FEM eigen GPU solve failed: {reason}"),
+                        });
                     }
-                    solve_real_symmetric_eigenpairs(plan, stiffness, mass)?
                 }
             }
         } else {
@@ -218,7 +223,12 @@ fn execute_fem_eigen_inner(
                         &pair.vector,
                         &bases,
                     );
-                let norm = pair.vector.iter().map(|value| value.norm_sqr()).sum::<f64>().sqrt();
+                let norm = pair
+                    .vector
+                    .iter()
+                    .map(|value| value.norm_sqr())
+                    .sum::<f64>()
+                    .sqrt();
                 (
                     pair.eigenvalue_real,
                     pair.eigenvalue_imag,
@@ -231,12 +241,13 @@ fn execute_fem_eigen_inner(
                 )
             } else {
                 let pair = &real_eigenpairs[mode_index];
-                let (real, imag, amplitude, phase, max_amplitude) = project_real_mode_to_tangent_basis(
-                    topology.n_nodes,
-                    &reduction.active_nodes,
-                    &pair.vector,
-                    &bases,
-                );
+                let (real, imag, amplitude, phase, max_amplitude) =
+                    project_real_mode_to_tangent_basis(
+                        topology.n_nodes,
+                        &reduction.active_nodes,
+                        &pair.vector,
+                        &bases,
+                    );
                 let norm = pair.vector.norm();
                 (
                     pair.eigenvalue_real,
@@ -258,8 +269,12 @@ fn execute_fem_eigen_inner(
         };
         let frequency_hz = angular_frequency_real / (2.0 * std::f64::consts::PI);
         let frequency_imag_hz = angular_frequency_imag / (2.0 * std::f64::consts::PI);
-        let dominant_polarization =
-            classify_polarization(&amplitude, &reduction.active_nodes, &equilibrium, max_amplitude);
+        let dominant_polarization = classify_polarization(
+            &amplitude,
+            &reduction.active_nodes,
+            &equilibrium,
+            max_amplitude,
+        );
         let mode_summary = serde_json::json!({
             "index": mode_index,
             "frequency_hz": frequency_hz,
@@ -454,8 +469,14 @@ fn materialize_equilibrium(
     // engine treats per_node_field as static, we recompute it once after
     // an initial relaxation pass (self-consistent field iteration).
     let aniso_per_node: Option<Vec<Vector3>> = {
-        let has_uni = plan.material.uniaxial_anisotropy.map_or(false, |k| k.abs() > 0.0);
-        let has_cub = plan.material.cubic_anisotropy_kc1.map_or(false, |k| k.abs() > 0.0);
+        let has_uni = plan
+            .material
+            .uniaxial_anisotropy
+            .map_or(false, |k| k.abs() > 0.0);
+        let has_cub = plan
+            .material
+            .cubic_anisotropy_kc1
+            .map_or(false, |k| k.abs() > 0.0);
         if has_uni || has_cub {
             Some(
                 equilibrium_guess
@@ -477,6 +498,9 @@ fn materialize_equilibrium(
             external_field: plan.external_field,
             per_node_field: aniso_per_node,
             magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
             uniaxial_anisotropy: None,
             cubic_anisotropy: None,
             interfacial_dmi: None,
@@ -693,7 +717,9 @@ fn phase_reduction(
 
     let requested_pair = spin_wave_bc.boundary_pair_id();
     let k_vector = match (kind, k_sampling) {
-        (SpinWaveBoundaryKindIR::Floquet, Some(KSamplingIR::Single { k_vector })) => Some(*k_vector),
+        (SpinWaveBoundaryKindIR::Floquet, Some(KSamplingIR::Single { k_vector })) => {
+            Some(*k_vector)
+        }
         (SpinWaveBoundaryKindIR::Floquet, None) => {
             return Err(RunError {
                 message: "floquet spin-wave BC requires k_sampling=Single{...}".to_string(),
@@ -922,10 +948,30 @@ fn assemble_projected_scalar_operator_complex(
         }
         let volume = topology.element_volumes[element_index];
         let local_mass = [
-            [2.0 * volume / 20.0, volume / 20.0, volume / 20.0, volume / 20.0],
-            [volume / 20.0, 2.0 * volume / 20.0, volume / 20.0, volume / 20.0],
-            [volume / 20.0, volume / 20.0, 2.0 * volume / 20.0, volume / 20.0],
-            [volume / 20.0, volume / 20.0, volume / 20.0, 2.0 * volume / 20.0],
+            [
+                2.0 * volume / 20.0,
+                volume / 20.0,
+                volume / 20.0,
+                volume / 20.0,
+            ],
+            [
+                volume / 20.0,
+                2.0 * volume / 20.0,
+                volume / 20.0,
+                volume / 20.0,
+            ],
+            [
+                volume / 20.0,
+                volume / 20.0,
+                2.0 * volume / 20.0,
+                volume / 20.0,
+            ],
+            [
+                volume / 20.0,
+                volume / 20.0,
+                volume / 20.0,
+                2.0 * volume / 20.0,
+            ],
         ];
         let local_shift = [
             parallel_field[element[0] as usize],
@@ -1253,18 +1299,13 @@ fn add_dmi_real(
     reduction: &ReductionMap,
     stiffness: &mut DMatrix<f64>,
 ) {
-    let scale = plan
-        .interfacial_dmi
-        .map(f64::abs)
-        .unwrap_or(0.0)
+    let scale = plan.interfacial_dmi.map(f64::abs).unwrap_or(0.0)
         + plan.bulk_dmi.map(f64::abs).unwrap_or(0.0);
     if scale <= 0.0 {
         return;
     }
-    let coeff = scale
-        / (MU0
-            * plan.material.saturation_magnetisation.max(1e-30)
-            * plan.hmax.max(1e-30));
+    let coeff =
+        scale / (MU0 * plan.material.saturation_magnetisation.max(1e-30) * plan.hmax.max(1e-30));
     for (element_index, element) in topology.elements.iter().enumerate() {
         if !topology.magnetic_element_mask[element_index] {
             continue;
@@ -1305,8 +1346,7 @@ fn add_dmi_complex(
     let ms = plan.material.saturation_magnetisation.max(1e-30);
     let interfacial_coeff = interfacial / (MU0 * ms);
     let bulk_coeff = bulk / (MU0 * ms);
-    let nonreciprocal_shift =
-        interfacial_coeff * (k[0] + k[1]) + bulk_coeff * (k[0] + k[1] + k[2]);
+    let nonreciprocal_shift = interfacial_coeff * (k[0] + k[1]) + bulk_coeff * (k[0] + k[1] + k[2]);
     if nonreciprocal_shift.abs() <= 0.0 {
         return;
     }
@@ -1327,8 +1367,8 @@ fn uniaxial_anisotropy_field(m: Vector3, plan: &FemEigenPlanIR) -> Vector3 {
     let ms = plan.material.saturation_magnetisation.max(1e-30);
     let ku2 = plan.material.uniaxial_anisotropy_k2.unwrap_or(0.0);
     let m_dot_u = dot(m, axis);
-    let coeff = 2.0 * ku1 / (MU0 * ms) * m_dot_u
-        + 4.0 * ku2 / (MU0 * ms) * m_dot_u * m_dot_u * m_dot_u;
+    let coeff =
+        2.0 * ku1 / (MU0 * ms) * m_dot_u + 4.0 * ku2 / (MU0 * ms) * m_dot_u * m_dot_u * m_dot_u;
     scale_vector(axis, coeff)
 }
 
@@ -1341,8 +1381,16 @@ fn cubic_anisotropy_field(m: Vector3, plan: &FemEigenPlanIR) -> Vector3 {
         Some(k) if k.abs() > 0.0 => k,
         _ => return [0.0, 0.0, 0.0],
     };
-    let c1 = normalize_vector(plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]));
-    let c2 = normalize_vector(plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]));
+    let c1 = normalize_vector(
+        plan.material
+            .cubic_anisotropy_axis1
+            .unwrap_or([1.0, 0.0, 0.0]),
+    );
+    let c2 = normalize_vector(
+        plan.material
+            .cubic_anisotropy_axis2
+            .unwrap_or([0.0, 1.0, 0.0]),
+    );
     let c3 = cross(c1, c2);
     let kc2 = plan.material.cubic_anisotropy_kc2.unwrap_or(0.0);
     let ms = plan.material.saturation_magnetisation.max(1e-30);
@@ -1580,17 +1628,16 @@ fn solver_notes(plan: &FemEigenPlanIR, complex_reduction: bool) -> &'static str 
     }
 }
 
-fn solver_capabilities(
-    plan: &FemEigenPlanIR,
-    complex_reduction: bool,
-) -> Vec<&'static str> {
+fn solver_capabilities(plan: &FemEigenPlanIR, complex_reduction: bool) -> Vec<&'static str> {
     let mut capabilities = vec!["cpu_reference_eigen", "artifact_backed_analyze"];
     match plan.spin_wave_bc.kind() {
         SpinWaveBoundaryKindIR::Free => capabilities.push("free_bc"),
         SpinWaveBoundaryKindIR::Pinned => capabilities.push("pinned_bc"),
         SpinWaveBoundaryKindIR::Periodic => capabilities.push("periodic_zero_phase"),
         SpinWaveBoundaryKindIR::Floquet => capabilities.push("floquet_phase_reduction"),
-        SpinWaveBoundaryKindIR::SurfaceAnisotropy => capabilities.push("surface_anisotropy_boundary_term"),
+        SpinWaveBoundaryKindIR::SurfaceAnisotropy => {
+            capabilities.push("surface_anisotropy_boundary_term")
+        }
     }
     if plan.enable_exchange {
         capabilities.push("exchange");
@@ -1616,10 +1663,7 @@ fn solver_capabilities(
     capabilities
 }
 
-fn solver_limitations(
-    plan: &FemEigenPlanIR,
-    complex_reduction: bool,
-) -> Vec<&'static str> {
+fn solver_limitations(plan: &FemEigenPlanIR, complex_reduction: bool) -> Vec<&'static str> {
     let mut limitations = Vec::new();
     if matches!(plan.damping_policy, EigenDampingPolicyIR::Include) {
         limitations.push("no_generalized_qz_backend");
@@ -1631,7 +1675,10 @@ fn solver_limitations(
     if plan.interfacial_dmi.is_some() || plan.bulk_dmi.is_some() {
         limitations.push("dmi_operator_is_cpu_first_reference_approximation");
     }
-    if matches!(plan.spin_wave_bc.kind(), SpinWaveBoundaryKindIR::SurfaceAnisotropy) {
+    if matches!(
+        plan.spin_wave_bc.kind(),
+        SpinWaveBoundaryKindIR::SurfaceAnisotropy
+    ) {
         limitations.push("surface_anisotropy_requires_exposed_boundary_faces");
     }
     limitations

@@ -54,6 +54,13 @@ pub fn scene_document_from_script_builder(builder: &ScriptBuilderState) -> Scene
         },
         study: SceneStudyState {
             backend: builder.backend.clone(),
+            requested_backend: builder
+                .backend
+                .clone()
+                .unwrap_or_else(|| "auto".to_string()),
+            requested_device: "auto".to_string(),
+            requested_precision: "double".to_string(),
+            requested_mode: "strict".to_string(),
             demag_realization: builder.demag_realization.clone(),
             solver: builder.solver.clone(),
             universe_mesh: builder.universe.clone(),
@@ -130,7 +137,10 @@ pub fn scene_document_to_script_builder(
                 bounds_max: object.geometry.bounds_max,
                 material,
                 magnetization,
-                mesh: object.object_mesh.clone().or_else(|| object.mesh_override.clone()),
+                mesh: object
+                    .object_mesh
+                    .clone()
+                    .or_else(|| object.mesh_override.clone()),
             })
         })
         .collect::<Result<Vec<_>, SceneDocumentValidationError>>()?;
@@ -160,6 +170,16 @@ pub fn scene_document_to_script_builder_overrides(
 ) -> Result<Value, SceneDocumentValidationError> {
     let builder = scene_document_to_script_builder(scene)?;
     Ok(serde_json::json!({
+        "runtime_selection": {
+            "backend": scene.study.requested_backend,
+            "device": scene.study.requested_device,
+            "precision": scene.study.requested_precision,
+            "mode": scene.study.requested_mode,
+            "explicit_selection": scene.study.requested_backend != "auto"
+                || scene.study.requested_device != "auto"
+                || scene.study.requested_precision != "double"
+                || scene.study.requested_mode != "strict",
+        },
         "demag_realization": builder.demag_realization,
         "solver": {
             "integrator": string_or_null(&builder.solver.integrator),

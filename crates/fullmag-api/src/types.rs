@@ -95,12 +95,48 @@ pub(crate) struct SessionManifest {
     pub script_path: String,
     pub problem_name: String,
     pub requested_backend: String,
+    #[serde(default)]
+    pub explicit_selection: bool,
+    #[serde(default = "default_auto")]
+    pub requested_device: String,
+    #[serde(default = "default_double")]
+    pub requested_precision: String,
+    #[serde(default = "default_strict")]
+    pub requested_mode: String,
     pub execution_mode: String,
     pub precision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_device: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_precision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_runtime_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_engine_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_worker: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_fallback: Option<fullmag_runner::ResolvedFallback>,
     pub artifact_dir: String,
     pub started_at_unix_ms: u128,
     pub finished_at_unix_ms: u128,
     pub plan_summary: serde_json::Value,
+}
+
+fn default_auto() -> String {
+    "auto".to_string()
+}
+
+fn default_double() -> String {
+    "double".to_string()
+}
+
+fn default_strict() -> String {
+    "strict".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -804,8 +840,20 @@ mod tests {
                 script_path: String::new(),
                 problem_name: "demo".to_string(),
                 requested_backend: "auto".to_string(),
+                explicit_selection: false,
+                requested_device: "auto".to_string(),
+                requested_precision: "double".to_string(),
+                requested_mode: "strict".to_string(),
                 execution_mode: "strict".to_string(),
                 precision: "double".to_string(),
+                resolved_backend: None,
+                resolved_device: None,
+                resolved_precision: None,
+                resolved_mode: None,
+                resolved_runtime_family: None,
+                resolved_engine_id: None,
+                resolved_worker: None,
+                resolved_fallback: None,
                 artifact_dir: String::new(),
                 started_at_unix_ms: 0,
                 finished_at_unix_ms: 0,

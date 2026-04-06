@@ -57,6 +57,10 @@ export async function detectLiveSessionIntent(): Promise<DetectedLiveSession | n
   if (!root) {
     return null;
   }
+  const mode = asString(root.mode);
+  if (mode === "hub") {
+    return null;
+  }
 
   const session = asRecord(root.session);
   if (!session) {

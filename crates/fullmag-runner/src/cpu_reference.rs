@@ -6,7 +6,7 @@
 use fullmag_engine::{
     magnetoelastic::{MagnetoelasticParams, PrescribedStrainField},
     AdaptiveStepConfig, CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, ExchangeLlgProblem,
-    ExchangeLlgState, GridShape, LlgConfig, MaterialParameters, MagnetoelasticTermConfig,
+    ExchangeLlgState, GridShape, LlgConfig, MagnetoelasticTermConfig, MaterialParameters,
     SlonczewskiSttConfig, SotConfig, TimeIntegrator, UniaxialAnisotropyConfig, ZhangLiSttConfig,
 };
 use fullmag_ir::{
@@ -209,14 +209,21 @@ pub(crate) fn build_snapshot_problem_and_state(
                     axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
                 }
             }),
-            cubic_anisotropy: plan.material.cubic_anisotropy_kc1.map(|kc1| {
-                CubicAnisotropyConfig {
+            cubic_anisotropy: plan
+                .material
+                .cubic_anisotropy_kc1
+                .map(|kc1| CubicAnisotropyConfig {
                     kc1,
                     kc2: plan.material.cubic_anisotropy_kc2.unwrap_or(0.0),
-                    axis1: plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
-                    axis2: plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
-                }
-            }),
+                    axis1: plan
+                        .material
+                        .cubic_anisotropy_axis1
+                        .unwrap_or([1.0, 0.0, 0.0]),
+                    axis2: plan
+                        .material
+                        .cubic_anisotropy_axis2
+                        .unwrap_or([0.0, 1.0, 0.0]),
+                }),
             interfacial_dmi: plan.interfacial_dmi,
             bulk_dmi: plan.bulk_dmi,
             zhang_li_stt: build_zl_stt(plan),
@@ -333,14 +340,21 @@ pub(crate) fn execute_reference_fdm(
                     axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
                 }
             }),
-            cubic_anisotropy: plan.material.cubic_anisotropy_kc1.map(|kc1| {
-                CubicAnisotropyConfig {
+            cubic_anisotropy: plan
+                .material
+                .cubic_anisotropy_kc1
+                .map(|kc1| CubicAnisotropyConfig {
                     kc1,
                     kc2: plan.material.cubic_anisotropy_kc2.unwrap_or(0.0),
-                    axis1: plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
-                    axis2: plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
-                }
-            }),
+                    axis1: plan
+                        .material
+                        .cubic_anisotropy_axis1
+                        .unwrap_or([1.0, 0.0, 0.0]),
+                    axis2: plan
+                        .material
+                        .cubic_anisotropy_axis2
+                        .unwrap_or([0.0, 1.0, 0.0]),
+                }),
             interfacial_dmi: plan.interfacial_dmi,
             bulk_dmi: plan.bulk_dmi,
             zhang_li_stt: build_zl_stt(plan),
@@ -1003,7 +1017,7 @@ mod tests {
             temperature: None,
             interfacial_dmi: None,
             bulk_dmi: None,
-                ..Default::default()
+            ..Default::default()
         }
     }
 
@@ -1059,7 +1073,7 @@ mod tests {
             temperature: None,
             interfacial_dmi: None,
             bulk_dmi: None,
-                ..Default::default()
+            ..Default::default()
         }
     }
 

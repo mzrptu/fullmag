@@ -171,7 +171,19 @@ void refresh_thermal_field_for_current_state(Context &ctx) {
     );
     ctx.thermal_sigma = sigma;
 
-    static thread_local std::mt19937_64 rng(42);
+    // Seed policy: 0 = system entropy (non-reproducible),
+    // otherwise use the provided seed for reproducible stochastic runs.
+    static thread_local bool rng_initialized = false;
+    static thread_local std::mt19937_64 rng;
+    if (!rng_initialized) {
+        if (ctx.thermal_seed != 0) {
+            rng.seed(ctx.thermal_seed);
+        } else {
+            std::random_device rd;
+            rng.seed(rd());
+        }
+        rng_initialized = true;
+    }
     std::normal_distribution<double> dist(0.0, sigma);
     for (size_t node = 0; node < static_cast<size_t>(ctx.n_nodes); ++node) {
         const size_t base = node * 3u;
@@ -683,10 +695,7 @@ int context_copy_field_f64(
             source = &ctx.h_cubic_ani_xyz;
             break;
         case FULLMAG_FEM_OBSERVABLE_H_DMI_BULK:
-            // Note: bulk DMI field is computed transiently in H_eff assembly;
-            // return the last computed h_dmi_xyz if it was bulk-only, or zero if not.
-            // TODO: store h_bulk_dmi_xyz persistently in context for proper readback.
-            source = &ctx.h_dmi_xyz;
+            source = &ctx.h_bulk_dmi_xyz;
             break;
         case FULLMAG_FEM_OBSERVABLE_H_OE:
             source = &ctx.h_oe_xyz;
@@ -700,9 +709,16 @@ int context_copy_field_f64(
     }
 
     if (source == nullptr || source->size() != static_cast<size_t>(out_len)) {
-        // The requested field may not have been computed yet — return zeros.
-        std::memset(out_xyz, 0, sizeof(double) * static_cast<size_t>(out_len));
-        return FULLMAG_FEM_OK;
+        // Report an error instead of silently returning zeros when the field
+        // has not been computed or has a mismatched size.
+        if (source == nullptr || source->empty()) {
+            error = "requested field has not been computed yet";
+        } else {
+            error = "field size mismatch: expected " +
+                    std::to_string(out_len) + " but field has " +
+                    std::to_string(source->size()) + " elements";
+        }
+        return FULLMAG_FEM_ERR_INVALID;
     }
 
     std::memcpy(out_xyz, source->data(), sizeof(double) * static_cast<size_t>(out_len));

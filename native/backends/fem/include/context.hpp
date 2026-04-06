@@ -169,6 +169,7 @@ struct Context {
     std::vector<double> h_ext_xyz;
     std::vector<double> h_ani_xyz;
     std::vector<double> h_dmi_xyz;
+    std::vector<double> h_bulk_dmi_xyz;   // Per-node bulk DMI field (AOS-3)
     std::vector<double> h_eff_xyz;
 
     // ── Oersted field (cylindrical conductor) ──
@@ -191,6 +192,7 @@ struct Context {
     double current_dt = 1e-13;      // Current timestep for thermal sigma computation
     double last_thermal_refresh_time = -1.0;
     double last_thermal_refresh_dt = -1.0;
+    uint64_t thermal_seed = 0;      // 0 = random seed from system entropy
     std::vector<double> h_therm_xyz;  // Per-node thermal field buffer (AOS-3)
 
     TransferGridState transfer_grid{};

@@ -151,6 +151,10 @@ export function buildSceneDocumentFromScriptBuilder(
     },
     study: {
       backend: builder.backend,
+      requested_backend: builder.backend ?? "auto",
+      requested_device: "auto",
+      requested_precision: "double",
+      requested_mode: "strict",
       demag_realization: builder.demag_realization,
       solver: builder.solver,
       universe_mesh: builder.universe,

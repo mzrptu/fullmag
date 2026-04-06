@@ -99,7 +99,22 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
         ) {
           return;
         }
+        if (
+          raw &&
+          typeof raw === "object" &&
+          "mode" in raw &&
+          (raw as { mode?: unknown }).mode === "hub"
+        ) {
+          setState(null);
+          setError(null);
+          return;
+        }
         const nextState = normalizeSessionState(raw, pendingPreviewPayloadsRef.current);
+        if (!nextState.session) {
+          setState(null);
+          setError(null);
+          return;
+        }
         if (nextState.live_state?.finished) {
           finishedRef.current = true;
         }

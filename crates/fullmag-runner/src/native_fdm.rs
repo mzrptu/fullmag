@@ -13,8 +13,7 @@ use fullmag_fdm_sys as ffi;
 
 #[cfg(feature = "cuda")]
 use crate::preview::{
-    build_grid_preview_field_from_flat_plan, plan_grid_preview, resample_grid_mask,
-    GridPreviewPlan,
+    build_grid_preview_field_from_flat_plan, plan_grid_preview, resample_grid_mask, GridPreviewPlan,
 };
 #[cfg(feature = "cuda")]
 use crate::quantities::normalized_quantity_name;
@@ -291,7 +290,11 @@ impl NativeFdmBackend {
             oersted_time_dep_t_on: plan.oersted_time_dep_t_on,
             oersted_time_dep_t_off: plan.oersted_time_dep_t_off,
 
-            has_uniaxial_anisotropy: if plan.material.uniaxial_anisotropy_ku1.is_some() { 1 } else { 0 },
+            has_uniaxial_anisotropy: if plan.material.uniaxial_anisotropy_ku1.is_some() {
+                1
+            } else {
+                0
+            },
             uniaxial_anisotropy_constant: plan.material.uniaxial_anisotropy_ku1.unwrap_or(0.0),
             uniaxial_anisotropy_k2: plan.material.uniaxial_anisotropy_ku2.unwrap_or(0.0),
             anisotropy_axis: plan.material.anisotropy_axis.unwrap_or([0.0, 0.0, 1.0]),
@@ -299,12 +302,22 @@ impl NativeFdmBackend {
             ku1_field: std::ptr::null(),
             ku2_field: std::ptr::null(),
 
-            has_cubic_anisotropy: if plan.material.cubic_anisotropy_kc1.is_some() { 1 } else { 0 },
+            has_cubic_anisotropy: if plan.material.cubic_anisotropy_kc1.is_some() {
+                1
+            } else {
+                0
+            },
             cubic_kc1: plan.material.cubic_anisotropy_kc1.unwrap_or(0.0),
             cubic_kc2: plan.material.cubic_anisotropy_kc2.unwrap_or(0.0),
             cubic_kc3: plan.material.cubic_anisotropy_kc3.unwrap_or(0.0),
-            cubic_axis1: plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
-            cubic_axis2: plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
+            cubic_axis1: plan
+                .material
+                .cubic_anisotropy_axis1
+                .unwrap_or([1.0, 0.0, 0.0]),
+            cubic_axis2: plan
+                .material
+                .cubic_anisotropy_axis2
+                .unwrap_or([0.0, 1.0, 0.0]),
             kc1_field: std::ptr::null(),
             kc2_field: std::ptr::null(),
             kc3_field: std::ptr::null(),
@@ -314,7 +327,11 @@ impl NativeFdmBackend {
             has_bulk_dmi: if plan.bulk_dmi.is_some() { 1 } else { 0 },
             dmi_d_bulk: plan.bulk_dmi.unwrap_or(0.0),
 
-            has_magnetoelastic: if plan.mel_b1.is_some() && plan.mel_uniform_strain.is_some() { 1 } else { 0 },
+            has_magnetoelastic: if plan.mel_b1.is_some() && plan.mel_uniform_strain.is_some() {
+                1
+            } else {
+                0
+            },
             mel_b1: plan.mel_b1.unwrap_or(0.0),
             mel_b2: plan.mel_b2.unwrap_or(0.0),
             mel_strain: plan.mel_uniform_strain.unwrap_or([0.0; 6]),
@@ -1063,10 +1080,8 @@ impl NativeFdmPreviewSnapshot {
             self.ready = Some(NativeFieldSnapshotReady {
                 // SAFETY: `data` is valid until the handle is destroyed.
                 // We copy immediately so the raw pointer does not escape.
-                data: unsafe {
-                    std::slice::from_raw_parts(data.cast::<u8>(), len_bytes as usize)
-                }
-                .to_vec(),
+                data: unsafe { std::slice::from_raw_parts(data.cast::<u8>(), len_bytes as usize) }
+                    .to_vec(),
                 info: NativeFieldSnapshotInfo {
                     cell_count: desc.cell_count as usize,
                     component_count: desc.component_count as usize,
@@ -1085,18 +1100,16 @@ impl NativeFdmPreviewSnapshot {
         let ready = self.ensure_ready()?;
         let expected_len = ready.info.cell_count * ready.info.component_count;
         let vector_field_values: Vec<f64> = match ready.info.scalar_type {
-            NativeFieldSnapshotScalarType::F32 => {
-                ready.data
-                    .chunks_exact(std::mem::size_of::<f32>())
-                    .map(|b| f64::from(f32::from_ne_bytes(b.try_into().unwrap())))
-                    .collect()
-            }
-            NativeFieldSnapshotScalarType::F64 => {
-                ready.data
-                    .chunks_exact(std::mem::size_of::<f64>())
-                    .map(|b| f64::from_ne_bytes(b.try_into().unwrap()))
-                    .collect()
-            }
+            NativeFieldSnapshotScalarType::F32 => ready
+                .data
+                .chunks_exact(std::mem::size_of::<f32>())
+                .map(|b| f64::from(f32::from_ne_bytes(b.try_into().unwrap())))
+                .collect(),
+            NativeFieldSnapshotScalarType::F64 => ready
+                .data
+                .chunks_exact(std::mem::size_of::<f64>())
+                .map(|b| f64::from_ne_bytes(b.try_into().unwrap()))
+                .collect(),
         };
         debug_assert_eq!(vector_field_values.len(), expected_len);
         Ok(build_grid_preview_field_from_flat_plan(
@@ -1483,6 +1496,9 @@ mod tests {
                 external_field: plan.external_field,
                 per_node_field: None,
                 magnetoelastic: None,
+            demag_solver_policy: None,
+            thermal_seed_config: None,
+            oersted_realization: None,
                 uniaxial_anisotropy: plan.material.uniaxial_anisotropy_ku1.map(|ku1| {
                     UniaxialAnisotropyConfig {
                         ku1,
@@ -1494,8 +1510,14 @@ mod tests {
                     CubicAnisotropyConfig {
                         kc1,
                         kc2: plan.material.cubic_anisotropy_kc2.unwrap_or(0.0),
-                        axis1: plan.material.cubic_anisotropy_axis1.unwrap_or([1.0, 0.0, 0.0]),
-                        axis2: plan.material.cubic_anisotropy_axis2.unwrap_or([0.0, 1.0, 0.0]),
+                        axis1: plan
+                            .material
+                            .cubic_anisotropy_axis1
+                            .unwrap_or([1.0, 0.0, 0.0]),
+                        axis2: plan
+                            .material
+                            .cubic_anisotropy_axis2
+                            .unwrap_or([0.0, 1.0, 0.0]),
                     }
                 }),
                 interfacial_dmi: plan.interfacial_dmi,
