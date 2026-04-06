@@ -23,6 +23,7 @@ import {
   SubSectionHeader,
   PropertyRow,
   StatusBadge,
+  InfoRow,
   ToggleRow,
   CompactInputGrid,
 } from "./primitives";
@@ -396,32 +397,28 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
 
   if (!geo || !sceneObject) {
     return (
-      <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Geometry</span>
-          <span className="font-mono text-xs text-foreground">{model.meshName ?? model.mesherSourceKind ?? "—"}</span>
+      <SidebarSection title="Geometry" defaultOpen={true}>
+        <div className="flex flex-col gap-0.5">
+          <InfoRow label="Geometry" value={model.meshName ?? model.mesherSourceKind ?? "—"} />
+          <InfoRow label="Source" value={model.meshSource ?? model.mesherSourceKind ?? "—"} />
+          <InfoRow
+            label="Extent"
+            value={
+              model.meshExtent
+                ? `${fmtSI(model.meshExtent[0], "m")} · ${fmtSI(model.meshExtent[1], "m")} · ${fmtSI(model.meshExtent[2], "m")}`
+                : "—"
+            }
+          />
+          <InfoRow
+            label="Bounds"
+            value={
+              model.meshBoundsMin && model.meshBoundsMax
+                ? `${fmtSI(model.meshBoundsMin[0], "m")} → ${fmtSI(model.meshBoundsMax[0], "m")}`
+                : "—"
+            }
+          />
         </div>
-        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Source</span>
-          <span className="font-mono text-xs text-foreground">{model.meshSource ?? model.mesherSourceKind ?? "—"}</span>
-        </div>
-        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Extent</span>
-          <span className="font-mono text-xs text-foreground">
-            {model.meshExtent
-              ? `${fmtSI(model.meshExtent[0], "m")} · ${fmtSI(model.meshExtent[1], "m")} · ${fmtSI(model.meshExtent[2], "m")}`
-              : "—"}
-          </span>
-        </div>
-        <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-          <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">Bounds</span>
-          <span className="font-mono text-xs text-foreground">
-            {model.meshBoundsMin && model.meshBoundsMax
-              ? `${fmtSI(model.meshBoundsMin[0], "m")} → ${fmtSI(model.meshBoundsMax[0], "m")}`
-              : "—"}
-          </span>
-        </div>
-      </div>
+      </SidebarSection>
     );
   }
 

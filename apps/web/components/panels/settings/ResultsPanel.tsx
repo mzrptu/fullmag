@@ -3,7 +3,7 @@
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
 import { fmtPreviewEveryN, fmtPreviewMaxPoints, type PreviewComponent } from "../../runs/control-room/shared";
 import { Button } from "../../ui/button";
-import { SidebarSection } from "./primitives";
+import { SidebarSection, InfoRow, ToggleRow } from "./primitives";
 import SelectField from "../../ui/SelectField";
 
 export default function ResultsPanel() {
@@ -11,15 +11,9 @@ export default function ResultsPanel() {
   return (
     <div className="flex flex-col pt-4 px-2">
       <SidebarSection title="Active Preview State" defaultOpen={true}>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Quantity</span>
-            <span className="font-mono text-xs text-foreground">{ctx.selectedQuantity}</span>
-          </div>
-          <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-            <span className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground">Component</span>
-            <span className="font-mono text-xs text-foreground">{ctx.requestedPreviewComponent}</span>
-          </div>
+        <div className="flex flex-col gap-0.5">
+          <InfoRow label="Quantity" value={ctx.selectedQuantity ?? "—"} />
+          <InfoRow label="Component" value={ctx.requestedPreviewComponent ?? "—"} />
         </div>
 
         <div className="mt-3 flex flex-wrap items-center justify-start gap-1.5">
@@ -79,16 +73,14 @@ export default function ResultsPanel() {
               tooltip="Limit the number of rendering points to improve browser frame rates during live playback."
             />
 
-            <label className="col-span-2 flex h-8 items-center justify-start gap-2 rounded-md border border-border/60 bg-background/50 px-2.5 text-xs font-semibold text-foreground transition-colors hover:bg-background/80">
-              <input
-                type="checkbox"
-                className="accent-primary"
+            <div className="col-span-2">
+              <ToggleRow
+                label="Auto-fit Camera Bounds"
                 checked={ctx.requestedPreviewAutoScale}
-                onChange={(e) => void ctx.updatePreview("/autoScaleEnabled", { autoScaleEnabled: e.target.checked })}
+                onChange={(next) => void ctx.updatePreview("/autoScaleEnabled", { autoScaleEnabled: next })}
                 disabled={ctx.previewBusy}
               />
-              <span className="mt-px uppercase tracking-widest text-[0.65rem] font-bold text-muted-foreground">Auto-fit Camera Bounds</span>
-            </label>
+            </div>
           </div>
         </SidebarSection>
       )}

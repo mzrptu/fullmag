@@ -2,31 +2,26 @@
 
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { ReactNode } from "react";
+import { useWorkspaceStore } from "@/lib/workspace/workspace-store";
+import { SidebarSection, InfoRow } from "../../panels/settings/primitives";
 
-function InspectorSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="flex flex-col">
-      <div className="px-3 pt-3 pb-1.5">
-        <span className="text-[0.64rem] font-semibold tracking-widest uppercase text-muted-foreground">{title}</span>
-      </div>
-      <div className="px-3 pb-3">{children}</div>
-    </div>
-  );
-}
-
-function PropRow({ label, value }: { label: string; value: string | ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-2 py-0.5">
-      <span className="text-[0.73rem] text-muted-foreground shrink-0">{label}</span>
-      <span className="text-[0.73rem] font-medium text-foreground text-right truncate">{value}</span>
-    </div>
-  );
+function displayLaunchName(
+  displayName: string | null | undefined,
+  path: string | null | undefined,
+  fallback: string,
+) {
+  if (displayName) return displayName;
+  if (path) {
+    const parts = path.split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] ?? path;
+  }
+  return fallback;
 }
 
 /** Right inspector for Build mode — shows selected object properties */
 export function BuildRightInspector() {
   const ctx = useControlRoom();
+  const launchIntent = useWorkspaceStore((state) => state.launchIntent);
   const selectedId = ctx.selectedObjectId ?? ctx.selectedSidebarNodeId;
 
   return (
@@ -34,18 +29,25 @@ export function BuildRightInspector() {
       <div className="px-3 py-2 border-b border-border/30 shrink-0">
         <span className="text-[0.72rem] font-semibold tracking-wide uppercase text-muted-foreground">Object Inspector</span>
       </div>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 px-2 py-2">
         {selectedId ? (
-          <div className="divide-y divide-border/20">
-            <InspectorSection title="Selection">
-              <PropRow label="ID" value={selectedId} />
-            </InspectorSection>
-            <InspectorSection title="Geometry">
-              <div className="text-[0.72rem] text-muted-foreground italic">
-                Select a geometry object to inspect its properties.
-              </div>
-            </InspectorSection>
-          </div>
+          <>
+            <SidebarSection title="Selection" defaultOpen={true}>
+              <InfoRow label="ID" value={selectedId} />
+            </SidebarSection>
+            <SidebarSection title="Workspace" defaultOpen={true}>
+              <InfoRow
+                label="Simulation"
+                value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, ctx.session?.problem_name ?? "Workspace")}
+              />
+              <InfoRow label="Backend" value={ctx.session?.requested_backend ?? "—"} />
+              <InfoRow label="Objects" value={String(ctx.modelBuilderGraph?.objects.items.length ?? 0)} />
+            </SidebarSection>
+            <SidebarSection title="Geometry" defaultOpen={true}>
+              <InfoRow label="View mode" value={ctx.effectiveViewMode} />
+              <InfoRow label="Mesh mode" value={ctx.isFemBackend ? "FEM workspace" : "FDM grid"} />
+            </SidebarSection>
+          </>
         ) : (
           <div className="flex flex-col items-center justify-center h-24 gap-1 text-center px-3">
             <span className="text-[0.73rem] text-muted-foreground">No object selected</span>
@@ -61,37 +63,46 @@ export function BuildRightInspector() {
 export function StudyRightInspector() {
   const ctx = useControlRoom();
   const stages = ctx.studyStages ?? [];
+  const launchIntent = useWorkspaceStore((state) => state.launchIntent);
 
   return (
     <div className="flex flex-col h-full overflow-hidden border-l border-border/30 bg-card/20">
       <div className="px-3 py-2 border-b border-border/30 shrink-0">
         <span className="text-[0.72rem] font-semibold tracking-wide uppercase text-muted-foreground">Study Inspector</span>
       </div>
-      <ScrollArea className="flex-1">
-        <div className="divide-y divide-border/20">
-          <InspectorSection title="Study stages">
-            {stages.length === 0 ? (
-              <div className="text-[0.72rem] text-muted-foreground italic">No stages declared.</div>
-            ) : (
-              <div className="flex flex-col gap-1.5">
-                {stages.map((stage, i) => (
-                  <div key={i} className="flex items-center gap-2 rounded-md bg-muted/20 px-2.5 py-1.5">
-                    <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted/40 text-[0.6rem] font-bold text-muted-foreground">
-                      {i + 1}
-                    </span>
-                    <span className="text-[0.75rem] font-medium truncate">{stage.kind}</span>
-                    {stage.integrator && (
-                      <span className="ml-auto shrink-0 text-[0.65rem] text-muted-foreground">{stage.integrator}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </InspectorSection>
-          <InspectorSection title="Solver">
-            <PropRow label="Torque tol." value={ctx.solverSettings?.torqueTolerance ?? "—"} />
-          </InspectorSection>
-        </div>
+      <ScrollArea className="flex-1 px-2 py-2">
+        <SidebarSection title="Study Stages" defaultOpen={true}>
+          {stages.length === 0 ? (
+            <div className="text-[0.72rem] text-muted-foreground italic">No stages declared.</div>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              {stages.map((stage, i) => (
+                <div key={i} className="flex items-center gap-2 rounded-md bg-muted/20 px-2.5 py-1.5">
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted/40 text-[0.6rem] font-bold text-muted-foreground">
+                    {i + 1}
+                  </span>
+                  <span className="text-[0.75rem] font-medium truncate">{stage.kind}</span>
+                  {stage.integrator && (
+                    <span className="ml-auto shrink-0 text-[0.65rem] text-muted-foreground">{stage.integrator}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </SidebarSection>
+        <SidebarSection title="Solver" defaultOpen={true}>
+          <InfoRow label="Torque tol." value={ctx.solverSettings?.torqueTolerance ?? "—"} />
+          <InfoRow label="Run until" value={ctx.runUntilInput || "—"} />
+          <InfoRow label="Status" value={ctx.workspaceStatus} />
+        </SidebarSection>
+        <SidebarSection title="Session" defaultOpen={true}>
+          <InfoRow
+            label="Simulation"
+            value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, ctx.session?.problem_name ?? "Workspace")}
+          />
+          <InfoRow label="Runtime" value={ctx.runtimeEngineLabel ?? "—"} />
+          <InfoRow label="Command" value={ctx.commandMessage ?? "idle"} />
+        </SidebarSection>
       </ScrollArea>
     </div>
   );
@@ -100,53 +111,31 @@ export function StudyRightInspector() {
 /** Right inspector for Analyze mode — display settings */
 export function AnalyzeRightInspector() {
   const ctx = useControlRoom();
+  const launchIntent = useWorkspaceStore((state) => state.launchIntent);
 
   return (
     <div className="flex flex-col h-full overflow-hidden border-l border-border/30 bg-card/20">
       <div className="px-3 py-2 border-b border-border/30 shrink-0">
         <span className="text-[0.72rem] font-semibold tracking-wide uppercase text-muted-foreground">Display Settings</span>
       </div>
-      <ScrollArea className="flex-1">
-        <div className="divide-y divide-border/20">
-          <InspectorSection title="Active quantity">
-            <PropRow label="Quantity" value={ctx.selectedQuantityLabel ?? "—"} />
-          </InspectorSection>
-          <InspectorSection title="Viewport">
-            <PropRow label="View mode" value={ctx.effectiveViewMode} />
-          </InspectorSection>
-          <InspectorSection title="Preview">
-            <PropRow label="Grid" value={`${ctx.previewGrid[0]}×${ctx.previewGrid[1]}×${ctx.previewGrid[2]}`} />
-          </InspectorSection>
-        </div>
-      </ScrollArea>
-    </div>
-  );
-}
-
-/** Right inspector for Runs mode — active run details */
-export function RunsRightInspector() {
-  const ctx = useControlRoom();
-  const run = ctx.run;
-
-  return (
-    <div className="flex flex-col h-full overflow-hidden border-l border-border/30 bg-card/20">
-      <div className="px-3 py-2 border-b border-border/30 shrink-0">
-        <span className="text-[0.72rem] font-semibold tracking-wide uppercase text-muted-foreground">Run Details</span>
-      </div>
-      <ScrollArea className="flex-1">
-        {run ? (
-          <div className="divide-y divide-border/20">
-            <InspectorSection title="Active run">
-              <PropRow label="Status" value={ctx.workspaceStatus} />
-              <PropRow label="Backend" value={ctx.session?.requested_backend ?? "—"} />
-              <PropRow label="Precision" value={ctx.session?.precision ?? "—"} />
-            </InspectorSection>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-24 gap-1 text-center px-3">
-            <span className="text-[0.73rem] text-muted-foreground">No active run</span>
-          </div>
-        )}
+      <ScrollArea className="flex-1 px-2 py-2">
+        <SidebarSection title="Active Quantity" defaultOpen={true}>
+          <InfoRow label="Quantity" value={ctx.selectedQuantityLabel ?? "—"} />
+        </SidebarSection>
+        <SidebarSection title="Viewport" defaultOpen={true}>
+          <InfoRow label="View mode" value={ctx.effectiveViewMode} />
+        </SidebarSection>
+        <SidebarSection title="Preview" defaultOpen={true}>
+          <InfoRow label="Grid" value={`${ctx.previewGrid[0]}×${ctx.previewGrid[1]}×${ctx.previewGrid[2]}`} />
+          <InfoRow label="Artifacts" value={String(ctx.artifacts.length)} />
+        </SidebarSection>
+        <SidebarSection title="Dataset" defaultOpen={true}>
+          <InfoRow
+            label="Simulation"
+            value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, ctx.session?.problem_name ?? "Workspace")}
+          />
+          <InfoRow label="Status" value={ctx.workspaceStatus} />
+        </SidebarSection>
       </ScrollArea>
     </div>
   );

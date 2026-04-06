@@ -4,6 +4,6 @@ import { useRouter } from 'next/navigation';
 
 export default function SimulationsRedirect() {
   const router = useRouter();
-  useEffect(() => { router.replace('/analyze'); }, [router]);
+  useEffect(() => { router.replace('/'); }, [router]);
   return null;
 }

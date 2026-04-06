@@ -617,6 +617,10 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
               : null,
         }))
       : [],
+    study_pipeline:
+      raw.study_pipeline && typeof raw.study_pipeline === "object"
+        ? (raw.study_pipeline as ScriptBuilderState["study_pipeline"])
+        : null,
     initial_state:
       raw.initial_state && typeof raw.initial_state === "object"
         ? {
@@ -764,6 +768,7 @@ function normalizeModelBuilderGraph(raw: any): ModelBuilderGraphV2 | null {
     mesh: raw.study?.shared_domain_mesh ?? raw.study?.mesh_defaults,
     universe: raw.universe?.value,
     stages: raw.study?.stages,
+    study_pipeline: raw.study?.study_pipeline ?? null,
     initial_state: raw.study?.initial_state,
     geometries: Array.isArray(raw.objects?.items)
       ? raw.objects.items
@@ -796,6 +801,7 @@ function emptyScriptBuilderState(): ScriptBuilderState {
     mesh: {},
     universe: null,
     stages: [],
+    study_pipeline: null,
     initial_state: null,
     geometries: [],
     current_modules: [],
@@ -823,6 +829,7 @@ function normalizeSceneMeshOverride(raw: any) {
     mesh: {},
     universe: null,
     stages: [],
+    study_pipeline: null,
     initial_state: null,
     geometries: [
       {
@@ -847,6 +854,7 @@ function normalizeSceneCurrentModules(raw: any) {
     mesh: {},
     universe: null,
     stages: [],
+    study_pipeline: null,
     initial_state: null,
     geometries: [],
     current_modules: Array.isArray(raw?.modules) ? raw.modules : [],
@@ -868,6 +876,7 @@ function normalizeSceneStudy(raw: any) {
     mesh: raw?.shared_domain_mesh ?? raw?.mesh_defaults ?? {},
     universe: null,
     stages: Array.isArray(raw?.stages) ? raw.stages : [],
+    study_pipeline: raw?.study_pipeline ?? null,
     initial_state: raw?.initial_state ?? null,
     geometries: [],
     current_modules: [],
@@ -901,6 +910,7 @@ function normalizeSceneStudy(raw: any) {
     shared_domain_mesh: normalized?.mesh ?? defaults.mesh,
     mesh_defaults: normalized?.mesh ?? defaults.mesh,
     stages: normalized?.stages ?? [],
+    study_pipeline: normalized?.study_pipeline ?? null,
     initial_state: normalized?.initial_state ?? null,
   };
 }

@@ -64,13 +64,13 @@ if not USE_SAVED_RELAXED_STATE:
         body.m = fm.load_magnetization(RELAXED_STATE_ZARR, format="zarr")
 
 # ── Eigenmode analysis ──────────────────────────────────────
-study.save("spectrum")
-study.save("mode", indices=[0, 1, 2])
-study.eigenmodes(
-    count=20,
-    target="lowest",
-    include_demag=True,
-    equilibrium_source="relax",
-)
+# study.save("spectrum")
+# study.save("mode", indices=[0, 1, 2])
+# study.eigenmodes(
+#     count=20,
+#     target="lowest",
+#     include_demag=True,
+#     equilibrium_source="relax",
+# )
 
-# study.run(1e-9)
+# # study.run(1e-9)

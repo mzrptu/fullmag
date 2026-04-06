@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect, useCallback } from "react";
+import React, { useMemo, useEffect, useCallback } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   FileText, Play, Pause, Square, Box, Columns2, Grid3X3,
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { WorkspaceMode } from "../runs/control-room/context-hooks";
+import { useWorkspaceStore } from "@/lib/workspace/workspace-store";
 
 /* ── Types ──────────────────────────────────────── */
 
@@ -47,7 +48,21 @@ interface RibbonGroup {
   actions: RibbonAction[];
 }
 
-type RibbonTab = "Home" | "Mesh" | "Study" | "Results" | "Builder";
+type RibbonTab =
+  | "Home"
+  | "Geometry"
+  | "Materials"
+  | "Physics"
+  | "Mesh"
+  | "StudyBuilder"
+  | "LiveView"
+  | "Runtime"
+  | "Charts"
+  | "Diagnostics"
+  | "Spectrum"
+  | "Modes"
+  | "Compare"
+  | "Export";
 
 interface RibbonBarProps {
   viewMode?: string;
@@ -103,18 +118,14 @@ interface RibbonBarProps {
 }
 
 /* ── Tab inference from tree node ── */
-function inferTab(nodeId: string | null | undefined): RibbonTab {
-  if (!nodeId) return "Home";
-  if (nodeId === "session" || nodeId === "script-builder") return "Builder";
-  if (nodeId === "universe-airbox" || nodeId.startsWith("universe-airbox") || nodeId === "universe-boundary") return "Mesh";
-  if (nodeId === "universe-mesh" || nodeId.startsWith("universe-mesh-")) return "Mesh";
-  if (nodeId.startsWith("mesh") || nodeId === "mesh") return "Mesh";
-  // Per-object mesh nodes (e.g. "geo-nanoflower-mesh") → Mesh tab
-  if (nodeId.startsWith("geo-") && nodeId.endsWith("-mesh")) return "Mesh";
-  if (nodeId.startsWith("study") || nodeId === "study") return "Study";
-  if (nodeId.startsWith("res-") || nodeId === "results" ||
-      nodeId.startsWith("phys-") || nodeId === "physics") return "Results";
-  return "Home";
+function tabsForMode(mode: WorkspaceMode | undefined): RibbonTab[] {
+  if (mode === "build") {
+    return ["Home", "Geometry", "Materials", "Physics", "Mesh", "StudyBuilder"];
+  }
+  if (mode === "study") {
+    return ["Home", "LiveView", "Runtime", "Charts", "Diagnostics"];
+  }
+  return ["Home", "Spectrum", "Modes", "Compare", "Export"];
 }
 
 /* ── Group builders per tab ── */
@@ -511,48 +522,57 @@ const RibbonActionTrigger = React.forwardRef<
 });
 RibbonActionTrigger.displayName = "RibbonActionTrigger";
 
-const TABS: RibbonTab[] = ["Home", "Mesh", "Study", "Results", "Builder"];
-
 /** Map workspace mode to its default ribbon tab (when no manual override). */
 function defaultTabForMode(mode: WorkspaceMode | undefined): RibbonTab {
   switch (mode) {
     case "build": return "Home";
-    case "study": return "Study";
-    case "runs": return "Results";
+    case "study": return "LiveView";
     case "analyze":
-    default: return "Results";
+    default: return "Spectrum";
   }
 }
 
 /* ── Component ──────────────────────────────────── */
 
 export default function RibbonBar(props: RibbonBarProps) {
-  const modeDefaultTab = defaultTabForMode(props.workspaceMode);
-  const inferredTab = inferTab(props.selectedNodeId);
-  // workspaceMode-driven default wins over tree-inferred tab, unless user has explicitly clicked a tab
-  const baseTab: RibbonTab = inferredTab !== "Home" ? inferredTab : modeDefaultTab;
-  const [manualTab, setManualTab] = useState<RibbonTab | null>(null);
+  const currentStage = useWorkspaceStore((s) => s.currentStage);
+  const setRibbonTab = useWorkspaceStore((s) => s.setRibbonTab);
+  const stageLayouts = useWorkspaceStore((s) => s.stageLayouts);
+  const workspaceStage = props.workspaceMode ?? currentStage;
+  const visibleTabs = useMemo(() => tabsForMode(workspaceStage), [workspaceStage]);
+  const defaultTab = defaultTabForMode(workspaceStage);
+  const storedTab = stageLayouts[workspaceStage]?.ribbonTab;
+  const activeTab = (storedTab && visibleTabs.includes(storedTab as RibbonTab)
+    ? (storedTab as RibbonTab)
+    : defaultTab);
 
-  // Reset manual override when workspace mode changes
   useEffect(() => {
-    setManualTab(null);
-  }, [props.workspaceMode]);
-
-  useEffect(() => {
-    if (manualTab && inferredTab !== manualTab) {
-      setManualTab(null);
+    if (!storedTab || !visibleTabs.includes(storedTab as RibbonTab)) {
+      setRibbonTab(workspaceStage, defaultTab);
     }
-  }, [inferredTab, manualTab]);
-
-  const activeTab = manualTab ?? baseTab;
+  }, [defaultTab, setRibbonTab, storedTab, visibleTabs, workspaceStage]);
 
   const groups = useMemo(() => {
     switch (activeTab) {
-      case "Mesh": return buildMeshGroups(props);
-      case "Study": return buildStudyGroups(props);
-      case "Results": return buildResultsGroups(props);
-      case "Builder": return buildBuilderGroups(props);
-      default: return buildHomeGroups(props);
+      case "Mesh":
+        return buildMeshGroups(props);
+      case "StudyBuilder":
+        return buildBuilderGroups(props);
+      case "LiveView":
+      case "Runtime":
+      case "Diagnostics":
+        return buildStudyGroups(props);
+      case "Charts":
+      case "Spectrum":
+      case "Modes":
+      case "Compare":
+      case "Export":
+        return buildResultsGroups(props);
+      case "Geometry":
+      case "Materials":
+      case "Physics":
+      default:
+        return buildHomeGroups(props);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -578,17 +598,18 @@ export default function RibbonBar(props: RibbonBarProps) {
       <div className="flex flex-col w-full bg-card/10 border-b border-border/15 backdrop-blur-xl shrink-0 z-30">
         {/* ── Tab row ── */}
         <div className="flex px-3 pt-2 gap-1 border-b border-border/10">
-          {TABS.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab}
               onClick={() => {
-                setManualTab(tab);
+                setRibbonTab(workspaceStage, tab);
                 if (props.onSelectModelNode) {
                   if (tab === "Home") props.onSelectModelNode("universe");
                   else if (tab === "Mesh") props.onSelectModelNode(props.hasSharedAirboxDomain ? "universe-airbox-mesh" : "universe-mesh");
-                  else if (tab === "Study") props.onSelectModelNode("study");
-                  else if (tab === "Results") props.onSelectModelNode("results");
-                  else if (tab === "Builder") props.onSelectModelNode("script-builder");
+                  else if (tab === "StudyBuilder") props.onSelectModelNode("study-root");
+                  else if (tab === "LiveView" || tab === "Runtime" || tab === "Charts" || tab === "Diagnostics") props.onSelectModelNode("study");
+                  else if (tab === "Spectrum" || tab === "Modes" || tab === "Compare" || tab === "Export") props.onSelectModelNode("results");
+                  else props.onSelectModelNode("objects");
                 }
               }}
               className={cn(

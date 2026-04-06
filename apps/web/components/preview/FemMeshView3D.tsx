@@ -620,7 +620,7 @@ function FemMeshView3DInner({
             : baseViewState.opacity,
       };
       const visibleForMode =
-        objectViewMode === "isolate" && hasSelection ? isSelected : viewState.visible;
+        objectViewMode === "isolate" && hasSelection ? isSelected : (viewState.visible || isSelected);
       if (!visibleForMode) {
         continue;
       }

@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import type { Route } from "next";
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
-import EngineConsole from "../panels/EngineConsole";
 import TopHeader from "../shell/TopHeader";
 import RibbonBar from "../shell/RibbonBar";
 import StatusBar from "../shell/StatusBar";
+import StageBar from "../workspace/shell/StageBar";
 import RunSidebar from "./control-room/RunSidebar";
 import { ViewportBar, ViewportCanvasArea } from "./control-room/ViewportPanels";
 import FullmagLogo from "../brand/FullmagLogo";
@@ -38,10 +40,22 @@ import {
   BuildRightInspector,
   StudyRightInspector,
   AnalyzeRightInspector,
-  RunsRightInspector,
 } from "../workspace/modes/WorkspaceModeInspectors";
+import type { WorkspaceMode } from "./control-room/context-hooks";
 import SettingsDialog from "../workspace/overlays/SettingsDialog";
 import PhysicsDocsDrawer from "../workspace/overlays/PhysicsDocsDrawer";
+import BottomUtilityDock from "../workspace/shell/BottomUtilityDock";
+import { useActiveStageLayout, useWorkspaceStore } from "@/lib/workspace/workspace-store";
+
+function launchDisplayName(intent: ReturnType<typeof useWorkspaceStore.getState>["launchIntent"]): string | null {
+  if (!intent) return null;
+  if (intent.displayName) return intent.displayName;
+  if (intent.entryPath) {
+    const parts = intent.entryPath.split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] ?? intent.entryPath;
+  }
+  return intent.resumeProjectId;
+}
 
 function nextAntennaName(
   prefix: string,
@@ -97,8 +111,58 @@ function makeRibbonAntenna(
 
 /* ── Inner shell (consumes context) ── */
 
-function ControlRoomShell() {
+export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMode?: WorkspaceMode }) {
   const ctx = useControlRoom();
+  const router = useRouter();
+  const pathname = usePathname();
+  const activeStageLayout = useActiveStageLayout();
+  const launchIntent = useWorkspaceStore((state) => state.launchIntent);
+  const rightInspectorOpen = useWorkspaceStore((state) => state.rightInspectorOpen);
+  const setRightInspectorOpen = useWorkspaceStore((state) => state.setRightInspectorOpen);
+  const [viewportSize, setViewportSize] = useState({ width: 1920, height: 1080 });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const update = () => {
+      setViewportSize({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  const compactHorizontalLayout = viewportSize.width < 1360;
+  const autoCollapseSidebar = viewportSize.width < 1080;
+  const compactVerticalLayout = viewportSize.height < 940;
+
+  useEffect(() => {
+    if (autoCollapseSidebar && !ctx.sidebarCollapsed) {
+      ctx.setSidebarCollapsed(true);
+    }
+  }, [autoCollapseSidebar, ctx]);
+
+  const viewportPanelDefaultSize = compactVerticalLayout ? "90%" : PANEL_SIZES.viewportDefault;
+  const consolePanelDefaultSize = compactVerticalLayout ? "10%" : PANEL_SIZES.consoleDefault;
+  const rightInspectorDefaultSize = compactHorizontalLayout ? "18%" : PANEL_SIZES.rightInspectorDefault;
+  const rightInspectorMinSize = compactHorizontalLayout ? "10%" : PANEL_SIZES.rightInspectorMin;
+  const rightInspectorMaxSize = compactHorizontalLayout ? "36%" : PANEL_SIZES.rightInspectorMax;
+  const layoutBucket = `${compactHorizontalLayout ? "compact" : "full"}-${compactVerticalLayout ? "short" : "tall"}`;
+  const workspaceTitle = launchDisplayName(launchIntent) ?? ctx.session?.problem_name ?? "Local Live Workspace";
+
+  useEffect(() => {
+    if (!initialWorkspaceMode) return;
+    if (ctx.workspaceMode !== initialWorkspaceMode) {
+      ctx.setWorkspaceMode(initialWorkspaceMode);
+    }
+  }, [ctx, initialWorkspaceMode]);
+
+  useEffect(() => {
+    setRightInspectorOpen(Boolean(activeStageLayout.rightDock));
+  }, [activeStageLayout.rightDock, setRightInspectorOpen]);
+
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
   const [meshBuildDialogOpen, setMeshBuildDialogOpen] = useState(false);
   const [meshBuildIntent, setMeshBuildIntent] = useState<ReturnType<typeof meshBuildIntentForNode> | null>(null);
@@ -453,10 +517,18 @@ function ControlRoomShell() {
     </>
   );
 
+  const handleStageChange = useCallback((stage: WorkspaceMode) => {
+    ctx.setWorkspaceMode(stage);
+    const targetPath = `/${stage}`;
+    if (pathname !== targetPath) {
+      router.push(targetPath as Route);
+    }
+  }, [ctx, pathname, router]);
+
   return (
     <div className="h-full flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
       <TopHeader
-        problemName={ctx.session?.problem_name ?? "Local Live Workspace"}
+        problemName={workspaceTitle}
         backend={ctx.session?.requested_backend ?? ""}
         runtimeEngine={ctx.runtimeEngineLabel ?? undefined}
         runtimeGpuLabel={ctx.runtimeEngineGpuLabel ?? undefined}
@@ -475,9 +547,8 @@ function ControlRoomShell() {
         viewMode={ctx.effectiveViewMode}
         onViewChange={ctx.handleViewModeChange}
         onSidebarToggle={() => ctx.setSidebarCollapsed((v) => !v)}
-        workspaceMode={ctx.workspaceMode}
-        onWorkspaceModeChange={ctx.setWorkspaceMode}
       />
+      <StageBar activeStage={ctx.workspaceMode} onChangeStage={handleStageChange} />
       <RibbonBar
         workspaceMode={ctx.workspaceMode}
         viewMode={ctx.effectiveViewMode}
@@ -561,13 +632,14 @@ function ControlRoomShell() {
           minSize={PANEL_SIZES.bodyMainMin}
         >
           <PanelGroup
+            key={layoutBucket}
             orientation="vertical"
             className="relative flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden"
             resizeTargetMinimumSize={{ coarse: 40, fine: 10 }}
           >
             <Panel
               id="workspace-viewport"
-              defaultSize={PANEL_SIZES.viewportDefault}
+              defaultSize={viewportPanelDefaultSize}
               minSize={PANEL_SIZES.viewportMin}
             >
                 <div className="flex flex-row h-full min-h-0 min-w-0 overflow-hidden bg-background flex-1 relative">
@@ -583,50 +655,51 @@ function ControlRoomShell() {
 
             <Panel
               id="workspace-console"
-              defaultSize={PANEL_SIZES.consoleDefault}
+              defaultSize={consolePanelDefaultSize}
               minSize={PANEL_SIZES.consoleMin}
               maxSize={PANEL_SIZES.consoleMax}
               collapsible
               collapsedSize="3%"
             >
-              <div className="flex flex-col h-full bg-card/35 isolate overflow-hidden relative z-40 border-t border-border/30">
-                <EngineConsole
-                  session={ctx.session ?? null}
-                  run={ctx.run ?? null}
-                  liveState={ctx.effectiveLiveState ?? null}
-                  scalarRows={ctx.scalarRows}
-                  engineLog={ctx.engineLog}
-                  artifacts={ctx.artifacts}
-                  connection={ctx.connection}
-                  error={ctx.error}
-                  presentationMode="current"
-                  convergenceThreshold={Number(ctx.solverSettings.torqueTolerance) || DEFAULT_CONVERGENCE_THRESHOLD}
-                  commandStatus={ctx.commandStatus}
-                  commandBusy={ctx.commandBusy}
-                  commandMessage={ctx.commandMessage}
-                  activity={ctx.activity}
-                  meshWorkspace={ctx.meshWorkspace}
-                />
-              </div>
+              <BottomUtilityDock
+                session={ctx.session ?? null}
+                run={ctx.run ?? null}
+                liveState={ctx.effectiveLiveState ?? null}
+                scalarRows={ctx.scalarRows}
+                engineLog={ctx.engineLog}
+                artifacts={ctx.artifacts}
+                connection={ctx.connection}
+                error={ctx.error}
+                convergenceThreshold={Number(ctx.solverSettings.torqueTolerance) || DEFAULT_CONVERGENCE_THRESHOLD}
+                commandStatus={ctx.commandStatus}
+                commandBusy={ctx.commandBusy}
+                commandMessage={ctx.commandMessage}
+                activity={ctx.activity}
+                meshWorkspace={ctx.meshWorkspace}
+                workspaceStatus={ctx.workspaceStatus}
+              />
             </Panel>
           </PanelGroup>
         </Panel>
 
         {/* ── Right inspector (mode-specific) ── */}
-        <PanelResizeHandle className="h-full w-2 bg-transparent cursor-ew-resize flex items-center justify-center transition-colors relative hover:bg-muted/50 active:bg-muted/50 after:content-[''] after:absolute after:top-1/2 after:left-1/2 after:-translate-x-1/2 after:-translate-y-1/2 after:w-[2px] after:h-9 after:rounded-full after:bg-border hover:after:bg-primary active:after:bg-primary z-50" />
-        <Panel
-          id="workspace-right-inspector"
-          defaultSize={18}
-          minSize={14}
-          maxSize={30}
-          collapsible
-          collapsedSize={0}
-        >
-          {ctx.workspaceMode === "build" && <BuildRightInspector />}
-          {ctx.workspaceMode === "study" && <StudyRightInspector />}
-          {ctx.workspaceMode === "analyze" && <AnalyzeRightInspector />}
-          {ctx.workspaceMode === "runs" && <RunsRightInspector />}
-        </Panel>
+        {rightInspectorOpen ? (
+          <>
+            <PanelResizeHandle className="h-full w-2 bg-transparent cursor-ew-resize flex items-center justify-center transition-colors relative hover:bg-muted/50 active:bg-muted/50 after:content-[''] after:absolute after:top-1/2 after:left-1/2 after:-translate-x-1/2 after:-translate-y-1/2 after:w-[2px] after:h-9 after:rounded-full after:bg-border hover:after:bg-primary active:after:bg-primary z-50" />
+            <Panel
+              id="workspace-right-inspector"
+              defaultSize={rightInspectorDefaultSize}
+              minSize={rightInspectorMinSize}
+              maxSize={rightInspectorMaxSize}
+              collapsible
+              collapsedSize={0}
+            >
+              {ctx.workspaceMode === "build" && <BuildRightInspector />}
+              {ctx.workspaceMode === "study" && <StudyRightInspector />}
+              {ctx.workspaceMode === "analyze" && <AnalyzeRightInspector />}
+            </Panel>
+          </>
+        ) : null}
       </PanelGroup>
 
       <StatusBar
@@ -700,10 +773,10 @@ function ControlRoomShell() {
 
 /* ── Public export ── */
 
-export default function RunControlRoom() {
+export default function RunControlRoom({ initialWorkspaceMode }: { initialWorkspaceMode?: WorkspaceMode }) {
   return (
     <ControlRoomProvider>
-      <ControlRoomShell />
+      <ControlRoomShell initialWorkspaceMode={initialWorkspaceMode} />
     </ControlRoomProvider>
   );
 }

@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import FullmagLogo from "../brand/FullmagLogo";
-import type { WorkspaceMode } from "../runs/control-room/context-hooks";
 import { useWorkspaceStore } from "@/lib/workspace/workspace-store";
 
 /* ── Menu definitions ───────────────────────────── */
@@ -51,8 +50,6 @@ export interface TopHeaderProps {
   onViewChange?: (mode: string) => void;
   onSidebarToggle?: () => void;
   onSimAction?: (action: string) => void;
-  workspaceMode?: WorkspaceMode;
-  onWorkspaceModeChange?: (mode: WorkspaceMode) => void;
 }
 
 interface MenuCallbacks {
@@ -130,13 +127,6 @@ function buildMenus(props: TopHeaderProps, cb: MenuCallbacks): MenuDef[] {
 
 /* ── Component ──────────────────────────────────── */
 
-const WORKSPACE_MODES: { id: WorkspaceMode; label: string }[] = [
-  { id: "build", label: "Build" },
-  { id: "study", label: "Study" },
-  { id: "analyze", label: "Analyze" },
-  { id: "runs", label: "Runs" },
-];
-
 export default function TopHeader(props: TopHeaderProps) {
   const setSettingsOpen = useWorkspaceStore((s) => s.setSettingsOpen);
   const setPhysicsDocsOpen = useWorkspaceStore((s) => s.setPhysicsDocsOpen);
@@ -157,8 +147,6 @@ export default function TopHeader(props: TopHeaderProps) {
 
   const controlsTitle = props.commandMessage
     ?? (props.interactiveEnabled ? "Interactive simulation controls" : "Interactive controls are unavailable for this session");
-
-  const activeMode = props.workspaceMode ?? "analyze";
 
   return (
     <div className="flex flex-col w-full shrink-0 border-b border-white/5 bg-background/70 backdrop-blur-xl z-[60] relative">
@@ -262,26 +250,6 @@ export default function TopHeader(props: TopHeaderProps) {
       </div>
       </div>
 
-      {/* ── Row 2: workspace mode tabs ── */}
-      {props.onWorkspaceModeChange && (
-        <div className="flex items-center px-3 gap-0 border-t border-white/[0.04]" style={{ height: 28 }}>
-          {WORKSPACE_MODES.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              onClick={() => props.onWorkspaceModeChange!(m.id)}
-              className={cn(
-                "px-4 h-full text-[0.72rem] font-semibold tracking-wide cursor-pointer select-none transition-colors border-b-2",
-                m.id === activeMode
-                  ? "border-[var(--brand-accent,#6378ff)] text-[var(--brand-accent,#6378ff)] bg-[var(--brand-accent,#6378ff)]/8"
-                  : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/30",
-              )}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import type {
   ScriptBuilderGeometryEntry,
   ScriptBuilderInitialState,
   ScriptBuilderMeshState,
+  StudyPipelineDocumentState,
   ScriptBuilderSolverState,
   ScriptBuilderStageState,
   ScriptBuilderState,
@@ -100,7 +101,7 @@ export function createModelBuilderGraphV2(
     study: {
       id: "study",
       kind: "study",
-      label: "Study",
+      label: "Simulation",
       backend: builder?.backend ?? null,
       demag_realization: builder?.demag_realization ?? null,
       solver: builder?.solver ?? EMPTY_SOLVER,
@@ -108,6 +109,7 @@ export function createModelBuilderGraphV2(
       shared_domain_mesh: builder?.mesh ?? EMPTY_MESH,
       mesh_defaults: builder?.mesh ?? EMPTY_MESH,
       stages: builder?.stages ?? [],
+      study_pipeline: builder?.study_pipeline ?? null,
       initial_state: builder?.initial_state ?? null,
     },
     universe: {
@@ -165,6 +167,7 @@ export function serializeModelBuilderGraphV2(graph: ModelBuilderGraphV2): Omit<
     universe: graph.universe.value,
     domain_frame: null,
     stages: graph.study.stages,
+    study_pipeline: graph.study.study_pipeline,
     geometries: graph.objects.items.map((objectNode) => objectNode.geometry),
     current_modules: graph.current_modules.modules,
     excitation_analysis: graph.current_modules.excitation_analysis,
@@ -175,6 +178,12 @@ export function selectModelBuilderStages(
   graph: ModelBuilderGraphV2 | null | undefined,
 ): ScriptBuilderStageState[] {
   return graph?.study.stages ?? [];
+}
+
+export function selectModelBuilderStudyPipeline(
+  graph: ModelBuilderGraphV2 | null | undefined,
+): StudyPipelineDocumentState | null {
+  return graph?.study.study_pipeline ?? null;
 }
 
 export function selectModelBuilderUniverse(
@@ -225,6 +234,22 @@ export function setModelBuilderStages(
     study: {
       ...ensured.study,
       stages: nextStages,
+    },
+  };
+}
+
+export function setModelBuilderStudyPipeline(
+  graph: ModelBuilderGraphV2 | null | undefined,
+  action: SetStateAction<StudyPipelineDocumentState | null>,
+  defaults?: ModelBuilderGraphDefaults,
+): ModelBuilderGraphV2 {
+  const ensured = ensureModelBuilderGraphV2(graph, defaults);
+  const nextStudyPipeline = applyStateAction(ensured.study.study_pipeline, action);
+  return {
+    ...ensured,
+    study: {
+      ...ensured.study,
+      study_pipeline: nextStudyPipeline,
     },
   };
 }

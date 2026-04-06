@@ -67,7 +67,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Prevent flash of wrong theme
   if (!mounted) {
     return (
-      <div data-theme="dark" suppressHydrationWarning>
+      <div data-theme="dark" className="h-full" suppressHydrationWarning>
         {children}
       </div>
     );

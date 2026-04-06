@@ -66,21 +66,24 @@ export interface MeshFaceDetail {
 
 export const FEM_SLICE_COUNT = 25;
 export const PANEL_SIZES = {
-  bodyMainDefault: "78%",
-  bodyMainMin: "34%",
-  viewportDefault: "72%",
-  viewportMin: "24%",
-  consoleDefault: "28%",
-  consoleMin: "10%",
-  consoleMax: "72%",
+  bodyMainDefault: "72%",
+  bodyMainMin: "20%",
+  viewportDefault: "84%",
+  viewportMin: "30%",
+  consoleDefault: "12%",
+  consoleMin: "4%",
+  consoleMax: "32%",
+  rightInspectorDefault: "24%",
+  rightInspectorMin: "14%",
+  rightInspectorMax: "46%",
   femDockDefault: "24%",
   femDockMin: "16%",
   femDockMax: "50%",
   femViewportDefault: "76%",
   femViewportMin: "26%",
-  sidebarDefault: "35%",
-  sidebarMin: "20%",
-  sidebarMax: "50%",
+  sidebarDefault: "24%",
+  sidebarMin: "14%",
+  sidebarMax: "38%",
 } as const;
 
 export const PREVIEW_EVERY_N_DEFAULT = 10;

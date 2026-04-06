@@ -25,6 +25,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { TreeNodeData } from "../../panels/ModelTree";
+import { useActiveStageLayout, useWorkspaceStore } from "@/lib/workspace/workspace-store";
 
 type TreeFilterScope = "all" | "objects" | "mesh" | "physics" | "results";
 
@@ -91,6 +92,8 @@ export default function RunSidebar() {
   const cmd = useCommand();
   const tp = useTransport();
   const vp = useViewport();
+  const activeStageLayout = useActiveStageLayout();
+  const launchIntent = useWorkspaceStore((state) => state.launchIntent);
   const treePanelRef = usePanelRef();
   const inspectorPanelRef = usePanelRef();
   const [treeOpen, setTreeOpen] = useState(true);
@@ -145,7 +148,7 @@ export default function RunSidebar() {
       buildFullmagModelTree({
         graph: model.modelBuilderGraph,
         sceneDocument: model.sceneDocument,
-        studyLabel: "Study",
+        studyLabel: launchIntent?.displayName ?? model.modelBuilderGraph?.study.label ?? "Simulation",
         backend: cmd.isFemBackend ? "FEM" : "FDM",
         universeMode: runtimeDeclaredUniverse?.mode ?? null,
         universeDeclaredSize: runtimeDeclaredUniverse?.size ?? null,
@@ -216,6 +219,9 @@ export default function RunSidebar() {
       return "universe-mesh";
     }
     if (vp.previewControlsActive) return "res-fields";
+    if (activeStageLayout.leftDock === "results-tree") return "results";
+    if (activeStageLayout.leftDock === "study-tree") return "study";
+    if (activeStageLayout.leftDock === "model") return "study-root";
     if (cmd.interactiveControlsEnabled) return "study-solver";
     const firstObjectId =
       model.sceneDocument?.objects[0]?.name ??
@@ -223,7 +229,7 @@ export default function RunSidebar() {
       model.modelBuilderGraph?.objects.items[0]?.id;
     if (firstObjectId) return `obj-${firstObjectId}`;
     return "objects";
-  }, [vp.effectiveViewMode, model.effectiveFemMesh?.domain_mesh_mode, model.femDockTab, cmd.interactiveControlsEnabled,
+  }, [activeStageLayout.leftDock, vp.effectiveViewMode, model.effectiveFemMesh?.domain_mesh_mode, model.femDockTab, cmd.interactiveControlsEnabled,
       cmd.isFemBackend, model.modelBuilderGraph, model.sceneDocument, vp.previewControlsActive]);
 
   const activeNodeId = model.selectedSidebarNodeId ?? fallbackNodeId;
@@ -268,6 +274,7 @@ export default function RunSidebar() {
     const objectId = resolveSelectedObjectId(id, model.sceneDocument ?? model.modelBuilderGraph);
     model.setSelectedSidebarNodeId(id);
     model.setSelectedObjectId(objectId);
+    model.setObjectViewMode("context");
     if (id === "universe-airbox" || id === "universe-airbox-mesh") {
       const airPartId = model.airPart?.id ?? null;
       model.setSelectedEntityId(airPartId);

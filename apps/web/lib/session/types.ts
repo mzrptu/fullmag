@@ -435,6 +435,46 @@ export interface ScriptBuilderStageState {
   eigen_spin_wave_bc_config: Record<string, unknown> | null;
 }
 
+export interface StudyPipelinePrimitiveNodeState {
+  id: string;
+  label: string;
+  enabled: boolean;
+  node_kind: "primitive";
+  stage_kind: string;
+  payload: Record<string, unknown>;
+  notes?: string | null;
+}
+
+export interface StudyPipelineMacroNodeState {
+  id: string;
+  label: string;
+  enabled: boolean;
+  node_kind: "macro";
+  macro_kind: string;
+  config: Record<string, unknown>;
+  notes?: string | null;
+}
+
+export interface StudyPipelineGroupNodeState {
+  id: string;
+  label: string;
+  enabled: boolean;
+  node_kind: "group";
+  collapsed: boolean;
+  children: StudyPipelineNodeState[];
+  notes?: string | null;
+}
+
+export type StudyPipelineNodeState =
+  | StudyPipelinePrimitiveNodeState
+  | StudyPipelineMacroNodeState
+  | StudyPipelineGroupNodeState;
+
+export interface StudyPipelineDocumentState {
+  version: "study_pipeline.v1";
+  nodes: StudyPipelineNodeState[];
+}
+
 export interface ScriptBuilderInitialState {
   magnet_name: string | null;
   source_path: string;
@@ -549,6 +589,7 @@ export interface ScriptBuilderState {
   universe: ScriptBuilderUniverseState | null;
   domain_frame: DomainFrameState | null;
   stages: ScriptBuilderStageState[];
+  study_pipeline: StudyPipelineDocumentState | null;
   initial_state: ScriptBuilderInitialState | null;
   geometries: ScriptBuilderGeometryEntry[];
   current_modules: ScriptBuilderCurrentModuleEntry[];
@@ -583,6 +624,7 @@ export interface ModelBuilderGraphStudyNode {
   shared_domain_mesh: ScriptBuilderMeshState;
   mesh_defaults: ScriptBuilderMeshState;
   stages: ScriptBuilderStageState[];
+  study_pipeline: StudyPipelineDocumentState | null;
   initial_state: ScriptBuilderInitialState | null;
 }
 
@@ -721,6 +763,7 @@ export interface SceneStudyState {
   shared_domain_mesh: ScriptBuilderMeshState;
   mesh_defaults: ScriptBuilderMeshState;
   stages: ScriptBuilderStageState[];
+  study_pipeline: StudyPipelineDocumentState | null;
   initial_state: ScriptBuilderInitialState | null;
 }
 

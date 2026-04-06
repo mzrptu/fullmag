@@ -43,6 +43,7 @@ import type {
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
   ScriptBuilderUniverseState,
+  StudyPipelineDocumentState,
 } from "../../../lib/session/types";
 import type { SolverSettingsState } from "../../panels/SolverSettingsPanel";
 import type { MeshOptionsState, MeshQualityData } from "../../panels/MeshSettingsPanel";
@@ -104,7 +105,7 @@ export interface TransportContextValue {
 }
 
 /* ── Viewport: user-driven UI state ── */
-export type WorkspaceMode = "build" | "study" | "analyze" | "runs";
+export type WorkspaceMode = "build" | "study" | "analyze";
 
 export interface ViewportContextValue {
   workspaceMode: WorkspaceMode;
@@ -238,6 +239,7 @@ export interface ModelContextValue {
   solverPlan: SolverPlanSummary | null;
   solverSettings: SolverSettingsState;
   studyStages: ScriptBuilderStageState[];
+  studyPipeline: StudyPipelineDocumentState | null;
   scriptBuilderDemagRealization: string | null;
   scriptBuilderUniverse: ScriptBuilderUniverseState | null;
   scriptBuilderGeometries: ScriptBuilderGeometryEntry[];
@@ -309,6 +311,7 @@ export interface ModelContextValue {
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
   setSceneDocument: React.Dispatch<React.SetStateAction<SceneDocument | null>>;
   setStudyStages: React.Dispatch<React.SetStateAction<ScriptBuilderStageState[]>>;
+  setStudyPipeline: React.Dispatch<React.SetStateAction<StudyPipelineDocumentState | null>>;
   setScriptBuilderDemagRealization: React.Dispatch<React.SetStateAction<string | null>>;
   setScriptBuilderUniverse: React.Dispatch<React.SetStateAction<ScriptBuilderUniverseState | null>>;
   setScriptBuilderGeometries: React.Dispatch<React.SetStateAction<ScriptBuilderGeometryEntry[]>>;

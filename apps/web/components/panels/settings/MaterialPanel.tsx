@@ -17,7 +17,7 @@ import type {
   SceneMaterialAsset,
 } from "../../../lib/session/types";
 import { findSceneObjectByNodeId } from "./objectSelection";
-import { SidebarSection } from "./primitives";
+import { SidebarSection, InfoRow, StatusBadge } from "./primitives";
 
 function fallbackMaterial(name: string): SceneMaterialAsset {
   return {
@@ -205,27 +205,18 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
       return <div className="font-mono text-xs text-foreground">Material metadata not available yet.</div>;
     }
     return (
-      <>
-        <div className="grid grid-cols-3 gap-3">
-          <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">M_sat</span>
-            <span className="font-mono text-xs text-foreground">{model.material.msat != null ? fmtSI(model.material.msat, "A/m") : "—"}</span>
-          </div>
-          <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">A_ex</span>
-            <span className="font-mono text-xs text-foreground">{model.material.aex != null ? fmtSI(model.material.aex, "J/m") : "—"}</span>
-          </div>
-          <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-card/30 p-2.5">
-            <span className="text-[0.6rem] font-medium uppercase tracking-wider text-muted-foreground">α</span>
-            <span className="font-mono text-xs text-foreground">{model.material.alpha?.toPrecision(3) ?? "—"}</span>
-          </div>
+      <SidebarSection title="Material" defaultOpen={true}>
+        <div className="flex flex-col gap-0.5">
+          <InfoRow label="M_sat" value={model.material.msat != null ? fmtSI(model.material.msat, "A/m") : "—"} />
+          <InfoRow label="A_ex" value={model.material.aex != null ? fmtSI(model.material.aex, "J/m") : "—"} />
+          <InfoRow label="α" value={model.material.alpha?.toPrecision(3) ?? "—"} />
         </div>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {model.material.exchangeEnabled && <span className="inline-flex w-fit rounded-md border border-border/30 bg-card/20 px-1.5 py-0.5 text-[0.55rem] font-medium uppercase tracking-wider text-muted-foreground">Exchange</span>}
-          {model.material.demagEnabled && <span className="inline-flex w-fit rounded-md border border-border/30 bg-card/20 px-1.5 py-0.5 text-[0.55rem] font-medium uppercase tracking-wider text-muted-foreground">Demag</span>}
-          {model.material.zeemanField?.some((v) => v !== 0) && <span className="inline-flex w-fit rounded-md border border-border/30 bg-card/20 px-1.5 py-0.5 text-[0.55rem] font-medium uppercase tracking-wider text-muted-foreground">Zeeman</span>}
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {model.material.exchangeEnabled && <StatusBadge label="Exchange" tone="info" />}
+          {model.material.demagEnabled && <StatusBadge label="Demag" tone="info" />}
+          {model.material.zeemanField?.some((v) => v !== 0) && <StatusBadge label="Zeeman" tone="accent" />}
         </div>
-      </>
+      </SidebarSection>
     );
   }
 

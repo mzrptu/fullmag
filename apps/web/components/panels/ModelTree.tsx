@@ -9,6 +9,8 @@ import type {
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
   ScriptBuilderMagnetizationEntry,
+  ScriptBuilderStageState,
+  StudyPipelineNodeState,
 } from "@/lib/session/types";
 import { buildScriptBuilderFromSceneDocument } from "@/lib/session/sceneDocument";
 
@@ -28,6 +30,74 @@ export interface TreeNodeData {
   domain?: NodeDomain;
   children?: TreeNodeData[];
   onClick?: () => void;
+}
+
+function humanizeStageKind(kind: string | null | undefined): string {
+  if (!kind) return "Stage";
+  return kind
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function summarizeStage(stage: ScriptBuilderStageState): string {
+  if (stage.kind === "relax" || stage.kind.includes("relax")) {
+    return [
+      stage.relax_algorithm ? humanizeStageKind(stage.relax_algorithm) : null,
+      stage.max_steps ? `${stage.max_steps} steps` : null,
+      stage.torque_tolerance ? `tol ${stage.torque_tolerance}` : null,
+    ].filter(Boolean).join(" · ");
+  }
+  if (stage.kind === "run" || stage.kind.includes("run")) {
+    return stage.until_seconds ? `until ${stage.until_seconds} s` : "time evolution";
+  }
+  if (stage.kind === "eigenmodes" || stage.kind.includes("eigen")) {
+    return [
+      stage.eigen_count ? `${stage.eigen_count} modes` : null,
+      stage.eigen_target ? humanizeStageKind(stage.eigen_target) : null,
+    ].filter(Boolean).join(" · ");
+  }
+  return stage.entrypoint_kind ? humanizeStageKind(stage.entrypoint_kind) : "configured";
+}
+
+function buildStudyPipelineTreeNodes(
+  nodes: StudyPipelineNodeState[],
+): TreeNodeData[] {
+  return nodes.map((node, index) => {
+    if (node.node_kind === "group") {
+      return {
+        id: `study-pipeline-${node.id}`,
+        label: node.label || `Group ${index + 1}`,
+        icon: "🧩",
+        badge: `${node.children.length} nodes`,
+        status: node.enabled ? "ready" : "pending",
+        defaultOpen: !node.collapsed,
+        children: buildStudyPipelineTreeNodes(node.children),
+      };
+    }
+    if (node.node_kind === "macro") {
+      return {
+        id: `study-pipeline-${node.id}`,
+        label: node.label || humanizeStageKind(node.macro_kind),
+        icon: "⚗",
+        badge: humanizeStageKind(node.macro_kind),
+        status: node.enabled ? "ready" : "pending",
+      };
+    }
+    const importedKind =
+      typeof node.payload.kind === "string" && node.payload.kind.length > 0
+        ? node.payload.kind
+        : node.stage_kind;
+    return {
+      id: `study-pipeline-${node.id}`,
+      label: node.label || `Stage ${index + 1}`,
+      icon: "◌",
+      badge:
+        importedKind !== node.stage_kind
+          ? `${humanizeStageKind(node.stage_kind)} <- ${humanizeStageKind(importedKind)}`
+          : humanizeStageKind(node.stage_kind),
+      status: node.enabled ? "ready" : "pending",
+    };
+  });
 }
 
 interface ModelTreeProps {
@@ -442,6 +512,8 @@ export function buildFullmagModelTree(opts: {
   const excitationAnalysis =
     graph?.current_modules.excitation_analysis ?? opts.excitationAnalysis ?? null;
   const initialState = graph?.study.initial_state ?? null;
+  const studyStages = graph?.study.stages ?? [];
+  const studyPipeline = graph?.study.study_pipeline ?? null;
   const showUniverse = Boolean(
     graphUniverse ||
       opts.showUniverse ||
@@ -590,6 +662,18 @@ export function buildFullmagModelTree(opts: {
     });
   }
 
+  const studyStageChildren: TreeNodeData[] = studyStages.map((stage, index) => ({
+    id: `study-stage-${index}`,
+    label: `Stage ${index + 1} · ${humanizeStageKind(stage.kind)}`,
+    icon: "▶",
+    badge: summarizeStage(stage) || humanizeStageKind(stage.entrypoint_kind),
+    status: "ready",
+  }));
+
+  const studyPipelineChildren = studyPipeline
+    ? buildStudyPipelineTreeNodes(studyPipeline.nodes)
+    : [];
+
   studyChildren.push(
     {
       id: "physics",
@@ -604,11 +688,60 @@ export function buildFullmagModelTree(opts: {
       id: "study",
       label: "Study",
       icon: "▶",
-      badge: opts.backend ?? "—",
+      badge: studyStages.length > 0 ? `${studyStages.length} stages` : (opts.backend ?? "—"),
       status: opts.solverStatus ?? "pending",
-      defaultOpen: false,
+      defaultOpen: true,
       onClick: opts.onSolverClick,
       children: [
+        {
+          id: "study-setup",
+          label: "Study Setup",
+          icon: "🧭",
+          badge: studyPipeline ? "pipeline" : "flat stages",
+          status: "ready",
+          defaultOpen: true,
+          children: [
+            {
+              id: "study-builder",
+              label: "Stage Builder",
+              icon: "🧩",
+              badge: studyPipeline ? `${studyPipeline.nodes.length} nodes` : "import from script",
+              status: "ready",
+            },
+            {
+              id: "study-stage-sequence",
+              label: "Stage Sequence",
+              icon: "☰",
+              badge: `${studyStages.length}`,
+              status: studyStages.length > 0 ? "ready" : "pending",
+              defaultOpen: true,
+              children:
+                studyStageChildren.length > 0
+                  ? studyStageChildren
+                  : [
+                      {
+                        id: "study-stage-empty",
+                        label: "No stages declared",
+                        icon: "◌",
+                        status: "pending",
+                      },
+                    ],
+            },
+            ...(studyPipelineChildren.length > 0
+              ? [
+                  {
+                    id: "study-pipeline",
+                    label: "Pipeline Nodes",
+                    icon: "🧱",
+                    badge: `${studyPipelineChildren.length}`,
+                    status: "ready" as const,
+                    defaultOpen: false,
+                    children: studyPipelineChildren,
+                  },
+                ]
+              : []),
+          ],
+        },
         { id: "study-solver", label: opts.solverIntegrator ? `Integrator: ${opts.solverIntegrator.toUpperCase()}` : "Solver Configuration", icon: "🔧" },
         { id: "study-time", label: "Time Stepping", icon: "⏱" },
         { id: "study-convergence", label: "Convergence", icon: "📉", status: opts.convergenceStatus },
@@ -668,7 +801,7 @@ export function buildFullmagModelTree(opts: {
   return [
     {
       id: "study-root",
-      label: opts.studyLabel ?? "Study",
+      label: opts.studyLabel ?? "Simulation",
       icon: "◈",
       badge: opts.backend ?? undefined,
       status: "ready",

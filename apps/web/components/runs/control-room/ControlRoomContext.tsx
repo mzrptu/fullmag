@@ -44,12 +44,14 @@ import type {
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
   ScriptBuilderUniverseState,
+  StudyPipelineDocumentState,
 } from "../../../lib/session/types";
 import {
   buildModelBuilderGraphV2,
   selectModelBuilderCurrentModules,
   selectModelBuilderExcitationAnalysis,
   selectModelBuilderGeometries,
+  selectModelBuilderStudyPipeline,
   selectModelBuilderStages,
   selectModelBuilderUniverse,
   serializeModelBuilderGraphV2,
@@ -59,6 +61,7 @@ import {
   setModelBuilderGeometries as applyModelBuilderGeometries,
   setModelBuilderMeshDefaults as applyModelBuilderMeshDefaults,
   setModelBuilderSolver as applyModelBuilderSolver,
+  setModelBuilderStudyPipeline as applyModelBuilderStudyPipeline,
   setModelBuilderStages as applyModelBuilderStages,
   setModelBuilderUniverse as applyModelBuilderUniverse,
 } from "../../../lib/session/modelBuilderGraph";
@@ -421,6 +424,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     () => selectModelBuilderStages(modelBuilderGraph),
     [modelBuilderGraph],
   );
+  const studyPipeline = useMemo(
+    () => selectModelBuilderStudyPipeline(modelBuilderGraph),
+    [modelBuilderGraph],
+  );
   const scriptBuilderDemagRealization = useMemo(
     () => modelBuilderGraph?.study.demag_realization ?? null,
     [modelBuilderGraph],
@@ -664,6 +671,16 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     (update) => {
       setModelBuilderGraph((currentGraph) =>
         applyModelBuilderStages(currentGraph, update, modelBuilderDefaults),
+      );
+    },
+    [modelBuilderDefaults],
+  );
+  const setStudyPipeline = useCallback<
+    Dispatch<SetStateAction<StudyPipelineDocumentState | null>>
+  >(
+    (update) => {
+      setModelBuilderGraph((currentGraph) =>
+        applyModelBuilderStudyPipeline(currentGraph, update, modelBuilderDefaults),
       );
     },
     [modelBuilderDefaults],
@@ -2914,7 +2931,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const modelValue = useMemo<ModelContextValue>(() => ({
     sceneDocument: localBuilderDraft,
     modelBuilderGraph,
-    material, solverPlan, solverSettings, studyStages, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
+    material, solverPlan, solverSettings, studyStages, studyPipeline, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
@@ -2954,11 +2971,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     airPart,
     interfaceParts,
     analyzeSelection,
-    setSolverSettings, setSceneDocument, setStudyStages, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
+    setSolverSettings, setSceneDocument, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
     setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setActiveTransformScope, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, setAnalyzeSelection, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
   }), [
-    localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
+    localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, studyPipeline, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
@@ -2969,7 +2986,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
     selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart, magneticParts, airPart, interfaceParts, analyzeSelection, requestFocusObject,
-    setSceneDocument, setStudyStages, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
+    setSceneDocument, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze,
   ]);
 

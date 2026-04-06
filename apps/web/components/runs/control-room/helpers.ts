@@ -291,6 +291,7 @@ export function buildLegacyScriptBuilderUpdatePayload(
     universe,
     domain_frame: null,
     stages,
+    study_pipeline: null,
     initial_state: null,
     geometries,
     current_modules: currentModules,

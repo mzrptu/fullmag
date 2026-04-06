@@ -157,6 +157,7 @@ export function buildSceneDocumentFromScriptBuilder(
       shared_domain_mesh: builder.mesh,
       mesh_defaults: builder.mesh,
       stages: builder.stages,
+      study_pipeline: builder.study_pipeline ?? null,
       initial_state: builder.initial_state,
     },
     outputs: { items: [] },
@@ -222,6 +223,7 @@ export function buildScriptBuilderFromSceneDocument(
     universe: scene.study.universe_mesh ?? scene.universe,
     domain_frame: null,
     stages: scene.study.stages,
+    study_pipeline: scene.study.study_pipeline ?? null,
     initial_state: scene.study.initial_state,
     geometries: scene.objects.map((object): ScriptBuilderGeometryEntry => {
       const material =
