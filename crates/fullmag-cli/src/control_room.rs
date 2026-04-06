@@ -17,6 +17,11 @@ pub(crate) const LOOPBACK_V4_OCTETS: [u8; 4] = [127, 0, 0, 1];
 
 static RESOLVED_API_PORT: OnceLock<u16> = OnceLock::new();
 
+#[cfg(windows)]
+const EXE_SUFFIX: &str = ".exe";
+#[cfg(not(windows))]
+const EXE_SUFFIX: &str = "";
+
 pub(crate) fn api_port() -> u16 {
     *RESOLVED_API_PORT.get().expect("API port not yet resolved")
 }
@@ -96,7 +101,13 @@ pub(crate) struct ControlPlaneReady {
 
 fn browser_control_room_assets(root: &Path, dev_mode: bool) -> (PathBuf, PathBuf, PathBuf, bool) {
     let web_dir = root.join("apps").join("web");
-    let static_web_root = root.join(".fullmag").join("local").join("web");
+    let repo_local_static_web_root = root.join(".fullmag").join("local").join("web");
+    let repo_built_static_web_root = web_dir.join("out");
+    let static_web_root = if repo_local_static_web_root.join("index.html").is_file() {
+        repo_local_static_web_root
+    } else {
+        repo_built_static_web_root
+    };
     let external_control_room_available = if dev_mode {
         command_exists("node") && web_dir.join("dev-server.mjs").is_file()
     } else {
@@ -264,13 +275,29 @@ fn find_fullmag_ui_binary() -> Result<PathBuf> {
     let root = repo_root();
     let self_exe = std::env::current_exe().unwrap_or_default();
     let candidates = [
-        self_exe.with_file_name("fullmag-ui"),
+        self_exe.with_file_name(format!("fullmag-ui{EXE_SUFFIX}")),
         root.join(".fullmag")
             .join("local")
             .join("bin")
-            .join("fullmag-ui"),
-        root.join("target").join("debug").join("fullmag-ui"),
-        root.join("target").join("release").join("fullmag-ui"),
+            .join(format!("fullmag-ui{EXE_SUFFIX}")),
+        root.join("target")
+            .join("debug")
+            .join(format!("fullmag-ui{EXE_SUFFIX}")),
+        root.join("target")
+            .join("release")
+            .join(format!("fullmag-ui{EXE_SUFFIX}")),
+        root.join("target")
+            .join(std::env::consts::ARCH)
+            .join("debug")
+            .join(format!("fullmag-ui{EXE_SUFFIX}")),
+        root.join("target")
+            .join("x86_64-pc-windows-msvc")
+            .join("debug")
+            .join(format!("fullmag-ui{EXE_SUFFIX}")),
+        root.join("target")
+            .join("x86_64-pc-windows-msvc")
+            .join("release")
+            .join(format!("fullmag-ui{EXE_SUFFIX}")),
     ];
     candidates
         .into_iter()
@@ -505,23 +532,43 @@ pub(crate) fn spawn_fullmag_api(
     stderr: fs::File,
     disable_static_control_room: bool,
 ) -> Result<std::process::Child> {
-    let sibling_api = self_exe.with_file_name("fullmag-api");
+    let sibling_api = self_exe.with_file_name(format!("fullmag-api{EXE_SUFFIX}"));
+    let web_static_dir = {
+        let repo_local = root.join(".fullmag").join("local").join("web");
+        if repo_local.join("index.html").is_file() {
+            repo_local
+        } else {
+            root.join("apps").join("web").join("out")
+        }
+    };
     let candidates = [
         sibling_api,
         root.join(".fullmag")
             .join("local")
             .join("bin")
-            .join("fullmag-api"),
+            .join(format!("fullmag-api{EXE_SUFFIX}")),
         root.join(".fullmag")
             .join("target")
             .join("release")
-            .join("fullmag-api"),
+            .join(format!("fullmag-api{EXE_SUFFIX}")),
         root.join(".fullmag")
             .join("target")
             .join("debug")
-            .join("fullmag-api"),
-        root.join("target").join("release").join("fullmag-api"),
-        root.join("target").join("debug").join("fullmag-api"),
+            .join(format!("fullmag-api{EXE_SUFFIX}")),
+        root.join("target")
+            .join("release")
+            .join(format!("fullmag-api{EXE_SUFFIX}")),
+        root.join("target")
+            .join("debug")
+            .join(format!("fullmag-api{EXE_SUFFIX}")),
+        root.join("target")
+            .join("x86_64-pc-windows-msvc")
+            .join("release")
+            .join(format!("fullmag-api{EXE_SUFFIX}")),
+        root.join("target")
+            .join("x86_64-pc-windows-msvc")
+            .join("debug")
+            .join(format!("fullmag-api{EXE_SUFFIX}")),
     ];
 
     if let Some(path) = candidates.iter().find(|candidate| candidate.exists()) {
@@ -529,10 +576,7 @@ pub(crate) fn spawn_fullmag_api(
         command
             .current_dir(root)
             .env("FULLMAG_API_PORT", api_port().to_string())
-            .env(
-                "FULLMAG_WEB_STATIC_DIR",
-                root.join(".fullmag").join("local").join("web"),
-            )
+            .env("FULLMAG_WEB_STATIC_DIR", &web_static_dir)
             .stdin(Stdio::null())
             .stdout(stdout)
             .stderr(stderr);
@@ -551,10 +595,7 @@ pub(crate) fn spawn_fullmag_api(
         .args(["run", "-p", "fullmag-api"])
         .current_dir(root)
         .env("FULLMAG_API_PORT", api_port().to_string())
-        .env(
-            "FULLMAG_WEB_STATIC_DIR",
-            root.join(".fullmag").join("local").join("web"),
-        )
+        .env("FULLMAG_WEB_STATIC_DIR", &web_static_dir)
         .stdin(Stdio::null())
         .stdout(stdout)
         .stderr(stderr);
@@ -632,14 +673,28 @@ fn configure_repo_local_library_env(
         return;
     };
 
-    let mut merged = OsString::from(lib_dir.as_os_str());
-    if let Some(current) = std::env::var_os("LD_LIBRARY_PATH") {
-        if !current.is_empty() {
-            merged.push(":");
-            merged.push(current);
+    #[cfg(windows)]
+    {
+        let mut merged = OsString::from(lib_dir.as_os_str());
+        if let Some(current) = std::env::var_os("PATH") {
+            if !current.is_empty() {
+                merged.push(";");
+                merged.push(current);
+            }
         }
+        command.env("PATH", merged);
     }
-    command.env("LD_LIBRARY_PATH", merged);
+    #[cfg(not(windows))]
+    {
+        let mut merged = OsString::from(lib_dir.as_os_str());
+        if let Some(current) = std::env::var_os("LD_LIBRARY_PATH") {
+            if !current.is_empty() {
+                merged.push(":");
+                merged.push(current);
+            }
+        }
+        command.env("LD_LIBRARY_PATH", merged);
+    }
 }
 
 fn wait_for_api_ready(port: u16, child: &mut std::process::Child, timeout: Duration) -> Result<()> {

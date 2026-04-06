@@ -30,6 +30,18 @@ fn main() -> Result<()> {
         return orchestrator::run_script_mode(raw_args);
     }
 
+    #[cfg(windows)]
+    if raw_args.len() == 1 {
+        return launch_ui(UiCli {
+            script: None,
+            backend: None,
+            mode: None,
+            precision: None,
+            dev: false,
+            web_port: None,
+        });
+    }
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -43,46 +55,7 @@ fn main() -> Result<()> {
             println!("- reference LLG + exchange engine: CPU/FDM slice");
             println!("- CUDA FDM backend: native source present, calibration still in progress");
         }
-        Command::Ui(ui) => {
-            crate::control_room::init_api_port()?;
-            let (session_id, live_workspace) = if let Some(script) = ui.script.as_ref() {
-                let (session_id, live_workspace) = orchestrator::prepare_live_workspace_for_ui(
-                    script,
-                    ui.backend,
-                    ui.mode,
-                    ui.precision,
-                )?;
-                (session_id, Some(live_workspace))
-            } else {
-                (
-                    format!(
-                        "hub-{}-{}",
-                        std::process::id(),
-                        formatting::unix_time_millis()?
-                    ),
-                    None,
-                )
-            };
-
-            let intent = if live_workspace.is_some() {
-                "workspace"
-            } else {
-                "hub"
-            };
-            let ready = crate::control_room::bootstrap_control_plane(
-                &session_id,
-                ui.dev,
-                ui.web_port,
-                live_workspace.as_ref(),
-            )?;
-            let mut ui_child = crate::control_room::open_in_tauri(&ready, intent)?;
-            let _control_room_guard = crate::control_room::ControlRoomGuard::active(
-                ready.web_port,
-                ready.api_child,
-                ready.frontend_child,
-            );
-            let _ = ui_child.wait();
-        }
+        Command::Ui(ui) => launch_ui(ui)?,
         Command::Runtime(RuntimeCommand::Doctor) => {
             let runtimes_dir = crate::control_room::repo_root().join("runtimes");
             let registry = fullmag_runner::RuntimeRegistry::discover(&runtimes_dir);
@@ -236,6 +209,44 @@ fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn launch_ui(ui: UiCli) -> Result<()> {
+    crate::control_room::init_api_port()?;
+    let (session_id, live_workspace) = if let Some(script) = ui.script.as_ref() {
+        let (session_id, live_workspace) =
+            orchestrator::prepare_live_workspace_for_ui(script, ui.backend, ui.mode, ui.precision)?;
+        (session_id, Some(live_workspace))
+    } else {
+        (
+            format!(
+                "hub-{}-{}",
+                std::process::id(),
+                formatting::unix_time_millis()?
+            ),
+            None,
+        )
+    };
+
+    let intent = if live_workspace.is_some() {
+        "workspace"
+    } else {
+        "hub"
+    };
+    let ready = crate::control_room::bootstrap_control_plane(
+        &session_id,
+        ui.dev,
+        ui.web_port,
+        live_workspace.as_ref(),
+    )?;
+    let mut ui_child = crate::control_room::open_in_tauri(&ready, intent)?;
+    let _control_room_guard = crate::control_room::ControlRoomGuard::active(
+        ready.web_port,
+        ready.api_child,
+        ready.frontend_child,
+    );
+    let _ = ui_child.wait();
     Ok(())
 }
 
