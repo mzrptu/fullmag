@@ -58,13 +58,12 @@ class AdaptiveTimestep:
         d: dict[str, object] = {
             "atol": self.atol,
             "rtol": self.rtol,
+            "dt_initial": self.dt_initial if self.dt_initial is not None else self.dt_min,
             "dt_min": self.dt_min,
             "safety": self.safety,
             "growth_limit": self.growth_limit,
             "shrink_limit": self.shrink_limit,
         }
-        if self.dt_initial is not None:
-            d["dt_initial"] = self.dt_initial
         if self.dt_max is not None:
             d["dt_max"] = self.dt_max
         if self.max_spin_rotation is not None:

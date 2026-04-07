@@ -4298,6 +4298,7 @@ mod tests {
             magnetostriction_laws: Vec::new(),
             mechanical_bcs: Vec::new(),
             mechanical_loads: Vec::new(),
+            air_box_policy: None,
         }
     }
 

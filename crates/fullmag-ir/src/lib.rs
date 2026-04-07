@@ -1640,6 +1640,10 @@ pub struct ProblemIR {
     /// External mechanical loads.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mechanical_loads: Vec<MechanicalLoadIR>,
+
+    /// User-configurable policy for air-box construction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub air_box_policy: Option<AirBoxPolicyIR>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2186,6 +2190,28 @@ pub struct AirBoxConfigIR {
     pub boundary_marker_source: Option<String>,
 }
 
+/// User-configurable policy for air-box construction.
+/// Any field left as `None` will use the planner's default heuristic.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AirBoxPolicyIR {
+    /// Mesh grading factor for the air-box region (default: 1.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grading: Option<f64>,
+    /// Explicit boundary marker to use for the air-box outer surface.
+    /// If `None`, the planner picks marker 99 or the mesh maximum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_marker: Option<u32>,
+    /// Robin beta mode override: `"legacy"`, `"dipole"`, or `"user"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub robin_beta_mode: Option<String>,
+    /// Robin beta factor override (c in β = c/R*).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub robin_beta_factor: Option<f64>,
+    /// Air-box shape override: `"bbox"` or `"sphere"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RelaxationControlIR {
     pub algorithm: RelaxationAlgorithmIR,
@@ -2325,6 +2351,7 @@ impl ProblemIR {
             magnetostriction_laws: vec![],
             mechanical_bcs: vec![],
             mechanical_loads: vec![],
+            air_box_policy: None,
         }
     }
 

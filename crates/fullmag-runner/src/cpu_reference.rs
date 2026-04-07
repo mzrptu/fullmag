@@ -188,6 +188,9 @@ pub(crate) fn build_snapshot_problem_and_state(
             dt_min: adaptive.dt_min,
             dt_max: adaptive.dt_max.unwrap_or(1e-10),
             headroom: adaptive.safety,
+            rtol: adaptive.rtol,
+            growth_limit: if adaptive.growth_limit == 0.0 { f64::INFINITY } else { adaptive.growth_limit },
+            shrink_limit: adaptive.shrink_limit,
         });
     }
 
@@ -319,6 +322,9 @@ pub(crate) fn execute_reference_fdm(
             dt_min: adaptive.dt_min,
             dt_max: adaptive.dt_max.unwrap_or(1e-10),
             headroom: adaptive.safety,
+            rtol: adaptive.rtol,
+            growth_limit: if adaptive.growth_limit == 0.0 { f64::INFINITY } else { adaptive.growth_limit },
+            shrink_limit: adaptive.shrink_limit,
         });
     }
 
@@ -379,7 +385,7 @@ pub(crate) fn execute_reference_fdm(
         .or_else(|| {
             plan.adaptive_timestep
                 .as_ref()
-                .and_then(|adaptive| adaptive.dt_initial)
+                .map(|a| a.dt_initial.unwrap_or(a.dt_min))
         })
         .unwrap_or(1e-13);
     let mut last_solver_dt = 0.0;

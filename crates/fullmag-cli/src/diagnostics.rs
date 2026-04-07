@@ -162,6 +162,9 @@ pub(crate) fn diagnose_initial_fdm_plan(plan: &FdmPlanIR) -> Result<InitialState
             dt_min: adaptive.dt_min,
             dt_max: adaptive.dt_max.unwrap_or(1e-10),
             headroom: adaptive.safety,
+            rtol: adaptive.rtol,
+            growth_limit: if adaptive.growth_limit == 0.0 { f64::INFINITY } else { adaptive.growth_limit },
+            shrink_limit: adaptive.shrink_limit,
         });
     }
     let problem = ExchangeLlgProblem::with_terms_and_mask(
@@ -227,6 +230,9 @@ pub(crate) fn diagnose_initial_fem_plan(plan: &FemPlanIR) -> Result<InitialState
             dt_min: adaptive.dt_min,
             dt_max: adaptive.dt_max.unwrap_or(1e-10),
             headroom: adaptive.safety,
+            rtol: adaptive.rtol,
+            growth_limit: if adaptive.growth_limit == 0.0 { f64::INFINITY } else { adaptive.growth_limit },
+            shrink_limit: adaptive.shrink_limit,
         });
     }
     let _mesh_has_air = plan.mesh.element_markers.iter().any(|marker| *marker == 0);

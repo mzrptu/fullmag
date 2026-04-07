@@ -323,15 +323,11 @@ impl NativeFemBackend {
                 .map_or(0, |kernels| kernels.n_xx.len() as u64),
             initial_magnetization_xyz: m_flat.as_ptr(),
             initial_magnetization_len: m_flat.len() as u64,
-            dt_seconds: plan.fixed_timestep.unwrap_or_else(|| {
-                let fallback_dt = 1e-13;
-                eprintln!(
-                    "warning: native FEM: no fixed_timestep specified; \
-                     using fallback dt={:.0e} s (dt_policy=fallback)",
-                    fallback_dt
-                );
-                fallback_dt
-            }),
+            dt_seconds: plan.fixed_timestep.ok_or_else(|| RunError {
+                message: "native FEM: no fixed_timestep specified; \
+                         please set an explicit timestep in your dynamics configuration"
+                    .to_string(),
+            })?,
             adaptive_config: std::ptr::null(),
             // F-05 fix: enable uniaxial anisotropy when ANY of the relevant
             // parameters are set (Ku, Ku2, Ku_field, Ku2_field).
@@ -527,24 +523,19 @@ impl NativeFemBackend {
         let adaptive_cfg =
             plan.adaptive_timestep
                 .as_ref()
-                .map(|a| ffi::fullmag_fem_adaptive_config {
-                    atol: a.atol,
-                    rtol: a.rtol,
-                    dt_initial: a.dt_initial.unwrap_or_else(|| {
-                        plan.fixed_timestep.unwrap_or_else(|| {
-                            eprintln!(
-                                "warning: native FEM adaptive: no dt_initial or fixed_timestep; \
-                                 using fallback 1e-13 s"
-                            );
-                            1e-13
-                        })
-                    }),
-                    dt_min: a.dt_min,
-                    dt_max: a.dt_max.unwrap_or(1e-10),
-                    safety: a.safety,
-                    growth_limit: a.growth_limit,
-                    shrink_limit: a.shrink_limit,
-                });
+                .map(|a| -> Result<ffi::fullmag_fem_adaptive_config, RunError> {
+                    Ok(ffi::fullmag_fem_adaptive_config {
+                        atol: a.atol,
+                        rtol: a.rtol,
+                        dt_initial: a.dt_initial.or(plan.fixed_timestep).unwrap_or(a.dt_min),
+                        dt_min: a.dt_min,
+                        dt_max: a.dt_max.unwrap_or(1e-10),
+                        safety: a.safety,
+                        growth_limit: a.growth_limit,
+                        shrink_limit: a.shrink_limit,
+                    })
+                })
+                .transpose()?;
         if let Some(ref cfg) = adaptive_cfg {
             plan_desc.adaptive_config = cfg as *const ffi::fullmag_fem_adaptive_config;
         }

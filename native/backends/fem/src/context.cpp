@@ -173,15 +173,18 @@ void refresh_thermal_field_for_current_state(Context &ctx) {
 
     // Seed policy: 0 = system entropy (non-reproducible),
     // otherwise use the provided seed for reproducible stochastic runs.
+    // Re-seed when the seed changes between contexts on the same thread.
     static thread_local bool rng_initialized = false;
+    static thread_local uint64_t rng_active_seed = 0;
     static thread_local std::mt19937_64 rng;
-    if (!rng_initialized) {
+    if (!rng_initialized || rng_active_seed != ctx.thermal_seed) {
         if (ctx.thermal_seed != 0) {
             rng.seed(ctx.thermal_seed);
         } else {
             std::random_device rd;
             rng.seed(rd());
         }
+        rng_active_seed = ctx.thermal_seed;
         rng_initialized = true;
     }
     std::normal_distribution<double> dist(0.0, sigma);

@@ -127,15 +127,6 @@ pub(crate) fn build_problem_and_state(
     if let Some(adaptive) = plan.adaptive_timestep.as_ref() {
         // Reject adaptive fields not supported by the CPU reference engine.
         let mut unsupported = Vec::new();
-        if adaptive.rtol != 0.0 && adaptive.rtol != adaptive.atol {
-            unsupported.push(format!("rtol={}", adaptive.rtol));
-        }
-        if adaptive.growth_limit != 0.0 && adaptive.growth_limit != f64::INFINITY {
-            unsupported.push(format!("growth_limit={}", adaptive.growth_limit));
-        }
-        if adaptive.shrink_limit != 0.0 {
-            unsupported.push(format!("shrink_limit={}", adaptive.shrink_limit));
-        }
         if adaptive.max_spin_rotation.is_some() {
             unsupported.push("max_spin_rotation".to_string());
         }
@@ -146,7 +137,7 @@ pub(crate) fn build_problem_and_state(
             return Err(RunError {
                 message: format!(
                     "CPU reference FEM engine does not support adaptive parameters: {}; \
-                     supported: atol, dt_min, dt_max, safety",
+                     supported: atol, rtol, dt_min, dt_max, safety, growth_limit, shrink_limit",
                     unsupported.join(", ")
                 ),
             });
@@ -156,6 +147,13 @@ pub(crate) fn build_problem_and_state(
             dt_min: adaptive.dt_min,
             dt_max: adaptive.dt_max.unwrap_or(1e-10),
             headroom: adaptive.safety,
+            rtol: adaptive.rtol,
+            growth_limit: if adaptive.growth_limit == 0.0 {
+                f64::INFINITY
+            } else {
+                adaptive.growth_limit
+            },
+            shrink_limit: adaptive.shrink_limit,
         });
     }
     let per_unit_fields = compute_per_unit_antenna_fields(plan)?;
@@ -236,7 +234,9 @@ pub(crate) fn execution_provenance(plan: &FemPlanIR) -> ExecutionProvenance {
     } else if plan.fixed_timestep.is_some() {
         Some("user".to_string())
     } else {
-        Some("fallback".to_string())
+        // No fallback: execute_reference_fem_impl returns an error
+        // if neither fixed_timestep nor adaptive.dt_initial is set.
+        None
     };
     ExecutionProvenance {
         execution_engine: "cpu_reference_fem".to_string(),
@@ -297,16 +297,16 @@ fn execute_reference_fem_impl(
 
     let mut dt = plan
         .fixed_timestep
-        .or_else(|| plan.adaptive_timestep.as_ref().and_then(|a| a.dt_initial))
-        .unwrap_or_else(|| {
-            let fallback_dt = 1e-13;
-            eprintln!(
-                "warning: no fixed_timestep or adaptive.dt_initial specified; \
-                 using fallback dt={:.0e} s (dt_policy=fallback)",
-                fallback_dt
-            );
-            fallback_dt
-        });
+        .or_else(|| {
+            plan.adaptive_timestep
+                .as_ref()
+                .map(|a| a.dt_initial.unwrap_or(a.dt_min))
+        })
+        .ok_or_else(|| RunError {
+            message: "no fixed_timestep or adaptive_timestep specified; \
+                      please set an explicit timestep in your dynamics configuration"
+                .to_string(),
+        })?;
     let mut steps = Vec::new();
     let mut step_count = 0u64;
     let provenance = execution_provenance(plan);

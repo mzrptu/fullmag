@@ -4,7 +4,7 @@
 //! gradation) into a single step that returns enough information for the
 //! caller to decide whether to remesh (via Gmsh / E5) and transfer (E6).
 
-use crate::fem::{CsrMatrix, MeshTopology};
+use crate::fem::MeshTopology;
 use crate::fem_error_estimator::{
     compute_h1_error_indicators, doerfler_marking, ErrorIndicators, H1EstimatorParams,
     MarkingResult,
@@ -467,9 +467,6 @@ mod tests {
             magnetic_node_volumes: vec![0.0; n_nodes],
             grad_phi: grad_phi_all,
             element_stiffness: vec![[[0.0; 4]; 4]; n_elements],
-            stiffness_system: vec![],
-            boundary_mass_system: vec![],
-            demag_system: vec![],
             stiffness_csr: CsrMatrix::new(n_nodes),
             boundary_mass_csr: CsrMatrix::new(n_nodes),
             demag_csr: CsrMatrix::new(n_nodes),

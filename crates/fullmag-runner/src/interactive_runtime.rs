@@ -3395,6 +3395,13 @@ fn cuda_execution_provenance(
     plan: &FdmPlanIR,
     device_info: &crate::native_fdm::DeviceInfo,
 ) -> ExecutionProvenance {
+    let dt_policy = if plan.adaptive_timestep.is_some() {
+        Some("adaptive".to_string())
+    } else if plan.fixed_timestep.is_some() {
+        Some("user".to_string())
+    } else {
+        Some("fallback".to_string())
+    };
     ExecutionProvenance {
         execution_engine: "cuda_fdm".to_string(),
         precision: match plan.precision {
@@ -3416,8 +3423,14 @@ fn cuda_execution_provenance(
         cuda_driver_version: Some(device_info.driver_version),
         cuda_runtime_version: Some(device_info.runtime_version),
         lossy_fallback_used: false,
+        resolved_fallback: None,
         ignored_terms: Vec::new(),
         random_seed: None,
+        requested_integrator: Some(format!("{:?}", plan.integrator)),
+        resolved_integrator: Some(format!("{:?}", plan.integrator)),
+        requested_demag_realization: None,
+        resolved_demag_realization: None,
+        dt_policy,
     }
 }
 
@@ -3426,6 +3439,13 @@ fn fem_gpu_execution_provenance(
     plan: &FemPlanIR,
     device_info: &FemDeviceInfo,
 ) -> ExecutionProvenance {
+    let dt_policy = if plan.adaptive_timestep.is_some() {
+        Some("adaptive".to_string())
+    } else if plan.fixed_timestep.is_some() {
+        Some("user".to_string())
+    } else {
+        Some("fallback".to_string())
+    };
     ExecutionProvenance {
         execution_engine: "native_fem_gpu".to_string(),
         precision: match plan.precision {
@@ -3453,8 +3473,18 @@ fn fem_gpu_execution_provenance(
         cuda_driver_version: Some(device_info.driver_version),
         cuda_runtime_version: Some(device_info.runtime_version),
         lossy_fallback_used: false,
+        resolved_fallback: None,
         ignored_terms: Vec::new(),
         random_seed: None,
+        requested_integrator: Some(format!("{:?}", plan.integrator)),
+        resolved_integrator: Some(format!("{:?}", plan.integrator)),
+        requested_demag_realization: plan
+            .demag_realization
+            .map(|r| r.provenance_name().to_string()),
+        resolved_demag_realization: plan
+            .demag_realization
+            .map(|r| r.provenance_name().to_string()),
+        dt_policy,
     }
 }
 

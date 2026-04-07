@@ -214,6 +214,14 @@ pub struct AdaptiveStepConfig {
     pub dt_min: f64,
     pub dt_max: f64,
     pub headroom: f64,
+    /// Relative tolerance for mixed atol/rtol error norm.  0.0 = pure atol.
+    pub rtol: f64,
+    /// Maximum factor by which dt can grow in one accepted step (e.g. 2.0).
+    /// `f64::INFINITY` disables the limit.
+    pub growth_limit: f64,
+    /// Minimum factor by which dt can shrink on rejection (e.g. 0.2).
+    /// 0.0 disables the limit.
+    pub shrink_limit: f64,
 }
 
 impl Default for AdaptiveStepConfig {
@@ -223,6 +231,9 @@ impl Default for AdaptiveStepConfig {
             dt_min: 1e-18,
             dt_max: 1e-10,
             headroom: 0.8,
+            rtol: 0.0,
+            growth_limit: f64::INFINITY,
+            shrink_limit: 0.0,
         }
     }
 }
@@ -1501,21 +1512,26 @@ impl ExchangeLlgProblem {
                 n,
             );
 
-            if error <= cfg.max_error || dt <= cfg.dt_min {
+            // When rtol > 0 the error is already normalised → threshold = 1.
+            let thr = if cfg.rtol > 0.0 { 1.0 } else { cfg.max_error };
+
+            if error <= thr || dt <= cfg.dt_min {
                 state.magnetization[..n].copy_from_slice(&bufs.m_stage[..n]);
                 state.time_seconds += dt;
-                let dt_next =
-                    (cfg.headroom * dt * (cfg.max_error / error.max(1e-30)).powf(1.0 / 3.0))
-                        .max(cfg.dt_min)
-                        .min(cfg.dt_max);
+                let ratio = (cfg.headroom * (thr / error.max(1e-30)).powf(1.0 / 3.0))
+                    .min(cfg.growth_limit)
+                    .max(cfg.shrink_limit);
+                let dt_next = (dt * ratio).max(cfg.dt_min).min(cfg.dt_max);
                 let (_, eval) = self.llg_rhs_full_ws(&state.magnetization, ws);
                 let mut report = eval.into_step_report(state.time_seconds, dt, false);
                 report.suggested_next_dt = Some(dt_next);
                 return Ok(report);
             }
 
-            let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(1.0 / 3.0);
-            dt = dt_new.max(cfg.dt_min).min(cfg.dt_max);
+            let ratio = (cfg.headroom * (thr / error).powf(1.0 / 3.0))
+                .min(cfg.growth_limit)
+                .max(cfg.shrink_limit);
+            dt = (dt * ratio).max(cfg.dt_min).min(cfg.dt_max);
         }
     }
 
@@ -1661,22 +1677,28 @@ impl ExchangeLlgProblem {
                 n,
             );
 
-            if error <= cfg.max_error || dt <= cfg.dt_min {
+            // When rtol > 0 the error is already normalised → threshold = 1.
+            let thr = if cfg.rtol > 0.0 { 1.0 } else { cfg.max_error };
+
+            if error <= thr || dt <= cfg.dt_min {
                 state.magnetization[..n].copy_from_slice(&bufs.m_stage[..n]);
                 state.time_seconds += dt;
                 // FSAL: save k7 for next step's k1
                 state.k_fsal = Some(bufs.k[6][..n].to_vec());
-                let dt_next = (cfg.headroom * dt * (cfg.max_error / error.max(1e-30)).powf(0.2))
-                    .max(cfg.dt_min)
-                    .min(cfg.dt_max);
+                let ratio = (cfg.headroom * (thr / error.max(1e-30)).powf(0.2))
+                    .min(cfg.growth_limit)
+                    .max(cfg.shrink_limit);
+                let dt_next = (dt * ratio).max(cfg.dt_min).min(cfg.dt_max);
                 let (_, eval) = self.llg_rhs_full_ws(&state.magnetization, ws);
                 let mut report = eval.into_step_report(state.time_seconds, dt, false);
                 report.suggested_next_dt = Some(dt_next);
                 return Ok(report);
             }
 
-            let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(0.2);
-            dt = dt_new.max(cfg.dt_min).min(cfg.dt_max);
+            let ratio = (cfg.headroom * (thr / error).powf(0.2))
+                .min(cfg.growth_limit)
+                .max(cfg.shrink_limit);
+            dt = (dt * ratio).max(cfg.dt_min).min(cfg.dt_max);
         }
     }
 
@@ -1770,6 +1792,7 @@ impl ExchangeLlgProblem {
         dt: f64,
         n: usize,
     ) -> f64 {
+        let cfg = self.dynamics.adaptive;
         let mut max_err = 0.0f64;
         for i in 0..n {
             let mut err = [0.0, 0.0, 0.0];
@@ -1781,7 +1804,14 @@ impl ExchangeLlgProblem {
             err[0] *= dt;
             err[1] *= dt;
             err[2] *= dt;
-            max_err = max_err.max(norm(err));
+            if cfg.rtol > 0.0 {
+                // Mixed atol+rtol: scale = atol + rtol * |y|
+                let y_norm = norm(bufs.m0[i]).max(1e-30);
+                let scale = cfg.max_error + cfg.rtol * y_norm;
+                max_err = max_err.max(norm(err) / scale);
+            } else {
+                max_err = max_err.max(norm(err));
+            }
         }
         max_err
     }

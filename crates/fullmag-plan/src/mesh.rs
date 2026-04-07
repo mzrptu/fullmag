@@ -862,6 +862,8 @@ pub(crate) fn build_air_box_config(
         _ => None,
     }?;
 
+    let policy = problem.air_box_policy.as_ref();
+
     let study_universe = study_universe_metadata(problem);
     let factor = derive_air_box_factor(mesh, study_universe.as_ref());
     let factor_source = if study_universe.is_some() {
@@ -870,16 +872,41 @@ pub(crate) fn build_air_box_config(
         "mesh_auto"
     };
 
-    let (boundary_marker, boundary_marker_source) = select_airbox_boundary_marker(mesh);
+    let (heuristic_marker, heuristic_marker_source) = select_airbox_boundary_marker(mesh);
+    let (boundary_marker, boundary_marker_source) = if let Some(m) = policy.and_then(|p| p.boundary_marker) {
+        (m, "user_policy")
+    } else {
+        (heuristic_marker, heuristic_marker_source)
+    };
+
+    let grading = policy.and_then(|p| p.grading).unwrap_or(1.4);
+    let shape = policy
+        .and_then(|p| p.shape.clone())
+        .unwrap_or_else(|| "bbox".to_string());
+
+    let robin_beta_mode = if bc_kind == "robin" {
+        Some(
+            policy
+                .and_then(|p| p.robin_beta_mode.clone())
+                .unwrap_or_else(|| "dipole".to_string()),
+        )
+    } else {
+        None
+    };
+    let robin_beta_factor = if bc_kind == "robin" {
+        Some(policy.and_then(|p| p.robin_beta_factor).unwrap_or(2.0))
+    } else {
+        None
+    };
 
     Some(AirBoxConfigIR {
         factor,
-        grading: 1.4,
+        grading,
         boundary_marker,
         bc_kind: Some(bc_kind.to_string()),
-        robin_beta_mode: (bc_kind == "robin").then_some("dipole".to_string()),
-        robin_beta_factor: (bc_kind == "robin").then_some(2.0),
-        shape: Some("bbox".to_string()),
+        robin_beta_mode,
+        robin_beta_factor,
+        shape: Some(shape),
         factor_source: Some(factor_source.to_string()),
         boundary_marker_source: Some(boundary_marker_source.to_string()),
     })

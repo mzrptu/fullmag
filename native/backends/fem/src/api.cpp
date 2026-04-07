@@ -33,6 +33,10 @@ std::optional<int> selected_cuda_device_from_env() {
     char *end = nullptr;
     const long parsed = std::strtol(raw, &end, 10);
     if (end == raw || *end != '\0' || parsed < 0) {
+        const char *var_name = (specific != nullptr) ? "FULLMAG_FEM_GPU_INDEX" : "FULLMAG_CUDA_DEVICE_INDEX";
+        std::fprintf(stderr,
+            "warning: ignoring invalid %s='%s' (expected non-negative integer)\n",
+            var_name, raw);
         return std::nullopt;
     }
     return static_cast<int>(parsed);

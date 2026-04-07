@@ -4,7 +4,7 @@
 //! to locate each new node efficiently, then performs barycentric
 //! interpolation of the P1 solution.
 
-use crate::fem::{barycentric_coordinates_tet, CsrMatrix, MeshTopology};
+use crate::fem::{barycentric_coordinates_tet, MeshTopology};
 use crate::Vector3;
 
 // ---------------------------------------------------------------------------
@@ -390,6 +390,7 @@ fn nearest_node_vector(point: &[f64; 3], coords: &[[f64; 3]], values: &[Vector3]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fem::CsrMatrix;
 
     /// Build a minimal MeshTopology (only the fields needed for transfer).
     fn make_topo(coords: Vec<[f64; 3]>, elements: Vec<[u32; 4]>) -> MeshTopology {
@@ -408,9 +409,6 @@ mod tests {
             magnetic_node_volumes: vec![0.0; n_nodes],
             grad_phi: vec![[[0.0; 3]; 4]; n_elements],
             element_stiffness: vec![[[0.0; 4]; 4]; n_elements],
-            stiffness_system: vec![],
-            boundary_mass_system: vec![],
-            demag_system: vec![],
             stiffness_csr: CsrMatrix::new(n_nodes),
             boundary_mass_csr: CsrMatrix::new(n_nodes),
             demag_csr: CsrMatrix::new(n_nodes),

@@ -16,6 +16,9 @@ use crate::relaxation::relaxation_converged;
 use crate::types::{AuxiliaryArtifact, ExecutedRun, RunError, RunResult, RunStatus, StepStats};
 use crate::ExecutionProvenance;
 
+/// Internal relaxation timestep for equilibrium preparation in eigen analysis.
+/// This is NOT the user's simulation dt — it is a fixed internal parameter
+/// used only for pre-eigen relaxation (small enough for safe LLG convergence).
 const RELAX_DT: f64 = 1e-13;
 const RELAX_MAX_STEPS: u64 = 4_000;
 
