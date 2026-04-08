@@ -20,6 +20,16 @@
 
 namespace fullmag::fem {
 
+// Declared outside the anonymous namespace so that context.cpp can forward-declare
+// and call this struct/function across translation units.
+struct PhaseTimings {
+    uint64_t exchange_wall_time_ns = 0;
+    uint64_t demag_wall_time_ns = 0;
+    uint64_t rhs_wall_time_ns = 0;
+    uint64_t extra_energy_wall_time_ns = 0;
+    uint64_t snapshot_wall_time_ns = 0;
+};
+
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
@@ -45,14 +55,6 @@ inline bool has_any_effective_field_term(const Context &ctx) {
         || ctx.enable_magnetoelastic
         || (ctx.temperature > 0.0);
 }
-
-struct PhaseTimings {
-    uint64_t exchange_wall_time_ns = 0;
-    uint64_t demag_wall_time_ns = 0;
-    uint64_t rhs_wall_time_ns = 0;
-    uint64_t extra_energy_wall_time_ns = 0;
-    uint64_t snapshot_wall_time_ns = 0;
-};
 
 uint64_t elapsed_ns(const SteadyClock::time_point &start) {
     return static_cast<uint64_t>(
@@ -130,11 +132,9 @@ const char *configured_mfem_device_string() {
     if (raw != nullptr && *raw != '\0') {
         return raw;
     }
-#ifdef MFEM_USE_CEED
-    return "ceed-cuda:/gpu/cuda/shared";
-#else
+    // Prefer plain CUDA as a safe default for managed host runtimes.
+    // Some CEED-enabled builds may not ship /gpu/cuda/shared at runtime.
     return "cuda";
-#endif
 }
 
 // FEM-030: plan override > env var > compiled default.
@@ -1743,7 +1743,7 @@ bool compute_demag_for_magnetization(
     return true;
 }
 
-bool compute_effective_fields_for_magnetization(
+bool compute_effective_fields_for_magnetization_impl(
     Context &ctx,
     const std::vector<double> &m_xyz,
     std::vector<double> &h_ex_xyz,
@@ -2277,9 +2277,9 @@ bool solve_poisson_hypre(
         auto *amg = new mfem::HypreBoomerAMG(*A_par);
         amg->SetPrintLevel(0);
         amg->SetRelaxType(18);   // l1-scaled Jacobi (GPU-friendly)
-        amg->SetCoarsenType(8);  // PMIS (good for GPU/parallel)
-        amg->SetInterpType(6);   // extended+i interpolation
-        amg->SetAggressiveCoarseningLevels(1);
+        amg->SetCoarsening(8);   // PMIS (good for GPU/parallel)
+        amg->SetInterpolation(6);   // extended+i interpolation
+        amg->SetAggressiveCoarsening(1);
         ctx.mfem_cached_hypre_amg = amg;
 
         // HyprePCG solver
@@ -2304,8 +2304,12 @@ bool solve_poisson_hypre(
     pcg->Mult(b_par, x_par);
 
     // x_par writes directly into solution.GetData()
-    ctx.poisson_last_iterations = pcg->GetNumIterations();
-    ctx.poisson_last_residual = pcg->GetFinalNorm();
+    int iterations = 0;
+    pcg->GetNumIterations(iterations);
+    ctx.poisson_last_iterations = iterations;
+    mfem::real_t final_residual = 0.0;
+    pcg->GetFinalResidualNorm(final_residual);
+    ctx.poisson_last_residual = static_cast<double>(final_residual);
 
     // Restore essential DOFs
     for (int i = 0; i < ess_tdof.Size(); ++i) {
@@ -2453,6 +2457,31 @@ bool recover_demag_field(
 }
 
 } // namespace
+
+bool compute_effective_fields_for_magnetization(
+    Context &ctx,
+    const std::vector<double> &m_xyz,
+    std::vector<double> &h_ex_xyz,
+    std::vector<double> &h_demag_xyz,
+    std::vector<double> &h_eff_xyz,
+    double *exchange_energy,
+    double *demag_energy,
+    bool allow_interrupt,
+    PhaseTimings *timings,
+    std::string &error)
+{
+    return compute_effective_fields_for_magnetization_impl(
+        ctx,
+        m_xyz,
+        h_ex_xyz,
+        h_demag_xyz,
+        h_eff_xyz,
+        exchange_energy,
+        demag_energy,
+        allow_interrupt,
+        timings,
+        error);
+}
 
 bool context_initialize_mfem(Context &ctx, std::string &error) {
     try {

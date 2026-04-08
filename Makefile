@@ -220,6 +220,11 @@ install-cli install-cli-dev install-cli-static:
 			'  fi' \
 			'fi' \
 			'if [ "$$ALLOW_MANAGED_RUNTIME" = "1" ] && [ "$$SHOULD_USE_MANAGED_RUNTIME" = "1" ] && [ "$${FULLMAG_DISABLE_MANAGED_FEM_GPU_RUNTIME:-0}" != "1" ] && [ -x "$$MANAGED_RUNTIME_BIN" ]; then' \
+			'  OPENMPI_ROOT="$$MANAGED_RUNTIME_ROOT/openmpi"' \
+			'  if [ -d "$$OPENMPI_ROOT/share/openmpi" ]; then' \
+			'    export OPAL_PREFIX="$$OPENMPI_ROOT"' \
+			'    export OMPI_MCA_component_path="$$OPENMPI_ROOT/lib/openmpi3"' \
+			'  fi' \
 			'  export LD_LIBRARY_PATH="$$MANAGED_RUNTIME_ROOT/lib:$$LOCAL_LD_LIBRARY_PATH"' \
 			'  exec "$$MANAGED_RUNTIME_BIN" "$$@"' \
 			'fi' \

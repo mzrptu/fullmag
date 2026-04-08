@@ -87,7 +87,8 @@ if not USE_SAVED_RELAXED_STATE:
     relax_result = study.relax(
         tol=1e-6,                       # torque tolerance (max_dm_dt)
         max_steps=100_000,              # limit kroków
-        algorithm="projected_gradient_bb",     # algorytm relaksacji
+        # Native FEM GPU currently supports LLG-based relaxation paths.
+        algorithm="llg_overdamped",
     )
     # Wynik relaksacji
     if hasattr(relax_result, "save_state"):

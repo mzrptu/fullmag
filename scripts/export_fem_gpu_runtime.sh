@@ -11,6 +11,7 @@ cd "${REPO_ROOT}"
 docker compose --profile fem-gpu run --rm -T fem-gpu bash -lc '
 set -euo pipefail
 mkdir -p .fullmag/runtimes/fem-gpu-host/bin .fullmag/runtimes/fem-gpu-host/lib
+rm -rf .fullmag/runtimes/fem-gpu-host/openmpi
 cargo +nightly clean -p fullmag-fdm-demag >/dev/null 2>&1 || true
 FULLMAG_USE_MFEM_STACK=ON cargo +nightly build -p fullmag-cli --features "cuda fem-gpu" --release >/tmp/fullmag-build.log
 cp -f target/release/fullmag .fullmag/runtimes/fem-gpu-host/bin/fullmag-fem-gpu-bin
@@ -19,6 +20,31 @@ FDM_LIB=$(dirname "$(find target/release/build -path "*fullmag-fdm-sys*/out/nati
 cp -a "$FEM_LIB"/libfullmag_fem.so* .fullmag/runtimes/fem-gpu-host/lib/
 cp -a "$FDM_LIB"/libfullmag_fdm.so* .fullmag/runtimes/fem-gpu-host/lib/
 cp -a /opt/fullmag-deps/lib/* .fullmag/runtimes/fem-gpu-host/lib/
+# Bundle OpenMPI runtime libs so the exported host runtime does not depend
+# on host-installed libmpi/libopen-rte variants.
+shopt -s nullglob
+for lib_glob in \
+  /usr/lib/x86_64-linux-gnu/libmpi*.so* \
+  /usr/lib/x86_64-linux-gnu/libopen-rte*.so* \
+  /usr/lib/x86_64-linux-gnu/libopen-pal*.so* \
+  /usr/lib/x86_64-linux-gnu/libhwloc.so* \
+  /usr/lib/x86_64-linux-gnu/libevent*.so* \
+  /usr/lib/x86_64-linux-gnu/openmpi/lib/*.so*; do
+  for lib in $lib_glob; do
+    cp -a "$lib" .fullmag/runtimes/fem-gpu-host/lib/
+  done
+done
+shopt -u nullglob
+if [ -d /usr/lib/x86_64-linux-gnu/openmpi/lib/openmpi3 ]; then
+  mkdir -p .fullmag/runtimes/fem-gpu-host/openmpi/lib
+  cp -a /usr/lib/x86_64-linux-gnu/openmpi/lib/openmpi3 \
+    .fullmag/runtimes/fem-gpu-host/openmpi/lib/
+fi
+if [ -d /usr/share/openmpi ]; then
+  mkdir -p .fullmag/runtimes/fem-gpu-host/openmpi/share
+  cp -a /usr/share/openmpi \
+    .fullmag/runtimes/fem-gpu-host/openmpi/share/
+fi
 '
 
 cat > "${RUNTIME_ROOT}/bin/fullmag-fem-gpu" <<'EOF'
@@ -29,6 +55,11 @@ RUNTIME_ROOT="$(cd "${SELF_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${RUNTIME_ROOT}/../../.." && pwd)"
 export FULLMAG_REPO_ROOT="${REPO_ROOT}"
 export LD_LIBRARY_PATH="${RUNTIME_ROOT}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+OPENMPI_ROOT="${RUNTIME_ROOT}/openmpi"
+if [ -d "${OPENMPI_ROOT}/share/openmpi" ]; then
+  export OPAL_PREFIX="${OPENMPI_ROOT}"
+  export OMPI_MCA_component_path="${OPENMPI_ROOT}/lib/openmpi3"
+fi
 export FULLMAG_FEM_EXECUTION="${FULLMAG_FEM_EXECUTION:-gpu}"
 export FULLMAG_FEM_GPU_INDEX="${FULLMAG_FEM_GPU_INDEX:-0}"
 export FULLMAG_FDM_GPU_INDEX="${FULLMAG_FDM_GPU_INDEX:-${FULLMAG_FEM_GPU_INDEX}}"

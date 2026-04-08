@@ -281,7 +281,7 @@ impl NativeFemBackend {
                     solver,
                     preconditioner,
                     relative_tolerance: policy.rtol,
-                    max_iterations: policy.max_iterations as i32,
+                    max_iterations: policy.max_iterations,
                 }
             },
             air_box_factor: plan.air_box_config.as_ref().map_or(0.0, |c| c.factor),
