@@ -391,6 +391,7 @@ def build_geometry_assets_for_request(
                         geometry,
                         discretization.fem,
                         study_universe=study_universe,
+                        mesh_workflow=mesh_workflow,
                     )
                     if cache_path is not None and not imported_surface_only:
                         mesh.save(cache_path)

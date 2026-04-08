@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from fullmag._progress import emit_progress
-from fullmag.model.geometry import Box, Cylinder, Ellipsoid, Geometry
+from fullmag.model.geometry import (
+    Box,
+    Cylinder,
+    Difference,
+    Ellipse,
+    Ellipsoid,
+    Geometry,
+    ImportedGeometry,
+    Intersection,
+    Translate,
+    Union,
+)
 
 from ._gmsh_types import AirboxOptions, MeshData, MeshOptions, MeshQualityReport
 from ._gmsh_infra import _import_gmsh, _configure_gmsh_threads, _GmshProgressLogger
@@ -360,9 +372,24 @@ def add_air_box(
         gmsh.model.add("fullmag_airbox")
 
         # ── Create magnetic volume via Gmsh OCC ──
-        mag_tag = _create_occ_geometry(gmsh, geometry)
+        magnetic_tags = _create_occ_geometry(gmsh, geometry)
+        if not magnetic_tags:
+            raise RuntimeError("air-box generation failed: geometry produced no OCC volumes")
+        gmsh.model.occ.synchronize()
+
         # Get bounding box of magnetic volume
-        xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.occ.getBoundingBox(3, mag_tag)
+        mins = np.array([math.inf, math.inf, math.inf], dtype=np.float64)
+        maxs = np.array([-math.inf, -math.inf, -math.inf], dtype=np.float64)
+        for dim, tag in magnetic_tags:
+            if dim != 3:
+                continue
+            xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.occ.getBoundingBox(dim, tag)
+            mins = np.minimum(mins, np.array([xmin, ymin, zmin], dtype=np.float64))
+            maxs = np.maximum(maxs, np.array([xmax, ymax, zmax], dtype=np.float64))
+        if not np.all(np.isfinite(mins)) or not np.all(np.isfinite(maxs)):
+            raise RuntimeError("air-box generation failed: magnetic OCC bounds are not finite")
+        xmin, ymin, zmin = float(mins[0]), float(mins[1]), float(mins[2])
+        xmax, ymax, zmax = float(maxs[0]), float(maxs[1]), float(maxs[2])
         cx, cy, cz = (xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2
         dx, dy, dz = xmax - xmin, ymax - ymin, zmax - zmin
         diag = math.sqrt(dx * dx + dy * dy + dz * dz)
@@ -376,37 +403,32 @@ def add_air_box(
 
         # ── Boolean cut: air = box - magnet, preserving both ──
         # Fragment produces non-overlapping volumes sharing interfaces
-        result, result_map = gmsh.model.occ.fragment(
-            [(3, air_tag)], [(3, mag_tag)]
-        )
+        _, result_map = gmsh.model.occ.fragment([(3, air_tag)], magnetic_tags)
         gmsh.model.occ.synchronize()
 
         # ── Identify which fragment is the magnet and which is air ──
-        # The magnetic volume is the one inside the original magnet bounding box
-        volumes = gmsh.model.getEntities(3)
-        mag_volumes = []
-        air_volumes = []
-        for dim, tag in volumes:
-            bb = gmsh.model.getBoundingBox(dim, tag)
-            vol_cx = (bb[0] + bb[3]) / 2
-            vol_cy = (bb[1] + bb[4]) / 2
-            vol_cz = (bb[2] + bb[5]) / 2
-            vol_dx = bb[3] - bb[0]
-            vol_dy = bb[4] - bb[1]
-            vol_dz = bb[5] - bb[2]
-            # If the volume fits within the original magnet bbox (with tolerance),
-            # it's the magnetic region; otherwise it's air.
-            tol = 0.1 * diag
-            if (vol_dx < dx + tol and vol_dy < dy + tol and vol_dz < dz + tol
-                    and abs(vol_cx - cx) < tol and abs(vol_cy - cy) < tol
-                    and abs(vol_cz - cz) < tol):
-                mag_volumes.append(tag)
-            else:
+        if not result_map:
+            raise RuntimeError(
+                "air-box generation failed: OCC fragment returned an empty result map"
+            )
+        mag_volumes: list[int] = []
+        for parent_idx in range(1, len(result_map)):
+            for dim, tag in result_map[parent_idx]:
+                if dim == 3 and tag not in mag_volumes:
+                    mag_volumes.append(tag)
+        air_volumes: list[int] = []
+        mag_set = set(mag_volumes)
+        for dim, tag in result_map[0]:
+            if dim == 3 and tag not in mag_set:
                 air_volumes.append(tag)
 
         if not mag_volumes:
             raise RuntimeError(
                 "air-box generation failed: could not identify magnetic volume after fragment"
+            )
+        if not air_volumes:
+            raise RuntimeError(
+                "air-box generation failed: could not identify air volume after fragment"
             )
 
         # ── Physical groups: magnetic=1, air=0 ──
@@ -416,24 +438,16 @@ def add_air_box(
         gmsh.model.setPhysicalName(3, 2, "air")
 
         # ── Outer boundary: faces on the air-box exterior ──
-        # Identify boundary faces of air volumes that are on the outer box surface
-        outer_faces = []
-        for air_tag_i in air_volumes:
-            bnd = gmsh.model.getBoundary([(3, air_tag_i)], oriented=False)
-            for _, face_tag in bnd:
-                bb = gmsh.model.getBoundingBox(2, face_tag)
-                face_cx = (bb[0] + bb[3]) / 2
-                face_cy = (bb[1] + bb[4]) / 2
-                face_cz = (bb[2] + bb[5]) / 2
-                # Check if face is on the outer box boundary
-                eps = 0.01 * half
-                on_outer = (
-                    abs(bb[0] - (cx - half)) < eps or abs(bb[3] - (cx + half)) < eps
-                    or abs(bb[1] - (cy - half)) < eps or abs(bb[4] - (cy + half)) < eps
-                    or abs(bb[2] - (cz - half)) < eps or abs(bb[5] - (cz + half)) < eps
-                )
-                if on_outer and face_tag not in outer_faces:
-                    outer_faces.append(face_tag)
+        air_boundary = gmsh.model.getBoundary(
+            [(3, tag) for tag in air_volumes],
+            oriented=False,
+        )
+        mag_boundary = gmsh.model.getBoundary(
+            [(3, tag) for tag in mag_volumes],
+            oriented=False,
+        )
+        interface_tags = {abs(tag) for _, tag in mag_boundary}
+        outer_faces = sorted({abs(tag) for _, tag in air_boundary} - interface_tags)
         if outer_faces:
             gmsh.model.addPhysicalGroup(2, outer_faces, tag=boundary_marker)
             gmsh.model.setPhysicalName(2, boundary_marker, "outer_boundary")
@@ -443,11 +457,7 @@ def add_air_box(
         gmsh.option.setNumber("Mesh.MeshSizeMin", hmax * 0.1)
 
         # Size field: distance from magnetic surface + threshold
-        mag_surfaces = []
-        for mv in mag_volumes:
-            bnd = gmsh.model.getBoundary([(3, mv)], oriented=False)
-            mag_surfaces.extend([abs(t) for _, t in bnd])
-        mag_surfaces = list(set(mag_surfaces))
+        mag_surfaces = sorted(interface_tags)
 
         f_dist = gmsh.model.mesh.field.add("Distance")
         gmsh.model.mesh.field.setNumbers(f_dist, "SurfacesList", mag_surfaces)
@@ -489,22 +499,82 @@ def add_air_box(
         gmsh.finalize()
 
 
-def _create_occ_geometry(gmsh: Any, geometry: Geometry) -> int:
-    """Create a Gmsh OCC volume from a fullmag Geometry and return its tag."""
+def _create_occ_geometry(gmsh: Any, geometry: Geometry) -> list[tuple[int, int]]:
+    """Create OCC entities from a fullmag ``Geometry`` tree.
+
+    Returns a list of OCC ``(dim, tag)`` tuples for downstream boolean ops.
+    """
     if isinstance(geometry, Box):
         sx, sy, sz = geometry.size
-        return gmsh.model.occ.addBox(-sx / 2, -sy / 2, -sz / 2, sx, sy, sz)
+        tag = gmsh.model.occ.addBox(-sx / 2, -sy / 2, -sz / 2, sx, sy, sz)
+        return [(3, tag)]
     if isinstance(geometry, Cylinder):
-        return gmsh.model.occ.addCylinder(
+        tag = gmsh.model.occ.addCylinder(
             0, 0, -geometry.height / 2, 0, 0, geometry.height, geometry.radius
         )
+        return [(3, tag)]
     if isinstance(geometry, Ellipsoid):
         tag = gmsh.model.occ.addSphere(0, 0, 0, 1.0)
-        rx, ry, rz = geometry.semi_axes
+        rx, ry, rz = geometry.rx, geometry.ry, geometry.rz
         gmsh.model.occ.dilate([(3, tag)], 0, 0, 0, rx, ry, rz)
-        return tag
-    # Fallback for CSG or imported: create a sphere placeholder
-    # (real implementation would walk the CSG tree)
+        return [(3, tag)]
+    if isinstance(geometry, Ellipse):
+        rmax = max(geometry.rx, geometry.ry)
+        tag = gmsh.model.occ.addCylinder(
+            0.0,
+            0.0,
+            -geometry.height / 2.0,
+            0.0,
+            0.0,
+            geometry.height,
+            rmax,
+        )
+        gmsh.model.occ.dilate(
+            [(3, tag)],
+            0.0,
+            0.0,
+            0.0,
+            geometry.rx / rmax,
+            geometry.ry / rmax,
+            1.0,
+        )
+        return [(3, tag)]
+    if isinstance(geometry, Difference):
+        base_tags = _create_occ_geometry(gmsh, geometry.base)
+        tool_tags = _create_occ_geometry(gmsh, geometry.tool)
+        result, _ = gmsh.model.occ.cut(base_tags, tool_tags)
+        return list(result)
+    if isinstance(geometry, Union):
+        a_tags = _create_occ_geometry(gmsh, geometry.a)
+        b_tags = _create_occ_geometry(gmsh, geometry.b)
+        result, _ = gmsh.model.occ.fuse(a_tags, b_tags)
+        return list(result)
+    if isinstance(geometry, Intersection):
+        a_tags = _create_occ_geometry(gmsh, geometry.a)
+        b_tags = _create_occ_geometry(gmsh, geometry.b)
+        result, _ = gmsh.model.occ.intersect(a_tags, b_tags)
+        return list(result)
+    if isinstance(geometry, Translate):
+        inner_tags = _create_occ_geometry(gmsh, geometry.geometry)
+        ox, oy, oz = geometry.offset
+        gmsh.model.occ.translate(inner_tags, ox, oy, oz)
+        return inner_tags
+    if isinstance(geometry, ImportedGeometry):
+        source = Path(geometry.source)
+        suffix = source.suffix.lower()
+        if suffix not in {".step", ".stp", ".iges", ".igs", ".brep"}:
+            raise TypeError(
+                f"add_air_box only supports CAD ImportedGeometry sources in OCC "
+                f"(STEP/IGES/BREP), got '{source.name}'"
+            )
+        tags = list(gmsh.model.occ.importShapes(str(source)))
+        if isinstance(geometry.scale, (int, float)):
+            sx = sy = sz = float(geometry.scale)
+        else:
+            sx, sy, sz = (float(component) for component in geometry.scale)
+        if not (math.isclose(sx, 1.0) and math.isclose(sy, 1.0) and math.isclose(sz, 1.0)):
+            gmsh.model.occ.dilate(tags, 0.0, 0.0, 0.0, sx, sy, sz)
+        return tags
     raise TypeError(f"add_air_box does not yet support {type(geometry).__name__} geometry")
 
 

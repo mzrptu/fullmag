@@ -2164,7 +2164,7 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(fem.order, 2)
         self.assertEqual(fem.hmax, 4e-9)
 
-    def test_flat_geometry_mesh_api_rejects_conflicting_per_geometry_mesh_settings(self) -> None:
+    def test_flat_geometry_mesh_api_accepts_per_geometry_hmax_overrides(self) -> None:
         script = """
         import fullmag as fm
 
@@ -2183,8 +2183,63 @@ class ProblemApiTests(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "script_flat_geometry_mesh_conflict.py"
             path.write_text(textwrap.dedent(script), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "Per-geometry FEM mesh settings are not yet supported"):
-                fm.load_problem_from_script(path)
+            with patch("fullmag.world.build_geometry_assets_for_request", return_value=None):
+                loaded = fm.load_problem_from_script(path)
+
+        workflow = loaded.problem.runtime_metadata["mesh_workflow"]
+        self.assertEqual(workflow["fem"]["hmax"], 8e-9)
+        per_geometry = workflow["per_geometry"]
+        by_name = {entry["geometry"]: entry for entry in per_geometry}
+        self.assertEqual(by_name["a"]["hmax"], 4e-9)
+        self.assertEqual(by_name["b"]["hmax"], 8e-9)
+
+    def test_flat_geometry_mesh_quality_returns_report_after_build(self) -> None:
+        fm.reset()
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="body")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        assets = {
+            "fdm_grid_assets": [],
+            "fem_mesh_assets": [
+                {
+                    "geometry_name": "body_geom",
+                    "mesh_source": None,
+                    "mesh": {
+                        "mesh_name": "body_geom",
+                        "nodes": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                        "elements": [[0, 1, 2, 3]],
+                        "element_markers": [1],
+                        "boundary_faces": [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]],
+                        "boundary_markers": [99, 99, 99, 99],
+                        "per_domain_quality": {
+                            "1": {
+                                "n_elements": 1,
+                                "sicn_min": 0.5,
+                                "sicn_max": 0.5,
+                                "sicn_mean": 0.5,
+                                "sicn_p5": 0.5,
+                                "sicn_histogram": [0] * 20,
+                                "gamma_min": 0.2,
+                                "gamma_mean": 0.2,
+                                "gamma_histogram": [0] * 20,
+                                "volume_min": 1.0,
+                                "volume_max": 1.0,
+                                "volume_mean": 1.0,
+                                "volume_std": 0.0,
+                                "avg_quality": 0.5,
+                            }
+                        },
+                    },
+                }
+            ],
+        }
+        with patch("fullmag.world.build_geometry_assets_for_request", return_value=assets):
+            body.mesh(hmax=4e-9, order=1, compute_quality=True).build()
+
+        quality = body.mesh.quality()
+        self.assertIsNotNone(quality)
+        self.assertEqual(getattr(quality, "n_elements", None), 1)
+        fm.reset()
 
     def test_flat_mesh_rewrite_preserves_multi_body_mesh_calls(self) -> None:
         script = """

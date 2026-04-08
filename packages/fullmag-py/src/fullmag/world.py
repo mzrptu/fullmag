@@ -34,7 +34,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from fullmag._progress import emit_progress
 from fullmag._validation import as_vector3, require_non_empty, require_non_negative, require_positive
@@ -125,6 +125,7 @@ class MagnetHandle:
         self._m_value: Any = None
         self._m_proxy = MagnetizationHandle(self)
         self._mesh_spec = _MeshSpecState()
+        self._last_mesh_quality: object | None = None
         self.mesh = GeometryMeshHandle(self)
 
     def __repr__(self) -> str:
@@ -540,9 +541,7 @@ class GeometryMeshHandle:
         Returns the ``MeshQualityReport`` from the most recent ``build()`` call,
         or ``None`` if quality extraction was not requested.
         """
-        # Quality data is attached to the mesh after build;
-        # for now, return info from workflow metadata.
-        return None  # TODO: wire after build() stores quality data
+        return self._owner._last_mesh_quality
 
 
 # ---------------------------------------------------------------------------
@@ -1492,30 +1491,35 @@ def _resolve_flat_fem_hint() -> FEM | None:
     if build_requested and not candidate_specs:
         candidate_specs = [default_spec]
 
-    shared_hmax = candidate_specs[0].hmax if candidate_specs else s._hmax
+    if candidate_specs:
+        shared_hmax = candidate_specs[0].hmax
+        if not study_surface:
+            explicit_hmaxs = [spec.hmax for spec in candidate_specs if spec.hmax is not None]
+            if explicit_hmaxs:
+                if all(isinstance(value, (int, float)) for value in explicit_hmaxs):
+                    shared_hmax = max(float(value) for value in explicit_hmaxs)
+                elif len({str(value) for value in explicit_hmaxs}) == 1:
+                    shared_hmax = explicit_hmaxs[0]
+                else:
+                    raise ValueError(
+                        "Per-geometry FEM hmax values currently support either all-numeric values "
+                        "or one shared symbolic value (for example, all 'auto')."
+                    )
+    else:
+        shared_hmax = s._hmax
     shared_order = candidate_specs[0].order if candidate_specs and candidate_specs[0].order is not None else s._fem_order
     shared_source = candidate_specs[0].source if candidate_specs else s._mesh_source
 
     if not study_surface:
         for spec in candidate_specs[1:]:
-            if spec.hmax is not None and shared_hmax is not None:
-                both_numeric = isinstance(spec.hmax, (int, float)) and isinstance(shared_hmax, (int, float))
-                hmax_mismatch = (
-                    (both_numeric and not math.isclose(spec.hmax, shared_hmax))
-                    or (not both_numeric and spec.hmax != shared_hmax)
-                )
-            else:
-                hmax_mismatch = False
             if (
-                hmax_mismatch
-            ) or (
                 spec.order is not None and spec.order != shared_order
             ) or (
                 spec.source is not None and spec.source != shared_source
             ):
                 raise ValueError(
-                    "Per-geometry FEM mesh settings are not yet supported in the flat-script IR. "
-                    "Use one shared mesh configuration for all geometries in this script."
+                    "Per-geometry FEM mesh order/source settings are not yet supported in the flat-script IR. "
+                    "Use one shared order/source for all geometries in this script."
                 )
 
     generated_shared_domain = (
@@ -1763,13 +1767,95 @@ def _build_explicit_mesh_assets() -> None:
     if _state._cell is not None:
         discretization_kwargs["fdm"] = FDM(cell=_state._cell)
     emit_progress("Building explicit FEM mesh asset")
-    build_geometry_assets_for_request(
+    assets = build_geometry_assets_for_request(
         requested_backend=BackendTarget.FEM,
         geometries=resolved_geometries,
         discretization=DiscretizationHints(**discretization_kwargs),
         mesh_workflow=_collect_mesh_workflow_metadata(),
         asset_cache=_state._geometry_asset_cache,
     )
+    _cache_mesh_quality_reports(assets)
+
+
+def _mesh_quality_report_from_ir(payload: Mapping[str, object]) -> object | None:
+    from fullmag.meshing.gmsh_bridge import MeshQualityReport
+
+    try:
+        return MeshQualityReport(
+            n_elements=int(payload["n_elements"]),
+            sicn_min=float(payload["sicn_min"]),
+            sicn_max=float(payload["sicn_max"]),
+            sicn_mean=float(payload["sicn_mean"]),
+            sicn_p5=float(payload["sicn_p5"]),
+            sicn_histogram=[int(value) for value in payload.get("sicn_histogram", [])],
+            gamma_min=float(payload["gamma_min"]),
+            gamma_mean=float(payload["gamma_mean"]),
+            gamma_histogram=[int(value) for value in payload.get("gamma_histogram", [])],
+            volume_min=float(payload["volume_min"]),
+            volume_max=float(payload["volume_max"]),
+            volume_mean=float(payload["volume_mean"]),
+            volume_std=float(payload["volume_std"]),
+            avg_quality=float(payload["avg_quality"]),
+            element_sicn=None,
+            element_gamma=None,
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _quality_payload_for_mesh_ir(mesh_ir: Mapping[str, object]) -> object | None:
+    raw_per_domain = mesh_ir.get("per_domain_quality")
+    if not isinstance(raw_per_domain, Mapping):
+        return None
+
+    per_domain: dict[int, object] = {}
+    for marker_raw, report_raw in raw_per_domain.items():
+        if not isinstance(report_raw, Mapping):
+            continue
+        report = _mesh_quality_report_from_ir(report_raw)
+        if report is None:
+            continue
+        try:
+            marker = int(marker_raw)
+        except (TypeError, ValueError):
+            continue
+        per_domain[marker] = report
+
+    if not per_domain:
+        return None
+    if len(per_domain) == 1:
+        return next(iter(per_domain.values()))
+    return per_domain
+
+
+def _cache_mesh_quality_reports(assets: dict[str, Any] | None) -> None:
+    for handle in _state._magnets:
+        handle._last_mesh_quality = None
+
+    if not isinstance(assets, dict):
+        return
+
+    handles_by_alias: dict[str, MagnetHandle] = {}
+    for handle in _state._magnets:
+        handles_by_alias[handle._name] = handle
+        resolved = handle._resolved_geometry()
+        geometry_name = getattr(resolved, "geometry_name", None)
+        if isinstance(geometry_name, str) and geometry_name:
+            handles_by_alias[geometry_name] = handle
+
+    for entry in assets.get("fem_mesh_assets", []):
+        if not isinstance(entry, Mapping):
+            continue
+        geometry_name = entry.get("geometry_name")
+        mesh_payload = entry.get("mesh")
+        if not isinstance(geometry_name, str) or not isinstance(mesh_payload, Mapping):
+            continue
+        handle = handles_by_alias.get(geometry_name)
+        if handle is None and geometry_name.endswith("_geom"):
+            handle = handles_by_alias.get(geometry_name[: -len("_geom")])
+        if handle is None:
+            continue
+        handle._last_mesh_quality = _quality_payload_for_mesh_ir(mesh_payload)
 
 
 # ---------------------------------------------------------------------------

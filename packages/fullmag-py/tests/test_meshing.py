@@ -50,6 +50,7 @@ from fullmag.meshing.gmsh_bridge import (
     SizeFieldData,
     _configure_gmsh_threads,
     _apply_mesh_options,
+    _create_occ_geometry,
     _extract_gmsh_connectivity,
     _normalize_gmsh_log_line,
     _resolve_gmsh_thread_count,
@@ -757,6 +758,90 @@ class MeshScaffoldTests(unittest.TestCase):
 
         np.testing.assert_array_equal(elements, np.asarray([[0, 1, 2, 3]], dtype=np.int32))
         np.testing.assert_array_equal(faces, np.asarray([[10, 11, 12]], dtype=np.int32))
+
+    def test_create_occ_geometry_supports_csg_and_translate(self) -> None:
+        class _FakeOccApi:
+            def __init__(self) -> None:
+                self._next = 1
+                self.translations: list[tuple[tuple[tuple[int, int], ...], float, float, float]] = []
+
+            def _tag(self) -> int:
+                tag = self._next
+                self._next += 1
+                return tag
+
+            def addBox(self, *_args: object) -> int:
+                return self._tag()
+
+            def addCylinder(self, *_args: object) -> int:
+                return self._tag()
+
+            def addSphere(self, *_args: object) -> int:
+                return self._tag()
+
+            def dilate(self, *_args: object) -> None:
+                return None
+
+            def cut(
+                self,
+                _base: list[tuple[int, int]],
+                _tool: list[tuple[int, int]],
+            ) -> tuple[list[tuple[int, int]], list[object]]:
+                return ([(3, self._tag())], [])
+
+            def fuse(
+                self,
+                _a: list[tuple[int, int]],
+                _b: list[tuple[int, int]],
+            ) -> tuple[list[tuple[int, int]], list[object]]:
+                return ([(3, self._tag())], [])
+
+            def intersect(
+                self,
+                _a: list[tuple[int, int]],
+                _b: list[tuple[int, int]],
+            ) -> tuple[list[tuple[int, int]], list[object]]:
+                return ([(3, self._tag())], [])
+
+            def translate(
+                self,
+                tags: list[tuple[int, int]],
+                ox: float,
+                oy: float,
+                oz: float,
+            ) -> None:
+                self.translations.append((tuple(tags), ox, oy, oz))
+
+            def importShapes(self, _source: str) -> list[tuple[int, int]]:
+                return [(3, self._tag())]
+
+        fake_occ = _FakeOccApi()
+        fake_gmsh = type(
+            "FakeGmsh",
+            (),
+            {"model": type("FakeModel", (), {"occ": fake_occ})()},
+        )()
+
+        geometry = (fm.Box(2.0, 2.0, 2.0) - fm.Cylinder(0.5, 2.0)).translate((1.0, 0.0, 0.0))
+        tags = _create_occ_geometry(fake_gmsh, geometry)
+
+        self.assertTrue(tags)
+        self.assertEqual(tags[0][0], 3)
+        self.assertTrue(fake_occ.translations)
+
+    def test_create_occ_geometry_rejects_non_cad_imported_geometry(self) -> None:
+        class _FakeOccApi:
+            pass
+
+        fake_gmsh = type(
+            "FakeGmsh",
+            (),
+            {"model": type("FakeModel", (), {"occ": _FakeOccApi()})()},
+        )()
+        imported = fm.ImportedGeometry(source="shape.stl")
+
+        with self.assertRaisesRegex(TypeError, "STEP/IGES/BREP"):
+            _create_occ_geometry(fake_gmsh, imported)
 
     def test_validate_mesh_reports_basic_quality(self) -> None:
         mesh = self._unit_tet_mesh()

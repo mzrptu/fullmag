@@ -1,7 +1,7 @@
 use fullmag_ir::{
     AirBoxConfigIR, FemDomainMeshAssetIR, FemDomainMeshModeIR, FemDomainRegionMarkerIR,
-    FemMeshPartIR, FemMeshPartRole, FemMeshPartSelector, FemObjectSegmentIR,
-    InitialMagnetizationIR, MeshIR, ProblemIR,
+    FemMeshPartIR, FemMeshPartRole, FemMeshPartSelector, FemObjectSegmentIR, InitialMagnetizationIR,
+    MeshIR, ProblemIR, ExecutionMode,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -870,9 +870,9 @@ pub(crate) fn build_air_box_config(
     problem: &ProblemIR,
     mesh: &MeshIR,
     resolved_demag_realization: Option<fullmag_ir::ResolvedFemDemagIR>,
-) -> Option<AirBoxConfigIR> {
+) -> Result<Option<AirBoxConfigIR>, String> {
     if !mesh_has_air_elements(mesh) {
-        return None;
+        return Ok(None);
     }
 
     let bc_kind = match resolved_demag_realization {
@@ -891,12 +891,23 @@ pub(crate) fn build_air_box_config(
         "mesh_auto"
     };
 
-    let (heuristic_marker, heuristic_marker_source) = select_airbox_boundary_marker(mesh);
-    let (boundary_marker, boundary_marker_source) =
-        if let Some(m) = policy.and_then(|p| p.boundary_marker) {
-            (m, "user_policy")
+    let explicit_policy_marker = policy.and_then(|p| p.boundary_marker);
+    let (boundary_marker, boundary_marker_source): (u32, &'static str) =
+        if let Some(marker) = explicit_policy_marker {
+            if !mesh.boundary_markers.iter().any(|&value| value == marker) {
+                return Err(format!(
+                    "air_box_policy.boundary_marker={} is not present in mesh '{}' boundary markers; provide a marker that exists on outer air-box faces",
+                    marker,
+                    mesh.mesh_name
+                ));
+            }
+            (marker, "user_policy")
+        } else if problem.validation_profile.execution_mode == ExecutionMode::Strict {
+            return Err(
+                "strict execution mode requires an explicit air_box_policy.boundary_marker for FEM air-box demag; planner no longer guesses boundary markers".to_string()
+            );
         } else {
-            (heuristic_marker, heuristic_marker_source)
+            select_airbox_boundary_marker(mesh)
         };
 
     let grading = policy
@@ -925,7 +936,7 @@ pub(crate) fn build_air_box_config(
         None
     };
 
-    Some(AirBoxConfigIR {
+    Ok(Some(AirBoxConfigIR {
         factor,
         grading,
         boundary_marker,
@@ -935,7 +946,7 @@ pub(crate) fn build_air_box_config(
         shape: Some(shape),
         factor_source: Some(factor_source.to_string()),
         boundary_marker_source: Some(boundary_marker_source.to_string()),
-    })
+    }))
 }
 
 pub(crate) fn study_universe_planner_note(

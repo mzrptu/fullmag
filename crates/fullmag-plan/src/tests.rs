@@ -1537,6 +1537,133 @@ fn fem_plan_conformal_shared_domain_duplicates_interface_nodes_for_cuda() {
 }
 
 #[test]
+fn fem_plan_four_body_shared_domain_populates_region_materials_on_cuda() {
+    // Reproducer for: "ambiguous FEM magnetic region contract: mesh uses
+    // multiple non-zero element markers {1, 2, 3, 4} without region_materials"
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.problem_meta.runtime_metadata.insert(
+        "runtime_selection".to_string(),
+        serde_json::json!({"device": "cuda", "device_index": 0}),
+    );
+
+    // Add 3 more bodies (bootstrap already has 1)
+    for idx in 1..4u32 {
+        let geom_name = format!("nanoflower_{idx}_geom");
+        let magnet_name = format!("nanoflower_{idx}");
+        ir.geometry.entries.push(GeometryEntryIR::Box {
+            name: geom_name.clone(),
+            size: [1.0, 1.0, 1.0],
+        });
+        ir.regions.push(fullmag_ir::RegionIR {
+            name: magnet_name.clone(),
+            geometry: geom_name.clone(),
+        });
+        ir.magnets.push(fullmag_ir::MagnetIR {
+            name: magnet_name.clone(),
+            region: magnet_name.clone(),
+            material: "Py".to_string(),
+            initial_magnetization: Some(InitialMagnetizationIR::Uniform {
+                value: [0.0, 0.0, 1.0],
+            }),
+        });
+    }
+
+    // Rename the bootstrap body for consistency
+    ir.geometry.entries[0] = GeometryEntryIR::Box {
+        name: "nanoflower_0_geom".to_string(),
+        size: [1.0, 1.0, 1.0],
+    };
+    ir.regions[0] = fullmag_ir::RegionIR {
+        name: "strip".to_string(),
+        geometry: "nanoflower_0_geom".to_string(),
+    };
+    ir.magnets[0].initial_magnetization = Some(InitialMagnetizationIR::Uniform {
+        value: [0.0, 0.0, 1.0],
+    });
+
+    // Build a shared-domain mesh with 4 bodies + air
+    // 5 tets: 4 magnetic (markers 1,2,3,4) + 1 air (marker 0)
+    let nodes = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [2.0, 0.0, 0.0],
+        [0.0, 2.0, 0.0],
+        [0.0, 0.0, 2.0],
+        [3.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0],
+    ];
+    let elements = vec![
+        [0, 1, 2, 3],
+        [0, 4, 2, 3],
+        [0, 1, 5, 3],
+        [0, 1, 2, 6],
+        [0, 7, 2, 8],
+    ];
+    let element_markers = vec![1, 2, 3, 4, 0];
+
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![],
+        fem_domain_mesh_asset: Some(fullmag_ir::FemDomainMeshAssetIR {
+            mesh_source: None,
+            mesh: Some(fullmag_ir::MeshIR {
+                mesh_name: "study_domain".to_string(),
+                nodes,
+                elements,
+                element_markers,
+                boundary_faces: vec![[0, 1, 2]],
+                boundary_markers: vec![1],
+                periodic_boundary_pairs: Vec::new(),
+                periodic_node_pairs: Vec::new(),
+                per_domain_quality: std::collections::HashMap::new(),
+            }),
+            region_markers: vec![
+                fullmag_ir::FemDomainRegionMarkerIR {
+                    geometry_name: "nanoflower_0_geom".to_string(),
+                    marker: 1,
+                },
+                fullmag_ir::FemDomainRegionMarkerIR {
+                    geometry_name: "nanoflower_1_geom".to_string(),
+                    marker: 2,
+                },
+                fullmag_ir::FemDomainRegionMarkerIR {
+                    geometry_name: "nanoflower_2_geom".to_string(),
+                    marker: 3,
+                },
+                fullmag_ir::FemDomainRegionMarkerIR {
+                    geometry_name: "nanoflower_3_geom".to_string(),
+                    marker: 4,
+                },
+            ],
+        }),
+    });
+    ir.energy_terms = vec![fullmag_ir::EnergyTermIR::Exchange];
+
+    let planned = plan(&ir).expect("4-body shared-domain FEM should plan on CUDA");
+    let BackendPlanIR::Fem(fem) = planned.backend_plan else {
+        panic!("expected FEM plan");
+    };
+
+    // Must have 4 object segments + implicit air
+    assert!(
+        fem.object_segments.len() >= 4,
+        "expected >=4 object_segments, got {}",
+        fem.object_segments.len()
+    );
+    // Must have region_materials so the runner knows which markers are magnetic
+    assert_eq!(
+        fem.region_materials.len(),
+        4,
+        "expected 4 region_materials, got {}: {:?}",
+        fem.region_materials.len(),
+        fem.region_materials
+    );
+}
+
+#[test]
 fn random_seeded_generates_correct_count() {
     let vectors = generate_random_unit_vectors(42, 100);
     assert_eq!(vectors.len(), 100);
