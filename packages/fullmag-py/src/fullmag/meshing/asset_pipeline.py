@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -37,16 +36,37 @@ from .gmsh_bridge import (
 from .surface_assets import _geometry_to_trimesh, _import_trimesh, build_surface_preview_payload
 from .voxelization import VoxelMaskData, voxelize_geometry
 
-_NO_OP_FIELD_SIZE = 1.0e22
+# PR 2: target resolution extracted into _mesh_targets
+from ._mesh_targets import (
+    ResolvedAirboxTarget,
+    ResolvedObjectPreviewTarget,
+    ResolvedSharedDomainTargets,
+    ResolvedSharedObjectTarget,
+    SharedDomainBuildReport,
+    _unique_size_field_kinds,
+    resolve_object_preview_target,
+    resolve_shared_domain_targets,
+)
+from ._mesh_targets import (
+    _coerce_positive_float as _coerce_positive_float,
+    _geometry_name_aliases as _geometry_name_aliases,
+    _lookup_geometry_name_alias as _lookup_geometry_name_alias,
+    _parse_per_geometry_overrides as _parse_per_geometry_overrides,
+    _resolve_requested_partition_hmaxs as _mesh_targets_resolve_partition_hmaxs,
+)
 
-
-@dataclass(frozen=True, slots=True)
-class SharedDomainBuildReport:
-    build_mode: str
-    fallbacks_triggered: list[str]
-    effective_airbox_target: dict[str, float | None]
-    effective_per_object_targets: dict[str, dict[str, float | int | str | None]]
-    used_size_field_kinds: list[str]
+# PR 3: size-field planning extracted into _size_field_plan
+from ._size_field_plan import (
+    _NO_OP_FIELD_SIZE as _NO_OP_FIELD_SIZE,
+    _build_field_stack as _build_field_stack,
+    _build_interface_fields as _build_interface_fields,
+    _build_manual_hotspot_fields as _build_manual_hotspot_fields,
+    _build_object_bulk_fields as _build_object_bulk_fields,
+    _build_transition_fields as _build_transition_fields,
+    _legacy_box_size_fields,
+    _mesh_options_from_runtime_metadata as _mesh_options_from_runtime_metadata,
+    _resolve_per_object_mesh_options as _resolve_per_object_mesh_options,
+)
 
 
 def _surface_preview_to_mesh_data(preview: dict[str, object]) -> MeshData:
@@ -70,15 +90,22 @@ def realize_fem_mesh_asset(
     hints: FEM,
     *,
     study_universe: Mapping[str, object] | None = None,
+    mesh_workflow: Mapping[str, object] | None = None,
+    per_object_recipes: dict[str, PerObjectMeshRecipe] | None = None,
 ) -> MeshData:
-    """Resolve a FEM mesh asset from either a prebuilt mesh or geometry source."""
+    """Resolve a FEM mesh asset from either a prebuilt mesh or geometry source.
 
-    # The executable FEM lowering path increasingly depends on study-level
-    # universe/domain metadata. The actual air-box meshing policy is still
-    # determined by the active mesh source/generator, but we keep the value in
-    # the call signature now so the higher layers can pass it through without
-    # losing intent or cache correctness.
-    _ = study_universe
+    The effective ``hmax`` and ``order`` are determined by
+    :func:`resolve_object_preview_target` which implements the standard
+    precedence chain: recipe > per_geometry > default_mesh > FEM.
+    """
+    _ = study_universe  # reserved for future airbox-aware preview
+
+    target = resolve_object_preview_target(
+        geometry, hints,
+        mesh_workflow=mesh_workflow,
+        per_object_recipes=per_object_recipes,
+    )
 
     preview = build_surface_preview_payload(geometry)
     if preview is not None:
@@ -115,12 +142,13 @@ def realize_fem_mesh_asset(
 
     if hints.mesh is not None:
         emit_progress(f"Resolving FEM mesh from source '{hints.mesh}'")
-        mesh = generate_mesh_from_file(hints.mesh, hmax=hints.hmax, order=hints.order)
+        mesh = generate_mesh_from_file(hints.mesh, hmax=target.hmax, order=target.order)
     else:
         emit_progress(
-            f"Generating FEM mesh from geometry '{geometry.geometry_name}' with hmax={hints.hmax:.4e}"
+            f"Generating FEM mesh from geometry '{geometry.geometry_name}' "
+            f"with hmax={target.hmax:.4e} (source={target.source})"
         )
-        mesh = generate_mesh(geometry, hmax=hints.hmax, order=hints.order)
+        mesh = generate_mesh(geometry, hmax=target.hmax, order=target.order)
 
     if mesh.n_elements == 0:
         raise ValueError(
@@ -316,550 +344,16 @@ def _study_universe_airbox_options(
     )
 
 
-def _coerce_positive_float(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        candidate = float(value)
-    elif isinstance(value, str):
-        stripped = value.strip()
-        if not stripped or stripped == "auto":
-            return None
-        try:
-            candidate = float(stripped)
-        except ValueError:
-            return None
-    else:
-        return None
-    return candidate if math.isfinite(candidate) and candidate > 0.0 else None
+# _coerce_positive_float, _parse_per_geometry_overrides,
+# _geometry_name_aliases, _lookup_geometry_name_alias are now imported
+# from _mesh_targets (see top-of-file imports).
 
+# _shared_domain_local_size_fields, _build_field_stack and layer builders,
+# _resolve_per_object_mesh_options, _mesh_options_from_runtime_metadata
+# are now imported from _size_field_plan (see top-of-file imports).
 
-def _shared_domain_local_size_fields(
-    geometries: list[Geometry],
-    *,
-    default_hmax: float,
-    per_geometry: object,
-    bounds_by_name: dict[str, tuple] | None = None,
-) -> list[dict[str, object]]:
-    if not isinstance(per_geometry, list):
-        return []
-
-    override_by_name: dict[str, Mapping[str, object]] = {}
-    for entry in per_geometry:
-        if not isinstance(entry, Mapping):
-            continue
-        raw_name = entry.get("geometry") or entry.get("geometry_name")
-        if not isinstance(raw_name, str) or not raw_name.strip():
-            continue
-        override_by_name[raw_name.strip()] = entry
-
-    fields: list[dict[str, object]] = []
-    for geometry in geometries:
-        if bounds_by_name is not None:
-            bounds_pair = bounds_by_name.get(geometry.geometry_name)
-            if bounds_pair is None:
-                continue
-            bounds_min, bounds_max = bounds_pair
-        else:
-            bounds_min, bounds_max = geometry_bounds(geometry, source_root=None)
-        # geometry_bounds returns (None, None) when file cannot be found — skip
-        if bounds_min is None or bounds_max is None:
-            continue
-        entry = override_by_name.get(geometry.geometry_name)
-        target_hmax = _coerce_positive_float(entry.get("hmax") if entry else None) or default_hmax
-        # Only emit a refinement field when the per-geometry hmax is strictly
-        # finer than the domain default.  Coarser-than-default overrides cannot
-        # be expressed through a Min-combiner background field anyway.
-        if target_hmax >= default_hmax:
-            continue
-        # A Box field is a purely coordinate-based size map: VIn inside the
-        # bounding box, VOut outside.  This works reliably for any geometry
-        # type (analytic or discrete/STL) because it never samples surface
-        # mesh nodes — unlike BoundsSurfaceThreshold/Distance fields whose
-        # discrete-surface sampling is unreliable and can leave the background
-        # field silently inactive, causing the mesh to fall back to the
-        # CharacteristicLengthMax (airbox hmax) everywhere.
-        fields.append(
-            {
-                "kind": "Box",
-                "params": {
-                    "VIn": float(target_hmax),
-                    "VOut": float(default_hmax),
-                    "XMin": float(bounds_min[0]),
-                    "XMax": float(bounds_max[0]),
-                    "YMin": float(bounds_min[1]),
-                    "YMax": float(bounds_max[1]),
-                    "ZMin": float(bounds_min[2]),
-                    "ZMax": float(bounds_max[2]),
-                },
-            }
-        )
-    return fields
-
-
-# ---------------------------------------------------------------------------
-# Field-stack builders (Commit 2) — geometry-aware local sizing
-# ---------------------------------------------------------------------------
-
-def _parse_per_geometry_overrides(
-    per_geometry: object,
-) -> dict[str, Mapping[str, object]]:
-    """Parse per_geometry list into a name-keyed dict."""
-    if not isinstance(per_geometry, list):
-        return {}
-    result: dict[str, Mapping[str, object]] = {}
-    for entry in per_geometry:
-        if not isinstance(entry, Mapping):
-            continue
-        raw_name = entry.get("geometry") or entry.get("geometry_name")
-        if not isinstance(raw_name, str) or not raw_name.strip():
-            continue
-        for alias in _geometry_name_aliases(raw_name):
-            result.setdefault(alias, entry)
-    return result
-
-
-def _geometry_name_aliases(name: str) -> tuple[str, ...]:
-    resolved = name.strip()
-    if not resolved:
-        return tuple()
-    aliases = [resolved]
-    if resolved.endswith("_geom") and len(resolved) > len("_geom"):
-        aliases.append(resolved[: -len("_geom")])
-    else:
-        aliases.append(f"{resolved}_geom")
-    return tuple(dict.fromkeys(aliases))
-
-
-def _lookup_geometry_name_alias(
-    mapping: Mapping[str, object] | None,
-    geometry_name: str,
-) -> object | None:
-    if not mapping:
-        return None
-    for alias in _geometry_name_aliases(geometry_name):
-        if alias in mapping:
-            return mapping[alias]
-    return None
-
-
-def _build_object_bulk_fields(
-    geometries: list[Geometry],
-    *,
-    default_hmax: float,
-    override_by_name: dict[str, Mapping[str, object]],
-    bounds_by_name: dict[str, tuple] | None = None,
-    component_aware: bool = False,
-) -> list[dict[str, object]]:
-    """Build per-object bulk refinement fields."""
-    fields: list[dict[str, object]] = []
-    for geometry in geometries:
-        entry = _lookup_geometry_name_alias(override_by_name, geometry.geometry_name)
-        bulk_hmax = _coerce_positive_float(
-            entry.get("bulk_hmax") or entry.get("hmax") if entry else None
-        ) or default_hmax
-
-        if bulk_hmax >= default_hmax:
-            continue
-
-        if component_aware:
-            fields.append(
-                {
-                    "kind": "ComponentVolumeConstant",
-                    "params": {
-                        "GeometryName": geometry.geometry_name,
-                        "VIn": float(bulk_hmax),
-                        "VOut": float(_NO_OP_FIELD_SIZE),
-                    },
-                }
-            )
-            continue
-
-        if bounds_by_name is not None:
-            bounds_pair = bounds_by_name.get(geometry.geometry_name)
-            if bounds_pair is None:
-                continue
-            bounds_min, bounds_max = bounds_pair
-        else:
-            bounds_min, bounds_max = geometry_bounds(geometry, source_root=None)
-        if bounds_min is None or bounds_max is None:
-            continue
-
-        fields.append(
-            {
-                "kind": "Box",
-                "params": {
-                    "VIn": float(bulk_hmax),
-                    "VOut": float(_NO_OP_FIELD_SIZE),
-                    "XMin": float(bounds_min[0]),
-                    "XMax": float(bounds_max[0]),
-                    "YMin": float(bounds_min[1]),
-                    "YMax": float(bounds_max[1]),
-                    "ZMin": float(bounds_min[2]),
-                    "ZMax": float(bounds_max[2]),
-                },
-            }
-        )
-    return fields
-
-
-def _build_interface_fields(
-    geometries: list[Geometry],
-    *,
-    default_hmax: float,
-    override_by_name: dict[str, Mapping[str, object]],
-    bounds_by_name: dict[str, tuple] | None = None,
-    component_aware: bool = False,
-) -> list[dict[str, object]]:
-    """Build interface refinement fields around each object."""
-    fields: list[dict[str, object]] = []
-    for geometry in geometries:
-        entry = _lookup_geometry_name_alias(override_by_name, geometry.geometry_name)
-        bulk_hmax = _coerce_positive_float(
-            entry.get("bulk_hmax") or entry.get("hmax") if entry else None
-        ) or default_hmax
-        interface_hmax = _coerce_positive_float(
-            entry.get("interface_hmax") if entry else None
-        )
-        interface_thickness = _coerce_positive_float(
-            entry.get("interface_thickness") if entry else None
-        )
-
-        if interface_hmax is None:
-            # Default: interface is 60% of bulk to give visible refinement
-            interface_hmax = bulk_hmax * 0.6
-        if interface_thickness is None:
-            # Default thickness = 2× the interface element size
-            interface_thickness = interface_hmax * 2.0
-
-        if interface_hmax >= default_hmax:
-            continue
-
-        if component_aware:
-            fields.append(
-                {
-                    "kind": "InterfaceShellThreshold",
-                    "params": {
-                        "GeometryName": geometry.geometry_name,
-                        "SizeMin": float(interface_hmax),
-                        "SizeMax": float(_NO_OP_FIELD_SIZE),
-                        "DistMin": 0.0,
-                        "DistMax": float(interface_thickness),
-                        "Sampling": 20,
-                    },
-                }
-            )
-            continue
-
-        if bounds_by_name is not None:
-            bounds_pair = bounds_by_name.get(geometry.geometry_name)
-            if bounds_pair is None:
-                continue
-            bounds_min, bounds_max = bounds_pair
-        else:
-            bounds_min, bounds_max = geometry_bounds(geometry, source_root=None)
-        if bounds_min is None or bounds_max is None:
-            continue
-
-        fields.append(
-            {
-                "kind": "BoundsSurfaceThreshold",
-                "params": {
-                    "BoundsMin": list(bounds_min),
-                    "BoundsMax": list(bounds_max),
-                    "SizeMin": float(interface_hmax),
-                    "SizeMax": float(_NO_OP_FIELD_SIZE),
-                    "DistMin": 0.0,
-                    "DistMax": float(interface_thickness),
-                    "Sampling": 20,
-                    "MatchPadding": float(interface_hmax * 0.5),
-                },
-            }
-        )
-    return fields
-
-
-def _build_transition_fields(
-    geometries: list[Geometry],
-    *,
-    default_hmax: float,
-    override_by_name: dict[str, Mapping[str, object]],
-    bounds_by_name: dict[str, tuple] | None = None,
-    component_aware: bool = False,
-) -> list[dict[str, object]]:
-    """Build transition zone fields from fine object region to coarse airbox."""
-    fields: list[dict[str, object]] = []
-    for geometry in geometries:
-        entry = _lookup_geometry_name_alias(override_by_name, geometry.geometry_name)
-        bulk_hmax = _coerce_positive_float(
-            entry.get("bulk_hmax") or entry.get("hmax") if entry else None
-        ) or default_hmax
-        transition_distance = _coerce_positive_float(
-            entry.get("transition_distance") if entry else None
-        )
-
-        if transition_distance is None:
-            # Default: transition zone = 3× bulk hmax
-            transition_distance = bulk_hmax * 3.0
-
-        if bulk_hmax >= default_hmax:
-            continue
-
-        if component_aware:
-            fields.append(
-                {
-                    "kind": "TransitionShellThreshold",
-                    "params": {
-                        "GeometryName": geometry.geometry_name,
-                        "SizeMin": float(bulk_hmax),
-                        "SizeMax": float(_NO_OP_FIELD_SIZE),
-                        "DistMin": 0.0,
-                        "DistMax": float(transition_distance),
-                        "Sampling": 20,
-                    },
-                }
-            )
-            continue
-
-        if bounds_by_name is not None:
-            bounds_pair = bounds_by_name.get(geometry.geometry_name)
-            if bounds_pair is None:
-                continue
-            bounds_min, bounds_max = bounds_pair
-        else:
-            bounds_min, bounds_max = geometry_bounds(geometry, source_root=None)
-        if bounds_min is None or bounds_max is None:
-            continue
-
-        fields.append(
-            {
-                "kind": "BoundsSurfaceThreshold",
-                "params": {
-                    "BoundsMin": list(bounds_min),
-                    "BoundsMax": list(bounds_max),
-                    "SizeMin": float(bulk_hmax),
-                    "SizeMax": float(_NO_OP_FIELD_SIZE),
-                    "DistMin": 0.0,
-                    "DistMax": float(transition_distance),
-                    "Sampling": 20,
-                    "MatchPadding": float(bulk_hmax),
-                },
-            }
-        )
-    return fields
-
-
-def _build_manual_hotspot_fields(
-    per_geometry: object,
-) -> list[dict[str, object]]:
-    """Extract manually declared size fields from per_geometry entries."""
-    if not isinstance(per_geometry, list):
-        return []
-    fields: list[dict[str, object]] = []
-    for entry in per_geometry:
-        if not isinstance(entry, Mapping):
-            continue
-        extra = entry.get("size_fields")
-        if not isinstance(extra, list):
-            continue
-        for sf in extra:
-            if isinstance(sf, dict) and "kind" in sf:
-                fields.append(sf)
-    return fields
-
-
-def _build_field_stack(
-    geometries: list[Geometry],
-    *,
-    default_hmax: float,
-    per_geometry: object,
-    bounds_by_name: dict[str, tuple] | None = None,
-    component_aware: bool = False,
-) -> list[dict[str, object]]:
-    """Full field stack: bulk + interface + transition + manual hotspots.
-
-    This is the Commit 2 replacement for ``_shared_domain_local_size_fields``.
-    Falls back to Box-only bulk fields when no interface/transition params are
-    specified, keeping backward compatibility.
-    """
-    override_by_name = _parse_per_geometry_overrides(per_geometry)
-
-    # Layer 1: Object bulk (Box fields)
-    fields = _build_object_bulk_fields(
-        geometries,
-        default_hmax=default_hmax,
-        override_by_name=override_by_name,
-        bounds_by_name=bounds_by_name,
-        component_aware=component_aware,
-    )
-
-    # Layer 2: Interface refinement (BoundsSurfaceThreshold)
-    interface_fields = _build_interface_fields(
-        geometries,
-        default_hmax=default_hmax,
-        override_by_name=override_by_name,
-        bounds_by_name=bounds_by_name,
-        component_aware=component_aware,
-    )
-    if interface_fields:
-        fields.extend(interface_fields)
-
-    # Layer 3: Transition zone (BoundsSurfaceThreshold with wider distance)
-    transition_fields = _build_transition_fields(
-        geometries,
-        default_hmax=default_hmax,
-        override_by_name=override_by_name,
-        bounds_by_name=bounds_by_name,
-        component_aware=component_aware,
-    )
-    if transition_fields:
-        fields.extend(transition_fields)
-
-    # Layer 4: Manual hotspot fields
-    hotspot_fields = _build_manual_hotspot_fields(per_geometry)
-    if hotspot_fields:
-        fields.extend(hotspot_fields)
-
-    if fields:
-        emit_progress(
-            f"Field stack: {len(fields)} fields "
-            f"(bulk={len(fields) - len(interface_fields) - len(transition_fields) - len(hotspot_fields)}, "
-            f"interface={len(interface_fields)}, "
-            f"transition={len(transition_fields)}, "
-            f"hotspots={len(hotspot_fields)})"
-        )
-
-    return fields
-
-
-def _resolve_per_object_mesh_options(
-    geometries: list[Geometry],
-    per_object_recipes: dict[str, PerObjectMeshRecipe],
-    assembly_policy: SharedMeshAssemblyPolicy,
-    *,
-    default_hmax: float,
-    bounds_by_name: dict[str, tuple] | None = None,
-    component_aware: bool = False,
-) -> list[dict[str, object]]:
-    """Build size-field overrides from per-object mesh recipes.
-
-    For each geometry that has an associated :class:`PerObjectMeshRecipe`, a
-    surface-driven threshold field is injected around the object's recovered
-    STL surfaces. This keeps refinement attached to the real body boundary
-    instead of flooding the whole bounding box volume.
-    """
-    extra_fields: list[dict[str, object]] = []
-    for geometry in geometries:
-        recipe = _lookup_geometry_name_alias(per_object_recipes, geometry.geometry_name)
-        if recipe is None:
-            continue
-        if bounds_by_name is not None:
-            bounds_pair = bounds_by_name.get(geometry.geometry_name)
-            if bounds_pair is None:
-                continue
-            bounds_min, bounds_max = bounds_pair
-        else:
-            bounds_min, bounds_max = geometry_bounds(geometry, source_root=None)
-        # geometry_bounds returns (None, None) when file cannot be found — skip
-        if bounds_min is None or bounds_max is None:
-            continue
-        target_hmax = recipe.hmax if recipe.hmax is not None else default_hmax
-        if target_hmax >= default_hmax:
-            extra_fields.extend(recipe.size_fields if recipe.size_fields else [])
-            continue
-        if component_aware:
-            extra_fields.append(
-                {
-                    "kind": "ComponentVolumeConstant",
-                    "params": {
-                        "GeometryName": geometry.geometry_name,
-                        "VIn": float(target_hmax),
-                        "VOut": float(_NO_OP_FIELD_SIZE),
-                    },
-                }
-            )
-        else:
-            extra_fields.append(
-                {
-                    "kind": "Box",
-                    "params": {
-                        "VIn": float(target_hmax),
-                        "VOut": float(_NO_OP_FIELD_SIZE),
-                        "XMin": float(bounds_min[0]),
-                        "XMax": float(bounds_max[0]),
-                        "YMin": float(bounds_min[1]),
-                        "YMax": float(bounds_max[1]),
-                        "ZMin": float(bounds_min[2]),
-                        "ZMax": float(bounds_max[2]),
-                    },
-                }
-            )
-        # Inject any extra size fields declared directly on the recipe.
-        for sf in recipe.size_fields:
-            if isinstance(sf, dict):
-                extra_fields.append(sf)
-    return extra_fields
-
-
-def _mesh_options_from_runtime_metadata(
-    mesh_workflow: Mapping[str, object] | None,
-    *,
-    geometries: list[Geometry],
-    default_hmax: float,
-    bounds_by_name: dict[str, tuple] | None = None,
-    component_aware: bool = False,
-) -> MeshOptions:
-    raw_mesh_options = (
-        mesh_workflow.get("mesh_options")
-        if isinstance(mesh_workflow, Mapping)
-        and isinstance(mesh_workflow.get("mesh_options"), Mapping)
-        else {}
-    )
-    assert isinstance(raw_mesh_options, Mapping)
-    size_fields = (
-        [field for field in raw_mesh_options.get("size_fields", []) if isinstance(field, Mapping)]
-        if isinstance(raw_mesh_options.get("size_fields"), list)
-        else []
-    )
-    size_fields.extend(
-        _build_field_stack(
-            geometries,
-            default_hmax=default_hmax,
-            per_geometry=mesh_workflow.get("per_geometry") if isinstance(mesh_workflow, Mapping) else None,
-            bounds_by_name=bounds_by_name,
-            component_aware=component_aware,
-        )
-    )
-    optimize = raw_mesh_options.get("optimize")
-    return MeshOptions(
-        algorithm_2d=int(raw_mesh_options.get("algorithm_2d", 6)),
-        algorithm_3d=int(raw_mesh_options.get("algorithm_3d", 1)),
-        hmin=_coerce_positive_float(raw_mesh_options.get("hmin")),
-        calibrate_for=(
-            str(raw_mesh_options.get("calibrate_for"))
-            if isinstance(raw_mesh_options.get("calibrate_for"), str)
-            else None
-        ),
-        size_preset=(
-            str(raw_mesh_options.get("size_preset"))
-            if isinstance(raw_mesh_options.get("size_preset"), str)
-            else None
-        ),
-        size_factor=float(raw_mesh_options.get("size_factor", 1.0)),
-        size_from_curvature=int(raw_mesh_options.get("size_from_curvature", 0)),
-        curvature_factor=_coerce_positive_float(raw_mesh_options.get("curvature_factor")),
-        growth_rate=_coerce_positive_float(raw_mesh_options.get("growth_rate")),
-        narrow_regions=int(raw_mesh_options.get("narrow_regions", 0)),
-        narrow_region_resolution=_coerce_positive_float(
-            raw_mesh_options.get("narrow_region_resolution")
-        ),
-        smoothing_steps=int(raw_mesh_options.get("smoothing_steps", 1)),
-        optimize=str(optimize) if isinstance(optimize, str) and optimize.strip() else None,
-        optimize_iters=int(raw_mesh_options.get("optimize_iterations", 1)),
-        size_fields=size_fields,
-        compute_quality=bool(raw_mesh_options.get("compute_quality", False)),
-        per_element_quality=bool(raw_mesh_options.get("per_element_quality", False)),
-    )
+# Backward-compat alias for _shared_domain_local_size_fields:
+_shared_domain_local_size_fields = _legacy_box_size_fields
 
 
 def _contains_points_in_geometry(
@@ -1096,57 +590,13 @@ def _resolve_requested_partition_hmaxs(
     mesh_workflow: Mapping[str, object] | None,
     per_object_recipes: dict[str, PerObjectMeshRecipe] | None,
 ) -> tuple[float | None, dict[str, float | None]]:
-    requested_airbox_hmax = (
-        float(airbox.hmax)
-        if airbox is not None and airbox.hmax is not None and float(airbox.hmax) > 0.0
-        else (float(hints.hmax) if hints.hmax is not None else None)
+    """Backward-compatible wrapper — delegates to ``_mesh_targets``."""
+    return _mesh_targets_resolve_partition_hmaxs(
+        geometries, hints,
+        airbox_hmax=float(airbox.hmax) if airbox is not None and airbox.hmax is not None else None,
+        mesh_workflow=mesh_workflow,
+        per_object_recipes=per_object_recipes,
     )
-
-    default_object_hmax: float | None = None
-    if isinstance(mesh_workflow, Mapping):
-        default_mesh = mesh_workflow.get("default_mesh")
-        if isinstance(default_mesh, Mapping):
-            default_object_hmax = _coerce_positive_float(default_mesh.get("hmax"))
-
-    override_by_name: dict[str, float] = {}
-    if isinstance(mesh_workflow, Mapping):
-        per_geometry = mesh_workflow.get("per_geometry")
-        if isinstance(per_geometry, list):
-            for entry in per_geometry:
-                if not isinstance(entry, Mapping):
-                    continue
-                raw_name = entry.get("geometry") or entry.get("geometry_name")
-                if not isinstance(raw_name, str) or not raw_name.strip():
-                    continue
-                override_hmax = _coerce_positive_float(entry.get("hmax"))
-                if override_hmax is not None:
-                    for alias in _geometry_name_aliases(raw_name):
-                        override_by_name.setdefault(alias, override_hmax)
-
-    if per_object_recipes:
-        for geometry_name, recipe in per_object_recipes.items():
-            if recipe.hmax is not None and float(recipe.hmax) > 0.0:
-                for alias in _geometry_name_aliases(geometry_name):
-                    override_by_name.setdefault(alias, float(recipe.hmax))
-
-    object_hmax_by_geometry: dict[str, float | None] = {}
-    for geometry in geometries:
-        requested = _lookup_geometry_name_alias(override_by_name, geometry.geometry_name)
-        if requested is None:
-            requested = default_object_hmax
-        if requested is None and (airbox is None or airbox.hmax is None):
-            requested = float(hints.hmax) if hints.hmax is not None else None
-        object_hmax_by_geometry[geometry.geometry_name] = requested
-    return requested_airbox_hmax, object_hmax_by_geometry
-
-
-def _unique_size_field_kinds(size_fields: list[dict[str, object]]) -> list[str]:
-    kinds: list[str] = []
-    for field in size_fields:
-        kind = field.get("kind")
-        if isinstance(kind, str) and kind not in kinds:
-            kinds.append(kind)
-    return kinds
 
 
 def _resolve_effective_shared_domain_targets(
@@ -1157,74 +607,40 @@ def _resolve_effective_shared_domain_targets(
     mesh_workflow: Mapping[str, object] | None,
     per_object_recipes: dict[str, PerObjectMeshRecipe] | None,
 ) -> tuple[dict[str, float | None], dict[str, dict[str, float | int | str | None]]]:
-    requested_airbox_hmax, requested_hmax_by_geometry = _resolve_requested_partition_hmaxs(
-        geometries,
-        hints,
-        airbox=airbox,
-        mesh_workflow=mesh_workflow,
-        per_object_recipes=per_object_recipes,
-    )
-    workflow_by_name: dict[str, Mapping[str, object]] = {}
-    if isinstance(mesh_workflow, Mapping):
-        per_geometry = mesh_workflow.get("per_geometry")
-        if isinstance(per_geometry, list):
-            for entry in per_geometry:
-                if not isinstance(entry, Mapping):
-                    continue
-                raw_name = entry.get("geometry") or entry.get("geometry_name")
-                if isinstance(raw_name, str) and raw_name.strip():
-                    for alias in _geometry_name_aliases(raw_name):
-                        workflow_by_name.setdefault(alias, entry)
+    """Backward-compatible wrapper — delegates to ``resolve_shared_domain_targets``.
 
-    effective_airbox_target = {
-        "hmax": requested_airbox_hmax,
-        "hmin": (
+    Returns the legacy ``(airbox_dict, per_object_dict)`` format so existing
+    callers continue working until they are migrated to the typed API.
+    """
+    resolved = resolve_shared_domain_targets(
+        geometries, hints,
+        airbox_hmax=float(airbox.hmax) if airbox is not None and airbox.hmax is not None else None,
+        airbox_hmin=(
             _coerce_positive_float(getattr(airbox, "hmin", None))
             if airbox is not None and getattr(airbox, "hmin", None) is not None
             else None
         ),
-        "growth_rate": (
+        airbox_growth_rate=(
             float(getattr(airbox, "grading_ratio", None))
             if airbox is not None and getattr(airbox, "grading_ratio", None) is not None
             else None
         ),
+        mesh_workflow=mesh_workflow,
+        per_object_recipes=per_object_recipes,
+    )
+    effective_airbox_target: dict[str, float | None] = {
+        "hmax": resolved.airbox.hmax,
+        "hmin": resolved.airbox.hmin,
+        "growth_rate": resolved.airbox.growth_rate,
     }
-    default_hmax = float(hints.hmax) if hints.hmax is not None else None
     effective_per_object_targets: dict[str, dict[str, float | int | str | None]] = {}
-    for geometry in geometries:
-        workflow_entry = _lookup_geometry_name_alias(workflow_by_name, geometry.geometry_name)
-        recipe = (
-            _lookup_geometry_name_alias(per_object_recipes, geometry.geometry_name)
-            if per_object_recipes
-            else None
-        )
-        bulk_hmax = requested_hmax_by_geometry.get(geometry.geometry_name)
-        interface_hmax = (
-            _coerce_positive_float(workflow_entry.get("interface_hmax"))
-            if workflow_entry is not None
-            else None
-        )
-        if interface_hmax is None and bulk_hmax is not None and default_hmax is not None and bulk_hmax < default_hmax:
-            interface_hmax = bulk_hmax * 0.6
-        transition_distance = (
-            _coerce_positive_float(workflow_entry.get("transition_distance"))
-            if workflow_entry is not None
-            else None
-        )
-        if transition_distance is None and bulk_hmax is not None and default_hmax is not None and bulk_hmax < default_hmax:
-            transition_distance = bulk_hmax * 3.0
-        source = "study_default"
-        if recipe is not None:
-            source = "recipe_override"
-        elif workflow_entry is not None:
-            mode = workflow_entry.get("mode")
-            source = "local_override" if mode == "custom" else "study_default"
-        effective_per_object_targets[geometry.geometry_name] = {
+    for name, target in resolved.per_object.items():
+        effective_per_object_targets[name] = {
             "marker": None,
-            "hmax": bulk_hmax,
-            "interface_hmax": interface_hmax,
-            "transition_distance": transition_distance,
-            "source": source,
+            "hmax": target.hmax,
+            "interface_hmax": target.interface_hmax,
+            "transition_distance": target.transition_distance,
+            "source": target.source,
         }
     return effective_airbox_target, effective_per_object_targets
 
@@ -1241,25 +657,38 @@ def _build_shared_domain_build_report(
     build_mode: str,
     fallbacks_triggered: list[str],
 ) -> SharedDomainBuildReport:
-    effective_airbox_target, effective_per_object_targets = _resolve_effective_shared_domain_targets(
-        geometries,
-        hints,
-        airbox=airbox,
+    resolved = resolve_shared_domain_targets(
+        geometries, hints,
+        airbox_hmax=float(airbox.hmax) if airbox is not None and airbox.hmax is not None else None,
+        airbox_hmin=(
+            _coerce_positive_float(getattr(airbox, "hmin", None))
+            if airbox is not None and getattr(airbox, "hmin", None) is not None
+            else None
+        ),
+        airbox_growth_rate=(
+            float(getattr(airbox, "grading_ratio", None))
+            if airbox is not None and getattr(airbox, "grading_ratio", None) is not None
+            else None
+        ),
         mesh_workflow=mesh_workflow,
         per_object_recipes=per_object_recipes,
     )
+    # Attach region markers to per-object targets using dataclass replace.
+    from dataclasses import replace as _dc_replace
+    per_object_targets: dict[str, ResolvedSharedObjectTarget] = dict(resolved.per_object)
     for region in region_markers:
         geometry_name = region.get("geometry_name")
         marker = region.get("marker")
-        if isinstance(geometry_name, str) and geometry_name in effective_per_object_targets:
-            effective_per_object_targets[geometry_name]["marker"] = (
-                int(marker) if isinstance(marker, (int, np.integer)) else None
+        if isinstance(geometry_name, str) and geometry_name in per_object_targets:
+            per_object_targets[geometry_name] = _dc_replace(
+                per_object_targets[geometry_name],
+                marker=int(marker) if isinstance(marker, (int, np.integer)) else None,
             )
     return SharedDomainBuildReport(
         build_mode=build_mode,
         fallbacks_triggered=list(fallbacks_triggered),
-        effective_airbox_target=effective_airbox_target,
-        effective_per_object_targets=effective_per_object_targets,
+        effective_airbox_target=resolved.airbox,
+        effective_per_object_targets=per_object_targets,
         used_size_field_kinds=_unique_size_field_kinds(size_fields),
     )
 
@@ -1808,10 +1237,7 @@ def _realize_fem_domain_mesh_asset_from_components_impl(
             "n_nodes": classified_mesh.n_nodes,
             "n_elements": classified_mesh.n_elements,
             "n_boundary_faces": classified_mesh.n_boundary_faces,
-            "effective_airbox_target": report.effective_airbox_target,
-            "effective_per_object_targets": report.effective_per_object_targets,
-            "used_size_field_kinds": report.used_size_field_kinds,
-            "fallbacks_triggered": report.fallbacks_triggered,
+            **{k: v for k, v in report.to_dict().items() if k != "build_mode"},
             "message": "Shared-domain mesh build finished",
         }
     )

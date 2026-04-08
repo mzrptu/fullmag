@@ -4,6 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV CMAKE_VERSION=3.30.5
 ENV MFEM_REF=v4.7
 ENV LIBCEED_REF=v0.12.0
+ENV HYPRE_REF=v2.32.0
 ENV INSTALL_PREFIX=/opt/fullmag-deps
 ENV CUDA_HOME=/usr/local/cuda
 ENV CUDA_PATH=/usr/local/cuda
@@ -23,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gfortran \
     git \
+    openmpi-bin \
     libopenmpi-dev \
     ninja-build \
     pkg-config \
@@ -46,13 +48,15 @@ RUN make -C /tmp/build/libCEED -j"$(nproc)" && \
     make -C /tmp/build/libCEED install prefix=${INSTALL_PREFIX}
 
 # S10: Build hypre (serial + CUDA) — required for CG+AMG Poisson solver
-RUN git clone --depth 1 https://github.com/hypre-space/hypre.git /tmp/build/hypre && \
+RUN git clone --depth 1 --branch ${HYPRE_REF} https://github.com/hypre-space/hypre.git /tmp/build/hypre && \
     cd /tmp/build/hypre/src && \
+    CC=mpicc CXX=mpicxx FC=mpifort \
     ./configure \
       --prefix=${INSTALL_PREFIX} \
       --enable-shared \
       --with-cuda \
-      --with-gpu-arch="60 70 80 90" && \
+      --with-gpu-arch="60 70 80 90" \
+      --without-umpire && \
     make -j"$(nproc)" && \
     make install
 

@@ -1,0 +1,398 @@
+"""Single source of truth for FEM mesh-target resolution.
+
+PR 2 — Extracts all hmax/hmin/order resolution logic from
+``asset_pipeline.py`` into pure-data functions with explicit precedence.
+
+Resolution precedence (highest to lowest):
+  1. ``PerObjectMeshRecipe.hmax`` — per-geometry DSL override
+  2. ``mesh_workflow.per_geometry[hmax]`` — frontend / control-room override
+  3. ``mesh_workflow.default_mesh[hmax]`` — frontend global object default
+  4. ``FEM.hmax`` — study-level default
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from typing import Mapping
+
+from fullmag.model.discretization import FEM, PerObjectMeshRecipe
+from fullmag.model.geometry import Geometry
+
+
+# ===================================================================
+# Resolved-target dataclasses
+# ===================================================================
+
+@dataclass(frozen=True, slots=True)
+class ResolvedObjectPreviewTarget:
+    """Resolved targets for a single-object FEM preview mesh."""
+    hmax: float
+    order: int
+    source: str  # "fem_default" | "recipe_override" | "workflow_override"
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedAirboxTarget:
+    """Resolved airbox mesh-size targets."""
+    hmax: float | None
+    hmin: float | None = None
+    growth_rate: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedSharedObjectTarget:
+    """Resolved targets for one magnetic object within a shared domain."""
+    geometry_name: str
+    hmax: float | None
+    interface_hmax: float | None = None
+    transition_distance: float | None = None
+    source: str = "study_default"
+    marker: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedSharedDomainTargets:
+    """Complete resolved targets for a shared-domain FEM mesh."""
+    airbox: ResolvedAirboxTarget
+    per_object: dict[str, ResolvedSharedObjectTarget]
+    effective_hmax: float  # max(airbox_hmax, max object VIn, FEM.hmax)
+
+
+# ===================================================================
+# Utility helpers (moved from asset_pipeline)
+# ===================================================================
+
+def _coerce_positive_float(value: object) -> float | None:
+    """Parse *value* as a strictly positive finite float, or ``None``."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        candidate = float(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not stripped or stripped == "auto":
+            return None
+        try:
+            candidate = float(stripped)
+        except ValueError:
+            return None
+    else:
+        return None
+    return candidate if math.isfinite(candidate) and candidate > 0.0 else None
+
+
+def _geometry_name_aliases(name: str) -> tuple[str, ...]:
+    """Return canonical aliases for *name* (with and without ``_geom`` suffix)."""
+    resolved = name.strip()
+    if not resolved:
+        return tuple()
+    aliases = [resolved]
+    if resolved.endswith("_geom") and len(resolved) > len("_geom"):
+        aliases.append(resolved[: -len("_geom")])
+    else:
+        aliases.append(f"{resolved}_geom")
+    return tuple(dict.fromkeys(aliases))
+
+
+def _lookup_geometry_name_alias(
+    mapping: Mapping[str, object] | None,
+    geometry_name: str,
+) -> object | None:
+    """Look up *geometry_name* in *mapping*, trying canonical aliases."""
+    if not mapping:
+        return None
+    for alias in _geometry_name_aliases(geometry_name):
+        if alias in mapping:
+            return mapping[alias]
+    return None
+
+
+def _parse_per_geometry_overrides(
+    per_geometry: object,
+) -> dict[str, Mapping[str, object]]:
+    """Parse per_geometry list into a name-keyed dict (alias-expanded)."""
+    if not isinstance(per_geometry, list):
+        return {}
+    result: dict[str, Mapping[str, object]] = {}
+    for entry in per_geometry:
+        if not isinstance(entry, Mapping):
+            continue
+        raw_name = entry.get("geometry") or entry.get("geometry_name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            continue
+        for alias in _geometry_name_aliases(raw_name):
+            result.setdefault(alias, entry)
+    return result
+
+
+# ===================================================================
+# Single-object preview resolution
+# ===================================================================
+
+def resolve_object_preview_target(
+    geometry: Geometry,
+    hints: FEM,
+    *,
+    mesh_workflow: Mapping[str, object] | None = None,
+    per_object_recipes: dict[str, PerObjectMeshRecipe] | None = None,
+) -> ResolvedObjectPreviewTarget:
+    """Resolve the effective hmax/order for a single-object preview mesh.
+
+    Precedence (highest wins):
+      1. ``PerObjectMeshRecipe.hmax``
+      2. ``mesh_workflow.per_geometry[hmax]``
+      3. ``mesh_workflow.default_mesh[hmax]``
+      4. ``FEM.hmax``
+    """
+    hmax = float(hints.hmax)
+    order = int(hints.order)
+    source = "fem_default"
+
+    # Level 3: mesh_workflow.default_mesh[hmax]
+    if isinstance(mesh_workflow, Mapping):
+        default_mesh = mesh_workflow.get("default_mesh")
+        if isinstance(default_mesh, Mapping):
+            v = _coerce_positive_float(default_mesh.get("hmax"))
+            if v is not None:
+                hmax = v
+                source = "workflow_default"
+
+    # Level 2: mesh_workflow.per_geometry[hmax]
+    if isinstance(mesh_workflow, Mapping):
+        per_geometry = mesh_workflow.get("per_geometry")
+        if isinstance(per_geometry, list):
+            override_by_name: dict[str, float] = {}
+            for entry in per_geometry:
+                if not isinstance(entry, Mapping):
+                    continue
+                raw_name = entry.get("geometry") or entry.get("geometry_name")
+                if not isinstance(raw_name, str) or not raw_name.strip():
+                    continue
+                override_hmax = _coerce_positive_float(entry.get("hmax"))
+                if override_hmax is not None:
+                    for alias in _geometry_name_aliases(raw_name):
+                        override_by_name.setdefault(alias, override_hmax)
+            resolved = _lookup_geometry_name_alias(override_by_name, geometry.geometry_name)
+            if isinstance(resolved, (int, float)):
+                hmax = float(resolved)
+                source = "workflow_override"
+
+    # Level 1: PerObjectMeshRecipe.hmax (highest priority)
+    if per_object_recipes:
+        recipe = _lookup_geometry_name_alias(per_object_recipes, geometry.geometry_name)
+        if isinstance(recipe, PerObjectMeshRecipe) and recipe.hmax is not None and float(recipe.hmax) > 0:
+            hmax = float(recipe.hmax)
+            source = "recipe_override"
+        if isinstance(recipe, PerObjectMeshRecipe) and recipe.order is not None:
+            order = int(recipe.order)
+
+    return ResolvedObjectPreviewTarget(hmax=hmax, order=order, source=source)
+
+
+# ===================================================================
+# Shared-domain resolution (previously _resolve_requested_partition_hmaxs)
+# ===================================================================
+
+def _resolve_requested_partition_hmaxs(
+    geometries: list[Geometry],
+    hints: FEM,
+    *,
+    airbox_hmax: float | None,
+    mesh_workflow: Mapping[str, object] | None,
+    per_object_recipes: dict[str, PerObjectMeshRecipe] | None,
+) -> tuple[float | None, dict[str, float | None]]:
+    """Resolve requested hmax for airbox and each geometry partition.
+
+    Returns ``(airbox_hmax, {geometry_name: hmax | None})``.
+    """
+    requested_airbox_hmax = (
+        float(airbox_hmax)
+        if airbox_hmax is not None and float(airbox_hmax) > 0.0
+        else (float(hints.hmax) if hints.hmax is not None else None)
+    )
+
+    default_object_hmax: float | None = None
+    if isinstance(mesh_workflow, Mapping):
+        default_mesh = mesh_workflow.get("default_mesh")
+        if isinstance(default_mesh, Mapping):
+            default_object_hmax = _coerce_positive_float(default_mesh.get("hmax"))
+
+    override_by_name: dict[str, float] = {}
+    if isinstance(mesh_workflow, Mapping):
+        per_geometry = mesh_workflow.get("per_geometry")
+        if isinstance(per_geometry, list):
+            for entry in per_geometry:
+                if not isinstance(entry, Mapping):
+                    continue
+                raw_name = entry.get("geometry") or entry.get("geometry_name")
+                if not isinstance(raw_name, str) or not raw_name.strip():
+                    continue
+                override_hmax = _coerce_positive_float(entry.get("hmax"))
+                if override_hmax is not None:
+                    for alias in _geometry_name_aliases(raw_name):
+                        override_by_name.setdefault(alias, override_hmax)
+
+    if per_object_recipes:
+        for geometry_name, recipe in per_object_recipes.items():
+            if recipe.hmax is not None and float(recipe.hmax) > 0.0:
+                for alias in _geometry_name_aliases(geometry_name):
+                    override_by_name.setdefault(alias, float(recipe.hmax))
+
+    object_hmax_by_geometry: dict[str, float | None] = {}
+    for geometry in geometries:
+        requested = _lookup_geometry_name_alias(override_by_name, geometry.geometry_name)
+        if requested is None:
+            requested = default_object_hmax
+        if requested is None and (airbox_hmax is None):
+            requested = float(hints.hmax) if hints.hmax is not None else None
+        object_hmax_by_geometry[geometry.geometry_name] = requested
+    return requested_airbox_hmax, object_hmax_by_geometry
+
+
+def resolve_shared_domain_targets(
+    geometries: list[Geometry],
+    hints: FEM,
+    *,
+    airbox_hmax: float | None,
+    airbox_hmin: float | None = None,
+    airbox_growth_rate: float | None = None,
+    mesh_workflow: Mapping[str, object] | None,
+    per_object_recipes: dict[str, PerObjectMeshRecipe] | None,
+) -> ResolvedSharedDomainTargets:
+    """Resolve all shared-domain targets in one shot.
+
+    This replaces the former ``_resolve_effective_shared_domain_targets`` which
+    returned raw dicts.  The new API returns typed dataclasses that downstream
+    code can rely on without dict-key guessing.
+    """
+    requested_airbox_hmax, requested_hmax_by_geometry = _resolve_requested_partition_hmaxs(
+        geometries, hints,
+        airbox_hmax=airbox_hmax,
+        mesh_workflow=mesh_workflow,
+        per_object_recipes=per_object_recipes,
+    )
+
+    airbox = ResolvedAirboxTarget(
+        hmax=requested_airbox_hmax,
+        hmin=airbox_hmin,
+        growth_rate=airbox_growth_rate,
+    )
+
+    default_hmax = float(hints.hmax) if hints.hmax is not None else None
+
+    workflow_by_name: dict[str, Mapping[str, object]] = {}
+    if isinstance(mesh_workflow, Mapping):
+        per_geometry = mesh_workflow.get("per_geometry")
+        if isinstance(per_geometry, list):
+            for entry in per_geometry:
+                if not isinstance(entry, Mapping):
+                    continue
+                raw_name = entry.get("geometry") or entry.get("geometry_name")
+                if isinstance(raw_name, str) and raw_name.strip():
+                    for alias in _geometry_name_aliases(raw_name):
+                        workflow_by_name.setdefault(alias, entry)
+
+    per_object: dict[str, ResolvedSharedObjectTarget] = {}
+    for geometry in geometries:
+        workflow_entry = _lookup_geometry_name_alias(workflow_by_name, geometry.geometry_name)
+        recipe = (
+            _lookup_geometry_name_alias(per_object_recipes, geometry.geometry_name)
+            if per_object_recipes
+            else None
+        )
+        bulk_hmax = requested_hmax_by_geometry.get(geometry.geometry_name)
+
+        interface_hmax = (
+            _coerce_positive_float(workflow_entry.get("interface_hmax"))
+            if isinstance(workflow_entry, Mapping)
+            else None
+        )
+        if interface_hmax is None and bulk_hmax is not None and default_hmax is not None and bulk_hmax < default_hmax:
+            interface_hmax = bulk_hmax * 0.6
+
+        transition_distance = (
+            _coerce_positive_float(workflow_entry.get("transition_distance"))
+            if isinstance(workflow_entry, Mapping)
+            else None
+        )
+        if transition_distance is None and bulk_hmax is not None and default_hmax is not None and bulk_hmax < default_hmax:
+            transition_distance = bulk_hmax * 3.0
+
+        source = "study_default"
+        if isinstance(recipe, PerObjectMeshRecipe):
+            source = "recipe_override"
+        elif isinstance(workflow_entry, Mapping):
+            mode = workflow_entry.get("mode")
+            source = "local_override" if mode == "custom" else "study_default"
+
+        per_object[geometry.geometry_name] = ResolvedSharedObjectTarget(
+            geometry_name=geometry.geometry_name,
+            hmax=bulk_hmax,
+            interface_hmax=interface_hmax,
+            transition_distance=transition_distance,
+            source=source,
+        )
+
+    # effective_hmax is the maximum across all targets — used as the Gmsh
+    # CharacteristicLengthMax so the mesh generator doesn't clip size fields.
+    all_hmaxs = [float(hints.hmax)]
+    if requested_airbox_hmax is not None:
+        all_hmaxs.append(requested_airbox_hmax)
+    effective_hmax = max(all_hmaxs)
+
+    return ResolvedSharedDomainTargets(
+        airbox=airbox,
+        per_object=per_object,
+        effective_hmax=effective_hmax,
+    )
+
+
+# ===================================================================
+# Build report (promoted from asset_pipeline — PR 5)
+# ===================================================================
+
+@dataclass(frozen=True, slots=True)
+class SharedDomainBuildReport:
+    """Typed report for a shared-domain FEM mesh build.
+
+    Uses typed ``Resolved*Target`` fields instead of loose dicts.
+    Call :meth:`to_dict` for IR-compatible serialization.
+    """
+    build_mode: str
+    fallbacks_triggered: list[str]
+    effective_airbox_target: ResolvedAirboxTarget
+    effective_per_object_targets: dict[str, ResolvedSharedObjectTarget]
+    used_size_field_kinds: list[str]
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize to a plain-dict form suitable for JSON / IR embedding."""
+        return {
+            "build_mode": self.build_mode,
+            "fallbacks_triggered": list(self.fallbacks_triggered),
+            "effective_airbox_target": {
+                "hmax": self.effective_airbox_target.hmax,
+                "hmin": self.effective_airbox_target.hmin,
+                "growth_rate": self.effective_airbox_target.growth_rate,
+            },
+            "effective_per_object_targets": {
+                name: {
+                    "marker": target.marker,
+                    "hmax": target.hmax,
+                    "interface_hmax": target.interface_hmax,
+                    "transition_distance": target.transition_distance,
+                    "source": target.source,
+                }
+                for name, target in self.effective_per_object_targets.items()
+            },
+            "used_size_field_kinds": list(self.used_size_field_kinds),
+        }
+
+
+def _unique_size_field_kinds(size_fields: list[dict[str, object]]) -> list[str]:
+    """Return unique field kinds from a list of field descriptors, preserving order."""
+    kinds: list[str] = []
+    for field_desc in size_fields:
+        kind = field_desc.get("kind")
+        if isinstance(kind, str) and kind not in kinds:
+            kinds.append(kind)
+    return kinds

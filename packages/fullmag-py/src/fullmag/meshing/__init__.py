@@ -1,5 +1,14 @@
 """Geometry asset, meshing, and voxelization helpers for backend lowering."""
 
+from ._mesh_targets import (
+    ResolvedAirboxTarget,
+    ResolvedObjectPreviewTarget,
+    ResolvedSharedDomainTargets,
+    ResolvedSharedObjectTarget,
+    SharedDomainBuildReport,
+    resolve_object_preview_target,
+    resolve_shared_domain_targets,
+)
 from .asset_pipeline import (
     realize_fdm_grid_asset,
     realize_fem_domain_mesh_asset,
@@ -54,6 +63,13 @@ __all__ = [
     "generate_mesh_from_file",
     "generate_shared_domain_mesh_from_components",
     "load_surface_asset",
+    "ResolvedAirboxTarget",
+    "ResolvedObjectPreviewTarget",
+    "ResolvedSharedDomainTargets",
+    "ResolvedSharedObjectTarget",
+    "SharedDomainBuildReport",
+    "resolve_object_preview_target",
+    "resolve_shared_domain_targets",
     "realize_fdm_grid_asset",
     "realize_fem_domain_mesh_asset",
     "realize_fem_domain_mesh_asset_from_components",

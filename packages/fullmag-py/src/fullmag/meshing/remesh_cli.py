@@ -368,12 +368,12 @@ def main() -> None:
                     else []
                 ),
                 "effective_airbox_target": (
-                    shared_domain_report.effective_airbox_target
+                    shared_domain_report.to_dict()["effective_airbox_target"]
                     if shared_domain_report is not None
                     else None
                 ),
                 "effective_per_object_targets": (
-                    shared_domain_report.effective_per_object_targets
+                    shared_domain_report.to_dict()["effective_per_object_targets"]
                     if shared_domain_report is not None
                     else None
                 ),

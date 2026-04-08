@@ -29,6 +29,10 @@ from fullmag.meshing.asset_pipeline import (
     realize_fem_domain_mesh_asset_from_components,
     realize_fem_mesh_asset,
 )
+from fullmag.meshing._mesh_targets import (
+    ResolvedAirboxTarget,
+    ResolvedSharedObjectTarget,
+)
 from fullmag.meshing.gmsh_bridge import (
     ALGO_3D_HXT,
     ALGO_3D_MMG3D,
@@ -375,15 +379,16 @@ class MeshScaffoldTests(unittest.TestCase):
                 SharedDomainBuildReport(
                     build_mode="component_aware",
                     fallbacks_triggered=[],
-                    effective_airbox_target={"hmax": 20e-9, "hmin": None, "growth_rate": None},
+                    effective_airbox_target=ResolvedAirboxTarget(hmax=20e-9, hmin=None, growth_rate=None),
                     effective_per_object_targets={
-                        "left": {
-                            "marker": 1,
-                            "hmax": 20e-9,
-                            "interface_hmax": None,
-                            "transition_distance": None,
-                            "source": "study_default",
-                        }
+                        "left": ResolvedSharedObjectTarget(
+                            geometry_name="left",
+                            hmax=20e-9,
+                            interface_hmax=None,
+                            transition_distance=None,
+                            source="study_default",
+                            marker=1,
+                        )
                     },
                     used_size_field_kinds=[],
                 ),
