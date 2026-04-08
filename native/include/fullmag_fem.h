@@ -186,6 +186,9 @@ typedef struct {
     const char                *mfem_device_string;
     /* FEM-039: explicit transfer-grid cell size for demag (0.0 = hmax) */
     double                     demag_transfer_cell_size;
+    /* FND-013: use consistent (full) mass matrix instead of lumped for exchange.
+       0 = lumped (default), 1 = consistent (CG solve). */
+    int                        use_consistent_mass;
 } fullmag_fem_plan_desc;
 
 typedef struct {

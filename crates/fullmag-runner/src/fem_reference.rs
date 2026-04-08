@@ -1055,6 +1055,8 @@ mod tests {
             gpu_device_index: None,
             mfem_device_string: None,
             demag_transfer_cell_size: None,
+            dmi_interface_normal: None,
+            use_consistent_mass: None,
         }
     }
 
@@ -1174,6 +1176,8 @@ mod tests {
             gpu_device_index: None,
             mfem_device_string: None,
             demag_transfer_cell_size: None,
+            dmi_interface_normal: None,
+            use_consistent_mass: None,
         }
     }
 
@@ -1355,6 +1359,8 @@ mod tests {
             gpu_device_index: None,
             mfem_device_string: None,
             demag_transfer_cell_size: None,
+            dmi_interface_normal: None,
+            use_consistent_mass: None,
         }
     }
 

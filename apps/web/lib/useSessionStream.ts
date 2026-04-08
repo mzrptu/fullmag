@@ -133,7 +133,17 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
         try {
           const raw = JSON.parse(event.data);
           setState((prev) => {
+            if (
+              raw?.kind === "command_ack" ||
+              raw?.kind === "command_rejected" ||
+              raw?.kind === "command_completed"
+            ) {
+              return mergeCommandStatusEvent(prev, raw as RuntimeCurrentLiveEvent);
+            }
             const next = normalizeSessionState(raw?.kind === "session_state" ? raw.state : raw, pendingPreviewPayloadsRef.current);
+            if (!next.session) {
+              return prev;
+            }
             if (next.live_state?.finished) (finishedRef as any).current = true;
             return mergeSessionState(prev, next);
           });

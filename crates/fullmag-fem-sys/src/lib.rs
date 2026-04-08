@@ -213,6 +213,8 @@ pub struct fullmag_fem_plan_desc {
     pub mfem_device_string: *const std::ffi::c_char,
     /// FEM-039: explicit transfer-grid cell size for demag. 0.0 = fall back to hmax.
     pub demag_transfer_cell_size: f64,
+    /// FND-013: use consistent (full) mass matrix for exchange. 0 = lumped, 1 = consistent.
+    pub use_consistent_mass: i32,
 }
 
 #[repr(C)]
@@ -361,4 +363,44 @@ extern "C" {
     /// Returns `FULLMAG_FEM_ERR_UNAVAILABLE` (-2) when the GPU/cuSolver stack
     /// is not compiled in; the caller should fall back to the CPU path.
     pub fn fullmag_fem_eigen_dense(desc: *mut fullmag_fem_eigen_dense_desc) -> i32;
+}
+
+// ── FND-010: compile-time FFI enum parity checks ──
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify the Rust observable enum has the expected number of variants
+    /// matching the C header (M=1 .. H_THERM=12 → 12 variants).
+    #[test]
+    fn observable_enum_has_12_variants() {
+        let variants = [
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_M,
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_EX,
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_DEMAG,
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_EXT,
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_EFF,
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_ANI,
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_DMI,
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_MEL,
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_ANI_CUBIC,
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_DMI_BULK,
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_OE,
+            fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_THERM,
+        ];
+        assert_eq!(variants.len(), 12);
+        // Verify sequential discriminants 1..=12
+        for (i, v) in variants.iter().enumerate() {
+            assert_eq!(*v as i32, (i + 1) as i32, "variant {i} discriminant mismatch");
+        }
+    }
+
+    /// Verify plan desc contains the use_consistent_mass field (FND-013).
+    #[test]
+    fn plan_desc_has_consistent_mass_field() {
+        let plan = std::mem::MaybeUninit::<fullmag_fem_plan_desc>::zeroed();
+        let plan = unsafe { plan.assume_init() };
+        assert_eq!(plan.use_consistent_mass, 0);
+    }
 }

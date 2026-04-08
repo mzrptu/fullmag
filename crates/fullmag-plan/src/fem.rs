@@ -701,6 +701,7 @@ pub(crate) fn plan_fem(
         gpu_device_index: None,
         mfem_device_string: None,
         demag_transfer_cell_size: None,
+        use_consistent_mass: None,
     };
 
     // ── Extract Oersted cylinder from energy terms ──

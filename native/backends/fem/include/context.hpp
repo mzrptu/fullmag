@@ -237,6 +237,8 @@ struct Context {
     void *mfem_exchange_out_vec = nullptr;
     bool mfem_ready = false;
     bool mfem_exchange_ready = false;
+    // FND-013: consistent-mass projection for exchange (CG solve M*h = K*m).
+    bool use_consistent_mass = false;
 
     // ── Poisson demag (S02-S05) ──
     // Scalar H1 space for potential u on the FULL mesh (magnetic + air).

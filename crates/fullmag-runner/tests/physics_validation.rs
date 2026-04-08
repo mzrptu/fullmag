@@ -768,6 +768,7 @@ fn fem_eigen_smoke_completes_without_errors() {
         exchange_bc: ExchangeBoundaryCondition::Neumann,
         spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
         demag_realization: None,
+        dmi_interface_normal: None,
     };
 
     let outputs = vec![
@@ -858,6 +859,7 @@ fn fem_eigen_lowest_mode_order_of_magnitude() {
         exchange_bc: ExchangeBoundaryCondition::Neumann,
         spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
         demag_realization: None,
+        dmi_interface_normal: None,
     };
 
     let outputs = vec![OutputIR::EigenSpectrum {
@@ -926,6 +928,7 @@ fn fem_eigen_modes_are_non_trivial() {
         exchange_bc: ExchangeBoundaryCondition::Neumann,
         spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
         demag_realization: None,
+        dmi_interface_normal: None,
     };
 
     let outputs = vec![
@@ -1022,6 +1025,7 @@ fn fem_eigen_frequency_is_stable_across_resolutions() {
             exchange_bc: ExchangeBoundaryCondition::Neumann,
             spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
             demag_realization: None,
+            dmi_interface_normal: None,
         };
         let outputs = vec![OutputIR::EigenSpectrum {
             quantity: "eigenfrequency".to_string(),
@@ -1100,6 +1104,7 @@ fn fem_eigen_periodic_k_zero_runs_with_periodic_node_pairs() {
             },
         ),
         demag_realization: None,
+        dmi_interface_normal: None,
     };
 
     let result = fullmag_runner::run_reference_fem_eigen(
@@ -1167,6 +1172,7 @@ fn fem_eigen_floquet_runs_with_phase_aware_metadata() {
             },
         ),
         demag_realization: None,
+        dmi_interface_normal: None,
     };
 
     let result = fullmag_runner::run_reference_fem_eigen(
@@ -1228,6 +1234,7 @@ fn fem_eigen_damping_include_emits_nonzero_imaginary_frequency() {
         exchange_bc: ExchangeBoundaryCondition::Neumann,
         spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
         demag_realization: None,
+        dmi_interface_normal: None,
     };
     let result = fullmag_runner::run_reference_fem_eigen(
         &plan,
@@ -1287,6 +1294,7 @@ fn fem_eigen_surface_anisotropy_runs_and_reports_term() {
             },
         ),
         demag_realization: None,
+        dmi_interface_normal: None,
     };
     let result = fullmag_runner::run_reference_fem_eigen(
         &plan,
@@ -1355,6 +1363,7 @@ fn fem_eigen_floquet_bulk_dmi_is_nonreciprocal_for_plus_minus_k() {
                 },
             ),
             demag_realization: None,
+            dmi_interface_normal: None,
         }
     };
 
@@ -1439,6 +1448,7 @@ fn fem_eigen_demag_lowers_frequency() {
             exchange_bc: ExchangeBoundaryCondition::Neumann,
             spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
             demag_realization: None,
+            dmi_interface_normal: None,
         }
     };
 
@@ -1526,6 +1536,7 @@ fn eigen_bc_free_baseline() {
         exchange_bc: ExchangeBoundaryCondition::Neumann,
         spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(), // Free BC
         demag_realization: None,
+        dmi_interface_normal: None,
     };
 
     let result = fullmag_runner::run_reference_fem_eigen(
@@ -1626,6 +1637,7 @@ fn eigen_bc_pinned_higher_frequency() {
                 fullmag_ir::SpinWaveBoundaryConditionIR::default()
             },
             demag_realization: None,
+            dmi_interface_normal: None,
         }
     };
 
@@ -1732,6 +1744,7 @@ fn eigen_bc_periodic_requires_pairs_error() {
             },
         ),
         demag_realization: None,
+        dmi_interface_normal: None,
     };
 
     let result = fullmag_runner::run_reference_fem_eigen(
@@ -1814,6 +1827,7 @@ fn eigen_bc_periodic_k_zero_matches_free() {
                 fullmag_ir::SpinWaveBoundaryConditionIR::default()
             },
             demag_realization: None,
+            dmi_interface_normal: None,
         }
     };
 

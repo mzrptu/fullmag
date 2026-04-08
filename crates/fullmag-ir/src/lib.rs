@@ -2135,6 +2135,11 @@ pub struct FemPlanIR {
     /// `None` means fall back to `hmax`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demag_transfer_cell_size: Option<f64>,
+
+    /// FND-013: use consistent (full) mass matrix for exchange instead of lumped.
+    /// `None` or `false` = lumped (default), `true` = consistent (CG solve).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_consistent_mass: Option<bool>,
 }
 
 /// Prescribed-strain magnetoelastic coupling plan for FEM backend.

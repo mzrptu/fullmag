@@ -611,6 +611,8 @@ bool apply_exchange_component_device(
     mfem::GridFunction &m_component,
     mfem::GridFunction &ms_field,
     mfem::Vector &inv_lumped_mass,
+    mfem::BilinearForm &mass_form,
+    bool use_consistent_mass,
     mfem::Vector &tmp,
     mfem::Vector &h_component,
     std::vector<double> &h_component_host,
@@ -622,17 +624,42 @@ bool apply_exchange_component_device(
     }
 
     const int ndofs = tmp.Size();
-    const double *tmp_host = tmp.HostRead();
-    const double *inv_mass_host = inv_lumped_mass.HostRead();
-    const double *ms_host = ms_field.HostRead();
-    double *h_host = h_component.HostWrite();
-    for (int i = 0; i < ndofs; ++i) {
-        const double inv_mass = inv_mass_host[i];
-        const double Ms_i = ms_host[i];
-        if (inv_mass <= 0.0 || Ms_i <= 0.0) {
-            h_host[i] = 0.0;
-        } else {
-            h_host[i] = -(2.0 / (kMu0 * Ms_i)) * tmp_host[i] * inv_mass;
+
+    if (use_consistent_mass) {
+        // FND-013: Consistent-mass projection: solve M * raw_h = K * m via CG,
+        // then scale by -2/(μ₀ Ms_i).
+        mfem::CGSolver cg_solver;
+        cg_solver.SetRelTol(1e-10);
+        cg_solver.SetMaxIter(200);
+        cg_solver.SetPrintLevel(0);
+        cg_solver.SetOperator(mass_form);
+        h_component = 0.0;
+        cg_solver.Mult(tmp, h_component);
+        // Apply Ms scaling
+        const double *ms_host = ms_field.HostRead();
+        double *h_host = h_component.HostReadWrite();
+        for (int i = 0; i < ndofs; ++i) {
+            const double Ms_i = ms_host[i];
+            if (Ms_i <= 0.0) {
+                h_host[i] = 0.0;
+            } else {
+                h_host[i] = -(2.0 / (kMu0 * Ms_i)) * h_host[i];
+            }
+        }
+    } else {
+        // Default lumped-mass path
+        const double *tmp_host = tmp.HostRead();
+        const double *inv_mass_host = inv_lumped_mass.HostRead();
+        const double *ms_host = ms_field.HostRead();
+        double *h_host = h_component.HostWrite();
+        for (int i = 0; i < ndofs; ++i) {
+            const double inv_mass = inv_mass_host[i];
+            const double Ms_i = ms_host[i];
+            if (inv_mass <= 0.0 || Ms_i <= 0.0) {
+                h_host[i] = 0.0;
+            } else {
+                h_host[i] = -(2.0 / (kMu0 * Ms_i)) * tmp_host[i] * inv_mass;
+            }
         }
     }
     if (energy_out != nullptr) {
@@ -1350,6 +1377,7 @@ bool compute_exchange_for_magnetization(
     }
 
     auto *exchange_form = static_cast<mfem::BilinearForm *>(ctx.mfem_exchange_form);
+    auto *mass_form = static_cast<mfem::BilinearForm *>(ctx.mfem_mass_form);
     auto *gf_mx = static_cast<mfem::GridFunction *>(ctx.mfem_gf_mx);
     auto *gf_my = static_cast<mfem::GridFunction *>(ctx.mfem_gf_my);
     auto *gf_mz = static_cast<mfem::GridFunction *>(ctx.mfem_gf_mz);
@@ -1360,6 +1388,10 @@ bool compute_exchange_for_magnetization(
     if (exchange_form == nullptr || gf_mx == nullptr || gf_my == nullptr || gf_mz == nullptr ||
         gf_ms == nullptr || inv_lumped_mass == nullptr || tmp_vec == nullptr || out_vec == nullptr) {
         error = "MFEM exchange scaffold is missing one or more operator/device buffers";
+        return false;
+    }
+    if (ctx.use_consistent_mass && mass_form == nullptr) {
+        error = "MFEM mass form is required for consistent-mass exchange but is null";
         return false;
     }
 
@@ -1378,6 +1410,8 @@ bool compute_exchange_for_magnetization(
             *gf_mx,
             *gf_ms,
             *inv_lumped_mass,
+            *mass_form,
+            ctx.use_consistent_mass,
             *tmp_vec,
             *out_vec,
             ctx.mfem_h_ex_x,
@@ -1395,6 +1429,8 @@ bool compute_exchange_for_magnetization(
             *gf_my,
             *gf_ms,
             *inv_lumped_mass,
+            *mass_form,
+            ctx.use_consistent_mass,
             *tmp_vec,
             *out_vec,
             ctx.mfem_h_ex_y,
@@ -1412,6 +1448,8 @@ bool compute_exchange_for_magnetization(
             *gf_mz,
             *gf_ms,
             *inv_lumped_mass,
+            *mass_form,
+            ctx.use_consistent_mass,
             *tmp_vec,
             *out_vec,
             ctx.mfem_h_ex_z,
@@ -1463,6 +1501,19 @@ bool compute_exchange_for_magnetization(
 
     return true;
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// BOOTSTRAP TRANSFER-GRID DEMAG
+//
+// This path rasterises FEM nodal magnetisation onto a regular FDM grid and
+// delegates the demagnetisation calculation to the existing FDM tensor-FFT
+// backend (Newell kernel).  It is a *bootstrap* strategy: accurate for
+// convex domains, but introduces rasterisation error for complex geometries.
+//
+// Alternative native-FEM realisations (Poisson–Dirichlet, Poisson–Robin)
+// solve the demagnetisation on the FEM mesh directly and should be preferred
+// when supported.  See `demag_realization` in context.hpp.
+// ──────────────────────────────────────────────────────────────────────────────
 
 bool ensure_transfer_grid_backend(
     Context &ctx,
@@ -1731,10 +1782,12 @@ bool compute_effective_fields_for_magnetization(
     if (ctx.enable_demag) {
         ScopedPhaseTimer timer(timings != nullptr ? &timings->demag_wall_time_ns : nullptr);
         if ((ctx.demag_realization == 1 || ctx.demag_realization == 2) && ctx.poisson_ready) {
+            // Native FEM demag: Poisson–Dirichlet (1) or Poisson–Robin (2)
             if (!context_compute_demag_poisson(ctx, m_xyz, h_demag_xyz, demag, allow_interrupt, error)) {
                 return false;
             }
         } else {
+            // Bootstrap transfer-grid demag: FEM→FDM rasterisation + tensor-FFT
             if (!compute_demag_for_magnetization(
                     ctx, m_xyz, h_demag_xyz, demag, allow_interrupt, error))
             {

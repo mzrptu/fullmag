@@ -200,6 +200,31 @@ fn allow_unsupported_cpu_reference_terms() -> bool {
     )
 }
 
+fn magnetic_markers_from_object_segments(plan: &FemPlanIR) -> BTreeSet<u32> {
+    if plan.mesh.element_markers.is_empty() {
+        return BTreeSet::new();
+    }
+    let mut markers = BTreeSet::new();
+    for segment in &plan.object_segments {
+        if segment.element_count == 0 {
+            continue;
+        }
+        let start = segment.element_start as usize;
+        let end = start
+            .saturating_add(segment.element_count as usize)
+            .min(plan.mesh.element_markers.len());
+        if start >= end {
+            continue;
+        }
+        for marker in &plan.mesh.element_markers[start..end] {
+            if *marker != 0 {
+                markers.insert(*marker);
+            }
+        }
+    }
+    markers
+}
+
 fn normalized_runtime_element_markers(plan: &FemPlanIR) -> Result<Vec<u32>, RunError> {
     let markers = &plan.mesh.element_markers;
     if markers.is_empty() {
@@ -245,6 +270,27 @@ fn normalized_runtime_element_markers(plan: &FemPlanIR) -> Result<Vec<u32>, RunE
     }
 
     if distinct_nonzero.len() > 1 {
+        let inferred_magnetic_markers = magnetic_markers_from_object_segments(plan);
+        if !inferred_magnetic_markers.is_empty() {
+            let unknown_nonzero = distinct_nonzero
+                .difference(&inferred_magnetic_markers)
+                .copied()
+                .collect::<Vec<_>>();
+            if unknown_nonzero.is_empty() {
+                return Ok(markers
+                    .iter()
+                    .map(|marker| u32::from(inferred_magnetic_markers.contains(marker)))
+                    .collect());
+            }
+            return Err(RunError {
+                message: format!(
+                    "ambiguous FEM magnetic region contract: mesh contains non-zero element markers {:?} \
+                     that are not covered by object_segments-inferred magnetic markers {:?}. \
+                     Refusing to guess which regions are magnetic.",
+                    unknown_nonzero, inferred_magnetic_markers
+                ),
+            });
+        }
         return Err(RunError {
             message: format!(
                 "ambiguous FEM magnetic region contract: mesh uses multiple non-zero element markers {:?} \
@@ -2115,7 +2161,7 @@ mod tests {
     use super::*;
     use fullmag_ir::{
         AntennaIR, BackendTarget, CurrentModuleIR, DiscretizationHintsIR, FdmHintsIR, FemHintsIR,
-        FemPlanIR, MeshIR, ProblemIR, RfDriveIR,
+        FemObjectSegmentIR, FemPlanIR, MeshIR, ProblemIR, RfDriveIR,
     };
     use serde_json::Value;
     use std::collections::HashMap;
@@ -2247,6 +2293,8 @@ mod tests {
             gpu_device_index: None,
             mfem_device_string: None,
             demag_transfer_cell_size: None,
+            dmi_interface_normal: None,
+            use_consistent_mass: None,
         }
     }
 
@@ -2346,5 +2394,71 @@ mod tests {
         unsafe {
             std::env::remove_var("FULLMAG_FEM_GPU_MIN_NODES");
         }
+    }
+
+    #[test]
+    fn normalized_runtime_markers_fallback_to_object_segments_when_region_materials_missing() {
+        let mut plan = tiny_fem_plan();
+        plan.mesh.elements = vec![[0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]];
+        plan.mesh.element_markers = vec![1, 2, 0];
+        plan.object_segments = vec![
+            FemObjectSegmentIR {
+                object_id: "nanoflower_0".to_string(),
+                geometry_id: Some("nanoflower_0_geom".to_string()),
+                node_start: 0,
+                node_count: 4,
+                element_start: 0,
+                element_count: 1,
+                boundary_face_start: 0,
+                boundary_face_count: 0,
+            },
+            FemObjectSegmentIR {
+                object_id: "nanoflower_1".to_string(),
+                geometry_id: Some("nanoflower_1_geom".to_string()),
+                node_start: 0,
+                node_count: 4,
+                element_start: 1,
+                element_count: 1,
+                boundary_face_start: 0,
+                boundary_face_count: 0,
+            },
+            FemObjectSegmentIR {
+                object_id: "__air__".to_string(),
+                geometry_id: None,
+                node_start: 0,
+                node_count: 4,
+                element_start: 2,
+                element_count: 1,
+                boundary_face_start: 0,
+                boundary_face_count: 0,
+            },
+        ];
+
+        let normalized = normalized_runtime_element_markers(&plan)
+            .expect("segments should disambiguate markers");
+        assert_eq!(normalized, vec![1, 1, 0]);
+    }
+
+    #[test]
+    fn normalized_runtime_markers_reject_incomplete_object_segment_inference() {
+        let mut plan = tiny_fem_plan();
+        plan.mesh.elements = vec![[0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]];
+        plan.mesh.element_markers = vec![1, 2, 0];
+        plan.object_segments = vec![FemObjectSegmentIR {
+            object_id: "nanoflower_0".to_string(),
+            geometry_id: Some("nanoflower_0_geom".to_string()),
+            node_start: 0,
+            node_count: 4,
+            element_start: 0,
+            element_count: 1,
+            boundary_face_start: 0,
+            boundary_face_count: 0,
+        }];
+
+        let error = normalized_runtime_element_markers(&plan)
+            .expect_err("missing marker 2 in object_segments should fail");
+        assert!(error
+            .message
+            .contains("object_segments-inferred magnetic markers"));
     }
 }

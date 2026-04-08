@@ -2706,13 +2706,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       let changed = false;
       const next: MeshEntityViewStateMap = { ...prev };
       for (const part of airRelatedParts) {
-        const current = next[part.id];
-        if (!current) {
-          continue;
-        }
+        const current = next[part.id] ?? defaultMeshPartViewState(part);
         const nextVisible = airMeshVisible;
         const nextOpacity = part.role === "air" ? airMeshOpacity : current.opacity;
         if (current.visible === nextVisible && current.opacity === nextOpacity) {
+          if (!next[part.id]) {
+            next[part.id] = current;
+            changed = true;
+          }
           continue;
         }
         next[part.id] = {

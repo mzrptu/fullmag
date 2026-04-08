@@ -688,6 +688,9 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     // FEM-039 fix: read explicit demag transfer-grid cell size from plan.
     ctx.demag_transfer_cell_size = plan.demag_transfer_cell_size;
 
+    // FND-013: read consistent-mass flag from plan.
+    ctx.use_consistent_mass = (plan.use_consistent_mass != 0);
+
 #if FULLMAG_HAS_MFEM_STACK
     if (!context_initialize_mfem(ctx, error)) {
         return false;
@@ -862,9 +865,25 @@ int context_upload_magnetization_f64(
 void context_populate_device_info(Context &ctx) {
     std::memset(&ctx.device_info_cache, 0, sizeof(ctx.device_info_cache));
 #if FULLMAG_HAS_MFEM_STACK
-    std::string backend_name = ctx.mfem_exchange_ready
-        ? (ctx.enable_demag ? "mfem_cuda_transfer_grid_demag_ready" : "mfem_cuda_exchange_ready")
-        : (ctx.mfem_ready ? "mfem_cuda_mesh_ready" : "mfem_stack_uninitialized");
+    // FND-007: backend name reflects the actual demag realization in use
+    std::string backend_name;
+    if (ctx.mfem_exchange_ready) {
+        if (!ctx.enable_demag) {
+            backend_name = "mfem_cuda_exchange_ready";
+        } else if (ctx.demag_realization == 0) {
+            backend_name = "mfem_cuda_bootstrap_transfer_grid_demag";
+        } else if (ctx.demag_realization == 1) {
+            backend_name = "mfem_cuda_native_poisson_dirichlet_demag";
+        } else if (ctx.demag_realization == 2) {
+            backend_name = "mfem_cuda_native_poisson_robin_demag";
+        } else {
+            backend_name = "mfem_cuda_unknown_demag_realization";
+        }
+    } else if (ctx.mfem_ready) {
+        backend_name = "mfem_cuda_mesh_ready";
+    } else {
+        backend_name = "mfem_stack_uninitialized";
+    }
 #if FULLMAG_HAS_CUDA_RUNTIME
     if (ctx.mfem_selected_device_index >= 0) {
         cudaDeviceProp props{};

@@ -35,7 +35,13 @@ function compareLexicographic(
 }
 
 export function mergeSessionState(prev: SessionState | null, next: SessionState): SessionState {
+  if (!next?.session) {
+    return prev ?? next;
+  }
   if (!prev) {
+    return next;
+  }
+  if (!prev.session) {
     return next;
   }
   if (prev.session.session_id !== next.session.session_id) {
@@ -195,7 +201,7 @@ export function mergeCommandStatusEvent(
   prev: SessionState | null,
   raw: RuntimeCurrentLiveEvent,
 ): SessionState | null {
-  if (!prev || prev.session.session_id !== raw.session_id) {
+  if (!prev || !prev.session || prev.session.session_id !== raw.session_id) {
     return prev;
   }
 

@@ -533,6 +533,8 @@ impl NativeFemBackend {
             mfem_device_string: std::ptr::null(), // set below if present
             // FEM-039 fix: pass explicit demag transfer-grid cell size.
             demag_transfer_cell_size: plan.demag_transfer_cell_size.unwrap_or(0.0),
+            // FND-013: pass consistent-mass flag.
+            use_consistent_mass: if plan.use_consistent_mass.unwrap_or(false) { 1 } else { 0 },
         };
 
         // Build adaptive config if present
@@ -1202,6 +1204,7 @@ mod tests {
             gpu_device_index: None,
             mfem_device_string: None,
             demag_transfer_cell_size: None,
+            use_consistent_mass: None,
         }
     }
 
@@ -1311,6 +1314,7 @@ mod tests {
             gpu_device_index: None,
             mfem_device_string: None,
             demag_transfer_cell_size: None,
+            use_consistent_mass: None,
         }
     }
 

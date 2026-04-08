@@ -499,6 +499,12 @@ pub struct FemLlgProblem {
     pub dynamics: LlgConfig,
     pub terms: EffectiveFieldTerms,
     pub demag_transfer_cell_size_hint: Option<[f64; 3]>,
+    /// FND-012: Override the default sparse CG tolerance (default: 1e-10).
+    pub sparse_cg_tol: Option<f64>,
+    /// FND-012: Override the default sparse CG max iterations (default: 1000).
+    pub sparse_cg_max_iter: Option<usize>,
+    /// FND-012: Override cell-size extent fraction heuristic (default: 0.25).
+    pub cell_size_extent_fraction: Option<f64>,
     demag_csr: CsrMatrix,
     demag_dirichlet_boundary: bool,
 }
@@ -517,6 +523,9 @@ impl FemLlgProblem {
             dynamics,
             terms,
             demag_transfer_cell_size_hint: None,
+            sparse_cg_tol: None,
+            sparse_cg_max_iter: None,
+            cell_size_extent_fraction: None,
             demag_csr,
             demag_dirichlet_boundary: false,
         }
@@ -536,6 +545,9 @@ impl FemLlgProblem {
             dynamics,
             terms,
             demag_transfer_cell_size_hint,
+            sparse_cg_tol: None,
+            sparse_cg_max_iter: None,
+            cell_size_extent_fraction: None,
             demag_csr,
             demag_dirichlet_boundary: false,
         }
@@ -563,6 +575,9 @@ impl FemLlgProblem {
             dynamics,
             terms,
             demag_transfer_cell_size_hint: None,
+            sparse_cg_tol: None,
+            sparse_cg_max_iter: None,
+            cell_size_extent_fraction: None,
             demag_csr,
             demag_dirichlet_boundary: dirichlet_boundary,
         }
@@ -1178,19 +1193,45 @@ impl FemLlgProblem {
         };
         let external_field = self.external_field_vectors();
 
-        // FND-011: compute anisotropy field (uniaxial) for FEM CPU reference.
-        let anisotropy_field = if let Some(ref uni) = self.terms.uniaxial_anisotropy {
+        // FND-011: compute anisotropy field (uniaxial + cubic) for FEM CPU reference.
+        let anisotropy_field = {
             let ms = self.material.saturation_magnetisation.max(1e-30);
-            let u_len = (uni.axis[0]*uni.axis[0] + uni.axis[1]*uni.axis[1] + uni.axis[2]*uni.axis[2]).sqrt().max(1e-30);
-            let u = [uni.axis[0]/u_len, uni.axis[1]/u_len, uni.axis[2]/u_len];
-            magnetization.iter().map(|m| {
-                let m_dot_u = m[0]*u[0] + m[1]*u[1] + m[2]*u[2];
-                let coeff = 2.0 * uni.ku1 / (MU0 * ms) * m_dot_u
-                    + 4.0 * uni.ku2 / (MU0 * ms) * m_dot_u * m_dot_u * m_dot_u;
-                [u[0]*coeff, u[1]*coeff, u[2]*coeff]
-            }).collect::<Vec<_>>()
-        } else {
-            vec![[0.0, 0.0, 0.0]; n]
+            let has_uni = self.terms.uniaxial_anisotropy.is_some();
+            let has_cub = self.terms.cubic_anisotropy.is_some();
+            if !has_uni && !has_cub {
+                vec![[0.0, 0.0, 0.0]; n]
+            } else {
+                magnetization.iter().map(|m| {
+                    let mut h = [0.0f64, 0.0, 0.0];
+                    if let Some(ref uni) = self.terms.uniaxial_anisotropy {
+                        let n_u = norm(uni.axis).max(1e-30);
+                        let u = scale(uni.axis, 1.0 / n_u);
+                        let m_dot_u = dot(*m, u);
+                        let coeff = 2.0 * uni.ku1 / (MU0 * ms) * m_dot_u
+                            + 4.0 * uni.ku2 / (MU0 * ms) * m_dot_u * m_dot_u * m_dot_u;
+                        h = add(h, scale(u, coeff));
+                    }
+                    if let Some(ref cub) = self.terms.cubic_anisotropy {
+                        let n1 = norm(cub.axis1).max(1e-30);
+                        let n2 = norm(cub.axis2).max(1e-30);
+                        let c1 = scale(cub.axis1, 1.0 / n1);
+                        let c2 = scale(cub.axis2, 1.0 / n2);
+                        let c3 = cross(c1, c2);
+                        let m1 = dot(*m, c1);
+                        let m2 = dot(*m, c2);
+                        let m3 = dot(*m, c3);
+                        let pf = 2.0 / (MU0 * ms);
+                        let g1 = -pf * (cub.kc1 * m1 * (m2 * m2 + m3 * m3)
+                            + cub.kc2 * m1 * m2 * m2 * m3 * m3);
+                        let g2 = -pf * (cub.kc1 * m2 * (m1 * m1 + m3 * m3)
+                            + cub.kc2 * m2 * m1 * m1 * m3 * m3);
+                        let g3 = -pf * (cub.kc1 * m3 * (m1 * m1 + m2 * m2)
+                            + cub.kc2 * m3 * m1 * m1 * m2 * m2);
+                        h = add(h, add(add(scale(c1, g1), scale(c2, g2)), scale(c3, g3)));
+                    }
+                    h
+                }).collect::<Vec<_>>()
+            }
         };
 
         // FND-011: interfacial DMI field (Néel-type, z-normal approximation for CPU ref).
@@ -1199,6 +1240,10 @@ impl FemLlgProblem {
         let _dmi_field = vec![[0.0, 0.0, 0.0]; n];
         if self.terms.interfacial_dmi.is_some() {
             // TODO: implement gradient-based interfacial DMI for FEM CPU reference
+        }
+        if self.terms.bulk_dmi.is_some() {
+            // TODO: implement gradient-based bulk DMI for FEM CPU reference
+            // (requires curl computation on unstructured mesh)
         }
 
         #[cfg(feature = "parallel")]
@@ -1402,7 +1447,10 @@ impl FemLlgProblem {
                 }
             }
         }
-        let potential = solve_sparse_cg(&self.demag_csr, &rhs, SPARSE_CG_TOL, SPARSE_CG_MAX_ITER)?;
+        // FND-012: use overridable solver parameters
+        let tol = self.sparse_cg_tol.unwrap_or(SPARSE_CG_TOL);
+        let max_iter = self.sparse_cg_max_iter.unwrap_or(SPARSE_CG_MAX_ITER);
+        let potential = solve_sparse_cg(&self.demag_csr, &rhs, tol, max_iter)?;
         let field = self.demag_field_from_potential(&potential);
         let energy = 0.5
             * MU0
@@ -1740,8 +1788,10 @@ impl FemLlgProblem {
         let characteristic_volume = (self.topology.magnetic_total_volume.max(ZERO_THRESHOLD)
             / self.topology.n_nodes.max(1) as f64)
             .cbrt();
+        // FND-012: use overridable cell-size extent fraction
+        let frac = self.cell_size_extent_fraction.unwrap_or(CELL_SIZE_EXTENT_FRACTION);
         let h = characteristic_volume
-            .max(extent[2].min(extent[0].min(extent[1])) * CELL_SIZE_EXTENT_FRACTION);
+            .max(extent[2].min(extent[0].min(extent[1])) * frac);
         [h, h, h]
     }
 
@@ -2138,7 +2188,8 @@ fn max_norm(values: &[Vector3]) -> f64 {
 mod tests {
     use super::*;
     use crate::{
-        CellSize, EffectiveFieldTerms, ExchangeLlgProblem, GridShape, DEFAULT_GYROMAGNETIC_RATIO,
+        CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, ExchangeLlgProblem, GridShape,
+        DEFAULT_GYROMAGNETIC_RATIO,
     };
 
     fn unit_tet_problem() -> FemLlgProblem {
@@ -2519,5 +2570,158 @@ mod tests {
             magnetic_element_mask_from_markers(&[1, 0, 7]),
             vec![true, false, true],
         );
+    }
+
+    // ── FND-001/002: Rasterization order-independence test ──
+
+    #[test]
+    fn rasterization_is_order_independent() {
+        // Build a problem with transfer-grid demag
+        let problem = coarse_box_problem_transfer_grid(true);
+        let n = problem.topology.n_nodes;
+
+        // Uniform magnetization along x
+        let mag: Vec<Vector3> = vec![[1.0, 0.0, 0.0]; n];
+        let state_a = problem.new_state(mag.clone()).expect("state a");
+        let obs_a = problem.observe(&state_a).expect("obs a");
+
+        // Build the same problem but with permuted element order
+        let mut mesh_perm = MeshIR {
+            mesh_name: "box_40x20x10_perm".to_string(),
+            nodes: vec![
+                [-20e-9, -10e-9, -5e-9],
+                [20e-9, -10e-9, -5e-9],
+                [20e-9, 10e-9, -5e-9],
+                [-20e-9, 10e-9, -5e-9],
+                [-20e-9, -10e-9, 5e-9],
+                [20e-9, -10e-9, 5e-9],
+                [20e-9, 10e-9, 5e-9],
+                [-20e-9, 10e-9, 5e-9],
+            ],
+            elements: vec![
+                [0, 5, 1, 6],  // element 4 moved to front
+                [0, 1, 2, 6],  // element 0
+                [0, 7, 4, 6],  // element 3
+                [0, 2, 3, 6],  // element 1
+                [0, 4, 5, 6],  // element 4 (original)
+                [0, 3, 7, 6],  // element 2
+            ],
+            element_markers: vec![1, 1, 1, 1, 1, 1],
+            boundary_faces: vec![
+                [0, 1, 2], [0, 1, 5], [1, 2, 6], [0, 2, 3],
+                [2, 3, 6], [0, 3, 7], [3, 6, 7], [0, 4, 7],
+                [4, 6, 7], [0, 4, 5], [4, 5, 6], [1, 5, 6],
+            ],
+            boundary_markers: vec![1; 12],
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+            per_domain_quality: std::collections::HashMap::new(),
+        };
+        let topo_perm = MeshTopology::from_ir(&mesh_perm).expect("perm topology");
+        let problem_perm = FemLlgProblem::with_terms_and_demag_transfer_grid(
+            topo_perm,
+            MaterialParameters::new(800e3, 13e-12, 0.5).expect("material"),
+            LlgConfig::new(DEFAULT_GYROMAGNETIC_RATIO, TimeIntegrator::Heun).expect("llg"),
+            EffectiveFieldTerms {
+                exchange: true,
+                demag: true,
+                external_field: None,
+                per_node_field: None,
+                magnetoelastic: None,
+                ..Default::default()
+            },
+            Some([10e-9, 10e-9, 10e-9]),
+        );
+        let state_b = problem_perm.new_state(mag).expect("state b");
+        let obs_b = problem_perm.observe(&state_b).expect("obs b");
+
+        // Exchange and demag energies should be identical regardless of element order
+        let rel_tol = 1e-10;
+        assert!(
+            (obs_a.exchange_energy_joules - obs_b.exchange_energy_joules).abs()
+                < rel_tol * obs_a.exchange_energy_joules.abs().max(1e-30),
+            "exchange energy differs: {} vs {}",
+            obs_a.exchange_energy_joules,
+            obs_b.exchange_energy_joules
+        );
+        assert!(
+            (obs_a.demag_energy_joules - obs_b.demag_energy_joules).abs()
+                < rel_tol * obs_a.demag_energy_joules.abs().max(1e-30),
+            "demag energy differs: {} vs {}",
+            obs_a.demag_energy_joules,
+            obs_b.demag_energy_joules
+        );
+    }
+
+    // ── FND-011: Cubic anisotropy test ──
+
+    #[test]
+    fn cubic_anisotropy_field_changes_effective_field() {
+        let mesh = MeshIR {
+            mesh_name: "tet_cubic".to_string(),
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            elements: vec![[0, 1, 2, 3]],
+            element_markers: vec![1],
+            boundary_faces: vec![[0, 1, 2]],
+            boundary_markers: vec![1],
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+            per_domain_quality: std::collections::HashMap::new(),
+        };
+        let topo = MeshTopology::from_ir(&mesh).expect("topo");
+        let problem = FemLlgProblem::with_terms(
+            topo,
+            MaterialParameters::new(800e3, 13e-12, 0.5).expect("material"),
+            LlgConfig::new(DEFAULT_GYROMAGNETIC_RATIO, TimeIntegrator::Heun).expect("llg"),
+            EffectiveFieldTerms {
+                exchange: false,
+                demag: false,
+                external_field: None,
+                per_node_field: None,
+                magnetoelastic: None,
+                cubic_anisotropy: Some(CubicAnisotropyConfig {
+                    kc1: -1e5,
+                    kc2: 0.0,
+                    axis1: [1.0, 0.0, 0.0],
+                    axis2: [0.0, 1.0, 0.0],
+                }),
+                ..Default::default()
+            },
+        );
+        // Magnetization along [110] — NOT along a cubic easy axis for Kc1<0
+        let inv_sqrt2 = 1.0 / 2.0_f64.sqrt();
+        let mag: Vec<Vector3> = vec![[inv_sqrt2, inv_sqrt2, 0.0]; 4];
+        let state = problem.new_state(mag).expect("state");
+        let obs = problem.observe(&state).expect("obs");
+        // Effective field should be non-zero (anisotropy drives m away from [110])
+        assert!(
+            obs.max_effective_field_amplitude > 1e3,
+            "cubic anisotropy should produce non-zero H_eff, got {}",
+            obs.max_effective_field_amplitude
+        );
+    }
+
+    // ── FND-012: Overridable solver parameters ──
+
+    #[test]
+    fn solver_parameter_overrides_are_stored() {
+        let problem = unit_tet_problem();
+        // Defaults should be None
+        assert!(problem.sparse_cg_tol.is_none());
+        assert!(problem.sparse_cg_max_iter.is_none());
+        assert!(problem.cell_size_extent_fraction.is_none());
+
+        let mut problem2 = unit_tet_problem();
+        problem2.sparse_cg_tol = Some(1e-8);
+        problem2.sparse_cg_max_iter = Some(500);
+        problem2.cell_size_extent_fraction = Some(0.5);
+        assert_eq!(problem2.sparse_cg_tol, Some(1e-8));
+        assert_eq!(problem2.sparse_cg_max_iter, Some(500));
+        assert_eq!(problem2.cell_size_extent_fraction, Some(0.5));
     }
 }

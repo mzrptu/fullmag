@@ -383,8 +383,12 @@ fn resolve_runtime_invocation(raw_args: Vec<OsString>) -> Result<RuntimeResoluti
     let requested_device = runtime_selection_string(problem, "device", "auto");
     let preferred_runtime_family =
         preferred_runtime_family_for_problem(problem, resolved_backend, &requested_device);
-    let (local_engine_id, local_engine_label, requires_managed_runtime) =
-        local_engine_resolution(problem, resolved_backend, &preferred_runtime_family);
+    let (local_engine_id, local_engine_label, requires_managed_runtime) = local_engine_resolution(
+        problem,
+        resolved_backend,
+        &preferred_runtime_family,
+        explicit_selection,
+    );
     let resolved_session_runtime = fullmag_runner::resolve_session_runtime(problem).ok();
 
     Ok(RuntimeResolutionSummary {
@@ -483,6 +487,7 @@ fn local_engine_resolution(
     problem: &ProblemIR,
     resolved_backend: BackendTarget,
     preferred_runtime_family: &str,
+    explicit_selection: bool,
 ) -> (Option<String>, Option<String>, bool) {
     match preferred_runtime_family {
         "fem-gpu" => {
@@ -503,7 +508,7 @@ fn local_engine_resolution(
                 (
                     Some("fem_cpu_reference".to_string()),
                     Some("CPU FEM".to_string()),
-                    true,
+                    explicit_selection,
                 )
             }
         }
@@ -542,8 +547,8 @@ mod tests {
     use super::*;
     use crate::diagnostics::diagnose_initial_fdm_plan;
     use fullmag_ir::{
-        BackendPlanIR, ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR, FemPlanIR,
-        GridDimensions, IntegratorChoice, MaterialIR, MeshIR, RelaxationAlgorithmIR,
+        BackendPlanIR, BackendTarget, ExchangeBoundaryCondition, ExecutionPrecision, FdmMaterialIR,
+        FemPlanIR, GridDimensions, IntegratorChoice, MaterialIR, MeshIR, RelaxationAlgorithmIR,
         RelaxationControlIR,
     };
 
@@ -879,5 +884,13 @@ mod tests {
     fn ui_subcommand_is_not_treated_as_script_mode() {
         let args = vec![OsString::from("fullmag"), OsString::from("ui")];
         assert!(!is_script_mode(&args));
+    }
+
+    #[test]
+    fn local_engine_resolution_does_not_require_managed_runtime_without_explicit_selection() {
+        let problem = ProblemIR::bootstrap_example();
+        let (_engine_id, _engine_label, requires_managed_runtime) =
+            local_engine_resolution(&problem, BackendTarget::Fem, "fem-gpu", false);
+        assert!(!requires_managed_runtime);
     }
 }
