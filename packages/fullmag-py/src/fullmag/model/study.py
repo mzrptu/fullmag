@@ -4,8 +4,10 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 from fullmag.model.dynamics import LLG
+from fullmag.model.eigen import ModeTracking, coerce_k_sampling
 from fullmag.model.outputs import (
     SaveDispersion,
+    SaveEigenDiagnostics,
     SaveField,
     SaveMode,
     SaveScalar,
@@ -15,7 +17,7 @@ from fullmag.model.outputs import (
 from fullmag._validation import require_non_empty, require_positive
 
 TimeOutputSpec = SaveField | SaveScalar | Snapshot
-EigenOutputSpec = SaveSpectrum | SaveMode | SaveDispersion
+EigenOutputSpec = SaveSpectrum | SaveMode | SaveDispersion | SaveEigenDiagnostics
 OutputSpec = TimeOutputSpec | EigenOutputSpec
 SUPPORTED_RELAXATION_ALGORITHMS = {
     "llg_overdamped",
@@ -138,7 +140,9 @@ class Eigenmodes:
     equilibrium_source: str = "provided"
     equilibrium_artifact: str | None = None
     include_demag: bool = True
+    k_sampling: object | None = None
     k_vector: tuple[float, float, float] | None = None
+    mode_tracking: ModeTracking | None = None
     normalization: str = "unit_l2"
     damping_policy: str = "ignore"
     spin_wave_bc: str | dict[str, object] = "free"
@@ -176,8 +180,6 @@ class Eigenmodes:
                 "equilibrium_artifact",
                 require_non_empty(self.equilibrium_artifact, "equilibrium_artifact"),
             )
-        if self.k_vector is not None and len(self.k_vector) != 3:
-            raise ValueError("k_vector must have exactly three components")
         if self.normalization not in SUPPORTED_EIGEN_NORMALIZATIONS:
             supported = ", ".join(sorted(SUPPORTED_EIGEN_NORMALIZATIONS))
             raise ValueError(f"normalization must be one of: {supported}")
@@ -195,6 +197,8 @@ class Eigenmodes:
                 raise ValueError(f"spin_wave_bc.kind must be one of: {supported}")
         else:
             raise ValueError("spin_wave_bc must be a string or a mapping")
+        # Validate alias / primary representation early to fail loudly.
+        coerce_k_sampling(k_sampling=self.k_sampling, legacy_k_vector=self.k_vector)
 
     def to_ir(self) -> dict[str, object]:
         target: dict[str, object]
@@ -214,11 +218,7 @@ class Eigenmodes:
         else:
             equilibrium = {"kind": "provided"}
 
-        sampling = None
-        if self.k_vector is not None:
-            sampling = {"kind": "single", "k_vector": list(self.k_vector)}
-
-        return {
+        payload: dict[str, object] = {
             "kind": "eigenmodes",
             "dynamics": self.dynamics.to_ir(),
             "operator": {
@@ -228,9 +228,71 @@ class Eigenmodes:
             "count": self.count,
             "target": target,
             "equilibrium": equilibrium,
-            "k_sampling": sampling,
+            "k_sampling": coerce_k_sampling(
+                k_sampling=self.k_sampling,
+                legacy_k_vector=self.k_vector,
+            ),
             "normalization": self.normalization,
             "damping_policy": self.damping_policy,
             "spin_wave_bc": self.spin_wave_bc,
+            "sampling": {"outputs": [output.to_ir() for output in self.outputs]},
+        }
+        if self.mode_tracking is not None:
+            payload["mode_tracking"] = self.mode_tracking.to_ir()
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class FrequencyResponse:
+    outputs: Sequence[EigenOutputSpec]
+    frequencies_hz: Sequence[float]
+    excitation_field_au_per_m: tuple[float, float, float] = (0.0, 0.0, 1.0)
+    operator: str = "linearized_llg"
+    equilibrium_source: str = "provided"
+    equilibrium_artifact: str | None = None
+    include_demag: bool = True
+    k_sampling: object | None = None
+    k_vector: tuple[float, float, float] | None = None
+    normalization: str = "unit_l2"
+    damping_policy: str = "ignore"
+    spin_wave_bc: str | dict[str, object] = "free"
+    dynamics: LLG = field(default_factory=LLG)
+
+    def __post_init__(self) -> None:
+        if not self.outputs:
+            raise ValueError("FrequencyResponse requires at least one output")
+        normalized_freqs = tuple(float(freq) for freq in self.frequencies_hz)
+        if not normalized_freqs:
+            raise ValueError("frequencies_hz must not be empty")
+        if any(freq <= 0.0 for freq in normalized_freqs):
+            raise ValueError("frequencies_hz must contain positive values only")
+        object.__setattr__(self, "frequencies_hz", normalized_freqs)
+        coerce_k_sampling(k_sampling=self.k_sampling, legacy_k_vector=self.k_vector)
+
+    def to_ir(self) -> dict[str, object]:
+        equilibrium: dict[str, object]
+        if self.equilibrium_source == "artifact":
+            equilibrium = {"kind": "artifact", "path": self.equilibrium_artifact}
+        elif self.equilibrium_source == "relax":
+            equilibrium = {"kind": "relaxed_initial_state"}
+        else:
+            equilibrium = {"kind": "provided"}
+        return {
+            "kind": "frequency_response",
+            "dynamics": self.dynamics.to_ir(),
+            "operator": {
+                "kind": self.operator,
+                "include_demag": self.include_demag,
+            },
+            "equilibrium": equilibrium,
+            "k_sampling": coerce_k_sampling(
+                k_sampling=self.k_sampling,
+                legacy_k_vector=self.k_vector,
+            ),
+            "normalization": self.normalization,
+            "damping_policy": self.damping_policy,
+            "spin_wave_bc": self.spin_wave_bc,
+            "excitation": {"field_au_per_m": list(self.excitation_field_au_per_m)},
+            "frequencies_hz": {"values_hz": list(self.frequencies_hz)},
             "sampling": {"outputs": [output.to_ir() for output in self.outputs]},
         }

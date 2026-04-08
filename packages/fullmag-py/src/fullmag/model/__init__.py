@@ -47,7 +47,7 @@ from .geometry import (
     Translate,
     Union,
 )
-from .outputs import SaveDispersion, SaveField, SaveMode, SaveScalar, SaveSpectrum, Snapshot
+from .outputs import SaveDispersion, SaveEigenDiagnostics, SaveField, SaveMode, SaveScalar, SaveSpectrum, Snapshot
 from .problem import (
     BackendTarget,
     DeviceTarget,
@@ -58,7 +58,8 @@ from .problem import (
     backend,
 )
 from .structure import Ferromagnet, Material, Region
-from .study import Eigenmodes, Relaxation, TimeEvolution
+from .study import Eigenmodes, FrequencyResponse, Relaxation, TimeEvolution
+from .eigen import KPath, KPoint, ModeTracking
 
 __all__ = [
     "BackendTarget",
@@ -118,10 +119,15 @@ __all__ = [
     "SaveMode",
     "SaveScalar",
     "SaveSpectrum",
+    "SaveEigenDiagnostics",
     "Sinusoidal",
     "Snapshot",
     "Sphere",
     "SpinWaveExcitationAnalysis",
+    "FrequencyResponse",
+    "KPath",
+    "KPoint",
+    "ModeTracking",
     "TimeEvolution",
     "Translate",
     "Union",

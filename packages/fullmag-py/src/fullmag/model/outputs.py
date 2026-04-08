@@ -133,44 +133,104 @@ class Snapshot:
 @dataclass(frozen=True, slots=True)
 class SaveSpectrum:
     quantity: str = "eigenfrequency"
+    scope: str = "per_sample"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "quantity", require_non_empty(self.quantity, "quantity"))
+        _SUPPORTED_SCOPES = {"global", "per_sample"}
+        if self.scope not in _SUPPORTED_SCOPES:
+            supported = ", ".join(sorted(_SUPPORTED_SCOPES))
+            raise ValueError(f"scope must be one of: {supported}")
 
     def to_ir(self) -> dict[str, object]:
-        return {"kind": "eigen_spectrum", "quantity": self.quantity}
+        return {"kind": "eigen_spectrum", "quantity": self.quantity, "scope": self.scope}
 
 
 @dataclass(frozen=True, slots=True)
 class SaveMode:
     field: str = "mode"
     indices: Sequence[int] = ()
+    branches: Sequence[int] = ()
+    sample_indices: Sequence[int] = ()
+    sample_labels: Sequence[str] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "field", require_non_empty(self.field, "field"))
         normalized = tuple(int(index) for index in self.indices)
-        if not normalized:
-            raise ValueError("SaveMode requires at least one mode index")
         if any(index < 0 for index in normalized):
             raise ValueError("mode indices must be >= 0")
         if len(set(normalized)) != len(normalized):
             raise ValueError("mode indices must be unique")
         object.__setattr__(self, "indices", normalized)
+        normalized_branches = tuple(int(b) for b in self.branches)
+        if any(b < 0 for b in normalized_branches):
+            raise ValueError("branch indices must be >= 0")
+        if len(set(normalized_branches)) != len(normalized_branches):
+            raise ValueError("branch indices must be unique")
+        object.__setattr__(self, "branches", normalized_branches)
+        if not normalized and not normalized_branches:
+            raise ValueError(
+                "SaveMode requires at least one raw mode index or tracked branch index"
+            )
+        normalized_si = tuple(int(i) for i in self.sample_indices)
+        if any(i < 0 for i in normalized_si):
+            raise ValueError("sample_indices must be >= 0")
+        object.__setattr__(self, "sample_indices", normalized_si)
+        object.__setattr__(
+            self,
+            "sample_labels",
+            tuple(
+                require_non_empty(label, "sample_labels entry")
+                for label in self.sample_labels
+            ),
+        )
 
     def to_ir(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "kind": "eigen_mode",
             "field": self.field,
             "indices": list(self.indices),
         }
+        if self.branches:
+            payload["branches"] = list(self.branches)
+        if self.sample_indices or self.sample_labels:
+            payload["sample_selector"] = {
+                "sample_indices": list(self.sample_indices),
+                "sample_labels": list(self.sample_labels),
+            }
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
 class SaveDispersion:
     name: str = "dispersion"
+    include_branch_table: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", require_non_empty(self.name, "name"))
 
     def to_ir(self) -> dict[str, object]:
-        return {"kind": "dispersion_curve", "name": self.name}
+        return {
+            "kind": "dispersion_curve",
+            "name": self.name,
+            "include_branch_table": self.include_branch_table,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SaveEigenDiagnostics:
+    include_tracking: bool = True
+    include_residuals: bool = True
+    include_overlaps: bool = True
+    include_tangent_leakage: bool = True
+    include_orthogonality: bool = True
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "kind": "eigen_diagnostics",
+            "include_tracking": self.include_tracking,
+            "include_residuals": self.include_residuals,
+            "include_overlaps": self.include_overlaps,
+            "include_tangent_leakage": self.include_tangent_leakage,
+            "include_orthogonality": self.include_orthogonality,
+        }

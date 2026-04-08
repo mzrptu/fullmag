@@ -747,6 +747,11 @@ fn phase_reduction(
         (SpinWaveBoundaryKindIR::Floquet, Some(KSamplingIR::Single { k_vector })) => {
             Some(*k_vector)
         }
+        (SpinWaveBoundaryKindIR::Floquet, Some(KSamplingIR::Path { .. })) => {
+            return Err(RunError {
+                message: "floquet spin-wave BC with KSampling::Path is not yet supported in single-k runner; use the multi-k orchestrator".to_string(),
+            });
+        }
         (SpinWaveBoundaryKindIR::Floquet, None) => {
             return Err(RunError {
                 message: "floquet spin-wave BC requires k_sampling=Single{...}".to_string(),
@@ -1368,6 +1373,7 @@ fn add_dmi_complex(
     }
     let k = match k_sampling {
         Some(KSamplingIR::Single { k_vector }) => *k_vector,
+        Some(KSamplingIR::Path { .. }) => [0.0, 0.0, 0.0],
         None => [0.0, 0.0, 0.0],
     };
     let ms = plan.material.saturation_magnetisation.max(1e-30);
@@ -1726,6 +1732,7 @@ fn equilibrium_source_json(equilibrium: &EquilibriumSourceIR) -> serde_json::Val
 fn k_vector_json(k_sampling: Option<&KSamplingIR>) -> serde_json::Value {
     match k_sampling {
         Some(KSamplingIR::Single { k_vector }) => serde_json::json!(k_vector),
+        Some(KSamplingIR::Path { .. }) => serde_json::json!([0.0, 0.0, 0.0]),
         None => serde_json::Value::Null,
     }
 }
@@ -1733,6 +1740,7 @@ fn k_vector_json(k_sampling: Option<&KSamplingIR>) -> serde_json::Value {
 fn dispersion_csv(k_sampling: Option<&KSamplingIR>, modes: &serde_json::Value) -> String {
     let k_vector = match k_sampling {
         Some(KSamplingIR::Single { k_vector }) => *k_vector,
+        Some(KSamplingIR::Path { .. }) => [0.0, 0.0, 0.0],
         None => [0.0, 0.0, 0.0],
     };
     let mut csv = String::from("mode_index,kx,ky,kz,frequency_hz,angular_frequency_rad_per_s\n");

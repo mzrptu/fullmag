@@ -736,6 +736,7 @@ fn materialize_pipeline_eigenmodes(
         damping_policy: payload_eigen_damping_policy(payload)?.unwrap_or(default_damping_policy),
         spin_wave_bc: payload_spin_wave_bc(payload)?.unwrap_or(default_spin_wave_bc),
         sampling,
+        mode_tracking: None,
     };
 
     Ok(ResolvedScriptStage::solver(ir, 0.0, entrypoint_kind))

@@ -1196,7 +1196,7 @@ pub(crate) fn plan_fem_eigen(
                         .to_string(),
                 );
             }
-            if !matches!(k_sampling, Some(fullmag_ir::KSamplingIR::Single { .. })) {
+            if !matches!(k_sampling, Some(fullmag_ir::KSamplingIR::Single { .. }) | Some(fullmag_ir::KSamplingIR::Path { .. })) {
                 errors.push(
                     "spin_wave_bc.kind='floquet' requires k_sampling=Single{ k_vector = [...] }"
                         .to_string(),

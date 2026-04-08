@@ -13,6 +13,7 @@ mod artifacts;
 pub mod capabilities;
 mod cpu_reference;
 mod dispatch;
+pub mod eigen;
 mod fem_eigen;
 mod fem_reference;
 pub mod interactive;

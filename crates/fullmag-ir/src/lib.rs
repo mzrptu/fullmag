@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+pub mod eigen_contract;
+pub use eigen_contract::*;
+
 pub const IR_VERSION: &str = "0.2.0";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -795,7 +798,48 @@ pub enum EquilibriumSourceIR {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum KSamplingIR {
-    Single { k_vector: [f64; 3] },
+    Single {
+        k_vector: [f64; 3],
+    },
+    Path {
+        points: Vec<KPointIR>,
+        samples_per_segment: Vec<u32>,
+        #[serde(default)]
+        closed: bool,
+    },
+}
+
+impl KSamplingIR {
+    pub fn is_single_gamma(&self) -> bool {
+        matches!(
+            self,
+            KSamplingIR::Single {
+                k_vector: [0.0, 0.0, 0.0]
+            }
+        )
+    }
+
+    pub fn sample_count_hint(&self) -> usize {
+        match self {
+            KSamplingIR::Single { .. } => 1,
+            KSamplingIR::Path {
+                samples_per_segment,
+                ..
+            } => {
+                if samples_per_segment.is_empty() {
+                    0
+                } else {
+                    let repeated_segment_starts = samples_per_segment.len().saturating_sub(1);
+                    samples_per_segment
+                        .iter()
+                        .map(|value| *value as usize)
+                        .sum::<usize>()
+                        .saturating_add(1)
+                        .saturating_sub(repeated_segment_starts)
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -841,6 +885,8 @@ pub enum StudyIR {
         /// Spin-wave boundary condition applied to the eigenvalue operator.
         #[serde(default)]
         spin_wave_bc: SpinWaveBoundaryConditionIR,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode_tracking: Option<ModeTrackingIR>,
         sampling: SamplingIR,
     },
 }
@@ -908,6 +954,18 @@ pub enum OutputIR {
     },
     DispersionCurve {
         name: String,
+    },
+    EigenDiagnostics {
+        #[serde(default)]
+        include_tracking: bool,
+        #[serde(default)]
+        include_residuals: bool,
+        #[serde(default)]
+        include_overlaps: bool,
+        #[serde(default)]
+        include_tangent_leakage: bool,
+        #[serde(default)]
+        include_orthogonality: bool,
     },
 }
 
@@ -2552,6 +2610,9 @@ impl ProblemIR {
                         errors.push("dispersion_curve name must not be empty".to_string());
                     }
                 }
+                OutputIR::EigenDiagnostics { .. } => {
+                    // No additional validation needed for diagnostics flags
+                }
             }
         }
         match &self.study {
@@ -2640,6 +2701,25 @@ impl ProblemIR {
                     if !k_vector.iter().all(|value| value.is_finite()) {
                         errors.push(
                             "eigenmodes.k_sampling.k_vector must contain finite values".to_string(),
+                        );
+                    }
+                }
+                if let Some(KSamplingIR::Path { points, samples_per_segment, .. }) = k_sampling {
+                    if points.len() < 2 {
+                        errors.push(
+                            "eigenmodes.k_sampling.path requires at least two control points".to_string(),
+                        );
+                    }
+                    for point in points {
+                        if !point.k_vector.iter().all(|v| v.is_finite()) {
+                            errors.push(
+                                "eigenmodes.k_sampling.path point k_vector must contain finite values".to_string(),
+                            );
+                        }
+                    }
+                    if samples_per_segment.iter().any(|n| *n == 0) {
+                        errors.push(
+                            "eigenmodes.k_sampling.path samples_per_segment entries must be > 0".to_string(),
                         );
                     }
                 }
@@ -3382,6 +3462,7 @@ mod tests {
                     },
                 ],
             },
+            mode_tracking: None,
         };
 
         assert!(ir.validate().is_ok());
@@ -3461,6 +3542,7 @@ mod tests {
                     name: "dispersion".to_string(),
                 }],
             },
+            mode_tracking: None,
         };
 
         let errors = ir

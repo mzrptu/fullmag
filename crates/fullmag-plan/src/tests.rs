@@ -2469,6 +2469,7 @@ fn fem_eigen_backend_with_mesh_asset_plans_successfully() {
                 },
             ],
         },
+        mode_tracking: None,
     };
 
     let plan = plan(&ir).expect("FEM eigen mesh asset should produce a FemEigenPlanIR");
@@ -2560,6 +2561,7 @@ fn fem_eigen_backend_interfacial_dmi_requires_explicit_interface_normal_in_stric
                 quantity: "eigenfrequency".to_string(),
             }],
         },
+        mode_tracking: None,
     };
 
     let error = plan(&ir).expect_err(
@@ -2646,6 +2648,7 @@ fn fem_eigen_accepts_shared_domain_mesh_with_air_when_transfer_grid_is_used() {
                 quantity: "eigenfrequency".to_string(),
             }],
         },
+        mode_tracking: None,
     };
 
     let plan = plan(&ir).expect("shared-domain FEM eigen mesh should now plan");
@@ -2743,6 +2746,7 @@ fn fem_eigen_periodic_bc_requires_periodic_node_pairs() {
                 quantity: "eigenfrequency".to_string(),
             }],
         },
+        mode_tracking: None,
     };
 
     let err = plan(&ir).expect_err("periodic FEM eigen without pairing metadata must fail");
@@ -2825,6 +2829,7 @@ fn fem_eigen_periodic_bc_with_pairs_plans_successfully() {
                 quantity: "eigenfrequency".to_string(),
             }],
         },
+        mode_tracking: None,
     };
 
     let plan = plan(&ir).expect("periodic FEM eigen with pairing metadata should plan");
@@ -2904,6 +2909,7 @@ fn fem_eigen_floquet_bc_with_pairs_and_k_sampling_plans_successfully() {
                 quantity: "eigenfrequency".to_string(),
             }],
         },
+        mode_tracking: None,
     };
 
     let plan =
@@ -2974,6 +2980,7 @@ fn fem_eigen_surface_anisotropy_requires_positive_ks_and_axis() {
                 quantity: "eigenfrequency".to_string(),
             }],
         },
+        mode_tracking: None,
     };
 
     let err = plan(&ir).expect_err("invalid surface anisotropy config must fail planning");

@@ -238,7 +238,8 @@ pub(crate) fn validate_executable_outputs(
             }
             OutputIR::EigenSpectrum { .. }
             | OutputIR::EigenMode { .. }
-            | OutputIR::DispersionCurve { .. } => errors.push(
+            | OutputIR::DispersionCurve { .. }
+            | OutputIR::EigenDiagnostics { .. } => errors.push(
                 "eigenmode outputs require StudyIR::Eigenmodes and the FEM eigen planner"
                     .to_string(),
             ),
@@ -285,9 +286,17 @@ pub(crate) fn validate_eigen_outputs(outputs: &[OutputIR], errors: &mut Vec<Stri
                     ));
                 }
             }
+            OutputIR::EigenDiagnostics { .. } => {
+                let key = "eigen_diagnostics".to_string();
+                if !seen.insert(key) {
+                    errors.push(
+                        "eigen diagnostics output is declared more than once".to_string(),
+                    );
+                }
+            }
             OutputIR::Field { .. } | OutputIR::Scalar { .. } | OutputIR::Snapshot { .. } => {
                 errors.push(
-                    "StudyIR::Eigenmodes supports only eigen_spectrum, eigen_mode, and dispersion_curve outputs"
+                    "StudyIR::Eigenmodes supports only eigen_spectrum, eigen_mode, dispersion_curve, and eigen_diagnostics outputs"
                         .to_string(),
                 );
             }
