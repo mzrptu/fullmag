@@ -231,6 +231,13 @@ fn normalized_runtime_element_markers(plan: &FemPlanIR) -> Result<Vec<u32>, RunE
         return Ok(Vec::new());
     }
 
+    eprintln!(
+        "[DEBUG dispatch] region_materials.len()={}, object_segments.len()={}, distinct_nonzero={:?}",
+        plan.region_materials.len(),
+        plan.object_segments.len(),
+        markers.iter().copied().filter(|m| *m != 0).collect::<BTreeSet<_>>()
+    );
+
     let distinct_nonzero = markers
         .iter()
         .copied()

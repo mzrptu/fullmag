@@ -10,6 +10,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 
+@dataclass(frozen=True, slots=True)
 class MeshQualityReport:
     """Per-element quality metrics extracted from Gmsh.
 
@@ -287,6 +288,7 @@ class SizeFieldData:
 
 
 
+@dataclass(frozen=True, slots=True)
 class MeshData:
     """Tetrahedral mesh data ready for FEM lowering."""
 
@@ -633,6 +635,7 @@ def _infer_axis_aligned_periodic_pairs(
 
 
 
+@dataclass(frozen=True, slots=True)
 class ComponentDescriptor:
     """Description of a single geometry component for shared-domain meshing."""
 

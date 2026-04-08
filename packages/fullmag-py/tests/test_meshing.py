@@ -13,6 +13,13 @@ import struct
 import numpy as np
 
 import fullmag as fm
+
+_has_trimesh = False
+try:
+    import trimesh as _trimesh  # noqa: F401
+    _has_trimesh = True
+except ImportError:
+    pass
 from fullmag import _core as fullmag_core
 from fullmag.meshing.asset_pipeline import (
     SharedDomainBuildReport,
@@ -993,6 +1000,7 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertEqual(voxels.shape, (23, 66, 66))
         self.assertGreater(voxels.active_cell_count, 0)
 
+    @unittest.skipUnless(_has_trimesh, "trimesh not installed")
     def test_two_nanoflower_shared_domain_hmax_changes_total_tetra_count(self) -> None:
         coarse_mesh, coarse_markers = self._realize_two_nanoflower_shared_domain(
             airbox_hmax=120e-9,

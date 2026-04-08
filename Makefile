@@ -195,16 +195,26 @@ install-cli install-cli-dev install-cli-static:
 			'  RESOLVE_RUNTIME_OUTPUT="$$(LD_LIBRARY_PATH="$$LOCAL_LD_LIBRARY_PATH" "$$SELF_DIR/fullmag-bin" resolve-runtime-invocation --shell -- "$$@" 2>/dev/null || true)"' \
 			'fi' \
 			'PREFERRED_RUNTIME_FAMILY=""' \
+			'RESOLVED_RUNTIME_FAMILY=""' \
+			'LOCAL_ENGINE_ID=""' \
 			'REQUIRES_MANAGED_RUNTIME="0"' \
+			'SHOULD_USE_MANAGED_RUNTIME="0"' \
 			'if [ -n "$$RESOLVE_RUNTIME_OUTPUT" ]; then' \
 			'  while IFS="=" read -r key value; do' \
 			'    case "$$key" in' \
 			'      preferred_runtime_family) PREFERRED_RUNTIME_FAMILY="$$value" ;;' \
+			'      resolved_runtime_family) RESOLVED_RUNTIME_FAMILY="$$value" ;;' \
+			'      local_engine_id) LOCAL_ENGINE_ID="$$value" ;;' \
 			'      requires_managed_runtime) REQUIRES_MANAGED_RUNTIME="$$value" ;;' \
 			'    esac' \
 			'  done <<< "$$RESOLVE_RUNTIME_OUTPUT"' \
 			'fi' \
-			'if [ "$$REQUIRES_MANAGED_RUNTIME" = "1" ] && [ "$$PREFERRED_RUNTIME_FAMILY" = "fem-gpu" ] && [ "$${FULLMAG_DISABLE_MANAGED_FEM_GPU_RUNTIME:-0}" != "1" ] && [ -x "$$MANAGED_RUNTIME_BIN" ]; then' \
+			'if [ "$$PREFERRED_RUNTIME_FAMILY" = "fem-gpu" ]; then' \
+			'  if [ "$$REQUIRES_MANAGED_RUNTIME" = "1" ] || [ "$$RESOLVED_RUNTIME_FAMILY" != "fem-gpu" ] || [ "$$LOCAL_ENGINE_ID" = "fem_cpu_reference" ]; then' \
+			'    SHOULD_USE_MANAGED_RUNTIME="1"' \
+			'  fi' \
+			'fi' \
+			'if [ "$$SHOULD_USE_MANAGED_RUNTIME" = "1" ] && [ "$${FULLMAG_DISABLE_MANAGED_FEM_GPU_RUNTIME:-0}" != "1" ] && [ -x "$$MANAGED_RUNTIME_BIN" ]; then' \
 			'  export LD_LIBRARY_PATH="$$MANAGED_RUNTIME_ROOT/lib:$$LOCAL_LD_LIBRARY_PATH"' \
 			'  exec "$$MANAGED_RUNTIME_BIN" "$$@"' \
 			'fi' \
