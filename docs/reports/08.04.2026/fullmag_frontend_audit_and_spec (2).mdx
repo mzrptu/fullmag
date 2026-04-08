@@ -1,0 +1,1725 @@
+---
+title: Fullmag Frontend Audit and Semantic UI Spec
+generated: 2026-04-08
+repo: MateuszZelent/fullmag
+branch: master
+status: preliminary-public-repo-audit
+---
+
+# Fullmag frontend audit i specyfikacja docelowa
+
+## 0. Kontekst
+
+Ten raport jest **auditem wstępnym** opartym o aktualne publiczne repo oraz bieżące zachowanie widoczne w kodzie. Nie jest to jeszcze audyt „ostateczny plik po pliku” według naszego protokołu, bo do tego potrzebuję od Ciebie **aktualny zip frontendu albo konkretne pliki po refaktorze**, które faktycznie chcesz audytować. Publiczne repo mówi dużo, ale nie musi być 1:1 tym, co masz lokalnie. Taka jest uroda świata i branch driftu.
+
+Ten dokument robi trzy rzeczy naraz:
+
+1. porównuje aktualną implementację do wcześniejszego planu refaktoru,
+2. wskazuje co nadal jest źle semantycznie,
+3. definiuje **docelowy kontrakt UI** dla ribbonów, drzewa modelu, inspectorów i focus/isolate w 3D.
+
+---
+
+## 1. Executive verdict
+
+### 1.1. Co zostało zrobione
+
+W aktualnej implementacji widać realny postęp:
+
+- są już bardziej rozbudowane grupy akcji w ribbonie,
+- są akcje study-stage typu relax / run / eigen / hysteresis,
+- istnieją podstawowe mechanizmy `Focus`, `Context`, `Isolate` w widoku 3D,
+- istnieje rozdzielenie na model tree + contextual settings panel,
+- pojawiły się bardziej konkretne panele dla Universe, Mesh, Study, Results.
+
+### 1.2. Co nie zostało zrealizowane z wcześniejszego planu
+
+Najważniejsze: **duża refaktoryzacja architektury informacji nie została jeszcze domknięta**.
+
+Nadal obecne są stare problemy:
+
+- nadal istnieje **3-warstwowa góra** (`TopHeader + StageBar + RibbonBar`),
+- nadal istnieje osobna oś `build / study / analyze`,
+- ribbon nadal jest **stage-dependent**, a nie **workflow-driven**,
+- `Geometry`, `Materials` i `Physics` nadal nie są prawdziwie osobnymi domenami autora modelu,
+- kliknięcie tabów ribbonu nadal potrafi mutować selekcję drzewa,
+- drzewo modelu nadal nie odzwierciedla poprawnie semantyki obiektu, materiału, physics stack i study,
+- inspector nadal pokazuje sporo informacji zbędnych, zdublowanych lub nieadekwatnych,
+- selection/focus/highlight w 3D istnieją, ale nie są jeszcze **spójnym kontraktem całego UI**.
+
+### 1.3. Krótki werdykt
+
+**Nie, refaktor nie został jeszcze zrealizowany zgodnie z pełnym planem.**
+
+To nie jest katastrofa. To jest raczej stan „połowa rusztowania stoi, ale budynek dalej ma stare schody w środku”. Czyli klasyczne przejście między „już coś działa” a „to wreszcie ma sens”.
+
+---
+
+## 2. Audit delta względem planu
+
+## 2.1. Górna nawigacja
+
+### Stan obecny
+
+Aktualny shell nadal logicznie składa się z trzech warstw:
+
+- `TopHeader`
+- `StageBar`
+- `RibbonBar`
+
+To oznacza, że użytkownik dalej musi rozumieć:
+
+1. menu aplikacji,
+2. tryb/perspektywę (`Model Builder / Study / Analyze`),
+3. dodatkowy zestaw tabów ribbonu zależny od powyższego.
+
+### Ocena
+
+To jest nadal za ciężkie poznawczo i zbyt mało semantyczne.
+
+### Docelowy stan
+
+Na górze powinny zostać **tylko dwa poziomy**:
+
+1. **App Bar**
+2. **Ribbon**
+
+#### App Bar
+
+App Bar powinien zawierać:
+
+- menu aplikacji,
+- quick actions: save / undo / redo / sync script,
+- nazwę projektu + status dirty/synced,
+- backend status,
+- runtime status,
+- solver controls: `Relax`, `Run`, `Pause`, `Stop`,
+- command search,
+- ewentualnie przełącznik layoutu/perspektywy, ale nie jako osobny poziom workflow.
+
+#### Ribbon
+
+Ribbon powinien być **jedyną główną nawigacją roboczą**.
+
+Docelowe core tabs:
+
+- `Home`
+- `Definitions`
+- `Geometry`
+- `Materials`
+- `Physics`
+- `Mesh`
+- `Study`
+- `Results`
+- `Automation`
+
+Dodatkowo contextual tab sets:
+
+- `Selected Object`
+- `Selected Material`
+- `Selected Interaction`
+- `Selected Mesh Part`
+- `Selected Stage`
+- `Selected Plot`
+- `Universe`
+
+### Wniosek implementacyjny
+
+`StageBar` powinien **zniknąć z widocznej, głównej nawigacji**. Jeśli zostaje jakaś perspektywa layoutu, ma być niskiego rzędu i nie może sterować ontologią modelu.
+
+---
+
+## 2.2. Ribbon semantics
+
+### Stan obecny
+
+Tabs ribbonu są nadal powiązane z `workspaceMode`, a nie z logiczną strukturą modelu.
+
+Obecnie mamy zestawy typu:
+
+- build: `Home / Geometry / Materials / Physics / Mesh / StudyBuilder`
+- study: `Home / LiveView / Runtime / Charts / Diagnostics`
+- analyze: `Home / Spectrum / Modes / Compare / Export`
+
+Dodatkowo kilka tabów nadal mapuje się na te same group builders, więc część tabów jest semantycznie pozorna.
+
+### Co jest złe
+
+1. `LiveView`, `Runtime`, `Charts`, `Diagnostics` nie są dobrymi top-level workflow tabs.
+2. `Spectrum`, `Modes`, `Compare`, `Export` to raczej widoki wyników albo operacje, nie domeny modelowania.
+3. `Geometry`, `Materials`, `Physics` nadal nie są w pełni niezależnymi warstwami authoringu.
+4. Klikanie tabów ribbonu nadal nie powinno zmieniać selekcji drzewa „za plecami użytkownika”.
+
+### Docelowa zasada
+
+Ribbon ma robić dwie rzeczy:
+
+- pokazywać komendy relewantne do aktualnego kontekstu,
+- przełączać **zakres narzędzi**, ale nie semantykę selekcji.
+
+### Twarde reguły
+
+1. **Tree selection jest źródłem kontekstu.**
+2. Ribbon dobiera się do selekcji.
+3. Kliknięcie ribbon tab **nie wybiera samo z siebie innego node w drzewie**, chyba że użytkownik użyje jawnej komendy `Go to ...`.
+4. Każda ikonka ribbonu musi odpowiadać **realnemu commandowi** z command registry.
+5. Każdy command musi mieć:
+   - `id`
+   - `label`
+   - `scope`
+   - `selection requirements`
+   - `effect on model`
+   - `backend binding`
+   - `undo/redo contract`
+
+---
+
+## 2.3. Drzewo modelu
+
+### Stan obecny
+
+Drzewo jest nadal zbyt mocno zorganizowane wokół jednej gałęzi `study-root / Simulation`, a potem pod to wpadają różne warstwy: Universe, Study Domain Mesh, Objects, Physics, Study, Outputs.
+
+To jest bliżej „run tree” niż „model builder tree”.
+
+### Co jest złe
+
+1. Brakuje jawnego `Definitions`.
+2. Obiekty nie mają poprawnego, pełnego subtree authoringu.
+3. Brakuje właściwego per-object `Magnetic Parameters` subtree.
+4. `Physics` jako globalna gałąź miesza pojęcia globalne i obiektowe.
+5. `Outputs`/`Results` są blisko study runtime, a powinny być bardziej jasno wydzielone.
+
+### Docelowa hierarchia
+
+```text
+Model
+  Definitions
+    Parameters
+    Variables
+    Functions
+    Coordinate Systems
+
+  Universe
+    Domain
+    Airbox
+    Domain Mesh
+
+  Objects
+    nanoflower_0
+      Overview
+      Geometry
+      Material
+      Magnetic Parameters
+        Exchange
+        Demag
+        Interfacial DMI
+        Bulk DMI
+        Uniaxial Anisotropy
+        Cubic Anisotropy
+        Initial Magnetization
+      Object Mesh
+    nanoflower_1
+      ...
+
+  Interfaces
+    Interface_0
+      Overview
+      Coupling
+      Boundary Conditions
+
+  Excitations
+    External Field
+    Current / STT / SOT
+    Thermal
+    Oersted
+    Magnetoelastic
+    Antennas
+
+  Study
+    Defaults
+    Stage 1 - Relax
+      Overview
+      Solver
+      Drivers
+      Outputs
+      Runtime
+    Stage 2 - Run
+      Overview
+      Solver
+      Drivers
+      Outputs
+      Runtime
+
+  Results
+    Overview
+    Field Data
+    Scalars / Tables
+    Energy
+    State I/O
+    Export
+    Eigenmodes
+      Spectrum
+      Dispersion
+      Modes
+```
+
+### Główna zasada
+
+Drzewo ma opisywać **strukturę modelu i workflow**, a nie wewnętrzne artefakty implementacyjne UI.
+
+---
+
+## 2.4. Inspector / Settings Panel
+
+### Stan obecny
+
+Routing w `SettingsPanel` jest nadal mocno ad hoc. Dla niektórych node’ów pokazuje kombinacje paneli, które nie mają sensu semantycznego.
+
+Najgorszy przykład:
+
+- kliknięcie `obj-*` nadal potrafi dawać jednocześnie `GeometryPanel` + `ObjectMeshPanel`.
+
+Do tego dochodzi jeszcze globalny blok typu `Capability Coverage`, który nie powinien być renderowany prawie wszędzie.
+
+### Docelowa zasada
+
+Każdy node w drzewie ma mieć **jeden dominujący inspector purpose**.
+
+Nie „trochę geometrii, trochę meshu, trochę statusów”, tylko:
+
+- Overview
+- Editor
+- Runtime state
+- Results view
+
+Zależnie od typu węzła.
+
+### Reguły inspectorów
+
+1. **Object root** pokazuje overview obiektu, a nie geometrię + mesh.
+2. **Geometry node** pokazuje tylko geometrię.
+3. **Material node** pokazuje tylko materiał.
+4. **Magnetic Parameters root** pokazuje stack interakcji + add/remove/reorder + summary.
+5. **Interaction child node** pokazuje tylko formularz konkretnego oddziaływania.
+6. **Object Mesh node** pokazuje tylko parametry meshu i statystyki preview/build.
+7. **Study stage node** pokazuje overview stage.
+8. **Results nodes** pokazują tylko wyniki, wykresy, eksport albo I/O.
+9. `Capability Coverage` nie może być globalnym blokiem w połowie aplikacji.
+
+---
+
+## 2.5. 3D focus / isolate / highlight
+
+### Stan obecny
+
+Jest już część mechaniki:
+
+- `selectedObjectId`
+- `selectedEntityId`
+- `focusedEntityId`
+- `objectViewMode`
+- `focusObjectRequest`
+
+Są też przyciski `Focus`, `Context`, `Isolate`.
+
+To znaczy, że fundament jest. Ale zachowanie nadal nie jest rozpisane jako jeden spójny kontrakt.
+
+### Docelowy kontrakt zachowania 3D
+
+#### A. Kliknięcie obiektu
+
+- obiekt dostaje stan `selected`
+- obiekt jest lekko podświetlony
+- ribbon przełącza się na odpowiedni contextual set `Selected Object`
+- inspector przechodzi na `Object Overview`
+- kamera nie musi się ruszać automatycznie, chyba że to pierwsza selekcja albo obiekt jest poza kadrem
+
+#### B. Kliknięcie child node obiektu
+
+Każdy child node nadal odnosi się do **tego samego owning object**, więc:
+
+- owning object ma być podświetlony,
+- jeśli child reprezentuje konkretną warstwę logiczną, highlight ma się różnić.
+
+Przykład:
+
+- `Geometry` -> highlight powierzchni / obrysu geometrii
+- `Material` -> highlight całego ciała delikatnym tintem materiałowym
+- `Exchange` / `Demag` / `DMI` -> highlight całego ciała + badge/legend overlay w inspectorze
+- `Object Mesh` -> przejście na mesh overlay albo mesh-only hybrid view
+- `Initial Magnetization` -> przejście na magnetization field preview
+
+#### C. Focus
+
+`Focus` powinien:
+
+- ustawić kamerę na obiekt/region,
+- nie zmieniać visibility innych obiektów,
+- zachować current context mode.
+
+#### D. Isolate
+
+`Isolate` powinien:
+
+- ukryć lub mocno wygasić wszystkie pozostałe obiekty,
+- pokazać tylko aktualny obiekt i powiązane warstwy.
+
+#### E. Context
+
+`Context` powinien:
+
+- zostawić pozostałe obiekty widoczne,
+- ale ghosted/desaturated,
+- z wyraźnym akcentem na selection owner.
+
+#### F. Hover
+
+Hover powinien być lokalny i tymczasowy:
+
+- outline albo jaśniejszy edge,
+- bez zmiany globalnej selekcji,
+- z możliwością kliknięcia w obiekt albo jego mesh partition.
+
+---
+
+## 3. Status wobec poprzedniego planu: checklist
+
+## 3.1. Flatten top navigation
+
+**Status:** NIE
+
+### Co miało być
+
+- AppBar + Ribbon
+- brak widocznego StageBar jako osobnej osi
+
+### Co jest
+
+- TopHeader + StageBar + RibbonBar
+
+### Działanie
+
+- usunąć StageBar z głównej góry,
+- w store zastąpić `currentStage` czymś w rodzaju `currentPerspective`, ale bez wpływu na semantykę modelu.
+
+## 3.2. Workflow-driven ribbon
+
+**Status:** NIE
+
+### Co miało być
+
+- core tabs zgodne z workflow
+- contextual tabs oparte o selekcję
+
+### Co jest
+
+- tabs zależne od `build/study/analyze`
+- część tabów to tylko różne etykiety do tych samych group builders
+
+### Działanie
+
+- przepisać `RibbonBar` na command registry + semantic tab registry.
+
+## 3.3. Tabs do not change tree selection
+
+**Status:** NIE
+
+### Co miało być
+
+- tab zmienia narzędzia, nie wybór node’a
+
+### Co jest
+
+- kliknięcia tabów nadal potrafią wymuszać `universe`, `objects`, `study`, `results`, `mesh`
+
+### Działanie
+
+- usunąć side effects `onSelectModelNode(...)` z click handlerów tabów
+- wprowadzić osobne jawne komendy `Go to ...`.
+
+## 3.4. Per-object Magnetic Parameters subtree
+
+**Status:** NIE / CZĘŚCIOWO
+
+### Co miało być
+
+- węzeł `Magnetic Parameters` pod obiektem
+- child nodes: exchange, demag, dmi, ku itd.
+
+### Co jest
+
+- tree nadal nie pokazuje takiego subtree jako first-class elementu
+- physics jest nadal w dużej mierze globalne
+
+### Działanie
+
+- przebudować `ModelTree.tsx`
+- dodać node descriptors dla interaction stack.
+
+## 3.5. Proper object inspector
+
+**Status:** NIE
+
+### Co miało być
+
+- object overview + actions + links do child editors
+
+### Co jest
+
+- object root potrafi nadal zwracać geometrię i mesh w jednym panelu
+
+### Działanie
+
+- wprowadzić `ObjectOverviewPanel.tsx`
+- przenieść geometrię/material/mesh do child nodes.
+
+## 3.6. Focus/isolate semantics across subtree
+
+**Status:** CZĘŚCIOWO
+
+### Co miało być
+
+- każdy child node obiektu powinien wpływać logicznie na 3D highlight/focus
+
+### Co jest
+n
+- fundament jest,
+- kontrakt zachowania nadal niespójny i nieopisany per node.
+
+### Działanie
+
+- dodać `selection presentation model` między tree a viewportem.
+
+---
+
+## 4. Docelowy command contract dla ribbonu
+
+## 4.1. Home
+
+### Grupa: File
+
+- `New Model`
+- `Open Model`
+- `Save`
+- `Save As`
+- `Sync Script`
+
+### Grupa: Edit
+
+- `Undo`
+- `Redo`
+- `Duplicate Selection`
+- `Delete Selection`
+
+### Grupa: View
+
+- `Focus Selection`
+- `Fit All`
+- `Context`
+- `Isolate`
+- `Reset Camera`
+- `Show/Hide Mesh Overlay`
+
+### Grupa: Run
+
+- `Relax`
+- `Run`
+- `Pause`
+- `Stop`
+
+### Backend / solver binding
+
+- solver commands -> runtime control API
+- save/sync -> scene document + script materializer
+- view commands -> viewport state only
+
+## 4.2. Definitions
+
+### Grupa: Add
+
+- `Parameter`
+- `Variable`
+- `Function`
+- `Coordinate System`
+
+### Grupa: Manage
+
+- `Import Preset`
+- `Validate Definitions`
+
+### Backend binding
+
+- definitions -> scene/schema layer
+- validation -> semantic validator before solver materialization
+
+## 4.3. Geometry
+
+### Grupa: Create
+
+- `Box`
+- `Cylinder`
+- `Ellipsoid`
+- `Imported STL`
+- `Array / Duplicate`
+
+### Grupa: Modify
+
+- `Translate`
+- `Rotate`
+- `Scale`
+- `Boolean Union`
+- `Boolean Difference`
+- `Boolean Intersect`
+
+### Grupa: Scene
+
+- `Airbox`
+- `Universe Domain`
+- `Interface`
+
+### Backend binding
+
+- geometry graph / scene graph
+- imported STL -> geometry asset pipeline
+
+## 4.4. Materials
+
+### Grupa: Assign
+
+- `Assign Material`
+- `Create Custom Material`
+- `Clone Material`
+- `Link Material`
+
+### Grupa: Presets
+
+- `NiFe`
+- `CoFeB`
+- `Fe`
+- `Custom Library...`
+
+### Grupa: Advanced
+
+- `Temperature Dependence`
+- `Damping Model`
+- `Gyro / Gamma`
+
+### Backend binding
+
+- material library + object material reference
+
+## 4.5. Physics
+
+### Grupa: Object Interactions
+
+- `Exchange`
+- `Demag`
+- `Interfacial DMI`
+- `Bulk DMI`
+- `Uniaxial Anisotropy`
+- `Cubic Anisotropy`
+- `Magnetoelastic`
+
+### Grupa: Global / Stage Drivers
+
+- `External Field`
+- `Thermal`
+- `Current / STT`
+- `SOT`
+- `Oersted`
+
+### Grupa: Boundary / Interfaces
+
+- `Exchange BC`
+- `Interface Coupling`
+- `Open Boundary`
+
+### Twarda zasada scope
+
+- `Exchange` i `Demag` są **object-scoped default interactions** dla ferromagnetu
+- `External Field`, `Thermal`, `Current`, `Oersted` są **stage-scoped / study-scoped**
+- `Interface Coupling` jest **interface-scoped**
+
+## 4.6. Mesh
+
+### Grupa: Build
+
+- `Build Object Mesh`
+- `Build Domain Mesh`
+- `Rebuild All`
+
+### Grupa: Quality
+
+- `Quality Report`
+- `Element Size`
+- `Transitions`
+- `Curvature`
+- `Boundary Layers`
+
+### Grupa: Recipes
+
+- `Apply Fine`
+- `Apply Normal`
+- `Apply Coarse`
+- `Custom Recipe`
+
+### Backend binding
+
+- per-object preview mesh
+- shared-domain mesh build
+- mesh report serialization
+
+## 4.7. Study
+
+### Grupa: Defaults
+
+- `Study Defaults`
+- `Solver Defaults`
+- `Outputs Defaults`
+
+### Grupa: Add Stage
+
+- `Relax`
+- `Run`
+- `Field Sweep`
+- `Hysteresis`
+- `Eigenmodes`
+
+### Grupa: Stage Ops
+
+- `Duplicate Stage`
+- `Reorder Stage`
+- `Disable Stage`
+- `Delete Stage`
+
+### Backend binding
+
+- study graph / stage graph
+- materialization to solver plan
+
+## 4.8. Results
+
+### Grupa: Plot
+
+- `Magnetization`
+- `Field`
+- `Energy`
+- `Table`
+- `Spectrum`
+- `Mode`
+
+### Grupa: Data
+
+- `Load State`
+- `Save State`
+- `Export CSV`
+- `Export VTK`
+- `Export NPZ`
+
+### Backend binding
+
+- outputs plan
+- runtime result assets
+
+---
+
+## 5. Drzewo modelu: dokładna specyfikacja node-by-node
+
+Poniżej jest **docelowa specyfikacja inspectora i ribbon mappingu** dla każdego rodzaju węzła.
+
+## 5.1. Root: `Model`
+
+### Inspector
+
+Powinno się wyświetlać:
+
+- nazwa modelu,
+- backend (`FDM` / `FEM`),
+- solver/device,
+- liczba obiektów,
+- liczba stage’y,
+- status walidacji,
+- szybkie akcje: Add Object, Build Domain Mesh, Add Study Stage, Run Validation.
+
+### Nie powinno się wyświetlać
+
+- Capability Coverage
+- detaliczne ustawienia pojedynczego obiektu
+- mesh stats jednego obiektu
+
+### Ribbon
+
+- `Home`
+
+### 3D
+
+- fit all, show full scene
+
+## 5.2. `Definitions`
+
+### Inspector
+
+- lista definitions
+- liczba parametrów i zmiennych
+- quick add buttons
+- validation issues
+
+### Ribbon
+
+- `Definitions`
+
+### 3D
+
+- brak specjalnego highlight
+
+## 5.3. `Definitions / Parameters`
+
+### Inspector
+
+- tabela parametrów
+- nazwa, wartość, jednostka, opis, scope
+- import/export parametrów
+
+### Ribbon
+
+- `Definitions`
+
+## 5.4. `Universe`
+
+### Inspector
+
+Powinno być tylko:
+
+- tryb domain: auto/manual
+- size / center / padding
+- airbox status
+- shared-domain mesh policy summary
+- world visualization toggles na poziomie semantycznym
+
+### Nie powinno być tutaj
+
+- viewer-specific panel clutter niezwiązany z semantyką Universe
+- object mesh preview settings
+
+### Ribbon
+
+- `Geometry` albo contextual `Universe`
+
+### 3D
+
+- highlight airbox / domain box translucent overlay
+
+## 5.5. `Universe / Domain`
+
+### Inspector
+
+- domain mode
+- domain extents
+- center
+- padding
+- derive from objects vs manual override
+
+### Ribbon
+
+- `Geometry` + contextual `Universe`
+
+## 5.6. `Universe / Airbox`
+
+### Inspector
+
+- airbox enabled/disabled
+- airbox shape/policy
+- `airbox_hmax`
+- boundary/open-domain method summary
+
+### Ribbon
+
+- `Geometry` lub `Mesh`, zależnie od aktywnej sub-akcji
+
+### 3D
+
+- translucent highlighted airbox
+
+## 5.7. `Universe / Domain Mesh`
+
+### Inspector
+
+- build state
+- node count / tet count / boundary faces
+- achieved vs requested size summary
+- quality summary
+- rebuild actions
+- domain mesh recipe defaults
+
+### Ribbon
+
+- `Mesh`
+
+### 3D
+
+- domain mesh overlay / airbox mesh overlay
+
+## 5.8. `Objects`
+
+### Inspector
+
+- lista obiektów
+- visible/hidden
+- material assigned?
+- object mesh built?
+- quick add/import/duplicate/delete
+
+### Ribbon
+
+- `Geometry`
+
+### 3D
+
+- no single selection, full object scene
+
+## 5.9. `Objects / <object>` root
+
+### Inspector
+
+To ma być **Object Overview**:
+
+- name, type, visibility, color
+- geometry source / transform summary
+- assigned material
+- active interaction stack summary
+- object mesh recipe summary
+- initial magnetization summary
+- quick actions:
+  - focus
+  - isolate
+  - duplicate
+  - delete
+  - assign material
+  - add interaction
+  - build object mesh
+
+### Nie powinno być
+
+- pełnego geometry form editora
+- pełnego object mesh form editora
+- capability coverage
+
+### Ribbon
+
+- contextual `Selected Object`
+- core tab domyślnie `Home` albo `Geometry`, ale contextual set musi się aktywować
+
+### 3D
+
+- highlight owning object
+- subtle tint + outline
+
+## 5.10. `Objects / <object> / Overview`
+
+### Inspector
+
+- dokładnie jak object root albo root może być Overview itself
+
+### Ribbon
+
+- contextual `Selected Object`
+
+## 5.11. `Objects / <object> / Geometry`
+
+### Inspector
+
+- source type (primitive/imported)
+- transform stack
+- dimensions / bbox
+- import source path
+- repair / replace source
+- boolean relations jeśli istnieją
+
+### Ribbon
+
+- `Geometry`
+
+### 3D
+
+- strong geometry outline / surface emphasis
+
+## 5.12. `Objects / <object> / Material`
+
+### Inspector
+
+- preset / custom material selector
+- Ms
+- Aex
+- alpha
+- gamma
+- optional advanced properties
+- whether shared or local material instance
+
+### Ribbon
+
+- `Materials`
+
+### 3D
+
+- object highlighted, optional material tint preview
+
+## 5.13. `Objects / <object> / Magnetic Parameters`
+
+### Inspector
+
+- ordered interaction stack list
+- enabled/disabled state
+- add/remove interaction actions
+- pinned defaults:
+  - Exchange
+  - Demag
+- optional interactions summary
+
+### Ribbon
+
+- `Physics` + contextual `Selected Object`
+
+### 3D
+
+- highlight owning object
+
+## 5.14. `Objects / <object> / Magnetic Parameters / Exchange`
+
+### Inspector
+
+- active/locked state
+- Aex source (from material or override)
+- exchange BC summary
+- related warnings
+
+### Ribbon
+
+- `Physics` + contextual `Selected Interaction`
+
+### 3D
+
+- owning object highlighted
+
+## 5.15. `... / Demag`
+
+### Inspector
+
+- active/locked state
+- demag realization summary
+- open boundary method summary
+- airbox dependency summary
+
+### Ribbon
+
+- `Physics`
+
+### 3D
+
+- owning object highlighted, optional field preview shortcut
+
+## 5.16. `... / Interfacial DMI`
+
+### Inspector
+
+- Dind
+- orientation / sign conventions
+- interface scope
+- source from material or override
+
+### Ribbon
+
+- `Physics`
+
+## 5.17. `... / Bulk DMI`
+
+### Inspector
+
+- Dbulk
+- convention summary
+
+### Ribbon
+
+- `Physics`
+
+## 5.18. `... / Uniaxial Anisotropy`
+
+### Inspector
+
+- Ku1
+- Ku2
+- axis
+- local/global reference frame
+
+### Ribbon
+
+- `Physics`
+
+## 5.19. `... / Cubic Anisotropy`
+
+### Inspector
+
+- Kc1, Kc2, Kc3
+- axis1 / axis2
+- frame validation
+
+### Ribbon
+
+- `Physics`
+
+## 5.20. `Objects / <object> / Initial Magnetization`
+
+### Inspector
+
+- uniform/random/file/state source
+- seed if random
+- vector or sampled field source
+- normalize option
+
+### Ribbon
+
+- `Physics` albo contextual `Selected Object`
+
+### 3D
+
+- magnetization preview if available
+
+## 5.21. `Objects / <object> / Object Mesh`
+
+### Inspector
+
+- local mesh recipe
+- hmax / hmin
+- curvature
+- transitions
+- algorithm
+- preview stats
+- build preview action
+- achieved preview metrics
+
+### Ribbon
+
+- `Mesh`
+
+### 3D
+
+- mesh overlay for selected object only
+
+## 5.22. `Interfaces`
+
+### Inspector
+
+- lista interfejsów między obiektami
+- quick add coupling / interface condition
+
+### Ribbon
+
+- `Physics`
+
+### 3D
+
+- highlight interface surfaces
+
+## 5.23. `Excitations`
+
+### Inspector
+
+- lista global/stage drivers
+- quick add field/current/thermal/oersted
+
+### Ribbon
+
+- `Physics`
+
+## 5.24. `Excitations / External Field`
+
+### Inspector
+
+- source: constant / sweep / stage-driven
+- B vector / theta / phi
+- units
+- stage assignment
+
+### Ribbon
+
+- `Physics`
+
+### 3D
+
+- no geometry highlight, maybe global field glyph toggle
+
+## 5.25. `Excitations / Thermal`
+
+### Inspector
+
+- T
+- noise on/off
+- seed / schedule
+- stage assignment
+
+### Ribbon
+
+- `Physics`
+
+## 5.26. `Excitations / Current / STT / SOT`
+
+### Inspector
+
+- current density
+- polarization
+- beta/lambda/epsilon'
+- axis or source object
+- time dependence
+
+### Ribbon
+
+- `Physics`
+
+## 5.27. `Excitations / Oersted`
+
+### Inspector
+
+- source geometry
+- current
+- radius/axis/center
+- time dependence
+
+### Ribbon
+
+- `Physics`
+
+## 5.28. `Study`
+
+### Inspector
+
+- ordered stage list
+- validation status
+- add/duplicate/delete/reorder stage
+
+### Ribbon
+
+- `Study`
+
+## 5.29. `Study / Defaults`
+
+### Inspector
+
+- solver defaults
+- runtime defaults
+- output defaults
+- inheritance rules
+
+### Ribbon
+
+- `Study`
+
+## 5.30. `Study / <stage>` root
+
+### Inspector
+
+- stage type
+- enabled/disabled
+- inherited defaults summary
+- drivers active in this stage
+- outputs active in this stage
+- run status if already executed
+
+### Ribbon
+
+- `Study` + contextual `Selected Stage`
+
+### 3D
+
+- if stage has a stage-specific preview, offer preview mode; otherwise keep current scene
+
+## 5.31. `Study / <stage> / Solver`
+
+### Inspector
+
+- integrator
+- tolerance
+- dt / adaptive
+- max steps / end time / convergence criteria
+
+### Ribbon
+
+- `Study`
+
+## 5.32. `Study / <stage> / Drivers`
+
+### Inspector
+
+- all stage-attached excitations
+- add/remove/override actions
+
+### Ribbon
+
+- `Physics` lub contextual `Selected Stage`
+
+## 5.33. `Study / <stage> / Outputs`
+
+### Inspector
+
+- sampled quantities
+- cadence
+- tables / autosave
+- heavy outputs warnings
+
+### Ribbon
+
+- `Results` lub `Study` zależnie od UX, ale lepiej `Study` z groupą Outputs
+
+## 5.34. `Study / <stage> / Runtime`
+
+### Inspector
+
+- runtime state
+- command state
+- progress
+- logs
+- stage-local diagnostics
+
+### Ribbon
+
+- `Study`
+
+## 5.35. `Results`
+
+### Inspector
+
+- overview wszystkich wyników
+- dostępne plot groups
+- last run assets
+- quick preview shortcuts
+
+### Ribbon
+
+- `Results`
+
+## 5.36. `Results / Field Data`
+
+### Inspector
+
+- quantity picker
+- component picker
+- object/region filter
+- time/stage selector
+
+### Ribbon
+
+- `Results`
+
+### 3D
+
+- field visualization becomes dominant
+
+## 5.37. `Results / Energy`
+
+### Inspector
+
+- total energy
+- per-term breakdown
+- time series
+- export table
+
+### Ribbon
+
+- `Results`
+
+## 5.38. `Results / State I/O`
+
+### Inspector
+
+- load state
+- save state
+- continuation source
+- latest state artifacts
+
+### Ribbon
+
+- `Results`
+
+## 5.39. `Results / Export`
+
+### Inspector
+
+- export format
+- scope
+- selected quantities
+- filename pattern
+
+### Ribbon
+
+- `Results`
+
+## 5.40. `Results / Eigenmodes`
+
+### Inspector
+
+- spectrum summary
+- available modes
+- dispersion if present
+- load mode preview
+
+### Ribbon
+
+- `Results`
+
+---
+
+## 6. Tree click -> Ribbon switching contract
+
+To jest ważne i trzeba to naprawić świadomie.
+
+## 6.1. Zasada główna
+
+**Kliknięcie node’a drzewa ma ustawiać aktywny ribbon kontekstowo.**
+
+Ale odwrotnie:
+
+**kliknięcie ribbon tab nie ma samoczynnie zmieniać wybranego node’a**.
+
+## 6.2. Mapowanie
+
+### Root / model nodes
+
+- `Model` -> `Home`
+- `Definitions*` -> `Definitions`
+- `Universe*` -> `Geometry` + contextual `Universe`
+- `Objects` -> `Geometry`
+- `Object root` -> `Home` + contextual `Selected Object`
+- `Object / Geometry` -> `Geometry`
+- `Object / Material` -> `Materials`
+- `Object / Magnetic Parameters*` -> `Physics`
+- `Object / Object Mesh` -> `Mesh`
+- `Interfaces*` -> `Physics`
+- `Excitations*` -> `Physics`
+- `Study*` -> `Study`
+- `Results*` -> `Results`
+
+## 6.3. Dodatkowa reguła
+
+Jeśli user kliknie child interaction node, ribbon powinien aktywować:
+
+- core tab `Physics`
+- contextual set `Selected Interaction`
+
+Jeśli user kliknie stage root:
+
+- core tab `Study`
+- contextual set `Selected Stage`
+
+Jeśli user kliknie plot/result node:
+
+- core tab `Results`
+- contextual set `Selected Plot` albo `Selected Result Asset`
+
+---
+
+## 7. Selection presentation model dla 3D
+
+## 7.1. Potrzebny nowy obiekt stanu
+
+Między tree/store a viewportem powinien powstać prosty, jawny model prezentacji selekcji:
+
+```ts
+interface SelectionPresentationModel {
+  selectionOwnerType:
+    | "model"
+    | "universe"
+    | "object"
+    | "interface"
+    | "stage"
+    | "result";
+  selectionOwnerId: string | null;
+  selectedNodeId: string | null;
+  highlightMode:
+    | "none"
+    | "object"
+    | "geometry"
+    | "mesh"
+    | "field"
+    | "interface";
+  visibilityMode:
+    | "normal"
+    | "context"
+    | "isolate";
+  cameraHint:
+    | "none"
+    | "focus-owner"
+    | "fit-all";
+  meshOverlayMode:
+    | "off"
+    | "selected-object"
+    | "domain"
+    | "hybrid";
+}
+```
+
+## 7.2. Przykłady
+
+### Object root
+
+- `selectionOwnerType = object`
+- `highlightMode = object`
+- `visibilityMode = current`
+- `cameraHint = none`
+
+### Object / Geometry
+
+- `selectionOwnerType = object`
+- `highlightMode = geometry`
+- `meshOverlayMode = off`
+
+### Object / Object Mesh
+
+- `selectionOwnerType = object`
+- `highlightMode = mesh`
+- `meshOverlayMode = selected-object`
+
+### Universe / Domain Mesh
+
+- `selectionOwnerType = universe`
+- `highlightMode = mesh`
+- `meshOverlayMode = domain`
+
+### Results / Field Data
+
+- `selectionOwnerType = result`
+- `highlightMode = field`
+- `meshOverlayMode = hybrid`
+
+---
+
+## 8. File-by-file plan zmian frontendu
+
+## 8.1. `apps/web/components/runs/RunControlRoom.tsx`
+
+### Zmiany
+
+- usunąć widoczny `StageBar` z głównego układu,
+- zostawić AppBar + Ribbon + content,
+- dodać `resolveRibbonContextFromSelection(...)`,
+- przepiąć selection -> ribbon zamiast ribbon -> selection,
+- wyrzucić semantykę `workspaceMode` z codziennej nawigacji.
+
+### Cel
+
+Ten plik ma być shell orchestrator, a nie miejsce, gdzie ontologia UI jest przypadkiem zszyta z layoutem.
+
+## 8.2. `apps/web/components/shell/TopHeader.tsx`
+
+### Zmiany
+
+- przemianować logicznie na `AppBar`,
+- zachować file/edit/runtime controls,
+- wywalić wszystko, co próbuje być drugą warstwą workflow,
+- dodać project status + command search.
+
+## 8.3. `apps/web/components/workspace/shell/StageBar.tsx`
+
+### Zmiany
+
+- zdeprecjonować jako główną nawigację,
+- ewentualnie zamienić na nieinwazyjny layout switcher albo usunąć całkiem.
+
+## 8.4. `apps/web/lib/workspace/workspace-store.ts`
+
+### Zmiany
+
+- usunąć semantyczną zależność od `build/study/analyze`,
+- dodać:
+  - `activeCoreTab`
+  - `activeContextTabSet`
+  - `selectedNodeId`
+  - `selectionPresentationModel`
+- dodać resolvery:
+  - `resolveCoreTabForNode(node)`
+  - `resolveContextTabSetForNode(node)`
+  - `resolveSelectionPresentation(node)`
+
+## 8.5. `apps/web/components/shell/RibbonBar.tsx`
+
+### Zmiany
+
+- rozbić na:
+  - `command-registry.ts`
+  - `core-tabs.ts`
+  - `context-tabs.ts`
+  - `group-builders/*.ts`
+- usunąć side effects wyboru node’a z tab click handlerów,
+- przepiąć grupy na prawdziwe domeny:
+  - geometry groups
+  - materials groups
+  - physics groups
+  - mesh groups
+  - study groups
+  - results groups
+
+### Krytyczne
+
+- zero pozornych tabów,
+- każda ikonka musi mapować na command id.
+
+## 8.6. `apps/web/components/panels/ModelTree.tsx`
+
+### Zmiany
+
+- przebudować top-level hierarchy na `Model / Definitions / Universe / Objects / Interfaces / Excitations / Study / Results`,
+- dodać per-object `Magnetic Parameters` subtree,
+- dodać node metadata:
+  - `nodeKind`
+  - `ownerObjectId`
+  - `preferredCoreTab`
+  - `highlightMode`
+
+## 8.7. `apps/web/components/panels/SettingsPanel.tsx`
+
+### Zmiany
+
+- zastąpić obecny cascade routing registry-based node inspector factory,
+- usunąć globalny `Capability Coverage` z default renderów,
+- dodać panele:
+  - `ObjectOverviewPanel`
+  - `DefinitionsPanel`
+  - `InteractionStackPanel`
+  - `InteractionEditorPanel`
+  - `StudyStageOverviewPanel`
+  - `ResultsOverviewPanel`
+
+## 8.8. `apps/web/components/runs/control-room/RunSidebar.tsx`
+
+### Zmiany
+
+- uprościć filtrowanie tree scopes,
+- nie opierać całego routing fallback na `workspaceMode`,
+- użyć node metadata jako źródła dla active inspector i ribbon context.
+
+## 8.9. `apps/web/components/runs/control-room/ViewportPanels.tsx`
+
+### Zmiany
+
+- wprowadzić spójny `SelectionPresentationModel`,
+- zmapować node selection na:
+  - highlight mode
+  - isolate/context mode
+  - camera hints
+  - overlay mode
+- dodać behavior dla child nodes obiektów.
+
+## 8.10. `MaterialPanel.tsx`
+
+### Zmiany
+
+- zostawić wyłącznie material authoring,
+- wywalić wszystko, co jest interaction-stack/physics authoring,
+- dodać preset/custom/shared-local semantics.
+
+## 8.11. `PhysicsPanel.tsx`
+
+### Zmiany
+
+- rozdzielić global/stage physics od object interaction editing,
+- dodać nowy panel do interakcji obiektowych,
+- physics global panel ma edytować tylko driver terms i boundary/interface terms.
+
+## 8.12. `UniversePanel.tsx`
+
+### Zmiany
+
+- odchudzić do semantyki universe/domain/airbox,
+- viewer controls przenieść do viewport overlay controls albo dedicated scene inspector,
+- domain mesh recipe tylko jako skrót do child node `Domain Mesh`.
+
+## 8.13. `StudyPanel.tsx`
+
+### Zmiany
+
+- rozdzielić `Defaults` od `Stage Overview` i `Stage Editor`,
+- stage child nodes powinny mieć osobne editory dla solvera, drivers i outputs.
+
+---
+
+## 9. Priorytety wdrożenia
+
+## P0 - musimy zrobić teraz
+
+1. usunąć `StageBar` z głównej nawigacji,
+2. odpiąć ribbon click od tree selection,
+3. przebudować tree hierarchy,
+4. wprowadzić `ObjectOverviewPanel`,
+5. dodać per-object `Magnetic Parameters` subtree,
+6. dodać tree -> ribbon auto switching.
+
+## P1 - tuż potem
+
+1. rozdzielić `MaterialPanel` i `PhysicsPanel`,
+2. dopiąć semantyczny command registry dla ikon ribbonu,
+3. dopiąć `SelectionPresentationModel` do viewportu.
+
+## P2 - po stabilizacji
+
+1. definitions authoring,
+2. interfaces subtree,
+3. richer results workflow,
+4. command search i power-user actions.
+
+---
+
+## 10. Validation checklist po refaktorze
+
+## 10.1. Navigation
+
+- [ ] U góry są tylko AppBar + Ribbon
+- [ ] Kliknięcie ribbon tab nie zmienia tree selection
+- [ ] Kliknięcie tree node ustawia właściwy ribbon tab
+
+## 10.2. Tree
+
+- [ ] Drzewo ma Definitions
+- [ ] Każdy obiekt ma Geometry, Material, Magnetic Parameters, Object Mesh
+- [ ] Exchange i Demag są domyślnie obecne pod każdym ferromagnetykiem
+- [ ] Stage nodes są wyraźnie rozdzielone od Results
+
+## 10.3. Inspectors
+
+- [ ] Object root pokazuje overview, nie geometry+mesh combo
+- [ ] Material node pokazuje tylko materiał
+- [ ] Magnetic Parameters node pokazuje tylko interaction stack
+- [ ] Object Mesh node pokazuje tylko mesh recipe i stats
+
+## 10.4. 3D
+
+- [ ] Kliknięcie object child node podświetla owning object
+- [ ] `Focus` ustawia kamerę bez wymuszania isolate
+- [ ] `Isolate` wygasza resztę sceny
+- [ ] `Context` zostawia resztę sceny ghosted
+- [ ] Mesh node przełącza widok na mesh overlay
+
+## 10.5. Ribbon command semantics
+
+- [ ] Każda ikonka ma realny command id
+- [ ] Każda ikonka ma zdefiniowany scope
+- [ ] Każda ikonka ma realny effect w scene/backend/runtime
+
+---
+
+## 11. Finalny werdykt
+
+Aktualny frontend jest już dalej niż na początku, ale nadal nie jest jeszcze spójny jako profesjonalny GUI do budowy symulacji „jak MuMax + COMSOL”. Największy brak to nie pojedyncze ikonki, tylko to, że nadal **architektura informacji** i **semantyka selekcji** nie zostały doprowadzone do końca.
+
+W praktyce:
+
+- ribbon nadal jest częściowo dekoracją zamiast prawdziwym command surface,
+- drzewo nadal jest zbyt run-centric i zbyt mało object-centric,
+- inspector nadal bywa zlepkiem paneli zamiast czystym edytorem konkretnego node’a,
+- 3D focus/highlight istnieją, ale nie są jeszcze częścią jednego, jawnego kontraktu.
+
+Docelowy kierunek jest jednoznaczny:
+
+1. **tree selection drives context**,
+2. **ribbon reflects context**,
+3. **inspector edits exactly one semantic node**,
+4. **viewport presents the semantic owner of that node**.
+
+To jest dokładnie ten moment, w którym trzeba przestać doklejać ikonki do starej architektury i dokończyć refaktor porządnie.

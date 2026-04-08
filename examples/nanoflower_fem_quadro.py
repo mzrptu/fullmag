@@ -17,8 +17,8 @@ study = fm.study("nanoflower_fem")
 
 # Engine
 study.engine("fem")
-study.device("cuda:0", precision="double")
-study.universe(mode="auto", size=(0.8e-06, 0.8e-06, 3e-07), center=(0, 0, 0), padding=(0, 0, 0), airbox_hmax=1.0e-07)
+study.device("cpu", precision="double")
+study.universe(mode="auto", size=(0.8e-06, 0.8e-06, 3e-07), center=(0, 0, 0), padding=(0, 0, 0), airbox_hmax=0.9e-07)
 study.interactive(True)
 
 # Geometry & Material — 2×2 kwadratowa siatka nanoflowerów
@@ -79,7 +79,7 @@ study.solver(max_error=1e-6, integrator="rk45", g=2.115)
 # ── Outputs ─────────────────────────────────────────────────
 # study.save("m", every=1e-13)
 # study.save("H_demag", every=1e-13)
-study.tableautosave(1e-13)
+# study.tableautosave(1e-13)
 
 # ── Run ─────────────────────────────────────────────────────
 # Dla siatki 4 nanoflowerów: relaksuj wszystkie jednocześnie

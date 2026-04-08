@@ -1428,24 +1428,6 @@ pub(crate) fn execute_fem<'a>(
             )
         }
         FemEngine::NativeGpu => {
-            // FND-015: reject direct-minimization relaxation algorithms that
-            // are only implemented in the CPU reference engine.
-            if let Some(ref relaxation) = normalized_plan.relaxation {
-                use fullmag_ir::RelaxationAlgorithmIR;
-                match relaxation.algorithm {
-                    RelaxationAlgorithmIR::ProjectedGradientBb
-                    | RelaxationAlgorithmIR::NonlinearCg => {
-                        return Err(RunError {
-                            message: format!(
-                                "relaxation algorithm '{}' is only implemented for the CPU reference FEM engine; \
-                                 use algorithm='llg_overdamped' for native GPU execution, or switch to engine='cpu'",
-                                relaxation.algorithm.as_str()
-                            ),
-                        });
-                    }
-                    _ => {}
-                }
-            }
             if normalized_plan.current_density.is_some()
                 || normalized_plan.stt_degree.is_some()
                 || normalized_plan.stt_beta.is_some()
@@ -1849,6 +1831,242 @@ fn execute_native_fem(
     let mut last_preview_revision: Option<u64> = None;
     let mut cancelled = false;
     let mut current_stats = backend.snapshot_step_stats(node_count)?;
+
+    let direct_minimization_relax = plan.relaxation.as_ref().filter(|control| {
+        matches!(
+            control.algorithm,
+            fullmag_ir::RelaxationAlgorithmIR::ProjectedGradientBb
+                | fullmag_ir::RelaxationAlgorithmIR::NonlinearCg
+        )
+    });
+
+    if let Some(control) = direct_minimization_relax {
+        let mut m = backend.copy_m(node_count)?;
+        let mut h_eff = backend.copy_h_eff(node_count)?;
+        let mut g = tangent_gradient_from_field(&m, &h_eff);
+        let mut energy = current_stats.e_total;
+        let mut p: Vec<[f64; 3]> = g.iter().map(|gi| scale_vec3(*gi, -1.0)).collect();
+        let mut g_norm_sq = global_dot_vec3(&g, &g);
+
+        let mut lambda: f64 = 1e-6;
+        let lambda_min: f64 = 1e-15;
+        let lambda_max: f64 = 1e-3;
+        let c_armijo: f64 = 1e-4;
+        let max_backtrack: u32 = 20;
+        let mut use_bb1 = true;
+        let mut reset_consecutive: u64 = 0;
+        let mut direct_step: u64 = 0;
+
+        while direct_step < control.max_steps {
+            if let Some(live) = live.as_mut() {
+                if let Some(display_selection) = live.display_selection.map(|get| get()) {
+                    let preview_due = display_refresh_due(
+                        last_preview_revision,
+                        &display_selection,
+                        current_stats.step,
+                    );
+                    let preview_targets_global_scalar =
+                        display_is_global_scalar(&display_selection);
+                    let preview_field = if preview_due && !preview_targets_global_scalar {
+                        let request = display_selection.preview_request();
+                        Some(backend.copy_live_preview_field(&request, node_count)?)
+                    } else {
+                        None
+                    };
+                    let action = (live.on_step)(StepUpdate {
+                        stats: current_stats.clone(),
+                        grid: live.grid,
+                        fem_mesh: Some(crate::types::FemMeshPayload::from(plan)),
+                        magnetization: None,
+                        preview_field,
+                        cached_preview_fields: None,
+                        scalar_row_due: preview_due && preview_targets_global_scalar,
+                        finished: false,
+                    });
+                    if preview_due {
+                        last_preview_revision = Some(display_selection.revision);
+                    }
+                    if action == StepAction::Stop {
+                        cancelled = true;
+                        break;
+                    }
+                }
+            }
+
+            let max_torque = max_torque_from_field(&m, &h_eff);
+            if max_torque <= control.torque_tolerance {
+                break;
+            }
+            g_norm_sq = global_dot_vec3(&g, &g);
+            if g_norm_sq < 1e-30 {
+                break;
+            }
+
+            let mut trial_lambda = lambda;
+            let mut backtracks = 0u32;
+            let mut m_trial = m.clone();
+            let mut trial_stats = current_stats.clone();
+            match control.algorithm {
+                fullmag_ir::RelaxationAlgorithmIR::ProjectedGradientBb => {
+                    loop {
+                        for i in 0..m.len() {
+                            m_trial[i] =
+                                normalized_vec3(sub_vec3(m[i], scale_vec3(g[i], trial_lambda)));
+                        }
+                        backend.upload_magnetization(&m_trial)?;
+                        trial_stats = backend.snapshot_step_stats(node_count)?;
+                        let e_trial = trial_stats.e_total;
+                        if e_trial <= energy - c_armijo * trial_lambda * g_norm_sq
+                            || backtracks >= max_backtrack
+                        {
+                            break;
+                        }
+                        trial_lambda *= 0.5;
+                        backtracks += 1;
+                    }
+
+                    let h_eff_new = backend.copy_h_eff(node_count)?;
+                    let g_new = tangent_gradient_from_field(&m_trial, &h_eff_new);
+
+                    let scale_factor = 1e-6;
+                    let s: Vec<[f64; 3]> = (0..m.len())
+                        .map(|i| scale_vec3(sub_vec3(m_trial[i], m[i]), scale_factor))
+                        .collect();
+                    let y: Vec<[f64; 3]> = (0..m.len())
+                        .map(|i| scale_vec3(sub_vec3(g_new[i], g[i]), scale_factor))
+                        .collect();
+                    let s_dot_s = global_dot_vec3(&s, &s);
+                    let s_dot_y = global_dot_vec3(&s, &y);
+                    let y_dot_y = global_dot_vec3(&y, &y);
+
+                    let bb_ok;
+                    if use_bb1 {
+                        if s_dot_y > 1e-30 {
+                            lambda = (s_dot_s / s_dot_y).clamp(lambda_min, lambda_max);
+                            bb_ok = true;
+                        } else if s_dot_y * y_dot_y > 0.0 && y_dot_y.abs() > 1e-30 {
+                            lambda = (s_dot_y / y_dot_y).clamp(lambda_min, lambda_max);
+                            bb_ok = true;
+                        } else {
+                            bb_ok = false;
+                        }
+                    } else if s_dot_y * y_dot_y > 0.0 && y_dot_y.abs() > 1e-30 {
+                        lambda = (s_dot_y / y_dot_y).clamp(lambda_min, lambda_max);
+                        bb_ok = true;
+                    } else if s_dot_y > 1e-30 {
+                        lambda = (s_dot_s / s_dot_y).clamp(lambda_min, lambda_max);
+                        bb_ok = true;
+                    } else {
+                        bb_ok = false;
+                    }
+                    if bb_ok {
+                        reset_consecutive = 0;
+                    } else {
+                        reset_consecutive += 1;
+                        lambda = (reset_consecutive as f64 * lambda_min).min(lambda_max);
+                    }
+                    use_bb1 = !use_bb1;
+
+                    h_eff = h_eff_new;
+                    g = g_new;
+                }
+                fullmag_ir::RelaxationAlgorithmIR::NonlinearCg => {
+                    let mut p_dot_g = global_dot_vec3(&p, &g);
+                    if p_dot_g >= 0.0 {
+                        p = g.iter().map(|gi| scale_vec3(*gi, -1.0)).collect();
+                        p_dot_g = global_dot_vec3(&p, &g);
+                    }
+                    let p_norm = global_dot_vec3(&p, &p).sqrt();
+                    trial_lambda = if p_norm > 0.0 {
+                        (1e-6_f64).min(1.0 / p_norm)
+                    } else {
+                        1e-6
+                    };
+                    let max_backtrack_ncg = 30u32;
+
+                    loop {
+                        for i in 0..m.len() {
+                            m_trial[i] =
+                                normalized_vec3(add_vec3(m[i], scale_vec3(p[i], trial_lambda)));
+                        }
+                        backend.upload_magnetization(&m_trial)?;
+                        trial_stats = backend.snapshot_step_stats(node_count)?;
+                        let e_trial = trial_stats.e_total;
+                        if e_trial <= energy + c_armijo * trial_lambda * p_dot_g
+                            || backtracks >= max_backtrack_ncg
+                        {
+                            break;
+                        }
+                        trial_lambda *= 0.5;
+                        backtracks += 1;
+                    }
+
+                    let h_eff_new = backend.copy_h_eff(node_count)?;
+                    let g_new = tangent_gradient_from_field(&m_trial, &h_eff_new);
+                    let g_new_norm_sq = global_dot_vec3(&g_new, &g_new);
+                    let g_old_transported = project_tangent(&m_trial, &g);
+                    let y_pr: Vec<[f64; 3]> = (0..m.len())
+                        .map(|i| sub_vec3(g_new[i], g_old_transported[i]))
+                        .collect();
+                    let mut beta = if g_norm_sq > 1e-30 {
+                        (global_dot_vec3(&g_new, &y_pr) / g_norm_sq).max(0.0)
+                    } else {
+                        0.0
+                    };
+                    let restart_interval = 50u64;
+                    if (direct_step + 1) % restart_interval == 0 {
+                        beta = 0.0;
+                    }
+                    let p_transported = project_tangent(&m_trial, &p);
+                    let mut p_new: Vec<[f64; 3]> = (0..m.len())
+                        .map(|i| add_vec3(scale_vec3(g_new[i], -1.0), scale_vec3(p_transported[i], beta)))
+                        .collect();
+                    if global_dot_vec3(&p_new, &g_new) >= 0.0 {
+                        p_new = g_new.iter().map(|gi| scale_vec3(*gi, -1.0)).collect();
+                    }
+
+                    p = p_new;
+                    g_norm_sq = g_new_norm_sq;
+                    h_eff = h_eff_new;
+                    g = g_new;
+                    lambda = trial_lambda;
+                }
+                _ => break,
+            }
+
+            let prev_energy = energy;
+            m = m_trial;
+            energy = trial_stats.e_total;
+            direct_step += 1;
+
+            let mut accepted_stats = trial_stats.clone();
+            accepted_stats.step = direct_step;
+            accepted_stats.time = 0.0;
+            accepted_stats.dt = trial_lambda;
+            accepted_stats.max_dm_dt = max_torque_from_field(&m, &h_eff);
+            accepted_stats.max_h_eff = h_eff
+                .iter()
+                .map(|h| (h[0] * h[0] + h[1] * h[1] + h[2] * h[2]).sqrt())
+                .fold(0.0, f64::max);
+
+            artifacts.record_scalar(&accepted_stats)?;
+            steps.push(accepted_stats.clone());
+            latest_stats = Some(accepted_stats.clone());
+            current_stats = accepted_stats;
+
+            if cancelled {
+                break;
+            }
+
+            if let Some(etol) = control.energy_tolerance {
+                let energy_delta = (prev_energy - energy).abs();
+                let torque = max_torque_from_field(&m, &h_eff);
+                if torque <= control.torque_tolerance && energy_delta <= etol {
+                    break;
+                }
+            }
+        }
+    } else {
     while current_time < until_seconds {
         if let Some(live) = live.as_mut() {
             if let Some(display_selection) = live.display_selection.map(|get| get()) {
@@ -1967,6 +2185,7 @@ fn execute_native_fem(
             break;
         }
     }
+    }
 
     let final_stats = latest_stats.unwrap_or(StepStats {
         step: 0,
@@ -2063,6 +2282,78 @@ fn flatten_vectors(values: &[[f64; 3]]) -> Vec<f64> {
         .iter()
         .flat_map(|vector| vector.iter().copied())
         .collect()
+}
+
+#[cfg(feature = "fem-gpu")]
+fn dot_vec3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+#[cfg(feature = "fem-gpu")]
+fn add_vec3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+#[cfg(feature = "fem-gpu")]
+fn sub_vec3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+#[cfg(feature = "fem-gpu")]
+fn scale_vec3(a: [f64; 3], s: f64) -> [f64; 3] {
+    [a[0] * s, a[1] * s, a[2] * s]
+}
+
+#[cfg(feature = "fem-gpu")]
+fn normalized_vec3(v: [f64; 3]) -> [f64; 3] {
+    let n2 = dot_vec3(v, v);
+    if n2 <= 0.0 {
+        [0.0, 0.0, 0.0]
+    } else {
+        let inv = 1.0 / n2.sqrt();
+        [v[0] * inv, v[1] * inv, v[2] * inv]
+    }
+}
+
+#[cfg(feature = "fem-gpu")]
+fn tangent_gradient_from_field(magnetization: &[[f64; 3]], h_eff: &[[f64; 3]]) -> Vec<[f64; 3]> {
+    magnetization
+        .iter()
+        .zip(h_eff.iter())
+        .map(|(m, h)| {
+            let projected = sub_vec3(*h, scale_vec3(*m, dot_vec3(*m, *h)));
+            scale_vec3(projected, -1.0)
+        })
+        .collect()
+}
+
+#[cfg(feature = "fem-gpu")]
+fn global_dot_vec3(a: &[[f64; 3]], b: &[[f64; 3]]) -> f64 {
+    a.iter().zip(b.iter()).map(|(ai, bi)| dot_vec3(*ai, *bi)).sum()
+}
+
+#[cfg(feature = "fem-gpu")]
+fn project_tangent(m: &[[f64; 3]], v: &[[f64; 3]]) -> Vec<[f64; 3]> {
+    m.iter()
+        .zip(v.iter())
+        .map(|(mi, vi)| sub_vec3(*vi, scale_vec3(*mi, dot_vec3(*mi, *vi))))
+        .collect()
+}
+
+#[cfg(feature = "fem-gpu")]
+fn max_torque_from_field(magnetization: &[[f64; 3]], h_eff: &[[f64; 3]]) -> f64 {
+    magnetization
+        .iter()
+        .zip(h_eff.iter())
+        .map(|(m, h)| {
+            let cross = [
+                m[1] * h[2] - m[2] * h[1],
+                m[2] * h[0] - m[0] * h[2],
+                m[0] * h[1] - m[1] * h[0],
+            ];
+            (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt()
+        })
+        .fold(0.0, f64::max)
 }
 
 #[cfg(feature = "cuda")]
