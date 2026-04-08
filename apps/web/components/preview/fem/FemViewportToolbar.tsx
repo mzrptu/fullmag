@@ -21,6 +21,11 @@ import { ViewportStatusChip } from "../ViewportStatusChips";
 import type { FemColorField, RenderMode, ClipAxis } from "../FemMeshView3D";
 import type { FemViewportNavigation, FemViewportProjection } from "./FemViewportTypes";
 import type { ViewportQualityProfileId } from "../shared/viewportQualityProfiles";
+import {
+  GLYPH_BUDGET_MAX,
+  GLYPH_BUDGET_MIN,
+  GLYPH_BUDGET_STEP,
+} from "./vectorDensityBudget";
 
 export interface FemViewportToolbarProps {
   renderMode: RenderMode;
@@ -34,6 +39,7 @@ export interface FemViewportToolbarProps {
   clipPos: number;
   arrowsVisible: boolean;
   arrowDensity: number;
+  effectiveArrowDensity?: number;
   opacity: number;
   shrinkFactor: number;
   showShrink: boolean;
@@ -111,6 +117,7 @@ export function FemViewportToolbar({
   clipPos,
   arrowsVisible,
   arrowDensity,
+  effectiveArrowDensity,
   opacity,
   shrinkFactor,
   showShrink,
@@ -148,6 +155,7 @@ export function FemViewportToolbar({
 }: FemViewportToolbarProps) {
   const activeSurfaceColorOpt = COLOR_OPTIONS.find((o) => o.value === surfaceColorField);
   const activeArrowColorOpt = COLOR_OPTIONS.find((o) => o.value === arrowColorField);
+  const effectiveDensity = effectiveArrowDensity ?? arrowDensity;
   const availableQuantities = quantityOptions.filter((o) => o.available);
   const activeQuantity = quantityOptions.find((o) => o.id === quantityId) ?? null;
 
@@ -281,6 +289,10 @@ export function FemViewportToolbar({
         <ViewportStatusChip color="primary" active>
           Arr {activeArrowColorOpt?.label ?? "—"}
         </ViewportStatusChip>
+        <ViewportStatusChip color={effectiveDensity < arrowDensity ? "warning" : "default"} active>
+          Vec {arrowDensity}
+          {effectiveDensity !== arrowDensity ? `->${effectiveDensity}` : ""}
+        </ViewportStatusChip>
       </ViewportToolGroup>
 
       {!compact ? <ViewportToolSeparator /> : null}
@@ -412,9 +424,9 @@ export function FemViewportToolbar({
                 <input
                   type="range"
                   className="flex-1 h-[3px] accent-primary w-[120px]"
-                  min={200}
-                  max={3000}
-                  step={100}
+                  min={GLYPH_BUDGET_MIN}
+                  max={GLYPH_BUDGET_MAX}
+                  step={GLYPH_BUDGET_STEP}
                   value={arrowDensity}
                   onChange={(e) => onArrowDensityChange(Number(e.target.value))}
                 />

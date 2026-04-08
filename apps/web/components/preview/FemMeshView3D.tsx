@@ -28,6 +28,12 @@ import { FemPartExplorerPanel } from "./fem/FemPartExplorerPanel";
 import { FemViewportScene } from "./fem/FemViewportScene";
 import { FemContextMenu, FemHoverTooltip } from "./fem/FemContextMenu";
 import { FemRefineToolbar, FemSelectionHUD } from "./fem/FemSelectionHUD";
+import {
+  GLYPH_BUDGET_MIN,
+  PREVIEW_MAX_POINTS_DEFAULT,
+  glyphBudgetToMaxPoints,
+  maxPointsToGlyphBudget,
+} from "./fem/vectorDensityBudget";
 import HslSphere from "./HslSphere";
 import ViewCube from "./ViewCube";
 import ScientificViewportShell from "./shared/ScientificViewportShell";
@@ -82,6 +88,7 @@ interface Props {
   clipAxis?: ClipAxis;
   clipPos?: number;
   showArrows?: boolean;
+  previewMaxPoints?: number;
   showOrientationLegend?: boolean;
   qualityPerFace?: number[] | null;
   shrinkFactor?: number;
@@ -91,6 +98,7 @@ interface Props {
   onClipAxisChange?: (value: ClipAxis) => void;
   onClipPosChange?: (value: number) => void;
   onShowArrowsChange?: (value: boolean) => void;
+  onPreviewMaxPointsChange?: (maxPoints: number) => void;
   onShrinkFactorChange?: (value: number) => void;
   onSelectionChange?: (selection: MeshSelectionSnapshot) => void;
   onRefine?: (faceIndices: number[], factor: number) => void;
@@ -160,6 +168,19 @@ function uniqueSortedMarkers(markers: readonly number[]): number[] {
   return Array.from(new Set(markers.filter((value) => Number.isFinite(value) && value >= 0))).sort(
     (left, right) => left - right,
   );
+}
+
+function countActiveNodes(mask: readonly boolean[] | null | undefined): number {
+  if (!mask || mask.length === 0) {
+    return 0;
+  }
+  let count = 0;
+  for (let index = 0; index < mask.length; index += 1) {
+    if (mask[index]) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 function markersForPart(
@@ -478,6 +499,7 @@ function FemMeshView3DInner({
   clipAxis: controlledClipAxis,
   clipPos: controlledClipPos,
   showArrows: controlledShowArrows,
+  previewMaxPoints,
   showOrientationLegend = false,
   qualityPerFace,
   topologyKey,
@@ -488,6 +510,7 @@ function FemMeshView3DInner({
   onClipAxisChange,
   onClipPosChange,
   onShowArrowsChange,
+  onPreviewMaxPointsChange,
   onShrinkFactorChange,
   onSelectionChange,
   onRefine,
@@ -524,7 +547,7 @@ function FemMeshView3DInner({
   const [internalClipPos, setInternalClipPos] = useState(50);
   const [showClipDrop, setShowClipDrop] = useState(false);
   const [internalShowArrows, setInternalShowArrows] = useState(false);
-  const [arrowDensity, setArrowDensity] = useState(1200);
+  const [internalPreviewMaxPoints, setInternalPreviewMaxPoints] = useState(PREVIEW_MAX_POINTS_DEFAULT);
   const [internalShrinkFactor, setInternalShrinkFactor] = useState(1);
   const [cameraProjection, setCameraProjection] = useState<CameraProjection>("perspective");
   const [navigationMode, setNavigationMode] = useState<NavigationMode>("trackball");
@@ -553,7 +576,15 @@ function FemMeshView3DInner({
   const clipAxis = controlledClipAxis ?? internalClipAxis;
   const clipPos = controlledClipPos ?? internalClipPos;
   const showArrows = controlledShowArrows ?? internalShowArrows;
+  const resolvedPreviewMaxPoints = previewMaxPoints ?? internalPreviewMaxPoints;
   const shrinkFactor = controlledShrinkFactor ?? internalShrinkFactor;
+  const updateSharedPreviewMaxPoints = useCallback((nextMaxPoints: number) => {
+    if (onPreviewMaxPointsChange) {
+      onPreviewMaxPointsChange(nextMaxPoints);
+      return;
+    }
+    setInternalPreviewMaxPoints(nextMaxPoints);
+  }, [onPreviewMaxPointsChange]);
   const hasMeshParts = meshParts.length > 0;
   const magneticSegments = useMemo(
     () => objectSegments.filter((segment) => segment.object_id !== AIR_OBJECT_SEGMENT_ID),
@@ -888,6 +919,47 @@ function FemMeshView3DInner({
       : magneticArrowNodeMask;
   const arrowBoundaryFaceIndices =
     meshData.quantityDomain === "full_domain" ? null : magneticBoundaryFaceIndices;
+  const baseArrowDensity = useMemo(
+    () => maxPointsToGlyphBudget(resolvedPreviewMaxPoints),
+    [resolvedPreviewMaxPoints],
+  );
+  const baselineArrowNodeCount = useMemo(() => {
+    if (meshData.nNodes <= 0) {
+      return 0;
+    }
+    if (meshData.quantityDomain === "full_domain") {
+      return meshData.nNodes;
+    }
+    if (meshData.activeMask && meshData.activeMask.length === meshData.nNodes) {
+      const count = countActiveNodes(meshData.activeMask);
+      return count > 0 ? count : meshData.nNodes;
+    }
+    return meshData.nNodes;
+  }, [meshData.activeMask, meshData.nNodes, meshData.quantityDomain]);
+  const visibleArrowNodeCount = useMemo(() => {
+    if (
+      arrowActiveNodeMask &&
+      arrowActiveNodeMask.length === meshData.nNodes
+    ) {
+      return countActiveNodes(arrowActiveNodeMask);
+    }
+    return baselineArrowNodeCount;
+  }, [arrowActiveNodeMask, baselineArrowNodeCount, meshData.nNodes]);
+  const effectiveArrowDensity = useMemo(() => {
+    if (baseArrowDensity <= 0 || baselineArrowNodeCount <= 0 || visibleArrowNodeCount <= 0) {
+      return 0;
+    }
+    const visibleRatio = Math.min(
+      1,
+      Math.max(0, visibleArrowNodeCount / baselineArrowNodeCount),
+    );
+    const scaled = Math.round(baseArrowDensity * visibleRatio);
+    if (visibleRatio >= 0.999) {
+      return Math.max(1, Math.min(baseArrowDensity, scaled));
+    }
+    const minBudget = Math.min(GLYPH_BUDGET_MIN, baseArrowDensity);
+    return Math.max(minBudget, Math.min(baseArrowDensity, scaled));
+  }, [baseArrowDensity, baselineArrowNodeCount, visibleArrowNodeCount]);
   const hasMagneticDisplayContent = useMemo(() => {
     if (missingExactScopeSegment) {
       return false;
@@ -1277,7 +1349,8 @@ function FemMeshView3DInner({
             clipAxis={clipAxis}
             clipPos={clipPos}
             arrowsVisible={showArrows}
-            arrowDensity={arrowDensity}
+            arrowDensity={baseArrowDensity}
+            effectiveArrowDensity={effectiveArrowDensity}
             opacity={toolbarOpacity}
             shrinkFactor={shrinkFactor}
             showShrink={meshData.elements.length >= 4}
@@ -1308,7 +1381,9 @@ function FemMeshView3DInner({
             onArrowsVisibleChange={(v) => {
               onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v);
             }}
-            onArrowDensityChange={setArrowDensity}
+            onArrowDensityChange={(nextBudget) => {
+              updateSharedPreviewMaxPoints(glyphBudgetToMaxPoints(nextBudget));
+            }}
             onOpacityChange={applyToolbarOpacity}
             onShrinkFactorChange={(v) => {
               onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v);
@@ -1500,8 +1575,8 @@ function FemMeshView3DInner({
     applyToolbarColorField,
     applyToolbarOpacity,
     applyToolbarRenderMode,
-    arrowDensity,
     arrowField,
+    baseArrowDensity,
     cameraProjection,
     captureOverlayHidden,
     clipAxis,
@@ -1562,6 +1637,7 @@ function FemMeshView3DInner({
     toolbarMode,
     toolbarOpacity,
     toolbarRenderMode,
+    updateSharedPreviewMaxPoints,
     viewCubeSceneRef,
     visibleLayers.length,
   ]);
@@ -1612,7 +1688,7 @@ function FemMeshView3DInner({
             dynamicMaxDim={dynamicMaxDim}
             effectiveShowArrows={effectiveShowArrows}
             arrowField={arrowField}
-            arrowDensity={arrowDensity}
+            arrowDensity={effectiveArrowDensity}
             arrowActiveNodeMask={arrowActiveNodeMask}
             arrowBoundaryFaceIndices={arrowBoundaryFaceIndices}
             selectedFaces={selectedFaces}

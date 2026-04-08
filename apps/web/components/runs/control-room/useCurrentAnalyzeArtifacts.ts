@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
   DispersionRow,
+  EigenBranchesArtifact,
   EigenModeArtifact,
   EigenSpectrumArtifact,
   FemMeshPayload,
@@ -37,6 +38,7 @@ export interface CurrentAnalyzeArtifactsState {
   modeError: string | null;
   mesh: FemMeshPayload | null;
   spectrum: EigenSpectrumArtifact | null;
+  branches: EigenBranchesArtifact | null;
   dispersionRows: DispersionRow[];
   modeCache: Record<number, EigenModeArtifact>;
   hasEigenArtifacts: boolean;
@@ -45,7 +47,7 @@ export interface CurrentAnalyzeArtifactsState {
   /** Sorted list of mode indices that have saved field files. */
   savedModeIndices: number[];
   refresh: () => void;
-  ensureMode: (index: number) => Promise<void>;
+  ensureMode: (index: number, sampleIndex?: number | null) => Promise<void>;
 }
 
 export function useCurrentAnalyzeArtifacts(
@@ -57,6 +59,7 @@ export function useCurrentAnalyzeArtifacts(
   const [modeError, setModeError] = useState<string | null>(null);
   const [mesh, setMesh] = useState<FemMeshPayload | null>(null);
   const [spectrum, setSpectrum] = useState<EigenSpectrumArtifact | null>(null);
+  const [branches, setBranches] = useState<EigenBranchesArtifact | null>(null);
   const [dispersionRows, setDispersionRows] = useState<DispersionRow[]>([]);
   const [modeCache, setModeCache] = useState<Record<number, EigenModeArtifact>>({});
   const [modeArtifactMap, setModeArtifactMap] = useState<Map<number, string>>(new Map());
@@ -92,12 +95,21 @@ export function useCurrentAnalyzeArtifacts(
           }
         }
 
-        const [nextSpectrum, nextDispersion] = await Promise.all([
+        const hasBranches = artifacts.some(
+          (a) => a.path === "eigen/branches.json",
+        );
+
+        const [nextSpectrum, nextDispersion, nextBranches] = await Promise.all([
           hasSpectrum
             ? fetchJson<EigenSpectrumArtifact>(`${base}/v1/live/current/eigen/spectrum`)
             : Promise.resolve(null),
           hasDispersion
             ? fetchJson<EigenDispersionResponse>(`${base}/v1/live/current/eigen/dispersion`)
+            : Promise.resolve(null),
+          hasBranches
+            ? fetchJson<EigenBranchesArtifact>(`${base}/v1/live/current/eigen/branches`).catch(
+                () => null,
+              )
             : Promise.resolve(null),
         ]);
 
@@ -105,6 +117,7 @@ export function useCurrentAnalyzeArtifacts(
 
         setMesh(bootstrap.fem_mesh ?? bootstrap.live_state?.latest_step?.fem_mesh ?? null);
         setSpectrum(nextSpectrum);
+        setBranches(nextBranches);
         setDispersionRows(nextDispersion?.rows ?? []);
         setModeArtifactMap(nextModeArtifactMap);
         setModeCache({});
@@ -125,7 +138,7 @@ export function useCurrentAnalyzeArtifacts(
     };
   }, [refreshNonce, internalRefreshNonce]);
 
-  const ensureMode = useCallback(async (index: number) => {
+  const ensureMode = useCallback(async (index: number, sampleIndex?: number | null) => {
     if (modeCache[index]) return;
 
     setModeLoadState("loading");
@@ -133,8 +146,12 @@ export function useCurrentAnalyzeArtifacts(
 
     try {
       const base = resolveApiBase();
+      const params = new URLSearchParams({ index: String(index) });
+      if (sampleIndex != null) {
+        params.set("sample_index", String(sampleIndex));
+      }
       const artifact = await fetchJson<EigenModeArtifact>(
-        `${base}/v1/live/current/eigen/mode?index=${index}`,
+        `${base}/v1/live/current/eigen/mode?${params.toString()}`,
       );
       setModeCache((prev) => ({ ...prev, [index]: artifact }));
       setModeLoadState("loaded");
@@ -162,6 +179,7 @@ export function useCurrentAnalyzeArtifacts(
     modeError,
     mesh,
     spectrum,
+    branches,
     dispersionRows,
     modeCache,
     hasEigenArtifacts,

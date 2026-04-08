@@ -248,16 +248,13 @@ export function FemArrows({
       }
       return Array.from(unique);
     })();
-    const maskedCandidateNodes =
-      effectiveNodeMask
-        ? effectiveNodeMask
-            .map((active, nodeIndex) => (active ? nodeIndex : -1))
-            .filter((nodeIndex) => nodeIndex >= 0)
-        : null;
+    const maskedBoundaryCandidateNodes = effectiveNodeMask
+      ? boundaryCandidateNodes.filter((nodeIndex) => effectiveNodeMask[nodeIndex] === true)
+      : null;
     const sampledNodes = sampleCandidateNodes(
       meshData.nodes,
-      maskedCandidateNodes && maskedCandidateNodes.length > 0
-        ? maskedCandidateNodes
+      maskedBoundaryCandidateNodes && maskedBoundaryCandidateNodes.length > 0
+        ? maskedBoundaryCandidateNodes
         : boundaryCandidateNodes,
       arrowDensity,
       fld,

@@ -670,11 +670,15 @@ export function ViewportCanvasArea() {
         clipEnabled={ctx.meshClipEnabled}
         clipAxis={ctx.meshClipAxis}
         clipPos={ctx.meshClipPos}
+        previewMaxPoints={ctx.requestedPreviewMaxPoints}
         onRenderModeChange={ctx.setMeshRenderMode}
         onOpacityChange={ctx.setMeshOpacity}
         onClipEnabledChange={ctx.setMeshClipEnabled}
         onClipAxisChange={ctx.setMeshClipAxis}
         onClipPosChange={ctx.setMeshClipPos}
+        onPreviewMaxPointsChange={(nextMaxPoints) =>
+          void ctx.updatePreview("/maxPoints", { maxPoints: nextMaxPoints })
+        }
         onSelectionChange={ctx.setMeshSelection}
         onRefine={ctx.handleLassoRefine}
         antennaOverlays={ctx.antennaOverlays}
@@ -723,12 +727,16 @@ export function ViewportCanvasArea() {
         clipAxis={ctx.meshClipAxis}
         clipPos={ctx.meshClipPos}
         showArrows={ctx.femShouldShowArrows}
+        previewMaxPoints={ctx.requestedPreviewMaxPoints}
         onRenderModeChange={ctx.setMeshRenderMode}
         onOpacityChange={ctx.setMeshOpacity}
         onClipEnabledChange={ctx.setMeshClipEnabled}
         onClipAxisChange={ctx.setMeshClipAxis}
         onClipPosChange={ctx.setMeshClipPos}
         onShowArrowsChange={ctx.setMeshShowArrows}
+        onPreviewMaxPointsChange={(nextMaxPoints) =>
+          void ctx.updatePreview("/maxPoints", { maxPoints: nextMaxPoints })
+        }
         onSelectionChange={ctx.setMeshSelection}
         antennaOverlays={ctx.antennaOverlays}
         selectedAntennaId={selectedAntennaName}

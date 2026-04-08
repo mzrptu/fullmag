@@ -4,6 +4,7 @@ import { useCallback, useEffect } from "react";
 import { RefreshCw } from "lucide-react";
 
 import DispersionBranchPlot from "@/components/analyze/DispersionBranchPlot";
+import EigenAnalyzeWorkbench from "@/components/analyze/EigenAnalyzeWorkbench";
 import EigenModeInspector from "@/components/analyze/EigenModeInspector";
 import ModeSpectrumPlot from "@/components/analyze/ModeSpectrumPlot";
 import EmptyState from "@/components/ui/EmptyState";
@@ -68,6 +69,7 @@ export default function AnalyzeViewport() {
     modeError,
     mesh,
     spectrum,
+    branches,
     dispersionRows,
     hasEigenArtifacts,
     refresh,
@@ -216,6 +218,20 @@ export default function AnalyzeViewport() {
 
       <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
         <div className="min-w-0 flex-1 overflow-hidden">
+          {branches ? (
+            <EigenAnalyzeWorkbench
+              spectrum={spectrum}
+              branches={branches}
+              renderModeInspector={(mode) => (
+                <EigenModeInspector
+                  mesh={mesh}
+                  mode={mode}
+                  loading={false}
+                  compact
+                />
+              )}
+            />
+          ) : (
           <Tabs
             value={model.analyzeSelection.tab}
             onValueChange={(value) => model.selectAnalyzeTab(value as "spectrum" | "modes" | "dispersion")}
@@ -284,6 +300,7 @@ export default function AnalyzeViewport() {
               </TabsContent>
             )}
           </Tabs>
+          )}
         </div>
 
         <aside className="hidden w-[360px] shrink-0 border-l border-border/25 bg-card/20 p-3 xl:block">

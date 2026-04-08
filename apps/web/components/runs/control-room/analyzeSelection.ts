@@ -5,12 +5,18 @@ export type AnalyzeTab = "spectrum" | "modes" | "dispersion";
 export interface AnalyzeSelectionState {
   tab: AnalyzeTab;
   selectedModeIndex: number | null;
+  /** k-sample index for multi-k (path) solves. Null means legacy single-sample. */
+  sampleIndex: number | null;
+  /** Tracked branch id. Null means no branch selected. */
+  branchId: number | null;
   refreshNonce: number;
 }
 
 export const DEFAULT_ANALYZE_SELECTION: AnalyzeSelectionState = {
   tab: "spectrum",
   selectedModeIndex: null,
+  sampleIndex: null,
+  branchId: null,
   refreshNonce: 0,
 };
 

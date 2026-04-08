@@ -38,9 +38,9 @@ export function useAnalyzeWorkspaceState(
 
   useEffect(() => {
     if (selectedMode != null) {
-      void artifacts.ensureMode(selectedMode);
+      void artifacts.ensureMode(selectedMode, analyzeSelection.sampleIndex);
     }
-  }, [artifacts, selectedMode]);
+  }, [artifacts, selectedMode, analyzeSelection.sampleIndex]);
 
   return {
     ...artifacts,

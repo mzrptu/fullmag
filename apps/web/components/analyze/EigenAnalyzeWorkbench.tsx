@@ -204,8 +204,8 @@ export default function EigenAnalyzeWorkbench({
             plot_bgcolor: C.bg,
             margin: { l: 56, r: 16, t: 8, b: 44 },
             font: { color: C.text, size: 11 },
-            xaxis: { title: "raw mode index", gridcolor: C.grid },
-            yaxis: { title: "f (GHz)", gridcolor: C.grid },
+            xaxis: { title: { text: "raw mode index" }, gridcolor: C.grid },
+            yaxis: { title: { text: "f (GHz)" }, gridcolor: C.grid },
             hovermode: "closest",
           }}
           config={{ responsive: true, displaylogo: false }}
@@ -235,8 +235,8 @@ export default function EigenAnalyzeWorkbench({
                 plot_bgcolor: C.bg,
                 margin: { l: 56, r: 16, t: 8, b: 44 },
                 font: { color: C.text, size: 11 },
-                xaxis: { title: "sample index", gridcolor: C.grid },
-                yaxis: { title: "f (GHz)", gridcolor: C.grid },
+                xaxis: { title: { text: "sample index" }, gridcolor: C.grid },
+                yaxis: { title: { text: "f (GHz)" }, gridcolor: C.grid },
                 hovermode: "closest",
                 legend: { orientation: "h", y: -0.22 },
               }}

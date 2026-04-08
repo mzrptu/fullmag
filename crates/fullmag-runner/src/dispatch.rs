@@ -1473,6 +1473,13 @@ pub(crate) fn execute_fem_eigen(
     plan: &FemEigenPlanIR,
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
+    // Route Path k-sampling through the multi-k orchestrator, which calls
+    // the single-k solver for each sample point and then performs branch
+    // tracking and writes V2 artifacts.
+    if matches!(plan.k_sampling, Some(fullmag_ir::KSamplingIR::Path { .. })) {
+        return execute_fem_eigen_path(engine, plan, outputs);
+    }
+
     match engine {
         FemEngine::CpuReference => fem_eigen::execute_reference_fem_eigen(plan, outputs),
         FemEngine::NativeGpu => {
@@ -1482,6 +1489,283 @@ pub(crate) fn execute_fem_eigen(
             fem_eigen::execute_gpu_fem_eigen(plan, outputs)
         }
     }
+}
+
+/// Multi-k orchestrator path: iterate over samples in a `KSamplingIR::Path`,
+/// solve each point with the existing single-k solver, track branches, and
+/// produce V2 path/branch/mode artifacts alongside legacy-compatible ones.
+fn execute_fem_eigen_path(
+    engine: FemEngine,
+    plan: &FemEigenPlanIR,
+    outputs: &[OutputIR],
+) -> Result<ExecutedRun, RunError> {
+    use crate::eigen::{
+        run_path_or_single, SingleKSolver,
+        KSampleDescriptor, SingleKModeResult, SingleKSolveResult,
+        EigenSolverModel,
+    };
+    use crate::types::AuxiliaryArtifact;
+
+    struct KSolverAdapter {
+        engine: FemEngine,
+    }
+
+    impl SingleKSolver for KSolverAdapter {
+        fn solve_single_k(
+            &self,
+            plan: &FemEigenPlanIR,
+            outputs: &[OutputIR],
+            sample: &KSampleDescriptor,
+        ) -> Result<SingleKSolveResult, crate::types::RunError> {
+            // Override plan's k_sampling to a single-k point for this sample
+            let mut point_plan = plan.clone();
+            point_plan.k_sampling = Some(fullmag_ir::KSamplingIR::Single {
+                k_vector: sample.k_vector,
+            });
+
+            let executed = match self.engine {
+                FemEngine::CpuReference => {
+                    fem_eigen::execute_reference_fem_eigen(&point_plan, outputs)?
+                }
+                FemEngine::NativeGpu => {
+                    fem_eigen::execute_gpu_fem_eigen(&point_plan, outputs)?
+                }
+            };
+
+            // Parse the spectrum artifact to extract mode results
+            let spectrum_bytes = executed
+                .auxiliary_artifacts
+                .iter()
+                .find(|a| a.relative_path == "eigen/spectrum.json")
+                .map(|a| &a.bytes)
+                .ok_or_else(|| crate::types::RunError {
+                    message: "single-k solver did not produce eigen/spectrum.json".to_string(),
+                })?;
+            let spectrum: serde_json::Value = serde_json::from_slice(spectrum_bytes)
+                .map_err(|e| crate::types::RunError {
+                    message: format!("failed to parse spectrum.json: {e}"),
+                })?;
+            let relaxation_steps = spectrum["relaxation_steps"].as_u64().unwrap_or(0);
+            let solver_kind = spectrum["solver_kind"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string();
+
+            let modes_array = spectrum["modes"]
+                .as_array()
+                .ok_or_else(|| crate::types::RunError {
+                    message: "spectrum.json has no modes array".to_string(),
+                })?;
+
+            let mut modes = Vec::with_capacity(modes_array.len());
+            for mode_json in modes_array {
+                modes.push(SingleKModeResult {
+                    raw_mode_index: mode_json["index"].as_u64().unwrap_or(0) as usize,
+                    branch_id: None,
+                    frequency_real_hz: mode_json["frequency_real_hz"].as_f64().unwrap_or(0.0),
+                    frequency_imag_hz: mode_json["frequency_imag_hz"].as_f64().unwrap_or(0.0),
+                    angular_frequency_rad_per_s: mode_json["angular_frequency_rad_per_s"]
+                        .as_f64()
+                        .unwrap_or(0.0),
+                    eigenvalue_real: mode_json["eigenvalue_real"].as_f64().unwrap_or(0.0),
+                    eigenvalue_imag: mode_json["eigenvalue_imag"].as_f64().unwrap_or(0.0),
+                    norm: mode_json["norm"].as_f64().unwrap_or(0.0),
+                    max_amplitude: mode_json["max_amplitude"].as_f64().unwrap_or(0.0),
+                    dominant_polarization: mode_json["dominant_polarization"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    // Mode field data is stored per-sample in artifacts;
+                    // we don't carry heavy vectors through the orchestrator.
+                    reduced_vector: None,
+                    lifted_real: None,
+                    lifted_imag: None,
+                    amplitude: None,
+                    phase: None,
+                });
+            }
+
+            Ok(SingleKSolveResult {
+                sample: sample.clone(),
+                modes,
+                relaxation_steps,
+                solver_model: EigenSolverModel::ReferenceScalarTangent,
+                solver_notes: vec![solver_kind],
+            })
+        }
+    }
+
+    let adapter = KSolverAdapter { engine };
+    let path_result = run_path_or_single(
+        &adapter,
+        plan,
+        outputs,
+        None, // we collect artifacts manually below
+        plan.mode_tracking.as_ref(),
+    )?;
+
+    // Build the ExecutedRun with both V2 and legacy-compatible artifacts
+    let mut auxiliary_artifacts = Vec::new();
+
+    // V2 path artifact (eigen/path.json)
+    let v2_samples: Vec<serde_json::Value> = path_result
+        .samples
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "sample_index": s.sample.sample_index,
+                "label": s.sample.label,
+                "k_vector": s.sample.k_vector,
+                "path_s": s.sample.path_s,
+                "segment_index": s.sample.segment_index,
+                "t_in_segment": s.sample.t_in_segment,
+                "modes": s.modes.iter().map(|m| serde_json::json!({
+                    "raw_mode_index": m.raw_mode_index,
+                    "branch_id": m.branch_id,
+                    "frequency_real_hz": m.frequency_real_hz,
+                    "frequency_imag_hz": m.frequency_imag_hz,
+                    "angular_frequency_rad_per_s": m.angular_frequency_rad_per_s,
+                    "eigenvalue_real": m.eigenvalue_real,
+                    "eigenvalue_imag": m.eigenvalue_imag,
+                    "norm": m.norm,
+                    "max_amplitude": m.max_amplitude,
+                    "dominant_polarization": m.dominant_polarization,
+                    "k_vector": s.sample.k_vector,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let path_json = serde_json::json!({
+        "schema_version": "2",
+        "solver_model": path_result.solver_model.as_str(),
+        "sample_count": v2_samples.len(),
+        "samples": v2_samples,
+    });
+    auxiliary_artifacts.push(AuxiliaryArtifact {
+        relative_path: "eigen/path.json".to_string(),
+        bytes: serde_json::to_vec_pretty(&path_json).unwrap_or_default(),
+    });
+
+    // V2 branches artifact (eigen/branches.json)
+    let v2_branches: Vec<serde_json::Value> = path_result
+        .branches
+        .iter()
+        .map(|b| {
+            serde_json::json!({
+                "branch_id": b.branch_id,
+                "label": b.label,
+                "points": b.points.iter().map(|p| serde_json::json!({
+                    "sample_index": p.sample_index,
+                    "raw_mode_index": p.raw_mode_index,
+                    "frequency_real_hz": p.frequency_real_hz,
+                    "frequency_imag_hz": p.frequency_imag_hz,
+                    "tracking_confidence": p.tracking_confidence,
+                    "overlap_prev": p.overlap_prev,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    auxiliary_artifacts.push(AuxiliaryArtifact {
+        relative_path: "eigen/branches.json".to_string(),
+        bytes: serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": "2",
+            "solver_model": path_result.solver_model.as_str(),
+            "branches": v2_branches,
+        }))
+        .unwrap_or_default(),
+    });
+
+    // Legacy-compatible spectrum.json from the first sample
+    if let Some(first_sample) = path_result.samples.first() {
+        let modes_summary: Vec<serde_json::Value> = first_sample
+            .modes
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "index": m.raw_mode_index,
+                    "frequency_hz": m.frequency_real_hz,
+                    "frequency_real_hz": m.frequency_real_hz,
+                    "frequency_imag_hz": m.frequency_imag_hz,
+                    "angular_frequency_rad_per_s": m.angular_frequency_rad_per_s,
+                    "eigenvalue_real": m.eigenvalue_real,
+                    "eigenvalue_imag": m.eigenvalue_imag,
+                    "norm": m.norm,
+                    "max_amplitude": m.max_amplitude,
+                    "dominant_polarization": m.dominant_polarization,
+                    "k_vector": first_sample.sample.k_vector,
+                })
+            })
+            .collect();
+
+        let legacy_spectrum = serde_json::json!({
+            "study_kind": "eigenmodes",
+            "solver_backend": "cpu_reference_fem_eigen",
+            "solver_kind": path_result.solver_model.as_str(),
+            "mesh_name": plan.mesh_name,
+            "mode_count": modes_summary.len(),
+            "normalization": format!("{:?}", plan.normalization).to_lowercase(),
+            "damping_policy": format!("{:?}", plan.damping_policy).to_lowercase(),
+            "k_sampling": plan.k_sampling,
+            "relaxation_steps": first_sample.relaxation_steps,
+            "modes": modes_summary,
+        });
+        auxiliary_artifacts.push(AuxiliaryArtifact {
+            relative_path: "eigen/spectrum.json".to_string(),
+            bytes: serde_json::to_vec_pretty(&legacy_spectrum).unwrap_or_default(),
+        });
+
+        // Legacy dispersion CSV with all samples × modes
+        let mut csv_lines = vec![
+            "mode_index,kx,ky,kz,frequency_hz,angular_frequency_rad_per_s".to_string(),
+        ];
+        for sample_result in &path_result.samples {
+            let k = sample_result.sample.k_vector;
+            for mode in &sample_result.modes {
+                csv_lines.push(format!(
+                    "{},{},{},{},{},{}",
+                    mode.raw_mode_index,
+                    k[0],
+                    k[1],
+                    k[2],
+                    mode.frequency_real_hz,
+                    mode.angular_frequency_rad_per_s,
+                ));
+            }
+        }
+        auxiliary_artifacts.push(AuxiliaryArtifact {
+            relative_path: "eigen/dispersion/branch_table.csv".to_string(),
+            bytes: csv_lines.join("\n").into_bytes(),
+        });
+
+        // Legacy dispersion path metadata
+        auxiliary_artifacts.push(AuxiliaryArtifact {
+            relative_path: "eigen/dispersion/path.json".to_string(),
+            bytes: serde_json::to_vec_pretty(&serde_json::json!({
+                "sampling": plan.k_sampling,
+            }))
+            .unwrap_or_default(),
+        });
+    }
+
+    Ok(ExecutedRun {
+        result: crate::types::RunResult {
+            status: crate::types::RunStatus::Completed,
+            steps: vec![],
+            final_magnetization: plan.equilibrium_magnetization.clone(),
+        },
+        initial_magnetization: plan.equilibrium_magnetization.clone(),
+        field_snapshots: Vec::new(),
+        field_snapshot_count: 0,
+        auxiliary_artifacts,
+        provenance: crate::ExecutionProvenance {
+            execution_engine: format!(
+                "multi_k_orchestrator/{}",
+                path_result.solver_model.as_str()
+            ),
+            precision: "double".to_string(),
+            ..Default::default()
+        },
+    })
 }
 
 #[cfg(feature = "cuda")]

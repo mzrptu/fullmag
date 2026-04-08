@@ -190,6 +190,10 @@ async fn main() {
             "/v1/live/current/eigen/dispersion",
             get(get_current_live_eigen_dispersion),
         )
+        .route(
+            "/v1/live/current/eigen/branches",
+            get(get_current_live_eigen_branches),
+        )
         .route("/v1/docs/physics", get(list_physics_docs))
         .route("/v1/run", post(start_run))
         .route("/ws/live/current", get(ws_current_live))
@@ -985,11 +989,24 @@ async fn get_current_live_eigen_mode(
     Query(query): Query<EigenModeQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let artifact_dir = require_current_live_artifact_dir(&state).await?;
-    let relative_path = format!("eigen/modes/mode_{:04}.json", query.index);
-    Ok(Json(read_json_artifact_value(
-        &artifact_dir,
-        &relative_path,
-    )?))
+    // Try V2 sample-indexed path first, then fall back to legacy flat path
+    let relative_path = if let Some(sample_idx) = query.sample_index {
+        format!(
+            "eigen/modes/sample_{:04}/mode_{:04}.json",
+            sample_idx, query.index
+        )
+    } else {
+        format!("eigen/modes/mode_{:04}.json", query.index)
+    };
+    match read_json_artifact_value(&artifact_dir, &relative_path) {
+        Ok(value) => Ok(Json(value)),
+        Err(_) if query.sample_index.is_some() => {
+            // Fallback: try legacy flat path when sample path doesn't exist
+            let legacy_path = format!("eigen/modes/mode_{:04}.json", query.index);
+            Ok(Json(read_json_artifact_value(&artifact_dir, &legacy_path)?))
+        }
+        Err(err) => Err(err),
+    }
 }
 
 async fn get_current_live_eigen_dispersion(
@@ -1012,6 +1029,23 @@ async fn get_current_live_eigen_dispersion(
         path_metadata,
         rows: parse_eigen_dispersion_csv(&csv_content)?,
     }))
+}
+
+/// Serve V2 tracked-branch artifact (eigen/branches.json).
+/// Returns 404 if the artifact doesn't exist (single-k solve or legacy run).
+async fn get_current_live_eigen_branches(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, ApiError> {
+    let artifact_dir = require_current_live_artifact_dir(&state).await?;
+    match try_resolve_artifact_path(&artifact_dir, "eigen/branches.json")? {
+        Some(_) => Ok(Json(read_json_artifact_value(
+            &artifact_dir,
+            "eigen/branches.json",
+        )?)),
+        None => Err(ApiError::not_found(
+            "no eigen/branches.json artifact found (single-k solve or legacy run)",
+        )),
+    }
 }
 
 /// POST /v1/run — start a simulation run and broadcast live updates.

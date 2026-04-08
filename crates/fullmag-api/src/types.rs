@@ -167,9 +167,13 @@ pub(crate) struct ArtifactFileQuery {
 #[derive(Debug, Deserialize)]
 pub(crate) struct EigenModeQuery {
     pub index: u32,
+    /// Optional k-sample index for multi-k (path) solves.
+    /// When omitted, the legacy single-sample path is used.
+    pub sample_index: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct EigenDispersionRow {
     pub mode_index: u32,
     pub kx: f64,

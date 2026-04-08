@@ -929,6 +929,7 @@ pub(crate) fn plan_fem_eigen(
         normalization,
         damping_policy,
         spin_wave_bc,
+        mode_tracking,
         ..
     } = &problem.study
     else {
@@ -1424,6 +1425,7 @@ pub(crate) fn plan_fem_eigen(
         exchange_bc: ExchangeBoundaryCondition::Neumann,
         spin_wave_bc: spin_wave_bc.clone(),
         demag_realization: resolved_demag_realization,
+        mode_tracking: mode_tracking.clone(),
     };
 
     let study_note = format!(

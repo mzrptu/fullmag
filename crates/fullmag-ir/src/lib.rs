@@ -2301,6 +2301,8 @@ pub struct FemEigenPlanIR {
     pub spin_wave_bc: SpinWaveBoundaryConditionIR,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demag_realization: Option<ResolvedFemDemagIR>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode_tracking: Option<ModeTrackingIR>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
