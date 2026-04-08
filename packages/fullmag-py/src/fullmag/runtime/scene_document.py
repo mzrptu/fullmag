@@ -137,6 +137,7 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
             "shared_domain_mesh": builder.get("mesh") or {},
             "mesh_defaults": builder.get("mesh") or {},
             "stages": builder.get("stages") or [],
+            "study_pipeline": builder.get("study_pipeline"),
             "initial_state": builder.get("initial_state"),
         },
         "outputs": {"items": []},
@@ -228,6 +229,7 @@ def build_builder_from_scene_document(scene: dict[str, Any]) -> dict[str, Any]:
         "mesh": study.get("shared_domain_mesh") or study.get("mesh_defaults") or {},
         "universe": study.get("universe_mesh") or scene.get("universe"),
         "stages": study.get("stages") or [],
+        "study_pipeline": study.get("study_pipeline"),
         "initial_state": study.get("initial_state"),
         "geometries": geometries,
         "current_modules": current_modules.get("modules") or [],
@@ -289,9 +291,28 @@ def builder_overrides_from_scene_document(scene: dict[str, Any]) -> dict[str, An
                 "torque_tolerance": _number_or_none(stage.get("torque_tolerance")),
                 "energy_tolerance": _number_or_none(stage.get("energy_tolerance")),
                 "max_steps": _int_or_none(stage.get("max_steps")),
+                "eigen_count": _int_or_none(stage.get("eigen_count")),
+                "eigen_target": stage.get("eigen_target") or None,
+                "eigen_include_demag": (
+                    bool(stage.get("eigen_include_demag"))
+                    if isinstance(stage.get("eigen_include_demag"), bool)
+                    else None
+                ),
+                "eigen_equilibrium_source": stage.get("eigen_equilibrium_source") or None,
+                "eigen_normalization": stage.get("eigen_normalization") or None,
+                "eigen_target_frequency": _number_or_none(stage.get("eigen_target_frequency")),
+                "eigen_damping_policy": stage.get("eigen_damping_policy") or None,
+                "eigen_k_vector": stage.get("eigen_k_vector") or None,
+                "eigen_spin_wave_bc": stage.get("eigen_spin_wave_bc") or None,
+                "eigen_spin_wave_bc_config": (
+                    dict(stage.get("eigen_spin_wave_bc_config"))
+                    if isinstance(stage.get("eigen_spin_wave_bc_config"), dict)
+                    else None
+                ),
             }
             for stage in (builder.get("stages") or [])
         ],
+        "study_pipeline": builder.get("study_pipeline"),
         "initial_state": builder.get("initial_state"),
         "geometries": builder.get("geometries") or [],
         "current_modules": builder.get("current_modules") or [],

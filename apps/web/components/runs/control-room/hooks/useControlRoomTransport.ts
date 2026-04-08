@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import type { TransportContextValue } from "../context-hooks";
 import { EMPTY_SCALAR_ROWS } from "../shared";
 import type { SessionState, LiveState, ScalarRow } from "../../../../lib/session/types";
@@ -55,13 +55,24 @@ export function useControlRoomTransport(state: SessionState | null): TransportCo
       effectiveEEx, effectiveEDemag, effectiveEExt, effectiveETotal,
       effectiveDmDt, effectiveHEff, effectiveHDemag]);
 
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const isRunning = session?.status === "running" || session?.status === "materializing_script";
+    if (!isRunning) return;
+    
+    const interval = setInterval(() => setNow(Date.now()), 200);
+    return () => clearInterval(interval);
+  }, [session?.status]);
+
   /* Status bar */
   const elapsed = useMemo(() => {
     if (!session) return 0;
-    return (session.finished_at_unix_ms > session.started_at_unix_ms
-      ? session.finished_at_unix_ms - session.started_at_unix_ms
-      : Date.now() - session.started_at_unix_ms);
-  }, [session]);
+    if (session.finished_at_unix_ms > session.started_at_unix_ms) {
+      return session.finished_at_unix_ms - session.started_at_unix_ms;
+    }
+    return now - session.started_at_unix_ms;
+  }, [session, now]);
   
   const stepsPerSec = useMemo(() => 
     elapsed > 0 ? (effectiveStep / elapsed) * 1000 : 0,

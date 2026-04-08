@@ -23,6 +23,7 @@ from fullmag.runtime import helper as runtime_helper
 from fullmag.runtime.loader import load_problem_from_script
 from fullmag.runtime.scene_document import build_scene_document_from_builder
 from fullmag.runtime.scene_document import build_builder_from_scene_document
+from fullmag.runtime.scene_document import builder_overrides_from_scene_document
 from fullmag.runtime.script_builder import export_builder_draft, rewrite_loaded_problem_script
 from fullmag.meshing.gmsh_bridge import MeshData
 
@@ -297,6 +298,7 @@ class ProblemApiTests(unittest.TestCase):
             padding=(2e-9, 2e-9, 1e-9),
             airbox_hmax=50e-9,
         )
+        study.object_mesh_defaults(hmax=20e-9, order=1)
 
         body = study.geometry(fm.Box(size=(20e-9, 10e-9, 5e-9), name="track"), name="track")
         body.Ms = 800e3
@@ -891,6 +893,90 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(magnetization["preset_kind"], "vortex")
         self.assertEqual(magnetization["preset_params"]["circulation"], -1)
         self.assertEqual(magnetization["mapping"]["clamp_mode"], "repeat")
+
+    def test_scene_document_preserves_study_pipeline_round_trip(self) -> None:
+        builder = {
+            "revision": 7,
+            "backend": "fdm",
+            "demag_realization": None,
+            "solver": {"integrator": "rk45"},
+            "mesh": {"hmax": "20e-9"},
+            "universe": None,
+            "stages": [
+                {
+                    "kind": "eigenmodes",
+                    "entrypoint_kind": "eigenmodes",
+                    "integrator": "rk45",
+                    "fixed_timestep": "",
+                    "until_seconds": "",
+                    "relax_algorithm": "",
+                    "torque_tolerance": "",
+                    "energy_tolerance": "",
+                    "max_steps": "",
+                    "eigen_count": "6",
+                    "eigen_target": "lowest",
+                    "eigen_include_demag": True,
+                    "eigen_equilibrium_source": "relax",
+                    "eigen_normalization": "unit_l2",
+                    "eigen_target_frequency": "",
+                    "eigen_damping_policy": "ignore",
+                    "eigen_k_vector": "0,0,0",
+                    "eigen_spin_wave_bc": "free",
+                    "eigen_spin_wave_bc_config": {"kind": "free"},
+                }
+            ],
+            "study_pipeline": {
+                "version": "study_pipeline.v1",
+                "nodes": [
+                    {
+                        "id": "stage_1_eigenmodes",
+                        "label": "Imported Stage 1",
+                        "enabled": True,
+                        "source": "script_imported",
+                        "node_kind": "primitive",
+                        "stage_kind": "eigenmodes",
+                        "payload": {
+                            "kind": "eigenmodes",
+                            "entrypoint_kind": "eigenmodes",
+                            "eigen_count": "6",
+                            "eigen_include_demag": True,
+                            "eigen_equilibrium_source": "relax",
+                            "eigen_normalization": "unit_l2",
+                            "eigen_damping_policy": "ignore",
+                            "eigen_k_vector": "0,0,0",
+                            "eigen_spin_wave_bc": "free",
+                            "eigen_spin_wave_bc_config": {"kind": "free"},
+                        },
+                    }
+                ],
+            },
+            "initial_state": None,
+            "geometries": [
+                {
+                    "name": "flower",
+                    "geometry_kind": "Box",
+                    "geometry_params": {"size": [20e-9, 20e-9, 10e-9]},
+                    "material": {"Ms": 800e3, "Aex": 13e-12, "alpha": 0.1},
+                    "magnetization": {"kind": "uniform", "value": [1.0, 0.0, 0.0]},
+                    "mesh": {"mode": "inherit", "hmax": ""},
+                }
+            ],
+            "current_modules": [],
+            "excitation_analysis": None,
+        }
+
+        scene = build_scene_document_from_builder(builder)
+        self.assertEqual(scene["study"]["study_pipeline"]["version"], "study_pipeline.v1")
+        self.assertEqual(scene["study"]["study_pipeline"]["nodes"][0]["stage_kind"], "eigenmodes")
+
+        rebuilt = build_builder_from_scene_document(scene)
+        self.assertEqual(rebuilt["study_pipeline"]["nodes"][0]["payload"]["eigen_count"], "6")
+
+        overrides = builder_overrides_from_scene_document(scene)
+        self.assertEqual(overrides["study_pipeline"]["nodes"][0]["stage_kind"], "eigenmodes")
+        self.assertEqual(overrides["stages"][0]["eigen_count"], 6)
+        self.assertTrue(overrides["stages"][0]["eigen_include_demag"])
+        self.assertEqual(overrides["stages"][0]["eigen_k_vector"], "0,0,0")
 
     def test_legacy_dynamics_and_outputs_are_normalized_to_time_evolution(self) -> None:
         geometry = fm.Box(size=(100e-9, 20e-9, 5e-9), name="track")
@@ -1703,6 +1789,7 @@ class ProblemApiTests(unittest.TestCase):
         body.Aex = 13e-12
         body.alpha = 0.1
         body.m = fm.uniform(1, 0, 0)
+        body.mesh(hmax=4e-9, order=1).build()
         fm.save("m", every=1e-12)
         fm.relax(max_steps=25, tol=1e-5, algorithm="llg_overdamped")
         fm.run(4e-12)
@@ -1720,6 +1807,12 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(draft["stages"][0]["torque_tolerance"], "1e-05")
         self.assertEqual(draft["stages"][1]["kind"], "run")
         self.assertEqual(draft["stages"][1]["until_seconds"], "4e-12")
+        self.assertEqual(draft["study_pipeline"]["version"], "study_pipeline.v1")
+        self.assertEqual(len(draft["study_pipeline"]["nodes"]), 2)
+        self.assertEqual(draft["study_pipeline"]["nodes"][0]["stage_kind"], "relax")
+        self.assertEqual(draft["study_pipeline"]["nodes"][0]["payload"]["max_steps"], "25")
+        self.assertEqual(draft["study_pipeline"]["nodes"][1]["stage_kind"], "run")
+        self.assertEqual(draft["study_pipeline"]["nodes"][1]["payload"]["until_seconds"], "4e-12")
 
     def test_builder_draft_uses_final_flat_problem_materials_for_stage_sequences(self) -> None:
         script = """
@@ -1732,6 +1825,7 @@ class ProblemApiTests(unittest.TestCase):
         body.Aex = 13e-12
         body.alpha = 0.1
         body.m = fm.uniform(1, 0, 0)
+        body.mesh(hmax=4e-9, order=1).build()
         fm.solver(dt=1e-13)
         fm.relax(max_steps=25)
         fm.run(4e-12)
@@ -1926,6 +2020,7 @@ class ProblemApiTests(unittest.TestCase):
         body.Aex = 13e-12
         body.alpha = 0.1
         body.m = fm.uniform(1, 0, 0)
+        body.mesh(hmax=4e-9, order=1).build()
         fm.solver(dt=1e-13)
         fm.save("m", every=1e-12)
         fm.relax(max_steps=25)
@@ -1946,6 +2041,53 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(loaded.stages[1].problem.study.to_ir()["kind"], "time_evolution")
         self.assertIsNotNone(loaded.workspace_problem)
         self.assertEqual(loaded.workspace_problem.study.to_ir()["kind"], "time_evolution")
+
+    def test_flat_sequence_ir_embeds_study_pipeline_runtime_metadata(self) -> None:
+        script = """
+        import fullmag as fm
+
+        fm.engine("fdm")
+        fm.cell(5e-9, 5e-9, 5e-9)
+        body = fm.geometry(fm.Box(100e-9, 20e-9, 5e-9), name="track")
+        body.Ms = 800e3
+        body.Aex = 13e-12
+        body.alpha = 0.1
+        body.m = fm.uniform(1, 0, 0)
+        body.mesh(hmax=4e-9, order=1).build()
+        fm.solver(dt=1e-13)
+        fm.relax(max_steps=25)
+        fm.run(4e-12)
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "script_flat_sequence_runtime_metadata.py"
+            path.write_text(textwrap.dedent(script), encoding="utf-8")
+            loaded = fm.load_problem_from_script(path, lightweight_assets=True)
+            ir = loaded.to_ir(
+                requested_backend=fm.BackendTarget.FDM,
+                execution_mode=fm.ExecutionMode.STRICT,
+                execution_precision=fm.ExecutionPrecision.DOUBLE,
+                include_geometry_assets=False,
+            )
+
+        runtime_metadata = ir["problem_meta"]["runtime_metadata"]
+        self.assertEqual(runtime_metadata["study_pipeline"]["version"], "study_pipeline.v1")
+        self.assertEqual(len(runtime_metadata["study_pipeline"]["nodes"]), 2)
+        self.assertEqual(runtime_metadata["study_pipeline"]["nodes"][0]["stage_kind"], "relax")
+        self.assertEqual(runtime_metadata["study_pipeline"]["nodes"][1]["stage_kind"], "run")
+        self.assertEqual(
+            runtime_metadata["model_builder"]["study_pipeline"]["version"],
+            "study_pipeline.v1",
+        )
+        self.assertEqual(
+            len(runtime_metadata["model_builder"]["study_pipeline"]["nodes"]),
+            2,
+        )
+        self.assertEqual(
+            runtime_metadata["script_sync"]["study_pipeline_version"],
+            "study_pipeline.v1",
+        )
+        self.assertEqual(runtime_metadata["script_sync"]["study_pipeline_node_count"], 2)
 
     def test_builder_draft_prefers_workspace_problem_when_available(self) -> None:
         script = """
@@ -2695,6 +2837,7 @@ class ProblemApiTests(unittest.TestCase):
         body.Aex = 13e-12
         body.alpha = 0.1
         body.m = fm.uniform(1, 0, 0)
+        body.mesh(hmax=4e-9, order=1).build()
         fm.solver(dt=1e-13)
         fm.save("m", every=1e-12)
         fm.relax(max_steps=25)
@@ -3105,6 +3248,7 @@ class ProblemApiTests(unittest.TestCase):
         body.Aex = 13e-12
         body.alpha = 0.1
         body.m = fm.uniform(1, 0, 0)
+        body.mesh(hmax=4e-9, order=1).build()
         fm.solver(dt=1e-13)
         fm.save("m", every=1e-12)
         fm.relax(max_steps=25)
@@ -3130,9 +3274,31 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(payload["ir"]["problem_meta"]["entrypoint_kind"], "flat_sequence")
         self.assertEqual(len(payload["stages"]), 2)
         self.assertIn("shared_geometry_assets", payload)
+        self.assertEqual(payload["study_pipeline"]["version"], "study_pipeline.v1")
+        self.assertEqual(len(payload["study_pipeline"]["nodes"]), 2)
+        self.assertEqual(
+            payload["ir"]["problem_meta"]["runtime_metadata"]["study_pipeline"]["version"],
+            "study_pipeline.v1",
+        )
+        self.assertEqual(
+            payload["ir"]["problem_meta"]["runtime_metadata"]["model_builder"]["study_pipeline"]["version"],
+            "study_pipeline.v1",
+        )
+        self.assertEqual(
+            payload["ir"]["problem_meta"]["runtime_metadata"]["script_sync"]["study_pipeline_version"],
+            "study_pipeline.v1",
+        )
         self.assertEqual(payload["stages"][0]["entrypoint_kind"], "flat_relax")
         self.assertEqual(payload["stages"][1]["entrypoint_kind"], "flat_run")
         self.assertEqual(payload["stages"][1]["default_until_seconds"], 4e-12)
+        self.assertEqual(
+            payload["stages"][0]["ir"]["problem_meta"]["runtime_metadata"]["study_pipeline"]["version"],
+            "study_pipeline.v1",
+        )
+        self.assertEqual(
+            payload["stages"][1]["ir"]["problem_meta"]["runtime_metadata"]["model_builder"]["study_pipeline"]["version"],
+            "study_pipeline.v1",
+        )
 
 
 if __name__ == "__main__":

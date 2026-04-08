@@ -106,6 +106,8 @@ pub(crate) fn execute_reference_fdm_multilayer(
         requested_demag_realization: None,
         resolved_demag_realization: None,
         dt_policy: None,
+        mfem_device: None,
+        demag_transfer_cell_size: None,
     };
     let mut artifacts = if let Some(writer) = artifact_writer {
         ArtifactRecorder::streaming(provenance.clone(), writer)

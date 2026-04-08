@@ -17,6 +17,12 @@ const ZERO_THRESHOLD: f64 = 1e-30;
 const SPARSE_CG_TOL: f64 = 1e-10;
 /// Default maximum CG iterations for the sparse demag solver.
 const SPARSE_CG_MAX_ITER: usize = 1000;
+/// Floor for bounding-box extents to avoid zero-size axes.
+const MIN_EXTENT_FLOOR: f64 = 1e-12;
+/// Fraction of smallest axis extent used as cell-size lower bound.
+const CELL_SIZE_EXTENT_FRACTION: f64 = 0.25;
+/// Tolerance for barycentric coordinate inclusion test.
+const BARYCENTRIC_INCLUSION_EPS: f64 = 1e-9;
 
 // ── Sparse CSR matrix for FEM operators ──
 
@@ -1678,14 +1684,14 @@ impl FemLlgProblem {
         bbox_max: Vector3,
     ) -> [f64; 3] {
         let extent = [
-            (bbox_max[0] - bbox_min[0]).abs().max(1e-12),
-            (bbox_max[1] - bbox_min[1]).abs().max(1e-12),
-            (bbox_max[2] - bbox_min[2]).abs().max(1e-12),
+            (bbox_max[0] - bbox_min[0]).abs().max(MIN_EXTENT_FLOOR),
+            (bbox_max[1] - bbox_min[1]).abs().max(MIN_EXTENT_FLOOR),
+            (bbox_max[2] - bbox_min[2]).abs().max(MIN_EXTENT_FLOOR),
         ];
         let characteristic_volume = (self.topology.magnetic_total_volume.max(ZERO_THRESHOLD)
             / self.topology.n_nodes.max(1) as f64)
             .cbrt();
-        let h = characteristic_volume.max(extent[2].min(extent[0].min(extent[1])) * 0.25);
+        let h = characteristic_volume.max(extent[2].min(extent[0].min(extent[1])) * CELL_SIZE_EXTENT_FRACTION);
         [h, h, h]
     }
 
@@ -1795,9 +1801,9 @@ impl TransferGridDesc {
         let nz = transfer_axis_cells(extent[2], requested_cell[2])?;
         let grid = GridShape::new(nx, ny, nz)?;
         let cell_size = CellSize::new(
-            (extent[0] / nx as f64).max(1e-12),
-            (extent[1] / ny as f64).max(1e-12),
-            (extent[2] / nz as f64).max(1e-12),
+            (extent[0] / nx as f64).max(MIN_EXTENT_FLOOR),
+            (extent[1] / ny as f64).max(MIN_EXTENT_FLOOR),
+            (extent[2] / nz as f64).max(MIN_EXTENT_FLOOR),
         )?;
         Ok(Self {
             grid,
@@ -1960,7 +1966,7 @@ pub(crate) fn barycentric_coordinates_tet(
     let d3 = sub(vertices[3], vertices[0]);
     let rhs = sub(point, vertices[0]);
     let det = dot(d1, cross(d2, d3));
-    if det.abs() <= 1e-30 {
+    if det.abs() <= ZERO_THRESHOLD {
         return None;
     }
     let inv = inverse_3x3_columns([d1, d2, d3], det);
@@ -1969,10 +1975,9 @@ pub(crate) fn barycentric_coordinates_tet(
     let lambda3 = inv[2][0] * rhs[0] + inv[2][1] * rhs[1] + inv[2][2] * rhs[2];
     let lambda0 = 1.0 - lambda1 - lambda2 - lambda3;
     let barycentric = [lambda0, lambda1, lambda2, lambda3];
-    let eps = 1e-9;
     barycentric
         .iter()
-        .all(|value| *value >= -eps && *value <= 1.0 + eps)
+        .all(|value| *value >= -BARYCENTRIC_INCLUSION_EPS && *value <= 1.0 + BARYCENTRIC_INCLUSION_EPS)
         .then_some(barycentric)
 }
 

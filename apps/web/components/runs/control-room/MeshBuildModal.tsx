@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { CheckCircle2, Loader2, AlertTriangle, X, Minimize2, GitCommitHorizontal, Layers, Triangle } from "lucide-react";
 
 import type { EngineLogEntry, MeshWorkspaceState } from "../../../lib/useSessionStream";
@@ -102,6 +103,9 @@ export default function MeshBuildModal({
     .slice(-16)
     .reverse();
 
+  // Stable fallback timestamp for errors detected during this modal session
+  const [fallbackTimestamp] = useState(() => Date.now());
+
   return (
     <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/60 px-6 py-8 backdrop-blur-sm">
       <div className="relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[linear-gradient(180deg,rgba(18,24,38,0.96),rgba(9,12,20,0.98))] shadow-[0_24px_120px_rgba(0,0,0,0.55)]">
@@ -154,7 +158,7 @@ export default function MeshBuildModal({
               <BackendErrorNotice
                 error={
                   errorDetails ?? {
-                    timestampUnixMs: Date.now(),
+                    timestampUnixMs: fallbackTimestamp,
                     level: "error",
                     title: "Operation interrupted by backend error",
                     summary: effectiveErrorMessage ?? "Mesh build failed",

@@ -7,6 +7,7 @@ export function humanizeStudyPipelineNodeKind(node: StudyPipelineNode): string {
     return humanizeToken(node.stage_kind);
   }
   if (node.node_kind === "macro") {
+    if (node.macro_kind === "hysteresis_loop") return "Hysteresis Loop";
     if (node.macro_kind === "field_sweep_relax") return "Field Sweep + Relax";
     if (node.macro_kind === "relax_run") return "Relax -> Run";
     if (node.macro_kind === "relax_eigenmodes") return "Relax -> Eigenmodes";
@@ -27,6 +28,12 @@ export function summarizeStudyPipelineNode(node: StudyPipelineNode): string {
     return node.stage_kind;
   }
   if (node.node_kind === "macro") {
+    if (node.macro_kind === "hysteresis_loop") {
+      const start = Number(node.config.start_mT ?? -100);
+      const stop = Number(node.config.stop_mT ?? 100);
+      const steps = Math.max(2, Number(node.config.steps ?? 21));
+      return `hysteresis loop ${start} -> ${stop} mT (${steps} points)`;
+    }
     if (node.macro_kind === "field_sweep_relax") {
       const start = Number(node.config.start_mT ?? -100);
       const stop = Number(node.config.stop_mT ?? 100);

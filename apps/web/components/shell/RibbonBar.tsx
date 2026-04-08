@@ -7,6 +7,7 @@ import {
   PanelRight, Camera, Download, BarChart3,
   Shapes, FlaskConical, Hexagon, Cog, Eye,
   RefreshCw, Ruler, ListChecks, Zap, Magnet, Target, Save, Plus, RadioTower,
+  Sparkles, FunctionSquare, Layers3, Binary,
 } from "lucide-react";
 import {
   Tooltip, TooltipTrigger, TooltipContent, TooltipProvider,
@@ -14,6 +15,11 @@ import {
 import { cn } from "@/lib/utils";
 import type { WorkspaceMode } from "../runs/control-room/context-hooks";
 import { useWorkspaceStore } from "@/lib/workspace/workspace-store";
+import {
+  parseStudyNodeContext,
+  type StudyNodeContext,
+} from "@/lib/study-builder/node-context";
+import type { StudyPrimitiveStageKind } from "@/lib/study-builder/types";
 
 /* ── Types ──────────────────────────────────────── */
 
@@ -115,6 +121,16 @@ interface RibbonBarProps {
   scriptSyncBusy?: boolean;
   onSyncScriptBuilder?: () => void;
   workspaceMode?: WorkspaceMode;
+  onStudyAddPrimitive?: (
+    kind: StudyPrimitiveStageKind,
+    placement: "append" | "before" | "after",
+  ) => void;
+  onStudyAddMacro?: (
+    kind: "hysteresis_loop" | "field_sweep_relax" | "relax_run" | "relax_eigenmodes",
+    placement: "append" | "before" | "after",
+  ) => void;
+  onStudyDuplicateSelected?: () => void;
+  onStudyToggleSelectedEnabled?: () => void;
 }
 
 /* ── Tab inference from tree node ── */
@@ -344,29 +360,171 @@ function buildStudyGroups(p: RibbonBarProps): RibbonGroup[] {
   ];
 }
 
-function buildBuilderGroups(p: RibbonBarProps): RibbonGroup[] {
+function buildStudyBuilderGroups(
+  p: RibbonBarProps,
+  studyNode: StudyNodeContext | null,
+): RibbonGroup[] {
+  const hasStageSelection = studyNode?.kind === "study-stage";
+  const placement = hasStageSelection ? "after" : "append";
   return [
     {
-      id: "builder-inspect",
-      title: "Builder",
+      id: "study-nav",
+      title: "Study",
       actions: [
         {
-          id: "builder-session",
+          id: "study-overview",
           icon: <Cog size={20} />,
-          label: "Session",
-          tooltip: "Workspace runtime and session metadata",
-          active: p.selectedNodeId === "session",
+          label: "Overview",
+          tooltip: "Study root and authoring summary",
+          active: studyNode?.kind === "study-root" || studyNode?.kind === "simulation-root",
           iconColor: "text-slate-400",
-          action: () => p.onSelectModelNode?.("session"),
+          action: () => p.onSelectModelNode?.("study"),
         },
         {
-          id: "builder-script",
-          icon: <FileText size={20} />,
-          label: "Script Builder",
-          tooltip: "Script rewrite contract and builder sync controls",
-          active: p.selectedNodeId === "script-builder",
+          id: "study-defaults",
+          icon: <Columns2 size={20} />,
+          label: "Defaults",
+          tooltip: "Runtime, solver and output defaults",
+          active:
+            studyNode?.kind === "study-defaults"
+            || studyNode?.kind === "study-runtime-defaults"
+            || studyNode?.kind === "study-solver-defaults"
+            || studyNode?.kind === "study-outputs-defaults",
+          iconColor: "text-cyan-400",
+          action: () => p.onSelectModelNode?.("study-defaults"),
+          menuItems: [
+            {
+              id: "study-defaults-runtime",
+              label: "Runtime Defaults",
+              icon: <Play size={14} />,
+              description: "Run horizon, execution mode and runtime policy",
+              active: studyNode?.kind === "study-runtime-defaults",
+              action: () => p.onSelectModelNode?.("study-defaults-runtime"),
+            },
+            {
+              id: "study-defaults-solver",
+              label: "Solver Defaults",
+              icon: <Target size={14} />,
+              description: "Integrator, relaxation and convergence defaults",
+              active: studyNode?.kind === "study-solver-defaults",
+              action: () => p.onSelectModelNode?.("study-defaults-solver"),
+            },
+            {
+              id: "study-defaults-outputs",
+              label: "Output Defaults",
+              icon: <Download size={14} />,
+              description: "Artifacts, snapshots and export policy",
+              active: studyNode?.kind === "study-outputs-defaults",
+              action: () => p.onSelectModelNode?.("study-defaults-outputs"),
+            },
+          ],
+        },
+        {
+          id: "study-stages",
+          icon: <ListChecks size={20} />,
+          label: "Stages",
+          tooltip: "Study stage sequence authoring",
+          active:
+            studyNode?.kind === "study-stages"
+            || studyNode?.kind === "study-stage"
+            || studyNode?.kind === "study-stage-empty",
+          iconColor: "text-violet-400",
+          action: () => p.onSelectModelNode?.("study-stages"),
+        },
+      ],
+    },
+    {
+      id: "study-add",
+      title: "Add Stage",
+      actions: [
+        {
+          id: "study-add-relax",
+          icon: <Target size={20} />,
+          label: "Relax",
+          tooltip: hasStageSelection ? "Insert Relax after the selected stage" : "Append Relax at the end of the stage sequence",
+          accent: true,
           iconColor: "text-emerald-400",
-          action: () => p.onSelectModelNode?.("script-builder"),
+          action: () => p.onStudyAddPrimitive?.("relax", placement),
+        },
+        {
+          id: "study-add-run",
+          icon: <Play size={20} />,
+          label: "Run",
+          tooltip: hasStageSelection ? "Insert Run after the selected stage" : "Append Run at the end of the stage sequence",
+          accent: true,
+          iconColor: "text-emerald-400",
+          action: () => p.onStudyAddPrimitive?.("run", placement),
+        },
+        {
+          id: "study-add-eigen",
+          icon: <Sparkles size={20} />,
+          label: "Eigensolve",
+          tooltip: hasStageSelection ? "Insert Eigensolve after the selected stage" : "Append Eigensolve at the end of the stage sequence",
+          accent: true,
+          iconColor: "text-emerald-400",
+          action: () => p.onStudyAddPrimitive?.("eigenmodes", placement),
+        },
+      ],
+    },
+    {
+      id: "study-composite",
+      title: "Composite",
+      actions: [
+        {
+          id: "study-add-hysteresis",
+          icon: <Magnet size={20} />,
+          label: "Hysteresis",
+          tooltip: hasStageSelection ? "Insert Hysteresis Loop after the selected stage" : "Append Hysteresis Loop at the end of the stage sequence",
+          iconColor: "text-violet-400",
+          action: () => p.onStudyAddMacro?.("hysteresis_loop", placement),
+        },
+        {
+          id: "study-add-field-sweep",
+          icon: <FunctionSquare size={20} />,
+          label: "Sweep+Relax",
+          tooltip: hasStageSelection ? "Insert Field Sweep + Relax after the selected stage" : "Append Field Sweep + Relax at the end of the stage sequence",
+          iconColor: "text-violet-400",
+          action: () => p.onStudyAddMacro?.("field_sweep_relax", placement),
+        },
+        {
+          id: "study-add-relax-run",
+          icon: <Layers3 size={20} />,
+          label: "Relax->Run",
+          tooltip: hasStageSelection ? "Insert Relax -> Run after the selected stage" : "Append Relax -> Run at the end of the stage sequence",
+          iconColor: "text-violet-400",
+          action: () => p.onStudyAddMacro?.("relax_run", placement),
+        },
+        {
+          id: "study-add-relax-eigen",
+          icon: <Binary size={20} />,
+          label: "Relax->Eigen",
+          tooltip: hasStageSelection ? "Insert Relax -> Eigensolve after the selected stage" : "Append Relax -> Eigensolve at the end of the stage sequence",
+          iconColor: "text-violet-400",
+          action: () => p.onStudyAddMacro?.("relax_eigenmodes", placement),
+        },
+      ],
+    },
+    {
+      id: "study-selection",
+      title: "Selection",
+      actions: [
+        {
+          id: "study-duplicate",
+          icon: <Plus size={20} />,
+          label: "Duplicate",
+          tooltip: hasStageSelection ? "Duplicate the selected stage node" : "Select a stage node to duplicate it",
+          disabled: !hasStageSelection,
+          action: () => p.onStudyDuplicateSelected?.(),
+          iconColor: "text-amber-400",
+        },
+        {
+          id: "study-toggle",
+          icon: <RefreshCw size={20} />,
+          label: "Enable",
+          tooltip: hasStageSelection ? "Enable or disable the selected stage node" : "Select a stage node to toggle it",
+          disabled: !hasStageSelection,
+          action: () => p.onStudyToggleSelectedEnabled?.(),
+          iconColor: "text-slate-400",
         },
       ],
     },
@@ -533,6 +691,10 @@ function defaultTabForMode(mode: WorkspaceMode | undefined): RibbonTab {
   }
 }
 
+function ribbonTabLabel(tab: RibbonTab): string {
+  return tab === "StudyBuilder" ? "Study" : tab;
+}
+
 /* ── Component ──────────────────────────────────── */
 
 export default function RibbonBar(props: RibbonBarProps) {
@@ -543,6 +705,7 @@ export default function RibbonBar(props: RibbonBarProps) {
   const visibleTabs = useMemo(() => tabsForMode(workspaceStage), [workspaceStage]);
   const defaultTab = defaultTabForMode(workspaceStage);
   const storedTab = stageLayouts[workspaceStage]?.ribbonTab;
+  const studyNode = useMemo(() => parseStudyNodeContext(props.selectedNodeId), [props.selectedNodeId]);
   const activeTab = (storedTab && visibleTabs.includes(storedTab as RibbonTab)
     ? (storedTab as RibbonTab)
     : defaultTab);
@@ -553,12 +716,18 @@ export default function RibbonBar(props: RibbonBarProps) {
     }
   }, [defaultTab, setRibbonTab, storedTab, visibleTabs, workspaceStage]);
 
+  useEffect(() => {
+    if (workspaceStage === "build" && studyNode) {
+      setRibbonTab(workspaceStage, "StudyBuilder");
+    }
+  }, [props.selectedNodeId, setRibbonTab, studyNode, workspaceStage]);
+
   const groups = useMemo(() => {
     switch (activeTab) {
       case "Mesh":
         return buildMeshGroups(props);
       case "StudyBuilder":
-        return buildBuilderGroups(props);
+        return buildStudyBuilderGroups(props, studyNode);
       case "LiveView":
       case "Runtime":
       case "Diagnostics":
@@ -592,6 +761,13 @@ export default function RibbonBar(props: RibbonBarProps) {
     props.selectedQuantity,
     props.antennaSources,
     props.selectedAntennaName,
+    props.canSyncScriptBuilder,
+    props.scriptSyncBusy,
+    props.onStudyAddPrimitive,
+    props.onStudyAddMacro,
+    props.onStudyDuplicateSelected,
+    props.onStudyToggleSelectedEnabled,
+    studyNode,
   ]);
 
   return (
@@ -620,7 +796,7 @@ export default function RibbonBar(props: RibbonBarProps) {
                   : "border-transparent text-muted-foreground hover:text-foreground"
               )}
             >
-              {tab}
+              {ribbonTabLabel(tab)}
             </button>
           ))}
           {activeTab === "Mesh" && (

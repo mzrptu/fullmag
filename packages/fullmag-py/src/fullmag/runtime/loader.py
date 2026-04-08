@@ -25,6 +25,7 @@ class LoadedStage:
         source_root: str | Path | None = None,
         asset_cache: dict[str, dict[str, object] | None] | None = None,
         include_geometry_assets: bool = True,
+        study_pipeline: dict[str, object] | None = None,
     ) -> dict[str, object]:
         return self.problem.to_ir(
             requested_backend=requested_backend,
@@ -35,6 +36,7 @@ class LoadedStage:
             entrypoint_kind=self.entrypoint_kind,
             asset_cache=asset_cache,
             include_geometry_assets=include_geometry_assets,
+            study_pipeline=study_pipeline,
         )
 
 
@@ -48,6 +50,11 @@ class LoadedProblem:
     stages: tuple[LoadedStage, ...] = ()
     workspace_problem: Problem | None = None
 
+    def study_pipeline_document(self) -> dict[str, object] | None:
+        from fullmag.runtime.script_builder import export_study_pipeline_document
+
+        return export_study_pipeline_document(self)
+
     def to_ir(
         self,
         *,
@@ -57,6 +64,7 @@ class LoadedProblem:
         asset_cache: dict[str, dict[str, object] | None] | None = None,
         include_geometry_assets: bool = True,
     ) -> dict[str, object]:
+        study_pipeline = self.study_pipeline_document()
         ir = self.problem.to_ir(
             requested_backend=requested_backend,
             execution_mode=execution_mode,
@@ -66,6 +74,7 @@ class LoadedProblem:
             entrypoint_kind=self.entrypoint_kind,
             asset_cache=asset_cache,
             include_geometry_assets=include_geometry_assets,
+            study_pipeline=study_pipeline,
         )
         if self.workspace_problem is None or self.workspace_problem == self.problem:
             return ir
@@ -79,10 +88,11 @@ class LoadedProblem:
             entrypoint_kind="flat_workspace",
             asset_cache=asset_cache,
             include_geometry_assets=False,
+            study_pipeline=study_pipeline,
         )
         runtime_metadata = ir["problem_meta"]["runtime_metadata"]
         workspace_runtime_metadata = workspace_ir["problem_meta"]["runtime_metadata"]
-        for key in ("model_builder", "script_sync", "domain_frame"):
+        for key in ("model_builder", "script_sync", "domain_frame", "study_pipeline"):
             if key in workspace_runtime_metadata:
                 runtime_metadata[key] = workspace_runtime_metadata[key]
         return ir

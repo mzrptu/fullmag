@@ -2104,6 +2104,20 @@ pub struct FemPlanIR {
     /// Oersted field realization model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oersted_realization: Option<OerstedRealization>,
+
+    /// FEM-029 fix: explicit GPU device index. `None` means use env / default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_device_index: Option<i32>,
+
+    /// FEM-030 fix: explicit MFEM device string (e.g. "ceed-cuda:/gpu/cuda/shared", "cuda", "cpu").
+    /// `None` means use env var `FULLMAG_FEM_MFEM_DEVICE` or compiled-in default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mfem_device_string: Option<String>,
+
+    /// FEM-039 fix: explicit transfer-grid cell size for demag, independent of FE hmax.
+    /// `None` means fall back to `hmax`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demag_transfer_cell_size: Option<f64>,
 }
 
 /// Prescribed-strain magnetoelastic coupling plan for FEM backend.

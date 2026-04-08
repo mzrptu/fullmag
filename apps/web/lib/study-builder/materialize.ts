@@ -67,6 +67,32 @@ function stage(kind: ScriptBuilderStageState["kind"], patch?: Partial<ScriptBuil
 }
 
 function expandMacro(node: MacroStageNode): ScriptBuilderStageState[] {
+  if (node.macro_kind === "hysteresis_loop") {
+    const steps = Math.max(2, Number(node.config.steps ?? 21));
+    const relaxEach = node.config.relax_each !== false;
+    const savePointState = Boolean(node.config.save_point_state);
+    const expanded: ScriptBuilderStageState[] = [];
+    for (let i = 0; i < steps; i += 1) {
+      expanded.push(
+        stage("run", {
+          until_seconds: "1e-12",
+          kind: "run",
+          entrypoint_kind: "run",
+        }),
+      );
+      if (relaxEach) {
+        expanded.push(stage("relax"));
+      }
+      if (savePointState) {
+        expanded.push(
+          stage("save_state", {
+            entrypoint_kind: "save_state",
+          }),
+        );
+      }
+    }
+    return expanded;
+  }
   if (node.macro_kind === "relax_run") {
     return [
       stage("relax"),

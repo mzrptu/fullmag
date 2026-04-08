@@ -11,6 +11,20 @@ use crate::util::{generate_random_unit_vectors, study_universe_metadata, StudyUn
 
 pub(crate) const AIR_OBJECT_SEGMENT_ID: &str = "__air__";
 
+// FEM-014 fix: centralised air-box heuristic defaults.
+// All magic numbers for the air-box are gathered in one place so they can be
+// reviewed, overridden via AirBoxPolicyIR, and traced in run metadata.
+/// Default mesh grading factor for air-box elements.
+const AIRBOX_DEFAULT_GRADING: f64 = 1.4;
+/// Preferred boundary marker value for the air-box outer surface.
+const AIRBOX_DEFAULT_BOUNDARY_MARKER: u32 = 99;
+/// Default air-box shape.
+const AIRBOX_DEFAULT_SHAPE: &str = "bbox";
+/// Default Robin beta mode (dipole approximation).
+const AIRBOX_DEFAULT_ROBIN_BETA_MODE: &str = "dipole";
+/// Default Robin beta factor.
+const AIRBOX_DEFAULT_ROBIN_BETA_FACTOR: f64 = 2.0;
+
 pub(crate) fn mesh_has_air_elements(mesh: &MeshIR) -> bool {
     mesh.element_markers.iter().any(|&marker| marker == 0)
 }
@@ -783,8 +797,8 @@ fn extent_from_bounds(bounds: ([f64; 3], [f64; 3])) -> [f64; 3] {
 }
 
 fn select_airbox_boundary_marker(mesh: &MeshIR) -> (u32, &'static str) {
-    if mesh.boundary_markers.iter().any(|&marker| marker == 99) {
-        (99, "mesh_marker_99")
+    if mesh.boundary_markers.iter().any(|&marker| marker == AIRBOX_DEFAULT_BOUNDARY_MARKER) {
+        (AIRBOX_DEFAULT_BOUNDARY_MARKER, "mesh_marker_99")
     } else {
         let max = mesh.boundary_markers
             .iter()
@@ -793,7 +807,7 @@ fn select_airbox_boundary_marker(mesh: &MeshIR) -> (u32, &'static str) {
             .max();
         match max {
             Some(m) => (m, "mesh_max_marker"),
-            None => (99, "fallback_99"),
+            None => (AIRBOX_DEFAULT_BOUNDARY_MARKER, "fallback_99"),
         }
     }
 }
@@ -879,22 +893,22 @@ pub(crate) fn build_air_box_config(
         (heuristic_marker, heuristic_marker_source)
     };
 
-    let grading = policy.and_then(|p| p.grading).unwrap_or(1.4);
+    let grading = policy.and_then(|p| p.grading).unwrap_or(AIRBOX_DEFAULT_GRADING);
     let shape = policy
         .and_then(|p| p.shape.clone())
-        .unwrap_or_else(|| "bbox".to_string());
+        .unwrap_or_else(|| AIRBOX_DEFAULT_SHAPE.to_string());
 
     let robin_beta_mode = if bc_kind == "robin" {
         Some(
             policy
                 .and_then(|p| p.robin_beta_mode.clone())
-                .unwrap_or_else(|| "dipole".to_string()),
+                .unwrap_or_else(|| AIRBOX_DEFAULT_ROBIN_BETA_MODE.to_string()),
         )
     } else {
         None
     };
     let robin_beta_factor = if bc_kind == "robin" {
-        Some(policy.and_then(|p| p.robin_beta_factor).unwrap_or(2.0))
+        Some(policy.and_then(|p| p.robin_beta_factor).unwrap_or(AIRBOX_DEFAULT_ROBIN_BETA_FACTOR))
     } else {
         None
     };

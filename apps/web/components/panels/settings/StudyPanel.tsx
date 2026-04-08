@@ -1,33 +1,67 @@
 "use client";
 
-import type { ScriptBuilderStageState } from "../../../lib/useSessionStream";
+import { useMemo } from "react";
+import { fmtExp, fmtSIOrDash } from "@/lib/format";
+import {
+  parseStudyNodeContext,
+  type StudyNodeContext,
+} from "@/lib/study-builder/node-context";
+import { materializeStudyPipeline } from "@/lib/study-builder/materialize";
+import { migrateFlatStagesToStudyPipeline } from "@/lib/study-builder/migrate";
+import {
+  findNodeById,
+  patchNode,
+  patchNodeConfig,
+  toggleNodeEnabled,
+} from "@/lib/study-builder/operations";
+import {
+  type MaterializedStageMapEntry,
+  type StudyPipelineDocument,
+  type StudyPipelineNode,
+} from "@/lib/study-builder/types";
+import { summarizeMaterializedStage } from "@/lib/study-builder/summaries";
+import type { ScriptBuilderStageState } from "@/lib/session/types";
+import StageInspector from "@/components/workspace/study-builder/StageInspector";
+import StudyBuilderWorkspace from "@/components/workspace/study-builder/StudyBuilderWorkspace";
+import { IntegratorSettingsPanel, RelaxationSettingsPanel } from "../SolverSettingsPanel";
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
-import { fmtExp, fmtSI, fmtSIOrDash } from "@/lib/format";
+import { Button } from "../../ui/button";
+import SelectField from "../../ui/SelectField";
+import TextField from "../../ui/TextField";
+import SolverSelector from "../../solver/SolverSelector";
 import {
   BACKEND_PROFILES,
   INTEGRATOR_PROFILES,
-  RELAXATION_PROFILES,
   PRECISION_PROFILES,
+  RELAXATION_PROFILES,
 } from "./profiles";
 import {
   humanizeToken,
-  formatVector,
-  formatGrid,
+  precessionModeForPlan,
   studyKindForPlan,
   timestepModeForPlan,
-  precessionModeForPlan,
 } from "./helpers";
-import { SidebarSection, InfoRow, StatusBadge } from "./primitives";
-import TextField from "../../ui/TextField";
-import SelectField from "../../ui/SelectField";
-import { Button } from "../../ui/button";
-import StudyBuilderWorkspace from "@/components/workspace/study-builder/StudyBuilderWorkspace";
-import SolverSelector from "../../solver/SolverSelector";
+import { InfoRow, SidebarSection, StatusBadge } from "./primitives";
 
-const EDITABLE_STAGE_STATES = new Set(["relax", "run", "eigenmodes"]);
+interface StudyPanelProps {
+  nodeId: string;
+}
 
-function eigenBcConfig(stage: ScriptBuilderStageState): Record<string, unknown> {
-  const config =
+interface EigenBcCarrier {
+  eigen_spin_wave_bc?: unknown;
+  eigen_spin_wave_bc_config?: unknown;
+}
+
+const STUDY_ROOT_NODE: StudyNodeContext = { kind: "study-root" };
+
+function stageDisplayName(kind: string): string {
+  if (kind === "eigenmodes") return "Eigensolve";
+  if (kind === "field_sweep_relax" || kind === "hysteresis_loop") return "Hysteresis Loop";
+  return humanizeToken(kind);
+}
+
+function eigenBcConfig(stage: EigenBcCarrier): Record<string, unknown> {
+  const config: Record<string, unknown> =
     stage.eigen_spin_wave_bc_config && typeof stage.eigen_spin_wave_bc_config === "object"
       ? { ...stage.eigen_spin_wave_bc_config }
       : {};
@@ -38,9 +72,9 @@ function eigenBcConfig(stage: ScriptBuilderStageState): Record<string, unknown> 
 }
 
 function patchEigenBcConfig(
-  stage: ScriptBuilderStageState,
+  stage: EigenBcCarrier,
   patch: Record<string, unknown>,
-): Partial<ScriptBuilderStageState> {
+): Record<string, unknown> {
   const next = { ...eigenBcConfig(stage), ...patch };
   return {
     eigen_spin_wave_bc: String(next.kind ?? stage.eigen_spin_wave_bc ?? "free"),
@@ -48,59 +82,103 @@ function patchEigenBcConfig(
   };
 }
 
-function stageTitle(stage: ScriptBuilderStageState, index: number): string {
-  switch (stage.kind) {
-    case "relax":
-      return `Stage ${index + 1} · Relax`;
-    case "run":
-      return `Stage ${index + 1} · Run`;
-    case "eigenmodes":
-      return `Stage ${index + 1} · Eigenmodes`;
-    default:
-      return `Stage ${index + 1} · ${humanizeToken(stage.kind)}`;
+function findMaterializedEntry(
+  entries: MaterializedStageMapEntry[],
+  nodeId: string | null,
+): MaterializedStageMapEntry | null {
+  if (!nodeId) return null;
+  for (const entry of entries) {
+    if (entry.nodeId === nodeId) return entry;
+    if (entry.childEntries?.length) {
+      const child = findMaterializedEntry(entry.childEntries, nodeId);
+      if (child) return child;
+    }
+  }
+  return null;
+}
+
+function builtAuthoringDocument(
+  pipeline: StudyPipelineDocument | null,
+  stages: ScriptBuilderStageState[],
+): StudyPipelineDocument {
+  return pipeline ?? migrateFlatStagesToStudyPipeline(stages);
+}
+
+function syncCompatibilityState(
+  ctx: ReturnType<typeof useControlRoom>,
+  stages: ScriptBuilderStageState[],
+): void {
+  const firstRun = stages.find((stage) => stage.kind === "run");
+  const firstRelax = stages.find((stage) => stage.kind === "relax");
+  if (firstRun?.until_seconds) {
+    ctx.setRunUntilInput(firstRun.until_seconds);
+  }
+  if (firstRelax) {
+    ctx.setSolverSettings((current) => ({
+      ...current,
+      integrator: firstRelax.integrator || current.integrator,
+      fixedTimestep: firstRelax.fixed_timestep || current.fixedTimestep,
+      relaxAlgorithm: firstRelax.relax_algorithm || current.relaxAlgorithm,
+      torqueTolerance: firstRelax.torque_tolerance || current.torqueTolerance,
+      energyTolerance: firstRelax.energy_tolerance || current.energyTolerance,
+      maxRelaxSteps: firstRelax.max_steps || current.maxRelaxSteps,
+    }));
   }
 }
 
-function stageSummary(stage: ScriptBuilderStageState): string {
-  if (stage.kind === "relax") {
-    return [
-      stage.relax_algorithm ? humanizeToken(stage.relax_algorithm) : null,
-      stage.torque_tolerance ? `tol ${stage.torque_tolerance}` : null,
-      stage.max_steps ? `${stage.max_steps} steps` : null,
-    ]
-      .filter(Boolean)
-      .join(" · ") || "Relaxation stage";
-  }
-  if (stage.kind === "run") {
-    return stage.until_seconds ? `Run until ${stage.until_seconds} s` : "Time-evolution stage";
-  }
-  if (stage.kind === "eigenmodes") {
-    return [
-      stage.eigen_count ? `${stage.eigen_count} modes` : null,
-      stage.eigen_target ? humanizeToken(stage.eigen_target) : null,
-      stage.eigen_include_demag ? "demag on" : null,
-    ]
-      .filter(Boolean)
-      .join(" · ") || "Eigenmode analysis";
-  }
-  return stage.entrypoint_kind ? humanizeToken(stage.entrypoint_kind) : "Stage details unavailable";
+function StageSectionNote({
+  title,
+  body,
+}: {
+  title: string;
+  body: string;
+}) {
+  return (
+    <SidebarSection title={title} defaultOpen={true}>
+      <div className="rounded-lg border border-border/35 bg-background/35 p-3 text-[0.74rem] leading-relaxed text-muted-foreground">
+        {body}
+      </div>
+    </SidebarSection>
+  );
 }
 
-function stageBadgeClass(kind: string): string {
-  if (kind === "relax") {
-    return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
-  }
-  if (kind === "run") {
-    return "border-sky-500/30 bg-sky-500/10 text-sky-300";
-  }
-  if (kind === "eigenmodes") {
-    return "border-violet-500/30 bg-violet-500/10 text-violet-300";
-  }
-  return "border-border/40 bg-card/20 text-muted-foreground";
+function StageMaterializedPreview({ stages }: { stages: ScriptBuilderStageState[] }) {
+  return (
+    <SidebarSection title="Materialized Preview" icon="🧱" defaultOpen={true}>
+      {stages.length === 0 ? (
+        <div className="rounded-lg border border-border/35 bg-background/35 p-3 text-[0.74rem] text-muted-foreground">
+          This node does not currently materialize to backend execution steps.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {stages.map((stage, index) => (
+            <div
+              key={`${stage.kind}-${stage.entrypoint_kind}-${index}`}
+              className="rounded-lg border border-border/35 bg-background/35 p-3"
+            >
+              <div className="text-[0.66rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Step {index + 1}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-foreground">
+                {stageDisplayName(stage.kind)}
+              </div>
+              <div className="mt-1 text-[0.72rem] text-muted-foreground">
+                {summarizeMaterializedStage(stage)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </SidebarSection>
+  );
 }
 
-export default function StudyPanel() {
+export default function StudyPanel({ nodeId }: StudyPanelProps) {
   const ctx = useControlRoom();
+  const studyNode = useMemo(
+    () => parseStudyNodeContext(nodeId) ?? STUDY_ROOT_NODE,
+    [nodeId],
+  );
   const solverPlan = ctx.solverPlan;
   const backendProfile = solverPlan?.backendKind ? BACKEND_PROFILES[solverPlan.backendKind] : null;
   const integratorProfile = solverPlan?.integrator ? INTEGRATOR_PROFILES[solverPlan.integrator] : null;
@@ -114,10 +192,6 @@ export default function StudyPanel() {
       ? `${ctx.totalCells.toLocaleString()} cells`
       : "—";
   const isBuilderAuthoringMode = ctx.workspaceMode === "build";
-  const stageEditingDisabled =
-    !isBuilderAuthoringMode || ctx.commandBusy || !(ctx.awaitingCommand || ctx.isWaitingForCompute);
-  const firstRunStageIndex = ctx.studyStages.findIndex((stage) => stage.kind === "run");
-  const firstRelaxStageIndex = ctx.studyStages.findIndex((stage) => stage.kind === "relax");
   const stageMatch = (ctx.activity.label ?? "").match(/stage\s+(\d+)\/(\d+)/i);
   const activeStageIndex = stageMatch ? Math.max(0, Number(stageMatch[1]) - 1) : null;
   const completedStageCount = stageMatch
@@ -126,73 +200,204 @@ export default function StudyPanel() {
       ? ctx.studyStages.length
       : 0;
 
-  const updateStage = (index: number, patch: Partial<ScriptBuilderStageState>) => {
-    ctx.setStudyStages((current) =>
-      current.map((stage, stageIndex) => (
-        stageIndex === index ? { ...stage, ...patch } : stage
-      )),
-    );
-    if (index === firstRunStageIndex && typeof patch.until_seconds === "string") {
-      ctx.setRunUntilInput(patch.until_seconds);
+  const authoringDocument = useMemo(
+    () => builtAuthoringDocument((ctx.studyPipeline as StudyPipelineDocument | null) ?? null, ctx.studyStages),
+    [ctx.studyPipeline, ctx.studyStages],
+  );
+  const materialized = useMemo(
+    () => materializeStudyPipeline(authoringDocument),
+    [authoringDocument],
+  );
+
+  const selectedAuthoringNode = useMemo<StudyPipelineNode | null>(() => {
+    if (studyNode.kind !== "study-stage") return null;
+    if (studyNode.source === "pipeline") {
+      return findNodeById(authoringDocument.nodes, studyNode.stageKey);
     }
-    if (index === firstRelaxStageIndex) {
-      ctx.setSolverSettings((current) => ({
-        ...current,
-        ...(typeof patch.relax_algorithm === "string" ? { relaxAlgorithm: patch.relax_algorithm } : {}),
-        ...(typeof patch.torque_tolerance === "string" ? { torqueTolerance: patch.torque_tolerance } : {}),
-        ...(typeof patch.energy_tolerance === "string" ? { energyTolerance: patch.energy_tolerance } : {}),
-        ...(typeof patch.max_steps === "string" ? { maxRelaxSteps: patch.max_steps } : {}),
-      }));
+    const flatIndex = Number(studyNode.stageKey);
+    return Number.isFinite(flatIndex) ? authoringDocument.nodes[flatIndex] ?? null : null;
+  }, [authoringDocument.nodes, studyNode]);
+
+  const selectedCompiledStages = useMemo(() => {
+    if (studyNode.kind !== "study-stage") return [];
+    if (studyNode.source === "pipeline" && selectedAuthoringNode) {
+      const entry = findMaterializedEntry(materialized.map, selectedAuthoringNode.id);
+      return entry
+        ? entry.stageIndexes.map((index) => materialized.stages[index]).filter(Boolean)
+        : [];
     }
+    const flatIndex = Number(studyNode.stageKey);
+    return Number.isFinite(flatIndex) && ctx.studyStages[flatIndex] ? [ctx.studyStages[flatIndex]] : [];
+  }, [ctx.studyStages, materialized.map, materialized.stages, selectedAuthoringNode, studyNode]);
+
+  const selectedDiagnostics = useMemo(() => {
+    if (studyNode.kind !== "study-stage" || !selectedAuthoringNode) return [];
+    return materialized.diagnostics.filter((item) => item.nodeId === selectedAuthoringNode.id);
+  }, [materialized.diagnostics, selectedAuthoringNode, studyNode]);
+
+  const commitDocument = (next: StudyPipelineDocument) => {
+    const compiled = materializeStudyPipeline(next);
+    ctx.setStudyPipeline(next);
+    ctx.setStudyStages(compiled.stages);
+    syncCompatibilityState(ctx, compiled.stages);
   };
 
-  const insightCards = [
-    {
-      title: "Backend Profile",
-      subtitle: backendProfile?.label ?? humanizeToken(solverPlan?.backendKind),
-      body: backendProfile
-        ? `${backendProfile.performance} ${backendProfile.physics}`
-        : "Backend metadata will appear here as soon as the live workspace publishes the execution plan.",
-    },
-    {
-      title: "Integrator Behavior",
-      subtitle: integratorProfile?.label ?? humanizeToken(solverPlan?.integrator),
-      body: integratorProfile
-        ? `${integratorProfile.performance} ${integratorProfile.physics}`
-        : "Integrator details are not available yet for this workspace.",
-    },
-    {
-      title: "Precision And Stability",
-      subtitle: precisionProfile?.label ?? humanizeToken(solverPlan?.precision ?? ctx.session?.precision),
-      body: precisionProfile
-        ? `${precisionProfile.performance} ${precisionProfile.physics}`
-        : "Precision metadata is not available yet.",
-    },
-    {
-      title: solverPlan?.relaxation ? "Relaxation Physics" : "Live Performance Snapshot",
-      subtitle: solverPlan?.relaxation
-        ? (relaxationProfile?.label ?? humanizeToken(solverPlan.relaxation.algorithm))
-        : ctx.activity.label,
-      body: solverPlan?.relaxation
-        ? (relaxationProfile
-          ? `${relaxationProfile.performance} ${relaxationProfile.physics}`
-          : "Relaxation is active, but a richer algorithm profile is not available yet.")
-        : `Current throughput: ${ctx.stepsPerSec > 0 ? `${ctx.stepsPerSec.toFixed(1)} st/s` : "—"}. Current dt: ${fmtSIOrDash(ctx.effectiveDt, "s", ctx.hasSolverTelemetry)}. Active workload: ${workloadLabel}.`,
-    },
-  ];
+  const patchSelectedNode = (patch: Record<string, unknown>) => {
+    if (!selectedAuthoringNode) return;
+    commitDocument(patchNodeConfig(authoringDocument, selectedAuthoringNode.id, patch));
+  };
 
-  return (
+  const renderStudyRoot = () => (
     <>
       <SidebarSection
-        title="Study Builder"
+        title="Study"
+        icon="🧭"
+        badge={`${authoringDocument.nodes.length} stages`}
+        defaultOpen={true}
+      >
+        <div className="rounded-lg border border-border/35 bg-background/35 p-3 text-[0.74rem] leading-relaxed text-muted-foreground">
+          This is the COMSOL-like study subsystem root. Authoring lives under <span className="font-semibold text-foreground">Defaults</span> and <span className="font-semibold text-foreground">Stages</span>, while runtime progress stays in the lower dock and status bar.
+        </div>
+        <div className="mt-3 grid gap-1">
+          <InfoRow label="Study kind" value={studyKindForPlan(solverPlan)} />
+          <InfoRow label="Stages" value={`${authoringDocument.nodes.length}`} />
+          <InfoRow label="Compiled steps" value={`${materialized.stages.length}`} />
+          <InfoRow label="Workspace status" value={ctx.workspaceStatus} />
+          <InfoRow label="Active workload" value={workloadLabel} />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" type="button" onClick={() => ctx.setSelectedSidebarNodeId("study-defaults")}>
+            Open Defaults
+          </Button>
+          <Button size="sm" variant="outline" type="button" onClick={() => ctx.setSelectedSidebarNodeId("study-stages")}>
+            Open Stages
+          </Button>
+        </div>
+      </SidebarSection>
+
+      <SidebarSection title="Validation Snapshot" icon="✅" defaultOpen={true}>
+        <div className="grid gap-1">
+          <InfoRow label="Diagnostics" value={`${materialized.diagnostics.length}`} />
+          <InfoRow label="Execution step map" value={`${materialized.map.length} entries`} />
+          <InfoRow label="Current stage" value={activeStageIndex != null ? `${activeStageIndex + 1}` : "—"} />
+          <InfoRow label="Completed stages" value={`${completedStageCount}`} />
+        </div>
+      </SidebarSection>
+    </>
+  );
+
+  const renderDefaultsOverview = () => (
+    <>
+      <SidebarSection title="Study Defaults" icon="⚙" defaultOpen={true}>
+        <div className="rounded-lg border border-border/35 bg-background/35 p-3 text-[0.74rem] leading-relaxed text-muted-foreground">
+          Defaults define the baseline runtime, solver and output policy inherited by newly authored stages. Individual stages can diverge later, but this is the first place where the study contract should be configured.
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" type="button" onClick={() => ctx.setSelectedSidebarNodeId("study-defaults-runtime")}>
+            Runtime & Backend
+          </Button>
+          <Button size="sm" variant="outline" type="button" onClick={() => ctx.setSelectedSidebarNodeId("study-defaults-solver")}>
+            Solver Defaults
+          </Button>
+          <Button size="sm" variant="outline" type="button" onClick={() => ctx.setSelectedSidebarNodeId("study-defaults-outputs")}>
+            Outputs Defaults
+          </Button>
+        </div>
+      </SidebarSection>
+      <SidebarSection title="Current Default Snapshot" icon="📌" defaultOpen={true}>
+        <div className="grid gap-1">
+          <InfoRow label="Requested backend" value={humanizeToken(ctx.requestedRuntimeSelection.requested_backend)} />
+          <InfoRow label="Requested device" value={humanizeToken(ctx.requestedRuntimeSelection.requested_device)} />
+          <InfoRow label="Requested precision" value={humanizeToken(ctx.requestedRuntimeSelection.requested_precision)} />
+          <InfoRow label="Integrator" value={ctx.solverSettings.integrator || "—"} />
+          <InfoRow label="Fixed dt" value={ctx.solverSettings.fixedTimestep || "adaptive / default"} />
+          <InfoRow label="Relax algorithm" value={humanizeToken(ctx.solverSettings.relaxAlgorithm)} />
+        </div>
+      </SidebarSection>
+    </>
+  );
+
+  const renderRuntimeDefaults = () => (
+    <>
+      <SidebarSection title="Runtime & Backend" icon="⚙" defaultOpen={true}>
+        <SolverSelector />
+      </SidebarSection>
+      <SidebarSection title="Resolved Runtime" icon="🧠" defaultOpen={true}>
+        <div className="grid gap-1">
+          <InfoRow label="State" value={ctx.workspaceStatus} />
+          <InfoRow label="Engine" value={ctx.runtimeEngineLabel ?? ctx.sessionFooter.requestedBackend ?? "—"} />
+          <InfoRow label="Backend" value={humanizeToken(solverPlan?.resolvedBackend ?? solverPlan?.backendKind ?? ctx.sessionFooter.requestedBackend)} />
+          <InfoRow label="Mode" value={humanizeToken(solverPlan?.executionMode ?? ctx.session?.execution_mode)} />
+          <InfoRow label="Precision" value={humanizeToken(solverPlan?.precision ?? ctx.session?.precision)} />
+          <InfoRow label="Workload" value={workloadLabel} />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {backendProfile && <StatusBadge label={backendProfile.label} />}
+          {precisionProfile && <StatusBadge label={precisionProfile.label} />}
+          {solverPlan?.demagEnabled && <StatusBadge label="Demag" />}
+          {solverPlan?.exchangeEnabled && <StatusBadge label="Exchange" />}
+        </div>
+      </SidebarSection>
+    </>
+  );
+
+  const renderSolverDefaults = () => (
+    <>
+      <SidebarSection title="Solver Defaults" icon="🧮" defaultOpen={true}>
+        <div className="rounded-lg border border-border/35 bg-background/35 p-3 text-[0.74rem] leading-relaxed text-muted-foreground">
+          These defaults define the baseline time integration and relaxation policy for newly authored stages. Stage-local overrides should be exceptional, not the main authoring path.
+        </div>
+        <div className="mt-3 grid gap-1">
+          <InfoRow label="Integrator" value={integratorProfile?.label ?? humanizeToken(solverPlan?.integrator)} />
+          <InfoRow label="Dt control" value={timestepModeForPlan(solverPlan)} />
+          <InfoRow label="Precession" value={precessionModeForPlan(solverPlan)} />
+          <InfoRow label="Gamma" value={solverPlan?.gyromagneticRatio != null ? `${fmtExp(solverPlan.gyromagneticRatio)} m/(A·s)` : "—"} />
+          <InfoRow label="Relax algorithm" value={relaxationProfile?.label ?? humanizeToken(ctx.solverSettings.relaxAlgorithm)} />
+        </div>
+      </SidebarSection>
+      <SidebarSection title="Integrator Defaults" icon="⏱" defaultOpen={true}>
+        <IntegratorSettingsPanel
+          settings={ctx.solverSettings}
+          onChange={ctx.setSolverSettings}
+          solverRunning={ctx.workspaceStatus === "running"}
+        />
+      </SidebarSection>
+      <SidebarSection title="Relaxation Defaults" icon="🎯" defaultOpen={true}>
+        <RelaxationSettingsPanel
+          settings={ctx.solverSettings}
+          onChange={ctx.setSolverSettings}
+          solverRunning={ctx.workspaceStatus === "running"}
+        />
+      </SidebarSection>
+    </>
+  );
+
+  const renderOutputsDefaults = () => (
+    <>
+      <SidebarSection title="Outputs Defaults" icon="💾" defaultOpen={true}>
+        <div className="rounded-lg border border-border/35 bg-background/35 p-3 text-[0.74rem] leading-relaxed text-muted-foreground">
+          Stage-specific output authoring is not yet a first-class contract in the builder. For now this node exposes the inherited live output surface and current artifact availability, so the `Study` tree already has a dedicated place for future output policies instead of overloading the runtime panels.
+        </div>
+        <div className="mt-3 grid gap-1">
+          <InfoRow label="Published quantities" value={`${ctx.quantities.length}`} />
+          <InfoRow label="Artifacts" value={`${ctx.artifacts.length}`} />
+          <InfoRow label="State I/O" value={ctx.stateIoBusy ? "busy" : "available"} />
+          <InfoRow label="Current dt" value={fmtSIOrDash(ctx.effectiveDt, "s", ctx.hasSolverTelemetry)} />
+        </div>
+      </SidebarSection>
+    </>
+  );
+
+  const renderStagesPanel = () => (
+    <>
+      <SidebarSection
+        title="Stages"
         icon="🧩"
         badge={isBuilderAuthoringMode ? "authoring" : "read-only"}
         defaultOpen={true}
       >
         <div className="mb-3 rounded-lg border border-border/35 bg-background/35 p-3 text-[0.74rem] text-muted-foreground">
-          This panel is the frontend stage authoring surface. It imports flat stages generated by Python scripts
-          such as <span className="font-mono text-foreground">flat_relax</span>, shows them as editable pipeline nodes,
-          and lets you add more stages from the UI until the whole simulation can be built without touching Python.
+          This is the COMSOL-like stage authoring surface. Add, reorder and configure user-facing stages here. Backend `flat stages` are materialized artifacts derived from this sequence, not the primary editing surface.
         </div>
         {isBuilderAuthoringMode ? (
           <StudyBuilderWorkspace
@@ -200,13 +405,15 @@ export default function StudyPanel() {
             pipeline={ctx.studyPipeline}
             activeStageIndex={activeStageIndex}
             completedStageCount={completedStageCount}
-            onChangeStages={(next) => ctx.setStudyStages(next)}
+            onChangeStages={(next) => {
+              ctx.setStudyStages(next);
+              syncCompatibilityState(ctx, next);
+            }}
             onChangePipeline={(next) => ctx.setStudyPipeline(next)}
           />
         ) : (
           <div className="rounded-lg border border-border/35 bg-background/35 p-3 text-[0.74rem] text-muted-foreground">
-            Study pipeline authoring is available in <span className="font-semibold text-foreground">Model Builder</span>.
-            In this stage you can monitor execution, runtime telemetry and results without mutating pipeline structure.
+            Stage authoring is available in <span className="font-semibold text-foreground">Model Builder</span>.
             <div className="mt-3">
               <Button size="sm" variant="outline" type="button" onClick={() => ctx.setWorkspaceMode("build")}>
                 Switch To Model Builder
@@ -215,445 +422,359 @@ export default function StudyPanel() {
           </div>
         )}
       </SidebarSection>
+    </>
+  );
 
-      <SidebarSection title="Backend Configuration" icon="⚙" defaultOpen={true}>
-        <SolverSelector />
-        <div className="h-px bg-border/40" />
-        <div className="flex flex-col gap-1">
-          <InfoRow label="State" value={ctx.workspaceStatus} />
-          <InfoRow label="Study" value={studyKindForPlan(solverPlan)} />
-          <InfoRow label="Engine" value={ctx.runtimeEngineLabel ?? ctx.sessionFooter.requestedBackend ?? "—"} />
-          <div className="h-px bg-border/40 my-1" />
-          <InfoRow label="Backend" value={humanizeToken(solverPlan?.resolvedBackend ?? solverPlan?.backendKind ?? ctx.sessionFooter.requestedBackend)} />
-          <InfoRow label="Mode" value={humanizeToken(solverPlan?.executionMode ?? ctx.session?.execution_mode)} />
-          <InfoRow label="Precision" value={humanizeToken(solverPlan?.precision ?? ctx.session?.precision)} />
-          <div className="h-px bg-border/40 my-1" />
-          <InfoRow label="Integrator" value={integratorProfile?.label ?? humanizeToken(solverPlan?.integrator)} />
-          <InfoRow label="Δt control" value={timestepModeForPlan(solverPlan)} />
-          <InfoRow label="Precession" value={precessionModeForPlan(solverPlan)} />
-          <div className="h-px bg-border/40 my-1" />
-          <InfoRow label="γ" value={solverPlan?.gyromagneticRatio != null ? `${fmtExp(solverPlan.gyromagneticRatio)} m/(A·s)` : "—"} />
-          <InfoRow label="Exchange BC" value={humanizeToken(solverPlan?.exchangeBoundary)} />
-          <InfoRow label="Workload" value={workloadLabel} />
-          <div className="h-px bg-border/40 my-1" />
-          <InfoRow
-            label="Discretization"
-            value={!solverPlan
-              ? "—"
-              : solverPlan.backendKind === "fem"
-              ? `P${solverPlan.feOrder ?? "?"} · hmax ${solverPlan.hmax != null ? fmtSI(solverPlan.hmax, "m") : "—"}`
-              : `${formatGrid(solverPlan?.gridCells ?? null)} cells · ${formatVector(solverPlan?.cellSize ?? null, "m")}`}
+  const renderStageSpecificContent = (
+    node: StudyPipelineNode,
+    context: Extract<StudyNodeContext, { kind: "study-stage" }>,
+  ) => {
+    const detail = context.detail ?? "overview";
+    if (detail === "overview") {
+      return (
+        <>
+          <StageInspector
+            node={node}
+            onRename={(value) => commitDocument(patchNode(authoringDocument, node.id, { label: value }))}
+            onToggleEnabled={() => commitDocument(toggleNodeEnabled(authoringDocument, node.id))}
+            onPatchConfig={patchSelectedNode}
+            onPatchNotes={(value) => commitDocument(patchNode(authoringDocument, node.id, { notes: value }))}
+            compiledStages={selectedCompiledStages}
+            diagnostics={selectedDiagnostics}
           />
-          <InfoRow label="External field" value={formatVector(solverPlan?.externalField ?? null, "T")} />
+        </>
+      );
+    }
 
-          {(solverPlan?.fixedTimestep != null || solverPlan?.adaptive) && (
-            <>
-              <div className="h-px bg-border/40 my-1" />
-              {solverPlan?.fixedTimestep != null && <InfoRow label="Fixed Δt" value={fmtSI(solverPlan.fixedTimestep, "s")} />}
-              {solverPlan?.adaptive && (
-                <>
-                  <InfoRow label="Adaptive atol" value={solverPlan.adaptive.atol != null ? fmtExp(solverPlan.adaptive.atol) : "—"} />
-                  <InfoRow label="Adaptive dt₀" value={solverPlan.adaptive.dtInitial != null ? fmtSI(solverPlan.adaptive.dtInitial, "s") : "—"} />
-                  <InfoRow label="Adaptive range" value={`${solverPlan.adaptive.dtMin != null ? fmtSI(solverPlan.adaptive.dtMin, "s") : "—"} → ${solverPlan.adaptive.dtMax != null ? fmtSI(solverPlan.adaptive.dtMax, "s") : "—"}`} />
-                </>
-              )}
-            </>
-          )}
-
-          {solverPlan?.relaxation && (
-            <>
-              <div className="h-px bg-border/40 my-1" />
-              <InfoRow label="Relax algorithm" value={relaxationProfile?.label ?? humanizeToken(solverPlan.relaxation.algorithm)} />
-              <InfoRow label="Max steps" value={solverPlan.relaxation.maxSteps != null ? solverPlan.relaxation.maxSteps.toLocaleString() : "—"} />
-              <InfoRow label="Torque tol." value={solverPlan.relaxation.torqueTolerance != null ? fmtExp(solverPlan.relaxation.torqueTolerance) : "—"} />
-              <InfoRow label="Energy tol." value={solverPlan.relaxation.energyTolerance != null ? fmtExp(solverPlan.relaxation.energyTolerance) : "—"} />
-            </>
-          )}
-
-          <div className="flex flex-wrap gap-1.5 mt-3 pt-2 border-t border-border/40">
-            {solverPlan?.exchangeEnabled && <StatusBadge label="Exchange" />}
-            {solverPlan?.demagEnabled && <StatusBadge label="Demag" />}
-            {solverPlan?.externalField?.some((value) => value !== 0) && <StatusBadge label="Zeeman" />}
-            {solverPlan?.adaptive && <StatusBadge label="Adaptive Δt" />}
-            {solverPlan?.relaxation && <StatusBadge label="Relaxation stage" />}
-            {ctx.studyStages.some((s) => s.kind === "eigenmodes") && <StatusBadge label="Eigenmode stage" />}
-          </div>
-
-          {solverPlan?.notes.length ? (
-            <div className="mt-4 flex flex-col gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-md shadow-sm">
-              {solverPlan.notes.map((note) => (
-                <div key={note} className="text-xs text-amber-600/90 font-medium leading-relaxed">{note}</div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </SidebarSection>
-
-      <SidebarSection title="Stage Sequence" icon="📋" defaultOpen={true}>
-        {ctx.studyStages.length > 0 ? (
-          <div className="flex flex-col gap-3">
-            {ctx.studyStages.map((stage, index) => (
-              <div key={`${stage.kind}-${index}-${stage.entrypoint_kind}`} className="rounded-xl border border-border/50 bg-card/30 p-3.5 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex flex-col gap-1">
-                    <div className="text-[0.65rem] font-black uppercase tracking-[0.18em] text-muted-foreground">
-                      {stageTitle(stage, index)}
-                    </div>
-                    <div className="text-sm font-semibold text-foreground">{stageSummary(stage)}</div>
-                    <div className="text-[0.7rem] text-muted-foreground mt-0.5">
-                      Entrypoint: <span className="font-mono text-foreground/90">{stage.entrypoint_kind || "—"}</span>
-                    </div>
-                  </div>
-                  <span className={`inline-flex rounded-md border px-2 py-1 text-[0.55rem] font-bold uppercase tracking-[0.18em] ${stageBadgeClass(stage.kind)}`}>
-                    {humanizeToken(stage.kind)}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 mt-4">
-                  <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-background/20 p-2.5 shadow-inner shadow-black/5">
-                    <span className="text-[0.55rem] font-medium uppercase tracking-wider text-muted-foreground">Integrator</span>
-                    <span className="font-mono text-xs text-foreground">{humanizeToken(stage.integrator)}</span>
-                  </div>
-                  <div className="flex flex-col gap-1 rounded-lg border border-border/30 bg-background/20 p-2.5 shadow-inner shadow-black/5">
-                    <span className="text-[0.55rem] font-medium uppercase tracking-wider text-muted-foreground">Fixed Δt</span>
-                    <span className="font-mono text-xs text-foreground">{stage.fixed_timestep || "adaptive / default"}</span>
-                  </div>
-                </div>
-
-                {isBuilderAuthoringMode && stage.kind === "run" && (
-                  <div className="mt-3">
-                    <TextField
-                      label="Run until [s]"
-                      value={stage.until_seconds || ""}
-                      onchange={(e) => updateStage(index, { until_seconds: e.target.value })}
-                      placeholder="1e-12"
-                      disabled={stageEditingDisabled}
-                      mono
-                      tooltip="Target simulation physical time for this execution stage. Reaching this time completes the stage."
-                    />
-                  </div>
-                )}
-
-                {isBuilderAuthoringMode && stage.kind === "relax" && (
-                  <div className="grid grid-cols-2 gap-3 mt-3">
-                    <div className="col-span-2">
-                      <SelectField
-                        label="Relax algorithm"
-                        value={stage.relax_algorithm || "llg_overdamped"}
-                        onchange={(val) => updateStage(index, { relax_algorithm: val })}
-                        disabled={stageEditingDisabled}
-                        options={Object.entries(RELAXATION_PROFILES).map(([value, profile]) => ({
-                          value,
-                          label: profile.label,
-                        }))}
-                        tooltip="Algorithm used to minimize the system energy. Overdamped LLG or steepest descent are common for finding the ground state."
-                      />
-                    </div>
-                    <div>
-                      <TextField
-                        label="Max steps"
-                        value={stage.max_steps || ""}
-                        onchange={(e) => updateStage(index, { max_steps: e.target.value })}
-                        placeholder="5000"
-                        disabled={stageEditingDisabled}
-                        mono
-                        tooltip="Maximum allowed iterations for the relaxation stage before timing out or moving on."
-                      />
-                    </div>
-                    <div>
-                      <TextField
-                        label="Torque tol."
-                        value={stage.torque_tolerance || ""}
-                        onchange={(e) => updateStage(index, { torque_tolerance: e.target.value })}
-                        placeholder="1e-6"
-                        disabled={stageEditingDisabled}
-                        mono
-                        tooltip="Stopping criterion based on the maximum normalized torque (dm/dt) across all cells."
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <TextField
-                        label="Energy tol."
-                        value={stage.energy_tolerance || ""}
-                        onchange={(e) => updateStage(index, { energy_tolerance: e.target.value })}
-                        placeholder="disabled"
-                        disabled={stageEditingDisabled}
-                        mono
-                        tooltip="Stopping criterion based on the fractional energy change between steps."
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {isBuilderAuthoringMode && stage.kind === "eigenmodes" && (
-                  <div className="grid grid-cols-2 gap-3 mt-3">
-                    <div>
-                      <TextField
-                        label="Mode count"
-                        value={stage.eigen_count || ""}
-                        onchange={(e) => updateStage(index, { eigen_count: e.target.value })}
-                        placeholder="10"
-                        disabled={stageEditingDisabled}
-                        mono
-                        tooltip="Number of eigenmodes to compute."
-                      />
-                    </div>
-                    <div>
-                      <SelectField
-                        label="Target"
-                        value={stage.eigen_target || "lowest"}
-                        onchange={(val) => updateStage(index, { eigen_target: val })}
-                        disabled={stageEditingDisabled}
-                        options={[
-                          { value: "lowest", label: "Lowest freq." },
-                          { value: "nearest", label: "Nearest to target" },
-                        ]}
-                        tooltip="Which part of the spectrum to extract."
-                      />
-                    </div>
-                    <div>
-                      <TextField
-                        label="Target freq. [Hz]"
-                        value={stage.eigen_target_frequency || ""}
-                        onchange={(e) => updateStage(index, { eigen_target_frequency: e.target.value })}
-                        placeholder="required for nearest"
-                        disabled={stageEditingDisabled || (stage.eigen_target || "lowest") !== "nearest"}
-                        mono
-                        tooltip="Frequency target used when the eigen extraction mode is 'nearest'."
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <SelectField
-                        label="Equilibrium source"
-                        value={stage.eigen_equilibrium_source || "relax"}
-                        onchange={(val) => updateStage(index, { eigen_equilibrium_source: val })}
-                        disabled={stageEditingDisabled}
-                        options={[
-                          { value: "relax", label: "From relaxation stage" },
-                          { value: "provided", label: "Supplied initial state" },
-                          { value: "artifact", label: "Artifact file" },
-                        ]}
-                        tooltip="Origin of the equilibrium magnetization used to linearise the LLG."
-                      />
-                    </div>
-                    <div>
-                      <SelectField
-                        label="Normalization"
-                        value={stage.eigen_normalization || "unit_l2"}
-                        onchange={(val) => updateStage(index, { eigen_normalization: val })}
-                        disabled={stageEditingDisabled}
-                        options={[
-                          { value: "unit_l2", label: "Unit L2" },
-                          { value: "unit_max_amplitude", label: "Unit max amplitude" },
-                        ]}
-                        tooltip="How the computed eigenvectors are normalised before output."
-                      />
-                    </div>
-                    <div>
-                      <SelectField
-                        label="Damping"
-                        value={stage.eigen_damping_policy || "ignore"}
-                        onchange={(val) => updateStage(index, { eigen_damping_policy: val })}
-                        disabled={stageEditingDisabled}
-                        options={[
-                          { value: "ignore", label: "Ignore damping" },
-                          { value: "include", label: "Include damping" },
-                        ]}
-                        tooltip="Whether damping should be incorporated into the linearized eigen operator."
-                      />
-                    </div>
-                    <div>
-                      <TextField
-                        label="k-vector"
-                        value={stage.eigen_k_vector || ""}
-                        onchange={(e) => updateStage(index, { eigen_k_vector: e.target.value })}
-                        placeholder="kx, ky, kz"
-                        disabled={stageEditingDisabled}
-                        mono
-                        tooltip="Single Bloch wave-vector sample written as comma-separated components."
-                      />
-                    </div>
-                    <div>
-                      <SelectField
-                        label="Spin-wave BC"
-                        value={stage.eigen_spin_wave_bc || "free"}
-                        onchange={(val) => updateStage(index, patchEigenBcConfig(stage, { kind: val }))}
-                        disabled={stageEditingDisabled}
-                        options={[
-                          { value: "free", label: "Free" },
-                          { value: "pinned", label: "Pinned" },
-                          { value: "periodic", label: "Periodic" },
-                          { value: "floquet", label: "Floquet" },
-                          { value: "surface_anisotropy", label: "Surface anisotropy" },
-                        ]}
-                        tooltip="Boundary semantics for the linearized spin-wave eigenproblem."
-                      />
-                    </div>
-                    {(stage.eigen_spin_wave_bc === "periodic" || stage.eigen_spin_wave_bc === "floquet") && (
-                      <div>
-                        <TextField
-                          label="Boundary pair id"
-                          value={typeof eigenBcConfig(stage).boundary_pair_id === "string" ? String(eigenBcConfig(stage).boundary_pair_id) : ""}
-                          onchange={(e) =>
-                            updateStage(
-                              index,
-                              patchEigenBcConfig(stage, {
-                                boundary_pair_id: e.target.value.trim() || null,
-                              }),
-                            )
-                          }
-                          placeholder="x_faces"
-                          disabled={stageEditingDisabled}
-                          mono
-                          tooltip="Pair id of the periodic/Floquet boundary relation on the mesh."
-                        />
-                      </div>
-                    )}
-                    {stage.eigen_spin_wave_bc === "surface_anisotropy" && (
-                      <>
-                        <div>
-                          <TextField
-                            label="Surface Ks"
-                            value={
-                              typeof eigenBcConfig(stage).surface_anisotropy_ks === "number"
-                                ? String(eigenBcConfig(stage).surface_anisotropy_ks)
-                                : ""
-                            }
-                            onchange={(e) =>
-                              updateStage(
-                                index,
-                                patchEigenBcConfig(stage, {
-                                  surface_anisotropy_ks:
-                                    e.target.value.trim().length > 0 ? Number(e.target.value) : null,
-                                }),
-                              )
-                            }
-                            placeholder="5e-4"
-                            disabled={stageEditingDisabled}
-                            mono
-                            tooltip="Surface anisotropy constant Ks for the boundary operator."
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <TextField
-                            label="Surface axis"
-                            value={
-                              Array.isArray(eigenBcConfig(stage).surface_anisotropy_axis)
-                                ? (eigenBcConfig(stage).surface_anisotropy_axis as number[]).join(", ")
-                                : ""
-                            }
-                            onchange={(e) => {
-                              const raw = e.target.value.trim();
-                              const parsed = raw
-                                ? raw.split(",").map((component) => Number(component.trim()))
-                                : [];
-                              updateStage(
-                                index,
-                                patchEigenBcConfig(stage, {
-                                  surface_anisotropy_axis:
-                                    parsed.length === 3 && parsed.every(Number.isFinite)
-                                      ? [parsed[0], parsed[1], parsed[2]]
-                                      : null,
-                                }),
-                              );
-                            }}
-                            placeholder="0, 0, 1"
-                            disabled={stageEditingDisabled}
-                            mono
-                            tooltip="Surface anisotropy axis as comma-separated xyz components."
-                          />
-                        </div>
-                      </>
-                    )}
-                    <div className="col-span-2 flex items-center gap-2 rounded-lg border border-border/30 bg-background/20 p-2.5">
-                      <input
-                        type="checkbox"
-                        id={`eigen-demag-${index}`}
-                        checked={stage.eigen_include_demag}
-                        disabled={stageEditingDisabled}
-                        onChange={(e) => updateStage(index, { eigen_include_demag: e.target.checked })}
-                        className="h-3.5 w-3.5 rounded accent-violet-500"
-                      />
-                      <label htmlFor={`eigen-demag-${index}`} className="text-xs font-medium text-foreground select-none cursor-pointer">
-                        Include demagnetization in eigen operator
-                      </label>
-                    </div>
-                  </div>
-                )}
-
-                {isBuilderAuthoringMode && !EDITABLE_STAGE_STATES.has(stage.kind) && (
-                  <div className="mt-3 rounded-lg border border-border/30 bg-background/20 p-2.5 text-xs text-muted-foreground leading-relaxed">
-                    This stage is visible in the builder sequence, but inline editing is not wired yet for this study kind.
-                  </div>
-                )}
-                {!isBuilderAuthoringMode && (
-                  <div className="mt-3 rounded-lg border border-border/30 bg-background/20 p-2.5 text-xs text-muted-foreground leading-relaxed">
-                    Stage authoring is disabled in this mode. Switch to <span className="font-semibold text-foreground">Model Builder</span> to edit sequence parameters.
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="rounded-xl border border-dashed border-border/50 bg-card/20 p-4 text-sm text-muted-foreground leading-relaxed">
-            No scripted stage sequence is attached to this workspace yet. Flat scripts that call `fm.relax(...)`, `fm.run(...)`, or a sequence of both will appear here automatically.
-          </div>
-        )}
-      </SidebarSection>
-
-      <SidebarSection title="Runtime Settings" icon="🎛" defaultOpen={true}>
-        <div className="flex flex-col gap-3">
-          <TextField
-            label="Run until [s]"
-            value={ctx.runUntilInput || ""}
-            onchange={(e) => ctx.setRunUntilInput(e.target.value)}
-            disabled={stageEditingDisabled}
-            mono
-            tooltip="Simulation target time for the next interactive run command."
+    if (detail === "solver") {
+      if (node.node_kind !== "primitive") {
+        return (
+          <StageSectionNote
+            title="Stage Solver"
+            body="This macro stage expands into multiple backend execution steps. Solver details are inherited by the generated steps and are best reviewed in the materialized preview."
           />
-          <div className="grid grid-cols-2 gap-3 mt-1">
-            <TextField
-              label="Relax steps"
-              value={ctx.solverSettings.maxRelaxSteps || ""}
-              onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, maxRelaxSteps: e.target.value }))}
-              disabled={stageEditingDisabled}
-              mono
-              tooltip="Maximum iterations for the next interactive relax command."
+        );
+      }
+      return (
+        <SidebarSection title="Stage Solver" icon="⚙" defaultOpen={true}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <SelectField
+              label="Integrator"
+              value={String(node.payload.integrator ?? "rk45")}
+              onchange={(value) => patchSelectedNode({ integrator: value })}
+              options={[
+                { value: "heun", label: "Heun" },
+                { value: "rk4", label: "RK4" },
+                { value: "rk23", label: "RK23" },
+                { value: "rk45", label: "RK45" },
+                { value: "abm3", label: "ABM3" },
+              ]}
             />
             <TextField
-              label="Torque tol."
-              value={ctx.solverSettings.torqueTolerance || ""}
-              onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, torqueTolerance: e.target.value }))}
-              disabled={stageEditingDisabled}
+              label="Fixed dt [s]"
+              value={String(node.payload.fixed_timestep ?? "")}
+              onchange={(event) => patchSelectedNode({ fixed_timestep: event.target.value })}
+              placeholder="adaptive / default"
               mono
-              tooltip="Torque (dm/dt) convergence threshold for the interactive relax."
             />
-            <div className="col-span-2">
-              <TextField
-                label="Energy tol."
-                value={ctx.solverSettings.energyTolerance || ""}
-                onchange={(e) => ctx.setSolverSettings((c) => ({ ...c, energyTolerance: e.target.value }))}
-                placeholder="disabled"
-                disabled={stageEditingDisabled}
-                mono
-                tooltip="Fractional energy change convergence threshold."
+          </div>
+        </SidebarSection>
+      );
+    }
+
+    if (detail === "time-range") {
+      if (node.node_kind !== "primitive" || node.stage_kind !== "run") {
+        return <StageSectionNote title="Time Range" body="This node is only meaningful for primitive Run stages." />;
+      }
+      return (
+        <SidebarSection title="Time Range" icon="⏱" defaultOpen={true}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <TextField
+              label="Run until [s]"
+              value={String(node.payload.until_seconds ?? "")}
+              onchange={(event) => patchSelectedNode({ until_seconds: event.target.value })}
+              placeholder="1e-9"
+              mono
+            />
+            <TextField
+              label="Fixed dt [s]"
+              value={String(node.payload.fixed_timestep ?? "")}
+              onchange={(event) => patchSelectedNode({ fixed_timestep: event.target.value })}
+              placeholder="adaptive / default"
+              mono
+            />
+          </div>
+        </SidebarSection>
+      );
+    }
+
+    if (detail === "stop-criteria") {
+      if (node.node_kind !== "primitive" || node.stage_kind !== "relax") {
+        return <StageSectionNote title="Stop Criteria" body="This node is only meaningful for primitive Relax stages." />;
+      }
+      return (
+        <SidebarSection title="Stop Criteria" icon="🎯" defaultOpen={true}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <SelectField
+              label="Relax algorithm"
+              value={String(node.payload.relax_algorithm ?? "llg_overdamped")}
+              onchange={(value) => patchSelectedNode({ relax_algorithm: value })}
+              options={Object.entries(RELAXATION_PROFILES).map(([value, profile]) => ({
+                value,
+                label: profile.label,
+              }))}
+            />
+            <TextField
+              label="Max steps"
+              value={String(node.payload.max_steps ?? "5000")}
+              onchange={(event) => patchSelectedNode({ max_steps: event.target.value })}
+              mono
+            />
+            <TextField
+              label="Torque tolerance"
+              value={String(node.payload.torque_tolerance ?? "1e-6")}
+              onchange={(event) => patchSelectedNode({ torque_tolerance: event.target.value })}
+              mono
+            />
+            <TextField
+              label="Energy tolerance"
+              value={String(node.payload.energy_tolerance ?? "")}
+              onchange={(event) => patchSelectedNode({ energy_tolerance: event.target.value })}
+              placeholder="disabled"
+              mono
+            />
+          </div>
+        </SidebarSection>
+      );
+    }
+
+    if (detail === "equilibrium") {
+      if (node.node_kind !== "primitive" || node.stage_kind !== "eigenmodes") {
+        return <StageSectionNote title="Equilibrium" body="This node is only meaningful for primitive Eigensolve stages." />;
+      }
+      return (
+        <SidebarSection title="Equilibrium" icon="🧲" defaultOpen={true}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <SelectField
+              label="Equilibrium source"
+              value={String(node.payload.eigen_equilibrium_source ?? "relax")}
+              onchange={(value) => patchSelectedNode({ eigen_equilibrium_source: value })}
+              options={[
+                { value: "relax", label: "From relax stage" },
+                { value: "provided", label: "Provided state" },
+                { value: "artifact", label: "Artifact file" },
+              ]}
+            />
+            <TextField
+              label="Spin-wave BC"
+              value={String(node.payload.eigen_spin_wave_bc ?? "free")}
+              onchange={(event) =>
+                patchSelectedNode(
+                  patchEigenBcConfig(node.payload, { kind: event.target.value }),
+                )
+              }
+            />
+          </div>
+        </SidebarSection>
+      );
+    }
+
+    if (detail === "operator") {
+      if (node.node_kind !== "primitive" || node.stage_kind !== "eigenmodes") {
+        return <StageSectionNote title="Operator & Spectrum" body="This node is only meaningful for primitive Eigensolve stages." />;
+      }
+      return (
+        <SidebarSection title="Operator & Spectrum" icon="〰" defaultOpen={true}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <TextField
+              label="Mode count"
+              value={String(node.payload.eigen_count ?? "10")}
+              onchange={(event) => patchSelectedNode({ eigen_count: event.target.value })}
+              mono
+            />
+            <SelectField
+              label="Target"
+              value={String(node.payload.eigen_target ?? "lowest")}
+              onchange={(value) => patchSelectedNode({ eigen_target: value })}
+              options={[
+                { value: "lowest", label: "Lowest" },
+                { value: "nearest", label: "Nearest" },
+              ]}
+            />
+            <TextField
+              label="Target frequency [Hz]"
+              value={String(node.payload.eigen_target_frequency ?? "")}
+              onchange={(event) => patchSelectedNode({ eigen_target_frequency: event.target.value })}
+              placeholder="required for nearest"
+              mono
+            />
+            <SelectField
+              label="Normalization"
+              value={String(node.payload.eigen_normalization ?? "unit_l2")}
+              onchange={(value) => patchSelectedNode({ eigen_normalization: value })}
+              options={[
+                { value: "unit_l2", label: "Unit L2" },
+                { value: "unit_max_amplitude", label: "Unit max amplitude" },
+              ]}
+            />
+            <SelectField
+              label="Damping"
+              value={String(node.payload.eigen_damping_policy ?? "ignore")}
+              onchange={(value) => patchSelectedNode({ eigen_damping_policy: value })}
+              options={[
+                { value: "ignore", label: "Ignore damping" },
+                { value: "include", label: "Include damping" },
+              ]}
+            />
+            <TextField
+              label="k-vector"
+              value={String(node.payload.eigen_k_vector ?? "")}
+              onchange={(event) => patchSelectedNode({ eigen_k_vector: event.target.value })}
+              placeholder="kx, ky, kz"
+              mono
+            />
+            <SelectField
+              label="Include demag"
+              value={Boolean(node.payload.eigen_include_demag) ? "yes" : "no"}
+              onchange={(value) => patchSelectedNode({ eigen_include_demag: value === "yes" })}
+              options={[
+                { value: "yes", label: "Enabled" },
+                { value: "no", label: "Disabled" },
+              ]}
+            />
+          </div>
+        </SidebarSection>
+      );
+    }
+
+    if (detail === "sweep") {
+      if (node.node_kind !== "macro") {
+        return <StageSectionNote title="Sweep Definition" body="This node is only meaningful for macro stages that expand into a sweep." />;
+      }
+      return (
+        <SidebarSection title="Sweep Definition" icon="↕" defaultOpen={true}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {"quantity" in node.config ? (
+              <SelectField
+                label="Quantity"
+                value={String(node.config.quantity ?? "b_ext")}
+                onchange={(value) => patchSelectedNode({ quantity: value })}
+                options={[
+                  { value: "b_ext", label: "External field" },
+                  { value: "current", label: "Current" },
+                ]}
               />
-            </div>
+            ) : null}
+            <TextField
+              label="Axis"
+              value={String(node.config.axis ?? "z")}
+              onchange={(event) => patchSelectedNode({ axis: event.target.value })}
+            />
+            <TextField
+              label="Start [mT]"
+              value={String(node.config.start_mT ?? -100)}
+              onchange={(event) => patchSelectedNode({ start_mT: Number(event.target.value) })}
+              mono
+            />
+            <TextField
+              label="Stop [mT]"
+              value={String(node.config.stop_mT ?? 100)}
+              onchange={(event) => patchSelectedNode({ stop_mT: Number(event.target.value) })}
+              mono
+            />
+            <TextField
+              label="Steps"
+              value={String(node.config.steps ?? 11)}
+              onchange={(event) => patchSelectedNode({ steps: Math.max(2, Number(event.target.value)) })}
+              mono
+            />
           </div>
-        </div>
-      </SidebarSection>
+        </SidebarSection>
+      );
+    }
 
-      <SidebarSection title="Performance" icon="📊" defaultOpen={false}>
-        <div className="grid gap-3">
-          {insightCards.map((card) => (
-            <div key={card.title} className="bg-card/50 border border-border/50 shadow-sm rounded-lg p-3.5 flex flex-col gap-1">
-              <div className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground/70">{card.title}</div>
-              <div className="font-bold text-[0.8rem] text-foreground mt-0.5 tracking-tight">{card.subtitle}</div>
-              <div className="text-xs text-muted-foreground leading-relaxed mt-1.5">{card.body}</div>
-            </div>
-          ))}
+    if (detail === "settle") {
+      if (node.node_kind !== "macro") {
+        return <StageSectionNote title="Settle Stage" body="This node is only meaningful for macro stages that generate a repeated settle step." />;
+      }
+      return (
+        <SidebarSection title="Settle Stage" icon="🧲" defaultOpen={true}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <SelectField
+              label="Per-point settle"
+              value={node.config.relax_each !== false ? "relax" : "run"}
+              onchange={(value) => patchSelectedNode({ relax_each: value === "relax" })}
+              options={[
+                { value: "relax", label: "Relax each point" },
+                { value: "run", label: "Run only" },
+              ]}
+            />
+            {"save_point_state" in node.config ? (
+              <SelectField
+                label="Save point state"
+                value={Boolean(node.config.save_point_state) ? "yes" : "no"}
+                onchange={(value) => patchSelectedNode({ save_point_state: value === "yes" })}
+                options={[
+                  { value: "no", label: "No" },
+                  { value: "yes", label: "Yes" },
+                ]}
+              />
+            ) : null}
+          </div>
+        </SidebarSection>
+      );
+    }
+
+    if (detail === "outputs") {
+      return (
+        <>
+          <StageSectionNote
+            title="Outputs"
+            body="Stage-specific output authoring is still inherited from the broader builder/runtime contract. This dedicated node already exists so output policies can move here cleanly without overloading the runtime panels."
+          />
+          <StageMaterializedPreview stages={selectedCompiledStages} />
+        </>
+      );
+    }
+
+    if (detail === "materialized") {
+      return <StageMaterializedPreview stages={selectedCompiledStages} />;
+    }
+
+    return <StageSectionNote title="Study Stage" body="No dedicated inspector exists for this stage node yet." />;
+  };
+
+  if (studyNode.kind === "simulation-root" || studyNode.kind === "study-root") {
+    return renderStudyRoot();
+  }
+  if (studyNode.kind === "study-defaults") {
+    return renderDefaultsOverview();
+  }
+  if (studyNode.kind === "study-runtime-defaults") {
+    return renderRuntimeDefaults();
+  }
+  if (studyNode.kind === "study-solver-defaults") {
+    return renderSolverDefaults();
+  }
+  if (studyNode.kind === "study-outputs-defaults") {
+    return renderOutputsDefaults();
+  }
+  if (studyNode.kind === "study-stages" || studyNode.kind === "study-stage-empty") {
+    return renderStagesPanel();
+  }
+
+  if (studyNode.kind === "study-stage" && selectedAuthoringNode) {
+    return renderStageSpecificContent(selectedAuthoringNode, studyNode);
+  }
+
+  return (
+    <>
+      <SidebarSection title="Study" icon="🧭" defaultOpen={true}>
+        <div className="rounded-lg border border-border/35 bg-background/35 p-3 text-[0.74rem] leading-relaxed text-muted-foreground">
+          Study routing could not resolve this node precisely, so the panel fell back to the stage authoring root.
         </div>
       </SidebarSection>
+      {renderStagesPanel()}
     </>
   );
 }

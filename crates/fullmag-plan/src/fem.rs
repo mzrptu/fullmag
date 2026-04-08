@@ -689,6 +689,9 @@ pub(crate) fn plan_fem(
         demag_solver_policy: None,
         thermal_seed_config: None,
         oersted_realization: None,
+        gpu_device_index: None,
+        mfem_device_string: None,
+        demag_transfer_cell_size: None,
     };
 
     // ── Extract Oersted cylinder from energy terms ──

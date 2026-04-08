@@ -46,6 +46,24 @@ import SettingsDialog from "../workspace/overlays/SettingsDialog";
 import PhysicsDocsDrawer from "../workspace/overlays/PhysicsDocsDrawer";
 import BottomUtilityDock from "../workspace/shell/BottomUtilityDock";
 import { useActiveStageLayout, useWorkspaceStore } from "@/lib/workspace/workspace-store";
+import {
+  appendNode,
+  createMacroNode,
+  createPrimitiveNode,
+  duplicateNode,
+  insertNodeNear,
+  toggleNodeEnabled,
+} from "@/lib/study-builder/operations";
+import { materializeStudyPipeline } from "@/lib/study-builder/materialize";
+import { migrateFlatStagesToStudyPipeline } from "@/lib/study-builder/migrate";
+import {
+  buildPipelineStudyStageNodeId,
+  parseStudyNodeContext,
+} from "@/lib/study-builder/node-context";
+import type {
+  StudyPipelineDocument,
+  StudyPrimitiveStageKind,
+} from "@/lib/study-builder/types";
 
 function launchDisplayName(intent: ReturnType<typeof useWorkspaceStore.getState>["launchIntent"]): string | null {
   if (!intent) return null;
@@ -107,6 +125,43 @@ function makeRibbonAntenna(
       waveform: null,
     },
   };
+}
+
+function syncStudyCompatibilityState(
+  ctx: ReturnType<typeof useControlRoom>,
+  stages: ReturnType<typeof materializeStudyPipeline>["stages"],
+): void {
+  const firstRun = stages.find((stage) => stage.kind === "run");
+  const firstRelax = stages.find((stage) => stage.kind === "relax");
+  if (firstRun?.until_seconds) {
+    ctx.setRunUntilInput(firstRun.until_seconds);
+  }
+  if (firstRelax) {
+    ctx.setSolverSettings((current) => ({
+      ...current,
+      integrator: firstRelax.integrator || current.integrator,
+      fixedTimestep: firstRelax.fixed_timestep || current.fixedTimestep,
+      relaxAlgorithm: firstRelax.relax_algorithm || current.relaxAlgorithm,
+      torqueTolerance: firstRelax.torque_tolerance || current.torqueTolerance,
+      energyTolerance: firstRelax.energy_tolerance || current.energyTolerance,
+      maxRelaxSteps: firstRelax.max_steps || current.maxRelaxSteps,
+    }));
+  }
+}
+
+function resolveStudyAnchorNodeId(
+  document: StudyPipelineDocument,
+  selectedNodeId: string | null,
+): string | null {
+  const studyNode = parseStudyNodeContext(selectedNodeId);
+  if (studyNode?.kind !== "study-stage") {
+    return null;
+  }
+  if (studyNode.source === "pipeline") {
+    return studyNode.stageKey;
+  }
+  const flatIndex = Number(studyNode.stageKey);
+  return Number.isFinite(flatIndex) ? document.nodes[flatIndex]?.id ?? null : null;
 }
 
 /* ── Inner shell (consumes context) ── */
@@ -177,15 +232,19 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
       ),
     [ctx.selectedSidebarNodeId, ctx.scriptBuilderCurrentModules],
   );
+  const authoringStudyDocument = useMemo<StudyPipelineDocument>(
+    () => (ctx.studyPipeline as StudyPipelineDocument | null) ?? migrateFlatStagesToStudyPipeline(ctx.studyStages),
+    [ctx.studyPipeline, ctx.studyStages],
+  );
   useKeyboardShortcuts();
 
-  const maybePreviewAntennaField = () => {
+  const maybePreviewAntennaField = useCallback(() => {
     if (ctx.quickPreviewTargets.some((target) => target.id === "H_ant" && target.available)) {
       ctx.requestPreviewQuantity("H_ant");
     }
-  };
+  }, [ctx]);
 
-  const handleSelectModelNode = (nodeId: string) => {
+  const handleSelectModelNode = useCallback((nodeId: string) => {
     ctx.setSelectedSidebarNodeId(nodeId);
     ctx.setSelectedObjectId(resolveSelectedObjectId(nodeId, ctx.modelBuilderGraph));
     if (ctx.sidebarCollapsed) {
@@ -194,9 +253,9 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
     if (nodeId === "antennas" || nodeId.startsWith("ant-")) {
       maybePreviewAntennaField();
     }
-  };
+  }, [ctx, maybePreviewAntennaField]);
 
-  const handleAddAntenna = (kind: "MicrostripAntenna" | "CPWAntenna") => {
+  const handleAddAntenna = useCallback((kind: "MicrostripAntenna" | "CPWAntenna") => {
     const nextModule = makeRibbonAntenna(kind, ctx.scriptBuilderCurrentModules);
     ctx.setScriptBuilderCurrentModules((prev) => [...prev, nextModule]);
     if (ctx.sidebarCollapsed) {
@@ -205,7 +264,55 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
     ctx.setSelectedSidebarNodeId(`ant-${nextModule.name}`);
     ctx.setSelectedObjectId(null);
     maybePreviewAntennaField();
-  };
+  }, [ctx, maybePreviewAntennaField]);
+
+  const commitStudyDocument = useCallback((next: StudyPipelineDocument, nextSelectedNodeId?: string | null) => {
+    const compiled = materializeStudyPipeline(next);
+    ctx.setStudyPipeline(next);
+    ctx.setStudyStages(compiled.stages);
+    syncStudyCompatibilityState(ctx, compiled.stages);
+    if (nextSelectedNodeId) {
+      handleSelectModelNode(nextSelectedNodeId);
+    }
+  }, [ctx, handleSelectModelNode]);
+
+  const handleStudyAddPrimitive = useCallback((
+    kind: StudyPrimitiveStageKind,
+    placement: "append" | "before" | "after",
+  ) => {
+    const nextNode = createPrimitiveNode(kind);
+    const anchorId = resolveStudyAnchorNodeId(authoringStudyDocument, ctx.selectedSidebarNodeId);
+    const nextDocument =
+      !anchorId || placement === "append"
+        ? appendNode(authoringStudyDocument, nextNode)
+        : insertNodeNear(authoringStudyDocument, anchorId, placement, nextNode);
+    commitStudyDocument(nextDocument, buildPipelineStudyStageNodeId(nextNode.id));
+  }, [authoringStudyDocument, commitStudyDocument, ctx.selectedSidebarNodeId]);
+
+  const handleStudyAddMacro = useCallback((
+    kind: "hysteresis_loop" | "field_sweep_relax" | "relax_run" | "relax_eigenmodes",
+    placement: "append" | "before" | "after",
+  ) => {
+    const nextNode = createMacroNode(kind);
+    const anchorId = resolveStudyAnchorNodeId(authoringStudyDocument, ctx.selectedSidebarNodeId);
+    const nextDocument =
+      !anchorId || placement === "append"
+        ? appendNode(authoringStudyDocument, nextNode)
+        : insertNodeNear(authoringStudyDocument, anchorId, placement, nextNode);
+    commitStudyDocument(nextDocument, buildPipelineStudyStageNodeId(nextNode.id));
+  }, [authoringStudyDocument, commitStudyDocument, ctx.selectedSidebarNodeId]);
+
+  const handleStudyDuplicateSelected = useCallback(() => {
+    const anchorId = resolveStudyAnchorNodeId(authoringStudyDocument, ctx.selectedSidebarNodeId);
+    if (!anchorId) return;
+    commitStudyDocument(duplicateNode(authoringStudyDocument, anchorId));
+  }, [authoringStudyDocument, commitStudyDocument, ctx.selectedSidebarNodeId]);
+
+  const handleStudyToggleSelectedEnabled = useCallback(() => {
+    const anchorId = resolveStudyAnchorNodeId(authoringStudyDocument, ctx.selectedSidebarNodeId);
+    if (!anchorId) return;
+    commitStudyDocument(toggleNodeEnabled(authoringStudyDocument, anchorId));
+  }, [authoringStudyDocument, commitStudyDocument, ctx.selectedSidebarNodeId]);
 
   const hasSharedAirboxDomain =
     ctx.effectiveFemMesh?.domain_mesh_mode === "shared_domain_mesh_with_air";
@@ -370,7 +477,7 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
     if (dockTab) {
       ctx.openFemMeshWorkspace(dockTab);
     }
-  }, [ctx]);
+  }, [ctx, handleSelectModelNode]);
 
   const handleBuildMeshSelected = useCallback(async () => {
     const intent = meshBuildIntentForNode({
@@ -461,6 +568,14 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
     }
   }, [ctx.meshGenerating, ctx.scriptSyncBusy]);
 
+  const handleStageChange = useCallback((stage: WorkspaceMode) => {
+    ctx.setWorkspaceMode(stage);
+    const targetPath = `/${stage}`;
+    if (pathname !== targetPath) {
+      router.push(targetPath as Route);
+    }
+  }, [ctx, pathname, router]);
+
   /* ── Loading state ── */
   if (!ctx.session) {
     return (
@@ -516,14 +631,6 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
       )}
     </>
   );
-
-  const handleStageChange = useCallback((stage: WorkspaceMode) => {
-    ctx.setWorkspaceMode(stage);
-    const targetPath = `/${stage}`;
-    if (pathname !== targetPath) {
-      router.push(targetPath as Route);
-    }
-  }, [ctx, pathname, router]);
 
   return (
     <div className="h-full flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
@@ -596,6 +703,10 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         canSyncScriptBuilder={Boolean(ctx.sessionFooter.scriptPath)}
         scriptSyncBusy={ctx.scriptSyncBusy}
         onSyncScriptBuilder={() => void ctx.syncScriptBuilder()}
+        onStudyAddPrimitive={handleStudyAddPrimitive}
+        onStudyAddMacro={handleStudyAddMacro}
+        onStudyDuplicateSelected={handleStudyDuplicateSelected}
+        onStudyToggleSelectedEnabled={handleStudyToggleSelectedEnabled}
       />
       {activeBackendError ? (
         <div className="border-b border-rose-500/20 bg-rose-950/10 px-3 py-3">
@@ -719,7 +830,15 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         progressMode={ctx.activity.progressMode}
         progressValue={ctx.activity.progressValue}
         commandMessage={ctx.commandMessage}
-        commandState={ctx.activeCommandState}
+        commandState={
+          ctx.activeCommandState === "acknowledged"
+            ? "progress"
+            : ctx.activeCommandState === "completed"
+              ? "success"
+              : ctx.activeCommandState === "rejected"
+                ? "rejected"
+                : undefined
+        }
         displayLabel={ctx.selectedQuantityLabel}
         displayDetail={
           ctx.selectedScalarValue != null

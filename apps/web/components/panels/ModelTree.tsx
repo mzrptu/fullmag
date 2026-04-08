@@ -13,6 +13,10 @@ import type {
   StudyPipelineNodeState,
 } from "@/lib/session/types";
 import { buildScriptBuilderFromSceneDocument } from "@/lib/session/sceneDocument";
+import {
+  buildFlatStudyStageNodeId,
+  buildPipelineStudyStageNodeId,
+} from "@/lib/study-builder/node-context";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -39,6 +43,57 @@ function humanizeStageKind(kind: string | null | undefined): string {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+function studyStageDisplayName(kind: string | null | undefined): string {
+  if (!kind) return "Stage";
+  if (kind === "eigenmodes") return "Eigensolve";
+  if (kind === "hysteresis_loop" || kind === "field_sweep_relax") return "Hysteresis Loop";
+  return humanizeStageKind(kind);
+}
+
+function humanizeStudyPipelineNodeStateKind(node: StudyPipelineNodeState): string {
+  if (node.node_kind === "primitive") {
+    return studyStageDisplayName(node.stage_kind);
+  }
+  if (node.node_kind === "macro") {
+    if (node.macro_kind === "hysteresis_loop") return "Hysteresis Loop";
+    if (node.macro_kind === "field_sweep_relax") return "Field Sweep + Relax";
+    if (node.macro_kind === "relax_run") return "Relax -> Run";
+    if (node.macro_kind === "relax_eigenmodes") return "Relax -> Eigensolve";
+    return humanizeStageKind(node.macro_kind);
+  }
+  return "Stage Group";
+}
+
+function summarizeStudyPipelineNodeState(node: StudyPipelineNodeState): string {
+  if (node.node_kind === "primitive") {
+    const originalKind =
+      typeof node.payload.kind === "string" && node.payload.kind.length > 0
+        ? node.payload.kind
+        : node.stage_kind;
+    return originalKind !== node.stage_kind
+      ? `${studyStageDisplayName(node.stage_kind)} <- ${studyStageDisplayName(originalKind)}`
+      : studyStageDisplayName(node.stage_kind);
+  }
+  if (node.node_kind === "macro") {
+    if (node.macro_kind === "hysteresis_loop") {
+      const start = Number(node.config.start_mT ?? -100);
+      const stop = Number(node.config.stop_mT ?? 100);
+      const steps = Math.max(2, Number(node.config.steps ?? 21));
+      return `hysteresis ${start} -> ${stop} mT (${steps} points)`;
+    }
+    if (node.macro_kind === "field_sweep_relax") {
+      const start = Number(node.config.start_mT ?? -100);
+      const stop = Number(node.config.stop_mT ?? 100);
+      const steps = Math.max(1, Number(node.config.steps ?? 11));
+      return `field sweep ${start} -> ${stop} mT (${steps} steps)`;
+    }
+    if (node.macro_kind === "relax_run") return "relax then run";
+    if (node.macro_kind === "relax_eigenmodes") return "relax then eigensolve";
+    return humanizeStageKind(node.macro_kind);
+  }
+  return `${node.children.length} nodes`;
+}
+
 function summarizeStage(stage: ScriptBuilderStageState): string {
   if (stage.kind === "relax" || stage.kind.includes("relax")) {
     return [
@@ -59,13 +114,26 @@ function summarizeStage(stage: ScriptBuilderStageState): string {
   return stage.entrypoint_kind ? humanizeStageKind(stage.entrypoint_kind) : "configured";
 }
 
+function buildStageDetailChildren(
+  baseId: string,
+  detailIds: Array<{ id: string; label: string; icon: string }>,
+): TreeNodeData[] {
+  return detailIds.map((detail) => ({
+    id: `${baseId}/${detail.id}`,
+    label: detail.label,
+    icon: detail.icon,
+    status: "ready",
+  }));
+}
+
 function buildStudyPipelineTreeNodes(
   nodes: StudyPipelineNodeState[],
 ): TreeNodeData[] {
   return nodes.map((node, index) => {
     if (node.node_kind === "group") {
+      const baseId = buildPipelineStudyStageNodeId(node.id);
       return {
-        id: `study-pipeline-${node.id}`,
+        id: baseId,
         label: node.label || `Group ${index + 1}`,
         icon: "🧩",
         badge: `${node.children.length} nodes`,
@@ -75,27 +143,110 @@ function buildStudyPipelineTreeNodes(
       };
     }
     if (node.node_kind === "macro") {
+      const baseId = buildPipelineStudyStageNodeId(node.id);
+      const macroChildren =
+        node.macro_kind === "hysteresis_loop" || node.macro_kind === "field_sweep_relax"
+          ? buildStageDetailChildren(baseId, [
+              { id: "overview", label: "Overview", icon: "🧾" },
+              { id: "sweep", label: "Sweep Definition", icon: "↕" },
+              { id: "settle", label: "Settle Stage", icon: "🧲" },
+              { id: "outputs", label: "Outputs", icon: "💾" },
+              { id: "materialized", label: "Materialized Preview", icon: "🧱" },
+            ])
+          : buildStageDetailChildren(baseId, [
+              { id: "overview", label: "Overview", icon: "🧾" },
+              { id: "materialized", label: "Materialized Preview", icon: "🧱" },
+            ]);
       return {
-        id: `study-pipeline-${node.id}`,
-        label: node.label || humanizeStageKind(node.macro_kind),
+        id: baseId,
+        label: `Stage ${index + 1} · ${node.label || humanizeStudyPipelineNodeStateKind(node)}`,
         icon: "⚗",
-        badge: humanizeStageKind(node.macro_kind),
+        badge: summarizeStudyPipelineNodeState(node),
         status: node.enabled ? "ready" : "pending",
+        children: macroChildren,
       };
     }
     const importedKind =
       typeof node.payload.kind === "string" && node.payload.kind.length > 0
         ? node.payload.kind
         : node.stage_kind;
+    const baseId = buildPipelineStudyStageNodeId(node.id);
+    const detailChildren =
+      node.stage_kind === "run"
+        ? buildStageDetailChildren(baseId, [
+            { id: "overview", label: "Overview", icon: "🧾" },
+            { id: "solver", label: "Solver", icon: "⚙" },
+            { id: "time-range", label: "Time Range", icon: "⏱" },
+            { id: "outputs", label: "Outputs", icon: "💾" },
+          ])
+        : node.stage_kind === "relax"
+          ? buildStageDetailChildren(baseId, [
+              { id: "overview", label: "Overview", icon: "🧾" },
+              { id: "solver", label: "Solver", icon: "⚙" },
+              { id: "stop-criteria", label: "Stop Criteria", icon: "🎯" },
+              { id: "outputs", label: "Outputs", icon: "💾" },
+            ])
+          : node.stage_kind === "eigenmodes"
+            ? buildStageDetailChildren(baseId, [
+                { id: "overview", label: "Overview", icon: "🧾" },
+                { id: "solver", label: "Solver", icon: "⚙" },
+                { id: "equilibrium", label: "Equilibrium", icon: "🧲" },
+                { id: "operator", label: "Operator & Spectrum", icon: "〰" },
+                { id: "outputs", label: "Outputs", icon: "💾" },
+              ])
+            : buildStageDetailChildren(baseId, [
+                { id: "overview", label: "Overview", icon: "🧾" },
+              ]);
     return {
-      id: `study-pipeline-${node.id}`,
-      label: node.label || `Stage ${index + 1}`,
+      id: baseId,
+      label: `Stage ${index + 1} · ${node.label || studyStageDisplayName(node.stage_kind)}`,
       icon: "◌",
       badge:
         importedKind !== node.stage_kind
-          ? `${humanizeStageKind(node.stage_kind)} <- ${humanizeStageKind(importedKind)}`
-          : humanizeStageKind(node.stage_kind),
+          ? `${studyStageDisplayName(node.stage_kind)} <- ${studyStageDisplayName(importedKind)}`
+          : summarizeStudyPipelineNodeState(node),
       status: node.enabled ? "ready" : "pending",
+      children: detailChildren,
+    };
+  });
+}
+
+function buildFlatStudyStageTreeNodes(stages: ScriptBuilderStageState[]): TreeNodeData[] {
+  return stages.map((stage, index) => {
+    const baseId = buildFlatStudyStageNodeId(index);
+    const detailChildren =
+      stage.kind === "run"
+        ? buildStageDetailChildren(baseId, [
+            { id: "overview", label: "Overview", icon: "🧾" },
+            { id: "solver", label: "Solver", icon: "⚙" },
+            { id: "time-range", label: "Time Range", icon: "⏱" },
+            { id: "outputs", label: "Outputs", icon: "💾" },
+          ])
+        : stage.kind === "relax"
+          ? buildStageDetailChildren(baseId, [
+              { id: "overview", label: "Overview", icon: "🧾" },
+              { id: "solver", label: "Solver", icon: "⚙" },
+              { id: "stop-criteria", label: "Stop Criteria", icon: "🎯" },
+              { id: "outputs", label: "Outputs", icon: "💾" },
+            ])
+          : stage.kind === "eigenmodes"
+            ? buildStageDetailChildren(baseId, [
+                { id: "overview", label: "Overview", icon: "🧾" },
+                { id: "solver", label: "Solver", icon: "⚙" },
+                { id: "equilibrium", label: "Equilibrium", icon: "🧲" },
+                { id: "operator", label: "Operator & Spectrum", icon: "〰" },
+                { id: "outputs", label: "Outputs", icon: "💾" },
+              ])
+            : buildStageDetailChildren(baseId, [
+                { id: "overview", label: "Overview", icon: "🧾" },
+              ]);
+    return {
+      id: baseId,
+      label: `Stage ${index + 1} · ${studyStageDisplayName(stage.kind)}`,
+      icon: "▶",
+      badge: summarizeStage(stage) || studyStageDisplayName(stage.entrypoint_kind),
+      status: "ready",
+      children: detailChildren,
     };
   });
 }
@@ -137,12 +288,14 @@ function TreeNode({
   const hasChildren = node.children && node.children.length > 0;
   const isActive = activeId === node.id;
 
-  useEffect(() => {
-    if (!hasChildren || forceExpandValue == null) {
-      return;
+  // Sync open state with force expansion token during render (React 19 recommended pattern for resets)
+  const [prevForceExpandToken, setPrevForceExpandToken] = useState(forceExpandToken);
+  if (forceExpandToken !== prevForceExpandToken) {
+    setPrevForceExpandToken(forceExpandToken);
+    if (hasChildren && forceExpandValue != null) {
+      setOpen(forceExpandValue);
     }
-    setOpen(forceExpandValue);
-  }, [forceExpandToken, forceExpandValue, hasChildren]);
+  }
 
   const handleClick = useCallback(() => {
     if (hasChildren) setOpen((prev) => !prev);
@@ -511,7 +664,6 @@ export function buildFullmagModelTree(opts: {
   const modules = graph?.current_modules.modules ?? opts.currentModules ?? [];
   const excitationAnalysis =
     graph?.current_modules.excitation_analysis ?? opts.excitationAnalysis ?? null;
-  const initialState = graph?.study.initial_state ?? null;
   const studyStages = graph?.study.stages ?? [];
   const studyPipeline = graph?.study.study_pipeline ?? null;
   const showUniverse = Boolean(
@@ -662,17 +814,11 @@ export function buildFullmagModelTree(opts: {
     });
   }
 
-  const studyStageChildren: TreeNodeData[] = studyStages.map((stage, index) => ({
-    id: `study-stage-${index}`,
-    label: `Stage ${index + 1} · ${humanizeStageKind(stage.kind)}`,
-    icon: "▶",
-    badge: summarizeStage(stage) || humanizeStageKind(stage.entrypoint_kind),
-    status: "ready",
-  }));
-
-  const studyPipelineChildren = studyPipeline
-    ? buildStudyPipelineTreeNodes(studyPipeline.nodes)
-    : [];
+  const authoringStageChildren =
+    studyPipeline && studyPipeline.nodes.length > 0
+      ? buildStudyPipelineTreeNodes(studyPipeline.nodes)
+      : buildFlatStudyStageTreeNodes(studyStages);
+  const authoringStageCount = studyPipeline?.nodes.length ?? studyStages.length;
 
   studyChildren.push(
     {
@@ -688,63 +834,61 @@ export function buildFullmagModelTree(opts: {
       id: "study",
       label: "Study",
       icon: "▶",
-      badge: studyStages.length > 0 ? `${studyStages.length} stages` : (opts.backend ?? "—"),
+      badge: authoringStageCount > 0 ? `${authoringStageCount} stages` : (opts.backend ?? "—"),
       status: opts.solverStatus ?? "pending",
       defaultOpen: true,
       onClick: opts.onSolverClick,
       children: [
         {
-          id: "study-setup",
-          label: "Study Setup",
+          id: "study-defaults",
+          label: "Defaults",
           icon: "🧭",
-          badge: studyPipeline ? "pipeline" : "flat stages",
+          badge: opts.backend ?? "auto",
           status: "ready",
           defaultOpen: true,
           children: [
             {
-              id: "study-builder",
-              label: "Stage Builder",
-              icon: "🧩",
-              badge: studyPipeline ? `${studyPipeline.nodes.length} nodes` : "import from script",
+              id: "study-defaults-runtime",
+              label: "Runtime & Backend",
+              icon: "⚙",
+              badge: opts.backend ?? "auto",
               status: "ready",
             },
             {
-              id: "study-stage-sequence",
-              label: "Stage Sequence",
-              icon: "☰",
-              badge: `${studyStages.length}`,
-              status: studyStages.length > 0 ? "ready" : "pending",
-              defaultOpen: true,
-              children:
-                studyStageChildren.length > 0
-                  ? studyStageChildren
-                  : [
-                      {
-                        id: "study-stage-empty",
-                        label: "No stages declared",
-                        icon: "◌",
-                        status: "pending",
-                      },
-                    ],
+              id: "study-defaults-solver",
+              label: "Solver Defaults",
+              icon: "🔧",
+              badge: opts.solverIntegrator ? opts.solverIntegrator.toUpperCase() : "auto",
+              status: "ready",
             },
-            ...(studyPipelineChildren.length > 0
-              ? [
-                  {
-                    id: "study-pipeline",
-                    label: "Pipeline Nodes",
-                    icon: "🧱",
-                    badge: `${studyPipelineChildren.length}`,
-                    status: "ready" as const,
-                    defaultOpen: false,
-                    children: studyPipelineChildren,
-                  },
-                ]
-              : []),
+            {
+              id: "study-defaults-outputs",
+              label: "Outputs Defaults",
+              icon: "💾",
+              badge: opts.scalarRowCount ? `${opts.scalarRowCount} pts` : "inherit",
+              status: "ready",
+            },
           ],
         },
-        { id: "study-solver", label: opts.solverIntegrator ? `Integrator: ${opts.solverIntegrator.toUpperCase()}` : "Solver Configuration", icon: "🔧" },
-        { id: "study-time", label: "Time Stepping", icon: "⏱" },
-        { id: "study-convergence", label: "Convergence", icon: "📉", status: opts.convergenceStatus },
+        {
+          id: "study-stages",
+          label: "Stages",
+          icon: "🧩",
+          badge: authoringStageCount > 0 ? `${authoringStageCount}` : "empty",
+          status: authoringStageCount > 0 ? "ready" : "pending",
+          defaultOpen: true,
+          children:
+            authoringStageChildren.length > 0
+              ? authoringStageChildren
+              : [
+                  {
+                    id: "study-stage-empty",
+                    label: "No stages declared",
+                    icon: "◌",
+                    status: "pending",
+                  },
+                ],
+        },
       ],
     },
     {
@@ -957,63 +1101,6 @@ const GEOMETRY_ICONS: Record<string, string> = {
   Union: "∪",
   Intersection: "∩",
 };
-
-function _buildGeometryNode(
-  geo: ScriptBuilderGeometryEntry,
-): TreeNodeData {
-  const geoId = `geo-${geo.name}`;
-  const icon = GEOMETRY_ICONS[geo.geometry_kind] ?? "◻";
-
-  const meshNode: TreeNodeData = {
-    id: `${geoId}-mesh`,
-    label: "Mesh",
-    icon: "◫",
-    status: geo.mesh?.mode === "custom" ? "ready" : "pending",
-    badge:
-      geo.mesh?.mode === "custom"
-        ? (geo.mesh.order ? `override · P${geo.mesh.order}` : "override")
-        : "inherits",
-    children: [
-      {
-        id: `${geoId}-mesh-mode`,
-        label:
-          geo.mesh?.mode === "custom"
-            ? "Mode: local override"
-            : "Mode: inherit shared object defaults",
-        icon: "⇆",
-      },
-      {
-        id: `${geoId}-mesh-hmax`,
-        label:
-          geo.mesh?.mode === "custom" && geo.mesh.hmax
-            ? `Maximum element size: ${geo.mesh.hmax}`
-            : "Maximum element size from object defaults",
-        icon: "📏",
-      },
-      ...(geo.mesh?.mode === "custom" && geo.mesh.source
-        ? [{ id: `${geoId}-mesh-source`, label: geo.mesh.source, icon: "📄" } satisfies TreeNodeData]
-        : []),
-    ],
-  };
-
-  return {
-    id: geoId,
-    label: geo.name,
-    icon,
-    badge: geo.geometry_kind,
-    status: "ready",
-    children: [
-      {
-        id: `${geoId}-params`,
-        label: "Properties",
-        icon: "⚙",
-        children: _buildGeometryParamChildren(geoId, geo),
-      },
-      _buildMaterialNode(geo),
-      meshNode,
-    ],
-  };
-}
 
 function _buildObjectNode(objectNode: {
   id: string;

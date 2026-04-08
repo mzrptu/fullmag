@@ -195,6 +195,15 @@ struct Context {
     uint64_t thermal_seed = 0;      // 0 = random seed from system entropy
     std::vector<double> h_therm_xyz;  // Per-node thermal field buffer (AOS-3)
 
+    // FEM-029 fix: explicit GPU device index from plan. -1 = env / default.
+    int32_t gpu_device_index = -1;
+
+    // FEM-030 fix: explicit MFEM device string from plan. Empty = env / default.
+    std::string mfem_device_string_override;
+
+    // FEM-039 fix: explicit demag transfer-grid cell size. 0 = fall back to hmax.
+    double demag_transfer_cell_size = 0.0;
+
     TransferGridState transfer_grid{};
 
 #if FULLMAG_HAS_MFEM_STACK

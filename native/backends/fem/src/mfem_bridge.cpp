@@ -122,6 +122,14 @@ const char *configured_mfem_device_string() {
 #endif
 }
 
+// FEM-030: plan override > env var > compiled default.
+const char *configured_mfem_device_string(const Context &ctx) {
+    if (!ctx.mfem_device_string_override.empty()) {
+        return ctx.mfem_device_string_override.c_str();
+    }
+    return configured_mfem_device_string();
+}
+
 bool mfem_device_requests_gpu() {
     const char *device = configured_mfem_device_string();
     if (device == nullptr || *device == '\0') {
@@ -247,7 +255,11 @@ TransferGridDesc build_transfer_grid_desc(const Context &ctx, const Vec3 &bbox_m
         std::abs(bbox_max[1] - bbox_min[1]),
         std::abs(bbox_max[2] - bbox_min[2]),
     };
-    const double requested = std::max(ctx.hmax, 1e-12);
+    // FEM-039: use dedicated demag cell size if set, otherwise fall back to hmax.
+    const double base_cell = (ctx.demag_transfer_cell_size > 0.0)
+        ? ctx.demag_transfer_cell_size
+        : ctx.hmax;
+    const double requested = std::max(base_cell, 1e-12);
     TransferGridDesc desc{};
     desc.nx = transfer_axis_cells(extent[0], requested);
     desc.ny = transfer_axis_cells(extent[1], requested);
@@ -1708,13 +1720,15 @@ bool compute_effective_fields_for_magnetization(
         }
 
         // F-03/F-07 fix: compute bulk DMI and add to H_eff.
+        // FEM-027 fix: persist bulk DMI field in context for readback.
         double bulk_dmi = 0.0;
-        std::vector<double> h_bulk_dmi_xyz;
         if (ctx.enable_bulk_dmi) {
             if (!compute_bulk_dmi_field(
-                    ctx, m_xyz, h_bulk_dmi_xyz, &bulk_dmi, error)) {
+                    ctx, m_xyz, ctx.h_bulk_dmi_xyz, &bulk_dmi, error)) {
                 return false;
             }
+        } else {
+            ctx.h_bulk_dmi_xyz.assign(m_xyz.size(), 0.0);
         }
 
         for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
@@ -1724,9 +1738,9 @@ bool compute_effective_fields_for_magnetization(
         }
 
         // Add bulk DMI to H_eff
-        if (ctx.enable_bulk_dmi && !h_bulk_dmi_xyz.empty()) {
+        if (ctx.enable_bulk_dmi && !ctx.h_bulk_dmi_xyz.empty()) {
             for (size_t i = 0; i < h_eff_xyz.size(); ++i) {
-                h_eff_xyz[i] += h_bulk_dmi_xyz[i];
+                h_eff_xyz[i] += ctx.h_bulk_dmi_xyz[i];
             }
         }
 
@@ -2340,10 +2354,16 @@ bool context_initialize_mfem(Context &ctx, std::string &error) {
         // threads share the same device safely.
         static std::once_flag s_mfem_device_once;
 #if FULLMAG_HAS_CUDA_RUNTIME
-        const char *device_config = configured_mfem_device_string();
-        const bool use_gpu_device = mfem_device_requests_gpu();
+        // FEM-030: use plan override > env var > compiled default.
+        const char *device_config = configured_mfem_device_string(ctx);
+        const bool use_gpu_device = (device_config != nullptr &&
+                                     std::strcmp(device_config, "cpu") != 0);
         if (use_gpu_device) {
-            const int selected_device = selected_cuda_device_from_env().value_or(0);
+            // FEM-029: honour explicit gpu_device_index from the plan; fall
+            // back to the env-var path, then to device 0.
+            const int selected_device = (ctx.gpu_device_index >= 0)
+                ? ctx.gpu_device_index
+                : selected_cuda_device_from_env().value_or(0);
             int device_count = 0;
             cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
             if (cuda_err != cudaSuccess || device_count <= 0) {
@@ -3291,10 +3311,17 @@ static const ExplicitTableau TABLEAU_DP54 = {
 
 const ExplicitTableau &tableau_for_integrator(fullmag_fem_integrator integrator) {
     switch (integrator) {
+        case FULLMAG_FEM_INTEGRATOR_HEUN:      return TABLEAU_HEUN;
         case FULLMAG_FEM_INTEGRATOR_RK4:       return TABLEAU_RK4;
         case FULLMAG_FEM_INTEGRATOR_RK23_BS:   return TABLEAU_BS23;
         case FULLMAG_FEM_INTEGRATOR_RK45_DP54: return TABLEAU_DP54;
-        default:                               return TABLEAU_HEUN;
+        default:
+            // FEM-016 fix: abort instead of silently degrading to Heun.
+            std::fprintf(stderr,
+                "FATAL: tableau_for_integrator called with unsupported "
+                "integrator value %d — refusing silent fallback to Heun\n",
+                static_cast<int>(integrator));
+            std::abort();
     }
 }
 

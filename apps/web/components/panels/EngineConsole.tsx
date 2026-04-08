@@ -132,11 +132,23 @@ export default function EngineConsole({
     }
   }, [logEntries, autoScroll]);
 
-  const elapsed = session
-    ? (session.finished_at_unix_ms > session.started_at_unix_ms
-        ? session.finished_at_unix_ms - session.started_at_unix_ms
-        : Date.now() - session.started_at_unix_ms)
-    : 0;
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (workspaceStatus !== "running" && workspaceStatus !== "materializing_script") {
+      return;
+    }
+    const interval = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(interval);
+  }, [workspaceStatus]);
+
+  const elapsed = useMemo(() => {
+    if (!session) return 0;
+    if (session.finished_at_unix_ms > session.started_at_unix_ms) {
+      return session.finished_at_unix_ms - session.started_at_unix_ms;
+    }
+    return now - session.started_at_unix_ms;
+  }, [session, now]);
 
   const stepsPerSec = elapsed > 0
     ? ((liveState?.step ?? run?.total_steps ?? 0) / elapsed) * 1000

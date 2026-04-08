@@ -1,0 +1,1282 @@
+# Fullmag Study / Stages Refactor Plan
+
+Data: 2026-04-07
+Status: draft architecture + UX blueprint
+Cel: przebudowac `Study` / `Stages` w drzewie modelu tak, aby dzialaly jak prawdziwy COMSOL-like study builder, a nie jak jeden wspolny panel zlepiajacy kilka roznych odpowiedzialnosci.
+
+---
+
+## 1. Executive Summary
+
+Obecny `Study` jest zle rozwarstwiony:
+
+- drzewo udaje semantyczne nody, ale wiele z nich nie ma wlasnego inspectora,
+- ribbon nie jest naprawde sterowany selekcja w drzewie,
+- `StudyPanel` miesza authoring, backend config, runtime summary i stage sequence,
+- `study_pipeline` i `stages` sa rownoleglymi modelami tej samej rzeczy,
+- Python i GUI nie maja jednego kanonicznego kontraktu stage.
+
+Docelowo musimy przyjac prosty model:
+
+1. `Stage` to pojedynczy user-facing etap badania.
+2. `Execution step` to backendowy krok wykonywania po materializacji stage do prymitywow.
+3. Drzewo po lewej pokazuje prawdziwa strukture `Study`.
+4. Ribbon u gory pokazuje komendy dla aktualnie wybranego noda.
+5. Inspector po prawej jest node-specific.
+6. Dolny panel pokazuje progress, log, queue, artifacts i telemetry.
+7. GUI i Python konfiguruja dokladnie ten sam model danych.
+
+W praktyce oznacza to:
+
+- usuwamy monolityczny `StudyPanel` jako glowny model pracy,
+- usuwamy duplikacje `Stage Builder` vs `Stage Sequence`,
+- przenosimy `Backend Configuration` do `Study Defaults` albo `Stage Solver Override`,
+- budujemy jeden kanoniczny `StudyDocumentV2`,
+- dopiero z niego kompilujemy legacy `flat stages` dla backendu.
+
+---
+
+## 2. Diagnoza Obecnego Stanu
+
+Najwazniejsze problemy widoczne dzis w repo:
+
+### 2.1. Kazdy study node pokazuje prawie to samo
+
+W `apps/web/components/panels/SettingsPanel.tsx` wszystkie nody `study-*` sa routowane do tego samego `StudyPanel`.
+
+Efekt:
+
+- klik w `Study`,
+- klik w `Stage Builder`,
+- klik w `Stage Sequence`,
+- klik w `study-stage-0`,
+- klik w `Integrator`,
+
+konczy sie bardzo podobnym lub identycznym panelem. To jest anty-COMSOL. W COMSOL selection = inny ribbon + inny settings view.
+
+### 2.2. `StudyPanel` miesza 4 rozne role
+
+Obecny `apps/web/components/panels/settings/StudyPanel.tsx` scala w jednym miejscu:
+
+- stage authoring,
+- backend configuration,
+- runtime settings summary,
+- stage sequence cards.
+
+To nie sa jedna i ta sama rzecz.
+
+### 2.3. Drzewo ma fake nody zamiast prawdziwych bytow
+
+W `apps/web/components/panels/ModelTree.tsx` mamy obecnie:
+
+- `Study Setup`,
+- `Stage Builder`,
+- `Stage Sequence`,
+- `Integrator`,
+- `Time Stepping`,
+- `Convergence`.
+
+To nie jest dobra struktura authoringu. To jest mieszanka:
+
+- struktury modelu,
+- skrutow do paneli,
+- oraz agregatow runtime.
+
+### 2.4. Dwa source-of-truth dla tej samej sekwencji
+
+Obecnie wspolistnieja:
+
+- `study.stages` - backendowe flat primitive stages,
+- `study.study_pipeline` - authoring pipeline.
+
+To ma sens jako warstwa kompatybilnosci, ale nie ma sensu jako docelowy model UI.
+
+### 2.5. Kontrakt stage jest plaski, stringly-typed i niepelny
+
+`ScriptBuilderStageState` w `apps/web/lib/session/types.ts` i `crates/fullmag-authoring/src/builder.rs` ma pola typu:
+
+- `kind: string`,
+- `integrator: string`,
+- `fixed_timestep: string`,
+- `until_seconds: string`,
+- `relax_algorithm: string`,
+- itd.
+
+Brakuje:
+
+- pelnego adaptive timestep config,
+- spoleczonego modelu solver overrides,
+- jawnych input/output policies,
+- normalnej typizacji dla stage kinds,
+- spoleczonego kontraktu GUI <-> Python <-> Rust.
+
+### 2.6. Python nadal mysli globalnym `solver()`, nie stage-first
+
+W `packages/fullmag-py/src/fullmag/world.py`:
+
+- `solver()` ustawia globalny stan,
+- `run()`, `relax()`, `eigenmodes()` buduja Problem na podstawie tego globalnego stanu,
+- stage override jest czesciowy.
+
+To nie odpowiada temu, jak uzytkownik mysli o sekwencji etapow w drzewie.
+
+### 2.7. Materializacja dopisuje domysly, zamiast pracowac na jawnych danych
+
+W `apps/web/lib/study-builder/materialize.ts` pipeline materialization tworzy stage z twardymi defaultami.
+
+To oznacza, ze:
+
+- nie wszystko jest jawnie skonfigurowane,
+- preview sekwencji niekoniecznie pokazuje pelny prawdziwy kontrakt,
+- round-trip Python <-> GUI jest slaby.
+
+---
+
+## 3. Decyzje Produktowe
+
+To powinny byc decyzje zamrozone przed implementacja.
+
+### 3.1. `Study` authoring zyje w `Model Builder`
+
+To jest najwazniejsza decyzja.
+
+`Model Builder`:
+
+- geometra,
+- materialy,
+- physics,
+- mesh,
+- study defaults,
+- study stages.
+
+`Study` workspace:
+
+- uruchamianie,
+- monitorowanie,
+- progress,
+- queue,
+- logs,
+- quick run actions.
+
+Czyli:
+
+- authoring w drzewie modelu,
+- execution/monitoring w workspace `Study`.
+
+### 3.2. `Stage` jest user-facing bytem, nie backendowym artefaktem
+
+Definicja:
+
+- `Stage` = jeden etap, ktory uzytkownik dodaje i widzi w drzewie.
+- `Execution step` = jeden backendowy krok po kompilacji.
+
+Przyklady:
+
+- `Relax` = primitive stage,
+- `Run` = primitive stage,
+- `Eigensolve` = primitive stage,
+- `Hysteresis Loop` = macro stage,
+- `Field Sweep` = macro stage.
+
+### 3.3. Drzewo jest lista sekwencji
+
+Lewy panel juz sam w sobie powinien byc `Stage Sequence`.
+
+Nie potrzebujemy osobnego carda `Stage Sequence` jako glownego authoring surface. To tylko duplikuje tree.
+
+### 3.4. Ribbon jest context-sensitive
+
+Klikam:
+
+- `Study > Stages` -> ribbon `Study` pokazuje przyciski dodawania stage,
+- `Stage 2 - Relax` -> ribbon `Study` pokazuje komendy dla relax stage,
+- `Stage 3 - Eigensolve > Spectrum` -> ribbon pokazuje akcje i presety dla spectrum/output settings.
+
+### 3.5. Kazdy node ma wlasny inspector
+
+Nie ma juz jednego wielkiego `StudyPanel`.
+
+Ma byc registry:
+
+- `node_kind -> inspector component`,
+- `node_kind -> ribbon groups`,
+- `node_kind -> validation summary`,
+- `node_kind -> status badges`.
+
+### 3.6. `Backend Configuration` nie moze byc wszedzie
+
+To trafia tylko do:
+
+- `Study > Defaults > Runtime & Backend`,
+- opcjonalnie `Stage N > Solver Override`.
+
+Nie powinno sie pokazywac jako stale globalne cardy niezaleznie od wybranego study noda.
+
+---
+
+## 4. Docelowy Mental Model - COMSOL Like
+
+```text
+Tree           = what exists
+Ribbon         = what you can do now
+Inspector      = what selected node means and how to edit it
+Bottom panel   = what happened / what is running
+Viewport       = what you see
+```
+
+To musi byc zachowane konsekwentnie.
+
+### 4.1. Docelowy uklad calego ekranu
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Top App Bar                                                                 │
+│ [Project] [Edit] [View] [Simulation] [Tools]                 [Run/Pause/Stop]│
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Context Ribbon                                                              │
+│ Model Builder | Study | Analyze                                             │
+│ When selection is inside Study tree -> ribbon switches to STUDY commands    │
+├────────────────┬───────────────────────────────────────┬─────────────────────┤
+│ Model Tree     │ Viewport / Graphics                   │ Properties          │
+│                │                                       │                     │
+│ Study          │ 3D / 2D / Mesh / Spectrum             │ node-specific       │
+│ |- Defaults    │                                       │ inspector           │
+│ `- Stages      │                                       │                     │
+│    |- Stage 1  │                                       │                     │
+│    `- Stage 2  │                                       │                     │
+├────────────────┴───────────────────────────────────────┴─────────────────────┤
+│ Bottom Runtime Panel                                                        │
+│ [Mesh Progress] [Study Progress] [Current Stage] [Log] [Artifacts] [Queue]  │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+W COMSOL selection nie jest tylko highlightem. Selection zmienia:
+
+- zestaw komend,
+- zawartosc settings,
+- czasem aktywne operacje,
+- runtime context.
+
+Dokladnie to samo powinno sie dziac w Fullmag.
+
+---
+
+## 5. Kanoniczny Model Danych
+
+### 5.1. Docelowy podzial
+
+Potrzebujemy 3 warstw:
+
+1. `StudyDocumentV2`
+   - user-facing authoring source of truth
+
+2. `CompiledExecutionPlan`
+   - wynik materializacji do backendowych primitive steps
+
+3. `RuntimeExecutionState`
+   - zywy stan wykonywania, progress, telemetry, status per stage
+
+### 5.2. `StudyDocumentV2`
+
+```ts
+type StudyDocumentV2 = {
+  version: "study.v2";
+  defaults: StudyDefaults;
+  stages: StudyStageNode[];
+};
+
+type StudyDefaults = {
+  runtime: RuntimeDefaults;
+  solver: SolverDefaults;
+  outputs: OutputDefaults;
+  validation_mode: "strict" | "warn";
+};
+
+type RuntimeDefaults = {
+  backend: "auto" | "fdm" | "fem";
+  device: "auto" | "cpu" | "gpu" | "cuda:0";
+  precision: "auto" | "single" | "double";
+  execution_mode: "strict" | "allow_fallback";
+};
+
+type SolverDefaults = {
+  gamma: number | null;
+  integrator: "auto" | "heun" | "rk4" | "rk23" | "rk45" | "abm3";
+  timestep_mode: "auto" | "fixed" | "adaptive";
+  fixed_dt: number | null;
+  adaptive: AdaptiveTimestepConfig | null;
+  precession_mode: "auto" | "on" | "off";
+};
+
+type AdaptiveTimestepConfig = {
+  atol: number;
+  rtol: number;
+  dt_initial: number | null;
+  dt_min: number;
+  dt_max: number | null;
+  safety: number;
+  growth_limit: number;
+  shrink_limit: number;
+  max_spin_rotation: number | null;
+  norm_tolerance: number | null;
+};
+```
+
+### 5.3. Wspolne pola stage
+
+Kazdy stage powinien miec ten sam wspolny naglowek:
+
+```ts
+type StageCommon = {
+  id: string;
+  kind: StudyStageKind;
+  name: string;
+  enabled: boolean;
+  notes: string | null;
+  source: "ui" | "python" | "imported";
+  solver_override: Partial<SolverDefaults> | null;
+  runtime_override: Partial<RuntimeDefaults> | null;
+  outputs_override: Partial<OutputDefaults> | null;
+  state_input: StageStateInput | null;
+  state_output: StageStateOutput | null;
+};
+```
+
+### 5.4. Stage kinds v1
+
+Pierwsza fala powinna objac:
+
+- `run`
+- `relax`
+- `eigensolve`
+- `hysteresis_loop`
+
+Druga fala:
+
+- `field_sweep`
+- `current_sweep`
+- `load_state`
+- `save_state`
+- `export`
+- `parameter_sweep`
+
+### 5.5. Primitive stages
+
+```ts
+type RunStage = StageCommon & {
+  kind: "run";
+  config: {
+    until_seconds: number;
+    sample_every: number | null;
+    autosave_state_every: number | null;
+  };
+};
+
+type RelaxStage = StageCommon & {
+  kind: "relax";
+  config: {
+    algorithm: "llg_overdamped" | "projected_gradient_bb" | "nonlinear_cg" | "tangent_plane_implicit";
+    torque_tolerance: number;
+    energy_tolerance: number | null;
+    max_steps: number;
+    relax_alpha: number | null;
+  };
+};
+
+type EigensolveStage = StageCommon & {
+  kind: "eigensolve";
+  config: {
+    count: number;
+    target: "lowest" | "nearest";
+    target_frequency: number | null;
+    include_demag: boolean;
+    equilibrium_source: "provided" | "relax" | "artifact";
+    equilibrium_artifact: string | null;
+    normalization: "unit_l2" | "unit_max_amplitude";
+    damping_policy: "ignore" | "include";
+    k_vector: [number, number, number] | null;
+    spin_wave_bc: string | Record<string, unknown>;
+  };
+};
+```
+
+### 5.6. Macro stages
+
+```ts
+type HysteresisLoopStage = StageCommon & {
+  kind: "hysteresis_loop";
+  config: {
+    quantity: "b_ext" | "current";
+    axis: [number, number, number];
+    start: number;
+    stop: number;
+    steps: number;
+    spacing: "linear" | "custom";
+    custom_values: number[] | null;
+    settle_stage: "relax" | "run";
+    settle_relax: RelaxStage["config"] | null;
+    settle_run: RunStage["config"] | null;
+    save_point_state: boolean;
+  };
+};
+```
+
+To jest bardzo wazne:
+
+- `Hysteresis Loop` ma byc jednym user-facing stage,
+- ale moze materializowac sie do wielu backendowych krokow.
+
+### 5.7. Macierz modulow per stage
+
+| Stage kind | Moduly w ribbonie | Sekcje inspectora |
+|---|---|---|
+| `run` | Time, Solver, Outputs | Overview, Solver, Time Range, Outputs |
+| `relax` | Relax, Solver, Outputs | Overview, Solver, Stop Criteria, Outputs |
+| `eigensolve` | Spectrum, Equilibrium, Advanced | Overview, Solver, Equilibrium, Operator & Spectrum, Outputs |
+| `hysteresis_loop` | Sweep, Per Point Action, Preview | Overview, Sweep Definition, Settle Stage, Outputs, Materialized Preview |
+
+### 5.8. Najwazniejsza zasada kontraktu
+
+Nie trzymamy juz osobno:
+
+- `study_pipeline`,
+- `flat stages`,
+- luźnych solver cards.
+
+Trzymamy:
+
+- `StudyDocumentV2` jako authoring,
+- `CompiledExecutionPlan` jako output kompilacji.
+
+`flat stages` pozostaje tylko kompatybilnym backend artifactem.
+
+---
+
+## 6. Python = GUI, 1:1
+
+### 6.1. Zasada
+
+Kazdy stage kind musi miec:
+
+1. ten sam zestaw pol w Pythonie,
+2. ten sam zestaw pol w GUI,
+3. ta sama walidacje,
+4. te same defaulty,
+5. ten sam serializer do scene document / script export.
+
+### 6.2. Docelowe API Python
+
+```python
+study = fm.study(
+    defaults=fm.StudyDefaults(
+        backend="fem",
+        precision="double",
+        solver=fm.SolverDefaults(
+            integrator="rk45",
+            timestep_mode="adaptive",
+            adaptive=fm.AdaptiveTimestep(
+                atol=1e-6,
+                rtol=1e-3,
+                dt_initial=1e-15,
+                dt_min=1e-18,
+                dt_max=1e-10,
+            ),
+        ),
+    )
+)
+
+study.add_relax(
+    name="Relax equilibrium",
+    algorithm="projected_gradient_bb",
+    torque_tolerance=1e-6,
+    max_steps=100_000,
+)
+
+study.add_run(
+    name="Transient ringdown",
+    until_seconds=5e-9,
+)
+
+study.add_eigensolve(
+    name="Linear modes near equilibrium",
+    count=20,
+    target="lowest",
+    include_demag=True,
+    equilibrium_source="relax",
+)
+
+study.add_hysteresis_loop(
+    name="Major loop Bz",
+    quantity="b_ext",
+    axis=(0, 0, 1),
+    start=-0.25,
+    stop=0.25,
+    steps=101,
+    settle_stage="relax",
+)
+
+fm.execute(study)
+```
+
+### 6.3. Kompatybilnosc wsteczna
+
+Stare API nadal moze istniec jako sugar:
+
+```python
+fm.relax(...)
+fm.run(...)
+fm.eigenmodes(...)
+```
+
+ale wewnetrznie powinno budowac:
+
+- jedno-stage albo multi-stage `StudyDocumentV2`,
+- nie globalny, rozproszony stan `_state + _captured_stages`.
+
+### 6.4. Jedno zrodlo prawdy dla schema
+
+Rekomendacja:
+
+- schema authoring ma zyc w `crates/fullmag-authoring` jako `StudyDocumentV2`,
+- Rust eksportuje maszynowy schema / JSON contract,
+- TypeScript bierze z niego typy i form metadata,
+- Python ma cienkie dataclasses / buildery mapowane 1:1.
+
+Nie odwrotnie.
+
+Powod:
+
+- Rust juz jest warstwa integracyjna dla authoring + runtime,
+- frontend i Python sa klientami tego kontraktu.
+
+---
+
+## 7. Docelowe Drzewo Modelu
+
+### 7.1. Minimalne drzewo `Study`
+
+```text
+Simulation
+|- Universe
+|- Objects
+|- Physics
+`- Study
+   |- Defaults
+   |  |- Runtime & Backend
+   |  |- Solver Defaults
+   |  `- Outputs Defaults
+   `- Stages
+      |- Stage 1 - Relax
+      |- Stage 2 - Run
+      `- Stage 3 - Eigensolve
+```
+
+### 7.2. Rozwiniete drzewo dla primitive stages
+
+```text
+Study
+|- Defaults
+|  |- Runtime & Backend
+|  |- Solver Defaults
+|  `- Outputs Defaults
+`- Stages
+   |- Stage 1 - Relax
+   |  |- Overview
+   |  |- Solver
+   |  |- Stop Criteria
+   |  `- Outputs
+   |- Stage 2 - Run
+   |  |- Overview
+   |  |- Solver
+   |  |- Time Range
+   |  `- Outputs
+   `- Stage 3 - Eigensolve
+      |- Overview
+      |- Solver
+      |- Equilibrium
+      |- Operator & Spectrum
+      `- Outputs
+```
+
+### 7.3. Rozwiniete drzewo dla macro stage
+
+```text
+Study
+`- Stages
+   |- Stage 1 - Relax
+   |- Stage 2 - Hysteresis Loop
+   |  |- Overview
+   |  |- Sweep Definition
+   |  |- Settle Stage
+   |  |- Outputs
+   |  `- Materialized Preview
+   `- Stage 3 - Eigensolve
+```
+
+### 7.4. Co usuwamy z drzewa
+
+Powinny zniknac jako osobne top-level study nody:
+
+- `Study Setup`
+- `Stage Builder`
+- `Stage Sequence`
+- `Integrator`
+- `Time Stepping`
+- `Convergence`
+
+Dlaczego:
+
+- to sa albo fake routing nodes,
+- albo konfiguracje, ktore powinny zyc pod `Defaults`,
+- albo elementy, ktore powinny byc dziecmi konkretnego stage.
+
+---
+
+## 8. Ribbon - Szkice COMSOL Like
+
+### 8.1. Gdy zaznaczony jest `Study > Stages`
+
+```text
+STUDY RIBBON
+
+Add Stage
+[ Run ] [ Relax ] [ Eigensolve ] [ Hysteresis Loop ]
+
+Sequence
+[ Insert Before ] [ Insert After ] [ Duplicate ] [ Delete ]
+[ Move Up ] [ Move Down ] [ Disable/Enable ]
+
+Validation
+[ Validate Study ] [ Preview Materialization ] [ Export Python ]
+```
+
+Najwazniejsza akcja:
+
+- klik `Run` -> drzewo dodaje `Stage N - Run`,
+- klik `Relax` -> drzewo dodaje `Stage N - Relax`,
+- klik `Eigensolve` -> drzewo dodaje `Stage N - Eigensolve`,
+- klik `Hysteresis Loop` -> drzewo dodaje `Stage N - Hysteresis Loop`.
+
+Auto numeracja jest obowiazkowa.
+
+### 8.2. Gdy zaznaczony jest `Stage N - Relax`
+
+```text
+STUDY RIBBON / RELAX STAGE
+
+Stage
+[ Rename ] [ Duplicate ] [ Delete ] [ Disable ]
+
+Relax
+[ Overdamped LLG ] [ Projected Gradient BB ] [ Nonlinear CG ]
+[ Stop Criteria ] [ Relax Alpha ]
+
+Solver
+[ Integrator ] [ Fixed dt ] [ Adaptive dt ] [ Backend Override ]
+
+Outputs
+[ Field Autosave ] [ Scalar Autosave ] [ Snapshot ]
+```
+
+### 8.3. Gdy zaznaczony jest `Stage N - Run`
+
+```text
+STUDY RIBBON / RUN STAGE
+
+Stage
+[ Rename ] [ Duplicate ] [ Delete ] [ Disable ]
+
+Time
+[ Until ] [ Sample Every ] [ Checkpoint ]
+
+Solver
+[ Integrator ] [ Fixed dt ] [ Adaptive dt ] [ Backend Override ]
+
+Outputs
+[ Field Autosave ] [ Scalar Autosave ] [ Snapshot ]
+```
+
+### 8.4. Gdy zaznaczony jest `Stage N - Eigensolve`
+
+```text
+STUDY RIBBON / EIGENSOLVE
+
+Stage
+[ Rename ] [ Duplicate ] [ Delete ] [ Disable ]
+
+Spectrum
+[ Mode Count ] [ Lowest ] [ Nearest ] [ Include Demag ]
+
+Equilibrium
+[ Use Relax ] [ Use Provided State ] [ Load Artifact ]
+
+Advanced
+[ k-Vector ] [ Damping Policy ] [ Spin-Wave BC ]
+```
+
+### 8.5. Gdy zaznaczony jest `Stage N - Hysteresis Loop`
+
+```text
+STUDY RIBBON / HYSTERESIS LOOP
+
+Stage
+[ Rename ] [ Duplicate ] [ Delete ] [ Disable ]
+
+Sweep
+[ B_ext ] [ Current ] [ Axis ] [ Start/Stop ] [ Steps ]
+
+Per Point Action
+[ Relax Each Point ] [ Run Each Point ] [ Save State ]
+
+Preview
+[ Materialized Steps ] [ Output Policy ] [ Validation ]
+```
+
+---
+
+## 9. Widoki Szczegolowe Dla Kazdego Typu Wezla
+
+To jest sekcja krytyczna. Kazdy node ma miec inne znaczenie i inny details panel.
+
+### 9.1. `Study`
+
+Rola:
+
+- root calego subsystemu badania.
+
+Inspector:
+
+- high-level summary,
+- liczba stages,
+- validation summary,
+- compile status,
+- linki do `Defaults` i `Stages`.
+
+Nie pokazujemy tutaj pelnego edytora solvera ani listy stage cards.
+
+### 9.2. `Study > Defaults`
+
+Rola:
+
+- global defaults dla wszystkich stages.
+
+Inspector:
+
+- sekcje typu dashboard:
+  - runtime defaults,
+  - solver defaults,
+  - output defaults,
+  - validation mode.
+
+### 9.3. `Study > Defaults > Runtime & Backend`
+
+Inspector:
+
+- backend,
+- device,
+- precision,
+- execution mode,
+- fallback policy,
+- capability coverage.
+
+To jest nowe miejsce dla obecnego `Backend Configuration`.
+
+### 9.4. `Study > Defaults > Solver Defaults`
+
+Inspector:
+
+- integrator default,
+- timestep mode,
+- fixed dt,
+- adaptive dt full config,
+- gamma,
+- precession mode.
+
+To zastapi obecne rozproszone `Integrator`, `Time Stepping`, `Convergence`.
+
+### 9.5. `Study > Defaults > Outputs Defaults`
+
+Inspector:
+
+- default scalar autosave,
+- default field autosave,
+- default snapshots,
+- checkpoint policy,
+- artifact naming defaults.
+
+### 9.6. `Study > Stages`
+
+Rola:
+
+- kolekcja sekwencji.
+
+Inspector:
+
+- lista stages w formie reorderable outline lub compact table,
+- actions:
+  - add stage,
+  - import from Python,
+  - preview materialization,
+  - validate.
+
+To jest jedyne miejsce, gdzie taka lista ma sens. Nie drugi raz w ogolnym `Study`.
+
+### 9.7. `Stage N - Relax`
+
+Inspector:
+
+- stage header:
+  - name,
+  - enabled,
+  - source,
+  - diagnostics,
+  - materialized step count,
+- relax config:
+  - algorithm,
+  - torque tolerance,
+  - energy tolerance,
+  - max steps,
+  - relax alpha,
+- solver override summary,
+- outputs summary.
+
+### 9.8. `Stage N - Relax > Solver`
+
+Inspector:
+
+- use defaults / override,
+- integrator,
+- fixed dt,
+- adaptive dt full config,
+- gamma override,
+- backend override,
+- precession mode.
+
+### 9.9. `Stage N - Relax > Stop Criteria`
+
+Inspector:
+
+- torque tolerance,
+- energy tolerance,
+- max steps,
+- stop on convergence / stop on limit.
+
+### 9.10. `Stage N - Relax > Outputs`
+
+Inspector:
+
+- scalar saves,
+- field saves,
+- snapshots,
+- final checkpoint,
+- naming pattern.
+
+### 9.11. `Stage N - Run`
+
+Inspector:
+
+- `until_seconds`,
+- sample cadence,
+- solver override summary,
+- outputs summary,
+- estimated runtime / estimated samples.
+
+### 9.12. `Stage N - Run > Time Range`
+
+Inspector:
+
+- until seconds,
+- optional sample every,
+- optional checkpoint every,
+- dry-run estimate.
+
+### 9.13. `Stage N - Eigensolve`
+
+Inspector:
+
+- mode count,
+- target mode,
+- target frequency,
+- include demag,
+- equilibrium source,
+- normalization,
+- damping policy,
+- k-vector,
+- BC config,
+- outputs.
+
+### 9.14. `Stage N - Eigensolve > Equilibrium`
+
+Inspector:
+
+- source:
+  - previous relax stage,
+  - provided state,
+  - artifact path,
+- validation:
+  - is previous relax available,
+  - does artifact exist,
+  - does ordering make sense.
+
+### 9.15. `Stage N - Eigensolve > Operator & Spectrum`
+
+Inspector:
+
+- count,
+- target,
+- target frequency,
+- demag on/off,
+- normalization,
+- damping policy,
+- k-vector,
+- BC config.
+
+### 9.16. `Stage N - Hysteresis Loop`
+
+Inspector:
+
+- sweep quantity,
+- axis,
+- start/stop,
+- steps,
+- spacing,
+- settle policy,
+- save point state,
+- materialized preview summary.
+
+### 9.17. `Stage N - Hysteresis Loop > Materialized Preview`
+
+Inspector:
+
+- read-only preview:
+  - total generated execution steps,
+  - first 5 steps,
+  - last 5 steps,
+  - points count,
+  - estimated artifacts.
+
+To jest bardzo COMSOL-like:
+
+- user authoruje jeden loop,
+- system jawnie pokazuje co backend z tego wygeneruje.
+
+---
+
+## 10. Przykadowe Sekwencje Study
+
+### 10.1. Relax -> Run -> Eigensolve
+
+```text
+Study
+`- Stages
+   |- Stage 1 - Relax
+   |- Stage 2 - Run
+   `- Stage 3 - Eigensolve
+```
+
+Zastosowanie:
+
+- znajdz rownowage,
+- policz transient,
+- policz mody dla stanu rownowagi.
+
+### 10.2. Relax -> Hysteresis Loop
+
+```text
+Study
+`- Stages
+   |- Stage 1 - Relax
+   `- Stage 2 - Hysteresis Loop
+      |- Sweep Definition
+      |- Settle Stage
+      `- Materialized Preview
+```
+
+Zastosowanie:
+
+- major loop / minor loop,
+- pomiar M(H),
+- zapisywanie stanu w punktach.
+
+### 10.3. Relax -> Eigensolve -> Run
+
+```text
+Study
+`- Stages
+   |- Stage 1 - Relax
+   |- Stage 2 - Eigensolve
+   `- Stage 3 - Run
+```
+
+To jest wazne, bo drzewo ma byc neutralne wobec kolejnosci. Uzytkownik ustawia etapy swobodnie, a walidacja ma tylko sygnalizowac sens lub ryzyko.
+
+---
+
+## 11. Materializacja I Walidacja
+
+### 11.1. Regula
+
+UI authoruje `StudyDocumentV2`.
+
+Backend wykonuje `CompiledExecutionPlan`.
+
+### 11.2. Materialization Preview
+
+Kazdy study document musi miec panel:
+
+- `Validate Study`,
+- `Preview Materialization`.
+
+Preview pokazuje:
+
+- stage -> execution steps map,
+- warnings,
+- implicit defaults,
+- backend capability issues,
+- niejednoznaczne zaleznosci.
+
+### 11.3. Przyklady walidacji
+
+- `Eigensolve` bez poprzedniego `Relax` i z `equilibrium_source="relax"` -> error.
+- `Run` bez `until_seconds` -> error.
+- `Relax` z `max_steps <= 0` -> error.
+- `Hysteresis Loop` z `steps < 2` -> error.
+- adaptive timestep na integratorze bez adaptacji -> error.
+- `dt_fixed` i `adaptive` jednoczesnie -> error.
+
+### 11.4. Capability coverage
+
+`Capability Coverage` nie powinno byc ogolnym cardem w kazdym view.
+
+Powinno byc:
+
+- pod `Study > Defaults > Runtime & Backend`,
+- oraz jako lokalne warning badges na stage, gdy stage wymaga czegos nieobslugiwanego.
+
+---
+
+## 12. Runtime I Dolny Panel
+
+Ten refaktor naturalnie spina sie z dolnym panelem.
+
+### 12.1. Bottom panel powinien miec osobne progress bars
+
+```text
+Bottom Runtime Strip
+
+Mesh Progress      [#####-----] 52%
+Study Progress     [##--------] 1 / 4 stages
+Current Stage      Relax equilibrium
+Stage Progress     [#######---] 73%
+Solver Detail      step 1980 / 5000, dt = 1e-15, max|dm/dt| = ...
+```
+
+### 12.2. Dlaczego to zalezy od nowego modelu stage
+
+Bez prawdziwych stage node'ow nie da sie dobrze pokazac:
+
+- ktory stage jest aktywny,
+- ile zostalo do konca sekwencji,
+- jaki stage wygenerowal jakie artifacts,
+- co jest meshingiem, a co study execution.
+
+Nowy model stage daje:
+
+- jasny `overall progress`,
+- jasny `current stage`,
+- jawne `stage execution map`,
+- jawne `mesh -> solve -> outputs` rozdzielenie.
+
+---
+
+## 13. Plan Refaktoryzacji Repo
+
+### 13.1. Etap 0 - Zamrozenie nazewnictwa
+
+Ustalic raz:
+
+- `StudyDocumentV2`
+- `StudyDefaults`
+- `StudyStageNode`
+- `CompiledExecutionPlan`
+- `RuntimeExecutionState`
+- `Stage` vs `Execution step`
+
+Bez tego implementacja bedzie sie rozjezdzac.
+
+### 13.2. Etap 1 - Nowy kontrakt authoring
+
+Pliki:
+
+- `crates/fullmag-authoring/src/builder.rs`
+- `crates/fullmag-authoring/src/scene.rs`
+- `apps/web/lib/session/types.ts`
+- `apps/web/lib/session/sceneDocument.ts`
+- `packages/fullmag-py/src/fullmag/runtime/scene_document.py`
+
+Zadanie:
+
+- dodac `StudyDocumentV2`,
+- dodac typed stage nodes,
+- zachowac legacy migration z `flat stages`.
+
+### 13.3. Etap 2 - Python API stage-first
+
+Pliki:
+
+- `packages/fullmag-py/src/fullmag/world.py`
+- `packages/fullmag-py/src/fullmag/model/study.py`
+- `packages/fullmag-py/src/fullmag/runtime/script_builder.py`
+
+Zadanie:
+
+- wprowadzic `study.add_run`, `study.add_relax`, `study.add_eigensolve`, `study.add_hysteresis_loop`,
+- zachowac `fm.run`, `fm.relax`, `fm.eigenmodes` jako sugar,
+- eksportowac ten sam kontrakt co GUI.
+
+### 13.4. Etap 3 - Tree refactor
+
+Pliki:
+
+- `apps/web/components/panels/ModelTree.tsx`
+
+Zadanie:
+
+- usunac fake nody,
+- zbudowac docelowe `Study > Defaults > Stages`,
+- stage nodes staja sie glowna sekwencja authoring.
+
+### 13.5. Etap 4 - Inspector registry
+
+Pliki:
+
+- `apps/web/components/panels/SettingsPanel.tsx`
+- nowe `apps/web/components/study/nodes/*`
+
+Zadanie:
+
+- zamiast `if nodeId.startsWith("study-") return <StudyPanel />`,
+- wprowadzic registry:
+  - `study-root`,
+  - `study-defaults`,
+  - `study-runtime`,
+  - `study-solver-defaults`,
+  - `stage-relax`,
+  - `stage-run`,
+  - `stage-eigensolve`,
+  - `stage-hysteresis`,
+  - child node panels.
+
+### 13.6. Etap 5 - Ribbon refactor
+
+Pliki:
+
+- `apps/web/components/shell/RibbonBar.tsx`
+- `apps/web/lib/workspace/workspace-store.ts`
+
+Zadanie:
+
+- ribbon ma zalezec od selection context,
+- `Study` ribbon dla `Study > Stages`,
+- `Relax` ribbon dla relax stage,
+- `Run` ribbon dla run stage,
+- itd.
+
+### 13.7. Etap 6 - Materialization service
+
+Pliki:
+
+- `apps/web/lib/study-builder/materialize.ts`
+- `apps/web/lib/study-builder/validate.ts`
+- `apps/web/lib/study-builder/operations.ts`
+
+Zadanie:
+
+- przepisac na `StudyDocumentV2`,
+- dodac `Execution step preview`,
+- przestac dopisywac ukryte domysly w wielu miejscach.
+
+### 13.8. Etap 7 - Runtime mapping i progress
+
+Pliki:
+
+- `apps/web/components/runs/control-room/ControlRoomContext.tsx`
+- footer / bottom dock komponenty
+
+Zadanie:
+
+- mapowac runtime na `stage_id`,
+- pokazac progress per stage,
+- rozdzielic progress mesh vs solve.
+
+---
+
+## 14. Czego Nie Robic
+
+### 14.1. Nie rozwijac dalej obecnego `StudyPanel`
+
+To bedzie tylko pogarszac problem.
+
+### 14.2. Nie trzymac `Stage Sequence` jako drugiego glownego widoku
+
+Sekwencja juz jest w drzewie. Duplikacja tworzy chaos.
+
+### 14.3. Nie dopisywac kolejnych `if nodeId.startsWith("study-")`
+
+To jest architektoniczny slepy zaulek.
+
+### 14.4. Nie traktowac `flat stages` jako editable source-of-truth
+
+To ma byc compiled artifact, nie model authoringu.
+
+---
+
+## 15. Kryteria Akceptacji
+
+Refaktor mozna uznac za udany dopiero gdy:
+
+1. Klikniecie roznych study node'ow pokazuje rozne, sensowne inspectory.
+2. Klikniecie `Study > Stages` zmienia ribbon na `Study` i pokazuje stage modules.
+3. Dodanie stage z ribbonu od razu dodaje nowy node do drzewa z auto numeracja.
+4. `Run`, `Relax`, `Eigensolve` i `Hysteresis Loop` maja jawne, kompletne parametry.
+5. Python i GUI round-tripuja ten sam kontrakt bez gubienia pol.
+6. `Backend Configuration` istnieje tylko tam, gdzie semantycznie ma sens.
+7. Uzytkownik moze zbudowac cala sekwencje badawcza bez edycji surowego Pythona.
+8. Dolny panel umie pokazac progress osobno dla meshu i osobno dla stage.
+9. `flat stages` sa widoczne tylko jako preview / compiled artifact.
+
+---
+
+## 16. Najwazniejsza Konkluzja
+
+Dzisiejszy problem nie polega na tym, ze brakuje kilku przyciskow.
+
+Problem polega na tym, ze:
+
+- drzewo,
+- ribbon,
+- inspector,
+- authoring model,
+- oraz backend materialization
+
+nie opisuja tego samego obiektu.
+
+Dopiero po wprowadzeniu jednego `StudyDocumentV2` i prawdziwych, node-specific stage views `Study` zacznie dzialac jak COMSOL, a nie jak panel z kilkoma sekcjami obok siebie.
+
+---
+
+## 17. Material Referencyjny
+
+Wzor referencyjny do tej refaktoryzacji:
+
+- `fullmag/docs/reports/04042026/comsol/Zrzut ekranu 2026-04-05 213529.png`
+- `fullmag/docs/reports/04042026/comsol/Zrzut ekranu 2026-04-05 213608.png`
+- `fullmag/docs/reports/06042026/image/fullmag_fem_audit_report/image.png`
+
+Najwazniejsze wzorce z COMSOL:
+
+- selekcja noda zmienia settings,
+- ribbon jest context-sensitive,
+- tree jest prawdziwa struktura modelu,
+- progress i log zyja na dole,
+- authoring i runtime nie sa wrzucone do jednego wielkiego panelu.

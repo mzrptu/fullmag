@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use fullmag_ir::{BackendPlanIR, ProblemIR};
+use serde_json::Value;
 
 use crate::formatting::unix_time_millis;
 use crate::live_workspace::LocalLiveWorkspace;
 use crate::types::{
     LiveStateManifest, LiveStepView, ResolvedScriptStage, RunManifest, ScriptExecutionConfig,
+    StudyPipelineDocument, StudyPipelineNode,
 };
 
 pub(crate) fn emit_initial_state_warnings(
@@ -292,6 +294,7 @@ pub(crate) fn materialize_script_stages(
         mut ir,
         shared_geometry_assets,
         default_until_seconds,
+        study_pipeline,
         stages,
     } = config;
 
@@ -300,6 +303,12 @@ pub(crate) fn materialize_script_stages(
     }
 
     if stages.is_empty() {
+        if let Some(document) = study_pipeline {
+            let materialized = materialize_study_pipeline(&document, &ir, default_until_seconds)?;
+            if !materialized.is_empty() {
+                return Ok(materialized);
+            }
+        }
         let entrypoint_kind = ir.problem_meta.entrypoint_kind.clone();
         return Ok(vec![ResolvedScriptStage {
             until_seconds: if entrypoint_kind == "flat_workspace" {
@@ -332,6 +341,539 @@ pub(crate) fn materialize_script_stages(
             })
         })
         .collect()
+}
+
+fn materialize_study_pipeline(
+    document: &StudyPipelineDocument,
+    base_ir: &ProblemIR,
+    default_until_seconds: Option<f64>,
+) -> Result<Vec<ResolvedScriptStage>> {
+    if document.version != "study_pipeline.v1" {
+        bail!(
+            "unsupported study pipeline version '{}' while materializing script stages",
+            document.version
+        );
+    }
+    let mut stages = Vec::new();
+    walk_study_pipeline_nodes(&document.nodes, base_ir, default_until_seconds, &mut stages)?;
+    Ok(stages)
+}
+
+fn walk_study_pipeline_nodes(
+    nodes: &[StudyPipelineNode],
+    base_ir: &ProblemIR,
+    default_until_seconds: Option<f64>,
+    out: &mut Vec<ResolvedScriptStage>,
+) -> Result<()> {
+    for node in nodes {
+        match node {
+            StudyPipelineNode::Primitive {
+                enabled,
+                stage_kind,
+                payload,
+                label,
+                ..
+            } => {
+                if !enabled {
+                    continue;
+                }
+                out.push(
+                    materialize_pipeline_primitive(
+                        base_ir,
+                        stage_kind,
+                        payload,
+                        default_until_seconds,
+                    )
+                    .with_context(|| {
+                        format!("failed to materialize study pipeline node '{label}'")
+                    })?,
+                );
+            }
+            StudyPipelineNode::Macro {
+                enabled,
+                macro_kind,
+                label,
+                ..
+            } => {
+                if !enabled {
+                    continue;
+                }
+                bail!(
+                    "study pipeline macro '{}' ('{}') requires prior materialization into explicit stages",
+                    label,
+                    macro_kind
+                );
+            }
+            StudyPipelineNode::Group {
+                enabled, children, ..
+            } => {
+                if !enabled {
+                    continue;
+                }
+                walk_study_pipeline_nodes(children, base_ir, default_until_seconds, out)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn materialize_pipeline_primitive(
+    base_ir: &ProblemIR,
+    stage_kind: &str,
+    payload: &std::collections::BTreeMap<String, Value>,
+    default_until_seconds: Option<f64>,
+) -> Result<ResolvedScriptStage> {
+    let normalized_kind = stage_kind.trim().to_ascii_lowercase();
+    match normalized_kind.as_str() {
+        "run" => materialize_pipeline_run(base_ir, payload, default_until_seconds),
+        "relax" => materialize_pipeline_relax(base_ir, payload),
+        "eigenmodes" => materialize_pipeline_eigenmodes(base_ir, payload),
+        other => bail!(
+            "study pipeline primitive stage '{}' is not yet executable by the runtime; materialize it into explicit stages first",
+            other
+        ),
+    }
+}
+
+fn materialize_pipeline_run(
+    base_ir: &ProblemIR,
+    payload: &std::collections::BTreeMap<String, Value>,
+    default_until_seconds: Option<f64>,
+) -> Result<ResolvedScriptStage> {
+    let mut ir = base_ir.clone();
+    let mut dynamics = ir.study.dynamics().clone();
+    apply_dynamics_overrides(&mut dynamics, payload)?;
+    let sampling = ir.study.sampling().clone();
+    let entrypoint_kind = payload_string(payload, "entrypoint_kind")
+        .unwrap_or_else(|| "study_pipeline_run".to_string());
+    ir.problem_meta.entrypoint_kind = entrypoint_kind.clone();
+    ir.study = fullmag_ir::StudyIR::TimeEvolution { dynamics, sampling };
+    let until_seconds = resolve_script_until_seconds(
+        &ir,
+        payload_f64(payload, "until_seconds")?.or(default_until_seconds),
+    )?;
+    if until_seconds <= 0.0 {
+        bail!("run study pipeline stage requires a positive until_seconds value");
+    }
+    Ok(ResolvedScriptStage {
+        ir,
+        until_seconds,
+        entrypoint_kind,
+    })
+}
+
+fn materialize_pipeline_relax(
+    base_ir: &ProblemIR,
+    payload: &std::collections::BTreeMap<String, Value>,
+) -> Result<ResolvedScriptStage> {
+    let mut ir = base_ir.clone();
+    let mut dynamics = ir.study.dynamics().clone();
+    apply_dynamics_overrides(&mut dynamics, payload)?;
+    let sampling = ir.study.sampling().clone();
+    let entrypoint_kind = payload_string(payload, "entrypoint_kind")
+        .unwrap_or_else(|| "study_pipeline_relax".to_string());
+    ir.problem_meta.entrypoint_kind = entrypoint_kind.clone();
+    ir.study = fullmag_ir::StudyIR::Relaxation {
+        algorithm: payload_relaxation_algorithm(payload)?
+            .unwrap_or(fullmag_ir::RelaxationAlgorithmIR::LlgOverdamped),
+        dynamics,
+        torque_tolerance: payload_f64(payload, "torque_tolerance")?.unwrap_or(1e-6),
+        energy_tolerance: payload_f64(payload, "energy_tolerance")?,
+        max_steps: payload_u64(payload, "max_steps")?.unwrap_or(50_000),
+        sampling,
+    };
+    let until_seconds = resolve_script_until_seconds(&ir, None)?;
+    Ok(ResolvedScriptStage {
+        ir,
+        until_seconds,
+        entrypoint_kind,
+    })
+}
+
+fn materialize_pipeline_eigenmodes(
+    base_ir: &ProblemIR,
+    payload: &std::collections::BTreeMap<String, Value>,
+) -> Result<ResolvedScriptStage> {
+    let mut ir = base_ir.clone();
+    let mut dynamics = ir.study.dynamics().clone();
+    apply_dynamics_overrides(&mut dynamics, payload)?;
+    let sampling = ir.study.sampling().clone();
+    let entrypoint_kind = payload_string(payload, "entrypoint_kind")
+        .unwrap_or_else(|| "study_pipeline_eigenmodes".to_string());
+    let current_eigen = match &base_ir.study {
+        fullmag_ir::StudyIR::Eigenmodes {
+            operator,
+            count,
+            target,
+            equilibrium,
+            k_sampling,
+            normalization,
+            damping_policy,
+            spin_wave_bc,
+            ..
+        } => Some((
+            operator.clone(),
+            *count,
+            target.clone(),
+            equilibrium.clone(),
+            k_sampling.clone(),
+            *normalization,
+            *damping_policy,
+            spin_wave_bc.clone(),
+        )),
+        _ => None,
+    };
+    let default_count = current_eigen
+        .as_ref()
+        .map(|current| current.1)
+        .unwrap_or(10);
+    let default_target = current_eigen
+        .as_ref()
+        .map(|current| current.2.clone())
+        .unwrap_or(fullmag_ir::EigenTargetIR::Lowest);
+    let default_equilibrium = current_eigen
+        .as_ref()
+        .map(|current| current.3.clone())
+        .unwrap_or(fullmag_ir::EquilibriumSourceIR::RelaxedInitialState);
+    let default_normalization = current_eigen
+        .as_ref()
+        .map(|current| current.5)
+        .unwrap_or(fullmag_ir::EigenNormalizationIR::UnitL2);
+    let default_damping_policy = current_eigen
+        .as_ref()
+        .map(|current| current.6)
+        .unwrap_or(fullmag_ir::EigenDampingPolicyIR::Ignore);
+    let default_spin_wave_bc = current_eigen
+        .as_ref()
+        .map(|current| current.7.clone())
+        .unwrap_or_default();
+    let include_demag = payload_bool(payload, "eigen_include_demag")?.unwrap_or_else(|| {
+        current_eigen
+            .as_ref()
+            .map(|current| current.0.include_demag)
+            .unwrap_or(true)
+    });
+
+    ir.problem_meta.entrypoint_kind = entrypoint_kind.clone();
+    ir.study = fullmag_ir::StudyIR::Eigenmodes {
+        dynamics,
+        operator: fullmag_ir::EigenOperatorConfigIR {
+            kind: fullmag_ir::EigenOperatorIR::LinearizedLlg,
+            include_demag,
+        },
+        count: payload_u32(payload, "eigen_count")?.unwrap_or(default_count),
+        target: payload_eigen_target(payload, default_target)?,
+        equilibrium: payload_equilibrium_source(payload, default_equilibrium)?,
+        k_sampling: payload_k_sampling(
+            payload,
+            current_eigen.as_ref().and_then(|current| current.4.clone()),
+        )?,
+        normalization: payload_eigen_normalization(payload)?.unwrap_or(default_normalization),
+        damping_policy: payload_eigen_damping_policy(payload)?.unwrap_or(default_damping_policy),
+        spin_wave_bc: payload_spin_wave_bc(payload)?.unwrap_or(default_spin_wave_bc),
+        sampling,
+    };
+
+    Ok(ResolvedScriptStage {
+        ir,
+        until_seconds: 0.0,
+        entrypoint_kind,
+    })
+}
+
+fn apply_dynamics_overrides(
+    dynamics: &mut fullmag_ir::DynamicsIR,
+    payload: &std::collections::BTreeMap<String, Value>,
+) -> Result<()> {
+    match dynamics {
+        fullmag_ir::DynamicsIR::Llg {
+            integrator,
+            fixed_timestep,
+            ..
+        } => {
+            let integrator_override = payload_string(payload, "integrator");
+            if let Some(value) = integrator_override.as_ref() {
+                *integrator = value.clone();
+            }
+            if payload.contains_key("fixed_timestep") {
+                *fixed_timestep = payload_f64(payload, "fixed_timestep")?;
+            } else if matches!(integrator_override.as_deref(), Some("rk45" | "rk23")) {
+                *fixed_timestep = None;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn payload_string(
+    payload: &std::collections::BTreeMap<String, Value>,
+    key: &str,
+) -> Option<String> {
+    match payload.get(key) {
+        Some(Value::String(value)) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Some(Value::Number(value)) => Some(value.to_string()),
+        Some(Value::Bool(value)) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn payload_f64(
+    payload: &std::collections::BTreeMap<String, Value>,
+    key: &str,
+) -> Result<Option<f64>> {
+    let Some(raw_value) = payload.get(key) else {
+        return Ok(None);
+    };
+    match raw_value {
+        Value::Null => Ok(None),
+        Value::String(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            trimmed
+                .parse::<f64>()
+                .with_context(|| format!("invalid floating-point value for payload field '{key}'"))
+                .map(Some)
+        }
+        Value::Number(value) => value
+            .as_f64()
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("invalid numeric value for payload field '{key}'")),
+        _ => bail!("payload field '{key}' must be a number or numeric string"),
+    }
+}
+
+fn payload_u64(
+    payload: &std::collections::BTreeMap<String, Value>,
+    key: &str,
+) -> Result<Option<u64>> {
+    let Some(raw_value) = payload.get(key) else {
+        return Ok(None);
+    };
+    match raw_value {
+        Value::Null => Ok(None),
+        Value::String(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            trimmed
+                .parse::<u64>()
+                .with_context(|| format!("invalid integer value for payload field '{key}'"))
+                .map(Some)
+        }
+        Value::Number(value) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("invalid integer value for payload field '{key}'")),
+        _ => bail!("payload field '{key}' must be an integer or integer string"),
+    }
+}
+
+fn payload_u32(
+    payload: &std::collections::BTreeMap<String, Value>,
+    key: &str,
+) -> Result<Option<u32>> {
+    payload_u64(payload, key)?.map_or(Ok(None), |value| {
+        u32::try_from(value)
+            .with_context(|| format!("payload field '{key}' does not fit into u32"))
+            .map(Some)
+    })
+}
+
+fn payload_bool(
+    payload: &std::collections::BTreeMap<String, Value>,
+    key: &str,
+) -> Result<Option<bool>> {
+    let Some(raw_value) = payload.get(key) else {
+        return Ok(None);
+    };
+    match raw_value {
+        Value::Null => Ok(None),
+        Value::Bool(value) => Ok(Some(*value)),
+        Value::String(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            match trimmed {
+                "true" => Ok(Some(true)),
+                "false" => Ok(Some(false)),
+                _ => bail!("payload field '{key}' must be a boolean or 'true'/'false' string"),
+            }
+        }
+        _ => bail!("payload field '{key}' must be a boolean"),
+    }
+}
+
+fn payload_relaxation_algorithm(
+    payload: &std::collections::BTreeMap<String, Value>,
+) -> Result<Option<fullmag_ir::RelaxationAlgorithmIR>> {
+    match payload_string(payload, "relax_algorithm") {
+        Some(value) => serde_json::from_value(Value::String(value))
+            .context("invalid relax_algorithm in study pipeline payload")
+            .map(Some),
+        None => Ok(None),
+    }
+}
+
+fn payload_eigen_target(
+    payload: &std::collections::BTreeMap<String, Value>,
+    default_target: fullmag_ir::EigenTargetIR,
+) -> Result<fullmag_ir::EigenTargetIR> {
+    let target_kind =
+        payload_string(payload, "eigen_target").unwrap_or_else(|| match default_target {
+            fullmag_ir::EigenTargetIR::Lowest => "lowest".to_string(),
+            fullmag_ir::EigenTargetIR::Nearest { .. } => "nearest".to_string(),
+        });
+    match target_kind.as_str() {
+        "lowest" => Ok(fullmag_ir::EigenTargetIR::Lowest),
+        "nearest" => {
+            let default_frequency = match default_target {
+                fullmag_ir::EigenTargetIR::Nearest { frequency_hz } => Some(frequency_hz),
+                fullmag_ir::EigenTargetIR::Lowest => None,
+            };
+            let frequency_hz = payload_f64(payload, "eigen_target_frequency")?
+                .or(default_frequency)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "study pipeline eigenmodes stage with eigen_target='nearest' requires eigen_target_frequency"
+                    )
+                })?;
+            Ok(fullmag_ir::EigenTargetIR::Nearest { frequency_hz })
+        }
+        other => bail!("unsupported eigen_target value '{other}'"),
+    }
+}
+
+fn payload_equilibrium_source(
+    payload: &std::collections::BTreeMap<String, Value>,
+    default_equilibrium: fullmag_ir::EquilibriumSourceIR,
+) -> Result<fullmag_ir::EquilibriumSourceIR> {
+    let default_label = match &default_equilibrium {
+        fullmag_ir::EquilibriumSourceIR::Provided => "provided",
+        fullmag_ir::EquilibriumSourceIR::RelaxedInitialState => "relax",
+        fullmag_ir::EquilibriumSourceIR::Artifact { .. } => "artifact",
+    };
+    let source = payload_string(payload, "eigen_equilibrium_source")
+        .unwrap_or_else(|| default_label.to_string());
+    match source.as_str() {
+        "provided" => Ok(fullmag_ir::EquilibriumSourceIR::Provided),
+        "relax" => Ok(fullmag_ir::EquilibriumSourceIR::RelaxedInitialState),
+        "artifact" => {
+            let path = payload_string(payload, "eigen_equilibrium_artifact").or_else(|| {
+                match default_equilibrium {
+                    fullmag_ir::EquilibriumSourceIR::Artifact { path } => Some(path),
+                    _ => None,
+                }
+            });
+            let path = path.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "study pipeline eigenmodes stage with equilibrium_source='artifact' requires eigen_equilibrium_artifact"
+                )
+            })?;
+            Ok(fullmag_ir::EquilibriumSourceIR::Artifact { path })
+        }
+        other => bail!("unsupported eigen_equilibrium_source value '{other}'"),
+    }
+}
+
+fn payload_eigen_normalization(
+    payload: &std::collections::BTreeMap<String, Value>,
+) -> Result<Option<fullmag_ir::EigenNormalizationIR>> {
+    match payload_string(payload, "eigen_normalization") {
+        Some(value) => serde_json::from_value(Value::String(value))
+            .context("invalid eigen_normalization in study pipeline payload")
+            .map(Some),
+        None => Ok(None),
+    }
+}
+
+fn payload_eigen_damping_policy(
+    payload: &std::collections::BTreeMap<String, Value>,
+) -> Result<Option<fullmag_ir::EigenDampingPolicyIR>> {
+    match payload_string(payload, "eigen_damping_policy") {
+        Some(value) => serde_json::from_value(Value::String(value))
+            .context("invalid eigen_damping_policy in study pipeline payload")
+            .map(Some),
+        None => Ok(None),
+    }
+}
+
+fn payload_k_sampling(
+    payload: &std::collections::BTreeMap<String, Value>,
+    default_sampling: Option<fullmag_ir::KSamplingIR>,
+) -> Result<Option<fullmag_ir::KSamplingIR>> {
+    let parsed = match payload.get("eigen_k_vector") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                let values: Vec<f64> = trimmed
+                    .split(',')
+                    .map(|component| {
+                        component.trim().parse::<f64>().with_context(|| {
+                            "invalid eigen_k_vector component in study pipeline payload"
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                if values.len() != 3 {
+                    bail!("eigen_k_vector must contain exactly 3 comma-separated values");
+                }
+                Some([values[0], values[1], values[2]])
+            }
+        }
+        Some(Value::Array(values)) => {
+            if values.len() != 3 {
+                bail!("eigen_k_vector array must contain exactly 3 entries");
+            }
+            Some([
+                values[0]
+                    .as_f64()
+                    .ok_or_else(|| anyhow::anyhow!("invalid eigen_k_vector[0] value"))?,
+                values[1]
+                    .as_f64()
+                    .ok_or_else(|| anyhow::anyhow!("invalid eigen_k_vector[1] value"))?,
+                values[2]
+                    .as_f64()
+                    .ok_or_else(|| anyhow::anyhow!("invalid eigen_k_vector[2] value"))?,
+            ])
+        }
+        _ => bail!("eigen_k_vector must be a comma-separated string or 3-element array"),
+    };
+    Ok(match parsed {
+        Some(k_vector) => Some(fullmag_ir::KSamplingIR::Single { k_vector }),
+        None => default_sampling,
+    })
+}
+
+fn payload_spin_wave_bc(
+    payload: &std::collections::BTreeMap<String, Value>,
+) -> Result<Option<fullmag_ir::SpinWaveBoundaryConditionIR>> {
+    if let Some(config) = payload.get("eigen_spin_wave_bc_config") {
+        if matches!(config, Value::Null) {
+            return Ok(None);
+        }
+        return serde_json::from_value(config.clone())
+            .context("invalid eigen_spin_wave_bc_config in study pipeline payload")
+            .map(Some);
+    }
+    match payload_string(payload, "eigen_spin_wave_bc") {
+        Some(value) => serde_json::from_value(Value::String(value))
+            .context("invalid eigen_spin_wave_bc in study pipeline payload")
+            .map(Some),
+        None => Ok(None),
+    }
 }
 
 pub(crate) fn apply_continuation_initial_state(
@@ -529,4 +1071,189 @@ pub(crate) fn build_resumable_interactive_command(
 
 pub(crate) fn supports_dynamic_live_preview(backend_plan: &BackendPlanIR) -> bool {
     matches!(backend_plan, BackendPlanIR::Fdm(_) | BackendPlanIR::Fem(_))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fullmag_ir::ProblemIR;
+    use serde_json::json;
+
+    fn sample_problem_ir() -> ProblemIR {
+        serde_json::from_value(json!({
+            "ir_version": "0.2.0",
+            "problem_meta": {
+                "name": "pipeline_test",
+                "description": null,
+                "script_language": "python",
+                "script_source": null,
+                "script_api_version": "0.2.0",
+                "serializer_version": "0.2.0",
+                "entrypoint_kind": "direct_script",
+                "source_hash": null,
+                "runtime_metadata": {},
+                "backend_revision": null,
+                "seeds": []
+            },
+            "geometry": {
+                "entries": [
+                    {
+                        "kind": "box",
+                        "name": "track",
+                        "size": [1.0, 1.0, 1.0]
+                    }
+                ]
+            },
+            "regions": [
+                {
+                    "name": "track",
+                    "geometry": "track"
+                }
+            ],
+            "materials": [
+                {
+                    "name": "Py",
+                    "saturation_magnetisation": 800000.0,
+                    "exchange_stiffness": 1.3e-11,
+                    "damping": 0.01,
+                    "uniaxial_anisotropy": null,
+                    "anisotropy_axis": null
+                }
+            ],
+            "magnets": [
+                {
+                    "name": "track",
+                    "region": "track",
+                    "material": "Py",
+                    "initial_magnetization": {
+                        "kind": "uniform",
+                        "value": [1.0, 0.0, 0.0]
+                    }
+                }
+            ],
+            "energy_terms": [
+                {
+                    "kind": "exchange"
+                }
+            ],
+            "study": {
+                "kind": "time_evolution",
+                "dynamics": {
+                    "kind": "llg",
+                    "gyromagnetic_ratio": 221000.0,
+                    "integrator": "rk45",
+                    "fixed_timestep": 1e-13
+                },
+                "sampling": {
+                    "outputs": []
+                }
+            },
+            "backend_policy": {
+                "requested_backend": "fdm",
+                "execution_precision": "double",
+                "discretization_hints": null
+            },
+            "validation_profile": {
+                "execution_mode": "strict"
+            }
+        }))
+        .expect("sample ProblemIR should deserialize")
+    }
+
+    #[test]
+    fn materialize_script_stages_uses_study_pipeline_when_explicit_stages_are_absent() {
+        let config = ScriptExecutionConfig {
+            ir: sample_problem_ir(),
+            shared_geometry_assets: None,
+            default_until_seconds: Some(5e-12),
+            study_pipeline: Some(StudyPipelineDocument {
+                version: "study_pipeline.v1".to_string(),
+                nodes: vec![
+                    StudyPipelineNode::Primitive {
+                        id: "stage_1_run".to_string(),
+                        label: "Imported Stage 1".to_string(),
+                        enabled: true,
+                        notes: None,
+                        source: Some("script_imported".to_string()),
+                        stage_kind: "run".to_string(),
+                        payload: serde_json::from_value(json!({
+                            "kind": "run",
+                            "entrypoint_kind": "pipeline_run",
+                            "integrator": "rk45",
+                            "fixed_timestep": "",
+                            "until_seconds": "5e-12"
+                        }))
+                        .expect("payload"),
+                    },
+                    StudyPipelineNode::Primitive {
+                        id: "stage_2_relax".to_string(),
+                        label: "Imported Stage 2".to_string(),
+                        enabled: true,
+                        notes: None,
+                        source: Some("script_imported".to_string()),
+                        stage_kind: "relax".to_string(),
+                        payload: serde_json::from_value(json!({
+                            "kind": "relax",
+                            "entrypoint_kind": "pipeline_relax",
+                            "integrator": "rk45",
+                            "fixed_timestep": "2e-13",
+                            "relax_algorithm": "llg_overdamped",
+                            "torque_tolerance": "1e-6",
+                            "max_steps": "25"
+                        }))
+                        .expect("payload"),
+                    },
+                ],
+            }),
+            stages: vec![],
+        };
+
+        let stages = materialize_script_stages(config).expect("pipeline should materialize");
+        assert_eq!(stages.len(), 2);
+        assert_eq!(stages[0].entrypoint_kind, "pipeline_run");
+        assert!((stages[0].until_seconds - 5e-12).abs() < 1e-24);
+        assert_eq!(stages[1].entrypoint_kind, "pipeline_relax");
+        assert!(matches!(
+            stages[1].ir.study,
+            fullmag_ir::StudyIR::Relaxation { max_steps: 25, .. }
+        ));
+        assert!((stages[1].until_seconds - (25.0 * 2e-13)).abs() < 1e-24);
+    }
+
+    #[test]
+    fn materialize_script_stages_prefers_explicit_stages_over_study_pipeline() {
+        let explicit_stage = crate::types::ScriptExecutionStage {
+            ir: sample_problem_ir(),
+            default_until_seconds: Some(7e-12),
+            entrypoint_kind: "explicit_run".to_string(),
+        };
+        let config = ScriptExecutionConfig {
+            ir: sample_problem_ir(),
+            shared_geometry_assets: None,
+            default_until_seconds: Some(5e-12),
+            study_pipeline: Some(StudyPipelineDocument {
+                version: "study_pipeline.v1".to_string(),
+                nodes: vec![StudyPipelineNode::Primitive {
+                    id: "stage_1_run".to_string(),
+                    label: "Imported Stage 1".to_string(),
+                    enabled: true,
+                    notes: None,
+                    source: Some("script_imported".to_string()),
+                    stage_kind: "run".to_string(),
+                    payload: serde_json::from_value(json!({
+                        "kind": "run",
+                        "entrypoint_kind": "pipeline_run",
+                        "until_seconds": "5e-12"
+                    }))
+                    .expect("payload"),
+                }],
+            }),
+            stages: vec![explicit_stage],
+        };
+
+        let stages = materialize_script_stages(config).expect("explicit stages should win");
+        assert_eq!(stages.len(), 1);
+        assert_eq!(stages[0].entrypoint_kind, "explicit_run");
+        assert!((stages[0].until_seconds - 7e-12).abs() < 1e-24);
+    }
 }

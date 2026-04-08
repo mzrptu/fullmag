@@ -176,6 +176,15 @@ typedef struct {
     int                        mel_uniform_strain;     /* 1 = uniform (6 doubles), 0 = per-node (6*n_nodes) */
     const double              *mel_strain_voigt;       /* Voigt strain [ε₁₁,ε₂₂,ε₃₃,2ε₂₃,2ε₁₃,2ε₁₂] */
     uint64_t                   mel_strain_len;         /* Length of strain array (6 or 6*n_nodes) */
+
+    /* FEM-029: explicit GPU device index from plan (-1 = env / default) */
+    int32_t                    gpu_device_index;
+    /* Thermal noise seed (0 = system entropy) */
+    uint64_t                   thermal_seed;
+    /* FEM-030: explicit MFEM device string (null = env / compiled default) */
+    const char                *mfem_device_string;
+    /* FEM-039: explicit transfer-grid cell size for demag (0.0 = hmax) */
+    double                     demag_transfer_cell_size;
 } fullmag_fem_plan_desc;
 
 typedef struct {

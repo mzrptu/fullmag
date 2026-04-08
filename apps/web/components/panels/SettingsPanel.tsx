@@ -4,7 +4,6 @@ import { useMemo } from "react";
 import { useControlRoom } from "../runs/control-room/ControlRoomContext";
 import { Button } from "../ui/button";
 import MeshSettingsPanel from "./MeshSettingsPanel";
-import { IntegratorSettingsPanel, RelaxationSettingsPanel } from "./SolverSettingsPanel";
 import { SidebarSection, InfoRow } from "./settings/primitives";
 import { humanizeToken, readBuilderContract } from "./settings/helpers";
 import GeometryPanel from "./settings/GeometryPanel";
@@ -22,6 +21,7 @@ import EnergyPanel from "./settings/EnergyPanel";
 import StateIoPanel from "./settings/StateIoPanel";
 import { CORE_UI_CAPABILITIES } from "@/lib/workspace/capability-contract";
 import { summarizeCapabilityCoverage } from "@/lib/workspace/capability-audit";
+import { parseStudyNodeContext } from "@/lib/study-builder/node-context";
 
 /* ── Main SettingsPanel ── */
 interface SettingsPanelProps {
@@ -123,6 +123,7 @@ function ScriptBuilderInfoPanel() {
 
 export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
   const ctx = useControlRoom();
+  const studyNodeContext = parseStudyNodeContext(nodeId);
   const capabilitySummary = summarizeCapabilityCoverage();
   const showSolverTelemetrySection = false;
   const showEnergySection = false;
@@ -193,26 +194,7 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
   const renderNodeContent = () => {
     if (nodeId === "session") return <SessionInfoPanel />;
     if (nodeId === "script-builder") return <ScriptBuilderInfoPanel />;
-    if (nodeId === "study-root") return <StudyPanel />;
-    if (nodeId === "study-integrator") {
-      return (
-        <IntegratorSettingsPanel
-          settings={ctx.solverSettings}
-          onChange={ctx.setSolverSettings}
-          solverRunning={ctx.workspaceStatus === "running"}
-        />
-      );
-    }
-    if (nodeId === "study-relax") {
-      return (
-        <RelaxationSettingsPanel
-          settings={ctx.solverSettings}
-          onChange={ctx.setSolverSettings}
-          solverRunning={ctx.workspaceStatus === "running"}
-        />
-      );
-    }
-    if (nodeId === "study" || nodeId.startsWith("study-")) return <StudyPanel />;
+    if (studyNodeContext) return <StudyPanel nodeId={nodeId} />;
     if (
       nodeId === "universe-mesh" ||
       nodeId === "universe-mesh-view" ||

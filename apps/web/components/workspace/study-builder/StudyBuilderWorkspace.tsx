@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { ScriptBuilderStageState, StudyPipelineDocumentState } from "@/lib/session/types";
 import type {
   MaterializedStageMapEntry,
@@ -94,16 +94,16 @@ export default function StudyBuilderWorkspace({
 
   const materialized = useMemo(() => materializeStudyPipeline(document), [document]);
   const selectedNode = useMemo(
-    () => findNodeById(document.nodes, selectedNodeId ?? "") ?? null,
-    [document.nodes, selectedNodeId],
+    () => findNodeById(document.nodes, effectiveSelectedNodeId ?? "") ?? null,
+    [document.nodes, effectiveSelectedNodeId],
   );
   const executionEntries = useMemo(
     () => buildExecutionMapStatus(materialized.map, activeStageIndex, completedStageCount),
     [activeStageIndex, completedStageCount, materialized.map],
   );
   const selectedMaterializedEntry = useMemo(
-    () => findMaterializedEntry(materialized.map, selectedNodeId),
-    [materialized.map, selectedNodeId],
+    () => findMaterializedEntry(materialized.map, effectiveSelectedNodeId),
+    [effectiveSelectedNodeId, materialized.map],
   );
   const selectedCompiledStages = useMemo(
     () =>
@@ -113,8 +113,8 @@ export default function StudyBuilderWorkspace({
     [materialized.stages, selectedMaterializedEntry],
   );
   const selectedDiagnostics = useMemo(
-    () => materialized.diagnostics.filter((item) => item.nodeId === selectedNodeId),
-    [materialized.diagnostics, selectedNodeId],
+    () => materialized.diagnostics.filter((item) => item.nodeId === effectiveSelectedNodeId),
+    [effectiveSelectedNodeId, materialized.diagnostics],
   );
 
   const commit = (next: StudyPipelineDocument) => {
@@ -136,7 +136,7 @@ export default function StudyBuilderWorkspace({
   };
 
   const placeMacro = (
-    kind: "field_sweep_relax" | "relax_run" | "relax_eigenmodes",
+    kind: "hysteresis_loop" | "field_sweep_relax" | "relax_run" | "relax_eigenmodes",
     placement: "append" | "before" | "after",
   ) => {
     if (!selectedNodeId || placement === "append") {

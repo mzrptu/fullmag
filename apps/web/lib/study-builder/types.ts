@@ -11,6 +11,7 @@ export type StudyPrimitiveStageKind =
   | "export";
 
 export type StudyMacroStageKind =
+  | "hysteresis_loop"
   | "field_sweep_relax"
   | "field_sweep_relax_snapshot"
   | "relax_run"

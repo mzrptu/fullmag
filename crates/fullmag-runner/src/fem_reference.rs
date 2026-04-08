@@ -100,6 +100,16 @@ pub(crate) fn snapshot_vector_fields(
 pub(crate) fn build_problem_and_state(
     plan: &FemPlanIR,
 ) -> Result<(FemLlgProblem, FemLlgState), RunError> {
+    // FEM-011 fix: reject periodic BC in time-domain FEM — not yet implemented.
+    if !plan.mesh.periodic_node_pairs.is_empty() || !plan.mesh.periodic_boundary_pairs.is_empty() {
+        return Err(RunError {
+            message: "CPU reference FEM time-domain runner does not yet support periodic \
+                      boundary conditions; periodic_node_pairs / periodic_boundary_pairs \
+                      are present in the mesh but constraint enforcement is not implemented"
+                .to_string(),
+        });
+    }
+
     let topology = MeshTopology::from_ir(&plan.mesh).map_err(|error| RunError {
         message: format!("MeshTopology: {}", error),
     })?;
@@ -145,7 +155,7 @@ pub(crate) fn build_problem_and_state(
         dynamics = dynamics.with_adaptive(AdaptiveStepConfig {
             max_error: adaptive.atol,
             dt_min: adaptive.dt_min,
-            dt_max: adaptive.dt_max.unwrap_or(1e-10),
+            dt_max: adaptive.dt_max.unwrap_or(crate::DEFAULT_ADAPTIVE_DT_MAX),
             headroom: adaptive.safety,
             rtol: adaptive.rtol,
             growth_limit: if adaptive.growth_limit == 0.0 {
@@ -156,6 +166,56 @@ pub(crate) fn build_problem_and_state(
             shrink_limit: adaptive.shrink_limit,
         });
     }
+    // FEM-010 fix: reject interactions not supported by CPU reference engine
+    // instead of silently ignoring them.
+    {
+        let mut unsupported_terms = Vec::new();
+        if plan.material.uniaxial_anisotropy.is_some()
+            || plan.material.uniaxial_anisotropy_k2.is_some()
+            || plan.material.ku_field.is_some()
+            || plan.material.ku2_field.is_some()
+        {
+            unsupported_terms.push("uniaxial_anisotropy");
+        }
+        if plan.material.cubic_anisotropy_kc1.is_some()
+            || plan.material.cubic_anisotropy_kc2.is_some()
+            || plan.material.cubic_anisotropy_kc3.is_some()
+            || plan.material.kc1_field.is_some()
+            || plan.material.kc2_field.is_some()
+            || plan.material.kc3_field.is_some()
+        {
+            unsupported_terms.push("cubic_anisotropy");
+        }
+        if plan.interfacial_dmi.is_some() || plan.dind_field.is_some() {
+            unsupported_terms.push("interfacial_dmi");
+        }
+        if plan.bulk_dmi.is_some() || plan.dbulk_field.is_some() {
+            unsupported_terms.push("bulk_dmi");
+        }
+        if plan.current_density.is_some() || plan.stt_degree.is_some() || plan.stt_beta.is_some() {
+            unsupported_terms.push("zhang_li_stt");
+        }
+        if plan.stt_spin_polarization.is_some()
+            || plan.stt_lambda.is_some()
+            || plan.stt_epsilon_prime.is_some()
+        {
+            unsupported_terms.push("slonczewski_stt");
+        }
+        if plan.magnetoelastic.is_some() {
+            unsupported_terms.push("magnetoelastic");
+        }
+        if !unsupported_terms.is_empty() {
+            return Err(RunError {
+                message: format!(
+                    "CPU reference FEM engine does not support the following interaction terms: {}; \
+                     supported: exchange, demag (transfer_grid/poisson), zeeman. \
+                     Use the native FEM GPU backend for these interactions.",
+                    unsupported_terms.join(", ")
+                ),
+            });
+        }
+    }
+
     let per_unit_fields = compute_per_unit_antenna_fields(plan)?;
     let initial_antenna_field = if per_unit_fields.is_empty() {
         None
@@ -183,12 +243,14 @@ pub(crate) fn build_problem_and_state(
     };
     let problem = match resolved_demag_realization {
         Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid) => {
+            // FEM-039: use dedicated demag cell size if set, otherwise fall back to hmax.
+            let cell = plan.demag_transfer_cell_size.unwrap_or(plan.hmax);
             FemLlgProblem::with_terms_and_demag_transfer_grid(
                 topology,
                 material,
                 dynamics,
                 terms,
-                Some([plan.hmax, plan.hmax, plan.hmax]),
+                Some([cell, cell, cell]),
             )
         }
         Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin) => {
@@ -990,6 +1052,9 @@ mod tests {
             demag_solver_policy: None,
             thermal_seed_config: None,
             oersted_realization: None,
+            gpu_device_index: None,
+            mfem_device_string: None,
+            demag_transfer_cell_size: None,
         }
     }
 
@@ -1106,6 +1171,9 @@ mod tests {
             demag_solver_policy: None,
             thermal_seed_config: None,
             oersted_realization: None,
+            gpu_device_index: None,
+            mfem_device_string: None,
+            demag_transfer_cell_size: None,
         }
     }
 
@@ -1284,6 +1352,9 @@ mod tests {
             demag_solver_policy: None,
             thermal_seed_config: None,
             oersted_realization: None,
+            gpu_device_index: None,
+            mfem_device_string: None,
+            demag_transfer_cell_size: None,
         }
     }
 

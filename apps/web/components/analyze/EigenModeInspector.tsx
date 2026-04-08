@@ -74,10 +74,13 @@ export default function EigenModeInspector({
   const [slicePlane, setSlicePlane] = useState<SlicePlane>("xy");
   const [sliceIndex, setSliceIndex] = useState(12);
 
-  useEffect(() => {
+  // Sync view state with mode index during render (React 19 recommended pattern for resets)
+  const [prevModeIndex, setPrevModeIndex] = useState(mode?.index);
+  if (mode?.index !== prevModeIndex) {
+    setPrevModeIndex(mode?.index);
     setFieldView("amplitude");
     setVectorComponent("magnitude");
-  }, [mode?.index]);
+  }
 
   const meshData = useMemo(() => {
     if (!mesh || !mode) return null;

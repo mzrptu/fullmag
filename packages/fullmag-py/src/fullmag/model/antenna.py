@@ -11,6 +11,11 @@ from fullmag._validation import (
 )
 from fullmag.model.energy import Sinusoidal, TimeDependence
 
+# FEM-034 / FEM-035: extensible allow-lists for solver and current_distribution.
+# Add new entries here when additional backends or distributions are implemented.
+ANTENNA_SOLVERS = {"mqs_2p5d_az"}
+CURRENT_DISTRIBUTIONS = {"uniform"}
+
 
 def _drive_waveform_ir(
     *,
@@ -73,8 +78,11 @@ class MicrostripAntenna:
             "current_distribution",
             require_non_empty(self.current_distribution, "current_distribution").lower(),
         )
-        if self.current_distribution not in {"uniform"}:
-            raise ValueError("current_distribution must currently be 'uniform'")
+        if self.current_distribution not in CURRENT_DISTRIBUTIONS:
+            raise ValueError(
+                f"current_distribution must be one of {sorted(CURRENT_DISTRIBUTIONS)}, "
+                f"got {self.current_distribution!r}"
+            )
 
     def to_ir(self) -> dict[str, object]:
         return {
@@ -113,8 +121,11 @@ class CPWAntenna:
             "current_distribution",
             require_non_empty(self.current_distribution, "current_distribution").lower(),
         )
-        if self.current_distribution not in {"uniform"}:
-            raise ValueError("current_distribution must currently be 'uniform'")
+        if self.current_distribution not in CURRENT_DISTRIBUTIONS:
+            raise ValueError(
+                f"current_distribution must be one of {sorted(CURRENT_DISTRIBUTIONS)}, "
+                f"got {self.current_distribution!r}"
+            )
 
     def to_ir(self) -> dict[str, object]:
         return {
@@ -146,8 +157,10 @@ class AntennaFieldSource:
         object.__setattr__(self, "name", require_non_empty(self.name, "name"))
         object.__setattr__(self, "solver", require_non_empty(self.solver, "solver").lower())
         require_positive(self.air_box_factor, "air_box_factor")
-        if self.solver not in {"mqs_2p5d_az"}:
-            raise ValueError("solver must currently be 'mqs_2p5d_az'")
+        if self.solver not in ANTENNA_SOLVERS:
+            raise ValueError(
+                f"solver must be one of {sorted(ANTENNA_SOLVERS)}, got {self.solver!r}"
+            )
 
     def to_ir(self) -> dict[str, object]:
         return {

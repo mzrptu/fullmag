@@ -710,10 +710,14 @@ export default function FemMeshSlice2D({
     [antennaOverlays, plane, selectedAntennaId, slice.planeCoord],
   );
 
-  useEffect(() => {
+  // Sync probe state with slice parameters during render (React 19 recommended pattern for resets)
+  const sliceParamsKey = `${component}:${plane}:${quantityId}:${slice.planeCoord}:${sliceIndex}:${sliceCount}`;
+  const [prevSliceParamsKey, setPrevSliceParamsKey] = useState(sliceParamsKey);
+  if (sliceParamsKey !== prevSliceParamsKey) {
+    setPrevSliceParamsKey(sliceParamsKey);
     setHoverProbe(null);
     setPinnedProbe(null);
-  }, [component, plane, quantityId, slice.planeCoord, sliceIndex, sliceCount]);
+  }
 
   // Track container size so the canvas re-draws on resize
   useEffect(() => {

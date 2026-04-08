@@ -119,6 +119,18 @@ The currently honest executable physics slice is:
 - native CUDA FDM in `double`
 - native CUDA `single` implementation exists but is not yet public-qualified
 
+### FEM solver maturity (Etap A4 — TRANSITIONAL)
+
+The FEM backend (`native/backends/fem/`) is functional but carries known limitations:
+
+- **Demag**: only `transfer_grid` (uniform FFT tensor) is implemented; direct Poisson and BEM paths are planned.
+- **CUDA kernels**: `double` precision only — `float` kernels are not yet available.
+- **Eigensolver**: dense O(n³) path via cuSolverDN Dsygvd; practical for ≲ 3 000 DOF. A sparse/Krylov path is planned.
+- **GPU selection**: controlled via `gpu_device_index` in `FemPlanIR` or the `FULLMAG_FEM_GPU_INDEX` / `FULLMAG_CUDA_DEVICE_INDEX` environment variables.
+- **MFEM device string**: controlled via the `FULLMAG_FEM_MFEM_DEVICE` environment variable (process-global singleton).
+
+These constraints are enforced at plan-validation time; unsupported configurations are rejected with clear error messages rather than silently degraded.
+
 ## Quick start
 
 ### 1. Set up environment

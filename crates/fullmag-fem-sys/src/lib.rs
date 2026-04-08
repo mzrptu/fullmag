@@ -198,6 +198,15 @@ pub struct fullmag_fem_plan_desc {
     pub mel_uniform_strain: i32,
     pub mel_strain_voigt: *const f64,
     pub mel_strain_len: u64,
+    // FEM-029/030 fix: explicit GPU device and MFEM device selection.
+    // -1 means "use default / env fallback".
+    pub gpu_device_index: i32,
+    /// Thermal seed for reproducibility. 0 = use random device.
+    pub thermal_seed: u64,
+    /// FEM-030: explicit MFEM device string. null = use env / compiled default.
+    pub mfem_device_string: *const std::ffi::c_char,
+    /// FEM-039: explicit transfer-grid cell size for demag. 0.0 = fall back to hmax.
+    pub demag_transfer_cell_size: f64,
 }
 
 #[repr(C)]

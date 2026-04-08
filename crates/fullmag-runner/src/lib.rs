@@ -30,6 +30,10 @@ mod scalar_metrics;
 mod schedules;
 mod types;
 
+// ── Shared runner defaults (FEM-040) ─────────────────────────────────────
+/// Default maximum timestep for adaptive stepping when the user provides none.
+const DEFAULT_ADAPTIVE_DT_MAX: f64 = 1e-10;
+
 // Public re-exports (unchanged API surface).
 pub use capabilities::{BackendCapabilities, RuntimeEngineId};
 pub use interactive::backend::BackendGeometry;

@@ -76,6 +76,7 @@ def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
         "universe": _export_universe(base_problem),
         "domain_frame": _export_domain_frame(base_problem, source_root=source_root),
         "stages": [_export_stage_draft(stage) for stage in _builder_stage_sequence(loaded)],
+        "study_pipeline": export_study_pipeline_document(loaded),
         "initial_state": _export_initial_state(base_problem),
         "geometries": [
             _export_geometry_entry(magnet, base_problem, source_root=source_root)
@@ -244,6 +245,57 @@ def _builder_stage_sequence(loaded: LoadedProblem) -> tuple[LoadedStage, ...]:
             default_until_seconds=loaded.default_until_seconds,
         ),
     )
+
+
+def export_study_pipeline_document(loaded: LoadedProblem) -> dict[str, object] | None:
+    stages = _builder_stage_sequence(loaded)
+    if not stages:
+        return None
+    return {
+        "version": "study_pipeline.v1",
+        "nodes": [
+            _export_study_pipeline_node(stage, index=index)
+            for index, stage in enumerate(stages)
+        ],
+    }
+
+
+def _export_study_pipeline_node(stage: LoadedStage, *, index: int) -> dict[str, object]:
+    draft = _export_stage_draft(stage)
+    stage_kind = _infer_pipeline_stage_kind(draft)
+    return {
+        "id": f"stage_{index + 1}_{stage_kind}",
+        "label": _study_pipeline_stage_label(draft, stage_kind=stage_kind, index=index),
+        "enabled": True,
+        "source": "script_imported",
+        "node_kind": "primitive",
+        "stage_kind": stage_kind,
+        "payload": draft,
+    }
+
+
+def _infer_pipeline_stage_kind(stage_draft: dict[str, object]) -> str:
+    entrypoint = str(stage_draft.get("entrypoint_kind") or "").strip().lower()
+    kind = str(stage_draft.get("kind") or "").strip().lower()
+    if entrypoint == "relax" or "relax" in kind:
+        return "relax"
+    if entrypoint == "eigenmodes" or "eigen" in kind:
+        return "eigenmodes"
+    if entrypoint == "run" or "run" in kind:
+        return "run"
+    return "run"
+
+
+def _study_pipeline_stage_label(
+    stage_draft: dict[str, object],
+    *,
+    stage_kind: str,
+    index: int,
+) -> str:
+    original_kind = str(stage_draft.get("kind") or "").strip()
+    if original_kind and original_kind.lower() != stage_kind:
+        return f"Imported {index + 1} · {original_kind}"
+    return f"Imported Stage {index + 1}"
 
 
 def _export_stage_draft(stage: LoadedStage) -> dict[str, object]:

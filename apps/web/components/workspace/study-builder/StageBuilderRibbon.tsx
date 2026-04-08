@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Binary, Cpu, Download, FunctionSquare, Layers3, Play, Save, ScanLine, Sparkles, Waves, Zap } from "lucide-react";
+import { Binary, Cpu, Download, FunctionSquare, Layers3, Magnet, Play, Save, ScanLine, Sparkles, Waves, Zap } from "lucide-react";
 import type { StudyPrimitiveStageKind } from "@/lib/study-builder/types";
 
 interface StageBuilderRibbonProps {
@@ -10,7 +10,7 @@ interface StageBuilderRibbonProps {
     placement: "append" | "before" | "after",
   ) => void;
   onAddMacro: (
-    kind: "field_sweep_relax" | "relax_run" | "relax_eigenmodes",
+    kind: "hysteresis_loop" | "field_sweep_relax" | "relax_run" | "relax_eigenmodes",
     placement: "append" | "before" | "after",
   ) => void;
   selectedNodeId: string | null;
@@ -101,6 +101,7 @@ export default function StageBuilderRibbon({
           </RibbonGroup>
 
           <RibbonGroup title="Composite">
+            <RibbonActionButton icon={<Magnet className="size-4" />} label="Hysteresis Loop" onClick={() => onAddMacro("hysteresis_loop", placement)} accent="violet" />
             <RibbonActionButton icon={<FunctionSquare className="size-4" />} label="Field Sweep + Relax" onClick={() => onAddMacro("field_sweep_relax", placement)} accent="violet" />
             <RibbonActionButton icon={<Layers3 className="size-4" />} label="Relax -> Run" onClick={() => onAddMacro("relax_run", placement)} accent="violet" />
             <RibbonActionButton icon={<Binary className="size-4" />} label="Relax -> Eigenmodes" onClick={() => onAddMacro("relax_eigenmodes", placement)} accent="violet" />

@@ -46,8 +46,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setThemeState(getInitialTheme());
-    setMounted(true);
+    // Initialize theme asynchronously to avoid React 19 cascading render warnings
+    // while ensuring hydration-safe environment access (localStorage/matchMedia)
+    queueMicrotask(() => {
+      setThemeState(getInitialTheme());
+      setMounted(true);
+    });
   }, []);
 
   useEffect(() => {

@@ -213,11 +213,13 @@ export function createPrimitiveNode(kind: StudyPrimitiveStageKind): StudyPipelin
   };
 }
 
-export function createMacroNode(kind: Extract<StudyMacroStageKind, "field_sweep_relax" | "relax_run" | "relax_eigenmodes">): StudyPipelineNode {
+export function createMacroNode(kind: Extract<StudyMacroStageKind, "hysteresis_loop" | "field_sweep_relax" | "relax_run" | "relax_eigenmodes">): StudyPipelineNode {
   const label =
-    kind === "field_sweep_relax"
-      ? "Field Sweep + Relax"
-      : kind === "relax_run"
+    kind === "hysteresis_loop"
+      ? "Hysteresis Loop"
+      : kind === "field_sweep_relax"
+        ? "Field Sweep + Relax"
+        : kind === "relax_run"
         ? "Relax -> Run"
         : "Relax -> Eigenmodes";
   return {
@@ -228,7 +230,17 @@ export function createMacroNode(kind: Extract<StudyMacroStageKind, "field_sweep_
     node_kind: "macro",
     macro_kind: kind,
     config:
-      kind === "field_sweep_relax"
+      kind === "hysteresis_loop"
+        ? {
+            quantity: "b_ext",
+            axis: "z",
+            start_mT: -100,
+            stop_mT: 100,
+            steps: 21,
+            relax_each: true,
+            save_point_state: false,
+          }
+        : kind === "field_sweep_relax"
         ? { start_mT: -100, stop_mT: 100, steps: 11, axis: "z", relax_each: true }
         : kind === "relax_run"
           ? { run_until_seconds: "1e-9" }

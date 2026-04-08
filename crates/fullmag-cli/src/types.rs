@@ -1,5 +1,6 @@
 use fullmag_ir::{GeometryAssetsIR, ProblemIR};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -134,12 +135,71 @@ pub(crate) struct LiveStepView {
     pub finished: bool,
 }
 
-#[derive(Debug, Deserialize)]
+fn default_study_pipeline_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct StudyPipelineDocument {
+    pub version: String,
+    #[serde(default)]
+    pub nodes: Vec<StudyPipelineNode>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+#[serde(tag = "node_kind", rename_all = "snake_case")]
+pub(crate) enum StudyPipelineNode {
+    Primitive {
+        id: String,
+        label: String,
+        #[serde(default = "default_study_pipeline_enabled")]
+        enabled: bool,
+        #[serde(default)]
+        notes: Option<String>,
+        #[serde(default)]
+        source: Option<String>,
+        stage_kind: String,
+        #[serde(default)]
+        payload: BTreeMap<String, Value>,
+    },
+    Macro {
+        id: String,
+        label: String,
+        #[serde(default = "default_study_pipeline_enabled")]
+        enabled: bool,
+        #[serde(default)]
+        notes: Option<String>,
+        #[serde(default)]
+        source: Option<String>,
+        macro_kind: String,
+        #[serde(default)]
+        config: BTreeMap<String, Value>,
+    },
+    Group {
+        id: String,
+        label: String,
+        #[serde(default = "default_study_pipeline_enabled")]
+        enabled: bool,
+        #[serde(default)]
+        notes: Option<String>,
+        #[serde(default)]
+        source: Option<String>,
+        #[serde(default)]
+        collapsed: bool,
+        #[serde(default)]
+        children: Vec<StudyPipelineNode>,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ScriptExecutionConfig {
     pub ir: ProblemIR,
     #[serde(default)]
     pub shared_geometry_assets: Option<GeometryAssetsIR>,
     pub default_until_seconds: Option<f64>,
+    #[serde(default)]
+    pub study_pipeline: Option<StudyPipelineDocument>,
     #[serde(default)]
     pub stages: Vec<ScriptExecutionStage>,
 }

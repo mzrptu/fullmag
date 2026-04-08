@@ -81,7 +81,11 @@ export function validateStudyPipeline(
     firstEigenIndex <= 0
       ? false
       : enabled.slice(0, firstEigenIndex).some((entry) =>
-          entry.kind === "relax" || entry.kind === "relax_run" || entry.kind === "relax_eigenmodes",
+          entry.kind === "relax" ||
+          entry.kind === "relax_run" ||
+          entry.kind === "relax_eigenmodes" ||
+          entry.kind === "field_sweep_relax" ||
+          entry.kind === "hysteresis_loop",
         );
 
   if (firstEigenIndex >= 0 && !hasRelaxBeforeEigen) {
@@ -91,6 +95,17 @@ export function validateStudyPipeline(
       nodeId: enabled[firstEigenIndex]?.nodeId ?? null,
       message: "Eigenmodes stage found without a prior relax stage.",
       suggestion: "Insert a relax stage before eigenmodes.",
+    });
+  }
+
+  for (const entry of enabled) {
+    if (entry.kind !== "hysteresis_loop") continue;
+    diagnostics.push({
+      id: `hysteresis-preview-${entry.nodeId}`,
+      severity: "info",
+      nodeId: entry.nodeId,
+      message: "Hysteresis loop will materialize into repeated run/relax/save execution steps.",
+      suggestion: "Open Materialized Preview to inspect the generated backend stage sequence.",
     });
   }
 

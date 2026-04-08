@@ -631,6 +631,12 @@ pub struct ExecutionProvenance {
     /// Timestep policy: "user", "adaptive", or "fallback".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dt_policy: Option<String>,
+    /// FEM-030: MFEM device string used for this run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mfem_device: Option<String>,
+    /// FEM-039: explicit demag transfer-grid cell size (if overridden from hmax).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub demag_transfer_cell_size: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

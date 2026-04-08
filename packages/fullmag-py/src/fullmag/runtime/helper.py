@@ -147,6 +147,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             Path(args.script),
             lightweight_assets=getattr(args, "skip_geometry_assets", False),
         )
+        study_pipeline = loaded.study_pipeline_document()
         asset_cache = loaded.problem.geometry_asset_cache
         requested_backend = BackendTarget(args.backend) if args.backend is not None else None
         execution_mode = ExecutionMode(args.mode) if args.mode is not None else None
@@ -175,6 +176,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "ir": ir,
                     "shared_geometry_assets": shared_geometry_assets,
                     "default_until_seconds": loaded.default_until_seconds,
+                    "study_pipeline": study_pipeline,
                     "stages": [
                         {
                             "ir": _compact_stage_ir(
@@ -186,6 +188,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                     source_root=loaded.source_path.parent,
                                     asset_cache=asset_cache,
                                     include_geometry_assets=not getattr(args, "skip_geometry_assets", False),
+                                    study_pipeline=study_pipeline,
                                 ),
                                 shared_geometry_assets=shared_geometry_assets,
                             ),

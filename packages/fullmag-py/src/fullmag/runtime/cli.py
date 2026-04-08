@@ -75,6 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             base_output_dir = Path(args.output_dir)
             base_output_dir.mkdir(parents=True, exist_ok=True)
             stage_manifest: list[dict[str, object]] = []
+            study_pipeline = loaded.study_pipeline_document()
 
             for index, stage in enumerate(loaded.stages, start=1):
                 until_seconds = _resolve_until_seconds(stage.problem.study, stage.default_until_seconds)
@@ -91,6 +92,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     execution_precision=simulation.precision,
                     script_source=loaded.script_source,
                     source_root=loaded.source_path.parent,
+                    study_pipeline=study_pipeline,
                 )
                 if final_magnetization is not None:
                     _apply_continuation_initial_state(ir, final_magnetization)

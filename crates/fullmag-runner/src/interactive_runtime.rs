@@ -3387,6 +3387,8 @@ fn cpu_execution_provenance(plan: &FdmPlanIR) -> ExecutionProvenance {
         requested_demag_realization: None,
         resolved_demag_realization: None,
         dt_policy: None,
+        mfem_device: None,
+        demag_transfer_cell_size: None,
     }
 }
 

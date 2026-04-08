@@ -364,6 +364,59 @@ export default function StageInspector({
               </>
             ) : null}
 
+            {node.macro_kind === "hysteresis_loop" ? (
+              <>
+                <Field label="Sweep quantity">
+                  <Input
+                    value={String(node.config.quantity ?? "b_ext")}
+                    onChange={(event) => onPatchConfig({ quantity: event.target.value })}
+                  />
+                </Field>
+                <Field label="Axis">
+                  <Input
+                    value={String(node.config.axis ?? "z")}
+                    onChange={(event) => onPatchConfig({ axis: event.target.value })}
+                  />
+                </Field>
+                <Field label="Start [mT]">
+                  <Input
+                    type="number"
+                    value={Number(node.config.start_mT ?? -100)}
+                    onChange={(event) => onPatchConfig({ start_mT: Number(event.target.value) })}
+                  />
+                </Field>
+                <Field label="Stop [mT]">
+                  <Input
+                    type="number"
+                    value={Number(node.config.stop_mT ?? 100)}
+                    onChange={(event) => onPatchConfig({ stop_mT: Number(event.target.value) })}
+                  />
+                </Field>
+                <Field label="Points">
+                  <Input
+                    type="number"
+                    min={2}
+                    value={Number(node.config.steps ?? 21)}
+                    onChange={(event) => onPatchConfig({ steps: Math.max(2, Number(event.target.value)) })}
+                  />
+                </Field>
+                <div className="md:col-span-2">
+                  <Checkbox
+                    label="Relax after each sweep point"
+                    checked={node.config.relax_each !== false}
+                    onChange={(checked) => onPatchConfig({ relax_each: checked })}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <Checkbox
+                    label="Save a state snapshot at each point"
+                    checked={Boolean(node.config.save_point_state)}
+                    onChange={(checked) => onPatchConfig({ save_point_state: checked })}
+                  />
+                </div>
+              </>
+            ) : null}
+
             {node.macro_kind === "relax_run" ? (
               <Field label="Run until [s]">
                 <Input

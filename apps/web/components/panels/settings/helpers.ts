@@ -1,5 +1,5 @@
 import { fmtSI } from "../../runs/control-room/shared";
-import type { SolverPlanSummary } from "../../runs/control-room/ControlRoomContext";
+import type { SolverPlanSummary } from "../../runs/control-room/types";
 
 export function asRecord(value: unknown): Record<string, unknown> | null {
   return value != null && typeof value === "object" && !Array.isArray(value)

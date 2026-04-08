@@ -1,0 +1,1216 @@
+# Fullmag Study / Stages Refactor Implementation Plan
+
+Data: 2026-04-07
+Status: execution plan
+Powiazany blueprint:
+
+- `docs/reports/07042026/fullmag_study_stages_comsol_refactor_plan_2026-04-07.mdx`
+
+Cel tego dokumentu:
+
+- zamienic blueprint architektury w realny plan wdrozenia,
+- rozdzielic prace na 20 czytelnych etapow,
+- dla kazdego etapu podac write-set, opis, ryzyka i metode weryfikacji,
+- zostawic twarde kryteria zamkniecia, zeby bylo wiadomo, czy etap jest naprawde skonczony.
+
+---
+
+## 1. Zasady Prowadzenia Refaktoru
+
+### 1.1. Zasada glowna
+
+Najpierw zamrazamy kontrakt danych i semantyke `Study`, potem przebudowujemy tree/ribbon/inspector, a dopiero na koncu usuwamy stare panele i warstwy kompatybilnosci.
+
+### 1.2. Zasada source-of-truth
+
+Docelowym authoring source-of-truth ma byc `StudyDocumentV2`.
+
+Do czasu konca migracji wolno utrzymywac:
+
+- legacy `flat stages`,
+- legacy `study_pipeline`,
+- legacy `StudyPanel`,
+
+ale tylko jako warstwy przejsciowe, nie jako miejsce dalszego rozwoju.
+
+### 1.3. Zasada kompatybilnosci
+
+W trakcie rollout:
+
+- stare skrypty Python musza dalej sie otwierac,
+- stare sceny musza dalej sie importowac,
+- backend nadal moze dostawac compiled `flat stages`,
+- GUI nie moze wymagac big-bang migracji danych.
+
+### 1.4. Zasada odbioru
+
+Kazdy etap jest zamkniety dopiero wtedy, gdy:
+
+- kod jest scalony,
+- przechodzi swoja metode weryfikacji,
+- nie zostawia ukrytej duplikacji source-of-truth,
+- nastepny etap moze na nim bezpiecznie polegac.
+
+---
+
+## 2. Mapa 20 Etapow
+
+| Etap | Nazwa | Glowny wynik |
+|---|---|---|
+| 1 | Freeze scope i nazewnictwa | wspolny slownik i kryteria sukcesu |
+| 2 | Inwentaryzacja zachowan i fixture baseline | material porownawczy przed migracja |
+| 3 | Rust authoring contract v2 | `StudyDocumentV2` w `fullmag-authoring` |
+| 4 | TypeScript contract v2 | nowe typy i normalizacja w web |
+| 5 | Python contract v2 | stage-first authoring po stronie Python |
+| 6 | Migracja legacy -> v2 | otwieranie starych dokumentow bez regresji |
+| 7 | Materialization engine v2 | kompilacja `StudyDocumentV2` do execution steps |
+| 8 | Validation engine v2 | jawne diagnozy i capability checks |
+| 9 | Stabilne node ids i selection model | solidna nawigacja pod inspector/ribbon |
+| 10 | Refactor `ModelTree` | prawdziwe drzewo `Study > Defaults > Stages` |
+| 11 | Inspector registry foundation | koniec monolitycznego routingu `StudyPanel` |
+| 12 | Inspectory `Study` i `Defaults` | runtime/backend/solver/output defaults |
+| 13 | Primitive stage inspectors | `Run`, `Relax`, `Eigensolve` |
+| 14 | Macro stage inspector | `Hysteresis Loop` + materialized preview |
+| 15 | Context ribbon engine | ribbon zalezy od wybranego node'a |
+| 16 | Stage CRUD i tree interactions | add/duplicate/delete/reorder/disable |
+| 17 | Script import/export round-trip | Python <-> scene <-> GUI 1:1 |
+| 18 | Runtime execution mapping | progress i status per stage |
+| 19 | Capability coverage i fallback UX | jasna komunikacja ograniczen backendu |
+| 20 | Cleanup i final acceptance | usuniecie starej architektury i odbior koncowy |
+
+---
+
+## 3. Etap 1 - Freeze Scope I Nazewnictwa
+
+### Cel
+
+Zamrozic slownik i granice systemu przed pisaniem kodu, zeby frontend, Rust i Python nie rozjechaly sie w nazewnictwie.
+
+### Zakres
+
+- ustalic finalne nazwy bytow,
+- opisac relacje `Stage` vs `Execution step`,
+- ustalic zakres v1 i v2,
+- zamrozic acceptance criteria.
+
+### Dotykane pliki / moduly
+
+- `docs/reports/07042026/fullmag_study_stages_comsol_refactor_plan_2026-04-07.mdx`
+- nowy dokument wdrozeniowy
+- ewentualnie `docs/adr/*` jesli zapadnie decyzja o ADR
+
+### Szczegolowy opis prac
+
+1. Ustalic finalne nazwy:
+   - `StudyDocumentV2`
+   - `StudyDefaults`
+   - `StudyStageNode`
+   - `CompiledExecutionPlan`
+   - `RuntimeExecutionState`
+2. Ustalic stage kinds v1:
+   - `run`
+   - `relax`
+   - `eigensolve`
+   - `hysteresis_loop`
+3. Ustalic, ze:
+   - `Study` authoring zyje w `Model Builder`,
+   - `Study` workspace sluzy glownie do runtime i monitoringu.
+4. Zamrozic decyzje o tym, ze `flat stages` sa tylko compiled artifact.
+
+### Ryzyka / uwagi
+
+- bez tego etapu kolejne PR-y beda produkowaly rozne wersje tego samego modelu,
+- szczegolnie ryzykowny jest rozjazd nazewnictwa `eigenmodes` vs `eigensolve`.
+
+### Metoda weryfikacji
+
+- manual doc review przez wlasciciela architektury,
+- sprawdzenie, czy wszystkie nowe taski i PR-y uzywaja tych samych nazw,
+- szybki grep po nowych diffach pod katem starych nazw, jezeli byly juz edyty.
+
+### Kryterium zamkniecia
+
+- istnieje jeden zatwierdzony slownik nazw,
+- nie ma otwartych sporow typu `study_pipeline` vs `study_document`,
+- wszystkie kolejne etapy odwoluja sie do tego samego modelu.
+
+---
+
+## 4. Etap 2 - Inwentaryzacja Zachowan I Fixture Baseline
+
+### Cel
+
+Zlapac obecne zachowanie systemu przed migracja, zeby po drodze nie zgubic semantyki, nawet jesli sama architektura sie zmieni.
+
+### Zakres
+
+- zapisac fixture current-state,
+- zlapac aktualne round-tripy,
+- zlapac obecne drzewo i obecna serializacje `stages`,
+- przygotowac zestaw scen testowych.
+
+### Dotykane pliki / moduly
+
+- nowe fixture docs lub test fixtures
+- `apps/web/lib/session/*`
+- `packages/fullmag-py/src/fullmag/runtime/script_builder.py`
+- `packages/fullmag-py/src/fullmag/runtime/scene_document.py`
+
+### Szczegolowy opis prac
+
+1. Przygotowac 4 wzorcowe scenariusze:
+   - tylko `Run`,
+   - tylko `Relax`,
+   - `Relax -> Run`,
+   - `Relax -> Eigensolve`.
+2. Dla kazdego zapisac:
+   - JSON scene export,
+   - legacy `flat stages`,
+   - export Python script,
+   - screenshot lub opis obecnego tree.
+3. Doliczyc piaty scenariusz docelowy:
+   - `Relax -> Hysteresis Loop`,
+   nawet jesli jeszcze nie jest obslugiwany end-to-end.
+4. Zapisac baseline problemow:
+   - identyczny `StudyPanel` dla wielu node'ow,
+   - `Stage Sequence` dublowane,
+   - globalny `Backend Configuration`.
+
+### Ryzyka / uwagi
+
+- bez baseline trudno bedzie odroznic swiadoma zmiane od regresji,
+- fixture powinny byc male i czytelne, nie produkcyjne.
+
+### Metoda weryfikacji
+
+- manual: otwarcie fixture i porownanie exportow,
+- technical: round-trip `scene -> builder -> scene` nie moze gubic pol juz istniejacych,
+- jesli pojawia sie testy, powinny porownywac serialized outputs.
+
+### Kryterium zamkniecia
+
+- istnieje zestaw referencyjnych fixture,
+- da sie na nich odtworzyc obecne zachowanie i przyszle porownania,
+- kolejny etap moze bezpiecznie ruszac kontrakt danych.
+
+---
+
+## 5. Etap 3 - Rust Authoring Contract V2
+
+### Cel
+
+Wprowadzic kanoniczny authoring model `StudyDocumentV2` w `crates/fullmag-authoring`.
+
+### Zakres
+
+- nowe struktury danych,
+- serde serialization,
+- podstawowa walidacja strukturalna,
+- adaptery do starego modelu tam, gdzie to potrzebne.
+
+### Dotykane pliki / moduly
+
+- `crates/fullmag-authoring/src/builder.rs`
+- `crates/fullmag-authoring/src/scene.rs`
+- `crates/fullmag-authoring/src/validation.rs`
+- `crates/fullmag-authoring/src/adapters.rs`
+- `crates/fullmag-authoring/src/lib.rs`
+
+### Szczegolowy opis prac
+
+1. Dodac `StudyDocumentV2` i typy pomocnicze:
+   - `StudyDefaults`
+   - `RuntimeDefaults`
+   - `SolverDefaults`
+   - `AdaptiveTimestepConfig`
+   - `StudyStageNode`
+2. Dodac primitive node types:
+   - `RunStage`
+   - `RelaxStage`
+   - `EigensolveStage`
+3. Dodac macro node type:
+   - `HysteresisLoopStage`
+4. Zdefiniowac wspolny `StageCommon`.
+5. Dodac serde round-trip oraz wersjonowanie dokumentu.
+6. Zachowac kompatybilnosc z dotychczasowym `ScriptBuilderStageState`.
+
+### Ryzyka / uwagi
+
+- to jest najwazniejszy etap kontraktowy,
+- zly model tutaj bedzie promieniowal na frontend i Python.
+
+### Metoda weryfikacji
+
+- `cargo test -p fullmag-authoring`,
+- dodanie testow serde `serialize -> deserialize -> equal`,
+- dodanie testow fixture dla primitive i macro stage.
+
+### Kryterium zamkniecia
+
+- Rust potrafi stabilnie serializowac/deserializowac `StudyDocumentV2`,
+- typy sa wystarczajace do opisania wszystkich stage kinds v1,
+- nie trzeba juz rozszerzac kontraktu stringowymi hackami.
+
+---
+
+## 6. Etap 4 - TypeScript Contract V2
+
+### Cel
+
+Przeniesc nowy kontrakt do warstwy web tak, aby tree, inspector i ribbon pracowaly na tych samych typach co Rust.
+
+### Zakres
+
+- nowe TS typy,
+- normalize/denormalize,
+- scene document mapping,
+- model builder graph mapping.
+
+### Dotykane pliki / moduly
+
+- `apps/web/lib/session/types.ts`
+- `apps/web/lib/session/normalize.ts`
+- `apps/web/lib/session/sceneDocument.ts`
+- `apps/web/lib/session/modelBuilderGraph.ts`
+
+### Szczegolowy opis prac
+
+1. Dodac odpowiedniki `StudyDocumentV2` i stage types do `types.ts`.
+2. Dopisac normalize logic dla nowych dokumentow.
+3. Dopisac scene-document round-trip.
+4. Oddzielic:
+   - authoring document,
+   - compiled artifact,
+   - runtime state.
+5. Zachowac legacy parsing starych payloadow.
+
+### Ryzyka / uwagi
+
+- TypeScript ma dzis miks `study_pipeline` i `stages`; trzeba go rozdzielic bez zerwania runtime,
+- selection i tree nie powinny jeszcze zmieniac zachowania, to tylko warstwa kontraktu.
+
+### Metoda weryfikacji
+
+- `pnpm web:typecheck`
+- `pnpm web:lint`
+- manual round-trip fixture `scene -> normalize -> scene`
+- sprawdzenie, czy otwieranie starej sesji nadal dziala.
+
+### Kryterium zamkniecia
+
+- frontend ma typed `StudyDocumentV2`,
+- stare dane nadal sie otwieraja,
+- nowe dane daja sie round-tripowac bez gubienia pol.
+
+---
+
+## 7. Etap 5 - Python Contract V2
+
+### Cel
+
+Dodac stage-first authoring po stronie Python, tak aby GUI i Python konfigurowaly ten sam model.
+
+### Zakres
+
+- nowy authoring API,
+- mapowanie do `StudyDocumentV2`,
+- utrzymanie compatibility sugar dla `fm.run`, `fm.relax`, `fm.eigenmodes`.
+
+### Dotykane pliki / moduly
+
+- `packages/fullmag-py/src/fullmag/world.py`
+- `packages/fullmag-py/src/fullmag/model/study.py`
+- `packages/fullmag-py/src/fullmag/model/dynamics.py`
+- `packages/fullmag-py/src/fullmag/runtime/scene_document.py`
+- `packages/fullmag-py/src/fullmag/runtime/script_builder.py`
+
+### Szczegolowy opis prac
+
+1. Dodac stage-first API:
+   - `study.add_run(...)`
+   - `study.add_relax(...)`
+   - `study.add_eigensolve(...)`
+   - `study.add_hysteresis_loop(...)`
+2. Dodac model defaults:
+   - runtime defaults,
+   - solver defaults,
+   - output defaults.
+3. Zachowac stare API jako thin wrapper.
+4. Ograniczyc globalny stan `_state` tam, gdzie dotyczy stage authoringu.
+5. Dopisac export/import `StudyDocumentV2`.
+
+### Ryzyka / uwagi
+
+- najwieksze ryzyko to niejawna dzisiejsza semantyka `solver()`,
+- trzeba jasno ustalic co jest global default, a co stage override.
+
+### Metoda weryfikacji
+
+- uruchomic male fixture scripts dla `Run`, `Relax`, `Eigensolve`,
+- sprawdzic eksport do `StudyDocumentV2`,
+- sprawdzic, ze stare `fm.relax(); fm.run()` nadal da sie zmaterializowac.
+
+### Kryterium zamkniecia
+
+- Python umie zbudowac ten sam dokument co GUI,
+- stare API nadal dziala,
+- nie trzeba juz wymyslac osobnych pol tylko dla GUI.
+
+---
+
+## 8. Etap 6 - Migracja Legacy Do V2
+
+### Cel
+
+Zapewnic bezpieczne otwieranie starych dokumentow i starych `flat stages`, zanim UI zacznie korzystac z nowego modelu.
+
+### Zakres
+
+- migracja `flat stages -> StudyDocumentV2`,
+- migracja `study_pipeline -> StudyDocumentV2`,
+- oznaczanie zrodla danych,
+- fallback na compiled artifact.
+
+### Dotykane pliki / moduly
+
+- `apps/web/lib/study-builder/migrate.ts`
+- `apps/web/lib/session/normalize.ts`
+- `packages/fullmag-py/src/fullmag/runtime/scene_document.py`
+- `crates/fullmag-authoring/src/adapters.rs`
+
+### Szczegolowy opis prac
+
+1. Napisac migrator ze starych `stages` do nowych stage nodes.
+2. Napisac migrator ze starego `study_pipeline` do `StudyDocumentV2`.
+3. Dodac `source` lub `origin`:
+   - `legacy_flat_stages`
+   - `legacy_pipeline`
+   - `ui_v2`
+   - `python_v2`
+4. Dopisac ostrzezenia migracyjne tam, gdzie stare dane nie maja pelnej informacji.
+
+### Ryzyka / uwagi
+
+- stare dane sa niepelne, wiec migracja musi byc jawnie oznaczona jako best-effort,
+- szczegolnie ryzykowne sa solver defaults ukryte w globalnym `solver()`.
+
+### Metoda weryfikacji
+
+- otwarcie wszystkich fixture z Etapu 2,
+- porownanie liczby stage po migracji,
+- porownanie materialized `flat stages` przed i po migracji.
+
+### Kryterium zamkniecia
+
+- stary dokument otwiera sie bez crasha,
+- migracja daje sensowny `StudyDocumentV2`,
+- compiled output nie odbiega nieoczekiwanie od starego zachowania.
+
+---
+
+## 9. Etap 7 - Materialization Engine V2
+
+### Cel
+
+Zbudowac nowa materializacje z `StudyDocumentV2` do backendowego execution planu.
+
+### Zakres
+
+- execution step generation,
+- node-to-step map,
+- compiled preview,
+- wsparcie dla macro stages.
+
+### Dotykane pliki / moduly
+
+- `apps/web/lib/study-builder/materialize.ts`
+- `apps/web/lib/study-builder/execution-map.ts`
+- `apps/web/lib/study-builder/types.ts`
+
+### Szczegolowy opis prac
+
+1. Przepisac materialization entrypoint na `StudyDocumentV2`.
+2. Dla primitive stages generowac 1 execution step na 1 stage.
+3. Dla `Hysteresis Loop` generowac wiele execution steps z czytelnym mapowaniem.
+4. Zwrocic:
+   - compiled `flat stages`,
+   - `nodeId -> step indexes`,
+   - diagnostyke materializacji.
+5. Usunac ukryte, rozsiane defaulty z runtime materialization.
+
+### Ryzyka / uwagi
+
+- to jest serce polaczenia authoring <-> backend,
+- trzeba bardzo uwazac, aby preview materialization pokazywal to samo, co backend potem wykona.
+
+### Metoda weryfikacji
+
+- testy fixture `StudyDocumentV2 -> compiled steps`,
+- porownanie wyniku dla prostych przypadkow z legacy materialization,
+- manual kontrola preview dla `Hysteresis Loop`.
+
+### Kryterium zamkniecia
+
+- `StudyDocumentV2` zawsze daje deterministyczny compiled plan,
+- node map jest pelna i stabilna,
+- macro stage ma jawny materialized preview.
+
+---
+
+## 10. Etap 8 - Validation Engine V2
+
+### Cel
+
+Dodac prawdziwa walidacje study authoringu, a nie tylko ciche domysly i fallbacki.
+
+### Zakres
+
+- structural validation,
+- semantic validation,
+- backend capability validation,
+- warning/error/info diagnostics.
+
+### Dotykane pliki / moduly
+
+- `apps/web/lib/study-builder/validate.ts`
+- `apps/web/lib/workspace/capability-contract.ts`
+- `apps/web/lib/workspace/capability-audit.ts`
+- `crates/fullmag-authoring/src/validation.rs`
+
+### Szczegolowy opis prac
+
+1. Dodac walidacje strukturalna:
+   - wymagane pola,
+   - poprawne enumy,
+   - poprawne zakresy liczb.
+2. Dodac walidacje semantyczna:
+   - `eigensolve` z `equilibrium_source="relax"` wymaga poprzedniego relax stage,
+   - `run` wymaga `until_seconds`,
+   - `adaptive` nie moze wspolistniec z `fixed_dt`.
+3. Dodac capability validation:
+   - backend nie obsluguje danego operatora,
+   - backend nie obsluguje danego stage kind,
+   - fallback bedzie konieczny.
+4. Wprowadzic severity:
+   - `info`
+   - `warning`
+   - `error`
+
+### Ryzyka / uwagi
+
+- nie wolno mieszac validation error z runtime telemetry,
+- validation ma byc authoring-time guidance.
+
+### Metoda weryfikacji
+
+- testy jednostkowe dla typowych bledow,
+- manual w GUI: wymuszenie blednych konfiguracji i sprawdzenie komunikatow,
+- porownanie z capability profile backendu.
+
+### Kryterium zamkniecia
+
+- nie da sie zbudowac ewidentnie blednej sekwencji bez jawnej diagnozy,
+- capability coverage jest pokazywane w odpowiednich miejscach,
+- validation wynik nie zalezy od przypadkowych defaultow UI.
+
+---
+
+## 11. Etap 9 - Stabilne Node IDs I Selection Model
+
+### Cel
+
+Oddzielic selection model od dzisiejszego, czesciowo umownego routingu po stringach `study-*`.
+
+### Zakres
+
+- stabilne ids,
+- typed node identity,
+- selection context,
+- powiazanie node z ribbon/inspector/runtime.
+
+### Dotykane pliki / moduly
+
+- `apps/web/components/panels/ModelTree.tsx`
+- `apps/web/components/panels/SettingsPanel.tsx`
+- `apps/web/lib/session/modelBuilderGraph.ts`
+- `apps/web/lib/workspace/workspace-store.ts`
+
+### Szczegolowy opis prac
+
+1. Zdefiniowac typed node identity:
+   - `study.root`
+   - `study.defaults`
+   - `study.defaults.runtime`
+   - `study.defaults.solver`
+   - `study.stage.<id>`
+   - `study.stage.<id>.solver`
+   - itd.
+2. Zapewnic stabilnosc tych id miedzy renderami.
+3. Przestac budowac selection purely po `startsWith("study-")`.
+4. Udostepnic `selectedNodeContext` dla inspector i ribbon.
+
+### Ryzyka / uwagi
+
+- jesli node ids beda niestabilne, stage selection bedzie gubic focus i stan paneli,
+- to jest zaleznosc dla kolejnych etapow UI.
+
+### Metoda weryfikacji
+
+- manual: reorder stage i sprawdzic, czy selection nadal wskazuje ten sam stage id,
+- manual: refresh UI i sprawdzic, czy node identity round-tripuje,
+- technical: snapshot tree node ids dla fixture.
+
+### Kryterium zamkniecia
+
+- selection jest typed i stabilna,
+- `SettingsPanel` i `RibbonBar` moga dostawac selection context bez hackow.
+
+---
+
+## 12. Etap 10 - Refactor `ModelTree`
+
+### Cel
+
+Przebudowac drzewo `Study`, zeby pokazuwalo prawdziwa strukture modelu, a nie fake routing nodes.
+
+### Zakres
+
+- nowe study subtree,
+- usuniecie `Study Setup`, `Stage Builder`, `Stage Sequence` jako glownych bytow,
+- wprowadzenie `Defaults` i `Stages`.
+
+### Dotykane pliki / moduly
+
+- `apps/web/components/panels/ModelTree.tsx`
+
+### Szczegolowy opis prac
+
+1. Wprowadzic docelowa strukture:
+   - `Study`
+   - `Defaults`
+   - `Runtime & Backend`
+   - `Solver Defaults`
+   - `Outputs Defaults`
+   - `Stages`
+   - `Stage N - ...`
+2. Usunac fake helper nodes:
+   - `Study Setup`
+   - `Stage Builder`
+   - `Stage Sequence`
+   - `Integrator`
+   - `Time Stepping`
+   - `Convergence`
+3. Dodac stage child nodes:
+   - `Overview`
+   - `Solver`
+   - `Stop Criteria` / `Time Range` / `Equilibrium`
+   - `Outputs`
+
+### Ryzyka / uwagi
+
+- `ModelTree` jest juz mocno obciazony innymi subsystemami, wiec trzeba uwazac na regresje w `Universe`, `Objects`, `Physics`.
+
+### Metoda weryfikacji
+
+- manual smoke test tree:
+   - klik rozne nody,
+   - sprawdz expand/collapse,
+   - sprawdz selection sync,
+- snapshot tree shape dla fixture.
+
+### Kryterium zamkniecia
+
+- drzewo ma docelowa semantyke `Study > Defaults > Stages`,
+- nie istnieja stare fake nody jako glowny punkt authoringu.
+
+---
+
+## 13. Etap 11 - Inspector Registry Foundation
+
+### Cel
+
+Zastapic monolityczny routing `StudyPanel` systemem registry `node_kind -> inspector`.
+
+### Zakres
+
+- registry komponentow,
+- node-specific inspectors,
+- przejsciowa kompatybilnosc,
+- usuniecie `if nodeId.startsWith("study-") return <StudyPanel />`.
+
+### Dotykane pliki / moduly
+
+- `apps/web/components/panels/SettingsPanel.tsx`
+- nowe `apps/web/components/panels/settings/study/*`
+
+### Szczegolowy opis prac
+
+1. Dodac registry inspectora dla study node kinds.
+2. Wydzielic wspolne primitives/card helpers, jesli trzeba.
+3. Zmienic `SettingsPanel`, aby routowal po typed node context.
+4. Zostawic przejsciowo `StudyPanel` tylko jako fallback dla nieprzemigrowanych node'ow.
+
+### Ryzyka / uwagi
+
+- to jest punkt, w ktorym najlatwiej zrobic duzo if-else; trzeba od razu zrobic registry cleanly.
+
+### Metoda weryfikacji
+
+- grep: brak nowego kodu typu `startsWith("study-")`,
+- manual: rozne study nodes renderuja rozne komponenty,
+- `pnpm web:typecheck`.
+
+### Kryterium zamkniecia
+
+- selection nie trafia juz zawsze do jednego `StudyPanel`,
+- registry jest gotowe pod kolejne inspectory.
+
+---
+
+## 14. Etap 12 - Inspectory `Study` I `Defaults`
+
+### Cel
+
+Zaimplementowac wszystkie inspectory dla nodow globalnych `Study` i `Defaults`.
+
+### Zakres
+
+- `Study` summary,
+- `Defaults`,
+- `Runtime & Backend`,
+- `Solver Defaults`,
+- `Outputs Defaults`.
+
+### Dotykane pliki / moduly
+
+- nowe `apps/web/components/panels/settings/study/StudyRootPanel.tsx`
+- nowe `apps/web/components/panels/settings/study/StudyDefaultsPanel.tsx`
+- nowe `apps/web/components/panels/settings/study/StudyRuntimePanel.tsx`
+- nowe `apps/web/components/panels/settings/study/StudySolverDefaultsPanel.tsx`
+- nowe `apps/web/components/panels/settings/study/StudyOutputsDefaultsPanel.tsx`
+- `apps/web/components/solver/SolverSelector.tsx` jesli bedzie reuse
+
+### Szczegolowy opis prac
+
+1. `Study` root ma pokazac:
+   - liczbe stage,
+   - validation summary,
+   - compile status.
+2. `Runtime & Backend` ma przejac obecne `Backend Configuration`.
+3. `Solver Defaults` ma przejac:
+   - integrator,
+   - fixed/adaptive dt,
+   - gamma,
+   - precession mode.
+4. `Outputs Defaults` ma przejac global output policy.
+
+### Ryzyka / uwagi
+
+- trzeba pilnowac, aby runtime summary nie mieszial sie z runtime telemetry,
+- `Study Defaults` to authoring, nie live execution.
+
+### Metoda weryfikacji
+
+- manual:
+   - klik kazdy default node,
+   - sprawdz, czy pokazuje inny inspector,
+   - edycja zapisuje sie do `StudyDocumentV2`,
+- `pnpm web:typecheck`
+
+### Kryterium zamkniecia
+
+- wszystkie default nodes maja wlasne inspectory,
+- `Backend Configuration` nie jest juz globalnym cardem w kazdym study view.
+
+---
+
+## 15. Etap 13 - Primitive Stage Inspectors
+
+### Cel
+
+Dowiezc kompletne inspectory dla stage `Run`, `Relax`, `Eigensolve`.
+
+### Zakres
+
+- node root inspector per stage,
+- child node inspectors,
+- solver overrides,
+- outputs override.
+
+### Dotykane pliki / moduly
+
+- nowe `apps/web/components/panels/settings/study/stages/RunStagePanel.tsx`
+- nowe `apps/web/components/panels/settings/study/stages/RelaxStagePanel.tsx`
+- nowe `apps/web/components/panels/settings/study/stages/EigensolveStagePanel.tsx`
+- child node panels dla `Solver`, `Outputs`, `Time Range`, `Stop Criteria`, `Equilibrium`
+
+### Szczegolowy opis prac
+
+1. `RunStagePanel`:
+   - `until_seconds`
+   - sample cadence
+   - checkpointing
+2. `RelaxStagePanel`:
+   - algorithm
+   - torque tolerance
+   - energy tolerance
+   - max steps
+   - relax alpha
+3. `EigensolveStagePanel`:
+   - count
+   - target
+   - target frequency
+   - include demag
+   - equilibrium source
+   - normalization
+   - damping policy
+   - k-vector
+   - spin-wave bc
+4. Dodac child node panels o waziutkich odpowiedzialnosciach.
+
+### Ryzyka / uwagi
+
+- tu bardzo latwo skopiowac stare stringly-typed fields zamiast pracowac na typed config,
+- `eigensolve` ma najwiecej semantyki i walidacji.
+
+### Metoda weryfikacji
+
+- manual authoring test dla 3 stage types,
+- sprawdzenie, czy kazdy node ma odrebny inspector,
+- porownanie exportu z Python round-trip.
+
+### Kryterium zamkniecia
+
+- `Run`, `Relax`, `Eigensolve` sa w pelni edytowalne z GUI,
+- config zapisuje sie do `StudyDocumentV2`,
+- nie trzeba wchodzic do starego `StudyPanel`.
+
+---
+
+## 16. Etap 14 - Macro Stage Inspector
+
+### Cel
+
+Dodac pierwszy naprawde wartosciowy macro stage: `Hysteresis Loop`.
+
+### Zakres
+
+- authoring config,
+- materialized preview,
+- settle stage config,
+- outputs i state policy.
+
+### Dotykane pliki / moduly
+
+- nowe `apps/web/components/panels/settings/study/stages/HysteresisLoopStagePanel.tsx`
+- `apps/web/lib/study-builder/materialize.ts`
+- `apps/web/lib/study-builder/summaries.ts`
+
+### Szczegolowy opis prac
+
+1. Dodac stage node `Hysteresis Loop`.
+2. Dodac pola:
+   - quantity,
+   - axis,
+   - start,
+   - stop,
+   - steps,
+   - spacing,
+   - settle stage,
+   - save point state.
+3. Dodac `Materialized Preview` child panel.
+4. Pokazac userowi:
+   - ile execution steps powstanie,
+   - jak beda nazwane punkty,
+   - czy kazdy punkt ma relax czy run.
+
+### Ryzyka / uwagi
+
+- macro stage nie moze byc tylko syntactic sugar ukrywajacym backend,
+- preview musi byc czytelny i deterministyczny.
+
+### Metoda weryfikacji
+
+- manual: utworzyc loop w GUI i sprawdzic preview,
+- technical: porownac liczbe wygenerowanych krokow z oczekiwanym `steps`,
+- validation: wymusic bledna konfiguracje i sprawdzic komunikaty.
+
+### Kryterium zamkniecia
+
+- `Hysteresis Loop` da sie skonfigurowac i zrozumiec bez zagladania do compiled stages,
+- materialized preview dziala.
+
+---
+
+## 17. Etap 15 - Context Ribbon Engine
+
+### Cel
+
+Sprawic, zeby ribbon zmienial sie zgodnie z zaznaczonym study nodem, tak jak w COMSOL-u.
+
+### Zakres
+
+- ribbon context model,
+- node-specific ribbon groups,
+- integracja z selection context.
+
+### Dotykane pliki / moduly
+
+- `apps/web/components/shell/RibbonBar.tsx`
+- `apps/web/lib/workspace/workspace-store.ts`
+- `apps/web/components/workspace/study-builder/StageBuilderRibbon.tsx`
+
+### Szczegolowy opis prac
+
+1. Zdefiniowac `RibbonContext`.
+2. Mapowac selected node na ribbon groups:
+   - `Study > Stages`
+   - `Relax stage`
+   - `Run stage`
+   - `Eigensolve stage`
+   - `Hysteresis Loop`
+3. Ograniczyc stare globalne taby ribbonu, gdzie trzeba.
+4. Zapewnic, ze klik w tree zmienia ribbon natychmiast.
+
+### Ryzyka / uwagi
+
+- nie wolno zbudowac drugiego systemu nawigacji obok tree,
+- ribbon ma byc pochodna selection, nie osobnym source-of-truth.
+
+### Metoda weryfikacji
+
+- manual:
+   - klik `Study > Stages`,
+   - klik `Stage 1 - Relax`,
+   - klik `Stage 2 - Run`,
+   - sprawdzic zmiane ribbonu,
+- `pnpm web:typecheck`
+
+### Kryterium zamkniecia
+
+- ribbon jest context-sensitive,
+- selection w tree steruje ribbonem,
+- uzytkownik moze dodawac stage z ribbonu.
+
+---
+
+## 18. Etap 16 - Stage CRUD I Tree Interactions
+
+### Cel
+
+Dowiezc realne operacje authoringu sekwencji: dodawanie, usuwanie, duplikacja, reorder, enable/disable.
+
+### Zakres
+
+- ribbon actions,
+- tree actions,
+- node numbering,
+- selection after mutation.
+
+### Dotykane pliki / moduly
+
+- `apps/web/lib/study-builder/operations.ts`
+- `apps/web/components/panels/ModelTree.tsx`
+- `apps/web/components/shell/RibbonBar.tsx`
+- `apps/web/components/workspace/study-builder/*`
+
+### Szczegolowy opis prac
+
+1. Dodac akcje:
+   - add before
+   - add after
+   - duplicate
+   - delete
+   - move up
+   - move down
+   - disable / enable
+2. Auto numerowac etapy po zmianach kolejnosci.
+3. Zachowac selection na sensownym nodzie po mutacji.
+4. Oznaczac disabled stage czytelnym badge.
+
+### Ryzyka / uwagi
+
+- selection po reorder jest czestym miejscem bugow,
+- stage id musi byc stabilny, nazwa i numer moga sie zmieniac.
+
+### Metoda weryfikacji
+
+- manual CRUD matrix:
+   - dodaj 3 stage,
+   - skopiuj srodkowy,
+   - przestaw kolejke,
+   - wylacz jeden,
+   - usun jeden,
+   - sprawdz numeracje i selection,
+- porownanie finalnego `StudyDocumentV2`.
+
+### Kryterium zamkniecia
+
+- sekwencje da sie w pelni authorowac z tree i ribbonu,
+- operacje nie psuja node ids i nie rozwalaja inspectora.
+
+---
+
+## 19. Etap 17 - Script Import/Export Round-Trip
+
+### Cel
+
+Domknac najwazniejszy kontrakt: to co zrobimy w GUI, ma dac sie wiernie zapisac do Pythona i z powrotem otworzyc.
+
+### Zakres
+
+- eksport Python script,
+- import script -> study document,
+- round-trip dla stage defaults i overrides.
+
+### Dotykane pliki / moduly
+
+- `packages/fullmag-py/src/fullmag/runtime/script_builder.py`
+- `packages/fullmag-py/src/fullmag/runtime/scene_document.py`
+- `apps/web/lib/session/sceneDocument.ts`
+- `apps/web/lib/study-builder/summaries.ts`
+
+### Szczegolowy opis prac
+
+1. Przepisac eksport skryptu tak, aby czytal `StudyDocumentV2`.
+2. Dla kazdego stage kind v1 dodac kanoniczny renderer Python.
+3. Zachowac czytelny eksport:
+   - defaults osobno,
+   - stages osobno,
+   - macro stages jako jawny builder.
+4. Dopisac import z Pythona z powrotem do `StudyDocumentV2`.
+
+### Ryzyka / uwagi
+
+- stare API `solver()` moze utrudniac czysty eksport,
+- trzeba pilnowac, by eksport nie "gubil" stage override i nie zlewal ich do global defaults.
+
+### Metoda weryfikacji
+
+- GUI -> Python -> GUI round-trip dla fixture,
+- Python -> scene -> Python round-trip dla fixture,
+- porownanie kluczowych pol i liczby stage.
+
+### Kryterium zamkniecia
+
+- round-trip nie gubi stage config,
+- GUI i Python sa semantycznie 1:1 dla v1 stage kinds.
+
+---
+
+## 20. Etap 18 - Runtime Execution Mapping
+
+### Cel
+
+Podpiac nowy model stage do live runtime, bottom docka i progress bars.
+
+### Zakres
+
+- mapowanie runtime step -> stage id,
+- stage progress,
+- study progress,
+- mesh progress osobno.
+
+### Dotykane pliki / moduly
+
+- `apps/web/components/runs/control-room/ControlRoomContext.tsx`
+- `apps/web/components/runs/control-room/context-hooks.tsx`
+- `apps/web/components/workspace/docks/ProgressDock.tsx`
+- `apps/web/components/workspace/docks/JobsDock.tsx`
+- `apps/web/components/workspace/docks/LogDock.tsx`
+- `apps/web/components/shell/StatusBar.tsx`
+
+### Szczegolowy opis prac
+
+1. Doliczyc `current_stage_id`.
+2. Doliczyc `completed_stage_count`.
+3. Oddzielic progress:
+   - meshing,
+   - overall study,
+   - current stage.
+4. Pokazac w bottom dock:
+   - stage label,
+   - step detail,
+   - runtime detail.
+5. Polaczyc runtime status z execution map z materialization.
+
+### Ryzyka / uwagi
+
+- runtime nie zawsze bedzie miec granularnosc potrzebna do pieknego progressu,
+- trzeba umiec pokazac `indeterminate` tam, gdzie backend nie raportuje postepu.
+
+### Metoda weryfikacji
+
+- manual live run z przynajmniej 2-stage sequence,
+- sprawdzenie, czy aktywny stage przesuwa sie we wlasciwym momencie,
+- sprawdzenie, czy mesh progress nie miesza sie z solve progress.
+
+### Kryterium zamkniecia
+
+- dolny panel pokazuje osobno progress mesh i progress study,
+- user widzi aktywny stage i postep calej sekwencji.
+
+---
+
+## 21. Etap 19 - Capability Coverage I Fallback UX
+
+### Cel
+
+Pokazac ograniczenia backendu tam, gdzie maja sens, zamiast rozrzucac globalne karty po calym `Study`.
+
+### Zakres
+
+- capability coverage w `Defaults`,
+- local stage warnings,
+- fallback policy visibility,
+- unavailable controls disabled with reasons.
+
+### Dotykane pliki / moduly
+
+- `apps/web/lib/workspace/capability-contract.ts`
+- `apps/web/lib/workspace/capability-audit.ts`
+- inspectory `Runtime & Backend` i stage panels
+
+### Szczegolowy opis prac
+
+1. Przeniesc ogolne capability coverage do `Study > Defaults > Runtime & Backend`.
+2. Dodac lokalne warning badges przy stage:
+   - stage kind nieobslugiwany,
+   - solver override nieobslugiwany,
+   - fallback required.
+3. Przy nieobslugiwanych opcjach:
+   - wyszarzyc,
+   - pokazac reason,
+   - nie udawac, ze opcja jest aktywna.
+
+### Ryzyka / uwagi
+
+- bardzo latwo tu zrobic "AI slop" w postaci nadmiaru badge'y i komunikatow,
+- komunikaty maja byc konkretne i lokalne.
+
+### Metoda weryfikacji
+
+- manual:
+   - wybrac backend z brakami capability,
+   - sprawdzic, czy ograniczenia sa widoczne tam, gdzie trzeba,
+- sprawdzenie, czy `Defaults` i stage panels nie duplikuja tych samych kart.
+
+### Kryterium zamkniecia
+
+- capability coverage jest czytelne,
+- fallback policy nie jest ukryta,
+- GUI nie obiecuje funkcji, ktore backend i tak cicho ignoruje.
+
+---
+
+## 22. Etap 20 - Cleanup, Deprecation I Final Acceptance
+
+### Cel
+
+Usunac stara architekture, zamknac warstwy kompatybilnosci tam, gdzie juz nie sa potrzebne, i wykonac finalny odbior.
+
+### Zakres
+
+- cleanup starego `StudyPanel`,
+- pruning martwego kodu,
+- final docs,
+- acceptance sweep.
+
+### Dotykane pliki / moduly
+
+- `apps/web/components/panels/settings/StudyPanel.tsx`
+- `apps/web/components/workspace/study-builder/*`
+- `apps/web/components/panels/SettingsPanel.tsx`
+- `apps/web/components/panels/ModelTree.tsx`
+- `apps/web/components/shell/RibbonBar.tsx`
+- `apps/web/lib/study-builder/*`
+- `packages/fullmag-py/src/fullmag/runtime/script_builder.py`
+- `packages/fullmag-py/src/fullmag/world.py`
+
+### Szczegolowy opis prac
+
+1. Usunac stare fallbacki, jesli nie sa juz potrzebne.
+2. Oczyscic martwe helpery od `Stage Sequence` i starego routingu.
+3. Zaktualizowac dokumentacje:
+   - architecture blueprint,
+   - implementation plan,
+   - ewentualne README workflow.
+4. Wykonac finalny acceptance sweep na wszystkich fixture.
+5. Przygotowac liste resztek odlozonych na v2.1.
+
+### Ryzyka / uwagi
+
+- cleanup zbyt wczesnie moze zepsuc kompatybilnosc,
+- cleanup zbyt pozno zostawi repo w podwojnej architekturze.
+
+### Metoda weryfikacji
+
+- `pnpm web:typecheck`
+- `pnpm web:lint`
+- `pnpm web:build`
+- `cargo test -p fullmag-authoring`
+- manual end-to-end smoke:
+   - otwarcie starego projektu,
+   - zbudowanie nowej sekwencji,
+   - export Python,
+   - uruchomienie study,
+   - obserwacja progressu per stage.
+
+### Kryterium zamkniecia
+
+- stary monolityczny `StudyPanel` nie jest juz glownym torem pracy,
+- `Study` dziala jako COMSOL-like subsystem,
+- finalne acceptance criteria z blueprintu sa spelnione.
+
+---
+
+## 23. Kolejnosc Scalania
+
+Rekomendowana kolejnosc merge:
+
+1. Etap 1
+2. Etap 2
+3. Etap 3
+4. Etap 4
+5. Etap 5
+6. Etap 6
+7. Etap 7
+8. Etap 8
+9. Etap 9
+10. Etap 10
+11. Etap 11
+12. Etap 12
+13. Etap 13
+14. Etap 14
+15. Etap 15
+16. Etap 16
+17. Etap 17
+18. Etap 18
+19. Etap 19
+20. Etap 20
+
+Nie rekomenduje przeskakiwania tej kolejnosci, bo:
+
+- tree bez selection modelu bedzie kruche,
+- inspector bez kontraktu danych bedzie prowizorka,
+- ribbon bez node-specific inspectors bedzie drugim systemem nawigacji,
+- runtime mapping bez execution map nie bedzie wiarygodny.
+
+---
+
+## 24. Globalna Lista Odbiorowa
+
+Po zakonczeniu calego refaktoru odpowiedz na kazde pytanie musi brzmiec `tak`:
+
+1. Czy `Study` ma jedno zrodlo prawdy authoringu?
+2. Czy GUI i Python modeluja te same stage i te same parametry?
+3. Czy tree pokazuje prawdziwe `Defaults` i `Stages`, a nie routing helpers?
+4. Czy ribbon zmienia sie po wyborze noda?
+5. Czy rozne nody `Study` maja rozne inspectory?
+6. Czy `Run`, `Relax`, `Eigensolve` i `Hysteresis Loop` sa kompletne?
+7. Czy `flat stages` sa tylko compiled artifactem?
+8. Czy export/import Python round-tripuje bez utraty danych?
+9. Czy bottom panel pokazuje progress per mesh i per stage?
+10. Czy capability coverage jest lokalne i uczciwe?
+
+Jesli choc jedna odpowiedz brzmi `nie`, refaktor nie jest jeszcze domkniety.

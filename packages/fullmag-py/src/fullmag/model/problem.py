@@ -695,6 +695,7 @@ def build_problem_builder_manifest(
     entrypoint_kind: str,
     source_root: str | Path | None,
     mesh_workflow: dict[str, object] | None,
+    study_pipeline: dict[str, object] | None = None,
 ) -> dict[str, object]:
     runtime_metadata = problem.runtime_metadata if isinstance(problem.runtime_metadata, dict) else {}
     study_universe = (
@@ -723,7 +724,7 @@ def build_problem_builder_manifest(
         mesh_workflow=mesh_workflow,
         study_universe=study_universe,
     )
-    return {
+    manifest = {
         "schema_version": "model_builder.v1",
         "source_kind": _builder_source_kind(entrypoint_kind),
         "entrypoint_kind": entrypoint_kind,
@@ -751,14 +752,18 @@ def build_problem_builder_manifest(
             "mesh_workflow": mesh_workflow,
         },
     }
+    if study_pipeline is not None:
+        manifest["study_pipeline"] = copy.deepcopy(study_pipeline)
+    return manifest
 
 
 def build_script_sync_manifest(
     *,
     entrypoint_kind: str,
     editable_scopes: Sequence[str],
+    study_pipeline: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    manifest = {
         "schema_version": "script_sync.v1",
         "source_kind": _builder_source_kind(entrypoint_kind),
         "entrypoint_kind": entrypoint_kind,
@@ -767,6 +772,23 @@ def build_script_sync_manifest(
         "editable_scopes": list(editable_scopes),
         "phase": "round_trip_canonical_sync",
     }
+    if study_pipeline is not None:
+        manifest["study_pipeline_version"] = study_pipeline.get("version")
+        nodes = study_pipeline.get("nodes")
+        manifest["study_pipeline_node_count"] = len(nodes) if isinstance(nodes, list) else 0
+    return manifest
+
+
+def _normalize_study_pipeline_value(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    version = value.get("version")
+    nodes = value.get("nodes")
+    if not isinstance(version, str) or not version.strip():
+        return None
+    if nodes is not None and not isinstance(nodes, list):
+        return None
+    return copy.deepcopy(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -830,6 +852,7 @@ class Problem:
         entrypoint_kind: str = "direct",
         asset_cache: dict[str, dict[str, Any] | None] | None = None,
         include_geometry_assets: bool = True,
+        study_pipeline: dict[str, object] | None = None,
     ) -> dict[str, object]:
         runtime = self.runtime.resolved(
             backend=requested_backend,
@@ -847,6 +870,13 @@ class Problem:
         effective_asset_cache = asset_cache if asset_cache is not None else self.geometry_asset_cache
         runtime_metadata = dict(self.runtime_metadata)
         runtime_metadata["runtime_selection"] = runtime.to_runtime_metadata()
+        effective_study_pipeline = _normalize_study_pipeline_value(study_pipeline)
+        if effective_study_pipeline is None:
+            effective_study_pipeline = _normalize_study_pipeline_value(
+                runtime_metadata.get("study_pipeline")
+            )
+        if effective_study_pipeline is not None:
+            runtime_metadata["study_pipeline"] = copy.deepcopy(effective_study_pipeline)
         if self.discretization is not None and discretization is not self.discretization:
             runtime_metadata["derived_discretization"] = {
                 "policy": "fem_from_fdm_cell",
@@ -873,11 +903,13 @@ class Problem:
             entrypoint_kind=entrypoint_kind,
             source_root=source_root,
             mesh_workflow=mesh_workflow,
+            study_pipeline=effective_study_pipeline,
         )
         runtime_metadata["model_builder"] = builder_manifest
         runtime_metadata["script_sync"] = build_script_sync_manifest(
             entrypoint_kind=entrypoint_kind,
             editable_scopes=builder_manifest.get("editable_scopes", []),
+            study_pipeline=effective_study_pipeline,
         )
         geometry_assets = None
         if include_geometry_assets:

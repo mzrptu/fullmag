@@ -23,6 +23,12 @@ use std::ffi::CStr;
 #[cfg(feature = "fem-gpu")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
+// ── Fallback defaults when air_box_config is absent (FEM-040) ────────────
+#[cfg(feature = "fem-gpu")]
+const FALLBACK_POISSON_BOUNDARY_MARKER: i32 = 99;
+#[cfg(feature = "fem-gpu")]
+const FALLBACK_ROBIN_BETA_FACTOR: f64 = 2.0;
+
 pub(crate) fn is_gpu_available() -> bool {
     #[cfg(feature = "fem-gpu")]
     {
@@ -135,6 +141,14 @@ impl NativeFemBackend {
             return Err(RunError {
                 message:
                     "native FEM air-box demag requires domain_mesh_mode='shared_domain_mesh_with_air'"
+                        .to_string(),
+            });
+        }
+        if plan.precision == fullmag_ir::ExecutionPrecision::Single {
+            return Err(RunError {
+                message:
+                    "native FEM GPU backend requires double precision; \
+                     single-precision CUDA kernels are not yet implemented"
                         .to_string(),
             });
         }
@@ -283,7 +297,7 @@ impl NativeFemBackend {
             poisson_boundary_marker: plan
                 .air_box_config
                 .as_ref()
-                .map_or(99, |c| c.boundary_marker as i32),
+                .map_or(FALLBACK_POISSON_BOUNDARY_MARKER, |c| c.boundary_marker as i32),
             robin_beta_mode: plan.air_box_config.as_ref().map_or(0, |c| {
                 match c.bc_kind.as_deref() {
                     Some("robin") => match c.robin_beta_mode.as_deref() {
@@ -299,7 +313,7 @@ impl NativeFemBackend {
                 .air_box_config
                 .as_ref()
                 .and_then(|c| c.robin_beta_factor)
-                .unwrap_or(2.0),
+                .unwrap_or(FALLBACK_ROBIN_BETA_FACTOR),
             demag_kernel_xx_spectrum: demag_kernel_spectra
                 .as_ref()
                 .map_or(std::ptr::null(), |kernels| kernels.n_xx.as_ptr()),
@@ -323,11 +337,17 @@ impl NativeFemBackend {
                 .map_or(0, |kernels| kernels.n_xx.len() as u64),
             initial_magnetization_xyz: m_flat.as_ptr(),
             initial_magnetization_len: m_flat.len() as u64,
-            dt_seconds: plan.fixed_timestep.ok_or_else(|| RunError {
-                message: "native FEM: no fixed_timestep specified; \
-                         please set an explicit timestep in your dynamics configuration"
-                    .to_string(),
-            })?,
+            dt_seconds: plan
+                .fixed_timestep
+                .or_else(|| {
+                    plan.adaptive_timestep
+                        .as_ref()
+                        .map(|a| a.dt_initial.unwrap_or(a.dt_min))
+                })
+                .ok_or_else(|| RunError {
+                    message: "native FEM: no fixed_timestep or adaptive_timestep specified"
+                        .to_string(),
+                })?,
             adaptive_config: std::ptr::null(),
             // F-05 fix: enable uniaxial anisotropy when ANY of the relevant
             // parameters are set (Ku, Ku2, Ku_field, Ku2_field).
@@ -497,6 +517,17 @@ impl NativeFemBackend {
             },
             mel_strain_voigt: std::ptr::null(), // will be set below
             mel_strain_len: 0,
+            // FEM-029 fix: pass explicit GPU device index from plan.
+            gpu_device_index: plan.gpu_device_index.unwrap_or(-1),
+            // FEM-021 fix: pass thermal seed from plan.
+            thermal_seed: plan
+                .thermal_seed_config
+                .as_ref()
+                .map_or(0, |c| c.seed.unwrap_or(0)),
+            // FEM-030 fix: pass explicit MFEM device string from plan.
+            mfem_device_string: std::ptr::null(), // set below if present
+            // FEM-039 fix: pass explicit demag transfer-grid cell size.
+            demag_transfer_cell_size: plan.demag_transfer_cell_size.unwrap_or(0.0),
         };
 
         // Build adaptive config if present
@@ -529,7 +560,7 @@ impl NativeFemBackend {
                         rtol: a.rtol,
                         dt_initial: a.dt_initial.or(plan.fixed_timestep).unwrap_or(a.dt_min),
                         dt_min: a.dt_min,
-                        dt_max: a.dt_max.unwrap_or(1e-10),
+                        dt_max: a.dt_max.unwrap_or(crate::DEFAULT_ADAPTIVE_DT_MAX),
                         safety: a.safety,
                         growth_limit: a.growth_limit,
                         shrink_limit: a.shrink_limit,
@@ -548,6 +579,15 @@ impl NativeFemBackend {
         if let Some(ref strain) = mel_strain_data {
             plan_desc.mel_strain_voigt = strain.as_ptr();
             plan_desc.mel_strain_len = 6;
+        }
+
+        // FEM-030 fix: pass explicit MFEM device string (must be kept alive until backend_create).
+        let mfem_device_cstring = plan
+            .mfem_device_string
+            .as_deref()
+            .map(|s| std::ffi::CString::new(s).expect("mfem_device_string must not contain NUL"));
+        if let Some(ref cs) = mfem_device_cstring {
+            plan_desc.mfem_device_string = cs.as_ptr();
         }
 
         let handle = unsafe { ffi::fullmag_fem_backend_create(&plan_desc) };
@@ -1120,6 +1160,9 @@ mod tests {
             demag_solver_policy: None,
             thermal_seed_config: None,
             oersted_realization: None,
+            gpu_device_index: None,
+            mfem_device_string: None,
+            demag_transfer_cell_size: None,
         }
     }
 
@@ -1226,6 +1269,9 @@ mod tests {
             demag_solver_policy: None,
             thermal_seed_config: None,
             oersted_realization: None,
+            gpu_device_index: None,
+            mfem_device_string: None,
+            demag_transfer_cell_size: None,
         }
     }
 

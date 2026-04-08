@@ -474,9 +474,13 @@ fn bootstrap_example_plans_successfully() {
 #[test]
 fn unsupported_term_is_rejected() {
     let mut ir = ProblemIR::bootstrap_example();
-    ir.energy_terms = vec![fullmag_ir::EnergyTermIR::InterfacialDmi { d: 3e-3 }];
+    ir.energy_terms = vec![fullmag_ir::EnergyTermIR::Magnetoelastic {
+        magnet: "m".to_string(),
+        body: "b".to_string(),
+        law: "l".to_string(),
+    }];
 
-    let err = plan(&ir).expect_err("DMI should be rejected");
+    let err = plan(&ir).expect_err("Magnetoelastic should be rejected");
     assert!(err.reasons.iter().any(|r| r.contains("semantic-only")));
 }
 

@@ -471,7 +471,15 @@ pub(crate) fn plan_fdm(
                             fdm_plan.oersted_time_dep_t_off = *t_off;
                         }
                         TimeDependenceIR::PiecewiseLinear { .. } => {
-                            fdm_plan.oersted_time_dep_kind = 0;
+                            // FEM-025 fix: reject unsupported time dependence
+                            // instead of silently falling back to constant.
+                            return Err(PlanError {
+                                reasons: vec![
+                                    "Oersted time dependence 'PiecewiseLinear' is not yet supported \
+                                     by the FDM backend; use 'Constant', 'Sinusoidal', or 'Pulse' instead"
+                                        .to_string(),
+                                ],
+                            });
                         }
                     }
                 }

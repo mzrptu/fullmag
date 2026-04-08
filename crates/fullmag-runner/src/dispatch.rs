@@ -1642,6 +1642,10 @@ fn execute_native_fem(
         .unwrap_or(1e-13);
 
     let mut steps = Vec::new();
+    // FEM-013 fix: serialize resolved demag realization and integrator in provenance.
+    let resolved_demag = plan
+        .demag_realization
+        .unwrap_or(fullmag_ir::ResolvedFemDemagIR::TransferGrid);
     let provenance = ExecutionProvenance {
         execution_engine: "native_fem_gpu".to_string(),
         precision: match plan.precision {
@@ -1649,7 +1653,7 @@ fn execute_native_fem(
             fullmag_ir::ExecutionPrecision::Double => "double".to_string(),
         },
         demag_operator_kind: if plan.enable_demag {
-            Some("fem_transfer_grid_fdm_demag".to_string())
+            Some(resolved_demag.provenance_name().to_string())
         } else {
             None
         },
@@ -1662,6 +1666,25 @@ fn execute_native_fem(
         compute_capability: Some(device_info.compute_capability.clone()),
         cuda_driver_version: Some(device_info.driver_version),
         cuda_runtime_version: Some(device_info.runtime_version),
+        requested_integrator: Some(format!("{:?}", plan.integrator)),
+        resolved_integrator: Some(format!("{:?}", plan.integrator)),
+        requested_demag_realization: plan
+            .demag_realization
+            .map(|r| r.provenance_name().to_string()),
+        resolved_demag_realization: if plan.enable_demag {
+            Some(resolved_demag.provenance_name().to_string())
+        } else {
+            None
+        },
+        dt_policy: if plan.adaptive_timestep.is_some() {
+            Some("adaptive".to_string())
+        } else if plan.fixed_timestep.is_some() {
+            Some("user".to_string())
+        } else {
+            Some("fallback".to_string())
+        },
+        mfem_device: plan.mfem_device_string.clone(),
+        demag_transfer_cell_size: plan.demag_transfer_cell_size,
         ..Default::default()
     };
     let mut artifacts = if let Some(writer) = artifact_writer {
@@ -2203,6 +2226,9 @@ mod tests {
             demag_solver_policy: None,
             thermal_seed_config: None,
             oersted_realization: None,
+            gpu_device_index: None,
+            mfem_device_string: None,
+            demag_transfer_cell_size: None,
         }
     }
 

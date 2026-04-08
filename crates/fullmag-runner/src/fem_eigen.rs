@@ -432,13 +432,19 @@ fn execute_fem_eigen_inner(
         field_snapshots: Vec::new(),
         field_snapshot_count: 0,
         auxiliary_artifacts,
-        provenance: execution_provenance(plan),
+        provenance: execution_provenance(plan, try_gpu),
     })
 }
 
-fn execution_provenance(plan: &FemEigenPlanIR) -> ExecutionProvenance {
+fn execution_provenance(plan: &FemEigenPlanIR, used_gpu: bool) -> ExecutionProvenance {
+    let engine = if used_gpu {
+        format!("gpu_cusolver_fem_eigen/{}", solver_kind_label(plan))
+    } else {
+        format!("cpu_reference_fem_eigen/{}", solver_kind_label(plan))
+    };
     ExecutionProvenance {
-        execution_engine: format!("cpu_reference_fem_eigen/{}", solver_kind_label(plan)),
+        execution_engine: engine,
+        // FEM-033: eigen runner only supports double + transfer_grid.
         precision: "double".to_string(),
         demag_operator_kind: if plan.enable_demag {
             Some(
@@ -446,6 +452,11 @@ fn execution_provenance(plan: &FemEigenPlanIR) -> ExecutionProvenance {
                     .map(|r| r.provenance_name().to_string())
                     .unwrap_or_else(|| "fem_transfer_grid_tensor_fft_newell".to_string()),
             )
+        } else {
+            None
+        },
+        resolved_demag_realization: if plan.enable_demag {
+            Some("transfer_grid".to_string())
         } else {
             None
         },

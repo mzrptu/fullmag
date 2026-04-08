@@ -21,9 +21,13 @@ interface StatusBarProps {
   status: string;
   activityLabel?: string;
   activityDetail?: string;
-  nodeCount?: number;
+  progressMode?: "idle" | "indeterminate" | "determinate";
+  progressValue?: number | undefined;
+  nodeCount?: string | number;
   commandMessage?: string | null;
   commandState?: "idle" | "progress" | "error" | "success" | "rejected";
+  displayLabel?: string | null;
+  displayDetail?: string | null;
   previewPending?: boolean;
   runtimeCanAcceptCommands?: boolean;
   pipelineLabel?: string | null;

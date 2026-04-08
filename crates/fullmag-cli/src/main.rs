@@ -697,6 +697,9 @@ mod tests {
             demag_solver_policy: None,
             thermal_seed_config: None,
             oersted_realization: None,
+            gpu_device_index: None,
+            mfem_device_string: None,
+            demag_transfer_cell_size: None,
         });
 
         let update = initial_step_update(&plan);

@@ -16,6 +16,9 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kB  = 1.380649e-23;   // Boltzmann constant [J/K]
 constexpr double kMU0 = 4.0 * kPi * 1e-7;  // vacuum permeability [T·m/A]
+constexpr double kZeroThreshold = 1e-30; // FEM-040: named zero guard
+constexpr double kOrthogonalityDotTol = 1e-3;    // cubic axis dot-product tolerance
+constexpr double kOrthogonalityCrossMinNorm = 1e-6; // cubic axis cross-product minimum norm
 
 template <typename T>
 void copy_optional_span(
@@ -374,7 +377,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     {
         auto normalize3 = [](std::array<double, 3> &v) {
             double len = std::sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-            if (len > 1e-30) {
+            if (len > kZeroThreshold) {
                 v[0] /= len; v[1] /= len; v[2] /= len;
             }
         };
@@ -399,7 +402,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
                 ctx.cubic_axis1[1] * ctx.cubic_axis2[0];
             const double cross_norm = std::sqrt(cross_x * cross_x + cross_y * cross_y + cross_z * cross_z);
             if (!std::isfinite(dot) || !std::isfinite(cross_norm) ||
-                std::abs(dot) > 1e-3 || cross_norm < 1e-6) {
+                std::abs(dot) > kOrthogonalityDotTol || cross_norm < kOrthogonalityCrossMinNorm) {
                 error = "cubic anisotropy axes must be finite, normalized and mutually orthogonal";
                 return false;
             }
@@ -549,7 +552,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
             ctx.oersted_axis[0] * ctx.oersted_axis[0] +
             ctx.oersted_axis[1] * ctx.oersted_axis[1] +
             ctx.oersted_axis[2] * ctx.oersted_axis[2]);
-        if (!(axis_norm > 1e-12) || !std::isfinite(axis_norm)) {
+        if (!(axis_norm > kZeroThreshold) || !std::isfinite(axis_norm)) {
             error = "oersted_axis must be finite and non-zero";
             return false;
         }
@@ -597,7 +600,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
             const double r_perp = std::sqrt(rx * rx + ry * ry + rz * rz);
 
             double H_mag;
-            if (r_perp < 1e-30) {
+            if (r_perp < kZeroThreshold) {
                 H_mag = 0.0;
             } else if (r_perp < R) {
                 H_mag = inv_2pi * r_perp / R2;
@@ -605,7 +608,7 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
                 H_mag = inv_2pi / r_perp;
             }
 
-            if (r_perp < 1e-30) {
+            if (r_perp < kZeroThreshold) {
                 ctx.h_oe_xyz[i * 3 + 0] = 0.0;
                 ctx.h_oe_xyz[i * 3 + 1] = 0.0;
                 ctx.h_oe_xyz[i * 3 + 2] = 0.0;
@@ -643,6 +646,21 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     }
     fill_zero_vector_field(ctx.h_mel_xyz, ctx.n_nodes);
     ctx.mel_energy = 0.0;
+
+    // FEM-029 fix: read explicit GPU device index from plan (-1 = env/default).
+    ctx.gpu_device_index = plan.gpu_device_index;
+
+    // FEM-021 fix: read thermal seed from plan (0 = system entropy).
+    ctx.thermal_seed = plan.thermal_seed;
+
+    // FEM-030 fix: read explicit MFEM device string from plan.
+    if (plan.mfem_device_string != nullptr && plan.mfem_device_string[0] != '\0') {
+        ctx.mfem_device_string_override = plan.mfem_device_string;
+    }
+
+    // FEM-039 fix: read explicit demag transfer-grid cell size from plan.
+    ctx.demag_transfer_cell_size = plan.demag_transfer_cell_size;
+
 #if FULLMAG_HAS_MFEM_STACK
     if (!context_initialize_mfem(ctx, error)) {
         return false;

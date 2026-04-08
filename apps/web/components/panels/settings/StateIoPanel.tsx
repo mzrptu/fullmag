@@ -13,13 +13,16 @@ export default function StateIoPanel() {
   const [attachToScriptBuilder, setAttachToScriptBuilder] = useState(true);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  useEffect(() => {
-    if (!ctx.awaitingCommand && !ctx.isWaitingForCompute) {
+  const canApplyToWorkspace = ctx.awaitingCommand || ctx.isWaitingForCompute;
+
+  // Sync applyToWorkspace state with canApplyToWorkspace during render (React 19 recommended pattern for resets)
+  const [prevCanApply, setPrevCanApply] = useState(canApplyToWorkspace);
+  if (canApplyToWorkspace !== prevCanApply) {
+    setPrevCanApply(canApplyToWorkspace);
+    if (!canApplyToWorkspace) {
       setApplyToWorkspace(false);
     }
-  }, [ctx.awaitingCommand, ctx.isWaitingForCompute]);
-
-  const canApplyToWorkspace = ctx.awaitingCommand || ctx.isWaitingForCompute;
+  }
 
   const handleImport = () => {
     if (!selectedFile) return;
