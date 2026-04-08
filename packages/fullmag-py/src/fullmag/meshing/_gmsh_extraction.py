@@ -22,6 +22,23 @@ def _first_cell_block(mesh: Any, allowed: set[str], allow_empty: bool = False) -
     raise ValueError(f"mesh does not contain required cell types: {sorted(allowed)}")
 
 
+def _read_mesh_file(path: Path) -> MeshData:
+    meshio = _import_meshio()
+    mesh = meshio.read(path)
+    tetra = _first_cell_block(mesh, {"tetra"})
+    triangles = _first_cell_block(mesh, {"triangle"}, allow_empty=True)
+    nodes = np.asarray(mesh.points[:, :3], dtype=np.float64)
+    elements = np.asarray(tetra, dtype=np.int32)
+    boundary_faces = np.asarray(triangles, dtype=np.int32)
+    element_markers = np.ones(elements.shape[0], dtype=np.int32)
+    boundary_markers = np.ones(boundary_faces.shape[0], dtype=np.int32)
+    return MeshData(
+        nodes=nodes,
+        elements=elements,
+        element_markers=element_markers,
+        boundary_faces=boundary_faces,
+        boundary_markers=boundary_markers,
+    )
 
 
 def _extract_mesh_data(
