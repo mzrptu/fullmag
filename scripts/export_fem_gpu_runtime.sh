@@ -12,6 +12,7 @@ docker compose --profile fem-gpu run --rm -T fem-gpu bash -lc '
 set -euo pipefail
 mkdir -p .fullmag/runtimes/fem-gpu-host/bin .fullmag/runtimes/fem-gpu-host/lib
 rm -rf .fullmag/runtimes/fem-gpu-host/openmpi
+mkdir -p .fullmag/runtimes/fem-gpu-host/openmpi/bin
 cargo +nightly clean -p fullmag-fdm-demag >/dev/null 2>&1 || true
 FULLMAG_USE_MFEM_STACK=ON cargo +nightly build -p fullmag-cli --features "cuda fem-gpu" --release >/tmp/fullmag-build.log
 cp -f target/release/fullmag .fullmag/runtimes/fem-gpu-host/bin/fullmag-fem-gpu-bin
@@ -25,6 +26,10 @@ cp -a /opt/fullmag-deps/lib/* .fullmag/runtimes/fem-gpu-host/lib/
 shopt -s nullglob
 for lib_glob in \
   /usr/lib/x86_64-linux-gnu/libmpi*.so* \
+  /usr/lib/x86_64-linux-gnu/libmca_common_*.so* \
+  /usr/lib/x86_64-linux-gnu/libpmix*.so* \
+  /usr/lib/x86_64-linux-gnu/libnl-3.so* \
+  /usr/lib/x86_64-linux-gnu/libnl-route-3.so* \
   /usr/lib/x86_64-linux-gnu/libopen-rte*.so* \
   /usr/lib/x86_64-linux-gnu/libopen-pal*.so* \
   /usr/lib/x86_64-linux-gnu/libhwloc.so* \
@@ -35,6 +40,19 @@ for lib_glob in \
   done
 done
 shopt -u nullglob
+if [ -x /usr/bin/orted ]; then
+  cp -a /usr/bin/orted .fullmag/runtimes/fem-gpu-host/openmpi/bin/
+fi
+if [ -d /usr/lib/x86_64-linux-gnu/pmix2/lib ]; then
+  mkdir -p .fullmag/runtimes/fem-gpu-host/lib/pmix2
+  cp -a /usr/lib/x86_64-linux-gnu/pmix2/lib \
+    .fullmag/runtimes/fem-gpu-host/lib/pmix2/
+fi
+if [ -d /usr/lib/x86_64-linux-gnu/pmix2/share ]; then
+  mkdir -p .fullmag/runtimes/fem-gpu-host/lib/pmix2
+  cp -a /usr/lib/x86_64-linux-gnu/pmix2/share \
+    .fullmag/runtimes/fem-gpu-host/lib/pmix2/
+fi
 if [ -d /usr/lib/x86_64-linux-gnu/openmpi/lib/openmpi3 ]; then
   mkdir -p .fullmag/runtimes/fem-gpu-host/openmpi/lib
   cp -a /usr/lib/x86_64-linux-gnu/openmpi/lib/openmpi3 \
@@ -58,7 +76,14 @@ export LD_LIBRARY_PATH="${RUNTIME_ROOT}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH
 OPENMPI_ROOT="${RUNTIME_ROOT}/openmpi"
 if [ -d "${OPENMPI_ROOT}/share/openmpi" ]; then
   export OPAL_PREFIX="${OPENMPI_ROOT}"
-  export OMPI_MCA_component_path="${OPENMPI_ROOT}/lib/openmpi3"
+  export PATH="${OPENMPI_ROOT}/bin${PATH:+:${PATH}}"
+  export OMPI_MCA_mca_base_component_path="${OPENMPI_ROOT}/lib/openmpi3"
+  export OMPI_MCA_orte_launch_agent="${OPENMPI_ROOT}/bin/orted"
+  export OMPI_MCA_reachable="${OMPI_MCA_reachable:-weighted}"
+fi
+if [ -d "${RUNTIME_ROOT}/lib/pmix2/share/pmix" ]; then
+  export PMIX_PREFIX="${RUNTIME_ROOT}/lib/pmix2"
+  export PMIX_EXEC_PREFIX="${RUNTIME_ROOT}/lib/pmix2"
 fi
 export FULLMAG_FEM_EXECUTION="${FULLMAG_FEM_EXECUTION:-gpu}"
 export FULLMAG_FEM_GPU_INDEX="${FULLMAG_FEM_GPU_INDEX:-0}"

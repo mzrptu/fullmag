@@ -223,7 +223,14 @@ install-cli install-cli-dev install-cli-static:
 			'  OPENMPI_ROOT="$$MANAGED_RUNTIME_ROOT/openmpi"' \
 			'  if [ -d "$$OPENMPI_ROOT/share/openmpi" ]; then' \
 			'    export OPAL_PREFIX="$$OPENMPI_ROOT"' \
-			'    export OMPI_MCA_component_path="$$OPENMPI_ROOT/lib/openmpi3"' \
+			'    export PATH="$$OPENMPI_ROOT/bin$${PATH:+:$$PATH}"' \
+			'    export OMPI_MCA_mca_base_component_path="$$OPENMPI_ROOT/lib/openmpi3"' \
+			'    export OMPI_MCA_orte_launch_agent="$$OPENMPI_ROOT/bin/orted"' \
+			'    export OMPI_MCA_reachable="$${OMPI_MCA_reachable:-weighted}"' \
+			'  fi' \
+			'  if [ -d "$$MANAGED_RUNTIME_ROOT/lib/pmix2/share/pmix" ]; then' \
+			'    export PMIX_PREFIX="$$MANAGED_RUNTIME_ROOT/lib/pmix2"' \
+			'    export PMIX_EXEC_PREFIX="$$MANAGED_RUNTIME_ROOT/lib/pmix2"' \
 			'  fi' \
 			'  export LD_LIBRARY_PATH="$$MANAGED_RUNTIME_ROOT/lib:$$LOCAL_LD_LIBRARY_PATH"' \
 			'  exec "$$MANAGED_RUNTIME_BIN" "$$@"' \

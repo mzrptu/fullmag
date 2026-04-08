@@ -1767,6 +1767,16 @@ fn execute_native_fem(
 
     let mut backend = NativeFemBackend::create(plan)?;
     let device_info = backend.device_info()?;
+    runtime_info_once(&format!(
+        "native FEM GPU backend active: device='{}' cc={} driver={} runtime={} mfem_device={}",
+        device_info.name,
+        device_info.compute_capability,
+        device_info.driver_version,
+        device_info.runtime_version,
+        plan.mfem_device_string
+            .as_deref()
+            .unwrap_or("cuda")
+    ));
     let node_count = plan.mesh.nodes.len();
     let initial_magnetization = backend.copy_m(node_count)?;
     let dt = plan

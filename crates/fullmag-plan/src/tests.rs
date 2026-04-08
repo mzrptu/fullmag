@@ -1754,6 +1754,7 @@ fn fem_plan_conformal_shared_domain_duplicates_interface_nodes_for_cuda() {
                     marker: 2,
                 },
             ],
+            build_report: None,
         }),
     });
     ir.energy_terms = vec![fullmag_ir::EnergyTermIR::Exchange];
@@ -1873,6 +1874,7 @@ fn fem_plan_four_body_shared_domain_populates_region_materials_on_cuda() {
                     marker: 4,
                 },
             ],
+            build_report: None,
         }),
     });
     ir.energy_terms = vec![fullmag_ir::EnergyTermIR::Exchange];
@@ -2617,6 +2619,7 @@ fn fem_eigen_accepts_shared_domain_mesh_with_air_when_transfer_grid_is_used() {
                 geometry_name: "strip".to_string(),
                 marker: 1,
             }],
+            build_report: None,
         }),
     });
     ir.energy_terms = vec![
@@ -3157,6 +3160,7 @@ fn fem_plan_succeeds_when_shared_domain_has_domain_mesh_asset() {
                 geometry_name: "strip".to_string(),
             }],
             mesh_source: None,
+            build_report: None,
         }),
     });
 
@@ -3176,4 +3180,290 @@ fn fem_plan_succeeds_when_shared_domain_has_domain_mesh_asset() {
         }
         other => panic!("expected FEM plan, got {other:?}"),
     }
+}
+
+// ------------------------------------------------------------------
+// Regression tests for audit findings (2026-04-08)
+// ------------------------------------------------------------------
+
+/// Homogeneous multi-body (same material) must still emit region_materials
+/// so the runner can distinguish magnetic markers from air.
+#[test]
+fn fem_plan_homogeneous_multi_body_populates_region_materials() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.problem_meta.runtime_metadata.insert(
+        "runtime_selection".to_string(),
+        serde_json::json!({"device": "cuda", "device_index": 0}),
+    );
+
+    // Add a second body with the SAME material (Py)
+    ir.geometry.entries.push(GeometryEntryIR::Box {
+        name: "second_geom".to_string(),
+        size: [1.0, 1.0, 1.0],
+    });
+    ir.regions.push(fullmag_ir::RegionIR {
+        name: "second".to_string(),
+        geometry: "second_geom".to_string(),
+    });
+    ir.magnets.push(fullmag_ir::MagnetIR {
+        name: "second".to_string(),
+        region: "second".to_string(),
+        material: "Py".to_string(), // same as the first body
+        initial_magnetization: Some(InitialMagnetizationIR::Uniform {
+            value: [0.0, 1.0, 0.0],
+        }),
+    });
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![
+            fullmag_ir::FemMeshAssetIR {
+                geometry_name: "strip".to_string(),
+                mesh_source: None,
+                mesh: Some(fullmag_ir::MeshIR {
+                    mesh_name: "strip".to_string(),
+                    nodes: vec![
+                        [0.0, 0.0, 0.0],
+                        [1.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    elements: vec![[0, 1, 2, 3]],
+                    element_markers: vec![1],
+                    boundary_faces: vec![[0, 1, 2]],
+                    boundary_markers: vec![1],
+                    periodic_boundary_pairs: Vec::new(),
+                    periodic_node_pairs: Vec::new(),
+                    per_domain_quality: std::collections::HashMap::new(),
+                }),
+            },
+            fullmag_ir::FemMeshAssetIR {
+                geometry_name: "second_geom".to_string(),
+                mesh_source: None,
+                mesh: Some(fullmag_ir::MeshIR {
+                    mesh_name: "second".to_string(),
+                    nodes: vec![
+                        [0.0, 0.0, 2.0],
+                        [1.0, 0.0, 2.0],
+                        [0.0, 1.0, 2.0],
+                        [0.0, 0.0, 3.0],
+                    ],
+                    elements: vec![[0, 1, 2, 3]],
+                    element_markers: vec![1],
+                    boundary_faces: vec![[0, 1, 2]],
+                    boundary_markers: vec![1],
+                    periodic_boundary_pairs: Vec::new(),
+                    periodic_node_pairs: Vec::new(),
+                    per_domain_quality: std::collections::HashMap::new(),
+                }),
+            },
+        ],
+        fem_domain_mesh_asset: None,
+    });
+
+    let planned = plan(&ir).expect("homogeneous multi-body FEM should plan on CUDA");
+    let BackendPlanIR::Fem(fem) = planned.backend_plan else {
+        panic!("expected FEM plan");
+    };
+    // Even though material is the same, region_materials must be populated
+    // for 2 magnetic bodies so the runner can distinguish them from air.
+    assert_eq!(
+        fem.region_materials.len(),
+        2,
+        "homogeneous multi-body must still emit region_materials, got {}: {:?}",
+        fem.region_materials.len(),
+        fem.region_materials,
+    );
+}
+
+/// Reorder must preserve per_domain_quality from the original mesh.
+#[test]
+fn reorder_shared_domain_mesh_preserves_per_domain_quality() {
+    let mut quality_map = std::collections::HashMap::new();
+    quality_map.insert(
+        1u32,
+        fullmag_ir::MeshQualityIR {
+            n_elements: 1,
+            sicn_min: 0.5,
+            sicn_max: 0.9,
+            sicn_mean: 0.7,
+            sicn_p5: 0.55,
+            sicn_histogram: vec![],
+            gamma_min: 0.4,
+            gamma_mean: 0.6,
+            gamma_histogram: vec![],
+            volume_min: 1e-27,
+            volume_max: 2e-27,
+            volume_mean: 1.5e-27,
+            volume_std: 0.5e-27,
+            avg_quality: 0.7,
+        },
+    );
+
+    let mesh = MeshIR {
+        mesh_name: "quality_test".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [-2.0, -2.0, -2.0],
+            [2.0, -2.0, -2.0],
+            [-2.0, 2.0, -2.0],
+            [-2.0, -2.0, 2.0],
+        ],
+        elements: vec![[0, 1, 2, 3], [4, 5, 6, 7]],
+        element_markers: vec![1, 0],
+        boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
+        boundary_markers: vec![1, 99],
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: quality_map,
+    };
+    let region_markers = vec![FemDomainRegionMarkerIR {
+        geometry_name: "obj".to_string(),
+        marker: 1,
+    }];
+
+    let (reordered, _segments, _parts) =
+        crate::mesh::reorder_shared_domain_mesh(&mesh, &region_markers, false)
+            .expect("reorder should succeed");
+    assert!(
+        !reordered.per_domain_quality.is_empty(),
+        "per_domain_quality must be preserved after reorder",
+    );
+    assert!(
+        reordered.per_domain_quality.contains_key(&1),
+        "quality for marker 1 must survive reorder",
+    );
+    assert_eq!(
+        reordered.per_domain_quality[&1].sicn_mean, 0.7,
+        "quality metrics must stay unchanged",
+    );
+}
+
+/// Merge must carry forward per_domain_quality from sub-meshes.
+#[test]
+fn merge_multibody_mesh_preserves_per_domain_quality() {
+    let mut q1 = std::collections::HashMap::new();
+    q1.insert(
+        1u32,
+        fullmag_ir::MeshQualityIR {
+            n_elements: 1,
+            sicn_min: 0.5,
+            sicn_max: 0.9,
+            sicn_mean: 0.7,
+            sicn_p5: 0.55,
+            sicn_histogram: vec![],
+            gamma_min: 0.4,
+            gamma_mean: 0.6,
+            gamma_histogram: vec![],
+            volume_min: 1e-27,
+            volume_max: 2e-27,
+            volume_mean: 1.5e-27,
+            volume_std: 0.5e-27,
+            avg_quality: 0.7,
+        },
+    );
+
+    let mesh_a = MeshIR {
+        mesh_name: "a".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        elements: vec![[0, 1, 2, 3]],
+        element_markers: vec![1],
+        boundary_faces: vec![[0, 1, 2]],
+        boundary_markers: vec![1],
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: q1,
+    };
+    let mesh_b = MeshIR {
+        mesh_name: "b".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 2.0],
+            [1.0, 0.0, 2.0],
+            [0.0, 1.0, 2.0],
+            [0.0, 0.0, 3.0],
+        ],
+        elements: vec![[0, 1, 2, 3]],
+        element_markers: vec![1],
+        boundary_faces: vec![[0, 1, 2]],
+        boundary_markers: vec![1],
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
+    };
+
+    let meshes = vec![
+        ("obj_a".to_string(), mesh_a),
+        ("obj_b".to_string(), mesh_b),
+    ];
+    let (merged, _segments) =
+        crate::mesh::merge_fem_meshes(&meshes).expect("merge should succeed");
+    assert!(
+        !merged.per_domain_quality.is_empty(),
+        "per_domain_quality must be carried forward after merge",
+    );
+    assert!(
+        merged.per_domain_quality.contains_key(&1),
+        "quality for marker 1 must survive merge",
+    );
+}
+
+/// FemDomainMeshAssetIR should accept an optional build_report field.
+#[test]
+fn fem_domain_mesh_asset_accepts_optional_build_report() {
+    let asset = fullmag_ir::FemDomainMeshAssetIR {
+        mesh_source: None,
+        mesh: Some(fullmag_ir::MeshIR {
+            mesh_name: "report_test".to_string(),
+            nodes: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            elements: vec![[0, 1, 2, 3]],
+            element_markers: vec![1],
+            boundary_faces: vec![[0, 1, 2]],
+            boundary_markers: vec![1],
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+            per_domain_quality: std::collections::HashMap::new(),
+        }),
+        region_markers: vec![],
+        build_report: Some(fullmag_ir::FemSharedDomainBuildReportIR {
+            build_mode: "component_aware".to_string(),
+            fallbacks_triggered: vec![],
+            effective_airbox_hmax: Some(100e-9),
+            effective_per_object_targets: std::collections::HashMap::new(),
+            used_size_field_kinds: vec!["ComponentVolumeConstant".to_string()],
+            degraded: false,
+        }),
+    };
+    assert!(asset.validate().is_ok());
+    assert!(asset.build_report.is_some());
+    let report = asset.build_report.unwrap();
+    assert_eq!(report.build_mode, "component_aware");
+    assert!(!report.degraded);
+
+    // Also verify None works
+    let asset_no_report = fullmag_ir::FemDomainMeshAssetIR {
+        mesh_source: None,
+        mesh: Some(fullmag_ir::MeshIR {
+            mesh_name: "no_report".to_string(),
+            nodes: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            elements: vec![[0, 1, 2, 3]],
+            element_markers: vec![1],
+            boundary_faces: vec![[0, 1, 2]],
+            boundary_markers: vec![1],
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+            per_domain_quality: std::collections::HashMap::new(),
+        }),
+        region_markers: vec![],
+        build_report: None,
+    };
+    assert!(asset_no_report.validate().is_ok());
+    assert!(asset_no_report.build_report.is_none());
 }

@@ -38,8 +38,12 @@ from fullmag.meshing.asset_pipeline import (
 )
 from fullmag.meshing._mesh_targets import (
     ResolvedAirboxTarget,
+    ResolvedSharedDomainTargets,
     ResolvedSharedObjectTarget,
+    resolve_object_preview_target,
+    resolve_shared_domain_targets,
 )
+from fullmag.model.discretization import PerObjectMeshRecipe
 from fullmag.meshing.gmsh_bridge import (
     ALGO_3D_HXT,
     ALGO_3D_MMG3D,
@@ -1871,6 +1875,124 @@ class FieldStackAcceptanceTests(unittest.TestCase):
         self.assertGreater(len(fields), 0)
         self.assertIn("Field stack:", output)
         self.assertIn("bulk=", output)
+
+    # ------------------------------------------------------------------
+    # Regression tests for A1–A3, B2 audit findings (2026-04-08)
+    # ------------------------------------------------------------------
+
+    def test_resolve_object_preview_target_recipe_beats_workflow(self) -> None:
+        """Recipe hmax must override workflow per_geometry hmax (A1)."""
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        hints = fm.FEM(order=1, hmax=100e-9)
+        target = resolve_object_preview_target(
+            left,
+            hints,
+            mesh_workflow={
+                "per_geometry": [{"geometry": "left", "hmax": "50e-9"}],
+            },
+            per_object_recipes={
+                "left": PerObjectMeshRecipe(hmax=20e-9),
+            },
+        )
+        self.assertAlmostEqual(target.hmax, 20e-9)
+        self.assertEqual(target.source, "recipe_override")
+
+    def test_resolve_shared_domain_targets_recipe_beats_workflow(self) -> None:
+        """Shared-domain: recipe hmax must override workflow per_geometry hmax (A1)."""
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        hints = fm.FEM(order=1, hmax=100e-9)
+        resolved = resolve_shared_domain_targets(
+            [left],
+            hints,
+            airbox_hmax=200e-9,
+            mesh_workflow={
+                "per_geometry": [{"geometry": "left", "hmax": "50e-9"}],
+            },
+            per_object_recipes={
+                "left": PerObjectMeshRecipe(hmax=20e-9),
+            },
+        )
+        self.assertAlmostEqual(resolved.per_object["left"].hmax, 20e-9)
+        self.assertEqual(resolved.per_object["left"].source, "recipe_override")
+
+    def test_resolve_shared_domain_targets_effective_hmax_includes_per_object_coarser_override(self) -> None:
+        """effective_hmax must include per-object hmax when it is coarser (A2)."""
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        hints = fm.FEM(order=1, hmax=100e-9)
+        resolved = resolve_shared_domain_targets(
+            [left],
+            hints,
+            airbox_hmax=None,
+            mesh_workflow={
+                "per_geometry": [{"geometry": "left", "hmax": "200e-9"}],
+            },
+            per_object_recipes=None,
+        )
+        # Per-object hmax (200 nm) is coarser than FEM.hmax (100 nm),
+        # so effective_hmax must be at least 200 nm.
+        self.assertGreaterEqual(resolved.effective_hmax, 200e-9)
+
+    def test_recipe_can_coarsen_workflow_field_stack_for_same_geometry(self) -> None:
+        """When recipe wants a coarser mesh, workflow fields for that geometry
+        should be removed so the recipe field actually takes effect (A3)."""
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        # Workflow sets fine 8 nm per_geometry
+        mesh_options = _mesh_options_from_runtime_metadata(
+            {
+                "per_geometry": [{"geometry": "left", "bulk_hmax": "8e-9"}],
+            },
+            geometries=[left],
+            default_hmax=20e-9,
+            component_aware=True,
+        )
+        # Before stripping: there should be component-aware fields for "left"
+        component_fields = [
+            f for f in mesh_options.size_fields
+            if isinstance(f.get("params"), dict) and f["params"].get("GeometryName") == "left"
+        ]
+        self.assertGreater(len(component_fields), 0)
+
+        # After stripping for a recipe override on "left"
+        from fullmag.meshing.asset_pipeline import _strip_overridden_geometry_fields
+        stripped = _strip_overridden_geometry_fields(
+            list(mesh_options.size_fields),
+            {"left": PerObjectMeshRecipe(hmax=50e-9)},
+        )
+        remaining_left = [
+            f for f in stripped
+            if isinstance(f.get("params"), dict) and f["params"].get("GeometryName") == "left"
+        ]
+        self.assertEqual(len(remaining_left), 0, "workflow fields for 'left' should be removed")
+
+    def test_build_report_marks_degraded_when_component_aware_fails(self) -> None:
+        """Build report degraded flag must be True when fallback was triggered (B2)."""
+        left = fm.Box(2.0, 2.0, 2.0, name="left")
+        report = SharedDomainBuildReport(
+            build_mode="concatenated_stl_fallback",
+            fallbacks_triggered=["component_aware_import_failed"],
+            effective_airbox_target=ResolvedAirboxTarget(hmax=100e-9),
+            effective_per_object_targets={
+                "left": ResolvedSharedObjectTarget(
+                    geometry_name="left", hmax=20e-9, source="recipe_override",
+                ),
+            },
+            used_size_field_kinds=["Box"],
+            degraded=True,
+        )
+        self.assertTrue(report.degraded)
+        self.assertIn("degraded", report.to_dict())
+        self.assertTrue(report.to_dict()["degraded"])
+
+    def test_build_report_not_degraded_for_component_aware(self) -> None:
+        """Build report degraded flag must be False for successful component-aware build."""
+        report = SharedDomainBuildReport(
+            build_mode="component_aware",
+            fallbacks_triggered=[],
+            effective_airbox_target=ResolvedAirboxTarget(hmax=100e-9),
+            effective_per_object_targets={},
+            used_size_field_kinds=["ComponentVolumeConstant"],
+        )
+        self.assertFalse(report.degraded)
 
 
 if __name__ == "__main__":

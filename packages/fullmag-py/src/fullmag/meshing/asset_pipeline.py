@@ -684,12 +684,16 @@ def _build_shared_domain_build_report(
                 per_object_targets[geometry_name],
                 marker=int(marker) if isinstance(marker, (int, np.integer)) else None,
             )
+    # degraded = True when a fallback was triggered or size fields had to be
+    # simplified (component identity lost).
+    degraded = bool(fallbacks_triggered) or build_mode != "component_aware"
     return SharedDomainBuildReport(
         build_mode=build_mode,
         fallbacks_triggered=list(fallbacks_triggered),
         effective_airbox_target=resolved.airbox,
         effective_per_object_targets=per_object_targets,
         used_size_field_kinds=_unique_size_field_kinds(size_fields),
+        degraded=degraded,
     )
 
 
@@ -782,6 +786,44 @@ def _emit_shared_domain_mesh_summary(
         )
 
 
+def _strip_overridden_geometry_fields(
+    existing_fields: list[dict[str, object]],
+    per_object_recipes: dict[str, PerObjectMeshRecipe],
+) -> list[dict[str, object]]:
+    """Remove runtime workflow size fields for geometries overridden by recipes.
+
+    This ensures that when a recipe specifies a *coarser* hmax than the workflow,
+    the finer workflow field is removed so Gmsh's ``Min`` background-field rule
+    doesn't silently clamp the coarser recipe back to the workflow value.
+    """
+    overridden_names: set[str] = set()
+    for geometry_name, recipe in per_object_recipes.items():
+        if recipe.hmax is not None and float(recipe.hmax) > 0.0:
+            overridden_names.add(geometry_name.strip())
+            if geometry_name.strip().endswith("_geom") and len(geometry_name.strip()) > len("_geom"):
+                overridden_names.add(geometry_name.strip()[: -len("_geom")])
+            else:
+                overridden_names.add(f"{geometry_name.strip()}_geom")
+    if not overridden_names:
+        return existing_fields
+
+    def _is_overridden(field: dict[str, object]) -> bool:
+        params = field.get("params")
+        if not isinstance(params, dict):
+            return False
+        geom_name = params.get("GeometryName")
+        if isinstance(geom_name, str) and geom_name in overridden_names:
+            return True
+        # For Box / BoundsSurfaceThreshold fields we can't match by geometry name
+        # directly — they don't carry one. We leave them; recipe fields prepended
+        # with smaller VIn will still win via Min. Only component-aware fields
+        # (ComponentVolumeConstant, InterfaceShellThreshold, TransitionShellThreshold)
+        # are reliably matchable.
+        return False
+
+    return [f for f in existing_fields if not _is_overridden(f)]
+
+
 def realize_fem_domain_mesh_asset(
     geometries: list[Geometry],
     hints: FEM,
@@ -840,8 +882,12 @@ def realize_fem_domain_mesh_asset(
                 bounds_by_name=bounds_by_name,
             )
             if recipe_fields:
-                # Prepend recipe fields so they take priority over generic workflow fields.
-                existing = list(mesh_options.size_fields)
+                # Remove runtime workflow fields for geometries overridden by
+                # recipes so that a coarser recipe can relax the mesh without
+                # the finer workflow field winning via Gmsh Min.
+                existing = _strip_overridden_geometry_fields(
+                    list(mesh_options.size_fields), per_object_recipes
+                )
                 from dataclasses import replace as _dc_replace  # local import to avoid polluting module namespace
                 mesh_options = _dc_replace(mesh_options, size_fields=recipe_fields + existing)
                 emit_progress(
@@ -1009,7 +1055,9 @@ def _realize_fem_domain_mesh_asset_from_components_impl(
                 component_aware=True,
             )
             if recipe_fields:
-                existing = list(mesh_options.size_fields)
+                existing = _strip_overridden_geometry_fields(
+                    list(mesh_options.size_fields), per_object_recipes
+                )
                 from dataclasses import replace as _dc_replace
                 mesh_options = _dc_replace(mesh_options, size_fields=recipe_fields + existing)
         effective_airbox_target, effective_per_object_targets = _resolve_effective_shared_domain_targets(
@@ -1105,7 +1153,9 @@ def _realize_fem_domain_mesh_asset_from_components_impl(
                         component_aware=False,
                     )
                     if recipe_fields:
-                        existing = list(mesh_options.size_fields)
+                        existing = _strip_overridden_geometry_fields(
+                            list(mesh_options.size_fields), per_object_recipes
+                        )
                         from dataclasses import replace as _dc_replace
                         mesh_options = _dc_replace(mesh_options, size_fields=recipe_fields + existing)
                 used_size_field_kinds = _unique_size_field_kinds(list(mesh_options.size_fields))

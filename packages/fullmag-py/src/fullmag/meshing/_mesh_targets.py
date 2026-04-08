@@ -236,7 +236,7 @@ def _resolve_requested_partition_hmaxs(
         for geometry_name, recipe in per_object_recipes.items():
             if recipe.hmax is not None and float(recipe.hmax) > 0.0:
                 for alias in _geometry_name_aliases(geometry_name):
-                    override_by_name.setdefault(alias, float(recipe.hmax))
+                    override_by_name[alias] = float(recipe.hmax)
 
     object_hmax_by_geometry: dict[str, float | None] = {}
     for geometry in geometries:
@@ -337,7 +337,10 @@ def resolve_shared_domain_targets(
     # CharacteristicLengthMax so the mesh generator doesn't clip size fields.
     all_hmaxs = [float(hints.hmax)]
     if requested_airbox_hmax is not None:
-        all_hmaxs.append(requested_airbox_hmax)
+        all_hmaxs.append(float(requested_airbox_hmax))
+    for value in requested_hmax_by_geometry.values():
+        if value is not None:
+            all_hmaxs.append(float(value))
     effective_hmax = max(all_hmaxs)
 
     return ResolvedSharedDomainTargets(
@@ -363,6 +366,7 @@ class SharedDomainBuildReport:
     effective_airbox_target: ResolvedAirboxTarget
     effective_per_object_targets: dict[str, ResolvedSharedObjectTarget]
     used_size_field_kinds: list[str]
+    degraded: bool = False
 
     def to_dict(self) -> dict[str, object]:
         """Serialize to a plain-dict form suitable for JSON / IR embedding."""
@@ -385,6 +389,7 @@ class SharedDomainBuildReport:
                 for name, target in self.effective_per_object_targets.items()
             },
             "used_size_field_kinds": list(self.used_size_field_kinds),
+            "degraded": self.degraded,
         }
 
 

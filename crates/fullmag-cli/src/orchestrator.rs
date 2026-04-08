@@ -4708,6 +4708,7 @@ mod tests {
                         per_domain_quality: Default::default(),
                     }),
                     region_markers: Vec::new(),
+                    build_report: None,
                 }),
             }),
             regions: Vec::new(),

@@ -1,9 +1,9 @@
 use fullmag_ir::{
     AirBoxConfigIR, ExecutionMode, FemDomainMeshAssetIR, FemDomainMeshModeIR,
     FemDomainRegionMarkerIR, FemMeshPartIR, FemMeshPartRole, FemMeshPartSelector,
-    FemObjectSegmentIR, InitialMagnetizationIR, MeshIR, ProblemIR,
+    FemObjectSegmentIR, InitialMagnetizationIR, MeshIR, MeshQualityIR, ProblemIR,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -566,7 +566,8 @@ pub(crate) fn pack_mesh_by_analysis(
         boundary_markers: reordered_boundary_markers,
         periodic_boundary_pairs: mesh.periodic_boundary_pairs.clone(),
         periodic_node_pairs: mesh.periodic_node_pairs.clone(),
-        per_domain_quality: Default::default(),
+        // Marker values are preserved during reorder — carry the quality map through.
+        per_domain_quality: mesh.per_domain_quality.clone(),
     };
     reordered_mesh.validate().map_err(|errors| {
         format!(
@@ -1142,6 +1143,20 @@ pub(crate) fn merge_fem_meshes(
         node_offset += mesh.nodes.len() as u32;
     }
 
+    // Carry forward per-domain quality from each sub-mesh.  The element
+    // markers of individual meshes are remapped to 1 by merged_fem_element_markers,
+    // so we re-key per_domain_quality entries under marker=1.  When multiple
+    // sub-meshes each have a marker=1 quality entry we keep only the first one
+    // (a best-effort heuristic — the downstream consumer can recompute if needed).
+    let mut merged_quality: HashMap<u32, MeshQualityIR> = HashMap::new();
+    for (_object_id, mesh) in meshes {
+        for (marker, quality) in &mesh.per_domain_quality {
+            // After merge, all non-zero markers are normalised to 1.
+            let target_key = if *marker == 0 { 0 } else { 1 };
+            merged_quality.entry(target_key).or_insert_with(|| quality.clone());
+        }
+    }
+
     let merged = MeshIR {
         mesh_name: format!("multibody_{merged_name}"),
         nodes,
@@ -1151,7 +1166,7 @@ pub(crate) fn merge_fem_meshes(
         boundary_markers,
         periodic_boundary_pairs: Vec::new(),
         periodic_node_pairs: Vec::new(),
-        per_domain_quality: Default::default(),
+        per_domain_quality: merged_quality,
     };
     merged.validate().map_err(|errors| {
         format!(

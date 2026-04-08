@@ -69,6 +69,7 @@ for idx, (dx, dy) in enumerate(positions_2x2):
 study.object_mesh_defaults(algorithm_2d=6, algorithm_3d=1, size_factor=1, size_from_curvature=0, smoothing_steps=1, optimize_iterations=1, narrow_regions=0, compute_quality=False, per_element_quality=False)
 study.build_domain_mesh()
 
+# Use Poisson-Robin demag on the managed FEM GPU runtime.
 study.demag(realization="poisson_robin")
 study.b_ext(0.0001, theta=0, phi=0)  # 0.1 T along +z
 # ── Solver ──────────────────────────────────────────────────
@@ -86,9 +87,9 @@ study.tableautosave(1e-13)
 if not USE_SAVED_RELAXED_STATE:
     relax_result = study.relax(
         tol=1e-6,                       # torque tolerance (max_dm_dt)
-        max_steps=100_000,              # limit kroków
+        max_steps=200_000,              # limit kroków
         # Native FEM GPU currently supports LLG-based relaxation paths.
-        algorithm="llg_overdamped",
+        algorithm="projected_gradient_bb", 
     )
     # Wynik relaksacji
     if hasattr(relax_result, "save_state"):

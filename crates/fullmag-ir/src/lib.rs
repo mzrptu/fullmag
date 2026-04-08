@@ -1245,6 +1245,40 @@ pub struct FemDomainRegionMarkerIR {
     pub marker: u32,
 }
 
+/// Per-object mesh-size target as resolved by the Python meshing pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemPerObjectTargetIR {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub marker: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hmax: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interface_hmax: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transition_distance: Option<f64>,
+    #[serde(default)]
+    pub source: String,
+}
+
+/// Build report for a shared-domain FEM mesh, propagated from the Python
+/// meshing pipeline so the planner / runner can inspect how the mesh was built.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FemSharedDomainBuildReportIR {
+    pub build_mode: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallbacks_triggered: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_airbox_hmax: Option<f64>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub effective_per_object_targets: HashMap<String, FemPerObjectTargetIR>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub used_size_field_kinds: Vec<String>,
+    /// ``true`` when the mesh was built via a degraded path (fallback, simplified
+    /// size fields, or lost component identity).
+    #[serde(default)]
+    pub degraded: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FemDomainMeshAssetIR {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1253,6 +1287,8 @@ pub struct FemDomainMeshAssetIR {
     pub mesh: Option<MeshIR>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub region_markers: Vec<FemDomainRegionMarkerIR>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_report: Option<FemSharedDomainBuildReportIR>,
 }
 
 impl FemDomainMeshAssetIR {

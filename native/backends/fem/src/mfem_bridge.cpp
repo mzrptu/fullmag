@@ -2297,13 +2297,33 @@ bool solve_poisson_hypre(
     auto *A_par = static_cast<mfem::HypreParMatrix *>(ctx.mfem_cached_hypre_par);
     auto *pcg = static_cast<mfem::HyprePCG *>(ctx.mfem_cached_hypre_pcg);
 
-    // Wrap host vectors as HypreParVectors
-    mfem::HypreParVector b_par(MPI_COMM_WORLD, glob_size, rhs_bc.GetData(), row_starts);
-    mfem::HypreParVector x_par(MPI_COMM_WORLD, glob_size, solution.GetData(), row_starts);
+    // Build dedicated Hypre vectors and copy data explicitly.
+    // Wrapping mfem::Vector::GetData() directly can trip MFEM/Hypre memory
+    // ownership rules on GPU-enabled builds (Unknown pointer at destruction).
+    mfem::HypreParVector b_par(MPI_COMM_WORLD, glob_size, row_starts);
+    mfem::HypreParVector x_par(MPI_COMM_WORLD, glob_size, row_starts);
+    if (b_par.Size() != rhs_bc.Size() || x_par.Size() != solution.Size()) {
+        error = "Hypre vector size mismatch during Poisson solve";
+        return false;
+    }
+    const double *rhs_host = rhs_bc.HostRead();
+    double *b_host = b_par.HostWrite();
+    const double *sol_host = solution.HostRead();
+    double *x_host = x_par.HostWrite();
+    for (int i = 0; i < rhs_bc.Size(); ++i) {
+        b_host[i] = rhs_host[i];
+        x_host[i] = sol_host[i];
+    }
 
     pcg->Mult(b_par, x_par);
 
-    // x_par writes directly into solution.GetData()
+    // Copy the solved potential back to the MFEM vector.
+    const double *x_solved = x_par.HostRead();
+    double *solution_host = solution.HostWrite();
+    for (int i = 0; i < solution.Size(); ++i) {
+        solution_host[i] = x_solved[i];
+    }
+
     int iterations = 0;
     pcg->GetNumIterations(iterations);
     ctx.poisson_last_iterations = iterations;
