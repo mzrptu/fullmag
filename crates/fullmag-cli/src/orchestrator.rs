@@ -1,7 +1,8 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, ValueEnum};
 use fullmag_ir::{
-    BackendPlanIR, BackendTarget, DiscretizationHintsIR, ExecutionPlanIR, FemHintsIR, ProblemIR,
+    BackendPlanIR, BackendTarget, DiscretizationHintsIR, DynamicsIR, ExecutionPlanIR, FemHintsIR,
+    ProblemIR, RelaxationAlgorithmIR, StudyIR,
 };
 use std::ffi::OsString;
 use std::fs;
@@ -86,6 +87,83 @@ fn explicit_selection_from_problem(problem: &ProblemIR) -> bool {
         .and_then(|selection| selection.get("explicit_selection"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TorqueDisplayMode {
+    /// `max_dm_dt` is already a torque-like metric (direct minimizers).
+    DirectTorque,
+    /// `max_dm_dt` is LLG RHS amplitude |dm/dt| and needs conversion.
+    FromDmdt {
+        gyromagnetic_ratio: f64,
+        damping: f64,
+        pure_damping_rhs: bool,
+    },
+}
+
+fn torque_display_mode(problem: &ProblemIR) -> Option<TorqueDisplayMode> {
+    if let StudyIR::Relaxation { algorithm, .. } = &problem.study {
+        match algorithm {
+            RelaxationAlgorithmIR::ProjectedGradientBb | RelaxationAlgorithmIR::NonlinearCg => {
+                return Some(TorqueDisplayMode::DirectTorque);
+            }
+            RelaxationAlgorithmIR::LlgOverdamped => {}
+            RelaxationAlgorithmIR::TangentPlaneImplicit => return None,
+        }
+    }
+
+    let (gyromagnetic_ratio, pure_damping_rhs) = match &problem.study {
+        StudyIR::TimeEvolution { dynamics, .. } => (
+            match dynamics {
+                DynamicsIR::Llg {
+                    gyromagnetic_ratio, ..
+                } => *gyromagnetic_ratio,
+            },
+            false,
+        ),
+        StudyIR::Relaxation {
+            dynamics,
+            algorithm,
+            ..
+        } => (
+            match dynamics {
+                DynamicsIR::Llg {
+                    gyromagnetic_ratio, ..
+                } => *gyromagnetic_ratio,
+            },
+            *algorithm == RelaxationAlgorithmIR::LlgOverdamped,
+        ),
+        StudyIR::Eigenmodes { .. } => return None,
+    };
+    let damping = problem.materials.first()?.damping;
+    Some(TorqueDisplayMode::FromDmdt {
+        gyromagnetic_ratio,
+        damping,
+        pure_damping_rhs,
+    })
+}
+
+fn estimate_max_torque_from_step(max_dm_dt: f64, mode: Option<TorqueDisplayMode>) -> Option<f64> {
+    let mode = mode?;
+    match mode {
+        TorqueDisplayMode::DirectTorque => Some(max_dm_dt),
+        TorqueDisplayMode::FromDmdt {
+            gyromagnetic_ratio,
+            damping,
+            pure_damping_rhs,
+        } => {
+            if gyromagnetic_ratio <= 0.0 {
+                return None;
+            }
+            if pure_damping_rhs {
+                if damping <= 0.0 {
+                    return None;
+                }
+                return Some(max_dm_dt * (1.0 + damping * damping) / (gyromagnetic_ratio * damping));
+            }
+            Some(max_dm_dt * (1.0 + damping * damping).sqrt() / gyromagnetic_ratio)
+        }
+    }
 }
 
 pub(crate) fn requested_runtime_selection(
@@ -3036,6 +3114,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             continue;
         }
 
+        let torque_mode = torque_display_mode(&stage.ir);
         let mut stage_result = match if use_live_callback {
             if supports_dynamic_live_preview(&execution_plan.backend_plan) {
                 let display_selection = || display_selection_handle.display_selection_snapshot();
@@ -3069,19 +3148,38 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             || adjusted.finished;
                         if print_step {
                             let wall_ms = s.wall_time_ns as f64 / 1e6;
-                            eprintln!(
-                                "stage {}/{} ({})  step {:>6}  t={:.4e}  dt={:.3e}  maxTorque={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
-                                stage_index + 1,
-                                stage_count,
-                                stage.entrypoint_kind,
-                                s.step,
-                                s.time,
-                                s.dt,
-                                s.max_dm_dt,
-                                s.e_total,
-                                s.max_h_eff,
-                                wall_ms
-                            );
+                            if let Some(max_torque_est) =
+                                estimate_max_torque_from_step(s.max_dm_dt, torque_mode)
+                            {
+                                eprintln!(
+                                    "stage {}/{} ({})  step {:>6}  t={:.4e}  dt={:.3e}  max_dm_dt={:.4e}  maxTorque_est={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
+                                    stage_index + 1,
+                                    stage_count,
+                                    stage.entrypoint_kind,
+                                    s.step,
+                                    s.time,
+                                    s.dt,
+                                    s.max_dm_dt,
+                                    max_torque_est,
+                                    s.e_total,
+                                    s.max_h_eff,
+                                    wall_ms
+                                );
+                            } else {
+                                eprintln!(
+                                    "stage {}/{} ({})  step {:>6}  t={:.4e}  dt={:.3e}  max_dm_dt={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
+                                    stage_index + 1,
+                                    stage_count,
+                                    stage.entrypoint_kind,
+                                    s.step,
+                                    s.time,
+                                    s.dt,
+                                    s.max_dm_dt,
+                                    s.e_total,
+                                    s.max_h_eff,
+                                    wall_ms
+                                );
+                            }
                         }
 
                         if adjusted.stats.step <= 1
@@ -3134,19 +3232,38 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             || adjusted.finished;
                         if print_step {
                             let wall_ms = s.wall_time_ns as f64 / 1e6;
-                            eprintln!(
-                                "stage {}/{} ({})  step {:>6}  t={:.4e}  dt={:.3e}  maxTorque={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
-                                stage_index + 1,
-                                stage_count,
-                                stage.entrypoint_kind,
-                                s.step,
-                                s.time,
-                                s.dt,
-                                s.max_dm_dt,
-                                s.e_total,
-                                s.max_h_eff,
-                                wall_ms
-                            );
+                            if let Some(max_torque_est) =
+                                estimate_max_torque_from_step(s.max_dm_dt, torque_mode)
+                            {
+                                eprintln!(
+                                    "stage {}/{} ({})  step {:>6}  t={:.4e}  dt={:.3e}  max_dm_dt={:.4e}  maxTorque_est={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
+                                    stage_index + 1,
+                                    stage_count,
+                                    stage.entrypoint_kind,
+                                    s.step,
+                                    s.time,
+                                    s.dt,
+                                    s.max_dm_dt,
+                                    max_torque_est,
+                                    s.e_total,
+                                    s.max_h_eff,
+                                    wall_ms
+                                );
+                            } else {
+                                eprintln!(
+                                    "stage {}/{} ({})  step {:>6}  t={:.4e}  dt={:.3e}  max_dm_dt={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
+                                    stage_index + 1,
+                                    stage_count,
+                                    stage.entrypoint_kind,
+                                    s.step,
+                                    s.time,
+                                    s.dt,
+                                    s.max_dm_dt,
+                                    s.e_total,
+                                    s.max_h_eff,
+                                    wall_ms
+                                );
+                            }
                         }
 
                         if adjusted.stats.step <= 1
@@ -3711,6 +3828,7 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                 clear_cached_preview_fields(state);
             });
 
+            let torque_mode = torque_display_mode(&stage.ir);
             let stage_result = match if use_live_callback {
                 let running_control = interactive_runtime_host.control();
                 if supports_dynamic_live_preview(&execution_plan.backend_plan) {
@@ -3731,17 +3849,34 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                             || s.step % 1000 == 0;
                         if print_step {
                             let wall_ms = s.wall_time_ns as f64 / 1e6;
-                            eprintln!(
-                                "interactive {}  step {:>6}  t={:.4e}  dt={:.3e}  maxTorque={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
-                                stage.entrypoint_kind,
-                                s.step,
-                                s.time,
-                                s.dt,
-                                s.max_dm_dt,
-                                s.e_total,
-                                s.max_h_eff,
-                                wall_ms
-                            );
+                            if let Some(max_torque_est) =
+                                estimate_max_torque_from_step(s.max_dm_dt, torque_mode)
+                            {
+                                eprintln!(
+                                    "interactive {}  step {:>6}  t={:.4e}  dt={:.3e}  max_dm_dt={:.4e}  maxTorque_est={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
+                                    stage.entrypoint_kind,
+                                    s.step,
+                                    s.time,
+                                    s.dt,
+                                    s.max_dm_dt,
+                                    max_torque_est,
+                                    s.e_total,
+                                    s.max_h_eff,
+                                    wall_ms
+                                );
+                            } else {
+                                eprintln!(
+                                    "interactive {}  step {:>6}  t={:.4e}  dt={:.3e}  max_dm_dt={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
+                                    stage.entrypoint_kind,
+                                    s.step,
+                                    s.time,
+                                    s.dt,
+                                    s.max_dm_dt,
+                                    s.e_total,
+                                    s.max_h_eff,
+                                    wall_ms
+                                );
+                            }
                         }
 
                         if adjusted.stats.step <= 1
@@ -3827,17 +3962,34 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
                                 || s.step % 1000 == 0;
                             if print_step {
                                 let wall_ms = s.wall_time_ns as f64 / 1e6;
-                                eprintln!(
-                                    "interactive {}  step {:>6}  t={:.4e}  dt={:.3e}  maxTorque={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
-                                    stage.entrypoint_kind,
-                                    s.step,
-                                    s.time,
-                                    s.dt,
-                                    s.max_dm_dt,
-                                    s.e_total,
-                                    s.max_h_eff,
-                                    wall_ms
-                                );
+                                if let Some(max_torque_est) =
+                                    estimate_max_torque_from_step(s.max_dm_dt, torque_mode)
+                                {
+                                    eprintln!(
+                                        "interactive {}  step {:>6}  t={:.4e}  dt={:.3e}  max_dm_dt={:.4e}  maxTorque_est={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
+                                        stage.entrypoint_kind,
+                                        s.step,
+                                        s.time,
+                                        s.dt,
+                                        s.max_dm_dt,
+                                        max_torque_est,
+                                        s.e_total,
+                                        s.max_h_eff,
+                                        wall_ms
+                                    );
+                                } else {
+                                    eprintln!(
+                                        "interactive {}  step {:>6}  t={:.4e}  dt={:.3e}  max_dm_dt={:.4e}  E_total={:.4e}  |H_eff|={:.4e}  [{:.0}ms]",
+                                        stage.entrypoint_kind,
+                                        s.step,
+                                        s.time,
+                                        s.dt,
+                                        s.max_dm_dt,
+                                        s.e_total,
+                                        s.max_h_eff,
+                                        wall_ms
+                                    );
+                                }
                             }
 
                             if adjusted.stats.step <= 1
