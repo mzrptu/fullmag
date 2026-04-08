@@ -4,10 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Route } from "next";
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
-import TopHeader from "../shell/TopHeader";
+import AppBar from "../shell/AppBar";
 import RibbonBar from "../shell/RibbonBar";
 import StatusBar from "../shell/StatusBar";
-import StageBar from "../workspace/shell/StageBar";
 import RunSidebar from "./control-room/RunSidebar";
 import { ViewportBar, ViewportCanvasArea } from "./control-room/ViewportPanels";
 import FullmagLogo from "../brand/FullmagLogo";
@@ -181,6 +180,8 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
   const launchIntent = useWorkspaceStore((state) => state.launchIntent);
   const rightInspectorOpen = useWorkspaceStore((state) => state.rightInspectorOpen);
   const setRightInspectorOpen = useWorkspaceStore((state) => state.setRightInspectorOpen);
+  const setActiveCoreTab = useWorkspaceStore((state) => state.setActiveCoreTab);
+  const setActiveContextualTab = useWorkspaceStore((state) => state.setActiveContextualTab);
   const [viewportSize, setViewportSize] = useState({ width: 1920, height: 1080 });
 
   useEffect(() => {
@@ -634,11 +635,15 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
 
   const handleStageChange = useCallback((stage: WorkspaceMode) => {
     ctx.setWorkspaceMode(stage);
+    setActiveContextualTab(null);
+    if (stage === "build") setActiveCoreTab("Geometry");
+    else if (stage === "study") setActiveCoreTab("Study");
+    else setActiveCoreTab("Results");
     const targetPath = `/${stage}`;
     if (pathname !== targetPath) {
       router.push(targetPath as Route);
     }
-  }, [ctx, pathname, router]);
+  }, [ctx, pathname, router, setActiveContextualTab, setActiveCoreTab]);
 
   /* ── Loading state ── */
   if (!ctx.session) {
@@ -698,7 +703,7 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
 
   return (
     <div className="h-full flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
-      <TopHeader
+      <AppBar
         problemName={workspaceTitle}
         backend={ctx.session?.requested_backend ?? ""}
         runtimeEngine={ctx.runtimeEngineLabel ?? undefined}
@@ -714,12 +719,13 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         runLabel={ctx.primaryRunLabel}
         commandBusy={ctx.commandBusy}
         commandMessage={ctx.commandMessage}
+        canSyncScriptBuilder={Boolean(ctx.sessionFooter.scriptPath)}
+        scriptSyncBusy={ctx.scriptSyncBusy}
+        onSyncScriptBuilder={() => void ctx.syncScriptBuilder()}
+        workspaceMode={ctx.workspaceMode}
+        onPerspectiveChange={handleStageChange}
         onSimAction={ctx.handleSimulationAction}
-        viewMode={ctx.effectiveViewMode}
-        onViewChange={ctx.handleViewModeChange}
-        onSidebarToggle={() => ctx.setSidebarCollapsed((v) => !v)}
       />
-      <StageBar activeStage={ctx.workspaceMode} onChangeStage={handleStageChange} />
       <RibbonBar
         workspaceMode={ctx.workspaceMode}
         viewMode={ctx.effectiveViewMode}

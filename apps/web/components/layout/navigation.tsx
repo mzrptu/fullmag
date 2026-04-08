@@ -16,9 +16,9 @@ function WorkspaceIcon(): ReactNode {
 
 /* ── Navigation items ──
  *
- * All navigation is now through the workspace shell (TopHeader mode tabs +
- * overlays). Physics Docs and Settings are opened as overlays via
- * Help → Documentation and Edit → Preferences menu items.
+ * All navigation is now through the workspace shell (AppBar perspective
+ * switcher + ribbon + overlays). Physics Docs and Settings are opened from
+ * the AppBar menu.
  *
  * This array is kept for AppLayout compatibility but the (main) layout no
  * longer renders AppLayout, so it's effectively unused.

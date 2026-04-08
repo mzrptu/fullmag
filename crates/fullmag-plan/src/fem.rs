@@ -592,7 +592,12 @@ pub(crate) fn plan_fem(
         build_mesh_parts_from_segments(&mesh, &object_segments, domain_mesh_mode)
     };
     assign_material_ids_to_mesh_parts(&mut resolved_mesh_parts, &magnet_entries, &magnet_materials);
-    let region_materials = if has_heterogeneous_materials {
+    // Populate region_materials whenever multiple magnetic bodies are present (not only for
+    // heterogeneous materials), because the runner uses region_materials to resolve which
+    // element markers are magnetic vs. air when multiple non-zero markers exist.
+    let needs_region_materials =
+        has_heterogeneous_materials || magnet_entries.len() > 1;
+    let region_materials = if needs_region_materials {
         build_region_materials(&mesh, &object_segments, &magnet_materials)
     } else {
         Vec::new()

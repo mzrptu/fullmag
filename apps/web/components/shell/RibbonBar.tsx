@@ -21,6 +21,11 @@ import {
 } from "@/lib/study-builder/node-context";
 import type { StudyPrimitiveStageKind } from "@/lib/study-builder/types";
 import type { ScriptBuilderMagneticInteractionKind } from "@/lib/session/types";
+import {
+  canExecuteRibbonCommand,
+  executeRibbonCommand,
+  type RibbonCommand,
+} from "./ribbon/command-registry";
 
 /* ── Types ──────────────────────────────────────── */
 
@@ -57,19 +62,14 @@ interface RibbonGroup {
 
 type RibbonTab =
   | "Home"
+  | "Definitions"
   | "Geometry"
   | "Materials"
   | "Physics"
   | "Mesh"
-  | "StudyBuilder"
-  | "LiveView"
-  | "Runtime"
-  | "Charts"
-  | "Diagnostics"
-  | "Spectrum"
-  | "Modes"
-  | "Compare"
-  | "Export";
+  | "Study"
+  | "Results"
+  | "Automation";
 
 interface RibbonBarProps {
   viewMode?: string;
@@ -146,13 +146,58 @@ interface RibbonBarProps {
 
 /* ── Tab inference from tree node ── */
 function tabsForMode(mode: WorkspaceMode | undefined): RibbonTab[] {
-  if (mode === "build") {
-    return ["Home", "Geometry", "Materials", "Physics", "Mesh", "StudyBuilder"];
+  void mode;
+  return [
+    "Home",
+    "Definitions",
+    "Geometry",
+    "Materials",
+    "Physics",
+    "Mesh",
+    "Study",
+    "Results",
+    "Automation",
+  ];
+}
+
+interface ContextualRibbonTab {
+  id: "selected-ferromagnet" | "interface" | "work-plane" | "mesh-quality" | "plot" | "table";
+  label: string;
+}
+
+function runCommand(p: RibbonBarProps, command: RibbonCommand): void {
+  executeRibbonCommand(p, command);
+}
+
+function canCommand(p: RibbonBarProps, command: RibbonCommand): boolean {
+  return canExecuteRibbonCommand(p, command);
+}
+
+function contextualTabsForSelection(p: RibbonBarProps): ContextualRibbonTab[] {
+  const nodeId = p.selectedNodeId ?? "";
+  const tabs: ContextualRibbonTab[] = [];
+  if (p.selectedObjectId) {
+    tabs.push({ id: "selected-ferromagnet", label: "Selected Ferromagnet" });
   }
-  if (mode === "study") {
-    return ["Home", "LiveView", "Runtime", "Charts", "Diagnostics"];
+  if (nodeId.includes("interface") || nodeId.includes("boundary")) {
+    tabs.push({ id: "interface", label: "Interface" });
   }
-  return ["Home", "Spectrum", "Modes", "Compare", "Export"];
+  if (nodeId.includes("work-plane") || nodeId.includes("plane")) {
+    tabs.push({ id: "work-plane", label: "Work Plane" });
+  }
+  if (
+    nodeId.includes("mesh-quality")
+    || nodeId === "mesh-pipeline"
+    || nodeId === "universe-mesh-quality"
+    || nodeId === "universe-mesh-pipeline"
+  ) {
+    tabs.push({ id: "mesh-quality", label: "Mesh Quality" });
+  }
+  if (nodeId.startsWith("res-") || nodeId === "results" || p.viewMode === "Analyze") {
+    tabs.push({ id: "plot", label: "Plot" });
+    tabs.push({ id: "table", label: "Table" });
+  }
+  return tabs;
 }
 
 /* ── Group builders per tab ── */
@@ -163,21 +208,23 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
       label: "Manage RF Sources",
       icon: <Cog size={14} />,
       description: "Open antenna placement and drive settings",
-      action: () => p.onSelectModelNode?.("antennas"),
+      action: () => runCommand(p, { id: "navigation.select-node", nodeId: "antennas" }),
     },
     {
       id: "add-microstrip",
       label: "Add Microstrip",
       icon: <Plus size={14} />,
       description: "Single strip conductor over the magnetic guide",
-      action: () => p.onAddAntenna?.("MicrostripAntenna"),
+      disabled: !canCommand(p, { id: "antenna.add", kind: "MicrostripAntenna" }),
+      action: () => runCommand(p, { id: "antenna.add", kind: "MicrostripAntenna" }),
     },
     {
       id: "add-cpw",
       label: "Add CPW",
       icon: <Plus size={14} />,
       description: "Signal strip with symmetric return grounds",
-      action: () => p.onAddAntenna?.("CPWAntenna"),
+      disabled: !canCommand(p, { id: "antenna.add", kind: "CPWAntenna" }),
+      action: () => runCommand(p, { id: "antenna.add", kind: "CPWAntenna" }),
     },
   ];
 
@@ -190,7 +237,7 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
         icon: <RadioTower size={14} />,
         description: `${antenna.kind} · ${(antenna.currentA * 1e3).toFixed(2)} mA`,
         active: p.selectedAntennaName === antenna.name,
-        action: () => p.onSelectModelNode?.(`ant-${antenna.name}`),
+        action: () => runCommand(p, { id: "navigation.select-node", nodeId: `ant-${antenna.name}` }),
       });
     }
   }
@@ -200,7 +247,16 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
       id: "script", title: "Script",
       actions: [
         { id: "open", icon: <FileText size={20} />, label: "Open", tooltip: "Open script file", shortcut: "Ctrl+O", disabled: true, iconColor: "text-sky-400" },
-        { id: p.runAction ?? "run", icon: <Play size={20} fill="currentColor" />, label: p.runLabel ?? "Run", tooltip: p.runLabel === "Resume" ? "Resume the paused solver stage" : "Run simulation", shortcut: "F5", accent: true, disabled: !p.canRun, action: () => p.onSimAction?.(p.runAction ?? "run") },
+        {
+          id: p.runAction ?? "run",
+          icon: <Play size={20} fill="currentColor" />,
+          label: p.runLabel ?? "Run",
+          tooltip: p.runLabel === "Resume" ? "Resume the paused solver stage" : "Run simulation",
+          shortcut: "F5",
+          accent: true,
+          disabled: !canCommand(p, { id: "solver.control", action: "run" }),
+          action: () => runCommand(p, { id: "solver.control", action: "run" }),
+        },
       ],
     },
     {
@@ -209,10 +265,10 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
         { 
           id: "geometry", icon: <Shapes size={20} />, label: "Objects", tooltip: "Add new geometric objects", iconColor: "text-emerald-400",
           menuItems: [
-            { id: "add-box", label: "Add Box", icon: <Box size={14} />, description: "Rectangular cuboid", action: () => alert("Not implemented yet") },
-            { id: "add-cylinder", label: "Add Cylinder", icon: <Box size={14} />, description: "Standard cylinder", action: () => alert("Not implemented yet") },
+            { id: "add-box", label: "Add Box", icon: <Box size={14} />, description: "Rectangular cuboid (coming next)", disabled: true },
+            { id: "add-cylinder", label: "Add Cylinder", icon: <Box size={14} />, description: "Standard cylinder (coming next)", disabled: true },
             { separator: true, id: "sep-geo", label: "" },
-            { id: "import-stl", label: "Import STL...", icon: <FileText size={14} />, description: "Load external mesh", action: () => alert("Not implemented yet") },
+            { id: "import-stl", label: "Import STL...", icon: <FileText size={14} />, description: "Load external mesh (coming next)", disabled: true },
           ]
         },
         { id: "material", icon: <FlaskConical size={20} />, label: "Material", tooltip: "Material properties", disabled: true, iconColor: "text-amber-400" },
@@ -225,16 +281,134 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
           iconColor: "text-cyan-400",
           menuItems: antennaMenuItems,
         },
-        { id: "mesh", icon: <Hexagon size={20} />, label: "Mesh", tooltip: "Mesh / geometry view", active: p.viewMode === "Mesh", action: () => p.onViewChange?.("Mesh"), iconColor: "text-fuchsia-400" },
+        {
+          id: "mesh",
+          icon: <Hexagon size={20} />,
+          label: "Mesh",
+          tooltip: "Mesh / geometry view",
+          active: p.viewMode === "Mesh",
+          action: () => runCommand(p, { id: "viewport.set-mode", mode: "Mesh" }),
+          iconColor: "text-fuchsia-400",
+        },
       ],
     },
     {
       id: "solver", title: "Solver",
       actions: [
-        { id: "relax", icon: <Target size={20} />, label: "Relax", tooltip: "Run relaxation to equilibrium", disabled: !p.canRelax, action: () => p.onSimAction?.("relax"), iconColor: "text-indigo-400" },
-        { id: p.runAction ?? "run", icon: <Play size={20} fill="currentColor" />, label: p.runLabel ?? "Run", tooltip: p.runLabel === "Resume" ? "Resume the paused solver stage" : "Run until the configured stop time", accent: true, disabled: !p.canRun, action: () => p.onSimAction?.(p.runAction ?? "run") },
-        { id: "pause", icon: <Pause size={20} fill="currentColor" />, label: "Pause", tooltip: "Pause solver", disabled: !p.canPause, action: () => p.onSimAction?.("pause"), iconColor: "text-amber-500" },
-        { id: "stop", icon: <Square size={20} fill="currentColor" />, label: "Stop", tooltip: "Stop solver", disabled: !p.canStop, action: () => p.onSimAction?.("stop"), iconColor: "text-rose-500" },
+        {
+          id: "relax",
+          icon: <Target size={20} />,
+          label: "Relax",
+          tooltip: "Run relaxation to equilibrium",
+          disabled: !canCommand(p, { id: "solver.control", action: "relax" }),
+          action: () => runCommand(p, { id: "solver.control", action: "relax" }),
+          iconColor: "text-indigo-400",
+        },
+        {
+          id: p.runAction ?? "run",
+          icon: <Play size={20} fill="currentColor" />,
+          label: p.runLabel ?? "Run",
+          tooltip: p.runLabel === "Resume" ? "Resume the paused solver stage" : "Run until the configured stop time",
+          accent: true,
+          disabled: !canCommand(p, { id: "solver.control", action: "run" }),
+          action: () => runCommand(p, { id: "solver.control", action: "run" }),
+        },
+        {
+          id: "pause",
+          icon: <Pause size={20} fill="currentColor" />,
+          label: "Pause",
+          tooltip: "Pause solver",
+          disabled: !canCommand(p, { id: "solver.control", action: "pause" }),
+          action: () => runCommand(p, { id: "solver.control", action: "pause" }),
+          iconColor: "text-amber-500",
+        },
+        {
+          id: "stop",
+          icon: <Square size={20} fill="currentColor" />,
+          label: "Stop",
+          tooltip: "Stop solver",
+          disabled: !canCommand(p, { id: "solver.control", action: "stop" }),
+          action: () => runCommand(p, { id: "solver.control", action: "stop" }),
+          iconColor: "text-rose-500",
+        },
+      ],
+    },
+    buildViewGroup(p),
+  ];
+}
+
+function buildDefinitionsGroups(p: RibbonBarProps): RibbonGroup[] {
+  return [
+    {
+      id: "definitions-model",
+      title: "Definitions",
+      actions: [
+        {
+          id: "definitions-parameters",
+          icon: <Binary size={20} />,
+          label: "Parameters",
+          tooltip: "Open model parameters and global variables (coming next)",
+          disabled: true,
+          iconColor: "text-slate-400",
+        },
+        {
+          id: "definitions-functions",
+          icon: <FunctionSquare size={20} />,
+          label: "Functions",
+          tooltip: "Open global functions and dependencies (coming next)",
+          disabled: true,
+          iconColor: "text-slate-400",
+        },
+        {
+          id: "definitions-coordinates",
+          icon: <Ruler size={20} />,
+          label: "Coordinates",
+          tooltip: "Coordinate systems and frames (coming next)",
+          disabled: true,
+          iconColor: "text-slate-400",
+        },
+      ],
+    },
+    buildViewGroup(p),
+  ];
+}
+
+function buildGeometryGroups(p: RibbonBarProps): RibbonGroup[] {
+  return [
+    {
+      id: "geometry-model",
+      title: "Objects",
+      actions: [
+        {
+          id: "geometry-open-objects",
+          icon: <Shapes size={20} />,
+          label: "Objects",
+          tooltip: "Open object list in Model Builder",
+          action: () => runCommand(p, { id: "navigation.select-node", nodeId: "objects" }),
+          iconColor: "text-emerald-400",
+        },
+        {
+          id: "geometry-open-universe",
+          icon: <Box size={20} />,
+          label: "Universe",
+          tooltip: "Open universe and airbox settings",
+          action: () => runCommand(p, { id: "navigation.select-node", nodeId: "universe" }),
+          iconColor: "text-cyan-400",
+        },
+      ],
+    },
+    {
+      id: "geometry-import",
+      title: "Import",
+      actions: [
+        {
+          id: "geometry-import-stl",
+          icon: <FileText size={20} />,
+          label: "Import STL",
+          tooltip: "Import geometry asset (coming next)",
+          disabled: true,
+          iconColor: "text-slate-400",
+        },
       ],
     },
     buildViewGroup(p),
@@ -252,16 +426,16 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           label: p.meshGenerating ? "Building..." : "Build Selected",
           tooltip: p.meshTargetLabel ? `Build ${p.meshTargetLabel}` : "Build the selected mesh target",
           accent: true,
-          disabled: !p.isFemBackend || p.meshGenerating,
-          action: p.onBuildMeshSelected,
+          disabled: !canCommand(p, { id: "mesh.build-selected" }),
+          action: () => runCommand(p, { id: "mesh.build-selected" }),
         },
         {
           id: "build-all",
           icon: <Zap size={20} />,
           label: "Build All",
           tooltip: "Rebuild the full shared-domain study mesh",
-          disabled: !p.isFemBackend || p.meshGenerating,
-          action: p.onBuildMeshAll,
+          disabled: !canCommand(p, { id: "mesh.build-all" }),
+          action: () => runCommand(p, { id: "mesh.build-all" }),
           iconColor: "text-cyan-400",
         },
         {
@@ -269,8 +443,8 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <BarChart3 size={20} />,
           label: "Statistics",
           tooltip: "Open mesh quality and statistics",
-          disabled: !p.isFemBackend,
-          action: p.onOpenMeshQuality,
+          disabled: !canCommand(p, { id: "mesh.open-quality" }),
+          action: () => runCommand(p, { id: "mesh.open-quality" }),
           iconColor: "text-emerald-400",
         },
       ],
@@ -283,8 +457,8 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <Ruler size={20} />,
           label: "Element Size",
           tooltip: "Open maximum, minimum and growth controls",
-          disabled: !p.isFemBackend,
-          action: p.onOpenMeshSizeSettings,
+          disabled: !canCommand(p, { id: "mesh.open-size-settings" }),
+          action: () => runCommand(p, { id: "mesh.open-size-settings" }),
           iconColor: "text-amber-400",
         },
         {
@@ -292,8 +466,8 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <Columns2 size={20} />,
           label: "Transitions",
           tooltip: "Open growth-rate and narrow-region controls",
-          disabled: !p.isFemBackend,
-          action: p.onOpenMeshSizeSettings,
+          disabled: !canCommand(p, { id: "mesh.open-size-settings" }),
+          action: () => runCommand(p, { id: "mesh.open-size-settings" }),
           iconColor: "text-fuchsia-400",
         },
       ],
@@ -306,8 +480,8 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <Hexagon size={20} />,
           label: "Mesher",
           tooltip: "Open tetrahedral mesher algorithm controls",
-          disabled: !p.isFemBackend,
-          action: p.onOpenMeshMethodSettings,
+          disabled: !canCommand(p, { id: "mesh.open-method-settings" }),
+          action: () => runCommand(p, { id: "mesh.open-method-settings" }),
           iconColor: "text-indigo-400",
         },
         {
@@ -315,8 +489,8 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <ListChecks size={20} />,
           label: "Quality",
           tooltip: "Open mesh quality optimization controls",
-          disabled: !p.isFemBackend,
-          action: p.onOpenMeshQuality,
+          disabled: !canCommand(p, { id: "mesh.open-quality" }),
+          action: () => runCommand(p, { id: "mesh.open-quality" }),
           iconColor: "text-emerald-400",
         },
       ],
@@ -329,8 +503,8 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <Eye size={20} />,
           label: "Inspector",
           tooltip: "Open the mesh inspector viewport",
-          disabled: !p.isFemBackend,
-          action: p.onOpenMeshInspector,
+          disabled: !canCommand(p, { id: "mesh.open-inspector" }),
+          action: () => runCommand(p, { id: "mesh.open-inspector" }),
           iconColor: "text-cyan-400",
         },
         {
@@ -338,8 +512,8 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <Grid3X3 size={20} />,
           label: "Workspace",
           tooltip: "Open the mesh workspace",
-          disabled: !p.isFemBackend,
-          action: () => p.onViewChange?.("Mesh"),
+          disabled: !canCommand(p, { id: "viewport.set-mode", mode: "Mesh" }),
+          action: () => runCommand(p, { id: "viewport.set-mode", mode: "Mesh" }),
           iconColor: "text-fuchsia-400",
         },
         {
@@ -347,8 +521,8 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <ListChecks size={20} />,
           label: "Pipeline",
           tooltip: "Open mesh pipeline diagnostics",
-          disabled: !p.isFemBackend,
-          action: p.onOpenMeshPipeline,
+          disabled: !canCommand(p, { id: "mesh.open-pipeline" }),
+          action: () => runCommand(p, { id: "mesh.open-pipeline" }),
           iconColor: "text-orange-400",
         },
       ],
@@ -372,7 +546,7 @@ function buildMaterialsGroups(p: RibbonBarProps): RibbonGroup[] {
           disabled: !hasObject,
           action: () => {
             if (!objectId) return;
-            p.onSelectModelNode?.(`physobj-${objectId}`);
+            runCommand(p, { id: "navigation.select-node", nodeId: `physobj-${objectId}` });
           },
           iconColor: "text-violet-400",
         },
@@ -384,7 +558,7 @@ function buildMaterialsGroups(p: RibbonBarProps): RibbonGroup[] {
           disabled: !hasObject,
           action: () => {
             if (!objectId) return;
-            p.onSelectModelNode?.(`mat-${objectId}`);
+            runCommand(p, { id: "navigation.select-node", nodeId: `mat-${objectId}` });
           },
           iconColor: "text-amber-400",
         },
@@ -399,11 +573,15 @@ function buildMaterialsGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <Sparkles size={20} />,
           label: "Add DMI",
           tooltip: hasObject ? "Add interfacial DMI interaction" : "Select object in tree first",
-          disabled: !hasObject || !p.onObjectAddInteraction,
+          disabled: !hasObject || !canCommand(p, {
+            id: "object.add-interaction",
+            objectId: objectId ?? "",
+            kind: "interfacial_dmi",
+          }),
           action: () => {
             if (!objectId) return;
-            p.onObjectAddInteraction?.(objectId, "interfacial_dmi");
-            p.onSelectModelNode?.(`physobj-${objectId}`);
+            runCommand(p, { id: "object.add-interaction", objectId, kind: "interfacial_dmi" });
+            runCommand(p, { id: "navigation.select-node", nodeId: `physobj-${objectId}` });
           },
           iconColor: "text-cyan-400",
         },
@@ -412,11 +590,15 @@ function buildMaterialsGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <Binary size={20} />,
           label: "Add Ku",
           tooltip: hasObject ? "Add uniaxial anisotropy interaction" : "Select object in tree first",
-          disabled: !hasObject || !p.onObjectAddInteraction,
+          disabled: !hasObject || !canCommand(p, {
+            id: "object.add-interaction",
+            objectId: objectId ?? "",
+            kind: "uniaxial_anisotropy",
+          }),
           action: () => {
             if (!objectId) return;
-            p.onObjectAddInteraction?.(objectId, "uniaxial_anisotropy");
-            p.onSelectModelNode?.(`physobj-${objectId}`);
+            runCommand(p, { id: "object.add-interaction", objectId, kind: "uniaxial_anisotropy" });
+            runCommand(p, { id: "navigation.select-node", nodeId: `physobj-${objectId}` });
           },
           iconColor: "text-rose-400",
         },
@@ -442,7 +624,7 @@ function buildPhysicsGroups(p: RibbonBarProps): RibbonGroup[] {
           disabled: !hasObject,
           action: () => {
             if (!objectId) return;
-            p.onSelectModelNode?.(`physobj-${objectId}`);
+            runCommand(p, { id: "navigation.select-node", nodeId: `physobj-${objectId}` });
           },
           iconColor: "text-violet-400",
         },
@@ -451,7 +633,7 @@ function buildPhysicsGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <Cog size={20} />,
           label: "Global Physics",
           tooltip: "Open global physics status panel",
-          action: () => p.onSelectModelNode?.("physics"),
+          action: () => runCommand(p, { id: "navigation.select-node", nodeId: "physics" }),
           iconColor: "text-slate-400",
         },
       ],
@@ -465,11 +647,15 @@ function buildPhysicsGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <Sparkles size={20} />,
           label: "DMI",
           tooltip: hasObject ? "Add interfacial DMI to selected object" : "Select object in tree first",
-          disabled: !hasObject || !p.onObjectAddInteraction,
+          disabled: !hasObject || !canCommand(p, {
+            id: "object.add-interaction",
+            objectId: objectId ?? "",
+            kind: "interfacial_dmi",
+          }),
           action: () => {
             if (!objectId) return;
-            p.onObjectAddInteraction?.(objectId, "interfacial_dmi");
-            p.onSelectModelNode?.(`physobj-${objectId}`);
+            runCommand(p, { id: "object.add-interaction", objectId, kind: "interfacial_dmi" });
+            runCommand(p, { id: "navigation.select-node", nodeId: `physobj-${objectId}` });
           },
           iconColor: "text-cyan-400",
         },
@@ -478,29 +664,18 @@ function buildPhysicsGroups(p: RibbonBarProps): RibbonGroup[] {
           icon: <Binary size={20} />,
           label: "Uniaxial Ku",
           tooltip: hasObject ? "Add uniaxial anisotropy to selected object" : "Select object in tree first",
-          disabled: !hasObject || !p.onObjectAddInteraction,
+          disabled: !hasObject || !canCommand(p, {
+            id: "object.add-interaction",
+            objectId: objectId ?? "",
+            kind: "uniaxial_anisotropy",
+          }),
           action: () => {
             if (!objectId) return;
-            p.onObjectAddInteraction?.(objectId, "uniaxial_anisotropy");
-            p.onSelectModelNode?.(`physobj-${objectId}`);
+            runCommand(p, { id: "object.add-interaction", objectId, kind: "uniaxial_anisotropy" });
+            runCommand(p, { id: "navigation.select-node", nodeId: `physobj-${objectId}` });
           },
           iconColor: "text-rose-400",
         },
-      ],
-    },
-    buildViewGroup(p),
-  ];
-}
-
-function buildStudyGroups(p: RibbonBarProps): RibbonGroup[] {
-  return [
-    {
-      id: "execution", title: "Execution",
-      actions: [
-        { id: "relax", icon: <Target size={20} />, label: "Relax", tooltip: "Run relaxation to equilibrium", disabled: !p.canRelax, action: () => p.onSimAction?.("relax"), iconColor: "text-indigo-400" },
-        { id: p.runAction ?? "run", icon: <Play size={20} fill="currentColor" />, label: p.runLabel ?? "Run", tooltip: p.runLabel === "Resume" ? "Resume the paused solver stage" : "Run until the configured stop time", shortcut: "F5", accent: true, disabled: !p.canRun, action: () => p.onSimAction?.(p.runAction ?? "run") },
-        { id: "pause", icon: <Pause size={20} fill="currentColor" />, label: "Pause", tooltip: "Pause solver", disabled: !p.canPause, action: () => p.onSimAction?.("pause"), iconColor: "text-amber-500" },
-        { id: "stop", icon: <Square size={20} fill="currentColor" />, label: "Stop", tooltip: "Stop solver", disabled: !p.canStop, action: () => p.onSimAction?.("stop"), iconColor: "text-rose-500" },
       ],
     },
     buildViewGroup(p),
@@ -525,7 +700,7 @@ function buildStudyBuilderGroups(
           tooltip: "Study root and authoring summary",
           active: studyNode?.kind === "study-root" || studyNode?.kind === "simulation-root",
           iconColor: "text-slate-400",
-          action: () => p.onSelectModelNode?.("study"),
+          action: () => runCommand(p, { id: "navigation.select-node", nodeId: "study" }),
         },
         {
           id: "study-defaults",
@@ -539,7 +714,7 @@ function buildStudyBuilderGroups(
             || studyNode?.kind === "study-physics-defaults"
             || studyNode?.kind === "study-outputs-defaults",
           iconColor: "text-cyan-400",
-          action: () => p.onSelectModelNode?.("study-defaults"),
+          action: () => runCommand(p, { id: "navigation.select-node", nodeId: "study-defaults" }),
           menuItems: [
             {
               id: "study-defaults-runtime",
@@ -547,7 +722,7 @@ function buildStudyBuilderGroups(
               icon: <Play size={14} />,
               description: "Run horizon, execution mode and runtime policy",
               active: studyNode?.kind === "study-runtime-defaults",
-              action: () => p.onSelectModelNode?.("study-defaults-runtime"),
+              action: () => runCommand(p, { id: "navigation.select-node", nodeId: "study-defaults-runtime" }),
             },
             {
               id: "study-defaults-solver",
@@ -555,7 +730,7 @@ function buildStudyBuilderGroups(
               icon: <Target size={14} />,
               description: "Integrator, relaxation and convergence defaults",
               active: studyNode?.kind === "study-solver-defaults",
-              action: () => p.onSelectModelNode?.("study-defaults-solver"),
+              action: () => runCommand(p, { id: "navigation.select-node", nodeId: "study-defaults-solver" }),
             },
             {
               id: "study-defaults-physics",
@@ -563,7 +738,7 @@ function buildStudyBuilderGroups(
               icon: <Magnet size={14} />,
               description: "Global Zeeman field and baseline magnetic forcing",
               active: studyNode?.kind === "study-physics-defaults",
-              action: () => p.onSelectModelNode?.("study-defaults-physics"),
+              action: () => runCommand(p, { id: "navigation.select-node", nodeId: "study-defaults-physics" }),
             },
             {
               id: "study-defaults-outputs",
@@ -571,7 +746,7 @@ function buildStudyBuilderGroups(
               icon: <Download size={14} />,
               description: "Artifacts, snapshots and export policy",
               active: studyNode?.kind === "study-outputs-defaults",
-              action: () => p.onSelectModelNode?.("study-defaults-outputs"),
+              action: () => runCommand(p, { id: "navigation.select-node", nodeId: "study-defaults-outputs" }),
             },
           ],
         },
@@ -585,7 +760,7 @@ function buildStudyBuilderGroups(
             || studyNode?.kind === "study-stage"
             || studyNode?.kind === "study-stage-empty",
           iconColor: "text-violet-400",
-          action: () => p.onSelectModelNode?.("study-stages"),
+          action: () => runCommand(p, { id: "navigation.select-node", nodeId: "study-stages" }),
         },
       ],
     },
@@ -600,7 +775,8 @@ function buildStudyBuilderGroups(
           tooltip: hasStageSelection ? "Insert Relax after the selected stage" : "Append Relax at the end of the stage sequence",
           accent: true,
           iconColor: "text-emerald-400",
-          action: () => p.onStudyAddPrimitive?.("relax", placement),
+          disabled: !canCommand(p, { id: "study.add-primitive", kind: "relax", placement }),
+          action: () => runCommand(p, { id: "study.add-primitive", kind: "relax", placement }),
         },
         {
           id: "study-add-run",
@@ -609,7 +785,8 @@ function buildStudyBuilderGroups(
           tooltip: hasStageSelection ? "Insert Run after the selected stage" : "Append Run at the end of the stage sequence",
           accent: true,
           iconColor: "text-emerald-400",
-          action: () => p.onStudyAddPrimitive?.("run", placement),
+          disabled: !canCommand(p, { id: "study.add-primitive", kind: "run", placement }),
+          action: () => runCommand(p, { id: "study.add-primitive", kind: "run", placement }),
         },
         {
           id: "study-add-eigen",
@@ -618,7 +795,8 @@ function buildStudyBuilderGroups(
           tooltip: hasStageSelection ? "Insert Eigensolve after the selected stage" : "Append Eigensolve at the end of the stage sequence",
           accent: true,
           iconColor: "text-emerald-400",
-          action: () => p.onStudyAddPrimitive?.("eigenmodes", placement),
+          disabled: !canCommand(p, { id: "study.add-primitive", kind: "eigenmodes", placement }),
+          action: () => runCommand(p, { id: "study.add-primitive", kind: "eigenmodes", placement }),
         },
       ],
     },
@@ -632,7 +810,8 @@ function buildStudyBuilderGroups(
           label: "Hysteresis",
           tooltip: hasStageSelection ? "Insert Hysteresis Loop after the selected stage" : "Append Hysteresis Loop at the end of the stage sequence",
           iconColor: "text-violet-400",
-          action: () => p.onStudyAddMacro?.("hysteresis_loop", placement),
+          disabled: !canCommand(p, { id: "study.add-macro", kind: "hysteresis_loop", placement }),
+          action: () => runCommand(p, { id: "study.add-macro", kind: "hysteresis_loop", placement }),
         },
         {
           id: "study-add-field-sweep",
@@ -640,7 +819,8 @@ function buildStudyBuilderGroups(
           label: "Sweep+Relax",
           tooltip: hasStageSelection ? "Insert Field Sweep + Relax after the selected stage" : "Append Field Sweep + Relax at the end of the stage sequence",
           iconColor: "text-violet-400",
-          action: () => p.onStudyAddMacro?.("field_sweep_relax", placement),
+          disabled: !canCommand(p, { id: "study.add-macro", kind: "field_sweep_relax", placement }),
+          action: () => runCommand(p, { id: "study.add-macro", kind: "field_sweep_relax", placement }),
         },
         {
           id: "study-add-field-sweep-snapshot",
@@ -648,7 +828,8 @@ function buildStudyBuilderGroups(
           label: "Sweep+Snap",
           tooltip: hasStageSelection ? "Insert Field Sweep + Relax + Snapshot after the selected stage" : "Append Field Sweep + Relax + Snapshot at the end of the stage sequence",
           iconColor: "text-violet-400",
-          action: () => p.onStudyAddMacro?.("field_sweep_relax_snapshot", placement),
+          disabled: !canCommand(p, { id: "study.add-macro", kind: "field_sweep_relax_snapshot", placement }),
+          action: () => runCommand(p, { id: "study.add-macro", kind: "field_sweep_relax_snapshot", placement }),
         },
         {
           id: "study-add-relax-run",
@@ -656,7 +837,8 @@ function buildStudyBuilderGroups(
           label: "Relax->Run",
           tooltip: hasStageSelection ? "Insert Relax -> Run after the selected stage" : "Append Relax -> Run at the end of the stage sequence",
           iconColor: "text-violet-400",
-          action: () => p.onStudyAddMacro?.("relax_run", placement),
+          disabled: !canCommand(p, { id: "study.add-macro", kind: "relax_run", placement }),
+          action: () => runCommand(p, { id: "study.add-macro", kind: "relax_run", placement }),
         },
         {
           id: "study-add-relax-eigen",
@@ -664,7 +846,8 @@ function buildStudyBuilderGroups(
           label: "Relax->Eigen",
           tooltip: hasStageSelection ? "Insert Relax -> Eigensolve after the selected stage" : "Append Relax -> Eigensolve at the end of the stage sequence",
           iconColor: "text-violet-400",
-          action: () => p.onStudyAddMacro?.("relax_eigenmodes", placement),
+          disabled: !canCommand(p, { id: "study.add-macro", kind: "relax_eigenmodes", placement }),
+          action: () => runCommand(p, { id: "study.add-macro", kind: "relax_eigenmodes", placement }),
         },
         {
           id: "study-add-parameter-sweep",
@@ -672,7 +855,8 @@ function buildStudyBuilderGroups(
           label: "Param Sweep",
           tooltip: hasStageSelection ? "Insert Parameter Sweep after the selected stage" : "Append Parameter Sweep at the end of the stage sequence",
           iconColor: "text-violet-400",
-          action: () => p.onStudyAddMacro?.("parameter_sweep", placement),
+          disabled: !canCommand(p, { id: "study.add-macro", kind: "parameter_sweep", placement }),
+          action: () => runCommand(p, { id: "study.add-macro", kind: "parameter_sweep", placement }),
         },
       ],
     },
@@ -685,8 +869,8 @@ function buildStudyBuilderGroups(
           icon: <Plus size={20} />,
           label: "Duplicate",
           tooltip: hasStageSelection ? "Duplicate the selected stage node" : "Select a stage node to duplicate it",
-          disabled: !hasStageSelection,
-          action: () => p.onStudyDuplicateSelected?.(),
+          disabled: !hasStageSelection || !canCommand(p, { id: "study.duplicate-selected" }),
+          action: () => runCommand(p, { id: "study.duplicate-selected" }),
           iconColor: "text-amber-400",
         },
         {
@@ -694,8 +878,8 @@ function buildStudyBuilderGroups(
           icon: <RefreshCw size={20} />,
           label: "Enable",
           tooltip: hasStageSelection ? "Enable or disable the selected stage node" : "Select a stage node to toggle it",
-          disabled: !hasStageSelection,
-          action: () => p.onStudyToggleSelectedEnabled?.(),
+          disabled: !hasStageSelection || !canCommand(p, { id: "study.toggle-selected-enabled" }),
+          action: () => runCommand(p, { id: "study.toggle-selected-enabled" }),
           iconColor: "text-slate-400",
         },
       ],
@@ -710,8 +894,8 @@ function buildStudyBuilderGroups(
           label: p.scriptSyncBusy ? "Syncing..." : "Sync Script",
           tooltip: "Rewrite the Python script from the current builder state",
           accent: true,
-          disabled: !p.canSyncScriptBuilder || p.scriptSyncBusy,
-          action: () => p.onSyncScriptBuilder?.(),
+          disabled: !canCommand(p, { id: "script.sync" }),
+          action: () => runCommand(p, { id: "script.sync" }),
         },
       ],
     },
@@ -742,9 +926,9 @@ function buildResultsGroups(p: RibbonBarProps): RibbonGroup[] {
         label: target.shortLabel,
         tooltip: `Switch preview to ${target.shortLabel}`,
         active: p.selectedQuantity === target.id,
-        disabled: !target.available,
+        disabled: !target.available || !canCommand(p, { id: "preview.select-quantity", quantityId: target.id }),
         iconColor,
-        action: () => p.onQuickPreviewSelect?.(target.id),
+        action: () => runCommand(p, { id: "preview.select-quantity", quantityId: target.id }),
       };
     });
 
@@ -762,31 +946,381 @@ function buildResultsGroups(p: RibbonBarProps): RibbonGroup[] {
     {
       id: "plot-tools", title: "Plot",
       actions: [
-        { id: "plot", icon: <BarChart3 size={20} />, label: "Chart", tooltip: "Open scalar plot", action: () => p.onViewChange?.("charts"), iconColor: "text-emerald-400" },
-        { id: "snapshot", icon: <Camera size={20} />, label: "Capture", tooltip: "Take viewport screenshot", action: p.onCapture, iconColor: "text-violet-400" },
-        { id: "exportvtk", icon: <Download size={20} />, label: "VTK", tooltip: "Export VTK", action: p.onExport, iconColor: "text-blue-400" },
-        { id: "save-state", icon: <Save size={20} />, label: "State", tooltip: "Download magnetization state (JSON)", action: p.onStateExport, iconColor: "text-emerald-400" },
+        {
+          id: "plot",
+          icon: <BarChart3 size={20} />,
+          label: "Chart",
+          tooltip: "Open scalar plot",
+          action: () => runCommand(p, { id: "viewport.set-mode", mode: "charts" }),
+          iconColor: "text-emerald-400",
+        },
+        {
+          id: "snapshot",
+          icon: <Camera size={20} />,
+          label: "Capture",
+          tooltip: "Take viewport screenshot",
+          disabled: !canCommand(p, { id: "capture.viewport" }),
+          action: () => runCommand(p, { id: "capture.viewport" }),
+          iconColor: "text-violet-400",
+        },
+        {
+          id: "exportvtk",
+          icon: <Download size={20} />,
+          label: "VTK",
+          tooltip: "Export VTK",
+          disabled: !canCommand(p, { id: "export.results" }),
+          action: () => runCommand(p, { id: "export.results" }),
+          iconColor: "text-blue-400",
+        },
+        {
+          id: "save-state",
+          icon: <Save size={20} />,
+          label: "State",
+          tooltip: "Download magnetization state (JSON)",
+          disabled: !canCommand(p, { id: "export.state" }),
+          action: () => runCommand(p, { id: "export.state" }),
+          iconColor: "text-emerald-400",
+        },
       ],
     },
     {
       id: "analyze", title: "Analyze",
       actions: [
-        { id: "analyze-spectrum", icon: <BarChart3 size={20} />, label: "Spectrum", tooltip: "Eigenmode spectrum & mode inspector", active: p.viewMode === "Analyze", action: () => p.onViewChange?.("Analyze"), iconColor: "text-violet-400" },
+        {
+          id: "analyze-spectrum",
+          icon: <BarChart3 size={20} />,
+          label: "Spectrum",
+          tooltip: "Eigenmode spectrum & mode inspector",
+          active: p.viewMode === "Analyze",
+          action: () => runCommand(p, { id: "viewport.set-mode", mode: "Analyze" }),
+          iconColor: "text-violet-400",
+        },
       ],
     },
     buildViewGroup(p),
   ];
 }
 
+function buildAutomationGroups(p: RibbonBarProps): RibbonGroup[] {
+  return [
+    {
+      id: "automation-sync",
+      title: "Automation",
+      actions: [
+        {
+          id: "automation-sync-script",
+          icon: <RefreshCw size={20} className={cn(p.scriptSyncBusy && "animate-spin")} />,
+          label: p.scriptSyncBusy ? "Syncing..." : "Sync Script",
+          tooltip: "Rewrite Python script from current builder model",
+          accent: true,
+          disabled: !canCommand(p, { id: "script.sync" }),
+          action: () => runCommand(p, { id: "script.sync" }),
+        },
+        {
+          id: "automation-export-state",
+          icon: <Save size={20} />,
+          label: "Export State",
+          tooltip: "Save current magnetization state (JSON)",
+          disabled: !canCommand(p, { id: "export.state" }),
+          action: () => runCommand(p, { id: "export.state" }),
+          iconColor: "text-emerald-400",
+        },
+        {
+          id: "automation-export-vtk",
+          icon: <Download size={20} />,
+          label: "Export VTK",
+          tooltip: "Export solver data for post-processing",
+          disabled: !canCommand(p, { id: "export.results" }),
+          action: () => runCommand(p, { id: "export.results" }),
+          iconColor: "text-cyan-400",
+        },
+      ],
+    },
+    buildViewGroup(p),
+  ];
+}
+
+function buildContextualGroups(
+  p: RibbonBarProps,
+  contextualTab: ContextualRibbonTab["id"] | null,
+): RibbonGroup[] {
+  const objectId = p.selectedObjectId ?? "";
+  if (contextualTab === "selected-ferromagnet" && objectId) {
+    return [
+      {
+        id: "ctx-ferromagnet",
+        title: "Selected Ferromagnet",
+        actions: [
+          {
+            id: "ctx-open-material",
+            icon: <FlaskConical size={20} />,
+            label: "Material",
+            tooltip: "Open material constants for selected ferromagnet",
+            action: () => runCommand(p, { id: "navigation.select-node", nodeId: `mat-${objectId}` }),
+            iconColor: "text-amber-400",
+          },
+          {
+            id: "ctx-open-physics",
+            icon: <Magnet size={20} />,
+            label: "Interactions",
+            tooltip: "Open magnetic interactions stack",
+            action: () => runCommand(p, { id: "navigation.select-node", nodeId: `physobj-${objectId}` }),
+            iconColor: "text-violet-400",
+          },
+          {
+            id: "ctx-add-dmi",
+            icon: <Sparkles size={20} />,
+            label: "Add DMI",
+            tooltip: "Add interfacial DMI interaction",
+            disabled: !canCommand(p, {
+              id: "object.add-interaction",
+              objectId,
+              kind: "interfacial_dmi",
+            }),
+            action: () => runCommand(p, {
+              id: "object.add-interaction",
+              objectId,
+              kind: "interfacial_dmi",
+            }),
+            iconColor: "text-cyan-400",
+          },
+          {
+            id: "ctx-add-ku",
+            icon: <Binary size={20} />,
+            label: "Add Ku",
+            tooltip: "Add uniaxial anisotropy interaction",
+            disabled: !canCommand(p, {
+              id: "object.add-interaction",
+              objectId,
+              kind: "uniaxial_anisotropy",
+            }),
+            action: () => runCommand(p, {
+              id: "object.add-interaction",
+              objectId,
+              kind: "uniaxial_anisotropy",
+            }),
+            iconColor: "text-rose-400",
+          },
+        ],
+      },
+    ];
+  }
+  if (contextualTab === "mesh-quality") {
+    return [
+      {
+        id: "ctx-mesh-quality",
+        title: "Mesh Quality",
+        actions: [
+          {
+            id: "ctx-mesh-open-quality",
+            icon: <BarChart3 size={20} />,
+            label: "Quality",
+            tooltip: "Open mesh quality diagnostics",
+            disabled: !canCommand(p, { id: "mesh.open-quality" }),
+            action: () => runCommand(p, { id: "mesh.open-quality" }),
+            iconColor: "text-emerald-400",
+          },
+          {
+            id: "ctx-mesh-open-pipeline",
+            icon: <ListChecks size={20} />,
+            label: "Pipeline",
+            tooltip: "Open mesh pipeline diagnostics",
+            disabled: !canCommand(p, { id: "mesh.open-pipeline" }),
+            action: () => runCommand(p, { id: "mesh.open-pipeline" }),
+            iconColor: "text-amber-400",
+          },
+          {
+            id: "ctx-mesh-build",
+            icon: <RefreshCw size={20} className={cn(p.meshGenerating && "animate-spin")} />,
+            label: p.meshGenerating ? "Building..." : "Rebuild",
+            tooltip: "Rebuild selected mesh target",
+            disabled: !canCommand(p, { id: "mesh.build-selected" }),
+            action: () => runCommand(p, { id: "mesh.build-selected" }),
+            accent: true,
+          },
+        ],
+      },
+    ];
+  }
+  if (contextualTab === "interface") {
+    return [
+      {
+        id: "ctx-interface",
+        title: "Interface",
+        actions: [
+          {
+            id: "ctx-interface-coupling",
+            icon: <Layers3 size={20} />,
+            label: "Coupling",
+            tooltip: "Interface coupling authoring will land in next pass",
+            disabled: true,
+            iconColor: "text-slate-400",
+          },
+          {
+            id: "ctx-interface-bc",
+            icon: <Target size={20} />,
+            label: "Boundary BC",
+            tooltip: "Boundary condition authoring will land in next pass",
+            disabled: true,
+            iconColor: "text-slate-400",
+          },
+        ],
+      },
+    ];
+  }
+  if (contextualTab === "work-plane") {
+    return [
+      {
+        id: "ctx-work-plane",
+        title: "Work Plane",
+        actions: [
+          {
+            id: "ctx-work-plane-transform",
+            icon: <Ruler size={20} />,
+            label: "Transform",
+            tooltip: "Work-plane transform tools will land in next pass",
+            disabled: true,
+            iconColor: "text-slate-400",
+          },
+          {
+            id: "ctx-work-plane-sketch",
+            icon: <Shapes size={20} />,
+            label: "Sketch",
+            tooltip: "Sketch tools will land in next pass",
+            disabled: true,
+            iconColor: "text-slate-400",
+          },
+        ],
+      },
+    ];
+  }
+  if (contextualTab === "plot") {
+    const firstAvailable = (p.quickPreviewTargets ?? []).find((target) => target.available);
+    return [
+      {
+        id: "ctx-plot",
+        title: "Plot",
+        actions: [
+          {
+            id: "ctx-plot-quantity",
+            icon: <Eye size={20} />,
+            label: firstAvailable?.shortLabel ?? "Quantity",
+            tooltip: "Switch to first available quantity",
+            disabled: !firstAvailable || !canCommand(p, {
+              id: "preview.select-quantity",
+              quantityId: firstAvailable?.id ?? "m",
+            }),
+            action: () => {
+              if (!firstAvailable) return;
+              runCommand(p, { id: "preview.select-quantity", quantityId: firstAvailable.id });
+            },
+            iconColor: "text-sky-400",
+          },
+          {
+            id: "ctx-plot-capture",
+            icon: <Camera size={20} />,
+            label: "Capture",
+            tooltip: "Capture current plot/viewport",
+            disabled: !canCommand(p, { id: "capture.viewport" }),
+            action: () => runCommand(p, { id: "capture.viewport" }),
+            iconColor: "text-violet-400",
+          },
+          {
+            id: "ctx-plot-export",
+            icon: <Download size={20} />,
+            label: "Export",
+            tooltip: "Export current results",
+            disabled: !canCommand(p, { id: "export.results" }),
+            action: () => runCommand(p, { id: "export.results" }),
+            iconColor: "text-cyan-400",
+          },
+        ],
+      },
+    ];
+  }
+  if (contextualTab === "table") {
+    return [
+      {
+        id: "ctx-table",
+        title: "Table",
+        actions: [
+          {
+            id: "ctx-table-open",
+            icon: <Columns2 size={20} />,
+            label: "Table View",
+            tooltip: "Table tooling will be moved here in next pass",
+            disabled: true,
+            iconColor: "text-slate-400",
+          },
+          {
+            id: "ctx-table-export",
+            icon: <Download size={20} />,
+            label: "Export CSV",
+            tooltip: "CSV export policy will be wired to results tables",
+            disabled: true,
+            iconColor: "text-slate-400",
+          },
+        ],
+      },
+    ];
+  }
+  return [];
+}
+
 function buildViewGroup(p: RibbonBarProps): RibbonGroup {
   return {
     id: "view", title: "View",
     actions: [
-      { id: "3d", icon: <Box size={20} />, label: "3D", tooltip: "3D view", shortcut: "1", active: p.viewMode === "3D", action: () => p.onViewChange?.("3D"), iconColor: "text-indigo-400" },
-      { id: "2d", icon: <Columns2 size={20} />, label: "2D", tooltip: "2D view", shortcut: "2", active: p.viewMode === "2D", action: () => p.onViewChange?.("2D"), iconColor: "text-sky-400" },
-      { id: "mesh-view", icon: <Grid3X3 size={20} />, label: "Mesh", tooltip: "Mesh view", shortcut: "3", active: p.viewMode === "Mesh", action: () => p.onViewChange?.("Mesh"), iconColor: "text-fuchsia-400" },
-      { id: "sidebar", icon: <PanelRight size={20} />, label: "Panel", tooltip: "Toggle sidebar", shortcut: "Ctrl+B", active: p.sidebarVisible, action: p.onSidebarToggle, iconColor: "text-slate-400" },
-      { id: "eye", icon: <Eye size={20} />, label: "Focus", tooltip: p.selectedObjectId ? "Focus camera on selected object" : "Select an object to focus", disabled: !p.selectedObjectId, iconColor: "text-teal-400", action: () => { if (p.selectedObjectId) p.onRequestObjectFocus?.(p.selectedObjectId); } },
+      {
+        id: "3d",
+        icon: <Box size={20} />,
+        label: "3D",
+        tooltip: "3D view",
+        shortcut: "1",
+        active: p.viewMode === "3D",
+        action: () => runCommand(p, { id: "viewport.set-mode", mode: "3D" }),
+        iconColor: "text-indigo-400",
+      },
+      {
+        id: "2d",
+        icon: <Columns2 size={20} />,
+        label: "2D",
+        tooltip: "2D view",
+        shortcut: "2",
+        active: p.viewMode === "2D",
+        action: () => runCommand(p, { id: "viewport.set-mode", mode: "2D" }),
+        iconColor: "text-sky-400",
+      },
+      {
+        id: "mesh-view",
+        icon: <Grid3X3 size={20} />,
+        label: "Mesh",
+        tooltip: "Mesh view",
+        shortcut: "3",
+        active: p.viewMode === "Mesh",
+        action: () => runCommand(p, { id: "viewport.set-mode", mode: "Mesh" }),
+        iconColor: "text-fuchsia-400",
+      },
+      {
+        id: "sidebar",
+        icon: <PanelRight size={20} />,
+        label: "Panel",
+        tooltip: "Toggle sidebar",
+        shortcut: "Ctrl+B",
+        active: p.sidebarVisible,
+        disabled: !canCommand(p, { id: "viewport.toggle-sidebar" }),
+        action: () => runCommand(p, { id: "viewport.toggle-sidebar" }),
+        iconColor: "text-slate-400",
+      },
+      {
+        id: "eye",
+        icon: <Eye size={20} />,
+        label: "Focus",
+        tooltip: p.selectedObjectId ? "Focus camera on selected object" : "Select an object to focus",
+        disabled: !canCommand(p, { id: "viewport.focus-selected-object" }),
+        iconColor: "text-teal-400",
+        action: () => runCommand(p, { id: "viewport.focus-selected-object" }),
+      },
     ],
   };
 }
@@ -856,72 +1390,95 @@ RibbonActionTrigger.displayName = "RibbonActionTrigger";
 /** Map workspace mode to its default ribbon tab (when no manual override). */
 function defaultTabForMode(mode: WorkspaceMode | undefined): RibbonTab {
   switch (mode) {
-    case "build": return "Home";
-    case "study": return "LiveView";
+    case "build": return "Geometry";
+    case "study": return "Study";
     case "analyze":
-    default: return "Spectrum";
+    default: return "Results";
   }
 }
 
 function ribbonTabLabel(tab: RibbonTab): string {
-  return tab === "StudyBuilder" ? "Study" : tab;
+  return tab;
 }
 
 /* ── Component ──────────────────────────────────── */
 
 export default function RibbonBar(props: RibbonBarProps) {
   const currentStage = useWorkspaceStore((s) => s.currentStage);
-  const setRibbonTab = useWorkspaceStore((s) => s.setRibbonTab);
-  const stageLayouts = useWorkspaceStore((s) => s.stageLayouts);
+  const activeCoreTab = useWorkspaceStore((s) => s.activeCoreTab);
+  const setActiveCoreTab = useWorkspaceStore((s) => s.setActiveCoreTab);
+  const activeContextualTab = useWorkspaceStore((s) => s.activeContextualTab);
+  const setActiveContextualTab = useWorkspaceStore((s) => s.setActiveContextualTab);
   const workspaceStage = props.workspaceMode ?? currentStage;
   const visibleTabs = useMemo(() => tabsForMode(workspaceStage), [workspaceStage]);
   const defaultTab = defaultTabForMode(workspaceStage);
-  const storedTab = stageLayouts[workspaceStage]?.ribbonTab;
   const studyNode = useMemo(() => parseStudyNodeContext(props.selectedNodeId), [props.selectedNodeId]);
-  const activeTab = (storedTab && visibleTabs.includes(storedTab as RibbonTab)
-    ? (storedTab as RibbonTab)
+  const contextualTabs = useMemo(
+    () => contextualTabsForSelection(props),
+    [props.quickPreviewTargets, props.selectedNodeId, props.selectedObjectId, props.viewMode],
+  );
+  const activeTab = (activeCoreTab && visibleTabs.includes(activeCoreTab as RibbonTab)
+    ? (activeCoreTab as RibbonTab)
     : defaultTab);
 
   useEffect(() => {
-    if (!storedTab || !visibleTabs.includes(storedTab as RibbonTab)) {
-      setRibbonTab(workspaceStage, defaultTab);
+    if (!activeCoreTab || !visibleTabs.includes(activeCoreTab as RibbonTab)) {
+      setActiveCoreTab(defaultTab);
     }
-  }, [defaultTab, setRibbonTab, storedTab, visibleTabs, workspaceStage]);
+  }, [activeCoreTab, defaultTab, setActiveCoreTab, visibleTabs]);
 
   useEffect(() => {
-    if (workspaceStage === "build" && studyNode) {
-      setRibbonTab(workspaceStage, "StudyBuilder");
+    if (contextualTabs.length === 0) {
+      if (activeContextualTab !== null) {
+        setActiveContextualTab(null);
+      }
+      return;
     }
-  }, [props.selectedNodeId, setRibbonTab, studyNode, workspaceStage]);
+    if (!activeContextualTab || !contextualTabs.some((tab) => tab.id === activeContextualTab)) {
+      setActiveContextualTab(contextualTabs[0]?.id ?? null);
+    }
+  }, [activeContextualTab, contextualTabs, setActiveContextualTab]);
 
   const groups = useMemo(() => {
+    let baseGroups: RibbonGroup[];
     switch (activeTab) {
-      case "Mesh":
-        return buildMeshGroups(props);
-      case "StudyBuilder":
-        return buildStudyBuilderGroups(props, studyNode);
-      case "LiveView":
-      case "Runtime":
-      case "Diagnostics":
-        return buildStudyGroups(props);
-      case "Charts":
-      case "Spectrum":
-      case "Modes":
-      case "Compare":
-      case "Export":
-        return buildResultsGroups(props);
+      case "Definitions":
+        baseGroups = buildDefinitionsGroups(props);
+        break;
       case "Geometry":
-        return buildHomeGroups(props);
+        baseGroups = buildGeometryGroups(props);
+        break;
       case "Materials":
-        return buildMaterialsGroups(props);
+        baseGroups = buildMaterialsGroups(props);
+        break;
       case "Physics":
-        return buildPhysicsGroups(props);
+        baseGroups = buildPhysicsGroups(props);
+        break;
+      case "Mesh":
+        baseGroups = buildMeshGroups(props);
+        break;
+      case "Study":
+        baseGroups = buildStudyBuilderGroups(props, studyNode);
+        break;
+      case "Results":
+        baseGroups = buildResultsGroups(props);
+        break;
+      case "Automation":
+        baseGroups = buildAutomationGroups(props);
+        break;
       default:
-        return buildHomeGroups(props);
+        baseGroups = buildHomeGroups(props);
+        break;
     }
+    const contextualGroups = buildContextualGroups(
+      props,
+      (activeContextualTab as ContextualRibbonTab["id"] | null) ?? null,
+    );
+    return contextualGroups.length > 0 ? [...baseGroups, ...contextualGroups] : baseGroups;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeTab,
+    activeContextualTab,
     props.workspaceMode,
     props.viewMode,
     props.isFemBackend,
@@ -955,17 +1512,7 @@ export default function RibbonBar(props: RibbonBarProps) {
           {visibleTabs.map((tab) => (
             <button
               key={tab}
-              onClick={() => {
-                setRibbonTab(workspaceStage, tab);
-                if (props.onSelectModelNode) {
-                  if (tab === "Home") props.onSelectModelNode("universe");
-                  else if (tab === "Mesh") props.onSelectModelNode(props.hasSharedAirboxDomain ? "universe-airbox-mesh" : "universe-mesh");
-                  else if (tab === "StudyBuilder") props.onSelectModelNode("study-root");
-                  else if (tab === "LiveView" || tab === "Runtime" || tab === "Charts" || tab === "Diagnostics") props.onSelectModelNode("study");
-                  else if (tab === "Spectrum" || tab === "Modes" || tab === "Compare" || tab === "Export") props.onSelectModelNode("results");
-                  else props.onSelectModelNode("objects");
-                }
-              }}
+              onClick={() => setActiveCoreTab(tab)}
               className={cn(
                 "px-4 py-2 min-w-[72px] text-[0.78rem] font-medium transition-colors rounded-t-lg border-b-2 font-sans cursor-pointer hover:bg-muted/30",
                 tab === activeTab 
@@ -976,8 +1523,33 @@ export default function RibbonBar(props: RibbonBarProps) {
               {ribbonTabLabel(tab)}
             </button>
           ))}
+          {contextualTabs.length > 0 ? (
+            <div className="ml-auto mb-2 flex items-center gap-1.5 pl-4">
+              <span className="text-[0.6rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground/80">
+                Context
+              </span>
+              {contextualTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={cn(
+                    "rounded-md border px-2 py-1 text-[0.63rem] font-semibold tracking-wide transition-colors",
+                    activeContextualTab === tab.id
+                      ? "border-primary/30 bg-primary/12 text-primary"
+                      : "border-border/30 bg-background/30 text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+                  )}
+                  onClick={() => setActiveContextualTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {activeTab === "Mesh" && (
-            <div className="ml-auto mb-2 flex items-center gap-2 pl-4">
+            <div className={cn(
+              "mb-2 flex items-center gap-2 pl-4",
+              contextualTabs.length > 0 ? "border-l border-border/20 ml-1" : "ml-auto",
+            )}>
               <span className="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground/80">
                 Mesh Status
               </span>

@@ -16,7 +16,7 @@ export default function WorkspaceEntryPage({ stage }: WorkspaceEntryPageProps) {
   const searchParams = useSearchParams();
   const setLaunchIntent = useWorkspaceStore((state) => state.setLaunchIntent);
   const setActiveProjectId = useWorkspaceStore((state) => state.setActiveProjectId);
-  const setCurrentStage = useWorkspaceStore((state) => state.setCurrentStage);
+  const setCurrentPerspective = useWorkspaceStore((state) => state.setCurrentPerspective);
   const setLauncherVisible = useWorkspaceStore((state) => state.setLauncherVisible);
 
   useEffect(() => {
@@ -34,9 +34,9 @@ export default function WorkspaceEntryPage({ stage }: WorkspaceEntryPageProps) {
       : intent;
     setLaunchIntent(enrichedIntent);
     setActiveProjectId(enrichedIntent.resumeProjectId ?? enrichedIntent.entryPath ?? null);
-    setCurrentStage(stage);
+    setCurrentPerspective(stage);
     setLauncherVisible(false);
-  }, [searchParams, setActiveProjectId, setCurrentStage, setLaunchIntent, setLauncherVisible, stage]);
+  }, [searchParams, setActiveProjectId, setCurrentPerspective, setLaunchIntent, setLauncherVisible, stage]);
 
   return <WorkspaceShell initialStage={stage} />;
 }

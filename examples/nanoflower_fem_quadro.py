@@ -18,12 +18,12 @@ study = fm.study("nanoflower_fem")
 # Engine
 study.engine("fem")
 study.device("cpu", precision="double")
-study.universe(mode="auto", size=(4e-07, 4e-07, 4e-07), center=(0, 0, 0), padding=(0, 0, 0), airbox_hmax=8e-08)
+study.universe(mode="auto", size=(0.8e-06, 0.8e-06, 3e-07), center=(0, 0, 0), padding=(0, 0, 0), airbox_hmax=1e-07)
 study.interactive(True)
 
 # Geometry & Material — 2×2 kwadratowa siatka nanoflowerów
 # Parametry siatki
-nanoflower_approx_size = 100e-9  # Przybliżony rozmiar jednego nanoflowera (m)
+nanoflower_approx_size = 330e-9  # Faktyczny rozmiar STL bounding box (m)
 spacing = 50e-9                   # Przerwa między nanoflowerami (m)
 pitch = nanoflower_approx_size + spacing  # Step siatki (nanoflower + przerwa)
 
@@ -60,9 +60,13 @@ for idx, (dx, dy) in enumerate(positions_2x2):
     # Magnetyzacja: losowa z różnym seedem dla każdej kopii (dla nietrywialnego warunku początkowego)
     body.m = fm.random(seed=10 + idx)
 
+    # Mesh — wymagany explicit hmax dla każdego obiektu magnetycznego
+    body.mesh(hmax=20e-09, order=1, algorithm_2d=1, algorithm_3d=1, size_factor=1,
+              size_from_curvature=1, smoothing_steps=1, optimize_iterations=1,
+              narrow_regions=1, compute_quality=True, per_element_quality=True)
+
 # Mesh
 study.object_mesh_defaults(algorithm_2d=6, algorithm_3d=1, size_factor=1, size_from_curvature=0, smoothing_steps=1, optimize_iterations=1, narrow_regions=0, compute_quality=False, per_element_quality=False)
-# Mesh zostanie zastosowany domyślny dla wszystkich 4 geometrii
 study.build_domain_mesh()
 
 study.demag(realization="poisson_robin")

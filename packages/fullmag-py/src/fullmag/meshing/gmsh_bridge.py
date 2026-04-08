@@ -702,6 +702,7 @@ def _add_airbox_geo(
     hmax: float,
     *,
     component_volume_groups: dict[str, list[int]] | None = None,
+    component_surface_groups: dict[str, list[int]] | None = None,
 ) -> int | None:
     """Add an airbox around a GEO-kernel body using pure GEO primitives.
 
@@ -792,9 +793,22 @@ def _add_airbox_geo(
     s_right = gmsh.model.geo.addPlaneSurface([cl_right])
     outer_surf_tags = [s_bot, s_top, s_front, s_back, s_left, s_right]
 
-    # 4 — airbox volume: outer box faces + body surfaces as inner hole
-    air_sl = gmsh.model.geo.addSurfaceLoop(outer_surf_tags + body_surf_tags)
-    air_vol = gmsh.model.geo.addVolume([air_sl])
+    # 4 — airbox volume: outer box faces + body surfaces as inner holes.
+    # When multiple disconnected bodies are present each body needs its own
+    # surface loop (Gmsh requires each hole to be a separate shell); passing
+    # all body surfaces in a single surface loop is only valid for one body.
+    outer_sl = gmsh.model.geo.addSurfaceLoop(outer_surf_tags)
+    if component_surface_groups is not None and len(component_surface_groups) > 1:
+        body_sls = [
+            gmsh.model.geo.addSurfaceLoop(list(surfs))
+            for surfs in component_surface_groups.values()
+            if surfs
+        ]
+        air_vol = gmsh.model.geo.addVolume([outer_sl] + body_sls)
+    else:
+        # Single body (or no grouping info): classic combined surface loop hole
+        hole_sl = gmsh.model.geo.addSurfaceLoop(body_surf_tags)
+        air_vol = gmsh.model.geo.addVolume([outer_sl, hole_sl])
     gmsh.model.geo.synchronize()
 
     # 5 — physical groups (same convention as the OCC path)
@@ -1724,6 +1738,7 @@ def generate_shared_domain_mesh_from_components(
                 airbox,
                 hmax,
                 component_volume_groups=component_volume_tags,
+                component_surface_groups=component_surface_tags,
             )
             if airbox_field is not None:
                 airbox_field_ids.append(airbox_field)

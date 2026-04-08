@@ -4,7 +4,6 @@ import type { LaunchIntent } from "./launch-intent";
 export type WorkspaceMode = "build" | "study" | "analyze";
 
 interface StageLayoutState {
-  ribbonTab: string;
   leftDock: string | null;
   centerDock: string | null;
   rightDock: string | null;
@@ -12,7 +11,10 @@ interface StageLayoutState {
 }
 
 interface WorkspaceStoreState {
+  currentPerspective: WorkspaceMode;
   currentStage: WorkspaceMode;
+  activeCoreTab: string;
+  activeContextualTab: string | null;
   stageLayouts: Record<WorkspaceMode, StageLayoutState>;
   selectionId: string | null;
   activeProjectId: string | null;
@@ -22,8 +24,10 @@ interface WorkspaceStoreState {
   settingsOpen: boolean;
   physicsDocsOpen: boolean;
   physicsDocsTopic: string | null;
+  setCurrentPerspective: (mode: WorkspaceMode) => void;
   setCurrentStage: (mode: WorkspaceMode) => void;
-  setRibbonTab: (mode: WorkspaceMode, tab: string) => void;
+  setActiveCoreTab: (tab: string) => void;
+  setActiveContextualTab: (tab: string | null) => void;
   setLeftDock: (mode: WorkspaceMode, dock: string | null) => void;
   setCenterDock: (mode: WorkspaceMode, dock: string | null) => void;
   setRightDock: (mode: WorkspaceMode, dock: string | null) => void;
@@ -52,24 +56,24 @@ function updateStageLayout(
 }
 
 export const useWorkspaceStore = create<WorkspaceStoreState>((set, get) => ({
+  currentPerspective: "analyze",
   currentStage: "analyze",
+  activeCoreTab: "Home",
+  activeContextualTab: null,
   stageLayouts: {
     build: {
-      ribbonTab: "Home",
       leftDock: "model",
       centerDock: "settings",
       rightDock: "properties",
       bottomDock: "messages",
     },
     study: {
-      ribbonTab: "Home",
       leftDock: "study-tree",
       centerDock: "viewport-controls",
       rightDock: "solver",
       bottomDock: "jobs",
     },
     analyze: {
-      ribbonTab: "Home",
       leftDock: "results-tree",
       centerDock: "plots",
       rightDock: "display",
@@ -84,9 +88,12 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set, get) => ({
   settingsOpen: false,
   physicsDocsOpen: false,
   physicsDocsTopic: null,
-  setCurrentStage: (currentStage) => set({ currentStage, mode: currentStage }),
-  setRibbonTab: (mode, ribbonTab) =>
-    set((state) => ({ stageLayouts: updateStageLayout(state, mode, { ribbonTab }) })),
+  setCurrentPerspective: (currentPerspective) =>
+    set({ currentPerspective, currentStage: currentPerspective, mode: currentPerspective }),
+  setCurrentStage: (currentStage) =>
+    set({ currentStage, currentPerspective: currentStage, mode: currentStage }),
+  setActiveCoreTab: (activeCoreTab) => set({ activeCoreTab }),
+  setActiveContextualTab: (activeContextualTab) => set({ activeContextualTab }),
   setLeftDock: (mode, leftDock) =>
     set((state) => ({ stageLayouts: updateStageLayout(state, mode, { leftDock }) })),
   setCenterDock: (mode, centerDock) =>
@@ -107,11 +114,10 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set, get) => ({
       physicsDocsTopic: topic !== undefined ? topic : state.physicsDocsTopic,
     })),
   mode: "analyze",
-  setMode: (mode) => set({ currentStage: mode, mode }),
+  setMode: (mode) => set({ currentPerspective: mode, currentStage: mode, mode }),
 }));
 
 export function useActiveStageLayout(): StageLayoutState {
   const state = useWorkspaceStore();
-  return state.stageLayouts[state.currentStage];
+  return state.stageLayouts[state.currentPerspective];
 }
-
