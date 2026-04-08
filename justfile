@@ -129,6 +129,20 @@ run-nanoflower-interactive-quadro:
     just build fullmag-dev
     PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag --dev -i examples/nanoflower_fem_quadro.py
 
+# Run nanoflower quadro on the managed GPU runtime (MFEM + CUDA, built via Docker).
+# Run `just rebuild-gpu-runtime` if the binary is stale or after source changes.
+gpu_runtime_bin := repo_root + "/.fullmag/runtimes/fem-gpu-host/bin/fullmag-fem-gpu"
+
+run-nanoflower-interactive-quadro-gpu:
+    just ensure-python
+    just build fullmag-dev
+    FULLMAG_PYTHON="{{repo_python}}" '{{gpu_runtime_bin}}' --dev -i examples/nanoflower_fem_quadro.py
+
+run-nanoflower-quadro-gpu-headless:
+    just ensure-python
+    just build fullmag-dev
+    FULLMAG_PYTHON="{{repo_python}}" '{{gpu_runtime_bin}}' --dev examples/nanoflower_fem_quadro.py --headless
+
 run-pylayer-interactive:
     just ensure-python
     just build fullmag-dev
@@ -153,3 +167,8 @@ fem-gpu-headless script:
 
 fem-gpu-py-layer-hole-headless:
     just fem-gpu-headless examples/py_layer_hole_relax_150nm.py
+
+# Rebuild the managed FEM GPU host runtime bundle (MFEM + CUDA) inside the fem-gpu Docker container.
+# Required after source changes to fullmag-plan, fullmag-runner, fullmag-fem-sys, or native/backends/fem.
+rebuild-gpu-runtime:
+    ./scripts/export_fem_gpu_runtime.sh

@@ -112,12 +112,24 @@ class ProblemApiTests(unittest.TestCase):
         self.assertEqual(ir["geometry"]["entries"][0]["kind"], "box")
         self.assertEqual(ir["geometry"]["entries"][0]["size"], [200e-9, 20e-9, 5e-9])
         self.assertEqual(ir["energy_terms"][2]["kind"], "interfacial_dmi")
+        self.assertNotIn("interface_normal", ir["energy_terms"][2])
         self.assertEqual(ir["study"]["kind"], "time_evolution")
         self.assertEqual(ir["study"]["dynamics"]["integrator"], "auto")
         self.assertEqual(ir["study"]["sampling"]["outputs"][0]["name"], "m")
         self.assertEqual(
             ir["problem_meta"]["runtime_metadata"]["runtime_selection"]["device"], "auto"
         )
+
+    def test_interfacial_dmi_interface_normal_serializes_to_ir(self) -> None:
+        term = fm.InterfacialDMI(D=3e-3, interface_normal=(0.0, 3.0, 4.0))
+        self.assertEqual(
+            term.to_ir(),
+            {"kind": "interfacial_dmi", "D": 3e-3, "interface_normal": [0.0, 3.0, 4.0]},
+        )
+
+    def test_interfacial_dmi_rejects_invalid_interface_normal_shape(self) -> None:
+        with self.assertRaises(ValueError):
+            fm.InterfacialDMI(D=3e-3, interface_normal=(0.0, 1.0))
 
     def test_problem_to_ir_materializes_preset_texture_for_fem_mesh(self) -> None:
         geometry = fm.Box(size=(40e-9, 20e-9, 10e-9), name="film")

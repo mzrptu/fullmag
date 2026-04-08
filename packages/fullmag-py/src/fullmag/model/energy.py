@@ -55,12 +55,24 @@ class Demag:
 @dataclass(frozen=True, slots=True)
 class InterfacialDMI:
     D: float
+    interface_normal: tuple[float, float, float] | None = None
 
-    def __post_init__(self) -> None:
-        require_positive(self.D, "D")
+    def __init__(self, D: float, interface_normal: Sequence[float] | None = None) -> None:
+        require_positive(D, "D")
+        object.__setattr__(self, "D", float(D))
+        object.__setattr__(
+            self,
+            "interface_normal",
+            as_vector3(interface_normal, "interface_normal")
+            if interface_normal is not None
+            else None,
+        )
 
     def to_ir(self) -> dict[str, object]:
-        return {"kind": "interfacial_dmi", "D": self.D}
+        ir: dict[str, object] = {"kind": "interfacial_dmi", "D": self.D}
+        if self.interface_normal is not None:
+            ir["interface_normal"] = list(self.interface_normal)
+        return ir
 
 
 @dataclass(frozen=True, slots=True)

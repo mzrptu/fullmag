@@ -577,6 +577,13 @@ fn fem_backend_with_mesh_asset_plans_successfully() {
         }],
         fem_domain_mesh_asset: None,
     });
+    ir.energy_terms = vec![
+        fullmag_ir::EnergyTermIR::Exchange,
+        fullmag_ir::EnergyTermIR::InterfacialDmi {
+            d: 3.0e-3,
+            interface_normal: Some([0.0, 0.0, 2.0]),
+        },
+    ];
 
     let plan = plan(&ir).expect("FEM mesh asset should produce a FemPlanIR");
     match plan.backend_plan {
@@ -592,9 +599,73 @@ fn fem_backend_with_mesh_asset_plans_successfully() {
                 fullmag_ir::FemMeshPartRole::MagneticObject
             );
             assert_eq!(fem.mesh_parts[0].material_id.as_deref(), Some("Py"));
+            assert_eq!(fem.interfacial_dmi, Some(3.0e-3));
+            let normal = fem
+                .dmi_interface_normal
+                .expect("planner should propagate normalized iDMI interface_normal");
+            assert!(normal[0].abs() <= 1e-12);
+            assert!(normal[1].abs() <= 1e-12);
+            assert!((normal[2] - 1.0).abs() <= 1e-12);
         }
         _ => panic!("expected FEM plan"),
     }
+}
+
+#[test]
+fn fem_backend_interfacial_dmi_requires_explicit_interface_normal_in_strict_mode() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+        fdm: Some(fullmag_ir::FdmHintsIR {
+            cell: [2e-9, 2e-9, 5e-9],
+            default_cell: None,
+            per_magnet: None,
+            demag: None,
+            boundary_correction: None,
+        }),
+        fem: Some(fullmag_ir::FemHintsIR {
+            order: 1,
+            hmax: 2e-9,
+            mesh: Some("meshes/unit_tet.msh".to_string()),
+        }),
+        hybrid: None,
+    });
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
+            geometry_name: "strip".to_string(),
+            mesh_source: Some("meshes/unit_tet.msh".to_string()),
+            mesh: Some(fullmag_ir::MeshIR {
+                mesh_name: "strip".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                elements: vec![[0, 1, 2, 3]],
+                element_markers: vec![1],
+                boundary_faces: vec![[0, 1, 2]],
+                boundary_markers: vec![1],
+                periodic_boundary_pairs: Vec::new(),
+                periodic_node_pairs: Vec::new(),
+                per_domain_quality: std::collections::HashMap::new(),
+            }),
+        }],
+        fem_domain_mesh_asset: None,
+    });
+    ir.energy_terms = vec![fullmag_ir::EnergyTermIR::InterfacialDmi {
+        d: 3.0e-3,
+        interface_normal: None,
+    }];
+
+    let error = plan(&ir).expect_err(
+        "strict FEM planning should reject InterfacialDmi without explicit interface_normal",
+    );
+    assert!(error.reasons.iter().any(|reason| {
+        reason.contains("InterfacialDmi.interface_normal")
+            && reason.contains("strict execution mode")
+    }));
 }
 
 #[test]
@@ -656,6 +727,10 @@ fn fem_plan_serializes_mesh_parts() {
 fn fem_backend_with_air_elements_lowers_study_universe_to_air_box_config() {
     let mut ir = ProblemIR::bootstrap_example();
     ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.air_box_policy = Some(fullmag_ir::AirBoxPolicyIR {
+        boundary_marker: Some(99),
+        ..Default::default()
+    });
     ir.problem_meta.runtime_metadata.insert(
         "study_universe".to_string(),
         serde_json::json!({
@@ -721,9 +796,14 @@ fn fem_backend_with_air_elements_lowers_study_universe_to_air_box_config() {
                 fem.demag_realization,
                 Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin)
             );
-            assert!(
-                fem.air_box_config.is_some(),
-                "shared-domain poisson demag should lower an air-box config"
+            let air_box = fem
+                .air_box_config
+                .as_ref()
+                .expect("shared-domain poisson demag should lower an air-box config");
+            assert_eq!(air_box.boundary_marker, 99);
+            assert_eq!(
+                air_box.boundary_marker_source.as_deref(),
+                Some("user_policy")
             );
         }
         _ => panic!("expected FEM plan"),
@@ -733,6 +813,161 @@ fn fem_backend_with_air_elements_lowers_study_universe_to_air_box_config() {
         .notes
         .iter()
         .any(|note| note.contains("FEM air-box configuration")));
+}
+
+/// When marker 99 (the well-known gmsh convention) is present in boundary_markers,
+/// strict mode should auto-detect it and succeed — it is not a guess.
+#[test]
+fn fem_backend_with_air_elements_accepts_marker_99_in_strict_mode() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.problem_meta.runtime_metadata.insert(
+        "study_universe".to_string(),
+        serde_json::json!({
+            "mode": "manual",
+            "size": [8.0, 6.0, 4.0],
+            "center": [0.5, 0.25, -0.125],
+        }),
+    );
+    ir.energy_terms = vec![
+        fullmag_ir::EnergyTermIR::Exchange,
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
+    ];
+    ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+        fdm: Some(fullmag_ir::FdmHintsIR {
+            cell: [2e-9, 2e-9, 5e-9],
+            default_cell: None,
+            per_magnet: None,
+            demag: None,
+            boundary_correction: None,
+        }),
+        fem: Some(fullmag_ir::FemHintsIR {
+            order: 1,
+            hmax: 2e-9,
+            mesh: None,
+        }),
+        hybrid: None,
+    });
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
+            geometry_name: "strip".to_string(),
+            mesh_source: None,
+            mesh: Some(fullmag_ir::MeshIR {
+                mesh_name: "strip".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [-2.0, -2.0, -2.0],
+                    [2.0, -2.0, -2.0],
+                    [-2.0, 2.0, -2.0],
+                    [-2.0, -2.0, 2.0],
+                ],
+                elements: vec![[0, 1, 2, 3], [4, 5, 6, 7]],
+                element_markers: vec![1, 0],
+                boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
+                boundary_markers: vec![1, 99],
+                periodic_boundary_pairs: Vec::new(),
+                periodic_node_pairs: Vec::new(),
+                per_domain_quality: std::collections::HashMap::new(),
+            }),
+        }],
+        fem_domain_mesh_asset: None,
+    });
+
+    let result = plan(&ir).expect(
+        "strict mode should accept marker 99 (well-known gmsh convention) without explicit air_box_policy",
+    );
+    let fem = match &result.backend_plan {
+        fullmag_ir::BackendPlanIR::Fem(fem) => fem,
+        _ => panic!("expected FEM plan"),
+    };
+    let air_box = fem
+        .air_box_config
+        .as_ref()
+        .expect("air_box_config should be present");
+    assert_eq!(air_box.boundary_marker, 99);
+    assert_eq!(
+        air_box.boundary_marker_source.as_deref(),
+        Some("mesh_marker_99")
+    );
+}
+
+/// When marker 99 is NOT present and no explicit boundary_marker is set,
+/// strict mode should still reject the plan.
+#[test]
+fn fem_backend_with_air_elements_rejects_unknown_boundary_marker_in_strict_mode() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.problem_meta.runtime_metadata.insert(
+        "study_universe".to_string(),
+        serde_json::json!({
+            "mode": "manual",
+            "size": [8.0, 6.0, 4.0],
+            "center": [0.5, 0.25, -0.125],
+        }),
+    );
+    ir.energy_terms = vec![
+        fullmag_ir::EnergyTermIR::Exchange,
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
+    ];
+    ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+        fdm: Some(fullmag_ir::FdmHintsIR {
+            cell: [2e-9, 2e-9, 5e-9],
+            default_cell: None,
+            per_magnet: None,
+            demag: None,
+            boundary_correction: None,
+        }),
+        fem: Some(fullmag_ir::FemHintsIR {
+            order: 1,
+            hmax: 2e-9,
+            mesh: None,
+        }),
+        hybrid: None,
+    });
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
+            geometry_name: "strip".to_string(),
+            mesh_source: None,
+            mesh: Some(fullmag_ir::MeshIR {
+                mesh_name: "strip".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [-2.0, -2.0, -2.0],
+                    [2.0, -2.0, -2.0],
+                    [-2.0, 2.0, -2.0],
+                    [-2.0, -2.0, 2.0],
+                ],
+                elements: vec![[0, 1, 2, 3], [4, 5, 6, 7]],
+                element_markers: vec![1, 0],
+                boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
+                boundary_markers: vec![1, 42],
+                periodic_boundary_pairs: Vec::new(),
+                periodic_node_pairs: Vec::new(),
+                per_domain_quality: std::collections::HashMap::new(),
+            }),
+        }],
+        fem_domain_mesh_asset: None,
+    });
+
+    let error = plan(&ir).expect_err(
+        "strict FEM air-box planning should reject when marker 99 is absent and no explicit boundary_marker",
+    );
+    assert!(error.reasons.iter().any(|reason| {
+        reason.contains("air_box_policy.boundary_marker")
+            && reason.contains("strict execution mode")
+    }));
 }
 
 #[test]
@@ -2198,6 +2433,10 @@ fn fem_eigen_backend_with_mesh_asset_plans_successfully() {
     });
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
+        fullmag_ir::EnergyTermIR::InterfacialDmi {
+            d: 2.5e-3,
+            interface_normal: Some([0.0, 3.0, 4.0]),
+        },
         fullmag_ir::EnergyTermIR::Demag {
             realization: fullmag_ir::RequestedFemDemagIR::Auto,
         },
@@ -2240,9 +2479,94 @@ fn fem_eigen_backend_with_mesh_asset_plans_successfully() {
             assert!(fem.enable_exchange);
             assert!(!fem.enable_demag);
             assert_eq!(fem.normalization, fullmag_ir::EigenNormalizationIR::UnitL2);
+            assert_eq!(fem.interfacial_dmi, Some(2.5e-3));
+            let normal = fem
+                .dmi_interface_normal
+                .expect("planner should propagate normalized iDMI interface_normal");
+            assert!(normal[0].abs() <= 1e-12);
+            assert!((normal[1] - 0.6).abs() <= 1e-12);
+            assert!((normal[2] - 0.8).abs() <= 1e-12);
         }
         other => panic!("expected FEM eigen plan, got {other:?}"),
     }
+}
+
+#[test]
+fn fem_eigen_backend_interfacial_dmi_requires_explicit_interface_normal_in_strict_mode() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
+        fdm: Some(fullmag_ir::FdmHintsIR {
+            cell: [2e-9, 2e-9, 5e-9],
+            default_cell: None,
+            per_magnet: None,
+            demag: None,
+            boundary_correction: None,
+        }),
+        fem: Some(fullmag_ir::FemHintsIR {
+            order: 1,
+            hmax: 2e-9,
+            mesh: Some("meshes/unit_tet.msh".to_string()),
+        }),
+        hybrid: None,
+    });
+    ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
+        fdm_grid_assets: vec![],
+        fem_mesh_assets: vec![fullmag_ir::FemMeshAssetIR {
+            geometry_name: "strip".to_string(),
+            mesh_source: Some("meshes/unit_tet.msh".to_string()),
+            mesh: Some(fullmag_ir::MeshIR {
+                mesh_name: "strip".to_string(),
+                nodes: vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                elements: vec![[0, 1, 2, 3]],
+                element_markers: vec![1],
+                boundary_faces: vec![[0, 1, 2]],
+                boundary_markers: vec![1],
+                periodic_boundary_pairs: Vec::new(),
+                periodic_node_pairs: Vec::new(),
+                per_domain_quality: std::collections::HashMap::new(),
+            }),
+        }],
+        fem_domain_mesh_asset: None,
+    });
+    ir.energy_terms = vec![fullmag_ir::EnergyTermIR::InterfacialDmi {
+        d: 3.0e-3,
+        interface_normal: None,
+    }];
+    ir.study = fullmag_ir::StudyIR::Eigenmodes {
+        dynamics: ir.study.dynamics().clone(),
+        operator: fullmag_ir::EigenOperatorConfigIR {
+            kind: fullmag_ir::EigenOperatorIR::LinearizedLlg,
+            include_demag: false,
+        },
+        count: 5,
+        target: fullmag_ir::EigenTargetIR::Lowest,
+        equilibrium: fullmag_ir::EquilibriumSourceIR::Provided,
+        k_sampling: Some(fullmag_ir::KSamplingIR::Single {
+            k_vector: [0.0, 0.0, 0.0],
+        }),
+        normalization: fullmag_ir::EigenNormalizationIR::UnitL2,
+        damping_policy: fullmag_ir::EigenDampingPolicyIR::Ignore,
+        spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
+        sampling: fullmag_ir::SamplingIR {
+            outputs: vec![fullmag_ir::OutputIR::EigenSpectrum {
+                quantity: "eigenfrequency".to_string(),
+            }],
+        },
+    };
+
+    let error = plan(&ir).expect_err(
+        "strict FEM eigen planning should reject InterfacialDmi without explicit interface_normal",
+    );
+    assert!(error.reasons.iter().any(|reason| {
+        reason.contains("InterfacialDmi.interface_normal")
+            && reason.contains("strict execution mode")
+    }));
 }
 
 #[test]
@@ -2744,6 +3068,10 @@ fn fem_plan_succeeds_when_shared_domain_has_domain_mesh_asset() {
     // Same setup as above but WITH a fem_domain_mesh_asset → should succeed
     let mut ir = ProblemIR::bootstrap_example();
     ir.backend_policy.requested_backend = BackendTarget::Fem;
+    ir.air_box_policy = Some(fullmag_ir::AirBoxPolicyIR {
+        boundary_marker: Some(99),
+        ..Default::default()
+    });
     ir.problem_meta.runtime_metadata.insert(
         "study_universe".to_string(),
         serde_json::json!({

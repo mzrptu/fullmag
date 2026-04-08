@@ -188,10 +188,15 @@ install-cli install-cli-dev install-cli-static:
 			'export PYTHONPATH="$$REPO_ROOT/packages/fullmag-py/src$${PYTHONPATH:+:$$PYTHONPATH}"' \
 			'export FULLMAG_FEM_MESH_CACHE_DIR="$$REPO_ROOT/.fullmag/local/cache/fem_mesh_assets"' \
 			'LOCAL_LD_LIBRARY_PATH="$$SELF_DIR/../lib$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}"' \
+			'LAUNCHER_BUILD_MODE="$$(cat "$$SELF_DIR/../launcher-build-mode" 2>/dev/null || echo cpu)"' \
+			'ALLOW_MANAGED_RUNTIME="0"' \
+			'case "$$LAUNCHER_BUILD_MODE" in' \
+			'  managed-fem-gpu-host|cuda+managed-fem-gpu-host) ALLOW_MANAGED_RUNTIME="1" ;;' \
+			'esac' \
 			'MANAGED_RUNTIME_ROOT="$${SELF_DIR}/../../runtimes/fem-gpu-host"' \
 			'MANAGED_RUNTIME_BIN="$${MANAGED_RUNTIME_ROOT}/bin/fullmag-fem-gpu-bin"' \
 			'RESOLVE_RUNTIME_OUTPUT=""' \
-			'if [ "$${FULLMAG_DISABLE_MANAGED_FEM_GPU_RUNTIME:-0}" != "1" ] && [ -x "$$MANAGED_RUNTIME_BIN" ]; then' \
+			'if [ "$$ALLOW_MANAGED_RUNTIME" = "1" ] && [ "$${FULLMAG_DISABLE_MANAGED_FEM_GPU_RUNTIME:-0}" != "1" ] && [ -x "$$MANAGED_RUNTIME_BIN" ]; then' \
 			'  RESOLVE_RUNTIME_OUTPUT="$$(LD_LIBRARY_PATH="$$LOCAL_LD_LIBRARY_PATH" "$$SELF_DIR/fullmag-bin" resolve-runtime-invocation --shell -- "$$@" 2>/dev/null || true)"' \
 			'fi' \
 			'PREFERRED_RUNTIME_FAMILY=""' \
@@ -214,7 +219,7 @@ install-cli install-cli-dev install-cli-static:
 			'    SHOULD_USE_MANAGED_RUNTIME="1"' \
 			'  fi' \
 			'fi' \
-			'if [ "$$SHOULD_USE_MANAGED_RUNTIME" = "1" ] && [ "$${FULLMAG_DISABLE_MANAGED_FEM_GPU_RUNTIME:-0}" != "1" ] && [ -x "$$MANAGED_RUNTIME_BIN" ]; then' \
+			'if [ "$$ALLOW_MANAGED_RUNTIME" = "1" ] && [ "$$SHOULD_USE_MANAGED_RUNTIME" = "1" ] && [ "$${FULLMAG_DISABLE_MANAGED_FEM_GPU_RUNTIME:-0}" != "1" ] && [ -x "$$MANAGED_RUNTIME_BIN" ]; then' \
 			'  export LD_LIBRARY_PATH="$$MANAGED_RUNTIME_ROOT/lib:$$LOCAL_LD_LIBRARY_PATH"' \
 			'  exec "$$MANAGED_RUNTIME_BIN" "$$@"' \
 			'fi' \

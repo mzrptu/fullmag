@@ -484,7 +484,7 @@ pub(crate) fn plan_fdm(
                     }
                 }
             }
-            EnergyTermIR::InterfacialDmi { d } => {
+            EnergyTermIR::InterfacialDmi { d, .. } => {
                 fdm_plan.interfacial_dmi = Some(*d);
             }
             EnergyTermIR::BulkDmi { d } => {

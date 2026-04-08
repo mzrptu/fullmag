@@ -392,7 +392,11 @@ mod tests {
         assert_eq!(variants.len(), 12);
         // Verify sequential discriminants 1..=12
         for (i, v) in variants.iter().enumerate() {
-            assert_eq!(*v as i32, (i + 1) as i32, "variant {i} discriminant mismatch");
+            assert_eq!(
+                *v as i32,
+                (i + 1) as i32,
+                "variant {i} discriminant mismatch"
+            );
         }
     }
 

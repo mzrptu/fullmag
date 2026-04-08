@@ -498,6 +498,9 @@ pub struct FemLlgProblem {
     pub material: MaterialParameters,
     pub dynamics: LlgConfig,
     pub terms: EffectiveFieldTerms,
+    /// Interface normal used by interfacial DMI in FEM reference path.
+    /// Defaults to +z and is normalized internally before use.
+    pub dmi_interface_normal: Vector3,
     pub demag_transfer_cell_size_hint: Option<[f64; 3]>,
     /// FND-012: Override the default sparse CG tolerance (default: 1e-10).
     pub sparse_cg_tol: Option<f64>,
@@ -522,6 +525,7 @@ impl FemLlgProblem {
             material,
             dynamics,
             terms,
+            dmi_interface_normal: [0.0, 0.0, 1.0],
             demag_transfer_cell_size_hint: None,
             sparse_cg_tol: None,
             sparse_cg_max_iter: None,
@@ -544,6 +548,7 @@ impl FemLlgProblem {
             material,
             dynamics,
             terms,
+            dmi_interface_normal: [0.0, 0.0, 1.0],
             demag_transfer_cell_size_hint,
             sparse_cg_tol: None,
             sparse_cg_max_iter: None,
@@ -574,12 +579,22 @@ impl FemLlgProblem {
             material,
             dynamics,
             terms,
+            dmi_interface_normal: [0.0, 0.0, 1.0],
             demag_transfer_cell_size_hint: None,
             sparse_cg_tol: None,
             sparse_cg_max_iter: None,
             cell_size_extent_fraction: None,
             demag_csr,
             demag_dirichlet_boundary: dirichlet_boundary,
+        }
+    }
+
+    pub fn set_dmi_interface_normal(&mut self, normal: Vector3) {
+        let n = norm(normal);
+        if n > ZERO_THRESHOLD && normal.iter().all(|component| component.is_finite()) {
+            self.dmi_interface_normal = scale(normal, 1.0 / n);
+        } else {
+            self.dmi_interface_normal = [0.0, 0.0, 1.0];
         }
     }
 
@@ -1193,67 +1208,41 @@ impl FemLlgProblem {
         };
         let external_field = self.external_field_vectors();
 
-        // FND-011: compute anisotropy field (uniaxial + cubic) for FEM CPU reference.
-        let anisotropy_field = {
-            let ms = self.material.saturation_magnetisation.max(1e-30);
-            let has_uni = self.terms.uniaxial_anisotropy.is_some();
-            let has_cub = self.terms.cubic_anisotropy.is_some();
-            if !has_uni && !has_cub {
-                vec![[0.0, 0.0, 0.0]; n]
-            } else {
-                magnetization.iter().map(|m| {
-                    let mut h = [0.0f64, 0.0, 0.0];
-                    if let Some(ref uni) = self.terms.uniaxial_anisotropy {
-                        let n_u = norm(uni.axis).max(1e-30);
-                        let u = scale(uni.axis, 1.0 / n_u);
-                        let m_dot_u = dot(*m, u);
-                        let coeff = 2.0 * uni.ku1 / (MU0 * ms) * m_dot_u
-                            + 4.0 * uni.ku2 / (MU0 * ms) * m_dot_u * m_dot_u * m_dot_u;
-                        h = add(h, scale(u, coeff));
-                    }
-                    if let Some(ref cub) = self.terms.cubic_anisotropy {
-                        let n1 = norm(cub.axis1).max(1e-30);
-                        let n2 = norm(cub.axis2).max(1e-30);
-                        let c1 = scale(cub.axis1, 1.0 / n1);
-                        let c2 = scale(cub.axis2, 1.0 / n2);
-                        let c3 = cross(c1, c2);
-                        let m1 = dot(*m, c1);
-                        let m2 = dot(*m, c2);
-                        let m3 = dot(*m, c3);
-                        let pf = 2.0 / (MU0 * ms);
-                        let g1 = -pf * (cub.kc1 * m1 * (m2 * m2 + m3 * m3)
-                            + cub.kc2 * m1 * m2 * m2 * m3 * m3);
-                        let g2 = -pf * (cub.kc1 * m2 * (m1 * m1 + m3 * m3)
-                            + cub.kc2 * m2 * m1 * m1 * m3 * m3);
-                        let g3 = -pf * (cub.kc1 * m3 * (m1 * m1 + m2 * m2)
-                            + cub.kc2 * m3 * m1 * m1 * m2 * m2);
-                        h = add(h, add(add(scale(c1, g1), scale(c2, g2)), scale(c3, g3)));
-                    }
-                    h
-                }).collect::<Vec<_>>()
-            }
-        };
-
-        // FND-011: interfacial DMI field (Néel-type, z-normal approximation for CPU ref).
-        // Full gradient-based iDMI would require the FEM stiffness approach;
-        // this is a placeholder that logs a warning if iDMI is requested.
-        let _dmi_field = vec![[0.0, 0.0, 0.0]; n];
-        if self.terms.interfacial_dmi.is_some() {
-            // TODO: implement gradient-based interfacial DMI for FEM CPU reference
-        }
-        if self.terms.bulk_dmi.is_some() {
-            // TODO: implement gradient-based bulk DMI for FEM CPU reference
-            // (requires curl computation on unstructured mesh)
-        }
+        // FND-011: compute anisotropy + DMI fields for FEM CPU reference.
+        let anisotropy_field = self.anisotropy_field_from_vectors(magnetization);
+        let (interfacial_dmi_field, bulk_dmi_field) = self.dmi_fields_from_vectors(magnetization);
 
         #[cfg(feature = "parallel")]
-        let effective_field = (0..n).into_par_iter().map(|i| {
-            add(add(add(exchange_field[i], demag_field[i]), external_field[i]), anisotropy_field[i])
-        }).collect::<Vec<_>>();
+        let effective_field = (0..n)
+            .into_par_iter()
+            .map(|i| {
+                add(
+                    add(
+                        add(
+                            add(exchange_field[i], demag_field[i]),
+                            add(external_field[i], anisotropy_field[i]),
+                        ),
+                        interfacial_dmi_field[i],
+                    ),
+                    bulk_dmi_field[i],
+                )
+            })
+            .collect::<Vec<_>>();
         #[cfg(not(feature = "parallel"))]
-        let effective_field = (0..n).map(|i| {
-            add(add(add(exchange_field[i], demag_field[i]), external_field[i]), anisotropy_field[i])
-        }).collect::<Vec<_>>();
+        let effective_field = (0..n)
+            .map(|i| {
+                add(
+                    add(
+                        add(
+                            add(exchange_field[i], demag_field[i]),
+                            add(external_field[i], anisotropy_field[i]),
+                        ),
+                        interfacial_dmi_field[i],
+                    ),
+                    bulk_dmi_field[i],
+                )
+            })
+            .collect::<Vec<_>>();
         let magnetic_node_volumes = &self.topology.magnetic_node_volumes;
         #[cfg(feature = "parallel")]
         let rhs = magnetization
@@ -1620,6 +1609,152 @@ impl FemLlgProblem {
         field
     }
 
+    fn anisotropy_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {
+        let ms = self.material.saturation_magnetisation.max(ZERO_THRESHOLD);
+        let has_uni = self.terms.uniaxial_anisotropy.is_some();
+        let has_cub = self.terms.cubic_anisotropy.is_some();
+        if !has_uni && !has_cub {
+            return vec![[0.0, 0.0, 0.0]; self.topology.n_nodes];
+        }
+        magnetization
+            .iter()
+            .map(|m| {
+                let mut h = [0.0f64, 0.0, 0.0];
+                if let Some(ref uni) = self.terms.uniaxial_anisotropy {
+                    let n_u = norm(uni.axis).max(ZERO_THRESHOLD);
+                    let u = scale(uni.axis, 1.0 / n_u);
+                    let m_dot_u = dot(*m, u);
+                    let coeff = 2.0 * uni.ku1 / (MU0 * ms) * m_dot_u
+                        + 4.0 * uni.ku2 / (MU0 * ms) * m_dot_u * m_dot_u * m_dot_u;
+                    h = add(h, scale(u, coeff));
+                }
+                if let Some(ref cub) = self.terms.cubic_anisotropy {
+                    let n1 = norm(cub.axis1).max(ZERO_THRESHOLD);
+                    let n2 = norm(cub.axis2).max(ZERO_THRESHOLD);
+                    let c1 = scale(cub.axis1, 1.0 / n1);
+                    let c2 = scale(cub.axis2, 1.0 / n2);
+                    let c3 = cross(c1, c2);
+                    let m1 = dot(*m, c1);
+                    let m2 = dot(*m, c2);
+                    let m3 = dot(*m, c3);
+                    let pf = 2.0 / (MU0 * ms);
+                    let g1 = -pf
+                        * (cub.kc1 * m1 * (m2 * m2 + m3 * m3) + cub.kc2 * m1 * m2 * m2 * m3 * m3);
+                    let g2 = -pf
+                        * (cub.kc1 * m2 * (m1 * m1 + m3 * m3) + cub.kc2 * m2 * m1 * m1 * m3 * m3);
+                    let g3 = -pf
+                        * (cub.kc1 * m3 * (m1 * m1 + m2 * m2) + cub.kc2 * m3 * m1 * m1 * m2 * m2);
+                    h = add(h, add(add(scale(c1, g1), scale(c2, g2)), scale(c3, g3)));
+                }
+                h
+            })
+            .collect::<Vec<_>>()
+    }
+
+    fn dmi_fields_from_vectors(&self, magnetization: &[Vector3]) -> (Vec<Vector3>, Vec<Vector3>) {
+        let n_nodes = self.topology.n_nodes;
+        let interfacial_d = self
+            .terms
+            .interfacial_dmi
+            .filter(|d| d.abs() > ZERO_THRESHOLD);
+        let bulk_d = self.terms.bulk_dmi.filter(|d| d.abs() > ZERO_THRESHOLD);
+        if interfacial_d.is_none() && bulk_d.is_none() {
+            return (
+                vec![[0.0, 0.0, 0.0]; n_nodes],
+                vec![[0.0, 0.0, 0.0]; n_nodes],
+            );
+        }
+
+        let ms = self.material.saturation_magnetisation.max(ZERO_THRESHOLD);
+        let interfacial_pf = interfacial_d.map(|d| 2.0 * d / (MU0 * ms));
+        let bulk_pf = bulk_d.map(|d| -2.0 * d / (MU0 * ms));
+
+        let mut n_hat = self.dmi_interface_normal;
+        if n_hat.iter().any(|component| !component.is_finite()) || norm(n_hat) <= ZERO_THRESHOLD {
+            n_hat = [0.0, 0.0, 1.0];
+        } else {
+            let inv_norm = norm(n_hat).recip();
+            n_hat = scale(n_hat, inv_norm);
+        }
+
+        let mut interfacial_accum = vec![[0.0, 0.0, 0.0]; n_nodes];
+        let mut bulk_accum = vec![[0.0, 0.0, 0.0]; n_nodes];
+
+        for (element_index, element) in self.topology.elements.iter().enumerate() {
+            if !self.topology.magnetic_element_mask[element_index] {
+                continue;
+            }
+
+            let gradients = self.topology.grad_phi[element_index];
+            // grad_m[comp][dir] = ∂ m_comp / ∂ dir, constant over a P1 tetra.
+            let mut grad_m = [[0.0f64; 3]; 3];
+            for local_index in 0..4 {
+                let node = element[local_index] as usize;
+                let m = magnetization[node];
+                let g = gradients[local_index];
+                for comp in 0..3 {
+                    grad_m[comp][0] += m[comp] * g[0];
+                    grad_m[comp][1] += m[comp] * g[1];
+                    grad_m[comp][2] += m[comp] * g[2];
+                }
+            }
+
+            let volume_weight = self.topology.element_volumes[element_index] * 0.25;
+
+            let interfacial_elem = if let Some(pf) = interfacial_pf {
+                let div_m = grad_m[0][0] + grad_m[1][1] + grad_m[2][2];
+                let grad_m_dot_n = [
+                    n_hat[0] * grad_m[0][0] + n_hat[1] * grad_m[1][0] + n_hat[2] * grad_m[2][0],
+                    n_hat[0] * grad_m[0][1] + n_hat[1] * grad_m[1][1] + n_hat[2] * grad_m[2][1],
+                    n_hat[0] * grad_m[0][2] + n_hat[1] * grad_m[1][2] + n_hat[2] * grad_m[2][2],
+                ];
+                scale(sub(grad_m_dot_n, scale(n_hat, div_m)), pf)
+            } else {
+                [0.0, 0.0, 0.0]
+            };
+
+            let bulk_elem = if let Some(pf) = bulk_pf {
+                let curl_m = [
+                    grad_m[2][1] - grad_m[1][2],
+                    grad_m[0][2] - grad_m[2][0],
+                    grad_m[1][0] - grad_m[0][1],
+                ];
+                scale(curl_m, pf)
+            } else {
+                [0.0, 0.0, 0.0]
+            };
+
+            for &node_u32 in element {
+                let node = node_u32 as usize;
+                if interfacial_pf.is_some() {
+                    interfacial_accum[node] = add(
+                        interfacial_accum[node],
+                        scale(interfacial_elem, volume_weight),
+                    );
+                }
+                if bulk_pf.is_some() {
+                    bulk_accum[node] = add(bulk_accum[node], scale(bulk_elem, volume_weight));
+                }
+            }
+        }
+
+        let mut interfacial_field = vec![[0.0, 0.0, 0.0]; n_nodes];
+        let mut bulk_field = vec![[0.0, 0.0, 0.0]; n_nodes];
+        for node in 0..n_nodes {
+            let lumped_mass = self.topology.magnetic_node_volumes[node];
+            if lumped_mass > ZERO_THRESHOLD {
+                let inv_mass = lumped_mass.recip();
+                if interfacial_pf.is_some() {
+                    interfacial_field[node] = scale(interfacial_accum[node], inv_mass);
+                }
+                if bulk_pf.is_some() {
+                    bulk_field[node] = scale(bulk_accum[node], inv_mass);
+                }
+            }
+        }
+        (interfacial_field, bulk_field)
+    }
+
     fn external_field_vectors(&self) -> Vec<Vector3> {
         let external = self.terms.external_field.unwrap_or([0.0, 0.0, 0.0]);
         let per_node_field = self.terms.per_node_field.as_deref();
@@ -1682,7 +1817,7 @@ impl FemLlgProblem {
             .sum()
     }
 
-    /// Compute the effective field (exchange + demag + external) without
+    /// Compute the effective field (exchange + demag + external + anisotropy + DMI) without
     /// computing energies, norms, or RHS.  This is the lightweight path
     /// used by integrators that only need H_eff for the RHS evaluation.
     fn effective_field_from_vectors(&self, magnetization: &[Vector3]) -> Result<Vec<Vector3>> {
@@ -1697,19 +1832,32 @@ impl FemLlgProblem {
             (vec![[0.0, 0.0, 0.0]; self.topology.n_nodes], 0.0)
         };
         let external_field = self.external_field_vectors();
+        let anisotropy_field = self.anisotropy_field_from_vectors(magnetization);
+        let (interfacial_dmi_field, bulk_dmi_field) = self.dmi_fields_from_vectors(magnetization);
         #[cfg(feature = "parallel")]
-        return Ok(exchange_field
-            .par_iter()
-            .zip(demag_field.par_iter())
-            .zip(external_field.par_iter())
-            .map(|((h_ex, h_demag), h_ext)| add(add(*h_ex, *h_demag), *h_ext))
+        return Ok((0..self.topology.n_nodes)
+            .into_par_iter()
+            .map(|i| {
+                add(
+                    add(
+                        add(exchange_field[i], demag_field[i]),
+                        add(external_field[i], anisotropy_field[i]),
+                    ),
+                    add(interfacial_dmi_field[i], bulk_dmi_field[i]),
+                )
+            })
             .collect());
         #[cfg(not(feature = "parallel"))]
-        Ok(exchange_field
-            .iter()
-            .zip(demag_field.iter())
-            .zip(external_field.iter())
-            .map(|((h_ex, h_demag), h_ext)| add(add(*h_ex, *h_demag), *h_ext))
+        Ok((0..self.topology.n_nodes)
+            .map(|i| {
+                add(
+                    add(
+                        add(exchange_field[i], demag_field[i]),
+                        add(external_field[i], anisotropy_field[i]),
+                    ),
+                    add(interfacial_dmi_field[i], bulk_dmi_field[i]),
+                )
+            })
             .collect())
     }
 
@@ -1789,9 +1937,10 @@ impl FemLlgProblem {
             / self.topology.n_nodes.max(1) as f64)
             .cbrt();
         // FND-012: use overridable cell-size extent fraction
-        let frac = self.cell_size_extent_fraction.unwrap_or(CELL_SIZE_EXTENT_FRACTION);
-        let h = characteristic_volume
-            .max(extent[2].min(extent[0].min(extent[1])) * frac);
+        let frac = self
+            .cell_size_extent_fraction
+            .unwrap_or(CELL_SIZE_EXTENT_FRACTION);
+        let h = characteristic_volume.max(extent[2].min(extent[0].min(extent[1])) * frac);
         [h, h, h]
     }
 
@@ -1864,9 +2013,9 @@ impl FemLlgProblem {
                             for c in 0..3 {
                                 cell_magnetization[index][c] +=
                                     barycentric[0] * local_m[0][c] * ms_scale[0]
-                                    + barycentric[1] * local_m[1][c] * ms_scale[1]
-                                    + barycentric[2] * local_m[2][c] * ms_scale[2]
-                                    + barycentric[3] * local_m[3][c] * ms_scale[3];
+                                        + barycentric[1] * local_m[1][c] * ms_scale[1]
+                                        + barycentric[2] * local_m[2][c] * ms_scale[2]
+                                        + barycentric[3] * local_m[3][c] * ms_scale[3];
                             }
                             cell_hit_count[index] += 1;
                         }
@@ -2599,18 +2748,27 @@ mod tests {
                 [-20e-9, 10e-9, 5e-9],
             ],
             elements: vec![
-                [0, 5, 1, 6],  // element 4 moved to front
-                [0, 1, 2, 6],  // element 0
-                [0, 7, 4, 6],  // element 3
-                [0, 2, 3, 6],  // element 1
-                [0, 4, 5, 6],  // element 4 (original)
-                [0, 3, 7, 6],  // element 2
+                [0, 5, 1, 6], // element 4 moved to front
+                [0, 1, 2, 6], // element 0
+                [0, 7, 4, 6], // element 3
+                [0, 2, 3, 6], // element 1
+                [0, 4, 5, 6], // element 4 (original)
+                [0, 3, 7, 6], // element 2
             ],
             element_markers: vec![1, 1, 1, 1, 1, 1],
             boundary_faces: vec![
-                [0, 1, 2], [0, 1, 5], [1, 2, 6], [0, 2, 3],
-                [2, 3, 6], [0, 3, 7], [3, 6, 7], [0, 4, 7],
-                [4, 6, 7], [0, 4, 5], [4, 5, 6], [1, 5, 6],
+                [0, 1, 2],
+                [0, 1, 5],
+                [1, 2, 6],
+                [0, 2, 3],
+                [2, 3, 6],
+                [0, 3, 7],
+                [3, 6, 7],
+                [0, 4, 7],
+                [4, 6, 7],
+                [0, 4, 5],
+                [4, 5, 6],
+                [1, 5, 6],
             ],
             boundary_markers: vec![1; 12],
             periodic_boundary_pairs: Vec::new(),
@@ -2702,6 +2860,118 @@ mod tests {
         assert!(
             obs.max_effective_field_amplitude > 1e3,
             "cubic anisotropy should produce non-zero H_eff, got {}",
+            obs.max_effective_field_amplitude
+        );
+    }
+
+    #[test]
+    fn interfacial_dmi_field_uses_configured_interface_normal() {
+        let mesh = MeshIR {
+            mesh_name: "tet_idmi".to_string(),
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            elements: vec![[0, 1, 2, 3]],
+            element_markers: vec![1],
+            boundary_faces: vec![[0, 1, 2]],
+            boundary_markers: vec![1],
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+            per_domain_quality: std::collections::HashMap::new(),
+        };
+        let topo = MeshTopology::from_ir(&mesh).expect("topo");
+        let mut problem_z = FemLlgProblem::with_terms(
+            topo.clone(),
+            MaterialParameters::new(800e3, 13e-12, 0.5).expect("material"),
+            LlgConfig::new(DEFAULT_GYROMAGNETIC_RATIO, TimeIntegrator::Heun).expect("llg"),
+            EffectiveFieldTerms {
+                exchange: false,
+                demag: false,
+                external_field: None,
+                per_node_field: None,
+                magnetoelastic: None,
+                interfacial_dmi: Some(3e-3),
+                ..Default::default()
+            },
+        );
+        problem_z.set_dmi_interface_normal([0.0, 0.0, 1.0]);
+        let mut problem_x = problem_z.clone();
+        problem_x.set_dmi_interface_normal([1.0, 0.0, 0.0]);
+
+        let mag: Vec<Vector3> = vec![
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ];
+        let state_z = problem_z.new_state(mag.clone()).expect("state z");
+        let state_x = problem_x.new_state(mag).expect("state x");
+        let obs_z = problem_z.observe(&state_z).expect("obs z");
+        let obs_x = problem_x.observe(&state_x).expect("obs x");
+
+        assert!(
+            obs_z.max_effective_field_amplitude > 1e-6,
+            "interfacial DMI should produce non-zero field for non-uniform m",
+        );
+        let max_diff = obs_z
+            .effective_field
+            .iter()
+            .zip(obs_x.effective_field.iter())
+            .map(|(a, b)| norm(sub(*a, *b)))
+            .fold(0.0, f64::max);
+        assert!(
+            max_diff > 1e-6,
+            "changing interface normal should change iDMI field, max diff={max_diff}",
+        );
+    }
+
+    #[test]
+    fn bulk_dmi_field_changes_effective_field() {
+        let mesh = MeshIR {
+            mesh_name: "tet_bulk_dmi".to_string(),
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            elements: vec![[0, 1, 2, 3]],
+            element_markers: vec![1],
+            boundary_faces: vec![[0, 1, 2]],
+            boundary_markers: vec![1],
+            periodic_boundary_pairs: Vec::new(),
+            periodic_node_pairs: Vec::new(),
+            per_domain_quality: std::collections::HashMap::new(),
+        };
+        let topo = MeshTopology::from_ir(&mesh).expect("topo");
+        let problem = FemLlgProblem::with_terms(
+            topo,
+            MaterialParameters::new(800e3, 13e-12, 0.5).expect("material"),
+            LlgConfig::new(DEFAULT_GYROMAGNETIC_RATIO, TimeIntegrator::Heun).expect("llg"),
+            EffectiveFieldTerms {
+                exchange: false,
+                demag: false,
+                external_field: None,
+                per_node_field: None,
+                magnetoelastic: None,
+                bulk_dmi: Some(2e-3),
+                ..Default::default()
+            },
+        );
+        let mag: Vec<Vector3> = vec![
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ];
+        let state = problem.new_state(mag).expect("state");
+        let obs = problem.observe(&state).expect("obs");
+        assert!(
+            obs.max_effective_field_amplitude > 1e-6,
+            "bulk DMI should produce non-zero H_eff for non-uniform m, got {}",
             obs.max_effective_field_amplitude
         );
     }

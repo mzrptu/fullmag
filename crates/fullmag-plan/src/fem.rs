@@ -149,6 +149,38 @@ fn values_differ(values: &[f64], reference: f64) -> bool {
         .any(|value| (*value - reference).abs() > 1e-18)
 }
 
+fn normalize_nonzero_vector3(value: [f64; 3], field_name: &str) -> Result<[f64; 3], String> {
+    if value.iter().any(|component| !component.is_finite()) {
+        return Err(format!("{field_name} must contain finite values"));
+    }
+    let norm_sq = value[0] * value[0] + value[1] * value[1] + value[2] * value[2];
+    if norm_sq <= 1e-30 {
+        return Err(format!("{field_name} must be non-zero"));
+    }
+    let inv_norm = norm_sq.sqrt().recip();
+    Ok([
+        value[0] * inv_norm,
+        value[1] * inv_norm,
+        value[2] * inv_norm,
+    ])
+}
+
+fn resolve_interfacial_dmi_normal(
+    requested_normal: Option<[f64; 3]>,
+    execution_mode: fullmag_ir::ExecutionMode,
+    planner_label: &str,
+) -> Result<Option<[f64; 3]>, String> {
+    let Some(raw_normal) = requested_normal else {
+        if execution_mode == fullmag_ir::ExecutionMode::Strict {
+            return Err(format!(
+                "{planner_label} planning in strict execution mode requires InterfacialDmi.interface_normal to be set explicitly",
+            ));
+        }
+        return Ok(None);
+    };
+    normalize_nonzero_vector3(raw_normal, "InterfacialDmi.interface_normal").map(Some)
+}
+
 fn build_region_material_fields(
     base_material: &fullmag_ir::MaterialIR,
     mesh: &fullmag_ir::MeshIR,
@@ -396,6 +428,7 @@ pub(crate) fn plan_fem(
     let mut external_field = None;
     let mut demag_realization = fullmag_ir::RequestedFemDemagIR::Auto;
     let mut interfacial_dmi: Option<f64> = None;
+    let mut interfacial_dmi_normal: Option<[f64; 3]> = None;
     let mut bulk_dmi: Option<f64> = None;
     for term in &problem.energy_terms {
         match term {
@@ -418,11 +451,15 @@ pub(crate) fn plan_fem(
                 }
                 external_field = Some([b[0] / MU0, b[1] / MU0, b[2] / MU0]);
             }
-            fullmag_ir::EnergyTermIR::InterfacialDmi { d } => {
+            fullmag_ir::EnergyTermIR::InterfacialDmi {
+                d,
+                interface_normal,
+            } => {
                 if interfacial_dmi.is_some() {
                     errors.push("InterfacialDmi is declared more than once".to_string());
                 }
                 interfacial_dmi = Some(*d);
+                interfacial_dmi_normal = *interface_normal;
             }
             fullmag_ir::EnergyTermIR::BulkDmi { d } => {
                 if bulk_dmi.is_some() {
@@ -440,6 +477,18 @@ pub(crate) fn plan_fem(
                 ));
             }
         }
+    }
+    if interfacial_dmi.is_some() {
+        match resolve_interfacial_dmi_normal(
+            interfacial_dmi_normal,
+            problem.validation_profile.execution_mode,
+            "FEM",
+        ) {
+            Ok(normal) => interfacial_dmi_normal = normal,
+            Err(reason) => errors.push(reason),
+        }
+    } else {
+        interfacial_dmi_normal = None;
     }
     if !(enable_exchange
         || enable_demag
@@ -595,8 +644,7 @@ pub(crate) fn plan_fem(
     // Populate region_materials whenever multiple magnetic bodies are present (not only for
     // heterogeneous materials), because the runner uses region_materials to resolve which
     // element markers are magnetic vs. air when multiple non-zero markers exist.
-    let needs_region_materials =
-        has_heterogeneous_materials || magnet_entries.len() > 1;
+    let needs_region_materials = has_heterogeneous_materials || magnet_entries.len() > 1;
     let region_materials = if needs_region_materials {
         build_region_materials(&mesh, &object_segments, &magnet_materials)
     } else {
@@ -637,7 +685,12 @@ pub(crate) fn plan_fem(
     } else {
         None
     };
-    let air_box_config = build_air_box_config(problem, &mesh, resolved_demag_realization);
+    let air_box_config =
+        build_air_box_config(problem, &mesh, resolved_demag_realization).map_err(|reason| {
+            PlanError {
+                reasons: vec![reason],
+            }
+        })?;
     let universe_note = study_universe_planner_note(
         problem,
         &mesh,
@@ -672,7 +725,7 @@ pub(crate) fn plan_fem(
         demag_realization: resolved_demag_realization,
         air_box_config,
         interfacial_dmi,
-        dmi_interface_normal: None, // FND-009: default ẑ in native backend
+        dmi_interface_normal: interfacial_dmi_normal,
         bulk_dmi,
         dind_field: None,
         dbulk_field: None,
@@ -1025,6 +1078,7 @@ pub(crate) fn plan_fem_eigen(
     let mut external_field = None;
     let mut demag_realization = fullmag_ir::RequestedFemDemagIR::Auto;
     let mut interfacial_dmi: Option<f64> = None;
+    let mut interfacial_dmi_normal: Option<[f64; 3]> = None;
     let mut bulk_dmi: Option<f64> = None;
     for term in &problem.energy_terms {
         match term {
@@ -1047,11 +1101,15 @@ pub(crate) fn plan_fem_eigen(
                 }
                 external_field = Some([b[0] / MU0, b[1] / MU0, b[2] / MU0]);
             }
-            fullmag_ir::EnergyTermIR::InterfacialDmi { d } => {
+            fullmag_ir::EnergyTermIR::InterfacialDmi {
+                d,
+                interface_normal,
+            } => {
                 if interfacial_dmi.is_some() {
                     errors.push("InterfacialDmi is declared more than once".to_string());
                 }
                 interfacial_dmi = Some(*d);
+                interfacial_dmi_normal = *interface_normal;
             }
             fullmag_ir::EnergyTermIR::BulkDmi { d } => {
                 if bulk_dmi.is_some() {
@@ -1066,6 +1124,18 @@ pub(crate) fn plan_fem_eigen(
                 ));
             }
         }
+    }
+    if interfacial_dmi.is_some() {
+        match resolve_interfacial_dmi_normal(
+            interfacial_dmi_normal,
+            problem.validation_profile.execution_mode,
+            "FEM eigen",
+        ) {
+            Ok(normal) => interfacial_dmi_normal = normal,
+            Err(reason) => errors.push(reason),
+        }
+    } else {
+        interfacial_dmi_normal = None;
     }
     if !(enable_exchange
         || enable_demag
@@ -1346,7 +1416,7 @@ pub(crate) fn plan_fem_eigen(
         enable_exchange,
         enable_demag: enable_demag && operator.include_demag,
         interfacial_dmi,
-        dmi_interface_normal: None,
+        dmi_interface_normal: interfacial_dmi_normal,
         bulk_dmi,
         external_field,
         gyromagnetic_ratio,

@@ -352,6 +352,21 @@ bool context_compute_demag_poisson(
 void compute_magnetoelastic_field(
     Context &ctx,
     const std::vector<double> &m_xyz);
+// Forward-declared so that context.cpp can call this without including
+// mfem_bridge.cpp internals. PhaseTimings is only ever passed as nullptr
+// from context.cpp.
+struct PhaseTimings;
+bool compute_effective_fields_for_magnetization(
+    Context &ctx,
+    const std::vector<double> &m_xyz,
+    std::vector<double> &h_ex_xyz,
+    std::vector<double> &h_demag_xyz,
+    std::vector<double> &h_eff_xyz,
+    double *exchange_energy,
+    double *demag_energy,
+    bool allow_interrupt,
+    PhaseTimings *timings,
+    std::string &error);
 #endif
 
 inline bool poll_interrupt(Context &ctx) {

@@ -11,10 +11,12 @@
 //! - `gpu`: force native FEM GPU, fail if unavailable
 
 use fullmag_ir::{
-    BackendPlanIR, FdmMultilayerPlanIR, FdmPlanIR, FemEigenPlanIR, FemPlanIR, OutputIR, ProblemIR,
+    BackendPlanIR, FdmMultilayerPlanIR, FdmPlanIR, FemEigenPlanIR, FemMeshPartSelector, FemPlanIR,
+    OutputIR, ProblemIR,
 };
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
+use std::sync::{Mutex, OnceLock};
 
 use crate::artifact_pipeline::ArtifactPipelineSender;
 #[cfg(any(feature = "cuda", feature = "fem-gpu"))]
@@ -128,6 +130,29 @@ fn runtime_fallback(
     }
 }
 
+fn runtime_log_once(level: &str, message: &str) {
+    static EMITTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let key = format!("{level}:{message}");
+    let emitted = EMITTED.get_or_init(|| Mutex::new(HashSet::new()));
+    match emitted.lock() {
+        Ok(mut guard) => {
+            if guard.insert(key) {
+                eprintln!("{level}: {message}");
+            }
+        }
+        // If the lock is poisoned, keep logging instead of muting diagnostics.
+        Err(_) => eprintln!("{level}: {message}"),
+    }
+}
+
+fn runtime_warn_once(message: &str) {
+    runtime_log_once("warning", message);
+}
+
+fn runtime_info_once(message: &str) {
+    runtime_log_once("info", message);
+}
+
 fn unsupported_cpu_reference_terms(plan: &FemPlanIR) -> Vec<&'static str> {
     let mut unsupported = Vec::new();
     if plan.material.uniaxial_anisotropy.is_some()
@@ -143,11 +168,11 @@ fn unsupported_cpu_reference_terms(plan: &FemPlanIR) -> Vec<&'static str> {
     {
         unsupported.push("cubic_anisotropy");
     }
-    if plan.interfacial_dmi.is_some() || plan.dind_field.is_some() {
-        unsupported.push("interfacial_dmi");
+    if plan.dind_field.is_some() {
+        unsupported.push("dind_field");
     }
-    if plan.bulk_dmi.is_some() || plan.dbulk_field.is_some() {
-        unsupported.push("bulk_dmi");
+    if plan.dbulk_field.is_some() {
+        unsupported.push("dbulk_field");
     }
     if plan.magnetoelastic.is_some() {
         unsupported.push("magnetoelastic");
@@ -225,18 +250,56 @@ fn magnetic_markers_from_object_segments(plan: &FemPlanIR) -> BTreeSet<u32> {
     markers
 }
 
+fn markers_from_element_selector(
+    selector: &FemMeshPartSelector,
+    mesh_element_markers: &[u32],
+) -> BTreeSet<u32> {
+    match selector {
+        FemMeshPartSelector::ElementMarkerSet { markers } => markers
+            .iter()
+            .copied()
+            .filter(|marker| *marker != 0)
+            .collect(),
+        FemMeshPartSelector::ElementRange { start, count } => {
+            let start = *start as usize;
+            let end = start
+                .saturating_add(*count as usize)
+                .min(mesh_element_markers.len());
+            if start >= end {
+                return BTreeSet::new();
+            }
+            mesh_element_markers[start..end]
+                .iter()
+                .copied()
+                .filter(|marker| *marker != 0)
+                .collect()
+        }
+        _ => BTreeSet::new(),
+    }
+}
+
+fn magnetic_markers_from_mesh_parts(plan: &FemPlanIR) -> BTreeSet<u32> {
+    if plan.mesh.element_markers.is_empty() {
+        return BTreeSet::new();
+    }
+    let mut markers = BTreeSet::new();
+    for part in &plan.mesh_parts {
+        if part.role != fullmag_ir::FemMeshPartRole::MagneticObject {
+            continue;
+        }
+        markers.extend(markers_from_element_selector(
+            &part.element_selector,
+            &plan.mesh.element_markers,
+        ));
+    }
+    markers
+}
+
 fn normalized_runtime_element_markers(plan: &FemPlanIR) -> Result<Vec<u32>, RunError> {
     let markers = &plan.mesh.element_markers;
     if markers.is_empty() {
         return Ok(Vec::new());
     }
-
-    eprintln!(
-        "[DEBUG dispatch] region_materials.len()={}, object_segments.len()={}, distinct_nonzero={:?}",
-        plan.region_materials.len(),
-        plan.object_segments.len(),
-        markers.iter().copied().filter(|m| *m != 0).collect::<BTreeSet<_>>()
-    );
 
     let distinct_nonzero = markers
         .iter()
@@ -277,7 +340,8 @@ fn normalized_runtime_element_markers(plan: &FemPlanIR) -> Result<Vec<u32>, RunE
     }
 
     if distinct_nonzero.len() > 1 {
-        let inferred_magnetic_markers = magnetic_markers_from_object_segments(plan);
+        let mut inferred_magnetic_markers = magnetic_markers_from_object_segments(plan);
+        inferred_magnetic_markers.extend(magnetic_markers_from_mesh_parts(plan));
         if !inferred_magnetic_markers.is_empty() {
             let unknown_nonzero = distinct_nonzero
                 .difference(&inferred_magnetic_markers)
@@ -292,7 +356,7 @@ fn normalized_runtime_element_markers(plan: &FemPlanIR) -> Result<Vec<u32>, RunE
             return Err(RunError {
                 message: format!(
                     "ambiguous FEM magnetic region contract: mesh contains non-zero element markers {:?} \
-                     that are not covered by object_segments-inferred magnetic markers {:?}. \
+                     that are not covered by object_segments/mesh_parts-inferred magnetic markers {:?}. \
                      Refusing to guess which regions are magnetic.",
                     unknown_nonzero, inferred_magnetic_markers
                 ),
@@ -333,10 +397,11 @@ pub(crate) fn resolve_fdm_engine_with_trail(
     let (policy, env_override) = match std::env::var("FULLMAG_FDM_EXECUTION") {
         Ok(env_val) => {
             if env_val != ir_policy {
-                eprintln!(
-                    "warning: FULLMAG_FDM_EXECUTION={} overrides script runtime_selection.device={}",
+                let message = format!(
+                    "FULLMAG_FDM_EXECUTION={} overrides script runtime_selection.device={}",
                     env_val, ir_policy
                 );
+                runtime_warn_once(&message);
             }
             (env_val, true)
         }
@@ -361,7 +426,7 @@ pub(crate) fn resolve_fdm_engine_with_trail(
                 })
             } else {
                 let message = "script requested CUDA FDM execution, but the CUDA backend is not available — falling back to CPU".to_string();
-                eprintln!("warning: {}", message);
+                runtime_warn_once(&message);
                 Ok(EngineResolution {
                     engine: FdmEngine::CpuReference,
                     fallback: Some(runtime_fallback(
@@ -485,10 +550,11 @@ pub(crate) fn resolve_fem_engine_with_trail(
     let (policy, env_override) = match std::env::var("FULLMAG_FEM_EXECUTION") {
         Ok(env_val) => {
             if env_val != ir_policy {
-                eprintln!(
-                    "warning: FULLMAG_FEM_EXECUTION={} overrides script runtime_selection.device={}",
+                let message = format!(
+                    "FULLMAG_FEM_EXECUTION={} overrides script runtime_selection.device={}",
                     env_val, ir_policy
                 );
+                runtime_warn_once(&message);
             }
             (env_val, true)
         }
@@ -504,7 +570,7 @@ pub(crate) fn resolve_fem_engine_with_trail(
             });
         }
         let message = "FEM engine falling back to CPU reference — native FEM GPU does not support active current_modules (fallback_reason=current_modules_force_cpu)".to_string();
-        eprintln!("warning: {}", message);
+        runtime_warn_once(&message);
         return Ok(EngineResolution {
             engine: FemEngine::CpuReference,
             fallback: Some(runtime_fallback(
@@ -537,7 +603,7 @@ pub(crate) fn resolve_fem_engine_with_trail(
                         "script requested FEM GPU execution, but the native FEM GPU backend is not available: {} — falling back to CPU reference engine",
                         availability.reason
                     );
-                    eprintln!("warning: {}", message);
+                    runtime_warn_once(&message);
                     Ok(EngineResolution {
                         engine: FemEngine::CpuReference,
                         fallback: Some(runtime_fallback(
@@ -563,7 +629,7 @@ pub(crate) fn resolve_fem_engine_with_trail(
                         "native FEM GPU backend currently supports fe_order=1 only; falling back to CPU for requested fe_order={} (fallback_reason=fem_gpu_fe_order_unsupported)",
                         fe_order
                     );
-                    eprintln!("warning: {}", message);
+                    runtime_warn_once(&message);
                     Ok(EngineResolution {
                         engine: FemEngine::CpuReference,
                         fallback: Some(runtime_fallback(
@@ -593,7 +659,7 @@ pub(crate) fn resolve_fem_engine_with_trail(
                         "native FEM GPU backend currently supports fe_order=1 only; falling back to CPU for requested fe_order={} (fallback_reason=fem_gpu_fe_order_unsupported)",
                         fe_order
                     );
-                    eprintln!("warning: {}", message);
+                    runtime_warn_once(&message);
                     Ok(EngineResolution {
                         engine: FemEngine::CpuReference,
                         fallback: Some(runtime_fallback(
@@ -608,7 +674,7 @@ pub(crate) fn resolve_fem_engine_with_trail(
                         "native FEM GPU backend is not available — using CPU reference engine (fallback_reason=native_fem_gpu_unavailable; reason={})",
                         availability.reason
                     );
-                    eprintln!("info: {}", message);
+                    runtime_info_once(&message);
                     Ok(EngineResolution {
                         engine: FemEngine::CpuReference,
                         fallback: runtime_device(problem)
@@ -2168,7 +2234,8 @@ mod tests {
     use super::*;
     use fullmag_ir::{
         AntennaIR, BackendTarget, CurrentModuleIR, DiscretizationHintsIR, FdmHintsIR, FemHintsIR,
-        FemObjectSegmentIR, FemPlanIR, MeshIR, ProblemIR, RfDriveIR,
+        FemMeshPartIR, FemMeshPartRole, FemMeshPartSelector, FemObjectSegmentIR, FemPlanIR, MeshIR,
+        ProblemIR, RfDriveIR,
     };
     use serde_json::Value;
     use std::collections::HashMap;
@@ -2466,6 +2533,80 @@ mod tests {
             .expect_err("missing marker 2 in object_segments should fail");
         assert!(error
             .message
-            .contains("object_segments-inferred magnetic markers"));
+            .contains("object_segments/mesh_parts-inferred magnetic markers"));
+    }
+
+    #[test]
+    fn normalized_runtime_markers_fallback_to_mesh_parts_when_segments_missing() {
+        let mut plan = tiny_fem_plan();
+        plan.mesh.elements = vec![[0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]];
+        plan.mesh.element_markers = vec![1, 2, 0];
+        plan.object_segments.clear();
+        plan.mesh_parts = vec![
+            FemMeshPartIR {
+                id: "part:nanoflower_0".to_string(),
+                label: "nanoflower_0".to_string(),
+                role: FemMeshPartRole::MagneticObject,
+                object_id: Some("nanoflower_0".to_string()),
+                geometry_id: Some("nanoflower_0_geom".to_string()),
+                material_id: None,
+                element_selector: FemMeshPartSelector::ElementMarkerSet { markers: vec![1] },
+                boundary_face_selector: FemMeshPartSelector::BoundaryFaceRange {
+                    start: 0,
+                    count: 0,
+                },
+                node_selector: FemMeshPartSelector::NodeRange { start: 0, count: 0 },
+                boundary_face_indices: Vec::new(),
+                node_indices: Vec::new(),
+                surface_faces: Vec::new(),
+                bounds_min: None,
+                bounds_max: None,
+                parent_id: None,
+            },
+            FemMeshPartIR {
+                id: "part:nanoflower_1".to_string(),
+                label: "nanoflower_1".to_string(),
+                role: FemMeshPartRole::MagneticObject,
+                object_id: Some("nanoflower_1".to_string()),
+                geometry_id: Some("nanoflower_1_geom".to_string()),
+                material_id: None,
+                element_selector: FemMeshPartSelector::ElementMarkerSet { markers: vec![2] },
+                boundary_face_selector: FemMeshPartSelector::BoundaryFaceRange {
+                    start: 0,
+                    count: 0,
+                },
+                node_selector: FemMeshPartSelector::NodeRange { start: 0, count: 0 },
+                boundary_face_indices: Vec::new(),
+                node_indices: Vec::new(),
+                surface_faces: Vec::new(),
+                bounds_min: None,
+                bounds_max: None,
+                parent_id: None,
+            },
+            FemMeshPartIR {
+                id: "part:air".to_string(),
+                label: "air".to_string(),
+                role: FemMeshPartRole::Air,
+                object_id: None,
+                geometry_id: None,
+                material_id: None,
+                element_selector: FemMeshPartSelector::ElementMarkerSet { markers: vec![0] },
+                boundary_face_selector: FemMeshPartSelector::BoundaryFaceRange {
+                    start: 0,
+                    count: 0,
+                },
+                node_selector: FemMeshPartSelector::NodeRange { start: 0, count: 0 },
+                boundary_face_indices: Vec::new(),
+                node_indices: Vec::new(),
+                surface_faces: Vec::new(),
+                bounds_min: None,
+                bounds_max: None,
+                parent_id: None,
+            },
+        ];
+
+        let normalized =
+            normalized_runtime_element_markers(&plan).expect("mesh_parts should disambiguate");
+        assert_eq!(normalized, vec![1, 1, 0]);
     }
 }

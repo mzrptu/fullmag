@@ -181,11 +181,11 @@ pub(crate) fn build_problem_and_state(
         {
             unsupported_terms.push("cubic_anisotropy");
         }
-        if plan.interfacial_dmi.is_some() || plan.dind_field.is_some() {
-            unsupported_terms.push("interfacial_dmi");
+        if plan.dind_field.is_some() {
+            unsupported_terms.push("dind_field");
         }
-        if plan.bulk_dmi.is_some() || plan.dbulk_field.is_some() {
-            unsupported_terms.push("bulk_dmi");
+        if plan.dbulk_field.is_some() {
+            unsupported_terms.push("dbulk_field");
         }
         if plan.current_density.is_some() || plan.stt_degree.is_some() || plan.stt_beta.is_some() {
             unsupported_terms.push("zhang_li_stt");
@@ -203,7 +203,7 @@ pub(crate) fn build_problem_and_state(
             return Err(RunError {
                 message: format!(
                     "CPU reference FEM engine does not support the following interaction terms: {}; \
-                     supported: exchange, demag (transfer_grid/poisson), zeeman. \
+                     supported: exchange, demag (transfer_grid/poisson), zeeman, interfacial_dmi, bulk_dmi. \
                      Use the native FEM GPU backend for these interactions.",
                     unsupported_terms.join(", ")
                 ),
@@ -225,8 +225,8 @@ pub(crate) fn build_problem_and_state(
         magnetoelastic: None,
         uniaxial_anisotropy: None,
         cubic_anisotropy: None,
-        interfacial_dmi: None,
-        bulk_dmi: None,
+        interfacial_dmi: plan.interfacial_dmi,
+        bulk_dmi: plan.bulk_dmi,
         zhang_li_stt: None,
         slonczewski_stt: None,
         sot: None,
@@ -236,7 +236,7 @@ pub(crate) fn build_problem_and_state(
     } else {
         plan.demag_realization
     };
-    let problem = match resolved_demag_realization {
+    let mut problem = match resolved_demag_realization {
         Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid) => {
             // FEM-039: use dedicated demag cell size if set, otherwise fall back to hmax.
             let cell = plan.demag_transfer_cell_size.unwrap_or(plan.hmax);
@@ -267,6 +267,9 @@ pub(crate) fn build_problem_and_state(
         }
         _ => FemLlgProblem::with_terms(topology, material, dynamics, terms),
     };
+    if let Some(normal) = plan.dmi_interface_normal {
+        problem.set_dmi_interface_normal(normal);
+    }
     let state = problem
         .new_state(plan.initial_magnetization.clone())
         .map_err(|e| RunError {
@@ -1383,6 +1386,30 @@ mod tests {
         let last = result.result.steps.last().expect("at least one step");
         assert!(last.e_demag >= 0.0);
         assert!(last.max_h_demag > 0.0);
+    }
+
+    #[test]
+    fn dmi_terms_are_supported_in_cpu_reference_fem() {
+        let mut plan = make_test_plan(false);
+        plan.interfacial_dmi = Some(3e-3);
+        plan.bulk_dmi = Some(2e-3);
+        plan.dmi_interface_normal = Some([1.0, 0.0, 0.0]);
+        plan.initial_magnetization = vec![
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ];
+
+        let result = execute_reference_fem(&plan, 1e-12, &[], None, None)
+            .expect("FEM DMI run should succeed");
+        assert_eq!(result.result.status, RunStatus::Completed);
+        let last = result.result.steps.last().expect("at least one step");
+        assert!(
+            last.max_h_eff > 1e-6,
+            "DMI terms should contribute to H_eff, got {}",
+            last.max_h_eff
+        );
     }
 
     #[test]

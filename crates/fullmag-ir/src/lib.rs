@@ -553,6 +553,12 @@ pub enum EnergyTermIR {
     InterfacialDmi {
         #[serde(rename = "D")]
         d: f64,
+        /// Interface normal for interfacial DMI.
+        ///
+        /// Strict FEM planners may require this to be provided explicitly
+        /// instead of relying on backend defaults.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interface_normal: Option<[f64; 3]>,
     },
     BulkDmi {
         #[serde(rename = "D")]
@@ -2049,7 +2055,7 @@ pub struct FemPlanIR {
     pub air_box_config: Option<AirBoxConfigIR>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interfacial_dmi: Option<f64>,
-    /// FND-009: interface normal direction for interfacial DMI (default [0,0,1])
+    /// Interface normal direction for interfacial DMI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dmi_interface_normal: Option<[f64; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2237,6 +2243,8 @@ pub struct AirBoxPolicyIR {
     pub grading: Option<f64>,
     /// Explicit boundary marker to use for the air-box outer surface.
     /// If `None`, the planner picks marker 99 or the mesh maximum.
+    /// In executable strict mode, planners may require this value to be set
+    /// and refuse heuristic marker selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boundary_marker: Option<u32>,
     /// Robin beta mode override: `"legacy"`, `"dipole"`, or `"user"`.

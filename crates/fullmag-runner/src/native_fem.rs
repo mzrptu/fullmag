@@ -534,7 +534,11 @@ impl NativeFemBackend {
             // FEM-039 fix: pass explicit demag transfer-grid cell size.
             demag_transfer_cell_size: plan.demag_transfer_cell_size.unwrap_or(0.0),
             // FND-013: pass consistent-mass flag.
-            use_consistent_mass: if plan.use_consistent_mass.unwrap_or(false) { 1 } else { 0 },
+            use_consistent_mass: if plan.use_consistent_mass.unwrap_or(false) {
+                1
+            } else {
+                0
+            },
         };
 
         // Build adaptive config if present
