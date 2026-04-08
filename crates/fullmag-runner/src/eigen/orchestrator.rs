@@ -34,9 +34,8 @@ pub fn run_path_or_single<S: SingleKSolver>(
     output_dir: Option<&Path>,
     mode_tracking: Option<&ModeTrackingIR>,
 ) -> Result<PathSolveResult, RunError> {
-    let sample_descriptors = expand_k_sampling(plan.k_sampling.as_ref()).map_err(|message| RunError {
-        message,
-    })?;
+    let sample_descriptors =
+        expand_k_sampling(plan.k_sampling.as_ref()).map_err(|message| RunError { message })?;
     if sample_descriptors.is_empty() {
         return Err(RunError {
             message: "expanded k-sampling produced zero samples".to_string(),

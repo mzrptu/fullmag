@@ -1029,7 +1029,7 @@ fn fem_eigen_frequency_is_stable_across_resolutions() {
             spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
             demag_realization: None,
             dmi_interface_normal: None,
-        mode_tracking: None,
+            mode_tracking: None,
         };
         let outputs = vec![OutputIR::EigenSpectrum {
             quantity: "eigenfrequency".to_string(),
@@ -1372,7 +1372,7 @@ fn fem_eigen_floquet_bulk_dmi_is_nonreciprocal_for_plus_minus_k() {
             ),
             demag_realization: None,
             dmi_interface_normal: None,
-        mode_tracking: None,
+            mode_tracking: None,
         }
     };
 
@@ -1458,7 +1458,7 @@ fn fem_eigen_demag_lowers_frequency() {
             spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
             demag_realization: None,
             dmi_interface_normal: None,
-        mode_tracking: None,
+            mode_tracking: None,
         }
     };
 
@@ -1492,6 +1492,94 @@ fn fem_eigen_demag_lowers_frequency() {
         "demag should lower the uniform-mode frequency: \
          f_with_demag={f_with_demag:.3e} Hz, f_no_demag={f_no_demag:.3e} Hz"
     );
+}
+
+#[test]
+fn fem_eigen_poisson_robin_demag_runs_on_shared_domain_mesh() {
+    let mesh = MeshIR {
+        mesh_name: "eigen_shared_domain_robin".to_string(),
+        nodes: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ],
+        elements: vec![[0, 1, 2, 3], [0, 1, 2, 4]],
+        element_markers: vec![1, 0],
+        boundary_faces: vec![
+            [0, 1, 3],
+            [1, 2, 3],
+            [2, 0, 3],
+            [0, 1, 4],
+            [1, 2, 4],
+            [2, 0, 4],
+        ],
+        boundary_markers: vec![1, 1, 1, 1, 1, 1],
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
+    };
+
+    let plan = FemEigenPlanIR {
+        mesh_name: mesh.mesh_name.clone(),
+        mesh_source: None,
+        mesh,
+        object_segments: Vec::new(),
+        mesh_parts: Vec::new(),
+        domain_mesh_mode: fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir,
+        domain_frame: None,
+        fe_order: 1,
+        hmax: 20e-9,
+        equilibrium_magnetization: vec![
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+        ],
+        material: fem_permalloy(),
+        operator: EigenOperatorConfigIR {
+            kind: EigenOperatorIR::LinearizedLlg,
+            include_demag: true,
+        },
+        count: 2,
+        target: EigenTargetIR::Lowest,
+        equilibrium: EquilibriumSourceIR::Provided,
+        k_sampling: None,
+        normalization: EigenNormalizationIR::UnitL2,
+        damping_policy: EigenDampingPolicyIR::Ignore,
+        enable_exchange: true,
+        enable_demag: true,
+        interfacial_dmi: None,
+        bulk_dmi: None,
+        external_field: Some([100_000.0, 0.0, 0.0]),
+        gyromagnetic_ratio: 2.211e5,
+        precision: ExecutionPrecision::Double,
+        exchange_bc: ExchangeBoundaryCondition::Neumann,
+        spin_wave_bc: fullmag_ir::SpinWaveBoundaryConditionIR::default(),
+        demag_realization: Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin),
+        dmi_interface_normal: None,
+        mode_tracking: None,
+    };
+
+    let outputs = [OutputIR::EigenSpectrum {
+        quantity: "eigenfrequency".to_string(),
+    }];
+
+    let result = fullmag_runner::run_reference_fem_eigen(&plan, &outputs)
+        .expect("FEM eigen Poisson-Robin demag should execute on shared-domain mesh");
+    assert_eq!(result.status, RunStatus::Completed);
+
+    let spectrum = result
+        .artifact_bytes("eigen/spectrum.json")
+        .expect("spectrum artifact must exist");
+    let value: serde_json::Value = serde_json::from_slice(spectrum).expect("valid spectrum json");
+    assert!(value["solver_capabilities"]
+        .as_array()
+        .is_some_and(|items| items
+            .iter()
+            .any(|item| item.as_str() == Some("demag_poisson_robin"))));
 }
 
 // ===========================================================================
@@ -1649,7 +1737,7 @@ fn eigen_bc_pinned_higher_frequency() {
             },
             demag_realization: None,
             dmi_interface_normal: None,
-        mode_tracking: None,
+            mode_tracking: None,
         }
     };
 
@@ -1841,7 +1929,7 @@ fn eigen_bc_periodic_k_zero_matches_free() {
             },
             demag_realization: None,
             dmi_interface_normal: None,
-        mode_tracking: None,
+            mode_tracking: None,
         }
     };
 

@@ -159,7 +159,9 @@ fn estimate_max_torque_from_step(max_dm_dt: f64, mode: Option<TorqueDisplayMode>
                 if damping <= 0.0 {
                     return None;
                 }
-                return Some(max_dm_dt * (1.0 + damping * damping) / (gyromagnetic_ratio * damping));
+                return Some(
+                    max_dm_dt * (1.0 + damping * damping) / (gyromagnetic_ratio * damping),
+                );
             }
             Some(max_dm_dt * (1.0 + damping * damping).sqrt() / gyromagnetic_ratio)
         }

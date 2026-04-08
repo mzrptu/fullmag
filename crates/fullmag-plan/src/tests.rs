@@ -2574,7 +2574,7 @@ fn fem_eigen_backend_interfacial_dmi_requires_explicit_interface_normal_in_stric
 }
 
 #[test]
-fn fem_eigen_accepts_shared_domain_mesh_with_air_when_transfer_grid_is_used() {
+fn fem_eigen_auto_demag_resolves_to_poisson_robin_on_shared_domain_mesh_with_air() {
     let mut ir = ProblemIR::bootstrap_example();
     ir.backend_policy.requested_backend = BackendTarget::Fem;
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
@@ -2660,7 +2660,7 @@ fn fem_eigen_accepts_shared_domain_mesh_with_air_when_transfer_grid_is_used() {
             );
             assert_eq!(
                 fem.demag_realization,
-                Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)
+                Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin)
             );
             assert_eq!(fem.object_segments.len(), 2);
             assert_eq!(fem.object_segments[0].object_id, "strip");
@@ -3406,12 +3406,8 @@ fn merge_multibody_mesh_preserves_per_domain_quality() {
         per_domain_quality: std::collections::HashMap::new(),
     };
 
-    let meshes = vec![
-        ("obj_a".to_string(), mesh_a),
-        ("obj_b".to_string(), mesh_b),
-    ];
-    let (merged, _segments) =
-        crate::mesh::merge_fem_meshes(&meshes).expect("merge should succeed");
+    let meshes = vec![("obj_a".to_string(), mesh_a), ("obj_b".to_string(), mesh_b)];
+    let (merged, _segments) = crate::mesh::merge_fem_meshes(&meshes).expect("merge should succeed");
     assert!(
         !merged.per_domain_quality.is_empty(),
         "per_domain_quality must be carried forward after merge",
@@ -3429,7 +3425,12 @@ fn fem_domain_mesh_asset_accepts_optional_build_report() {
         mesh_source: None,
         mesh: Some(fullmag_ir::MeshIR {
             mesh_name: "report_test".to_string(),
-            nodes: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
             elements: vec![[0, 1, 2, 3]],
             element_markers: vec![1],
             boundary_faces: vec![[0, 1, 2]],
@@ -3459,7 +3460,12 @@ fn fem_domain_mesh_asset_accepts_optional_build_report() {
         mesh_source: None,
         mesh: Some(fullmag_ir::MeshIR {
             mesh_name: "no_report".to_string(),
-            nodes: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            nodes: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
             elements: vec![[0, 1, 2, 3]],
             element_markers: vec![1],
             boundary_faces: vec![[0, 1, 2]],

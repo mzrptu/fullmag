@@ -214,12 +214,20 @@ export function FemGeometry({
       displayElementIndices[displayElementIndices.length - 1] ?? 0,
     ].join(":");
   }, [displayElementIndices]);
-  const resolvedEdgeColor = edgeColor ?? uniformColor ?? "#dbeafe";
+  const hasFieldColormap = field !== "none";
+  const resolvedEdgeColor = useMemo(
+    () => (hasFieldColormap ? "#d1d5db" : edgeColor ?? uniformColor ?? "#dbeafe"),
+    [edgeColor, hasFieldColormap, uniformColor],
+  );
+  const usesNeutralSelectionHighlight = highlight && hasFieldColormap;
   const resolvedHighlightEmissive = useMemo(() => {
+    if (usesNeutralSelectionHighlight) {
+      return "#f8fafc";
+    }
     const color = new THREE.Color(uniformColor ?? "#cbd5e1");
     color.lerp(new THREE.Color("#ffffff"), 0.42);
     return `#${color.getHexString()}`;
-  }, [uniformColor]);
+  }, [uniformColor, usesNeutralSelectionHighlight]);
 
   // ── Topology memo: only rebuilds when mesh structure changes ─────
   const topologySignature = `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}:${displayBoundaryFaceSignature}:${displayElementSignature}:${shrinkFactor ?? 1}:${clipEnabled ? `${clipAxis}${clipPos}` : "noclip"}`;
@@ -679,7 +687,7 @@ export function FemGeometry({
             roughness={highlight ? 0.34 : 0.52}
             metalness={highlight ? 0.08 : 0.03}
             emissive={highlight ? resolvedHighlightEmissive : "#000000"}
-            emissiveIntensity={highlight ? 0.34 : 0.02}
+            emissiveIntensity={highlight ? (usesNeutralSelectionHighlight ? 0.12 : 0.34) : 0.02}
             transparent={surfacePolicy.transparent}
             opacity={opacityVal}
             depthWrite={surfacePolicy.depthWrite}

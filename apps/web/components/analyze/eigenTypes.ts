@@ -267,7 +267,7 @@ export function normalizeModeArtifact(
 // Backward-compatibility aliases for existing consumers
 export type EigenModeSummary = LegacyEigenModeSummary;
 export type EigenSpectrumArtifact = LegacyEigenSpectrumArtifact;
-export type EigenModeArtifact = LegacyEigenModeArtifact;
+export type EigenModeArtifact = AnyModeArtifact;
 export type DispersionRow = LegacyDispersionRow;
 
 export interface FemMeshPayload {

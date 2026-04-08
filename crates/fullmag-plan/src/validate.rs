@@ -289,9 +289,7 @@ pub(crate) fn validate_eigen_outputs(outputs: &[OutputIR], errors: &mut Vec<Stri
             OutputIR::EigenDiagnostics { .. } => {
                 let key = "eigen_diagnostics".to_string();
                 if !seen.insert(key) {
-                    errors.push(
-                        "eigen diagnostics output is declared more than once".to_string(),
-                    );
+                    errors.push("eigen diagnostics output is declared more than once".to_string());
                 }
             }
             OutputIR::Field { .. } | OutputIR::Scalar { .. } | OutputIR::Snapshot { .. } => {

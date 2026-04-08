@@ -1197,7 +1197,11 @@ pub(crate) fn plan_fem_eigen(
                         .to_string(),
                 );
             }
-            if !matches!(k_sampling, Some(fullmag_ir::KSamplingIR::Single { .. }) | Some(fullmag_ir::KSamplingIR::Path { .. })) {
+            if !matches!(
+                k_sampling,
+                Some(fullmag_ir::KSamplingIR::Single { .. })
+                    | Some(fullmag_ir::KSamplingIR::Path { .. })
+            ) {
                 errors.push(
                     "spin_wave_bc.kind='floquet' requires k_sampling=Single{ k_vector = [...] }"
                         .to_string(),
@@ -1378,19 +1382,18 @@ pub(crate) fn plan_fem_eigen(
             fullmag_ir::RequestedFemDemagIR::PoissonRobin => {
                 fullmag_ir::ResolvedFemDemagIR::PoissonRobin
             }
-            fullmag_ir::RequestedFemDemagIR::Auto => fullmag_ir::ResolvedFemDemagIR::TransferGrid,
+            fullmag_ir::RequestedFemDemagIR::Auto => {
+                let has_air_elements = mesh.element_markers.iter().any(|&m| m == 0);
+                if has_air_elements {
+                    fullmag_ir::ResolvedFemDemagIR::PoissonRobin
+                } else {
+                    fullmag_ir::ResolvedFemDemagIR::TransferGrid
+                }
+            }
         })
     } else {
         None
     };
-    if enable_demag
-        && resolved_demag_realization != Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)
-    {
-        errors.push(
-            "the current FEM eigen executable path supports demag_realization='transfer_grid' only"
-                .to_string(),
-        );
-    }
     if !errors.is_empty() {
         return Err(PlanError { reasons: errors });
     }

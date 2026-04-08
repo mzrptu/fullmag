@@ -16,7 +16,9 @@ fn vec3_distance(a: [f64; 3], b: [f64; 3]) -> f64 {
     (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
-pub fn expand_k_sampling(k_sampling: Option<&KSamplingIR>) -> Result<Vec<KSampleDescriptor>, String> {
+pub fn expand_k_sampling(
+    k_sampling: Option<&KSamplingIR>,
+) -> Result<Vec<KSampleDescriptor>, String> {
     match k_sampling {
         None => Ok(vec![KSampleDescriptor {
             sample_index: 0,
@@ -46,7 +48,11 @@ pub fn expand_k_sampling(k_sampling: Option<&KSamplingIR>) -> Result<Vec<KSample
             if points.len() < 2 {
                 return Err("k_sampling.path requires at least two control points".to_string());
             }
-            let expected_segments = if *closed { points.len() } else { points.len() - 1 };
+            let expected_segments = if *closed {
+                points.len()
+            } else {
+                points.len() - 1
+            };
             if samples_per_segment.len() != expected_segments {
                 return Err(format!(
                     "k_sampling.path expected {} samples_per_segment entries, got {}",

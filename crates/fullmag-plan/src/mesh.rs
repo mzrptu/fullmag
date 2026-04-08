@@ -1153,7 +1153,9 @@ pub(crate) fn merge_fem_meshes(
         for (marker, quality) in &mesh.per_domain_quality {
             // After merge, all non-zero markers are normalised to 1.
             let target_key = if *marker == 0 { 0 } else { 1 };
-            merged_quality.entry(target_key).or_insert_with(|| quality.clone());
+            merged_quality
+                .entry(target_key)
+                .or_insert_with(|| quality.clone());
         }
     }
 

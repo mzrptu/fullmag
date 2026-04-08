@@ -2706,10 +2706,16 @@ impl ProblemIR {
                         );
                     }
                 }
-                if let Some(KSamplingIR::Path { points, samples_per_segment, .. }) = k_sampling {
+                if let Some(KSamplingIR::Path {
+                    points,
+                    samples_per_segment,
+                    ..
+                }) = k_sampling
+                {
                     if points.len() < 2 {
                         errors.push(
-                            "eigenmodes.k_sampling.path requires at least two control points".to_string(),
+                            "eigenmodes.k_sampling.path requires at least two control points"
+                                .to_string(),
                         );
                     }
                     for point in points {
@@ -2721,7 +2727,8 @@ impl ProblemIR {
                     }
                     if samples_per_segment.iter().any(|n| *n == 0) {
                         errors.push(
-                            "eigenmodes.k_sampling.path samples_per_segment entries must be > 0".to_string(),
+                            "eigenmodes.k_sampling.path samples_per_segment entries must be > 0"
+                                .to_string(),
                         );
                     }
                 }

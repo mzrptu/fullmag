@@ -95,6 +95,14 @@ const COLOR_OPTIONS: { value: FemColorField; label: string; fullLabel: string }[
   { value: "none", label: "—", fullLabel: "None" },
 ];
 
+const ARROW_COLOR_OPTIONS: { value: FemColorField; label: string; fullLabel: string }[] = [
+  { value: "orientation", label: "Ori", fullLabel: "Orientation" },
+  { value: "z", label: "m_z", fullLabel: "Field Z" },
+  { value: "x", label: "m_x", fullLabel: "Field X" },
+  { value: "y", label: "m_y", fullLabel: "Field Y" },
+  { value: "magnitude", label: "|m|", fullLabel: "|Field|" },
+];
+
 const QUALITY_PROFILES: { value: ViewportQualityProfileId; label: string }[] = [
   { value: "interactive", label: "Interactive" },
   { value: "balanced", label: "Balanced" },
@@ -154,7 +162,9 @@ export function FemViewportToolbar({
   compact = false,
 }: FemViewportToolbarProps) {
   const activeSurfaceColorOpt = COLOR_OPTIONS.find((o) => o.value === surfaceColorField);
-  const activeArrowColorOpt = COLOR_OPTIONS.find((o) => o.value === arrowColorField);
+  const activeArrowColorOpt =
+    ARROW_COLOR_OPTIONS.find((o) => o.value === arrowColorField)
+    ?? ARROW_COLOR_OPTIONS[0];
   const effectiveDensity = effectiveArrowDensity ?? arrowDensity;
   const availableQuantities = quantityOptions.filter((o) => o.available);
   const activeQuantity = quantityOptions.find((o) => o.id === quantityId) ?? null;
@@ -261,7 +271,7 @@ export function FemViewportToolbar({
                 </ViewportPopoverRow>
                 <ViewportPopoverRow label="Arrows">
                   <div className="grid grid-cols-2 gap-1">
-                    {COLOR_OPTIONS.map((opt) => (
+                    {ARROW_COLOR_OPTIONS.map((opt) => (
                       <ViewportIconAction
                         key={`arrows-${opt.value}`}
                         active={arrowColorField === opt.value}

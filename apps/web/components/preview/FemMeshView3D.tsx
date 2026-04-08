@@ -444,6 +444,14 @@ const RENDER_OPTIONS: { value: RenderMode; label: string; labeledLabel: string }
   { value: "points", label: "Pts", labeledLabel: "Points" },
 ];
 
+const SUPPORTED_ARROW_COLOR_FIELDS: ReadonlySet<FemColorField> = new Set([
+  "orientation",
+  "x",
+  "y",
+  "z",
+  "magnitude",
+]);
+
 const COLOR_OPTIONS: { value: FemColorField; label: string; labeledLabel: string }[] = [
   { value: "orientation", label: "Ori", labeledLabel: "Orientation" },
   { value: "z", label: "m_z", labeledLabel: "Field Z" },
@@ -638,12 +646,9 @@ function FemMeshView3DInner({
       const isDimmed = hasSelection && !isSelected && objectViewMode === "context";
       const viewState: MeshEntityViewState = {
         ...baseViewState,
-        renderMode:
-          isSelected &&
-          part.role !== "air" &&
-          baseViewState.renderMode === "surface"
-            ? "surface+edges"
-            : baseViewState.renderMode,
+        // Keep render mode strictly user-driven; selection must not
+        // auto-promote `surface` to `surface+edges`.
+        renderMode: baseViewState.renderMode,
         opacity: isDimmed
           ? Math.min(baseViewState.opacity, part.role === "air" ? 8 : 14)
           : isSelected
@@ -1003,12 +1008,9 @@ function FemMeshView3DInner({
     if (!hasMeshParts) {
       return [] as string[];
     }
-    const selectedLayerIds = visibleLayers
-      .filter((layer) => layer.isSelected)
-      .map((layer) => layer.part.id);
-    if (selectedLayerIds.length > 0) {
-      return selectedLayerIds;
-    }
+    // Keep toolbar controls stable across selection changes.
+    // Selection should highlight geometry, not silently change the target set
+    // for render/color controls in context mode.
     return visibleLayers.map((layer) => layer.part.id);
   }, [hasMeshParts, visibleLayers]);
   const toolbarColorPartIds = useMemo(() => {
@@ -1021,7 +1023,13 @@ function FemMeshView3DInner({
           toolbarStylePartIds.includes(layer.part.id) && layer.part.role === "magnetic_object",
       )
       .map((layer) => layer.part.id);
-    return magneticIds.length > 0 ? magneticIds : toolbarStylePartIds;
+    if (magneticIds.length > 0) {
+      return magneticIds;
+    }
+    const nonAirIds = visibleLayers
+      .filter((layer) => toolbarStylePartIds.includes(layer.part.id) && layer.part.role !== "air")
+      .map((layer) => layer.part.id);
+    return nonAirIds.length > 0 ? nonAirIds : toolbarStylePartIds;
   }, [hasMeshParts, toolbarStylePartIds, visibleLayers]);
   const toolbarRenderMode = useMemo(() => {
     if (!hasMeshParts || toolbarStylePartIds.length === 0) {
@@ -1029,7 +1037,10 @@ function FemMeshView3DInner({
     }
     const targetLayers = visibleLayers.filter((layer) => toolbarStylePartIds.includes(layer.part.id));
     const values = Array.from(new Set(targetLayers.map((layer) => layer.viewState.renderMode)));
-    return values[0] ?? renderMode;
+    if (values.length === 1) {
+      return values[0] ?? renderMode;
+    }
+    return renderMode;
   }, [hasMeshParts, renderMode, toolbarStylePartIds, visibleLayers]);
   const toolbarOpacity = useMemo(() => {
     if (!hasMeshParts || toolbarStylePartIds.length === 0) {
@@ -1044,14 +1055,19 @@ function FemMeshView3DInner({
     }
     const targetLayers = visibleLayers.filter((layer) => toolbarColorPartIds.includes(layer.part.id));
     const values = Array.from(new Set(targetLayers.map((layer) => layer.viewState.colorField)));
-    return values[0] ?? field;
+    if (values.length === 1) {
+      return values[0] ?? field;
+    }
+    return field;
   }, [field, hasMeshParts, toolbarColorPartIds, visibleLayers]);
   const prominentQuantityOptions = useMemo(
     () => quantityOptions.filter((option) => option.available),
     [quantityOptions],
   );
   const effectiveOpacity = opacity;
-  const arrowField = arrowColorField;
+  const arrowField = SUPPORTED_ARROW_COLOR_FIELDS.has(arrowColorField)
+    ? arrowColorField
+    : "orientation";
   const legendField = hasMeshParts
     ? (visibleLayers.find((layer) => layer.isSelected)?.viewState.colorField
       ?? visibleLayers.find((layer) => layer.isMagnetic)?.viewState.colorField
@@ -1297,11 +1313,11 @@ function FemMeshView3DInner({
     onOpacityChange ? onOpacityChange(next) : setInternalOpacity(next);
   }, [hasMeshParts, onMeshPartViewStatePatch, onOpacityChange, toolbarStylePartIds]);
   const applyToolbarColorField = useCallback((next: FemColorField) => {
+    setField(next);
     if (hasMeshParts && toolbarColorPartIds.length > 0 && onMeshPartViewStatePatch) {
       onMeshPartViewStatePatch(toolbarColorPartIds, { colorField: next });
       return;
     }
-    setField(next);
   }, [hasMeshParts, onMeshPartViewStatePatch, toolbarColorPartIds]);
   const patchSinglePart = useCallback((partId: string, patch: Partial<MeshEntityViewState>) => {
     onMeshPartViewStatePatch?.([partId], patch);

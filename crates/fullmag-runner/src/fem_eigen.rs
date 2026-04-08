@@ -121,17 +121,6 @@ fn execute_fem_eigen_inner(
     outputs: &[OutputIR],
     try_gpu: bool,
 ) -> Result<ExecutedRun, RunError> {
-    let resolved_demag_realization = plan.demag_realization.as_ref();
-    if plan.enable_demag
-        && !matches!(
-            resolved_demag_realization,
-            None | Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)
-        )
-    {
-        return Err(RunError {
-            message: "FEM eigen runner supports demag_realization='transfer_grid' only".to_string(),
-        });
-    }
     if plan.precision != fullmag_ir::ExecutionPrecision::Double {
         return Err(RunError {
             message: "execution_precision='single' is not executable in the FEM eigen CPU reference runner; use 'double'".to_string(),
@@ -442,24 +431,20 @@ fn execution_provenance(plan: &FemEigenPlanIR, used_gpu: bool) -> ExecutionProve
     } else {
         format!("cpu_reference_fem_eigen/{}", solver_kind_label(plan))
     };
+    let resolved_demag = resolved_demag_realization(plan);
     ExecutionProvenance {
         execution_engine: engine,
-        // FEM-033: eigen runner only supports double + transfer_grid.
+        // FEM eigen baseline currently executes in double precision.
         precision: "double".to_string(),
-        demag_operator_kind: if plan.enable_demag {
-            Some(
-                plan.demag_realization
-                    .map(|r| r.provenance_name().to_string())
-                    .unwrap_or_else(|| "fem_transfer_grid_tensor_fft_newell".to_string()),
-            )
+        demag_operator_kind: resolved_demag.map(|r| r.provenance_name().to_string()),
+        requested_demag_realization: if plan.enable_demag {
+            plan.demag_realization
+                .map(|requested| demag_realization_label(requested).to_string())
         } else {
             None
         },
-        resolved_demag_realization: if plan.enable_demag {
-            Some("transfer_grid".to_string())
-        } else {
-            None
-        },
+        resolved_demag_realization: resolved_demag
+            .map(|resolved| demag_realization_label(resolved).to_string()),
         fft_backend: None,
         device_name: None,
         compute_capability: None,
@@ -518,26 +503,46 @@ fn materialize_equilibrium(
             None
         }
     };
-    let problem = FemLlgProblem::with_terms_and_demag_transfer_grid(
-        topology,
-        material,
-        dynamics,
-        EffectiveFieldTerms {
-            exchange: plan.enable_exchange,
-            demag: plan.enable_demag,
-            external_field: plan.external_field,
-            per_node_field: aniso_per_node,
-            magnetoelastic: None,
-            uniaxial_anisotropy: None,
-            cubic_anisotropy: None,
-            interfacial_dmi: None,
-            bulk_dmi: None,
-            zhang_li_stt: None,
-            slonczewski_stt: None,
-            sot: None,
-        },
-        Some([plan.hmax, plan.hmax, plan.hmax]),
-    );
+    let terms = EffectiveFieldTerms {
+        exchange: plan.enable_exchange,
+        demag: plan.enable_demag,
+        external_field: plan.external_field,
+        per_node_field: aniso_per_node,
+        magnetoelastic: None,
+        uniaxial_anisotropy: None,
+        cubic_anisotropy: None,
+        interfacial_dmi: None,
+        bulk_dmi: None,
+        zhang_li_stt: None,
+        slonczewski_stt: None,
+        sot: None,
+    };
+    let resolved_demag = resolved_demag_realization(plan);
+    let mut problem = match resolved_demag {
+        Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid) => {
+            FemLlgProblem::with_terms_and_demag_transfer_grid(
+                topology,
+                material,
+                dynamics,
+                terms,
+                Some([plan.hmax, plan.hmax, plan.hmax]),
+            )
+        }
+        Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin) => {
+            FemLlgProblem::with_terms_and_demag_airbox(
+                topology, material, dynamics, terms, false, None,
+            )
+        }
+        Some(fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet) => {
+            FemLlgProblem::with_terms_and_demag_airbox(
+                topology, material, dynamics, terms, true, None,
+            )
+        }
+        None => FemLlgProblem::with_terms(topology, material, dynamics, terms),
+    };
+    if let Some(normal) = plan.dmi_interface_normal {
+        problem.set_dmi_interface_normal(normal);
+    }
     let mut state = problem
         .new_state(equilibrium_guess)
         .map_err(|error| RunError {
@@ -1676,7 +1681,19 @@ fn solver_capabilities(plan: &FemEigenPlanIR, complex_reduction: bool) -> Vec<&'
         capabilities.push("exchange");
     }
     if plan.enable_demag {
-        capabilities.push("demag_transfer_grid");
+        match resolved_demag_realization(plan)
+            .unwrap_or(fullmag_ir::ResolvedFemDemagIR::TransferGrid)
+        {
+            fullmag_ir::ResolvedFemDemagIR::TransferGrid => {
+                capabilities.push("demag_transfer_grid")
+            }
+            fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet => {
+                capabilities.push("demag_poisson_dirichlet")
+            }
+            fullmag_ir::ResolvedFemDemagIR::PoissonRobin => {
+                capabilities.push("demag_poisson_robin")
+            }
+        }
     }
     if plan.external_field.is_some() {
         capabilities.push("zeeman");
@@ -1715,6 +1732,24 @@ fn solver_limitations(plan: &FemEigenPlanIR, complex_reduction: bool) -> Vec<&'s
         limitations.push("surface_anisotropy_requires_exposed_boundary_faces");
     }
     limitations
+}
+
+fn resolved_demag_realization(plan: &FemEigenPlanIR) -> Option<fullmag_ir::ResolvedFemDemagIR> {
+    if !plan.enable_demag {
+        return None;
+    }
+    Some(
+        plan.demag_realization
+            .unwrap_or(fullmag_ir::ResolvedFemDemagIR::TransferGrid),
+    )
+}
+
+fn demag_realization_label(realization: fullmag_ir::ResolvedFemDemagIR) -> &'static str {
+    match realization {
+        fullmag_ir::ResolvedFemDemagIR::TransferGrid => "transfer_grid",
+        fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet => "poisson_dirichlet",
+        fullmag_ir::ResolvedFemDemagIR::PoissonRobin => "poisson_robin",
+    }
 }
 
 fn equilibrium_source_json(equilibrium: &EquilibriumSourceIR) -> serde_json::Value {

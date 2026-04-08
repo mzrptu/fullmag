@@ -45,10 +45,7 @@ pub fn residual_rows(
         .collect()
 }
 
-pub fn orthogonality_table(
-    mass: &DMatrix<f64>,
-    modes: &[DVector<f64>],
-) -> Vec<OrthogonalityEntry> {
+pub fn orthogonality_table(mass: &DMatrix<f64>, modes: &[DVector<f64>]) -> Vec<OrthogonalityEntry> {
     let mut rows = Vec::new();
     for (lhs_index, lhs) in modes.iter().enumerate() {
         for (rhs_index, rhs) in modes.iter().enumerate() {

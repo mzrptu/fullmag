@@ -230,13 +230,7 @@ export function FemViewportScene({
             <FemGeometry
               key={layer.part.id}
               meshData={meshData}
-              field={
-                layer.viewState.colorField === "none" &&
-                meshData.quantityDomain === "full_domain" &&
-                layer.part.role !== "magnetic_object"
-                  ? field
-                  : layer.viewState.colorField
-              }
+              field={layer.viewState.colorField}
               renderMode={layer.viewState.renderMode}
               opacity={layer.viewState.opacity}
               customBoundaryFaces={layer.surfaceFaces}

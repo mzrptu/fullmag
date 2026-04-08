@@ -74,10 +74,14 @@ export default function EigenModeInspector({
   const [slicePlane, setSlicePlane] = useState<SlicePlane>("xy");
   const [sliceIndex, setSliceIndex] = useState(12);
 
+  // Derive index and frequency_hz from either legacy or V2 mode format
+  const modeIndex = mode ? ("index" in mode ? mode.index : mode.raw_mode_index) : undefined;
+  const modeFrequencyHz = mode ? ("frequency_hz" in mode ? mode.frequency_hz : mode.frequency_real_hz) : 0;
+
   // Sync view state with mode index during render (React 19 recommended pattern for resets)
-  const [prevModeIndex, setPrevModeIndex] = useState(mode?.index);
-  if (mode?.index !== prevModeIndex) {
-    setPrevModeIndex(mode?.index);
+  const [prevModeIndex, setPrevModeIndex] = useState(modeIndex);
+  if (modeIndex !== prevModeIndex) {
+    setPrevModeIndex(modeIndex);
     setFieldView("amplitude");
     setVectorComponent("magnitude");
   }
@@ -204,8 +208,8 @@ export default function EigenModeInspector({
       <div className={`flex flex-wrap items-start justify-between gap-4 shrink-0 ${headerBgClass}`}>
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">Mode {mode.index}</Badge>
-            <span className="font-mono text-sm font-semibold text-foreground/90">{formatGHz(mode.frequency_hz)}</span>
+            <Badge variant="secondary">Mode {modeIndex}</Badge>
+            <span className="font-mono text-sm font-semibold text-foreground/90">{formatGHz(modeFrequencyHz)}</span>
             <Badge variant="outline">{mode.dominant_polarization}</Badge>
             <Badge variant="outline">{mode.normalization}</Badge>
             {!compact && <Badge variant="outline">{mode.damping_policy}</Badge>}
@@ -230,7 +234,7 @@ export default function EigenModeInspector({
             meshData={meshData}
             colorField={colorField}
             fieldLabel={modeFieldLabel(fieldView, vectorComponent)}
-            topologyKey={`mode:${mode.index}:${meshData.nNodes}`}
+            topologyKey={`mode:${modeIndex}:${meshData.nNodes}`}
             showOrientationLegend={false}
             toolbarMode="visible"
           />

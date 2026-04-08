@@ -20,7 +20,11 @@ fn complex_overlap(a: &[Complex64], b: &[Complex64]) -> f64 {
     num.norm() / (aa.sqrt() * bb.sqrt())
 }
 
-fn frequency_score(prev: &SingleKModeResult, current: &SingleKModeResult, window_hz: Option<f64>) -> f64 {
+fn frequency_score(
+    prev: &SingleKModeResult,
+    current: &SingleKModeResult,
+    window_hz: Option<f64>,
+) -> f64 {
     let delta = (prev.frequency_real_hz - current.frequency_real_hz).abs();
     match window_hz {
         Some(window) if window > 0.0 => {
@@ -47,10 +51,7 @@ fn edge_score(prev: &SingleKModeResult, current: &SingleKModeResult, cfg: &ModeT
     }
 }
 
-pub fn track_branches(
-    result: &mut PathSolveResult,
-    config: Option<&ModeTrackingIR>,
-) {
+pub fn track_branches(result: &mut PathSolveResult, config: Option<&ModeTrackingIR>) {
     let default_cfg = ModeTrackingIR::default();
     let cfg = config.unwrap_or(&default_cfg);
     if result.samples.is_empty() {
@@ -119,12 +120,17 @@ pub fn track_branches(
             {
                 mode.branch_id = Some(branch_id);
             }
-            if let Some(branch) = branches.iter_mut().find(|branch| branch.branch_id == branch_id) {
+            if let Some(branch) = branches
+                .iter_mut()
+                .find(|branch| branch.branch_id == branch_id)
+            {
                 branch.points.push(TrackedBranchPoint {
                     sample_index,
                     raw_mode_index,
-                    frequency_real_hz: result.samples[sample_index].modes[raw_mode_index].frequency_real_hz,
-                    frequency_imag_hz: result.samples[sample_index].modes[raw_mode_index].frequency_imag_hz,
+                    frequency_real_hz: result.samples[sample_index].modes[raw_mode_index]
+                        .frequency_real_hz,
+                    frequency_imag_hz: result.samples[sample_index].modes[raw_mode_index]
+                        .frequency_imag_hz,
                     tracking_confidence: score,
                     overlap_prev: Some(score),
                 });

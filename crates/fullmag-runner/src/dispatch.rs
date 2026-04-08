@@ -1500,9 +1500,8 @@ fn execute_fem_eigen_path(
     outputs: &[OutputIR],
 ) -> Result<ExecutedRun, RunError> {
     use crate::eigen::{
-        run_path_or_single, SingleKSolver,
-        KSampleDescriptor, SingleKModeResult, SingleKSolveResult,
-        EigenSolverModel,
+        run_path_or_single, EigenSolverModel, KSampleDescriptor, SingleKModeResult,
+        SingleKSolveResult, SingleKSolver,
     };
     use crate::types::AuxiliaryArtifact;
 
@@ -1527,9 +1526,7 @@ fn execute_fem_eigen_path(
                 FemEngine::CpuReference => {
                     fem_eigen::execute_reference_fem_eigen(&point_plan, outputs)?
                 }
-                FemEngine::NativeGpu => {
-                    fem_eigen::execute_gpu_fem_eigen(&point_plan, outputs)?
-                }
+                FemEngine::NativeGpu => fem_eigen::execute_gpu_fem_eigen(&point_plan, outputs)?,
             };
 
             // Parse the spectrum artifact to extract mode results
@@ -1541,8 +1538,8 @@ fn execute_fem_eigen_path(
                 .ok_or_else(|| crate::types::RunError {
                     message: "single-k solver did not produce eigen/spectrum.json".to_string(),
                 })?;
-            let spectrum: serde_json::Value = serde_json::from_slice(spectrum_bytes)
-                .map_err(|e| crate::types::RunError {
+            let spectrum: serde_json::Value =
+                serde_json::from_slice(spectrum_bytes).map_err(|e| crate::types::RunError {
                     message: format!("failed to parse spectrum.json: {e}"),
                 })?;
             let relaxation_steps = spectrum["relaxation_steps"].as_u64().unwrap_or(0);
@@ -1551,11 +1548,12 @@ fn execute_fem_eigen_path(
                 .unwrap_or("unknown")
                 .to_string();
 
-            let modes_array = spectrum["modes"]
-                .as_array()
-                .ok_or_else(|| crate::types::RunError {
-                    message: "spectrum.json has no modes array".to_string(),
-                })?;
+            let modes_array =
+                spectrum["modes"]
+                    .as_array()
+                    .ok_or_else(|| crate::types::RunError {
+                        message: "spectrum.json has no modes array".to_string(),
+                    })?;
 
             let mut modes = Vec::with_capacity(modes_array.len());
             for mode_json in modes_array {
@@ -1715,9 +1713,8 @@ fn execute_fem_eigen_path(
         });
 
         // Legacy dispersion CSV with all samples × modes
-        let mut csv_lines = vec![
-            "mode_index,kx,ky,kz,frequency_hz,angular_frequency_rad_per_s".to_string(),
-        ];
+        let mut csv_lines =
+            vec!["mode_index,kx,ky,kz,frequency_hz,angular_frequency_rad_per_s".to_string()];
         for sample_result in &path_result.samples {
             let k = sample_result.sample.k_vector;
             for mode in &sample_result.modes {
@@ -1758,10 +1755,7 @@ fn execute_fem_eigen_path(
         field_snapshot_count: 0,
         auxiliary_artifacts,
         provenance: crate::ExecutionProvenance {
-            execution_engine: format!(
-                "multi_k_orchestrator/{}",
-                path_result.solver_model.as_str()
-            ),
+            execution_engine: format!("multi_k_orchestrator/{}", path_result.solver_model.as_str()),
             precision: "double".to_string(),
             ..Default::default()
         },
@@ -2039,9 +2033,7 @@ fn execute_native_fem(
         device_info.compute_capability,
         device_info.driver_version,
         device_info.runtime_version,
-        plan.mfem_device_string
-            .as_deref()
-            .unwrap_or("cuda")
+        plan.mfem_device_string.as_deref().unwrap_or("cuda")
     ));
     let node_count = plan.mesh.nodes.len();
     let initial_magnetization = backend.copy_m(node_count)?;
@@ -2303,7 +2295,12 @@ fn execute_native_fem(
                     }
                     let p_transported = project_tangent(&m_trial, &p);
                     let mut p_new: Vec<[f64; 3]> = (0..m.len())
-                        .map(|i| add_vec3(scale_vec3(g_new[i], -1.0), scale_vec3(p_transported[i], beta)))
+                        .map(|i| {
+                            add_vec3(
+                                scale_vec3(g_new[i], -1.0),
+                                scale_vec3(p_transported[i], beta),
+                            )
+                        })
                         .collect();
                     if global_dot_vec3(&p_new, &g_new) >= 0.0 {
                         p_new = g_new.iter().map(|gi| scale_vec3(*gi, -1.0)).collect();
@@ -2351,124 +2348,127 @@ fn execute_native_fem(
             }
         }
     } else {
-    while current_time < until_seconds {
-        if let Some(live) = live.as_mut() {
-            if let Some(display_selection) = live.display_selection.map(|get| get()) {
-                let preview_due = display_refresh_due(
-                    last_preview_revision,
-                    &display_selection,
-                    current_stats.step,
-                );
-                let preview_targets_global_scalar = display_is_global_scalar(&display_selection);
+        while current_time < until_seconds {
+            if let Some(live) = live.as_mut() {
+                if let Some(display_selection) = live.display_selection.map(|get| get()) {
+                    let preview_due = display_refresh_due(
+                        last_preview_revision,
+                        &display_selection,
+                        current_stats.step,
+                    );
+                    let preview_targets_global_scalar =
+                        display_is_global_scalar(&display_selection);
+                    let preview_field = if preview_due && !preview_targets_global_scalar {
+                        let request = display_selection.preview_request();
+                        Some(backend.copy_live_preview_field(&request, node_count)?)
+                    } else {
+                        None
+                    };
+                    let action = (live.on_step)(StepUpdate {
+                        stats: current_stats.clone(),
+                        grid: live.grid,
+                        fem_mesh: (current_stats.step == 0)
+                            .then_some(crate::types::FemMeshPayload::from(plan)),
+                        magnetization: None,
+                        preview_field,
+                        cached_preview_fields: None,
+                        scalar_row_due: preview_due && preview_targets_global_scalar,
+                        finished: false,
+                    });
+                    if preview_due {
+                        last_preview_revision = Some(display_selection.revision);
+                    }
+                    if action == StepAction::Stop {
+                        cancelled = true;
+                        break;
+                    }
+                }
+            }
+
+            let dt_step = dt.min(until_seconds - current_time);
+            let interrupt_requested = live
+                .as_ref()
+                .and_then(|consumer| consumer.interrupt_requested);
+            let Some(stats) = backend.step_interruptible(dt_step, interrupt_requested)? else {
+                continue;
+            };
+            current_time = stats.time;
+            latest_stats = Some(stats.clone());
+            current_stats = stats.clone();
+            if let Some(live) = live.as_mut() {
+                let emit_every = live.field_every_n.max(1);
+                let display_selection = live.display_selection.map(|get| get());
+                let preview_due = display_selection
+                    .as_ref()
+                    .map(|selection| {
+                        display_refresh_due(last_preview_revision, selection, stats.step)
+                    })
+                    .unwrap_or(false);
+                let preview_targets_global_scalar = display_selection
+                    .as_ref()
+                    .is_some_and(display_is_global_scalar);
+                let magnetization =
+                    if live.display_selection.is_none() && stats.step % emit_every == 0 {
+                        Some(flatten_vectors(&backend.copy_m(node_count)?))
+                    } else {
+                        None
+                    };
                 let preview_field = if preview_due && !preview_targets_global_scalar {
-                    let request = display_selection.preview_request();
+                    let selection = display_selection.as_ref().expect("checked preview_due");
+                    let request = selection.preview_request();
                     Some(backend.copy_live_preview_field(&request, node_count)?)
                 } else {
                     None
                 };
                 let action = (live.on_step)(StepUpdate {
-                    stats: current_stats.clone(),
+                    stats: stats.clone(),
                     grid: live.grid,
-                    fem_mesh: (current_stats.step == 0)
-                        .then_some(crate::types::FemMeshPayload::from(plan)),
-                    magnetization: None,
+                    fem_mesh: Some(crate::types::FemMeshPayload::from(plan)),
+                    magnetization,
                     preview_field,
                     cached_preview_fields: None,
                     scalar_row_due: preview_due && preview_targets_global_scalar,
                     finished: false,
                 });
                 if preview_due {
-                    last_preview_revision = Some(display_selection.revision);
+                    last_preview_revision = Some(
+                        display_selection
+                            .as_ref()
+                            .expect("checked preview_due")
+                            .revision,
+                    );
                 }
                 if action == StepAction::Stop {
                     cancelled = true;
-                    break;
                 }
             }
-        }
-
-        let dt_step = dt.min(until_seconds - current_time);
-        let interrupt_requested = live
-            .as_ref()
-            .and_then(|consumer| consumer.interrupt_requested);
-        let Some(stats) = backend.step_interruptible(dt_step, interrupt_requested)? else {
-            continue;
-        };
-        current_time = stats.time;
-        latest_stats = Some(stats.clone());
-        current_stats = stats.clone();
-        if let Some(live) = live.as_mut() {
-            let emit_every = live.field_every_n.max(1);
-            let display_selection = live.display_selection.map(|get| get());
-            let preview_due = display_selection
-                .as_ref()
-                .map(|selection| display_refresh_due(last_preview_revision, selection, stats.step))
-                .unwrap_or(false);
-            let preview_targets_global_scalar = display_selection
-                .as_ref()
-                .is_some_and(display_is_global_scalar);
-            let magnetization = if live.display_selection.is_none() && stats.step % emit_every == 0
-            {
-                Some(flatten_vectors(&backend.copy_m(node_count)?))
+            if cancelled {
+                break;
+            }
+            if default_scalar_trace || scalar_schedules.is_empty() {
+                artifacts.record_scalar(&stats)?;
+                steps.push(stats);
             } else {
-                None
-            };
-            let preview_field = if preview_due && !preview_targets_global_scalar {
-                let selection = display_selection.as_ref().expect("checked preview_due");
-                let request = selection.preview_request();
-                Some(backend.copy_live_preview_field(&request, node_count)?)
-            } else {
-                None
-            };
-            let action = (live.on_step)(StepUpdate {
-                stats: stats.clone(),
-                grid: live.grid,
-                fem_mesh: Some(crate::types::FemMeshPayload::from(plan)),
-                magnetization,
-                preview_field,
-                cached_preview_fields: None,
-                scalar_row_due: preview_due && preview_targets_global_scalar,
-                finished: false,
+                artifacts.record_scalar(&stats)?;
+                steps.push(stats);
+            }
+            let latest = steps.last().expect("just pushed stats");
+            let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
+                latest.step >= control.max_steps
+                    || relaxation_converged(
+                        control,
+                        latest,
+                        previous_total_energy,
+                        plan.gyromagnetic_ratio,
+                        plan.material.damping,
+                        false,
+                    )
             });
-            if preview_due {
-                last_preview_revision = Some(
-                    display_selection
-                        .as_ref()
-                        .expect("checked preview_due")
-                        .revision,
-                );
-            }
-            if action == StepAction::Stop {
-                cancelled = true;
+            previous_total_energy = Some(latest.e_total);
+            if stop_for_relaxation {
+                break;
             }
         }
-        if cancelled {
-            break;
-        }
-        if default_scalar_trace || scalar_schedules.is_empty() {
-            artifacts.record_scalar(&stats)?;
-            steps.push(stats);
-        } else {
-            artifacts.record_scalar(&stats)?;
-            steps.push(stats);
-        }
-        let latest = steps.last().expect("just pushed stats");
-        let stop_for_relaxation = plan.relaxation.as_ref().is_some_and(|control| {
-            latest.step >= control.max_steps
-                || relaxation_converged(
-                    control,
-                    latest,
-                    previous_total_energy,
-                    plan.gyromagnetic_ratio,
-                    plan.material.damping,
-                    false,
-                )
-        });
-        previous_total_energy = Some(latest.e_total);
-        if stop_for_relaxation {
-            break;
-        }
-    }
     }
 
     let final_stats = latest_stats.unwrap_or(StepStats {
@@ -2613,7 +2613,10 @@ fn tangent_gradient_from_field(magnetization: &[[f64; 3]], h_eff: &[[f64; 3]]) -
 
 #[cfg(feature = "fem-gpu")]
 fn global_dot_vec3(a: &[[f64; 3]], b: &[[f64; 3]]) -> f64 {
-    a.iter().zip(b.iter()).map(|(ai, bi)| dot_vec3(*ai, *bi)).sum()
+    a.iter()
+        .zip(b.iter())
+        .map(|(ai, bi)| dot_vec3(*ai, *bi))
+        .sum()
 }
 
 #[cfg(feature = "fem-gpu")]
