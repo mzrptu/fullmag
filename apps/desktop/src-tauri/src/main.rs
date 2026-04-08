@@ -29,8 +29,8 @@ fn main() {
                 });
                 (url.clone(), None)
             } else {
-                let sidecar = ApiSidecar::start()
-                    .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+                let sidecar =
+                    ApiSidecar::start().map_err(|e| Box::<dyn std::error::Error>::from(e))?;
                 let base = sidecar.base_url();
                 app.manage(AppConfig {
                     api_base: base.clone(),

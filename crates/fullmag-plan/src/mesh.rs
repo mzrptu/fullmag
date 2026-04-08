@@ -797,10 +797,15 @@ fn extent_from_bounds(bounds: ([f64; 3], [f64; 3])) -> [f64; 3] {
 }
 
 fn select_airbox_boundary_marker(mesh: &MeshIR) -> (u32, &'static str) {
-    if mesh.boundary_markers.iter().any(|&marker| marker == AIRBOX_DEFAULT_BOUNDARY_MARKER) {
+    if mesh
+        .boundary_markers
+        .iter()
+        .any(|&marker| marker == AIRBOX_DEFAULT_BOUNDARY_MARKER)
+    {
         (AIRBOX_DEFAULT_BOUNDARY_MARKER, "mesh_marker_99")
     } else {
-        let max = mesh.boundary_markers
+        let max = mesh
+            .boundary_markers
             .iter()
             .copied()
             .filter(|&marker| marker > 0)
@@ -887,13 +892,16 @@ pub(crate) fn build_air_box_config(
     };
 
     let (heuristic_marker, heuristic_marker_source) = select_airbox_boundary_marker(mesh);
-    let (boundary_marker, boundary_marker_source) = if let Some(m) = policy.and_then(|p| p.boundary_marker) {
-        (m, "user_policy")
-    } else {
-        (heuristic_marker, heuristic_marker_source)
-    };
+    let (boundary_marker, boundary_marker_source) =
+        if let Some(m) = policy.and_then(|p| p.boundary_marker) {
+            (m, "user_policy")
+        } else {
+            (heuristic_marker, heuristic_marker_source)
+        };
 
-    let grading = policy.and_then(|p| p.grading).unwrap_or(AIRBOX_DEFAULT_GRADING);
+    let grading = policy
+        .and_then(|p| p.grading)
+        .unwrap_or(AIRBOX_DEFAULT_GRADING);
     let shape = policy
         .and_then(|p| p.shape.clone())
         .unwrap_or_else(|| AIRBOX_DEFAULT_SHAPE.to_string());
@@ -908,7 +916,11 @@ pub(crate) fn build_air_box_config(
         None
     };
     let robin_beta_factor = if bc_kind == "robin" {
-        Some(policy.and_then(|p| p.robin_beta_factor).unwrap_or(AIRBOX_DEFAULT_ROBIN_BETA_FACTOR))
+        Some(
+            policy
+                .and_then(|p| p.robin_beta_factor)
+                .unwrap_or(AIRBOX_DEFAULT_ROBIN_BETA_FACTOR),
+        )
     } else {
         None
     };
@@ -950,7 +962,12 @@ pub(crate) fn study_universe_planner_note(
         ));
     }
 
-    if mesh_has_air_elements(mesh) && matches!(resolved_demag_realization, Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)) {
+    if mesh_has_air_elements(mesh)
+        && matches!(
+            resolved_demag_realization,
+            Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)
+        )
+    {
         return Some(
             "study_universe metadata present and the FEM mesh already contains air elements, but demag realization remains transfer_grid; the air-box solve is not selected"
                 .to_string(),

@@ -794,6 +794,7 @@ mod tests {
             universe: None,
             domain_frame: None,
             stages: Vec::new(),
+            study_pipeline: None,
             initial_state: None,
             geometries: vec![fullmag_authoring::ScriptBuilderGeometryEntry {
                 name: "body".to_string(),

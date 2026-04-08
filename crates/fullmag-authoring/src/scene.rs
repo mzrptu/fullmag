@@ -2,7 +2,7 @@ use crate::{
     ScriptBuilderCurrentModuleState, ScriptBuilderExcitationAnalysisState,
     ScriptBuilderInitialState, ScriptBuilderMaterialState, ScriptBuilderMeshState,
     ScriptBuilderPerGeometryMeshState, ScriptBuilderSolverState, ScriptBuilderStageState,
-    ScriptBuilderUniverseState,
+    ScriptBuilderUniverseState, StudyPipelineDocument,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -229,6 +229,8 @@ pub struct SceneStudyState {
     pub mesh_defaults: ScriptBuilderMeshState,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stages: Vec<ScriptBuilderStageState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub study_pipeline: Option<StudyPipelineDocument>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_state: Option<ScriptBuilderInitialState>,
 }

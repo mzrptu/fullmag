@@ -510,22 +510,20 @@ pub(crate) fn plan_fem(
                 // state from a SharedDomainMeshWithAir solve can be used as per-body
                 // initial conditions without a length-mismatch error.
                 let sliced_sampled_field;
-                let effective_initial =
-                    match entry.initial_magnetization.as_ref() {
-                        Some(fullmag_ir::InitialMagnetizationIR::SampledField { values })
-                            if values.len() == total_domain_nodes
-                                && total_domain_nodes != segment.node_count as usize =>
-                        {
-                            let seg_start = segment.node_start as usize;
-                            let seg_end = seg_start + segment.node_count as usize;
-                            sliced_sampled_field =
-                                fullmag_ir::InitialMagnetizationIR::SampledField {
-                                    values: values[seg_start..seg_end].to_vec(),
-                                };
-                            Some(&sliced_sampled_field)
-                        }
-                        other => other,
-                    };
+                let effective_initial = match entry.initial_magnetization.as_ref() {
+                    Some(fullmag_ir::InitialMagnetizationIR::SampledField { values })
+                        if values.len() == total_domain_nodes
+                            && total_domain_nodes != segment.node_count as usize =>
+                    {
+                        let seg_start = segment.node_start as usize;
+                        let seg_end = seg_start + segment.node_count as usize;
+                        sliced_sampled_field = fullmag_ir::InitialMagnetizationIR::SampledField {
+                            values: values[seg_start..seg_end].to_vec(),
+                        };
+                        Some(&sliced_sampled_field)
+                    }
+                    other => other,
+                };
                 let values = initial_vectors_for_magnet(
                     &entry.magnet_name,
                     &domain_asset.mesh.mesh_name,
@@ -613,9 +611,15 @@ pub(crate) fn plan_fem(
     // otherwise TransferGrid (traditional FFT-on-Cartesian-grid approach).
     let resolved_demag_realization: Option<fullmag_ir::ResolvedFemDemagIR> = if enable_demag {
         Some(match demag_realization {
-            fullmag_ir::RequestedFemDemagIR::TransferGrid => fullmag_ir::ResolvedFemDemagIR::TransferGrid,
-            fullmag_ir::RequestedFemDemagIR::PoissonDirichlet => fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet,
-            fullmag_ir::RequestedFemDemagIR::PoissonRobin => fullmag_ir::ResolvedFemDemagIR::PoissonRobin,
+            fullmag_ir::RequestedFemDemagIR::TransferGrid => {
+                fullmag_ir::ResolvedFemDemagIR::TransferGrid
+            }
+            fullmag_ir::RequestedFemDemagIR::PoissonDirichlet => {
+                fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet
+            }
+            fullmag_ir::RequestedFemDemagIR::PoissonRobin => {
+                fullmag_ir::ResolvedFemDemagIR::PoissonRobin
+            }
             fullmag_ir::RequestedFemDemagIR::Auto => {
                 let has_air_elements = mesh.element_markers.iter().any(|&m| m == 0);
                 if has_air_elements {
@@ -628,8 +632,7 @@ pub(crate) fn plan_fem(
     } else {
         None
     };
-    let air_box_config =
-        build_air_box_config(problem, &mesh, resolved_demag_realization);
+    let air_box_config = build_air_box_config(problem, &mesh, resolved_demag_realization);
     let universe_note = study_universe_planner_note(
         problem,
         &mesh,
@@ -1124,7 +1127,10 @@ pub(crate) fn plan_fem_eigen(
             }
         }
         fullmag_ir::SpinWaveBoundaryKindIR::SurfaceAnisotropy => {
-            if spin_wave_bc.surface_anisotropy_ks().is_none_or(|ks| !ks.is_finite() || ks <= 0.0) {
+            if spin_wave_bc
+                .surface_anisotropy_ks()
+                .is_none_or(|ks| !ks.is_finite() || ks <= 0.0)
+            {
                 errors.push(
                     "spin_wave_bc.kind='surface_anisotropy' requires surface_anisotropy_ks > 0"
                         .to_string(),
@@ -1142,13 +1148,18 @@ pub(crate) fn plan_fem_eigen(
             if mesh_parts.iter().any(|(_, mesh)| {
                 mesh.element_markers.iter().any(|&marker| marker == 0)
                     && mesh.element_markers.iter().any(|&marker| marker != 0)
-            }) || resolved_domain_mesh_asset
-                .as_ref()
-                .is_some_and(|domain| {
-                    domain.mesh.element_markers.iter().any(|&marker| marker == 0)
-                        && domain.mesh.element_markers.iter().any(|&marker| marker != 0)
-                })
-            {
+            }) || resolved_domain_mesh_asset.as_ref().is_some_and(|domain| {
+                domain
+                    .mesh
+                    .element_markers
+                    .iter()
+                    .any(|&marker| marker == 0)
+                    && domain
+                        .mesh
+                        .element_markers
+                        .iter()
+                        .any(|&marker| marker != 0)
+            }) {
                 errors.push(
                     "spin_wave_bc.kind='surface_anisotropy' currently requires a standalone magnetic mesh; shared-domain airbox meshes do not yet expose magnetic interface faces"
                         .to_string(),
@@ -1200,22 +1211,20 @@ pub(crate) fn plan_fem_eigen(
                 };
                 // If initial_magnetization is a full-domain snapshot, slice this segment's range.
                 let sliced_sampled_field;
-                let effective_initial =
-                    match entry.initial_magnetization.as_ref() {
-                        Some(fullmag_ir::InitialMagnetizationIR::SampledField { values })
-                            if values.len() == total_domain_nodes
-                                && total_domain_nodes != segment.node_count as usize =>
-                        {
-                            let seg_start = segment.node_start as usize;
-                            let seg_end = seg_start + segment.node_count as usize;
-                            sliced_sampled_field =
-                                fullmag_ir::InitialMagnetizationIR::SampledField {
-                                    values: values[seg_start..seg_end].to_vec(),
-                                };
-                            Some(&sliced_sampled_field)
-                        }
-                        other => other,
-                    };
+                let effective_initial = match entry.initial_magnetization.as_ref() {
+                    Some(fullmag_ir::InitialMagnetizationIR::SampledField { values })
+                        if values.len() == total_domain_nodes
+                            && total_domain_nodes != segment.node_count as usize =>
+                    {
+                        let seg_start = segment.node_start as usize;
+                        let seg_end = seg_start + segment.node_count as usize;
+                        sliced_sampled_field = fullmag_ir::InitialMagnetizationIR::SampledField {
+                            values: values[seg_start..seg_end].to_vec(),
+                        };
+                        Some(&sliced_sampled_field)
+                    }
+                    other => other,
+                };
                 let values = initial_vectors_for_magnet(
                     &entry.magnet_name,
                     &domain_asset.mesh.mesh_name,
@@ -1282,15 +1291,23 @@ pub(crate) fn plan_fem_eigen(
 
     let resolved_demag_realization: Option<fullmag_ir::ResolvedFemDemagIR> = if enable_demag {
         Some(match demag_realization {
-            fullmag_ir::RequestedFemDemagIR::TransferGrid => fullmag_ir::ResolvedFemDemagIR::TransferGrid,
-            fullmag_ir::RequestedFemDemagIR::PoissonDirichlet => fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet,
-            fullmag_ir::RequestedFemDemagIR::PoissonRobin => fullmag_ir::ResolvedFemDemagIR::PoissonRobin,
+            fullmag_ir::RequestedFemDemagIR::TransferGrid => {
+                fullmag_ir::ResolvedFemDemagIR::TransferGrid
+            }
+            fullmag_ir::RequestedFemDemagIR::PoissonDirichlet => {
+                fullmag_ir::ResolvedFemDemagIR::PoissonDirichlet
+            }
+            fullmag_ir::RequestedFemDemagIR::PoissonRobin => {
+                fullmag_ir::ResolvedFemDemagIR::PoissonRobin
+            }
             fullmag_ir::RequestedFemDemagIR::Auto => fullmag_ir::ResolvedFemDemagIR::TransferGrid,
         })
     } else {
         None
     };
-    if enable_demag && resolved_demag_realization != Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid) {
+    if enable_demag
+        && resolved_demag_realization != Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)
+    {
         errors.push(
             "the current FEM eigen executable path supports demag_realization='transfer_grid' only"
                 .to_string(),

@@ -235,10 +235,61 @@ pub(crate) struct RuntimeResolutionSummary {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) enum ResolvedScriptStageAction {
+    SaveState {
+        artifact_name: String,
+        format: Option<String>,
+        dataset: Option<String>,
+    },
+    LoadState {
+        artifact_name: Option<String>,
+        state_path: Option<String>,
+        format: Option<String>,
+        dataset: Option<String>,
+        sample_index: Option<i64>,
+    },
+    Export {
+        artifact_name: Option<String>,
+        quantity: String,
+        format: String,
+        dataset: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ResolvedScriptStage {
     pub ir: ProblemIR,
     pub until_seconds: f64,
     pub entrypoint_kind: String,
+    pub action: Option<ResolvedScriptStageAction>,
+}
+
+impl ResolvedScriptStage {
+    pub(crate) fn solver(
+        ir: ProblemIR,
+        until_seconds: f64,
+        entrypoint_kind: impl Into<String>,
+    ) -> Self {
+        Self {
+            ir,
+            until_seconds,
+            entrypoint_kind: entrypoint_kind.into(),
+            action: None,
+        }
+    }
+
+    pub(crate) fn synthetic(
+        ir: ProblemIR,
+        entrypoint_kind: impl Into<String>,
+        action: ResolvedScriptStageAction,
+    ) -> Self {
+        Self {
+            ir,
+            until_seconds: 0.0,
+            entrypoint_kind: entrypoint_kind.into(),
+            action: Some(action),
+        }
+    }
 }
 
 pub(crate) type CurrentDisplaySelection = fullmag_runner::DisplaySelectionState;

@@ -3433,6 +3433,8 @@ fn cuda_execution_provenance(
         requested_demag_realization: None,
         resolved_demag_realization: None,
         dt_policy,
+        mfem_device: None,
+        demag_transfer_cell_size: None,
     }
 }
 
@@ -3487,6 +3489,8 @@ fn fem_gpu_execution_provenance(
             .demag_realization
             .map(|r| r.provenance_name().to_string()),
         dt_policy,
+        mfem_device: plan.mfem_device_string.clone(),
+        demag_transfer_cell_size: plan.demag_transfer_cell_size,
     }
 }
 

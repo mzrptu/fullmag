@@ -271,9 +271,7 @@ pub struct fullmag_fem_backend {
 
 extern "C" {
     pub fn fullmag_fem_is_available() -> i32;
-    pub fn fullmag_fem_get_availability_info(
-        out_info: *mut fullmag_fem_availability_info,
-    ) -> i32;
+    pub fn fullmag_fem_get_availability_info(out_info: *mut fullmag_fem_availability_info) -> i32;
 
     pub fn fullmag_fem_backend_create(
         plan: *const fullmag_fem_plan_desc,

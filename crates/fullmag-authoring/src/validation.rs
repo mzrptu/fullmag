@@ -1,4 +1,4 @@
-use crate::SceneDocument;
+use crate::{SceneDocument, StudyPipelineDocument, StudyPipelineNode};
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter};
 
@@ -108,5 +108,91 @@ pub fn validate_scene_document(scene: &SceneDocument) -> Result<(), SceneDocumen
         }
     }
 
+    if let Some(document) = &scene.study.study_pipeline {
+        validate_study_pipeline_document(document)?;
+    }
+
+    Ok(())
+}
+
+fn validate_study_pipeline_document(
+    document: &StudyPipelineDocument,
+) -> Result<(), SceneDocumentValidationError> {
+    if document.version != "study_pipeline.v1" {
+        return Err(SceneDocumentValidationError::new(format!(
+            "unsupported study pipeline version '{}'",
+            document.version
+        )));
+    }
+    validate_study_pipeline_nodes(&document.nodes)?;
+    Ok(())
+}
+
+fn validate_study_pipeline_nodes(
+    nodes: &[StudyPipelineNode],
+) -> Result<(), SceneDocumentValidationError> {
+    let mut node_ids = BTreeSet::new();
+    for node in nodes {
+        match node {
+            StudyPipelineNode::Primitive(node) => {
+                if node.id.trim().is_empty() {
+                    return Err(SceneDocumentValidationError::new(
+                        "study pipeline primitive node ids must not be empty",
+                    ));
+                }
+                if node.label.trim().is_empty() {
+                    return Err(SceneDocumentValidationError::new(format!(
+                        "study pipeline primitive node '{}' must have a label",
+                        node.id
+                    )));
+                }
+                if !node_ids.insert(node.id.clone()) {
+                    return Err(SceneDocumentValidationError::new(format!(
+                        "duplicate study pipeline node id '{}'",
+                        node.id
+                    )));
+                }
+            }
+            StudyPipelineNode::Macro(node) => {
+                if node.id.trim().is_empty() {
+                    return Err(SceneDocumentValidationError::new(
+                        "study pipeline macro node ids must not be empty",
+                    ));
+                }
+                if node.label.trim().is_empty() {
+                    return Err(SceneDocumentValidationError::new(format!(
+                        "study pipeline macro node '{}' must have a label",
+                        node.id
+                    )));
+                }
+                if !node_ids.insert(node.id.clone()) {
+                    return Err(SceneDocumentValidationError::new(format!(
+                        "duplicate study pipeline node id '{}'",
+                        node.id
+                    )));
+                }
+            }
+            StudyPipelineNode::Group(node) => {
+                if node.id.trim().is_empty() {
+                    return Err(SceneDocumentValidationError::new(
+                        "study pipeline group node ids must not be empty",
+                    ));
+                }
+                if node.label.trim().is_empty() {
+                    return Err(SceneDocumentValidationError::new(format!(
+                        "study pipeline group node '{}' must have a label",
+                        node.id
+                    )));
+                }
+                if !node_ids.insert(node.id.clone()) {
+                    return Err(SceneDocumentValidationError::new(format!(
+                        "duplicate study pipeline node id '{}'",
+                        node.id
+                    )));
+                }
+                validate_study_pipeline_nodes(&node.children)?;
+            }
+        }
+    }
     Ok(())
 }

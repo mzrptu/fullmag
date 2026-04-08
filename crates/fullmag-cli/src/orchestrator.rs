@@ -1724,6 +1724,337 @@ fn wait_for_solve_prompt(backend_plan: &BackendPlanIR) -> &'static str {
     }
 }
 
+fn sanitize_stage_file_name(file_name: &str) -> String {
+    Path::new(file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.replace(['/', '\\'], "_"))
+        .unwrap_or_default()
+}
+
+fn preferred_magnetization_state_suffix(format: &str) -> &'static str {
+    match format {
+        "zarr" => ".zarr.zip",
+        "h5" => ".h5",
+        _ => ".json",
+    }
+}
+
+fn normalize_magnetization_state_format(
+    explicit_format: Option<&str>,
+    file_name: Option<&str>,
+) -> Result<String> {
+    let normalized = explicit_format
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("auto")
+        .to_ascii_lowercase();
+    if normalized != "auto" {
+        let normalized = match normalized.as_str() {
+            "hdf5" => "h5",
+            "json" | "zarr" | "h5" => normalized.as_str(),
+            other => bail!(
+                "unsupported magnetization state format '{}'; supported formats: json, zarr, h5",
+                other
+            ),
+        };
+        return Ok(normalized.to_string());
+    }
+
+    let lower_name = file_name.unwrap_or_default().trim().to_ascii_lowercase();
+    if lower_name.ends_with(".zarr.zip") || lower_name.ends_with(".zarr") {
+        Ok("zarr".to_string())
+    } else if lower_name.ends_with(".h5") || lower_name.ends_with(".hdf5") {
+        Ok("h5".to_string())
+    } else {
+        Ok("json".to_string())
+    }
+}
+
+fn ensure_magnetization_state_file_name(file_name: &str, format: &str) -> String {
+    let safe = sanitize_stage_file_name(file_name);
+    if safe.is_empty() {
+        return format!(
+            "m_state_stage_{}{}",
+            unix_time_millis().unwrap_or(0),
+            preferred_magnetization_state_suffix(format)
+        );
+    }
+    let lower = safe.to_ascii_lowercase();
+    if format == "zarr" && lower.ends_with(".zarr") {
+        return format!("{safe}.zip");
+    }
+    if format == "h5" && (lower.ends_with(".h5") || lower.ends_with(".hdf5")) {
+        return safe;
+    }
+    if lower.ends_with(preferred_magnetization_state_suffix(format)) {
+        return safe;
+    }
+    format!("{safe}{}", preferred_magnetization_state_suffix(format))
+}
+
+fn magnetization_state_json_payload(values: &[[f64; 3]]) -> Vec<u8> {
+    serde_json::to_vec_pretty(&serde_json::json!({
+        "kind": "magnetization_state",
+        "observable": "m",
+        "format": "json",
+        "vector_count": values.len(),
+        "values": values,
+    }))
+    .expect("magnetization state JSON encoding should succeed")
+}
+
+fn write_magnetization_state_artifact(
+    output_path: &Path,
+    vectors: &[[f64; 3]],
+    format: &str,
+    dataset: Option<&str>,
+) -> Result<()> {
+    let parent = output_path.parent().ok_or_else(|| {
+        anyhow!(
+            "failed to determine output directory for magnetization artifact {}",
+            output_path.display()
+        )
+    })?;
+    fs::create_dir_all(parent)?;
+    if format == "json" {
+        fs::write(output_path, magnetization_state_json_payload(vectors))?;
+        return Ok(());
+    }
+
+    let temp_source_path = parent.join(format!(
+        ".state-export-{}-{}.json",
+        unix_time_millis().unwrap_or(0),
+        std::process::id()
+    ));
+    fs::write(&temp_source_path, magnetization_state_json_payload(vectors))?;
+    let convert_result = convert_magnetization_state(
+        &temp_source_path,
+        output_path,
+        Some("json"),
+        Some(format),
+        None,
+        dataset,
+        None,
+    );
+    let _ = fs::remove_file(&temp_source_path);
+    convert_result
+}
+
+fn current_stage_magnetization_vectors(
+    continuation_magnetization: Option<&[[f64; 3]]>,
+    backend_plan: &BackendPlanIR,
+) -> Vec<[f64; 3]> {
+    if let Some(current) = continuation_magnetization {
+        return current.to_vec();
+    }
+    match backend_plan {
+        BackendPlanIR::Fdm(fdm) => fdm.initial_magnetization.clone(),
+        BackendPlanIR::FdmMultilayer(fdm) => fdm
+            .layers
+            .iter()
+            .flat_map(|layer| layer.initial_magnetization.iter().copied())
+            .collect(),
+        BackendPlanIR::Fem(fem) => fem.initial_magnetization.clone(),
+        BackendPlanIR::FemEigen(fem) => fem.equilibrium_magnetization.clone(),
+    }
+}
+
+fn resolve_named_state_artifact_path(artifact_dir: &Path, artifact_name: &str) -> Option<PathBuf> {
+    let safe = sanitize_stage_file_name(artifact_name);
+    if safe.is_empty() {
+        return None;
+    }
+    for base_dir in [
+        artifact_dir.join("states"),
+        artifact_dir.join("exports"),
+        artifact_dir.to_path_buf(),
+    ] {
+        let exact = base_dir.join(&safe);
+        if exact.is_file() {
+            return Some(exact);
+        }
+        for suffix in [".json", ".zarr", ".zarr.zip", ".h5", ".hdf5"] {
+            let candidate = base_dir.join(format!("{safe}{suffix}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn resolve_state_input_path(
+    artifact_dir: &Path,
+    state_path: Option<&str>,
+    artifact_name: Option<&str>,
+) -> Result<PathBuf> {
+    if let Some(raw_path) = state_path.map(str::trim).filter(|value| !value.is_empty()) {
+        let direct = PathBuf::from(raw_path);
+        if direct.is_file() {
+            return Ok(direct);
+        }
+        for candidate in [
+            artifact_dir.join(raw_path),
+            artifact_dir.join("states").join(raw_path),
+            artifact_dir.join("exports").join(raw_path),
+        ] {
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+        bail!("load_state could not find state_path '{}'", raw_path);
+    }
+
+    let artifact_name = artifact_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("load_state requires either state_path or artifact_name"))?;
+    resolve_named_state_artifact_path(artifact_dir, artifact_name).ok_or_else(|| {
+        anyhow!(
+            "load_state could not find saved state '{}'; searched artifact states/exports directories",
+            artifact_name
+        )
+    })
+}
+
+fn write_synthetic_stage_record(
+    current_stage_artifact_dir: &Path,
+    payload: serde_json::Value,
+) -> Result<()> {
+    fs::create_dir_all(current_stage_artifact_dir)?;
+    fs::write(
+        current_stage_artifact_dir.join("synthetic_stage.json"),
+        serde_json::to_vec_pretty(&payload)?,
+    )?;
+    Ok(())
+}
+
+struct SyntheticStageOutcome {
+    magnetization: Vec<[f64; 3]>,
+    message: String,
+}
+
+fn execute_synthetic_stage(
+    action: &ResolvedScriptStageAction,
+    artifact_dir: &Path,
+    current_stage_artifact_dir: &Path,
+    backend_plan: &BackendPlanIR,
+    continuation_magnetization: Option<&[[f64; 3]]>,
+) -> Result<SyntheticStageOutcome> {
+    match action {
+        ResolvedScriptStageAction::SaveState {
+            artifact_name,
+            format,
+            dataset,
+        } => {
+            let vectors =
+                current_stage_magnetization_vectors(continuation_magnetization, backend_plan);
+            let format =
+                normalize_magnetization_state_format(format.as_deref(), Some(artifact_name))?;
+            let file_name = ensure_magnetization_state_file_name(artifact_name, &format);
+            let output_path = artifact_dir.join("states").join(&file_name);
+            write_magnetization_state_artifact(
+                &output_path,
+                &vectors,
+                &format,
+                dataset.as_deref(),
+            )?;
+            write_synthetic_stage_record(
+                current_stage_artifact_dir,
+                serde_json::json!({
+                    "kind": "save_state",
+                    "stored_path": output_path.display().to_string(),
+                    "format": format,
+                    "dataset": dataset,
+                    "vector_count": vectors.len(),
+                }),
+            )?;
+            Ok(SyntheticStageOutcome {
+                magnetization: vectors,
+                message: format!("Saved stage state to {}", output_path.display()),
+            })
+        }
+        ResolvedScriptStageAction::LoadState {
+            artifact_name,
+            state_path,
+            format,
+            dataset,
+            sample_index,
+        } => {
+            let input_path = resolve_state_input_path(
+                artifact_dir,
+                state_path.as_deref(),
+                artifact_name.as_deref(),
+            )?;
+            let loaded = read_magnetization_state(
+                &input_path,
+                format.as_deref(),
+                dataset.as_deref(),
+                *sample_index,
+            )?;
+            write_synthetic_stage_record(
+                current_stage_artifact_dir,
+                serde_json::json!({
+                    "kind": "load_state",
+                    "source_path": input_path.display().to_string(),
+                    "vector_count": loaded.vector_count,
+                }),
+            )?;
+            Ok(SyntheticStageOutcome {
+                magnetization: loaded.values,
+                message: format!("Loaded stage state from {}", input_path.display()),
+            })
+        }
+        ResolvedScriptStageAction::Export {
+            artifact_name,
+            quantity,
+            format,
+            dataset,
+        } => {
+            let normalized_quantity = quantity.trim().to_ascii_lowercase();
+            if normalized_quantity != "magnetization" && normalized_quantity != "m" {
+                bail!(
+                    "export stage currently supports only quantity='magnetization'/'m', got '{}'",
+                    quantity
+                );
+            }
+            let normalized_format =
+                normalize_magnetization_state_format(Some(format), artifact_name.as_deref())?;
+            let base_name = artifact_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("magnetization_export");
+            let file_name = ensure_magnetization_state_file_name(base_name, &normalized_format);
+            let output_path = artifact_dir.join("exports").join(&file_name);
+            let vectors =
+                current_stage_magnetization_vectors(continuation_magnetization, backend_plan);
+            write_magnetization_state_artifact(
+                &output_path,
+                &vectors,
+                &normalized_format,
+                dataset.as_deref(),
+            )?;
+            write_synthetic_stage_record(
+                current_stage_artifact_dir,
+                serde_json::json!({
+                    "kind": "export",
+                    "quantity": normalized_quantity,
+                    "stored_path": output_path.display().to_string(),
+                    "format": normalized_format,
+                    "dataset": dataset,
+                    "vector_count": vectors.len(),
+                }),
+            )?;
+            Ok(SyntheticStageOutcome {
+                magnetization: vectors,
+                message: format!("Exported {} to {}", quantity.trim(), output_path.display()),
+            })
+        }
+    }
+}
+
 // ── main orchestration entry point ───────────────────────────────────────────
 
 pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
@@ -2501,14 +2832,17 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             );
             continue;
         }
+        let synthetic_action = stage.action.clone();
         apply_current_fem_overrides(
             &mut stage.ir,
             current_fem_mesh_override.as_ref(),
             current_fem_hmax_override,
             current_adaptive_runtime_state.as_ref(),
         );
-        if let Some(previous_final_magnetization) = continuation_magnetization.as_deref() {
-            apply_continuation_initial_state(&mut stage.ir, previous_final_magnetization)?;
+        if synthetic_action.is_none() {
+            if let Some(previous_final_magnetization) = continuation_magnetization.as_deref() {
+                apply_continuation_initial_state(&mut stage.ir, previous_final_magnetization)?;
+            }
         }
         validate_ir(&stage.ir)?;
 
@@ -2591,6 +2925,116 @@ pub(crate) fn run_script_mode(raw_args: Vec<OsString>) -> Result<()> {
             state.live_state = live_state_manifest_from_update(&stage_initial_update);
             clear_cached_preview_fields(state);
         });
+
+        if let Some(action) = synthetic_action {
+            let synthetic_outcome = match execute_synthetic_stage(
+                &action,
+                &artifact_dir,
+                &current_stage_artifact_dir,
+                &execution_plan.backend_plan,
+                continuation_magnetization.as_deref(),
+            ) {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    let failed_at_unix_ms = unix_time_millis()?;
+                    let mut snapshot = live_workspace.snapshot();
+                    let failed_runtime = session_runtime_selection_for_problem(
+                        &stage.ir,
+                        backend_target_name(final_requested_backend),
+                        execution_mode_name(final_execution_mode),
+                        execution_precision_name(final_precision),
+                    );
+                    snapshot.session = build_session_manifest(
+                        &session_id,
+                        &run_id,
+                        "failed",
+                        interactive_requested,
+                        &script_path,
+                        &final_problem_name,
+                        &failed_runtime,
+                        &artifact_dir,
+                        started_at_unix_ms,
+                        failed_at_unix_ms,
+                        plan_summary_json(&current_plan_summary),
+                    );
+                    snapshot.metadata =
+                        Some(current_live_metadata(&stage.ir, &execution_plan, "failed"));
+                    snapshot.mesh_workspace = current_mesh_workspace(
+                        &stage.ir,
+                        &execution_plan,
+                        "failed",
+                        current_mesh_quality.as_ref(),
+                        &current_mesh_history,
+                    );
+                    snapshot.run = run_manifest_from_steps(
+                        &run_id,
+                        &session_id,
+                        "failed",
+                        &artifact_dir,
+                        &aggregated_steps,
+                    );
+                    set_live_state_status(&mut snapshot.live_state, "failed", Some(true));
+                    live_workspace.replace(snapshot);
+                    live_workspace.push_log(
+                        "error",
+                        format!("Synthetic stage execution failed: {}", error),
+                    );
+                    return Err(error);
+                }
+            };
+
+            let synthetic_stats = aggregated_steps.last().cloned().unwrap_or_default();
+            let final_update = snapshot_step_update_from_stats(
+                &execution_plan.backend_plan,
+                synthetic_stats,
+                &synthetic_outcome.magnetization,
+                is_session_final_stage,
+            );
+            live_workspace.update(|state| {
+                state.session.status = if final_update.finished {
+                    "completed".to_string()
+                } else {
+                    "running".to_string()
+                };
+                state.run = running_run_manifest_from_update(
+                    &run_id,
+                    &session_id,
+                    &artifact_dir,
+                    &final_update,
+                );
+                state.live_state = live_state_manifest_from_update(&final_update);
+                set_latest_scalar_row_if_due(state, &final_update);
+            });
+
+            if matches!(action, ResolvedScriptStageAction::LoadState { .. }) {
+                let display_selection = display_selection_handle.display_selection_snapshot();
+                if let Err(error) = refresh_problem_preview_state(
+                    &stage.ir,
+                    Some(synthetic_outcome.magnetization.as_slice()),
+                    &display_selection,
+                    &live_workspace,
+                    supports_dynamic_live_preview(&execution_plan.backend_plan),
+                ) {
+                    live_workspace.push_log(
+                        "warn",
+                        format!("Loaded state preview refresh failed: {}", error),
+                    );
+                }
+            }
+
+            continuation_magnetization = Some(synthetic_outcome.magnetization);
+            live_workspace.push_log("success", synthetic_outcome.message);
+            live_workspace.push_log(
+                "success",
+                format!(
+                    "Stage {}/{} ({}) completed",
+                    stage_index + 1,
+                    stage_count,
+                    stage.entrypoint_kind
+                ),
+            );
+            continue;
+        }
 
         let mut stage_result = match if use_live_callback {
             if supports_dynamic_live_preview(&execution_plan.backend_plan) {
@@ -3937,9 +4381,10 @@ pub(crate) fn prepare_live_workspace_for_ui(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_current_fem_overrides, default_domain_region_markers,
+        apply_current_fem_overrides, default_domain_region_markers, execute_synthetic_stage,
         fem_mesh_payload_from_backend_plan, wait_for_solve_prompt, wait_for_solve_supported,
     };
+    use crate::types::ResolvedScriptStageAction;
     use fullmag_ir::{
         BackendPlanIR, BackendPolicyIR, BackendTarget, DiscretizationHintsIR, DynamicsIR,
         ExchangeBoundaryCondition, ExecutionMode, ExecutionPrecision, FdmMaterialIR, FdmPlanIR,
@@ -3948,6 +4393,9 @@ mod tests {
         ProblemIR, ProblemMeta, SamplingIR, StudyIR, ValidationProfileIR,
     };
     use std::collections::BTreeMap;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn tiny_fdm_plan() -> BackendPlanIR {
         BackendPlanIR::Fdm(FdmPlanIR {
@@ -4308,6 +4756,21 @@ mod tests {
         }
     }
 
+    fn temp_test_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "fullmag-cli-{}-{}-{}",
+            label,
+            std::process::id(),
+            unique
+        ));
+        fs::create_dir_all(&dir).expect("temp dir should be creatable");
+        dir
+    }
+
     #[test]
     fn wait_for_solve_is_supported_for_fdm_and_fem() {
         assert!(wait_for_solve_supported(&tiny_fdm_plan()));
@@ -4403,5 +4866,71 @@ mod tests {
                 .map(|hints| hints.hmax),
             Some(2.5)
         );
+    }
+
+    #[test]
+    fn synthetic_stage_actions_round_trip_json_state_artifacts() {
+        let artifact_dir = temp_test_dir("synthetic-stage");
+        let backend_plan = tiny_fdm_plan();
+        let current = vec![[0.0, 1.0, 0.0]];
+
+        let save_stage_dir = artifact_dir.join("stage_save");
+        let save_outcome = execute_synthetic_stage(
+            &ResolvedScriptStageAction::SaveState {
+                artifact_name: "state_snapshot".to_string(),
+                format: Some("json".to_string()),
+                dataset: None,
+            },
+            &artifact_dir,
+            &save_stage_dir,
+            &backend_plan,
+            Some(current.as_slice()),
+        )
+        .expect("save_state should succeed");
+        let saved_path = artifact_dir.join("states").join("state_snapshot.json");
+        assert!(saved_path.is_file());
+        assert_eq!(save_outcome.magnetization, current);
+        assert!(save_stage_dir.join("synthetic_stage.json").is_file());
+
+        let load_stage_dir = artifact_dir.join("stage_load");
+        let load_outcome = execute_synthetic_stage(
+            &ResolvedScriptStageAction::LoadState {
+                artifact_name: Some("state_snapshot".to_string()),
+                state_path: None,
+                format: Some("json".to_string()),
+                dataset: None,
+                sample_index: None,
+            },
+            &artifact_dir,
+            &load_stage_dir,
+            &backend_plan,
+            None,
+        )
+        .expect("load_state should succeed");
+        assert_eq!(load_outcome.magnetization, current);
+        assert!(load_stage_dir.join("synthetic_stage.json").is_file());
+
+        let export_stage_dir = artifact_dir.join("stage_export");
+        let export_outcome = execute_synthetic_stage(
+            &ResolvedScriptStageAction::Export {
+                artifact_name: Some("magnetization_export".to_string()),
+                quantity: "magnetization".to_string(),
+                format: "json".to_string(),
+                dataset: None,
+            },
+            &artifact_dir,
+            &export_stage_dir,
+            &backend_plan,
+            Some(current.as_slice()),
+        )
+        .expect("export should succeed");
+        let exported_path = artifact_dir
+            .join("exports")
+            .join("magnetization_export.json");
+        assert!(exported_path.is_file());
+        assert_eq!(export_outcome.magnetization, current);
+        assert!(export_stage_dir.join("synthetic_stage.json").is_file());
+
+        let _ = fs::remove_dir_all(&artifact_dir);
     }
 }

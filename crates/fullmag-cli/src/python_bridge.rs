@@ -541,6 +541,53 @@ pub(crate) fn read_magnetization_state(
         .context("failed to parse magnetization state payload")
 }
 
+pub(crate) fn convert_magnetization_state(
+    input_path: &Path,
+    output_path: &Path,
+    input_format: Option<&str>,
+    output_format: Option<&str>,
+    input_dataset: Option<&str>,
+    output_dataset: Option<&str>,
+    sample_index: Option<i64>,
+) -> Result<()> {
+    let mut helper_args = vec![
+        "-m".to_string(),
+        "fullmag.runtime.helper".to_string(),
+        "convert-magnetization-state".to_string(),
+        "--input-path".to_string(),
+        input_path.display().to_string(),
+        "--output-path".to_string(),
+        output_path.display().to_string(),
+    ];
+    if let Some(input_format) = input_format {
+        helper_args.push("--input-format".to_string());
+        helper_args.push(input_format.to_string());
+    }
+    if let Some(output_format) = output_format {
+        helper_args.push("--output-format".to_string());
+        helper_args.push(output_format.to_string());
+    }
+    if let Some(input_dataset) = input_dataset {
+        helper_args.push("--input-dataset".to_string());
+        helper_args.push(input_dataset.to_string());
+    }
+    if let Some(output_dataset) = output_dataset {
+        helper_args.push("--output-dataset".to_string());
+        helper_args.push(output_dataset.to_string());
+    }
+    if let Some(sample_index) = sample_index {
+        helper_args.push("--sample".to_string());
+        helper_args.push(sample_index.to_string());
+    }
+
+    let output = run_python_helper(&helper_args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("failed to convert magnetization state: {}", stderr.trim());
+    }
+    Ok(())
+}
+
 pub(crate) fn invoke_remesh_full(
     geometry_entry: &fullmag_ir::GeometryEntryIR,
     hmax: f64,

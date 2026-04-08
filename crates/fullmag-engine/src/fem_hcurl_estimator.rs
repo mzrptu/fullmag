@@ -307,7 +307,7 @@ mod tests {
             boundary_markers: vec![1, 1, 1, 1, 1, 1],
             periodic_boundary_pairs: Vec::new(),
             periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+            per_domain_quality: std::collections::HashMap::new(),
         };
         let topo = MeshTopology::from_ir(&mesh).unwrap();
         let faces = FaceTopology::build(

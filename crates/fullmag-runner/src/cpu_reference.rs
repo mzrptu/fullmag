@@ -189,7 +189,11 @@ pub(crate) fn build_snapshot_problem_and_state(
             dt_max: adaptive.dt_max.unwrap_or(1e-10),
             headroom: adaptive.safety,
             rtol: adaptive.rtol,
-            growth_limit: if adaptive.growth_limit == 0.0 { f64::INFINITY } else { adaptive.growth_limit },
+            growth_limit: if adaptive.growth_limit == 0.0 {
+                f64::INFINITY
+            } else {
+                adaptive.growth_limit
+            },
             shrink_limit: adaptive.shrink_limit,
         });
     }
@@ -323,7 +327,11 @@ pub(crate) fn execute_reference_fdm(
             dt_max: adaptive.dt_max.unwrap_or(1e-10),
             headroom: adaptive.safety,
             rtol: adaptive.rtol,
-            growth_limit: if adaptive.growth_limit == 0.0 { f64::INFINITY } else { adaptive.growth_limit },
+            growth_limit: if adaptive.growth_limit == 0.0 {
+                f64::INFINITY
+            } else {
+                adaptive.growth_limit
+            },
             shrink_limit: adaptive.shrink_limit,
         });
     }

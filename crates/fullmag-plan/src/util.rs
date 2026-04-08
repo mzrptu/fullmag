@@ -16,7 +16,9 @@ pub(crate) fn runtime_requests_cuda(problem: &ProblemIR) -> bool {
         .is_some_and(|d| d == "cuda" || d == "gpu")
 }
 
-pub(crate) fn mesh_workflow_metadata(problem: &ProblemIR) -> Option<&serde_json::Map<String, Value>> {
+pub(crate) fn mesh_workflow_metadata(
+    problem: &ProblemIR,
+) -> Option<&serde_json::Map<String, Value>> {
     problem
         .problem_meta
         .runtime_metadata

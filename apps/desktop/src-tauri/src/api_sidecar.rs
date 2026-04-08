@@ -117,12 +117,7 @@ fn find_api_binary() -> Option<PathBuf> {
                     .join(&name),
             );
         }
-        candidates.push(
-            root.join(".fullmag")
-                .join("local")
-                .join("bin")
-                .join(&name),
-        );
+        candidates.push(root.join(".fullmag").join("local").join("bin").join(&name));
     }
 
     candidates.into_iter().find(|p| p.is_file())
@@ -165,9 +160,10 @@ fn resolve_web_static_dir(repo_root: &std::path::Path) -> Option<PathBuf> {
 }
 
 fn find_free_port() -> Option<u16> {
-    CANDIDATE_PORTS.iter().copied().find(|&port| {
-        TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port))).is_ok()
-    })
+    CANDIDATE_PORTS
+        .iter()
+        .copied()
+        .find(|&port| TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port))).is_ok())
 }
 
 fn health_check(port: u16) -> bool {
@@ -190,7 +186,11 @@ fn health_check(port: u16) -> bool {
 }
 
 /// Set PATH / LD_LIBRARY_PATH so fullmag-api can find native shared libraries.
-fn configure_native_library_env(cmd: &mut Command, repo_root: &std::path::Path, api_exe: &std::path::Path) {
+fn configure_native_library_env(
+    cmd: &mut Command,
+    repo_root: &std::path::Path,
+    api_exe: &std::path::Path,
+) {
     let mut lib_dirs: Vec<OsString> = Vec::new();
 
     // Sibling directory of the API binary

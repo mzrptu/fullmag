@@ -367,9 +367,15 @@ pub struct MagnetIR {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InitialMagnetizationIR {
-    Uniform { value: [f64; 3] },
-    RandomSeeded { seed: u64 },
-    SampledField { values: Vec<[f64; 3]> },
+    Uniform {
+        value: [f64; 3],
+    },
+    RandomSeeded {
+        seed: u64,
+    },
+    SampledField {
+        values: Vec<[f64; 3]>,
+    },
     PresetTexture {
         preset_kind: String,
         #[serde(default)]
@@ -673,10 +679,18 @@ pub struct FemLinearSolverPolicy {
     pub print_level: u32,
 }
 
-fn default_linear_solver() -> String { "CG".to_string() }
-fn default_preconditioner() -> String { "AMG".to_string() }
-fn default_rtol() -> f64 { 1e-8 }
-fn default_max_iterations() -> u32 { 500 }
+fn default_linear_solver() -> String {
+    "CG".to_string()
+}
+fn default_preconditioner() -> String {
+    "AMG".to_string()
+}
+fn default_rtol() -> f64 {
+    1e-8
+}
+fn default_max_iterations() -> u32 {
+    500
+}
 
 impl Default for FemLinearSolverPolicy {
     fn default() -> Self {
@@ -3247,7 +3261,7 @@ mod tests {
                 temperature: None,
                 interfacial_dmi: None,
                 bulk_dmi: None,
-                    ..Default::default()
+                ..Default::default()
             }),
             output_plan: OutputPlanIR {
                 outputs: vec![OutputIR::Field {

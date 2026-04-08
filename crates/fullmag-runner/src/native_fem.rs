@@ -146,10 +146,9 @@ impl NativeFemBackend {
         }
         if plan.precision == fullmag_ir::ExecutionPrecision::Single {
             return Err(RunError {
-                message:
-                    "native FEM GPU backend requires double precision; \
+                message: "native FEM GPU backend requires double precision; \
                      single-precision CUDA kernels are not yet implemented"
-                        .to_string(),
+                    .to_string(),
             });
         }
         let nodes_flat: Vec<f64> = plan
@@ -246,7 +245,10 @@ impl NativeFemBackend {
             has_external_field: if plan.external_field.is_some() { 1 } else { 0 },
             external_field_am: plan.external_field.unwrap_or([0.0, 0.0, 0.0]),
             demag_solver: {
-                let policy = plan.demag_solver_policy.as_ref().cloned()
+                let policy = plan
+                    .demag_solver_policy
+                    .as_ref()
+                    .cloned()
                     .unwrap_or_default();
                 let solver = match policy.solver.as_str() {
                     "CG" => ffi::fullmag_fem_linear_solver::FULLMAG_FEM_LINEAR_SOLVER_CG,
@@ -297,7 +299,9 @@ impl NativeFemBackend {
             poisson_boundary_marker: plan
                 .air_box_config
                 .as_ref()
-                .map_or(FALLBACK_POISSON_BOUNDARY_MARKER, |c| c.boundary_marker as i32),
+                .map_or(FALLBACK_POISSON_BOUNDARY_MARKER, |c| {
+                    c.boundary_marker as i32
+                }),
             robin_beta_mode: plan.air_box_config.as_ref().map_or(0, |c| {
                 match c.bc_kind.as_deref() {
                     Some("robin") => match c.robin_beta_mode.as_deref() {
@@ -551,22 +555,22 @@ impl NativeFemBackend {
                 });
             }
         }
-        let adaptive_cfg =
-            plan.adaptive_timestep
-                .as_ref()
-                .map(|a| -> Result<ffi::fullmag_fem_adaptive_config, RunError> {
-                    Ok(ffi::fullmag_fem_adaptive_config {
-                        atol: a.atol,
-                        rtol: a.rtol,
-                        dt_initial: a.dt_initial.or(plan.fixed_timestep).unwrap_or(a.dt_min),
-                        dt_min: a.dt_min,
-                        dt_max: a.dt_max.unwrap_or(crate::DEFAULT_ADAPTIVE_DT_MAX),
-                        safety: a.safety,
-                        growth_limit: a.growth_limit,
-                        shrink_limit: a.shrink_limit,
-                    })
+        let adaptive_cfg = plan
+            .adaptive_timestep
+            .as_ref()
+            .map(|a| -> Result<ffi::fullmag_fem_adaptive_config, RunError> {
+                Ok(ffi::fullmag_fem_adaptive_config {
+                    atol: a.atol,
+                    rtol: a.rtol,
+                    dt_initial: a.dt_initial.or(plan.fixed_timestep).unwrap_or(a.dt_min),
+                    dt_min: a.dt_min,
+                    dt_max: a.dt_max.unwrap_or(crate::DEFAULT_ADAPTIVE_DT_MAX),
+                    safety: a.safety,
+                    growth_limit: a.growth_limit,
+                    shrink_limit: a.shrink_limit,
                 })
-                .transpose()?;
+            })
+            .transpose()?;
         if let Some(ref cfg) = adaptive_cfg {
             plan_desc.adaptive_config = cfg as *const ffi::fullmag_fem_adaptive_config;
         }

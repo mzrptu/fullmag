@@ -67,6 +67,7 @@ pub fn scene_document_from_script_builder(builder: &ScriptBuilderState) -> Scene
             shared_domain_mesh: builder.mesh.clone(),
             mesh_defaults: builder.mesh.clone(),
             stages: builder.stages.clone(),
+            study_pipeline: builder.study_pipeline.clone(),
             initial_state: builder.initial_state.clone(),
         },
         outputs: SceneOutputsState::default(),
@@ -158,6 +159,7 @@ pub fn scene_document_to_script_builder(
             .or_else(|| scene.universe.clone()),
         domain_frame: None,
         stages: scene.study.stages.clone(),
+        study_pipeline: scene.study.study_pipeline.clone(),
         initial_state: scene.study.initial_state.clone(),
         geometries,
         current_modules: scene.current_modules.modules.clone(),
@@ -242,6 +244,9 @@ pub fn scene_document_to_script_builder_overrides(
             "eigen_equilibrium_source": string_or_null(&stage.eigen_equilibrium_source),
             "eigen_normalization": string_or_null(&stage.eigen_normalization),
         })).collect::<Vec<_>>(),
+        "study_pipeline": builder.study_pipeline.as_ref().map(|document| {
+            serde_json::to_value(document).unwrap_or(Value::Null)
+        }).unwrap_or(Value::Null),
         "initial_state": builder.initial_state.as_ref().map(|initial_state| serde_json::json!({
             "magnet_name": initial_state.magnet_name,
             "source_path": initial_state.source_path,
@@ -541,10 +546,12 @@ fn parse_optional_text_u64(raw: &str) -> Value {
 mod tests {
     use super::*;
     use crate::{
-        ScriptBuilderCurrentModuleState, ScriptBuilderDriveState, ScriptBuilderInitialState,
-        ScriptBuilderMaterialState, ScriptBuilderMeshOperationState,
-        ScriptBuilderMeshSizeFieldState, ScriptBuilderMeshState, ScriptBuilderPerGeometryMeshState,
-        ScriptBuilderSolverState, ScriptBuilderStageState, ScriptBuilderUniverseState,
+        MacroStageNode, PrimitiveStageNode, ScriptBuilderCurrentModuleState,
+        ScriptBuilderDriveState, ScriptBuilderInitialState, ScriptBuilderMaterialState,
+        ScriptBuilderMeshOperationState, ScriptBuilderMeshSizeFieldState, ScriptBuilderMeshState,
+        ScriptBuilderPerGeometryMeshState, ScriptBuilderSolverState, ScriptBuilderStageState,
+        ScriptBuilderUniverseState, StudyMacroStageKind, StudyPipelineDocument, StudyPipelineNode,
+        StudyPipelineNodeSource, StudyPrimitiveStageKind,
     };
 
     fn sample_builder() -> ScriptBuilderState {
@@ -613,6 +620,38 @@ mod tests {
                 eigen_spin_wave_bc: String::new(),
                 eigen_spin_wave_bc_config: None,
             }],
+            study_pipeline: Some(StudyPipelineDocument {
+                version: "study_pipeline.v1".to_string(),
+                nodes: vec![
+                    StudyPipelineNode::Primitive(PrimitiveStageNode {
+                        id: "stage_1_relax".to_string(),
+                        label: "Relax".to_string(),
+                        enabled: true,
+                        notes: None,
+                        source: Some(StudyPipelineNodeSource::UiAuthored),
+                        stage_kind: StudyPrimitiveStageKind::Relax,
+                        payload: BTreeMap::from([
+                            ("kind".to_string(), serde_json::json!("relax")),
+                            (
+                                "relax_algorithm".to_string(),
+                                serde_json::json!("llg_overdamped"),
+                            ),
+                        ]),
+                    }),
+                    StudyPipelineNode::Macro(MacroStageNode {
+                        id: "stage_2_relax_run".to_string(),
+                        label: "Relax -> Run".to_string(),
+                        enabled: true,
+                        notes: Some("Warmup sweep".to_string()),
+                        source: Some(StudyPipelineNodeSource::UiAuthored),
+                        macro_kind: StudyMacroStageKind::RelaxRun,
+                        config: BTreeMap::from([(
+                            "run_until_seconds".to_string(),
+                            serde_json::json!("1e-9"),
+                        )]),
+                    }),
+                ],
+            }),
             initial_state: Some(ScriptBuilderInitialState {
                 magnet_name: Some("flower".to_string()),
                 source_path: "/tmp/m0.ovf".to_string(),
@@ -715,6 +754,7 @@ mod tests {
         assert_eq!(round_trip.solver, builder.solver);
         assert_eq!(round_trip.mesh, builder.mesh);
         assert_eq!(round_trip.universe, builder.universe);
+        assert_eq!(round_trip.study_pipeline, builder.study_pipeline);
         assert_eq!(round_trip.initial_state, builder.initial_state);
         assert_eq!(round_trip.current_modules, builder.current_modules);
         assert_eq!(round_trip.excitation_analysis, builder.excitation_analysis);
@@ -723,6 +763,14 @@ mod tests {
             Some(&serde_json::json!([1.0, 2.0, 3.0]))
         );
         assert_eq!(round_trip.geometries[0].magnetization.kind, "sampled");
+        assert_eq!(
+            scene
+                .study
+                .study_pipeline
+                .as_ref()
+                .map(|document| document.version.as_str()),
+            Some("study_pipeline.v1")
+        );
     }
 
     #[test]
@@ -762,6 +810,15 @@ mod tests {
         assert_eq!(
             projection
                 .rewrite_overrides
+                .get("study_pipeline")
+                .and_then(Value::as_object)
+                .and_then(|value| value.get("version"))
+                .and_then(Value::as_str),
+            Some("study_pipeline.v1")
+        );
+        assert_eq!(
+            projection
+                .rewrite_overrides
                 .get("universe")
                 .and_then(Value::as_object)
                 .and_then(|value| value.get("airbox_hmax"))
@@ -788,5 +845,19 @@ mod tests {
         assert_eq!(scene.editor.selected_entity_id, None);
         assert_eq!(scene.editor.focused_entity_id, None);
         assert!(scene.editor.mesh_entity_view_state.is_empty());
+    }
+
+    #[test]
+    fn scene_document_validation_rejects_unsupported_study_pipeline_version() {
+        let mut scene = scene_document_from_script_builder(&sample_builder());
+        scene
+            .study
+            .study_pipeline
+            .as_mut()
+            .expect("sample builder should contain study pipeline")
+            .version = "study_pipeline.v0".to_string();
+        let error = scene_document_to_script_builder(&scene)
+            .expect_err("unsupported study pipeline version must fail");
+        assert!(error.message.contains("unsupported study pipeline version"));
     }
 }

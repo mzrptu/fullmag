@@ -18,9 +18,9 @@ fn mesh_parts_from_shared_domain_produces_air_and_magnetic() {
         element_markers: vec![1, 0],
         boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
         boundary_markers: vec![1, 99],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
     };
     let object_segments = vec![
         fullmag_ir::FemObjectSegmentIR {
@@ -72,9 +72,9 @@ fn mesh_parts_from_merged_magnetic_has_no_air() {
         element_markers: vec![1],
         boundary_faces: vec![[0, 1, 2]],
         boundary_markers: vec![1],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
     };
     let object_segments = vec![fullmag_ir::FemObjectSegmentIR {
         object_id: "flower".to_string(),
@@ -114,9 +114,9 @@ fn mesh_parts_bounds_are_correct() {
         element_markers: vec![1],
         boundary_faces: vec![[0, 1, 2]],
         boundary_markers: vec![1],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
     };
     let object_segments = vec![fullmag_ir::FemObjectSegmentIR {
         object_id: "sample".to_string(),
@@ -154,9 +154,9 @@ fn analyze_detects_interface_between_touching_markers() {
         element_markers: vec![1, 2],
         boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
         boundary_markers: vec![10, 20],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
     };
     let analysis = crate::mesh::analyze_shared_domain_mesh(
         &mesh,
@@ -206,9 +206,9 @@ fn reorder_shared_domain_mesh_materializes_interface_and_outer_boundary_parts() 
             [1, 2, 4],
         ],
         boundary_markers: vec![10, 10, 10, 99, 99, 99],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
     };
 
     let (_reordered, _segments, parts) = crate::mesh::reorder_shared_domain_mesh(
@@ -258,9 +258,9 @@ fn analyze_classifies_air_nodes() {
         element_markers: vec![1, 0],
         boundary_faces: vec![[0, 1, 2], [4, 5, 6]],
         boundary_markers: vec![10, 99],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
     };
     let analysis = crate::mesh::analyze_shared_domain_mesh(
         &mesh,
@@ -290,9 +290,9 @@ fn validate_rejects_shared_nodes_for_now() {
         element_markers: vec![1, 2],
         boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
         boundary_markers: vec![10, 20],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
     };
     let analysis = crate::mesh::analyze_shared_domain_mesh(
         &mesh,
@@ -329,9 +329,9 @@ fn validate_accepts_shared_nodes_when_solver_supports_conformal() {
         element_markers: vec![1, 2],
         boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
         boundary_markers: vec![10, 20],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
     };
     let analysis = crate::mesh::analyze_shared_domain_mesh(
         &mesh,
@@ -367,9 +367,9 @@ fn pack_duplicates_shared_interface_nodes_per_region() {
         element_markers: vec![1, 2],
         boundary_faces: vec![[0, 1, 3], [0, 1, 4]],
         boundary_markers: vec![10, 20],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
     };
     let region_markers = vec![
         fullmag_ir::FemDomainRegionMarkerIR {
@@ -424,9 +424,9 @@ fn pack_produces_same_result_as_before() {
         element_markers: vec![1, 2, 0],
         boundary_faces: vec![[0, 1, 2], [4, 5, 6], [8, 9, 10]],
         boundary_markers: vec![10, 20, 99],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+        periodic_boundary_pairs: Vec::new(),
+        periodic_node_pairs: Vec::new(),
+        per_domain_quality: std::collections::HashMap::new(),
     };
     let region_markers = vec![
         fullmag_ir::FemDomainRegionMarkerIR {
@@ -572,7 +572,7 @@ fn fem_backend_with_mesh_asset_plans_successfully() {
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -635,7 +635,7 @@ fn fem_plan_serializes_mesh_parts() {
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -666,7 +666,9 @@ fn fem_backend_with_air_elements_lowers_study_universe_to_air_box_config() {
     );
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
     ];
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
         fdm: Some(fullmag_ir::FdmHintsIR {
@@ -706,7 +708,7 @@ fn fem_backend_with_air_elements_lowers_study_universe_to_air_box_config() {
                 boundary_markers: vec![1, 99],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -715,7 +717,10 @@ per_domain_quality: std::collections::HashMap::new(),
     let plan = plan(&ir).expect("FEM air-box mesh asset should produce an air-box config");
     match plan.backend_plan {
         BackendPlanIR::Fem(fem) => {
-            assert_eq!(fem.demag_realization, Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin));
+            assert_eq!(
+                fem.demag_realization,
+                Some(fullmag_ir::ResolvedFemDemagIR::PoissonRobin)
+            );
             assert!(
                 fem.air_box_config.is_some(),
                 "shared-domain poisson demag should lower an air-box config"
@@ -744,7 +749,9 @@ fn fem_backend_without_air_elements_keeps_universe_as_provenance_note() {
     );
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
     ];
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
         fdm: Some(fullmag_ir::FdmHintsIR {
@@ -780,7 +787,7 @@ fn fem_backend_without_air_elements_keeps_universe_as_provenance_note() {
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -789,7 +796,10 @@ per_domain_quality: std::collections::HashMap::new(),
     let plan = plan(&ir).expect("FEM mesh without air elements should still plan");
     match plan.backend_plan {
         BackendPlanIR::Fem(fem) => {
-            assert_eq!(fem.demag_realization, Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid));
+            assert_eq!(
+                fem.demag_realization,
+                Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)
+            );
             assert!(fem.air_box_config.is_none());
         }
         _ => panic!("expected FEM plan"),
@@ -821,7 +831,9 @@ fn fem_backend_rejects_requested_shared_domain_without_air_elements() {
     );
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
     ];
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
         fdm: Some(fullmag_ir::FdmHintsIR {
@@ -857,7 +869,7 @@ fn fem_backend_rejects_requested_shared_domain_without_air_elements() {
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -924,7 +936,7 @@ fn fem_backend_populates_domain_frame_and_domain_mesh_mode() {
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -1015,7 +1027,7 @@ fn fem_backend_prefers_domain_frame_declared_universe_over_legacy_study_universe
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
@@ -1158,7 +1170,9 @@ fn fem_backend_multibody_merges_disjoint_mesh_assets() {
     ];
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
     ];
     ir.geometry_assets = Some(fullmag_ir::GeometryAssetsIR {
         fdm_grid_assets: vec![],
@@ -1178,9 +1192,9 @@ fn fem_backend_multibody_merges_disjoint_mesh_assets() {
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                    periodic_boundary_pairs: Vec::new(),
+                    periodic_node_pairs: Vec::new(),
+                    per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
             fullmag_ir::FemMeshAssetIR {
@@ -1198,9 +1212,9 @@ per_domain_quality: std::collections::HashMap::new(),
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                    periodic_boundary_pairs: Vec::new(),
+                    periodic_node_pairs: Vec::new(),
+                    per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
         ],
@@ -1303,9 +1317,9 @@ fn fem_backend_multibody_rejects_incompatible_material_law() {
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                    periodic_boundary_pairs: Vec::new(),
+                    periodic_node_pairs: Vec::new(),
+                    per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
             fullmag_ir::FemMeshAssetIR {
@@ -1323,9 +1337,9 @@ per_domain_quality: std::collections::HashMap::new(),
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                    periodic_boundary_pairs: Vec::new(),
+                    periodic_node_pairs: Vec::new(),
+                    per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
         ],
@@ -1406,9 +1420,9 @@ fn fem_plan_heterogeneous_materials_populates_region_materials_for_cuda() {
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                    periodic_boundary_pairs: Vec::new(),
+                    periodic_node_pairs: Vec::new(),
+                    per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
             fullmag_ir::FemMeshAssetIR {
@@ -1426,9 +1440,9 @@ per_domain_quality: std::collections::HashMap::new(),
                     element_markers: vec![1],
                     boundary_faces: vec![[0, 1, 2]],
                     boundary_markers: vec![1],
-                periodic_boundary_pairs: Vec::new(),
-                periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                    periodic_boundary_pairs: Vec::new(),
+                    periodic_node_pairs: Vec::new(),
+                    per_domain_quality: std::collections::HashMap::new(),
                 }),
             },
         ],
@@ -1493,7 +1507,7 @@ fn fem_plan_conformal_shared_domain_duplicates_interface_nodes_for_cuda() {
                 boundary_markers: vec![10, 20],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
             region_markers: vec![
                 fullmag_ir::FemDomainRegionMarkerIR {
@@ -1734,7 +1748,9 @@ fn multilayer_single_precision_is_rejected_without_cuda_device_request() {
     ];
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
     ];
     ir.backend_policy.execution_precision = ExecutionPrecision::Single;
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
@@ -1813,7 +1829,9 @@ fn multilayer_single_precision_is_accepted_when_cuda_device_requested() {
     ];
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
     ];
     ir.backend_policy.execution_precision = ExecutionPrecision::Single;
     ir.problem_meta.runtime_metadata.insert(
@@ -1902,7 +1920,9 @@ fn stacked_two_body_problem_lowers_to_multilayer_plan() {
     ];
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
     ];
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
         fdm: Some(fullmag_ir::FdmHintsIR {
@@ -1995,7 +2015,9 @@ fn multilayer_planner_rejects_xy_offset() {
             initial_magnetization: None,
         },
     ];
-    ir.energy_terms = vec![fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto }];
+    ir.energy_terms = vec![fullmag_ir::EnergyTermIR::Demag {
+        realization: fullmag_ir::RequestedFemDemagIR::Auto,
+    }];
 
     let err = plan(&ir).expect_err("XY-offset multilayer problem should be rejected");
     assert!(err
@@ -2042,14 +2064,16 @@ fn fem_eigen_backend_with_mesh_asset_plans_successfully() {
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
     });
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
     ];
     ir.study = fullmag_ir::StudyIR::Eigenmodes {
         dynamics: ir.study.dynamics().clone(),
@@ -2136,7 +2160,7 @@ fn fem_eigen_accepts_shared_domain_mesh_with_air_when_transfer_grid_is_used() {
                 boundary_markers: vec![10, 99],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
             region_markers: vec![fullmag_ir::FemDomainRegionMarkerIR {
                 geometry_name: "strip".to_string(),
@@ -2146,7 +2170,9 @@ per_domain_quality: std::collections::HashMap::new(),
     });
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
     ];
     ir.study = fullmag_ir::StudyIR::Eigenmodes {
         dynamics: ir.study.dynamics().clone(),
@@ -2175,7 +2201,10 @@ per_domain_quality: std::collections::HashMap::new(),
                 fem.domain_mesh_mode,
                 fullmag_ir::FemDomainMeshModeIR::SharedDomainMeshWithAir
             );
-            assert_eq!(fem.demag_realization, Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid));
+            assert_eq!(
+                fem.demag_realization,
+                Some(fullmag_ir::ResolvedFemDemagIR::TransferGrid)
+            );
             assert_eq!(fem.object_segments.len(), 2);
             assert_eq!(fem.object_segments[0].object_id, "strip");
             assert_eq!(fem.object_segments[0].geometry_id.as_deref(), Some("strip"));
@@ -2423,7 +2452,8 @@ fn fem_eigen_floquet_bc_with_pairs_and_k_sampling_plans_successfully() {
         },
     };
 
-    let plan = plan(&ir).expect("floquet FEM eigen with pairing metadata and k_sampling should plan");
+    let plan =
+        plan(&ir).expect("floquet FEM eigen with pairing metadata and k_sampling should plan");
     assert!(matches!(plan.backend_plan, BackendPlanIR::FemEigen(_)));
 }
 
@@ -2528,9 +2558,7 @@ fn fem_plan_fails_when_shared_domain_requested_but_no_domain_mesh_asset() {
             "domain_mesh_mode": "generated_shared_domain_mesh",
         }),
     );
-    ir.energy_terms = vec![
-        fullmag_ir::EnergyTermIR::Exchange,
-    ];
+    ir.energy_terms = vec![fullmag_ir::EnergyTermIR::Exchange];
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
         fdm: Some(fullmag_ir::FdmHintsIR {
             cell: [2e-9, 2e-9, 5e-9],
@@ -2566,15 +2594,14 @@ fn fem_plan_fails_when_shared_domain_requested_but_no_domain_mesh_asset() {
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         fem_domain_mesh_asset: None,
     });
 
-    let error = plan(&ir).expect_err(
-        "shared-domain mesh requested with no fem_domain_mesh_asset should fail",
-    );
+    let error = plan(&ir)
+        .expect_err("shared-domain mesh requested with no fem_domain_mesh_asset should fail");
     assert!(
         error.reasons.iter().any(|reason| {
             reason.contains("shared-domain FEM mesh")
@@ -2607,7 +2634,9 @@ fn fem_plan_succeeds_when_shared_domain_has_domain_mesh_asset() {
     );
     ir.energy_terms = vec![
         fullmag_ir::EnergyTermIR::Exchange,
-        fullmag_ir::EnergyTermIR::Demag { realization: fullmag_ir::RequestedFemDemagIR::Auto },
+        fullmag_ir::EnergyTermIR::Demag {
+            realization: fullmag_ir::RequestedFemDemagIR::Auto,
+        },
     ];
     ir.backend_policy.discretization_hints = Some(fullmag_ir::DiscretizationHintsIR {
         fdm: Some(fullmag_ir::FdmHintsIR {
@@ -2643,7 +2672,7 @@ fn fem_plan_succeeds_when_shared_domain_has_domain_mesh_asset() {
                 boundary_markers: vec![1],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
         }],
         // Provide the shared domain mesh asset
@@ -2666,14 +2695,12 @@ per_domain_quality: std::collections::HashMap::new(),
                 boundary_markers: vec![1, 99],
                 periodic_boundary_pairs: Vec::new(),
                 periodic_node_pairs: Vec::new(),
-per_domain_quality: std::collections::HashMap::new(),
+                per_domain_quality: std::collections::HashMap::new(),
             }),
-            region_markers: vec![
-                fullmag_ir::FemDomainRegionMarkerIR {
-                    marker: 1,
-                    geometry_name: "strip".to_string(),
-                },
-            ],
+            region_markers: vec![fullmag_ir::FemDomainRegionMarkerIR {
+                marker: 1,
+                geometry_name: "strip".to_string(),
+            }],
             mesh_source: None,
         }),
     });

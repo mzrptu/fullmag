@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ScriptBuilderSolverState {
@@ -200,6 +201,111 @@ pub struct ScriptBuilderStageState {
     pub eigen_spin_wave_bc_config: Option<Value>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StudyPrimitiveStageKind {
+    Relax,
+    Run,
+    Eigenmodes,
+    SetField,
+    SetCurrent,
+    SaveState,
+    LoadState,
+    Export,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StudyMacroStageKind {
+    HysteresisLoop,
+    FieldSweepRelax,
+    FieldSweepRelaxSnapshot,
+    RelaxRun,
+    RelaxEigenmodes,
+    ParameterSweep,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StudyPipelineNodeSource {
+    UiAuthored,
+    ScriptImported,
+    MacroGenerated,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PrimitiveStageNode {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<StudyPipelineNodeSource>,
+    pub stage_kind: StudyPrimitiveStageKind,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub payload: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct MacroStageNode {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<StudyPipelineNodeSource>,
+    pub macro_kind: StudyMacroStageKind,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub config: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct StageGroupNode {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<StudyPipelineNodeSource>,
+    #[serde(default)]
+    pub collapsed: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<StudyPipelineNode>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(tag = "node_kind", rename_all = "snake_case")]
+pub enum StudyPipelineNode {
+    Primitive(PrimitiveStageNode),
+    Macro(MacroStageNode),
+    Group(StageGroupNode),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct StudyPipelineDocument {
+    #[serde(default = "default_study_pipeline_version")]
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nodes: Vec<StudyPipelineNode>,
+}
+
+impl Default for StudyPipelineDocument {
+    fn default() -> Self {
+        Self {
+            version: default_study_pipeline_version(),
+            nodes: Vec::new(),
+        }
+    }
+}
+
+pub type StudyDocumentV2 = StudyPipelineDocument;
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ScriptBuilderInitialState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -363,6 +469,8 @@ pub struct ScriptBuilderState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stages: Vec<ScriptBuilderStageState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub study_pipeline: Option<StudyPipelineDocument>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_state: Option<ScriptBuilderInitialState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub geometries: Vec<ScriptBuilderGeometryEntry>,
@@ -374,6 +482,14 @@ pub struct ScriptBuilderState {
 
 fn default_inherit_mesh_mode() -> String {
     "inherit".to_string()
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+fn default_study_pipeline_version() -> String {
+    "study_pipeline.v1".to_string()
 }
 
 fn default_adaptive_mesh_policy() -> String {

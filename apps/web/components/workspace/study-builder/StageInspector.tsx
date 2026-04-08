@@ -311,7 +311,7 @@ export default function StageInspector({
                 </Field>
                 <Field label="Format">
                   <Input
-                    value={String(node.payload.format ?? "vtk")}
+                    value={String(node.payload.format ?? "json")}
                     onChange={(event) => onPatchConfig({ format: event.target.value })}
                   />
                 </Field>

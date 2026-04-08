@@ -191,9 +191,21 @@ pub fn assemble_stiffness_robin(
             let p2 = nodes[face[2] as usize];
             let area = triangle_area(p0, p1, p2);
             let local = [
-                [robin_beta * 2.0 * area / 12.0, robin_beta * area / 12.0, robin_beta * area / 12.0],
-                [robin_beta * area / 12.0, robin_beta * 2.0 * area / 12.0, robin_beta * area / 12.0],
-                [robin_beta * area / 12.0, robin_beta * area / 12.0, robin_beta * 2.0 * area / 12.0],
+                [
+                    robin_beta * 2.0 * area / 12.0,
+                    robin_beta * area / 12.0,
+                    robin_beta * area / 12.0,
+                ],
+                [
+                    robin_beta * area / 12.0,
+                    robin_beta * 2.0 * area / 12.0,
+                    robin_beta * area / 12.0,
+                ],
+                [
+                    robin_beta * area / 12.0,
+                    robin_beta * area / 12.0,
+                    robin_beta * 2.0 * area / 12.0,
+                ],
             ];
             coo.add_tri_local(face, &local);
         }
@@ -264,7 +276,10 @@ pub fn pcg_solve(
         return Err(LinearSolveError {
             message: format!(
                 "dimension mismatch: A is {}x{}, b has {}, x has {}",
-                n, n, b.len(), x.len()
+                n,
+                n,
+                b.len(),
+                x.len()
             ),
         });
     }
@@ -295,7 +310,11 @@ pub fn pcg_solve(
     }
 
     // z = M⁻¹ · r
-    let mut z: Vec<f64> = r.iter().zip(m_inv.iter()).map(|(&ri, &mi)| ri * mi).collect();
+    let mut z: Vec<f64> = r
+        .iter()
+        .zip(m_inv.iter())
+        .map(|(&ri, &mi)| ri * mi)
+        .collect();
     let mut p = z.clone();
     let mut rz = dot_product(&r, &z);
 
@@ -472,8 +491,7 @@ mod tests {
         let d1 = [1.0, 0.0, 0.0f64];
         let d2 = [0.0, 1.0, 0.0f64];
         let d3 = [0.0, 0.0, 1.0f64];
-        let det = d1[0] * (d2[1] * d3[2] - d2[2] * d3[1])
-            - d1[1] * (d2[0] * d3[2] - d2[2] * d3[0])
+        let det = d1[0] * (d2[1] * d3[2] - d2[2] * d3[1]) - d1[1] * (d2[0] * d3[2] - d2[2] * d3[0])
             + d1[2] * (d2[0] * d3[1] - d2[1] * d3[0]);
         let vol = det.abs() / 6.0;
 
@@ -502,8 +520,8 @@ mod tests {
             &elements,
             &element_stiffness,
             &nodes,
-            &[],   // no boundary faces
-            0.0,   // no Robin
+            &[], // no boundary faces
+            0.0, // no Robin
         );
 
         // Symmetry check: A[i,j] == A[j,i]

@@ -1,6 +1,5 @@
 pub mod fem;
 pub mod fem_afem_loop;
-pub mod fem_sparse;
 pub mod fem_edge_topology;
 pub mod fem_error_estimator;
 pub mod fem_face_topology;
@@ -8,6 +7,7 @@ pub mod fem_goal_estimator;
 pub mod fem_hcurl_estimator;
 pub mod fem_size_field;
 pub mod fem_solution_transfer;
+pub mod fem_sparse;
 pub mod magnetoelastic;
 pub mod multilayer;
 pub mod newell;
@@ -2628,12 +2628,12 @@ impl ExchangeLlgProblem {
                     let m2 = dot(*m, c2);
                     let m3 = dot(*m, c3);
                     let pf = 2.0 / (MU0 * ms_safe);
-                    let g1 = -pf * (cub.kc1 * m1 * (m2 * m2 + m3 * m3)
-                        + cub.kc2 * m1 * m2 * m2 * m3 * m3);
-                    let g2 = -pf * (cub.kc1 * m2 * (m1 * m1 + m3 * m3)
-                        + cub.kc2 * m2 * m1 * m1 * m3 * m3);
-                    let g3 = -pf * (cub.kc1 * m3 * (m1 * m1 + m2 * m2)
-                        + cub.kc2 * m3 * m1 * m1 * m2 * m2);
+                    let g1 = -pf
+                        * (cub.kc1 * m1 * (m2 * m2 + m3 * m3) + cub.kc2 * m1 * m2 * m2 * m3 * m3);
+                    let g2 = -pf
+                        * (cub.kc1 * m2 * (m1 * m1 + m3 * m3) + cub.kc2 * m2 * m1 * m1 * m3 * m3);
+                    let g3 = -pf
+                        * (cub.kc1 * m3 * (m1 * m1 + m2 * m2) + cub.kc2 * m3 * m1 * m1 * m2 * m2);
                     h = add(h, add(add(scale(c1, g1), scale(c2, g2)), scale(c3, g3)));
                 }
                 h
@@ -2677,10 +2677,26 @@ impl ExchangeLlgProblem {
                 let z = flat / (nx * ny);
 
                 // Neumann BC: clamp neighbour indices to boundary
-                let xp = if x + 1 < nx { self.grid.index(x + 1, y, z) } else { flat };
-                let xm = if x > 0 { self.grid.index(x - 1, y, z) } else { flat };
-                let yp = if y + 1 < ny { self.grid.index(x, y + 1, z) } else { flat };
-                let ym = if y > 0 { self.grid.index(x, y - 1, z) } else { flat };
+                let xp = if x + 1 < nx {
+                    self.grid.index(x + 1, y, z)
+                } else {
+                    flat
+                };
+                let xm = if x > 0 {
+                    self.grid.index(x - 1, y, z)
+                } else {
+                    flat
+                };
+                let yp = if y + 1 < ny {
+                    self.grid.index(x, y + 1, z)
+                } else {
+                    flat
+                };
+                let ym = if y > 0 {
+                    self.grid.index(x, y - 1, z)
+                } else {
+                    flat
+                };
 
                 let dx_mz = (magnetization[xp][2] - magnetization[xm][2]) / (2.0 * dx);
                 let dy_mz = (magnetization[yp][2] - magnetization[ym][2]) / (2.0 * dy);
@@ -2716,12 +2732,36 @@ impl ExchangeLlgProblem {
                 let y = (flat / nx) % ny;
                 let z = flat / (nx * ny);
 
-                let xp = if x + 1 < nx { self.grid.index(x + 1, y, z) } else { flat };
-                let xm = if x > 0 { self.grid.index(x - 1, y, z) } else { flat };
-                let yp = if y + 1 < ny { self.grid.index(x, y + 1, z) } else { flat };
-                let ym = if y > 0 { self.grid.index(x, y - 1, z) } else { flat };
-                let zp = if z + 1 < nz { self.grid.index(x, y, z + 1) } else { flat };
-                let zm = if z > 0 { self.grid.index(x, y, z - 1) } else { flat };
+                let xp = if x + 1 < nx {
+                    self.grid.index(x + 1, y, z)
+                } else {
+                    flat
+                };
+                let xm = if x > 0 {
+                    self.grid.index(x - 1, y, z)
+                } else {
+                    flat
+                };
+                let yp = if y + 1 < ny {
+                    self.grid.index(x, y + 1, z)
+                } else {
+                    flat
+                };
+                let ym = if y > 0 {
+                    self.grid.index(x, y - 1, z)
+                } else {
+                    flat
+                };
+                let zp = if z + 1 < nz {
+                    self.grid.index(x, y, z + 1)
+                } else {
+                    flat
+                };
+                let zm = if z > 0 {
+                    self.grid.index(x, y, z - 1)
+                } else {
+                    flat
+                };
 
                 let curl_x = (magnetization[yp][2] - magnetization[ym][2]) / (2.0 * dy)
                     - (magnetization[zp][1] - magnetization[zm][1]) / (2.0 * dz);
@@ -2739,7 +2779,11 @@ impl ExchangeLlgProblem {
     ///
     /// τ_ZL = −m×(m×u∇m) − β·m×(u∇m)
     /// where u = b·j and b = P·μ_B / (e·M_s·(1+β²))
-    fn zhang_li_stt_torque(&self, magnetization: &[Vector3], cfg: &ZhangLiSttConfig) -> Vec<Vector3> {
+    fn zhang_li_stt_torque(
+        &self,
+        magnetization: &[Vector3],
+        cfg: &ZhangLiSttConfig,
+    ) -> Vec<Vector3> {
         const MU_B: f64 = 9.274009994e-24; // Bohr magneton [J/T]
         const E_CHARGE: f64 = 1.60217662e-19; // Elementary charge [C]
 
@@ -2838,7 +2882,11 @@ impl ExchangeLlgProblem {
     /// τ_Slon = β_STT · [m×(m×p̂) + ε'·m×p̂]
     /// β_STT = |j|·ħ / (2·e·μ₀·M_s·d) · g(P, λ, m·p̂)
     /// g = P·λ² / (λ²+1 + (λ²−1)·(m·p̂))
-    fn slonczewski_stt_torque(&self, magnetization: &[Vector3], cfg: &SlonczewskiSttConfig) -> Vec<Vector3> {
+    fn slonczewski_stt_torque(
+        &self,
+        magnetization: &[Vector3],
+        cfg: &SlonczewskiSttConfig,
+    ) -> Vec<Vector3> {
         const HBAR: f64 = 1.054571817e-34; // Reduced Planck constant [J·s]
         const E_CHARGE: f64 = 1.60217662e-19; // Elementary charge [C]
         const MU0_CONST: f64 = 1.2566370614359173e-6; // Vacuum permeability [H/m]
@@ -2894,7 +2942,7 @@ impl ExchangeLlgProblem {
     ///
     /// where  amp = (ℏ |Je|) / (2 e μ₀ Ms t_F).
     fn sot_torque(&self, magnetization: &[Vector3], cfg: &SotConfig) -> Vec<Vector3> {
-        const HBAR: f64 = 1.054571817e-34;   // J·s
+        const HBAR: f64 = 1.054571817e-34; // J·s
         const E_CHARGE: f64 = 1.60217662e-19; // C
         const MU0_CONST: f64 = 1.2566370614359173e-6; // H/m
 

@@ -194,7 +194,7 @@ function primitiveDefaults(kind: StudyPrimitiveStageKind): {
           kind,
           entrypoint_kind: kind,
           quantity: "magnetization",
-          format: "vtk",
+          format: "json",
         },
       };
   }
