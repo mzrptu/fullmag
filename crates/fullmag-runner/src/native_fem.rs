@@ -374,6 +374,7 @@ impl NativeFemBackend {
                 0
             },
             dmi_constant: plan.interfacial_dmi.unwrap_or(0.0),
+            dmi_interface_normal: plan.dmi_interface_normal.unwrap_or([0.0, 0.0, 1.0]),
             // F-05 fix: enable bulk DMI when D or dbulk_field is present.
             has_bulk_dmi: if plan.bulk_dmi.is_some() || plan.dbulk_field.is_some() {
                 1
@@ -877,6 +878,35 @@ impl NativeFemBackend {
         )
     }
 
+    // FND-010 fix: add accessors for F-12 observables (cubic anisotropy, bulk DMI, Oersted, thermal)
+    pub fn copy_h_ani_cubic(&self, node_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
+        self.copy_field(
+            ffi::fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_ANI_CUBIC,
+            node_count,
+        )
+    }
+
+    pub fn copy_h_dmi_bulk(&self, node_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
+        self.copy_field(
+            ffi::fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_DMI_BULK,
+            node_count,
+        )
+    }
+
+    pub fn copy_h_oe(&self, node_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
+        self.copy_field(
+            ffi::fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_OE,
+            node_count,
+        )
+    }
+
+    pub fn copy_h_therm(&self, node_count: usize) -> Result<Vec<[f64; 3]>, RunError> {
+        self.copy_field(
+            ffi::fullmag_fem_observable::FULLMAG_FEM_OBSERVABLE_H_THERM,
+            node_count,
+        )
+    }
+
     pub fn copy_live_preview_field(
         &self,
         request: &LivePreviewRequest,
@@ -890,6 +920,11 @@ impl NativeFemBackend {
             QuantityId::HAni => self.copy_h_ani(node_count)?,
             QuantityId::HDmi => self.copy_h_dmi(node_count)?,
             QuantityId::HMel => self.copy_h_mel(node_count)?,
+            // FND-010 fix: support F-12 observable quantities in live preview
+            QuantityId::HAniCubic => self.copy_h_ani_cubic(node_count)?,
+            QuantityId::HDmiBulk => self.copy_h_dmi_bulk(node_count)?,
+            QuantityId::HOe => self.copy_h_oe(node_count)?,
+            QuantityId::HTherm => self.copy_h_therm(node_count)?,
             QuantityId::M => self.copy_m(node_count)?,
             other => {
                 return Err(RunError {

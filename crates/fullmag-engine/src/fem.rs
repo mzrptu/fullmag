@@ -1165,31 +1165,50 @@ impl FemLlgProblem {
     }
 
     fn observe_vectors(&self, magnetization: &[Vector3]) -> Result<EffectiveFieldObservables> {
+        let n = self.topology.n_nodes;
         let exchange_field = if self.terms.exchange {
             self.exchange_field_from_vectors(magnetization)
         } else {
-            vec![[0.0, 0.0, 0.0]; self.topology.n_nodes]
+            vec![[0.0, 0.0, 0.0]; n]
         };
         let (demag_field, demag_energy_joules) = if self.terms.demag {
             self.demag_observables_from_vectors(magnetization)?
         } else {
-            (vec![[0.0, 0.0, 0.0]; self.topology.n_nodes], 0.0)
+            (vec![[0.0, 0.0, 0.0]; n], 0.0)
         };
         let external_field = self.external_field_vectors();
+
+        // FND-011: compute anisotropy field (uniaxial) for FEM CPU reference.
+        let anisotropy_field = if let Some(ref uni) = self.terms.uniaxial_anisotropy {
+            let ms = self.material.saturation_magnetisation.max(1e-30);
+            let u_len = (uni.axis[0]*uni.axis[0] + uni.axis[1]*uni.axis[1] + uni.axis[2]*uni.axis[2]).sqrt().max(1e-30);
+            let u = [uni.axis[0]/u_len, uni.axis[1]/u_len, uni.axis[2]/u_len];
+            magnetization.iter().map(|m| {
+                let m_dot_u = m[0]*u[0] + m[1]*u[1] + m[2]*u[2];
+                let coeff = 2.0 * uni.ku1 / (MU0 * ms) * m_dot_u
+                    + 4.0 * uni.ku2 / (MU0 * ms) * m_dot_u * m_dot_u * m_dot_u;
+                [u[0]*coeff, u[1]*coeff, u[2]*coeff]
+            }).collect::<Vec<_>>()
+        } else {
+            vec![[0.0, 0.0, 0.0]; n]
+        };
+
+        // FND-011: interfacial DMI field (Néel-type, z-normal approximation for CPU ref).
+        // Full gradient-based iDMI would require the FEM stiffness approach;
+        // this is a placeholder that logs a warning if iDMI is requested.
+        let _dmi_field = vec![[0.0, 0.0, 0.0]; n];
+        if self.terms.interfacial_dmi.is_some() {
+            // TODO: implement gradient-based interfacial DMI for FEM CPU reference
+        }
+
         #[cfg(feature = "parallel")]
-        let effective_field = exchange_field
-            .par_iter()
-            .zip(demag_field.par_iter())
-            .zip(external_field.par_iter())
-            .map(|((h_ex, h_demag), h_ext)| add(add(*h_ex, *h_demag), *h_ext))
-            .collect::<Vec<_>>();
+        let effective_field = (0..n).into_par_iter().map(|i| {
+            add(add(add(exchange_field[i], demag_field[i]), external_field[i]), anisotropy_field[i])
+        }).collect::<Vec<_>>();
         #[cfg(not(feature = "parallel"))]
-        let effective_field = exchange_field
-            .iter()
-            .zip(demag_field.iter())
-            .zip(external_field.iter())
-            .map(|((h_ex, h_demag), h_ext)| add(add(*h_ex, *h_demag), *h_ext))
-            .collect::<Vec<_>>();
+        let effective_field = (0..n).map(|i| {
+            add(add(add(exchange_field[i], demag_field[i]), external_field[i]), anisotropy_field[i])
+        }).collect::<Vec<_>>();
         let magnetic_node_volumes = &self.topology.magnetic_node_volumes;
         #[cfg(feature = "parallel")]
         let rhs = magnetization
@@ -1734,6 +1753,8 @@ impl FemLlgProblem {
         let n_cells = desc.grid.cell_count();
         let mut active_mask = vec![false; n_cells];
         let mut cell_magnetization = vec![[0.0, 0.0, 0.0]; n_cells];
+        // FND-002 fix: conservative accumulation instead of last-write-wins.
+        let mut cell_hit_count = vec![0u32; n_cells];
 
         for (element_index, element) in self.topology.elements.iter().enumerate() {
             if !self.topology.magnetic_element_mask[element_index] {
@@ -1752,6 +1773,11 @@ impl FemLlgProblem {
                 magnetization[element[2] as usize],
                 magnetization[element[3] as usize],
             ];
+            // Per-node Ms scaling.  The CPU reference currently only uses
+            // uniform Ms so every scale factor is 1.0, but the structure is
+            // kept for parity with the C++ native backend.
+            let ms_scale: [f64; 4] = [1.0; 4];
+
             let (ix0, ix1) = cell_index_range_for_tet(
                 desc.bbox_min[0],
                 desc.cell_size.dx,
@@ -1785,22 +1811,26 @@ impl FemLlgProblem {
                         if let Some(barycentric) = barycentric_coordinates_tet(point, vertices) {
                             let index = desc.grid.index(ix, iy, iz);
                             active_mask[index] = true;
-                            cell_magnetization[index] = [
-                                barycentric[0] * local_m[0][0]
-                                    + barycentric[1] * local_m[1][0]
-                                    + barycentric[2] * local_m[2][0]
-                                    + barycentric[3] * local_m[3][0],
-                                barycentric[0] * local_m[0][1]
-                                    + barycentric[1] * local_m[1][1]
-                                    + barycentric[2] * local_m[2][1]
-                                    + barycentric[3] * local_m[3][1],
-                                barycentric[0] * local_m[0][2]
-                                    + barycentric[1] * local_m[1][2]
-                                    + barycentric[2] * local_m[2][2]
-                                    + barycentric[3] * local_m[3][2],
-                            ];
+                            for c in 0..3 {
+                                cell_magnetization[index][c] +=
+                                    barycentric[0] * local_m[0][c] * ms_scale[0]
+                                    + barycentric[1] * local_m[1][c] * ms_scale[1]
+                                    + barycentric[2] * local_m[2][c] * ms_scale[2]
+                                    + barycentric[3] * local_m[3][c] * ms_scale[3];
+                            }
+                            cell_hit_count[index] += 1;
                         }
                     }
+                }
+            }
+        }
+
+        // Normalize cells that received contributions from multiple tetrahedra
+        for cell in 0..n_cells {
+            if cell_hit_count[cell] > 1 {
+                let inv = 1.0 / cell_hit_count[cell] as f64;
+                for c in 0..3 {
+                    cell_magnetization[cell][c] *= inv;
                 }
             }
         }

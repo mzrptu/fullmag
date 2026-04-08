@@ -1652,6 +1652,38 @@ def _realize_fem_domain_mesh_asset_from_components_impl(
                 emit_progress(
                     f"Component-aware mesh failed ({exc!r}), falling back to concatenated STL"
                 )
+                # Rebuild mesh options for the non-component STL path so local
+                # refinement fields do not depend on recovered component tags.
+                # This preserves per-object hmax behavior (Box/Bounds thresholds)
+                # even when component-aware tagging fails.
+                mesh_options = _mesh_options_from_runtime_metadata(
+                    mesh_workflow,
+                    geometries=geometries,
+                    default_hmax=float(hints.hmax),
+                    bounds_by_name=bounds_by_name,
+                    component_aware=False,
+                )
+                if per_object_recipes:
+                    _policy = (
+                        assembly_policy if assembly_policy is not None else SharedMeshAssemblyPolicy()
+                    )
+                    recipe_fields = _resolve_per_object_mesh_options(
+                        geometries,
+                        per_object_recipes,
+                        _policy,
+                        default_hmax=float(hints.hmax),
+                        bounds_by_name=bounds_by_name,
+                        component_aware=False,
+                    )
+                    if recipe_fields:
+                        existing = list(mesh_options.size_fields)
+                        from dataclasses import replace as _dc_replace
+                        mesh_options = _dc_replace(mesh_options, size_fields=recipe_fields + existing)
+                used_size_field_kinds = _unique_size_field_kinds(list(mesh_options.size_fields))
+                if mesh_options.size_fields:
+                    emit_progress(
+                        f"Fallback local sizing active ({len(mesh_options.size_fields)} size fields)"
+                    )
                 component_meshes = [_geometry_to_trimesh(g, trimesh).copy() for g in geometries]
                 combined_surface = trimesh.util.concatenate(component_meshes)
                 surface_path = Path(tmp_dir) / "shared_domain_surface.stl"

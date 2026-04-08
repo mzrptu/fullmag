@@ -1309,6 +1309,24 @@ pub(crate) fn execute_fem<'a>(
             )
         }
         FemEngine::NativeGpu => {
+            // FND-015: reject direct-minimization relaxation algorithms that
+            // are only implemented in the CPU reference engine.
+            if let Some(ref relaxation) = normalized_plan.relaxation {
+                use fullmag_ir::RelaxationAlgorithmIR;
+                match relaxation.algorithm {
+                    RelaxationAlgorithmIR::ProjectedGradientBb
+                    | RelaxationAlgorithmIR::NonlinearCg => {
+                        return Err(RunError {
+                            message: format!(
+                                "relaxation algorithm '{}' is only implemented for the CPU reference FEM engine; \
+                                 use algorithm='llg_overdamped' for native GPU execution, or switch to engine='cpu'",
+                                relaxation.algorithm.as_str()
+                            ),
+                        });
+                    }
+                    _ => {}
+                }
+            }
             if normalized_plan.current_density.is_some()
                 || normalized_plan.stt_degree.is_some()
                 || normalized_plan.stt_beta.is_some()

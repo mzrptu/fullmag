@@ -148,7 +148,7 @@ interface PartQualitySummary {
 
 function defaultMeshEntityViewState(part: FemMeshPart): MeshEntityViewState {
   return {
-    visible: part.role !== "air",
+    visible: part.role !== "air" && part.role !== "outer_boundary",
     renderMode: part.role === "air" ? "wireframe" : "surface+edges",
     opacity:
       part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
@@ -619,8 +619,13 @@ function FemMeshView3DInner({
             ? Math.max(baseViewState.opacity, part.role === "air" ? 52 : 96)
             : baseViewState.opacity,
       };
+      // Selection should not force-show the airbox when the dedicated
+      // "Show Airbox Mesh" toggle is disabled.
+      const selectionKeepsVisible = isSelected && part.role !== "air";
       const visibleForMode =
-        objectViewMode === "isolate" && hasSelection ? isSelected : (viewState.visible || isSelected);
+        objectViewMode === "isolate" && hasSelection
+          ? isSelected && (viewState.visible || selectionKeepsVisible)
+          : (viewState.visible || selectionKeepsVisible);
       if (!visibleForMode) {
         continue;
       }

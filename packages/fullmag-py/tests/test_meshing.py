@@ -1291,6 +1291,118 @@ class MeshScaffoldTests(unittest.TestCase):
         self.assertEqual(region_markers[0], {"geometry_name": left.geometry_name, "marker": 1})
         self.assertEqual(region_markers[1], {"geometry_name": right.geometry_name, "marker": 2})
 
+    def test_component_aware_fallback_rebuilds_bounds_fields_for_local_hmax(self) -> None:
+        left = fm.Box(size=(1.0, 1.0, 1.0), name="left")
+        right = fm.Box(size=(1.0, 1.0, 1.0), name="right").translate((2.0, 0.0, 0.0))
+
+        shared_domain_mesh = MeshData(
+            nodes=np.asarray(
+                [
+                    [-0.5, -0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, -0.5, 0.5],
+                    [1.5, -0.5, -0.5],
+                    [2.5, -0.5, -0.5],
+                    [1.5, 0.5, -0.5],
+                    [1.5, -0.5, 0.5],
+                    [-2.0, -2.0, -2.0],
+                    [4.0, -2.0, -2.0],
+                    [-2.0, 2.0, -2.0],
+                    [-2.0, -2.0, 2.0],
+                ],
+                dtype=np.float64,
+            ),
+            elements=np.asarray(
+                [
+                    [0, 1, 2, 3],
+                    [4, 5, 6, 7],
+                    [8, 9, 10, 11],
+                ],
+                dtype=np.int32,
+            ),
+            element_markers=np.asarray([1, 2, 3], dtype=np.int32),
+            boundary_faces=np.asarray([[0, 1, 2], [4, 5, 6], [8, 9, 10]], dtype=np.int32),
+            boundary_markers=np.asarray([10, 10, 99], dtype=np.int32),
+        )
+
+        class _FakeSurface:
+            vertices = np.asarray(
+                [
+                    [-0.5, -0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, -0.5, 0.5],
+                ],
+                dtype=np.float64,
+            )
+
+            def copy(self) -> "_FakeSurface":
+                return self
+
+            def export(self, _path: Path) -> None:
+                return None
+
+        fake_trimesh = type(
+            "FakeTrimesh",
+            (),
+            {
+                "util": type(
+                    "Util",
+                    (),
+                    {"concatenate": staticmethod(lambda meshes: _FakeSurface())},
+                )
+            },
+        )
+
+        with patch(
+            "fullmag.meshing.asset_pipeline._import_trimesh",
+            return_value=fake_trimesh,
+        ), patch(
+            "fullmag.meshing.asset_pipeline._geometry_to_trimesh",
+            return_value=_FakeSurface(),
+        ), patch(
+            "fullmag.meshing.asset_pipeline.generate_shared_domain_mesh_from_components",
+            side_effect=Exception("component-aware failed"),
+        ), patch(
+            "fullmag.meshing.asset_pipeline._contains_points_in_geometry",
+            side_effect=AssertionError("point containment fallback should not run"),
+        ), patch(
+            "fullmag.meshing.gmsh_bridge.generate_mesh_from_file",
+            return_value=shared_domain_mesh,
+        ) as generate_mesh_from_file:
+            mesh, region_markers = realize_fem_domain_mesh_asset_from_components(
+                [left, right],
+                fm.FEM(order=1, hmax=100e-9),
+                study_universe={
+                    "mode": "manual",
+                    "size": [8.0, 8.0, 8.0],
+                    "center": [0.0, 0.0, 0.0],
+                    "airbox_hmax": 120e-9,
+                },
+                mesh_workflow={
+                    "per_geometry": [
+                        {
+                            "geometry": left.geometry_name,
+                            "mode": "custom",
+                            "hmax": "20e-9",
+                        },
+                    ],
+                },
+            )
+
+        np.testing.assert_array_equal(mesh.element_markers, np.asarray([1, 2, 0], dtype=np.int32))
+        self.assertEqual(region_markers[0], {"geometry_name": left.geometry_name, "marker": 1})
+        self.assertEqual(region_markers[1], {"geometry_name": right.geometry_name, "marker": 2})
+        self.assertEqual(generate_mesh_from_file.call_count, 1)
+        fallback_options = generate_mesh_from_file.call_args.kwargs["options"]
+        fallback_kinds = [field.get("kind") for field in fallback_options.size_fields]
+        self.assertIn("Box", fallback_kinds)
+        self.assertIn("BoundsSurfaceThreshold", fallback_kinds)
+        self.assertNotIn("ComponentVolumeConstant", fallback_kinds)
+        self.assertNotIn("InterfaceShellThreshold", fallback_kinds)
+        self.assertNotIn("TransitionShellThreshold", fallback_kinds)
+
     def test_realize_fem_domain_mesh_asset_emits_partition_summary(self) -> None:
         left = fm.Box(size=(1.0, 1.0, 1.0), name="left")
         right = fm.Box(size=(1.0, 1.0, 1.0), name="right").translate((2.0, 0.0, 0.0))

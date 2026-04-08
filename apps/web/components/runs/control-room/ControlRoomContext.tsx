@@ -214,7 +214,7 @@ function serializeMeshEntityViewStateForScene(
 
 function defaultMeshPartViewState(part: FemMeshPart): MeshEntityViewState {
   return {
-    visible: part.role !== "air",
+    visible: part.role !== "air" && part.role !== "outer_boundary",
     renderMode: part.role === "air" ? "wireframe" : "surface+edges",
     opacity: part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
     colorField: part.role === "magnetic_object" ? "orientation" : "none",
@@ -2531,6 +2531,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     () => meshParts.find((part) => part.role === "air") ?? null,
     [meshParts],
   );
+  const airRelatedParts = useMemo(
+    () => meshParts.filter((part) => part.role === "air" || part.role === "outer_boundary"),
+    [meshParts],
+  );
   const interfaceParts = useMemo(
     () => meshParts.filter((part) => part.role === "interface"),
     [meshParts],
@@ -2538,7 +2542,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const visibleMeshPartIds = useMemo(
     () =>
       meshParts
-        .filter((part) => meshEntityViewState[part.id]?.visible ?? part.role !== "air")
+        .filter(
+          (part) =>
+            meshEntityViewState[part.id]?.visible ?? (part.role !== "air" && part.role !== "outer_boundary"),
+        )
         .map((part) => part.id),
     [meshEntityViewState, meshParts],
   );
@@ -2692,30 +2699,32 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   ]);
 
   useEffect(() => {
-    if (!airPart) {
+    if (airRelatedParts.length === 0) {
       return;
     }
     setMeshEntityViewState((prev) => {
-      const nextCurrent = prev[airPart.id];
-      if (!nextCurrent) {
-        return prev;
+      let changed = false;
+      const next: MeshEntityViewStateMap = { ...prev };
+      for (const part of airRelatedParts) {
+        const current = next[part.id];
+        if (!current) {
+          continue;
+        }
+        const nextVisible = airMeshVisible;
+        const nextOpacity = part.role === "air" ? airMeshOpacity : current.opacity;
+        if (current.visible === nextVisible && current.opacity === nextOpacity) {
+          continue;
+        }
+        next[part.id] = {
+          ...current,
+          visible: nextVisible,
+          opacity: nextOpacity,
+        };
+        changed = true;
       }
-      if (
-        nextCurrent.visible === airMeshVisible &&
-        nextCurrent.opacity === airMeshOpacity
-      ) {
-        return prev;
-      }
-      return {
-        ...prev,
-        [airPart.id]: {
-          ...nextCurrent,
-          visible: airMeshVisible,
-          opacity: airMeshOpacity,
-        },
-      };
+      return changed ? next : prev;
     });
-  }, [airMeshOpacity, airMeshVisible, airPart]);
+  }, [airMeshOpacity, airMeshVisible, airRelatedParts]);
 
   // Keep femTopologyKeyRef in sync so study-domain remesh actions can snapshot the current key
   femTopologyKeyRef.current = femTopologyKey;

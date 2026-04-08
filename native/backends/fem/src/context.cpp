@@ -148,19 +148,10 @@ void refresh_thermal_field_for_current_state(Context &ctx) {
         return;
     }
 
-    const double alpha = average_magnetic_scalar_field(
-        ctx.alpha_field,
-        ctx.magnetic_node_mask,
-        ctx.material.damping);
-    const double Ms = average_magnetic_scalar_field(
-        ctx.Ms_field,
-        ctx.magnetic_node_mask,
-        ctx.material.saturation_magnetisation);
     const double gamma_red = ctx.material.gyromagnetic_ratio;
-    const double gamma0 = gamma_red * (1.0 + alpha * alpha);
     const double V_node = average_magnetic_node_volume(ctx);
 
-    if (!(alpha > 0.0) || !(Ms > 0.0) || !(gamma_red > 0.0) || !(V_node > 0.0)) {
+    if (!(gamma_red > 0.0) || !(V_node > 0.0)) {
         ctx.thermal_sigma = 0.0;
         std::fill(ctx.h_therm_xyz.begin(), ctx.h_therm_xyz.end(), 0.0);
         ctx.last_thermal_refresh_time = ctx.current_time;
@@ -168,15 +159,14 @@ void refresh_thermal_field_for_current_state(Context &ctx) {
         return;
     }
 
-    const double sigma = std::sqrt(
-        2.0 * alpha * kB * ctx.temperature /
-        (gamma0 * kMU0 * Ms * V_node * ctx.current_dt)
-    );
-    ctx.thermal_sigma = sigma;
+    // FND-008 fix: per-node thermal sigma using local alpha_i and Ms_i
+    // instead of mesh-averaged values.  ctx.thermal_sigma stores the
+    // maximum sigma across nodes for diagnostic purposes.
+    const bool has_per_node_alpha = !ctx.alpha_field.empty();
+    const bool has_per_node_ms    = !ctx.Ms_field.empty();
 
     // Seed policy: 0 = system entropy (non-reproducible),
     // otherwise use the provided seed for reproducible stochastic runs.
-    // Re-seed when the seed changes between contexts on the same thread.
     static thread_local bool rng_initialized = false;
     static thread_local uint64_t rng_active_seed = 0;
     static thread_local std::mt19937_64 rng;
@@ -190,7 +180,9 @@ void refresh_thermal_field_for_current_state(Context &ctx) {
         rng_active_seed = ctx.thermal_seed;
         rng_initialized = true;
     }
-    std::normal_distribution<double> dist(0.0, sigma);
+
+    double max_sigma = 0.0;
+    std::normal_distribution<double> unit_normal(0.0, 1.0);
     for (size_t node = 0; node < static_cast<size_t>(ctx.n_nodes); ++node) {
         const size_t base = node * 3u;
         if (!ctx.magnetic_node_mask.empty() && ctx.magnetic_node_mask[node] == 0u) {
@@ -199,10 +191,33 @@ void refresh_thermal_field_for_current_state(Context &ctx) {
             ctx.h_therm_xyz[base + 2] = 0.0;
             continue;
         }
-        ctx.h_therm_xyz[base + 0] = dist(rng);
-        ctx.h_therm_xyz[base + 1] = dist(rng);
-        ctx.h_therm_xyz[base + 2] = dist(rng);
+
+        const double alpha_i = has_per_node_alpha
+            ? ctx.alpha_field[node]
+            : ctx.material.damping;
+        const double Ms_i = has_per_node_ms
+            ? ctx.Ms_field[node]
+            : ctx.material.saturation_magnetisation;
+
+        if (!(alpha_i > 0.0) || !(Ms_i > 0.0)) {
+            ctx.h_therm_xyz[base + 0] = 0.0;
+            ctx.h_therm_xyz[base + 1] = 0.0;
+            ctx.h_therm_xyz[base + 2] = 0.0;
+            continue;
+        }
+
+        const double gamma0_i = gamma_red * (1.0 + alpha_i * alpha_i);
+        const double sigma_i = std::sqrt(
+            2.0 * alpha_i * kB * ctx.temperature /
+            (gamma0_i * kMU0 * Ms_i * V_node * ctx.current_dt)
+        );
+        if (sigma_i > max_sigma) max_sigma = sigma_i;
+
+        ctx.h_therm_xyz[base + 0] = unit_normal(rng) * sigma_i;
+        ctx.h_therm_xyz[base + 1] = unit_normal(rng) * sigma_i;
+        ctx.h_therm_xyz[base + 2] = unit_normal(rng) * sigma_i;
     }
+    ctx.thermal_sigma = max_sigma;
     ctx.last_thermal_refresh_time = ctx.current_time;
     ctx.last_thermal_refresh_dt = ctx.current_dt;
 }
@@ -273,6 +288,18 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     };
     ctx.enable_dmi = plan.has_interfacial_dmi != 0;
     ctx.dmi_D = plan.dmi_constant;
+    // FND-009: read interface normal, default to ẑ if zero-length
+    {
+        double nx = plan.dmi_interface_normal[0];
+        double ny = plan.dmi_interface_normal[1];
+        double nz = plan.dmi_interface_normal[2];
+        double len = std::sqrt(nx*nx + ny*ny + nz*nz);
+        if (len > 1e-15) {
+            ctx.dmi_n_hat = {nx/len, ny/len, nz/len};
+        } else {
+            ctx.dmi_n_hat = {0.0, 0.0, 1.0};
+        }
+    }
     ctx.enable_bulk_dmi = plan.has_bulk_dmi != 0;
     ctx.bulk_dmi_D = plan.bulk_dmi_constant;
     ctx.enable_cubic_anisotropy = plan.has_cubic_anisotropy != 0;
@@ -781,18 +808,35 @@ int context_upload_magnetization_f64(
     ctx.prev_error_norm = 1.0;
 
 #if FULLMAG_HAS_MFEM_STACK
-    if ((ctx.enable_exchange || ctx.enable_demag) &&
-        !context_refresh_exchange_field_mfem(ctx, error)) {
-        return FULLMAG_FEM_ERR_UNAVAILABLE;
+    // FND-004 fix: delegate H_eff assembly to compute_effective_fields_for_magnetization
+    // so that all terms (exchange, demag, external, anisotropy, cubic anisotropy,
+    // interfacial DMI, bulk DMI, Oersted, magnetoelastic) are included after upload.
+    // Thermal noise is intentionally excluded — it is refreshed in the RHS path.
+    {
+        std::string heff_error;
+        if (!compute_effective_fields_for_magnetization(
+                ctx,
+                ctx.m_xyz,
+                ctx.h_ex_xyz,
+                ctx.h_demag_xyz,
+                ctx.h_eff_xyz,
+                nullptr,   // exchange_energy — not needed on upload
+                nullptr,   // demag_energy — not needed on upload
+                false,     // allow_interrupt
+                nullptr,   // timings
+                heff_error)) {
+            error = "upload_magnetization: H_eff refresh failed: " + heff_error;
+            return FULLMAG_FEM_ERR_INTERNAL;
+        }
     }
-#endif
-
+#else
     if (!ctx.enable_exchange) {
         fill_zero_vector_field(ctx.h_ex_xyz, ctx.n_nodes);
     }
     if (!ctx.enable_demag) {
         fill_zero_vector_field(ctx.h_demag_xyz, ctx.n_nodes);
     }
+    // Non-MFEM fallback: compose H_eff from available cached fields
     if (ctx.has_external_field) {
         ctx.h_eff_xyz = ctx.h_ext_xyz;
         for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
@@ -804,36 +848,7 @@ int context_upload_magnetization_f64(
             ctx.h_eff_xyz[i] += ctx.h_demag_xyz[i];
         }
     }
-    // Add Oersted field: H_eff += I(t) * h_oe_static
-    if (ctx.has_oersted_cylinder && !ctx.h_oe_xyz.empty()) {
-        double I_scale = ctx.oersted_current;
-        switch (ctx.oersted_time_dep_kind) {
-            case 1: { // Sinusoidal
-                I_scale *= std::sin(2.0 * kPi * ctx.oersted_time_dep_freq * ctx.current_time
-                                    + ctx.oersted_time_dep_phase)
-                         + ctx.oersted_time_dep_offset;
-                break;
-            }
-            case 2: { // Pulse
-                I_scale *= (ctx.current_time >= ctx.oersted_time_dep_t_on &&
-                            ctx.current_time <  ctx.oersted_time_dep_t_off) ? 1.0 : 0.0;
-                break;
-            }
-            default: break;
-        }
-        for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
-            ctx.h_eff_xyz[i] += I_scale * ctx.h_oe_xyz[i];
-        }
-    }
-    // Add magnetoelastic field: H_eff += H_mel
-    if (ctx.enable_magnetoelastic && !ctx.h_mel_xyz.empty()) {
-#if FULLMAG_HAS_MFEM_STACK
-        compute_magnetoelastic_field(ctx, ctx.m_xyz);
 #endif
-        for (size_t i = 0; i < ctx.h_eff_xyz.size(); ++i) {
-            ctx.h_eff_xyz[i] += ctx.h_mel_xyz[i];
-        }
-    }
 
     // Thermal noise is refreshed in the RHS/effective-field path, not on upload.
     ctx.thermal_sigma = 0.0;

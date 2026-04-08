@@ -133,6 +133,7 @@ typedef struct {
     double anisotropy_axis[3];
     int has_interfacial_dmi;
     double dmi_constant;
+    double dmi_interface_normal[3]; /* FND-009: interface normal for iDMI, default {0,0,1} */
     int has_bulk_dmi;
     double bulk_dmi_constant;
     int has_cubic_anisotropy;

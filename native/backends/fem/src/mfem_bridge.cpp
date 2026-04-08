@@ -31,6 +31,21 @@ constexpr int kInterruptPollStride = 256;
 using Vec3 = std::array<double, 3>;
 using SteadyClock = std::chrono::steady_clock;
 
+// FND-005 fix: helper to check if any effective-field term is enabled,
+// so that snapshot/step are not blocked for anisotropy-only, DMI-only, etc.
+inline bool has_any_effective_field_term(const Context &ctx) {
+    return ctx.enable_exchange
+        || ctx.enable_demag
+        || ctx.has_external_field
+        || ctx.enable_anisotropy
+        || ctx.enable_dmi
+        || ctx.enable_bulk_dmi
+        || ctx.enable_cubic_anisotropy
+        || ctx.has_oersted_cylinder
+        || ctx.enable_magnetoelastic
+        || (ctx.temperature > 0.0);
+}
+
 struct PhaseTimings {
     uint64_t exchange_wall_time_ns = 0;
     uint64_t demag_wall_time_ns = 0;
@@ -354,8 +369,16 @@ void rasterize_magnetization_to_transfer_grid(
     std::vector<uint8_t> &active_mask,
     std::vector<double> &cell_magnetization_xyz)
 {
-    active_mask.assign(static_cast<size_t>(desc.cell_count()), 0u);
-    cell_magnetization_xyz.assign(static_cast<size_t>(desc.cell_count()) * 3u, 0.0);
+    const size_t n_cells = static_cast<size_t>(desc.cell_count());
+    active_mask.assign(n_cells, 0u);
+    cell_magnetization_xyz.assign(n_cells * 3u, 0.0);
+
+    // FND-001 fix: conservative accumulation — track how many tetrahedra
+    // contribute to each cell and average their contributions, instead of
+    // last-write-wins.  For a proper volume-weighted projection we would need
+    // tet–cell intersection volumes, which is expensive; using the hit count
+    // as weight is a simple, order-independent improvement.
+    std::vector<uint32_t> cell_hit_count(n_cells, 0u);
 
     for (uint32_t element_index = 0; element_index < ctx.n_elements; ++element_index) {
         if (!ctx.magnetic_element_mask.empty() &&
@@ -379,6 +402,18 @@ void rasterize_magnetization_to_transfer_grid(
         const auto [iy0, iy1] = cell_index_range_for_tet(desc.bbox_min[1], desc.dy, desc.ny, vertices, 1);
         const auto [iz0, iz1] = cell_index_range_for_tet(desc.bbox_min[2], desc.dz, desc.nz, vertices, 2);
 
+        // Pre-compute per-node Ms scaling for this element
+        const double n_scales[4] = {
+            scalar_field_value(ctx.Ms_field, static_cast<size_t>(element[0]),
+                               ctx.material.saturation_magnetisation) / transfer_grid_reference_ms,
+            scalar_field_value(ctx.Ms_field, static_cast<size_t>(element[1]),
+                               ctx.material.saturation_magnetisation) / transfer_grid_reference_ms,
+            scalar_field_value(ctx.Ms_field, static_cast<size_t>(element[2]),
+                               ctx.material.saturation_magnetisation) / transfer_grid_reference_ms,
+            scalar_field_value(ctx.Ms_field, static_cast<size_t>(element[3]),
+                               ctx.material.saturation_magnetisation) / transfer_grid_reference_ms,
+        };
+
         for (uint32_t iz = iz0; iz <= iz1; ++iz) {
             for (uint32_t iy = iy0; iy <= iy1; ++iy) {
                 for (uint32_t ix = ix0; ix <= ix1; ++ix) {
@@ -394,39 +429,27 @@ void rasterize_magnetization_to_transfer_grid(
                     const size_t cell = desc.index(ix, iy, iz);
                     active_mask[cell] = 1u;
                     const size_t out = cell * 3u;
-                    const double n0_scale =
-                        scalar_field_value(
-                            ctx.Ms_field,
-                            static_cast<size_t>(element[0]),
-                            ctx.material.saturation_magnetisation) /
-                        transfer_grid_reference_ms;
-                    const double n1_scale =
-                        scalar_field_value(
-                            ctx.Ms_field,
-                            static_cast<size_t>(element[1]),
-                            ctx.material.saturation_magnetisation) /
-                        transfer_grid_reference_ms;
-                    const double n2_scale =
-                        scalar_field_value(
-                            ctx.Ms_field,
-                            static_cast<size_t>(element[2]),
-                            ctx.material.saturation_magnetisation) /
-                        transfer_grid_reference_ms;
-                    const double n3_scale =
-                        scalar_field_value(
-                            ctx.Ms_field,
-                            static_cast<size_t>(element[3]),
-                            ctx.material.saturation_magnetisation) /
-                        transfer_grid_reference_ms;
                     for (int component = 0; component < 3; ++component) {
-                        cell_magnetization_xyz[out + component] =
-                            (*bary)[0] * magnetization_xyz[static_cast<size_t>(element[0]) * 3u + component] * n0_scale +
-                            (*bary)[1] * magnetization_xyz[static_cast<size_t>(element[1]) * 3u + component] * n1_scale +
-                            (*bary)[2] * magnetization_xyz[static_cast<size_t>(element[2]) * 3u + component] * n2_scale +
-                            (*bary)[3] * magnetization_xyz[static_cast<size_t>(element[3]) * 3u + component] * n3_scale;
+                        cell_magnetization_xyz[out + component] +=
+                            (*bary)[0] * magnetization_xyz[static_cast<size_t>(element[0]) * 3u + component] * n_scales[0] +
+                            (*bary)[1] * magnetization_xyz[static_cast<size_t>(element[1]) * 3u + component] * n_scales[1] +
+                            (*bary)[2] * magnetization_xyz[static_cast<size_t>(element[2]) * 3u + component] * n_scales[2] +
+                            (*bary)[3] * magnetization_xyz[static_cast<size_t>(element[3]) * 3u + component] * n_scales[3];
                     }
+                    cell_hit_count[cell] += 1u;
                 }
             }
+        }
+    }
+
+    // Normalize cells that received contributions from multiple tetrahedra
+    for (size_t cell = 0; cell < n_cells; ++cell) {
+        if (cell_hit_count[cell] > 1u) {
+            const double inv_count = 1.0 / static_cast<double>(cell_hit_count[cell]);
+            const size_t out = cell * 3u;
+            cell_magnetization_xyz[out + 0] *= inv_count;
+            cell_magnetization_xyz[out + 1] *= inv_count;
+            cell_magnetization_xyz[out + 2] *= inv_count;
         }
     }
 }
@@ -1023,20 +1046,41 @@ bool compute_interfacial_dmi_field(
             mfem::DenseMatrix dshape(local_ndof, 3);
             fe->CalcPhysDShape(*T, dshape);
 
-            // Compute spatial derivatives: ∂m_x/∂x, ∂m_y/∂y, ∂m_z/∂x, ∂m_z/∂y
-            double dmx_dx = 0.0, dmy_dy = 0.0;
-            double dmz_dx = 0.0, dmz_dy = 0.0;
+            // FND-009: General iDMI with arbitrary interface normal n̂.
+            // H_dmi = (2D/μ₀Ms) [∇(m·n̂) − n̂(∇·m)]
+            // Energy: e = D [(m·n̂)(∇·m) − (m·∇)(m·n̂)]
+            const double nx = ctx.dmi_n_hat[0];
+            const double ny = ctx.dmi_n_hat[1];
+            const double nz = ctx.dmi_n_hat[2];
+
+            // Compute full gradient: ∂m_i/∂x_j for all i,j
+            double dm[3][3] = {}; // dm[component][spatial_dim]
             for (int i = 0; i < local_ndof; ++i) {
-                dmx_dx += mx_elem(i) * dshape(i, 0);
-                dmy_dy += my_elem(i) * dshape(i, 1);
-                dmz_dx += mz_elem(i) * dshape(i, 0);
-                dmz_dy += mz_elem(i) * dshape(i, 1);
+                dm[0][0] += mx_elem(i) * dshape(i, 0); // ∂mx/∂x
+                dm[0][1] += mx_elem(i) * dshape(i, 1); // ∂mx/∂y
+                dm[0][2] += mx_elem(i) * dshape(i, 2); // ∂mx/∂z
+                dm[1][0] += my_elem(i) * dshape(i, 0); // ∂my/∂x
+                dm[1][1] += my_elem(i) * dshape(i, 1); // ∂my/∂y
+                dm[1][2] += my_elem(i) * dshape(i, 2); // ∂my/∂z
+                dm[2][0] += mz_elem(i) * dshape(i, 0); // ∂mz/∂x
+                dm[2][1] += mz_elem(i) * dshape(i, 1); // ∂mz/∂y
+                dm[2][2] += mz_elem(i) * dshape(i, 2); // ∂mz/∂z
             }
 
-            // H_dmi at this quadrature point
-            const double hx = prefactor * dmz_dx;
-            const double hy = prefactor * dmz_dy;
-            const double hz = -prefactor * (dmx_dx + dmy_dy);
+            // ∇·m = ∂mx/∂x + ∂my/∂y + ∂mz/∂z
+            const double div_m = dm[0][0] + dm[1][1] + dm[2][2];
+
+            // ∇(m·n̂) = (∂/∂x_j)(mx*nx + my*ny + mz*nz) for j=0,1,2
+            const double grad_mn[3] = {
+                nx * dm[0][0] + ny * dm[1][0] + nz * dm[2][0],
+                nx * dm[0][1] + ny * dm[1][1] + nz * dm[2][1],
+                nx * dm[0][2] + ny * dm[1][2] + nz * dm[2][2],
+            };
+
+            // H_dmi = prefactor * [∇(m·n̂) − n̂(∇·m)]
+            const double hx = prefactor * (grad_mn[0] - nx * div_m);
+            const double hy = prefactor * (grad_mn[1] - ny * div_m);
+            const double hz = prefactor * (grad_mn[2] - nz * div_m);
 
             // Distribute to DOFs weighted by shape function
             mfem::Vector shape(local_ndof);
@@ -1054,7 +1098,7 @@ bool compute_interfacial_dmi_field(
                 node_weight[gdof] += phi_w;
             }
 
-            // Energy contribution: e_dmi = D [mz(∂mx/∂x + ∂my/∂y) - mx ∂mz/∂x - my ∂mz/∂y]
+            // Energy: e_dmi = D [(m·n̂)(∇·m) − (m·∇)(m·n̂)]
             if (dmi_energy != nullptr) {
                 // Interpolate m at quadrature point
                 double mx_q = 0.0, my_q = 0.0, mz_q = 0.0;
@@ -1063,8 +1107,10 @@ bool compute_interfacial_dmi_field(
                     my_q += my_elem(i) * shape(i);
                     mz_q += mz_elem(i) * shape(i);
                 }
-                energy += elem_D * (mz_q * (dmx_dx + dmy_dy) -
-                                       mx_q * dmz_dx - my_q * dmz_dy) * w;
+                const double m_dot_n = mx_q * nx + my_q * ny + mz_q * nz;
+                // (m·∇)(m·n̂) = m_i ∂(m·n̂)/∂x_i
+                const double m_grad_mn = mx_q * grad_mn[0] + my_q * grad_mn[1] + mz_q * grad_mn[2];
+                energy += elem_D * (m_dot_n * div_m - m_grad_mn) * w;
             }
         }
     }
@@ -1486,16 +1532,26 @@ bool ensure_transfer_grid_backend(
     fdm_plan.precision    = transfer_grid_precision(ctx);
     fdm_plan.integrator   = FULLMAG_FDM_INTEGRATOR_HEUN;
     fdm_plan.enable_demag = 1;
-    // Let the native FDM backend generate its own Newell tensor for the
-    // resolved transfer grid. This keeps the kernel shape aligned with the
-    // native grid descriptor derived from the magnetic FEM subset.
-    fdm_plan.demag_kernel_xx_spectrum    = nullptr;
-    fdm_plan.demag_kernel_yy_spectrum    = nullptr;
-    fdm_plan.demag_kernel_zz_spectrum    = nullptr;
-    fdm_plan.demag_kernel_xy_spectrum    = nullptr;
-    fdm_plan.demag_kernel_xz_spectrum    = nullptr;
-    fdm_plan.demag_kernel_yz_spectrum    = nullptr;
-    fdm_plan.demag_kernel_spectrum_len   = 0;
+    // FND-003 fix: pass pre-computed Newell kernel spectra to the FDM backend
+    // when the Rust layer provided them.  Fall back to nullptr so the native
+    // FDM backend generates its own Newell tensor otherwise.
+    if (!ctx.transfer_grid.kernel_xx_spectrum.empty()) {
+        fdm_plan.demag_kernel_xx_spectrum  = ctx.transfer_grid.kernel_xx_spectrum.data();
+        fdm_plan.demag_kernel_yy_spectrum  = ctx.transfer_grid.kernel_yy_spectrum.data();
+        fdm_plan.demag_kernel_zz_spectrum  = ctx.transfer_grid.kernel_zz_spectrum.data();
+        fdm_plan.demag_kernel_xy_spectrum  = ctx.transfer_grid.kernel_xy_spectrum.data();
+        fdm_plan.demag_kernel_xz_spectrum  = ctx.transfer_grid.kernel_xz_spectrum.data();
+        fdm_plan.demag_kernel_yz_spectrum  = ctx.transfer_grid.kernel_yz_spectrum.data();
+        fdm_plan.demag_kernel_spectrum_len = static_cast<uint64_t>(ctx.transfer_grid.kernel_xx_spectrum.size());
+    } else {
+        fdm_plan.demag_kernel_xx_spectrum  = nullptr;
+        fdm_plan.demag_kernel_yy_spectrum  = nullptr;
+        fdm_plan.demag_kernel_zz_spectrum  = nullptr;
+        fdm_plan.demag_kernel_xy_spectrum  = nullptr;
+        fdm_plan.demag_kernel_xz_spectrum  = nullptr;
+        fdm_plan.demag_kernel_yz_spectrum  = nullptr;
+        fdm_plan.demag_kernel_spectrum_len = 0;
+    }
     fdm_plan.active_mask                 = ctx.transfer_grid.active_mask.data();
     fdm_plan.active_mask_len             = static_cast<uint64_t>(ctx.transfer_grid.active_mask.size());
     fdm_plan.initial_magnetization_xyz   = ctx.transfer_grid.magnetization_xyz.data();
@@ -2837,12 +2893,17 @@ bool context_initialize_poisson(Context &ctx, std::string &error) {
             }
 
             if (ctx.poisson_ess_tdof_list.empty()) {
-                // F-11 fix: warn instead of silently pinning DOF 0.
-                fprintf(stderr,
-                        "warning: Dirichlet BC for Poisson — no boundary DOFs found for marker=%d; "
-                        "pinning DOF 0 as fallback. This may produce incorrect demag results.\n",
-                        ctx.poisson_boundary_marker);
-                ctx.poisson_ess_tdof_list.push_back(0);
+                // FND-006 fix: no boundary DOFs found is a hard error, not a fallback.
+                // Pinning DOF 0 silently produces physically incorrect demag results.
+                error = "Dirichlet BC for Poisson — no boundary DOFs found for marker=" +
+                        std::to_string(ctx.poisson_boundary_marker) +
+                        ". Check that the mesh has correctly marked outer boundary faces "
+                        "and that air_box_config.boundary_marker matches.";
+                delete poisson_bilinear;
+                delete potential_fes;
+                delete potential_fec;
+                delete gf_potential;
+                return false;
             }
 
             // S09: Pre-compute the BC-eliminated Poisson operator
@@ -3002,8 +3063,9 @@ bool context_snapshot_stats_mfem(
         error = "MFEM snapshot requested before MFEM context initialization";
         return false;
     }
-    if (!ctx.enable_exchange && !ctx.enable_demag) {
-        error = "native FEM GPU snapshot requires at least one effective-field term";
+    // FND-005 fix: accept any effective-field term, not just exchange/demag.
+    if (!has_any_effective_field_term(ctx)) {
+        error = "native FEM snapshot requires at least one effective-field term";
         return false;
     }
 
@@ -3076,8 +3138,9 @@ bool context_step_exchange_heun_mfem(
         error = "MFEM step requested before MFEM context initialization";
         return false;
     }
-    if (!ctx.enable_exchange && !ctx.enable_demag) {
-        error = "native FEM GPU stepper requires at least one effective-field term to be enabled";
+    // FND-005 fix: accept any effective-field term, not just exchange/demag.
+    if (!has_any_effective_field_term(ctx)) {
+        error = "native FEM stepper requires at least one effective-field term to be enabled";
         return false;
     }
     if (dt_seconds <= 0.0) {
@@ -3406,8 +3469,9 @@ bool context_step_explicit_rk_mfem(
         error = "MFEM step requested before MFEM context initialization";
         return false;
     }
-    if (!ctx.enable_exchange && !ctx.enable_demag) {
-        error = "native FEM GPU stepper requires at least one effective-field term";
+    // FND-005 fix: accept any effective-field term, not just exchange/demag.
+    if (!has_any_effective_field_term(ctx)) {
+        error = "native FEM stepper requires at least one effective-field term";
         return false;
     }
     if (dt_seconds <= 0.0) {

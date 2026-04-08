@@ -54,6 +54,11 @@ pub enum fullmag_fem_observable {
     FULLMAG_FEM_OBSERVABLE_H_ANI = 6,
     FULLMAG_FEM_OBSERVABLE_H_DMI = 7,
     FULLMAG_FEM_OBSERVABLE_H_MEL = 8,
+    // FND-010 fix: added F-12 observables to match native/include/fullmag_fem.h
+    FULLMAG_FEM_OBSERVABLE_H_ANI_CUBIC = 9,
+    FULLMAG_FEM_OBSERVABLE_H_DMI_BULK = 10,
+    FULLMAG_FEM_OBSERVABLE_H_OE = 11,
+    FULLMAG_FEM_OBSERVABLE_H_THERM = 12,
 }
 
 #[repr(C)]
@@ -148,6 +153,7 @@ pub struct fullmag_fem_plan_desc {
     pub anisotropy_axis: [f64; 3],
     pub has_interfacial_dmi: i32,
     pub dmi_constant: f64,
+    pub dmi_interface_normal: [f64; 3], // FND-009
     pub has_bulk_dmi: i32,
     pub bulk_dmi_constant: f64,
     pub has_cubic_anisotropy: i32,

@@ -17,8 +17,8 @@ study = fm.study("nanoflower_fem")
 
 # Engine
 study.engine("fem")
-study.device("cpu", precision="double")
-study.universe(mode="auto", size=(0.8e-06, 0.8e-06, 3e-07), center=(0, 0, 0), padding=(0, 0, 0), airbox_hmax=1e-07)
+study.device("cuda:0", precision="double")
+study.universe(mode="auto", size=(0.8e-06, 0.8e-06, 3e-07), center=(0, 0, 0), padding=(0, 0, 0), airbox_hmax=1.0e-07)
 study.interactive(True)
 
 # Geometry & Material — 2×2 kwadratowa siatka nanoflowerów
@@ -61,7 +61,7 @@ for idx, (dx, dy) in enumerate(positions_2x2):
     body.m = fm.random(seed=10 + idx)
 
     # Mesh — wymagany explicit hmax dla każdego obiektu magnetycznego
-    body.mesh(hmax=20e-09, order=1, algorithm_2d=1, algorithm_3d=1, size_factor=1,
+    body.mesh(hmax=30e-09, order=1, algorithm_2d=1, algorithm_3d=1, size_factor=1,
               size_from_curvature=1, smoothing_steps=1, optimize_iterations=1,
               narrow_regions=1, compute_quality=True, per_element_quality=True)
 

@@ -113,6 +113,7 @@ struct Context {
 
     bool enable_dmi = false;
     double dmi_D = 0.0;
+    std::array<double, 3> dmi_n_hat{0.0, 0.0, 1.0}; // FND-009: interface normal for iDMI
 
     bool enable_bulk_dmi = false;
     double bulk_dmi_D = 0.0;

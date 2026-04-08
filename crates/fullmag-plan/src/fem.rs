@@ -672,6 +672,7 @@ pub(crate) fn plan_fem(
         demag_realization: resolved_demag_realization,
         air_box_config,
         interfacial_dmi,
+        dmi_interface_normal: None, // FND-009: default ẑ in native backend
         bulk_dmi,
         dind_field: None,
         dbulk_field: None,
@@ -1344,6 +1345,7 @@ pub(crate) fn plan_fem_eigen(
         enable_exchange,
         enable_demag: enable_demag && operator.include_demag,
         interfacial_dmi,
+        dmi_interface_normal: None,
         bulk_dmi,
         external_field,
         gyromagnetic_ratio,

@@ -2049,6 +2049,9 @@ pub struct FemPlanIR {
     pub air_box_config: Option<AirBoxConfigIR>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interfacial_dmi: Option<f64>,
+    /// FND-009: interface normal direction for interfacial DMI (default [0,0,1])
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dmi_interface_normal: Option<[f64; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bulk_dmi: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2177,6 +2180,8 @@ pub struct FemEigenPlanIR {
     pub enable_demag: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interfacial_dmi: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dmi_interface_normal: Option<[f64; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bulk_dmi: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
