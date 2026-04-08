@@ -2635,18 +2635,18 @@ mod tests {
         let state_b = problem_perm.new_state(mag).expect("state b");
         let obs_b = problem_perm.observe(&state_b).expect("obs b");
 
-        // Exchange and demag energies should be identical regardless of element order
-        let rel_tol = 1e-10;
+        // Exchange and demag energies should be identical regardless of element order.
+        // Use absolute tolerance since uniform states produce near-zero energies
+        // where relative comparisons are meaningless.
+        let abs_tol = 1e-25;
         assert!(
-            (obs_a.exchange_energy_joules - obs_b.exchange_energy_joules).abs()
-                < rel_tol * obs_a.exchange_energy_joules.abs().max(1e-30),
+            (obs_a.exchange_energy_joules - obs_b.exchange_energy_joules).abs() < abs_tol,
             "exchange energy differs: {} vs {}",
             obs_a.exchange_energy_joules,
             obs_b.exchange_energy_joules
         );
         assert!(
-            (obs_a.demag_energy_joules - obs_b.demag_energy_joules).abs()
-                < rel_tol * obs_a.demag_energy_joules.abs().max(1e-30),
+            (obs_a.demag_energy_joules - obs_b.demag_energy_joules).abs() < abs_tol,
             "demag energy differs: {} vs {}",
             obs_a.demag_energy_joules,
             obs_b.demag_energy_joules

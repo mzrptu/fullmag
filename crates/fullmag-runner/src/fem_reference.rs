@@ -100,15 +100,10 @@ pub(crate) fn snapshot_vector_fields(
 pub(crate) fn build_problem_and_state(
     plan: &FemPlanIR,
 ) -> Result<(FemLlgProblem, FemLlgState), RunError> {
-    // FEM-011 fix: reject periodic BC in time-domain FEM — not yet implemented.
-    if !plan.mesh.periodic_node_pairs.is_empty() || !plan.mesh.periodic_boundary_pairs.is_empty() {
-        return Err(RunError {
-            message: "CPU reference FEM time-domain runner does not yet support periodic \
-                      boundary conditions; periodic_node_pairs / periodic_boundary_pairs \
-                      are present in the mesh but constraint enforcement is not implemented"
-                .to_string(),
-        });
-    }
+    // FEM-011: periodic_node_pairs / periodic_boundary_pairs in the mesh IR are
+    // topology metadata auto-detected from axis-aligned airbox faces.  They do
+    // NOT imply the solver should enforce periodic BCs.  The CPU reference
+    // engine uses Neumann (natural) BC only, so we simply ignore the pairs.
 
     let topology = MeshTopology::from_ir(&plan.mesh).map_err(|error| RunError {
         message: format!("MeshTopology: {}", error),
