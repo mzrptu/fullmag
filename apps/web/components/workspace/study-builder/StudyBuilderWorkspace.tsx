@@ -136,7 +136,13 @@ export default function StudyBuilderWorkspace({
   };
 
   const placeMacro = (
-    kind: "hysteresis_loop" | "field_sweep_relax" | "relax_run" | "relax_eigenmodes",
+    kind:
+      | "hysteresis_loop"
+      | "field_sweep_relax"
+      | "field_sweep_relax_snapshot"
+      | "relax_run"
+      | "relax_eigenmodes"
+      | "parameter_sweep",
     placement: "append" | "before" | "after",
   ) => {
     if (!selectedNodeId || placement === "append") {

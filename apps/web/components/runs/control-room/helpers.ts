@@ -286,6 +286,7 @@ export function buildLegacyScriptBuilderUpdatePayload(
     revision: 0,
     backend: null,
     demag_realization: demagRealization,
+    external_field: null,
     solver: solverSettingsToBuilder(solverSettings),
     mesh: meshOptionsToBuilder(meshOptions),
     universe,

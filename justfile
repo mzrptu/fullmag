@@ -124,6 +124,11 @@ run-nanoflower-interactive:
     just build fullmag-dev
     PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag --dev -i examples/nanoflower_fem.py
 
+run-nanoflower-interactive-quadro:
+    just ensure-python
+    just build fullmag-dev
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag --dev -i examples/nanoflower_fem_quadro.py
+
 run-pylayer-interactive:
     just ensure-python
     just build fullmag-dev

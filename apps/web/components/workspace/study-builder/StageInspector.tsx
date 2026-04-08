@@ -324,7 +324,7 @@ export default function StageInspector({
       {node.node_kind === "macro" ? (
         <Section title="Macro Parameters">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {node.macro_kind === "field_sweep_relax" ? (
+            {node.macro_kind === "field_sweep_relax" || node.macro_kind === "field_sweep_relax_snapshot" ? (
               <>
                 <Field label="Start [mT]">
                   <Input
@@ -359,6 +359,13 @@ export default function StageInspector({
                     label="Relax after each field step"
                     checked={node.config.relax_each !== false}
                     onChange={(checked) => onPatchConfig({ relax_each: checked })}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <Checkbox
+                    label="Save snapshot at each step"
+                    checked={Boolean(node.config.save_point_state ?? (node.macro_kind === "field_sweep_relax_snapshot"))}
+                    onChange={(checked) => onPatchConfig({ save_point_state: checked })}
                   />
                 </div>
               </>
@@ -439,6 +446,62 @@ export default function StageInspector({
                     label="Include demag in eigenproblem"
                     checked={Boolean(node.config.eigen_include_demag ?? true)}
                     onChange={(checked) => onPatchConfig({ eigen_include_demag: checked })}
+                  />
+                </div>
+              </>
+            ) : null}
+
+            {node.macro_kind === "parameter_sweep" ? (
+              <>
+                <Field label="Parameter">
+                  <Input
+                    value={String(node.config.parameter ?? "b_ext")}
+                    onChange={(event) => onPatchConfig({ parameter: event.target.value })}
+                  />
+                </Field>
+                <Field label="Axis">
+                  <Input
+                    value={String(node.config.axis ?? "z")}
+                    onChange={(event) => onPatchConfig({ axis: event.target.value })}
+                  />
+                </Field>
+                <Field label="Start">
+                  <Input
+                    value={String(node.config.start_mT ?? node.config.start_value ?? -100)}
+                    onChange={(event) => onPatchConfig({ start_mT: event.target.value })}
+                  />
+                </Field>
+                <Field label="Stop">
+                  <Input
+                    value={String(node.config.stop_mT ?? node.config.stop_value ?? 100)}
+                    onChange={(event) => onPatchConfig({ stop_mT: event.target.value })}
+                  />
+                </Field>
+                <Field label="Steps">
+                  <Input
+                    type="number"
+                    min={1}
+                    value={Number(node.config.steps ?? 11)}
+                    onChange={(event) => onPatchConfig({ steps: Math.max(1, Number(event.target.value)) })}
+                  />
+                </Field>
+                <Field label="Solve kind">
+                  <Input
+                    value={String(node.config.solve_kind ?? "run_relax")}
+                    onChange={(event) => onPatchConfig({ solve_kind: event.target.value })}
+                  />
+                </Field>
+                <Field label="Run until [s]">
+                  <Input
+                    value={String(node.config.run_until_seconds ?? "1e-12")}
+                    onChange={(event) => onPatchConfig({ run_until_seconds: event.target.value })}
+                  />
+                </Field>
+                <div className="md:col-span-2">
+                  <Checkbox
+                    label="Save a state snapshot at each point"
+                    checked={Boolean(node.config.save_point_state)}
+                    onChange={(checked) => onPatchConfig({ save_point_state: checked })}
                   />
                 </div>
               </>

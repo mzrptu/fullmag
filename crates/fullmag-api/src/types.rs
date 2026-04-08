@@ -761,6 +761,7 @@ mod tests {
             revision: 3,
             backend: None,
             demag_realization: None,
+            external_field: None,
             solver: fullmag_authoring::ScriptBuilderSolverState {
                 integrator: "rk45".to_string(),
                 fixed_timestep: String::new(),
@@ -818,6 +819,7 @@ mod tests {
                     dataset: None,
                     sample_index: None,
                 },
+                physics_stack: vec![],
                 mesh: None,
             }],
             current_modules: Vec::new(),

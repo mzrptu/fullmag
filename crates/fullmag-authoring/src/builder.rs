@@ -330,6 +330,24 @@ pub struct ScriptBuilderMaterialState {
     pub dind: Option<f64>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptBuilderMagneticInteractionKind {
+    Exchange,
+    Demag,
+    InterfacialDmi,
+    UniaxialAnisotropy,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ScriptBuilderMagneticInteractionEntry {
+    pub kind: ScriptBuilderMagneticInteractionKind,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<Value>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ScriptBuilderMagnetizationState {
     pub kind: String,
@@ -416,6 +434,8 @@ pub struct ScriptBuilderGeometryEntry {
     pub bounds_max: Option<[f64; 3]>,
     pub material: ScriptBuilderMaterialState,
     pub magnetization: ScriptBuilderMagnetizationState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub physics_stack: Vec<ScriptBuilderMagneticInteractionEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh: Option<ScriptBuilderPerGeometryMeshState>,
 }
@@ -460,6 +480,8 @@ pub struct ScriptBuilderState {
     pub backend: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demag_realization: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_field: Option<[f64; 3]>,
     pub solver: ScriptBuilderSolverState,
     pub mesh: ScriptBuilderMeshState,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1,8 +1,8 @@
 use crate::{
     ScriptBuilderCurrentModuleState, ScriptBuilderExcitationAnalysisState,
-    ScriptBuilderInitialState, ScriptBuilderMaterialState, ScriptBuilderMeshState,
-    ScriptBuilderPerGeometryMeshState, ScriptBuilderSolverState, ScriptBuilderStageState,
-    ScriptBuilderUniverseState, StudyPipelineDocument,
+    ScriptBuilderInitialState, ScriptBuilderMagneticInteractionEntry, ScriptBuilderMaterialState,
+    ScriptBuilderMeshState, ScriptBuilderPerGeometryMeshState, ScriptBuilderSolverState,
+    ScriptBuilderStageState, ScriptBuilderUniverseState, StudyPipelineDocument,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -69,6 +69,8 @@ pub struct SceneObject {
     pub region_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub magnetization_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub physics_stack: Vec<ScriptBuilderMagneticInteractionEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub object_mesh: Option<ScriptBuilderPerGeometryMeshState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -219,6 +221,8 @@ pub struct SceneStudyState {
     pub requested_mode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demag_realization: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_field: Option<[f64; 3]>,
     #[serde(default = "default_solver")]
     pub solver: ScriptBuilderSolverState,
     #[serde(default, skip_serializing_if = "Option::is_none")]

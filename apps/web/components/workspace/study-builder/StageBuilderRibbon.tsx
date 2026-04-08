@@ -10,7 +10,13 @@ interface StageBuilderRibbonProps {
     placement: "append" | "before" | "after",
   ) => void;
   onAddMacro: (
-    kind: "hysteresis_loop" | "field_sweep_relax" | "relax_run" | "relax_eigenmodes",
+    kind:
+      | "hysteresis_loop"
+      | "field_sweep_relax"
+      | "field_sweep_relax_snapshot"
+      | "relax_run"
+      | "relax_eigenmodes"
+      | "parameter_sweep",
     placement: "append" | "before" | "after",
   ) => void;
   selectedNodeId: string | null;
@@ -103,8 +109,10 @@ export default function StageBuilderRibbon({
           <RibbonGroup title="Composite">
             <RibbonActionButton icon={<Magnet className="size-4" />} label="Hysteresis Loop" onClick={() => onAddMacro("hysteresis_loop", placement)} accent="violet" />
             <RibbonActionButton icon={<FunctionSquare className="size-4" />} label="Field Sweep + Relax" onClick={() => onAddMacro("field_sweep_relax", placement)} accent="violet" />
+            <RibbonActionButton icon={<FunctionSquare className="size-4" />} label="Field Sweep + Snapshot" onClick={() => onAddMacro("field_sweep_relax_snapshot", placement)} accent="violet" />
             <RibbonActionButton icon={<Layers3 className="size-4" />} label="Relax -> Run" onClick={() => onAddMacro("relax_run", placement)} accent="violet" />
             <RibbonActionButton icon={<Binary className="size-4" />} label="Relax -> Eigenmodes" onClick={() => onAddMacro("relax_eigenmodes", placement)} accent="violet" />
+            <RibbonActionButton icon={<FunctionSquare className="size-4" />} label="Parameter Sweep" onClick={() => onAddMacro("parameter_sweep", placement)} accent="violet" />
           </RibbonGroup>
         </div>
 

@@ -108,6 +108,7 @@ export function createModelBuilderGraphV2(
       requested_precision: "double",
       requested_mode: "strict",
       demag_realization: builder?.demag_realization ?? null,
+      external_field: builder?.external_field ?? null,
       solver: builder?.solver ?? EMPTY_SOLVER,
       universe_mesh: builder?.universe ?? null,
       shared_domain_mesh: builder?.mesh ?? EMPTY_MESH,
@@ -166,6 +167,7 @@ export function serializeModelBuilderGraphV2(graph: ModelBuilderGraphV2): Omit<
   return {
     backend: graph.study.backend,
     demag_realization: graph.study.demag_realization,
+    external_field: graph.study.external_field,
     solver: graph.study.solver,
     mesh: graph.study.shared_domain_mesh,
     universe: graph.universe.value,
@@ -408,6 +410,7 @@ export function resolveSelectedObjectIdFromModelBuilderGraph(
     const materialPrefix = objectNode.tree.material;
     const regionPrefix = objectNode.tree.region;
     const meshPrefix = objectNode.tree.mesh;
+    const physicsPrefix = `physobj-${objectNode.name}`;
     if (
       nodeId === objectPrefix ||
       nodeId.startsWith(`${objectPrefix}-`) ||
@@ -417,6 +420,8 @@ export function resolveSelectedObjectIdFromModelBuilderGraph(
       nodeId.startsWith(`${materialPrefix}-`) ||
       nodeId === regionPrefix ||
       nodeId.startsWith(`${regionPrefix}-`) ||
+      nodeId === physicsPrefix ||
+      nodeId.startsWith(`${physicsPrefix}-`) ||
       nodeId === meshPrefix ||
       nodeId.startsWith(`${meshPrefix}-`)
     ) {

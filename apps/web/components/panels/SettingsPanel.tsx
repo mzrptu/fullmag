@@ -278,6 +278,7 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
     if (nodeId === "res-state-io" || nodeId === "res-export") return <StateIoPanel />;
     if (nodeId === "initial-state") return <StateIoPanel />;
     if (nodeId === "objects") return <GeometryPanel />;
+    if (nodeId.startsWith("physobj-")) return <MaterialPanel nodeId={nodeId} />;
     if (nodeId.startsWith("geo-") && nodeId.includes("-mesh")) {
       return <ObjectMeshPanel nodeId={nodeId} />;
     }

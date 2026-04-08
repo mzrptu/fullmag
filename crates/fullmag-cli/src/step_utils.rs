@@ -910,7 +910,9 @@ struct ParameterSweepSolvePattern {
     relax_each: bool,
 }
 
-fn parameter_sweep_solve_pattern(config: &BTreeMap<String, Value>) -> Result<ParameterSweepSolvePattern> {
+fn parameter_sweep_solve_pattern(
+    config: &BTreeMap<String, Value>,
+) -> Result<ParameterSweepSolvePattern> {
     let solve_kind = payload_string(config, "solve_kind")
         .unwrap_or_else(|| "run_relax".to_string())
         .trim()
@@ -979,7 +981,10 @@ fn materialize_pipeline_parameter_sweep(
         .unwrap_or(if is_field_parameter { 100.0 } else { 1e10 });
     let values_raw = linear_sweep_values(start_raw, stop_raw, steps)?;
     let values_si = if is_field_parameter {
-        values_raw.iter().map(|value| value * 1e-3).collect::<Vec<_>>()
+        values_raw
+            .iter()
+            .map(|value| value * 1e-3)
+            .collect::<Vec<_>>()
     } else {
         values_raw
     };
@@ -996,8 +1001,9 @@ fn materialize_pipeline_parameter_sweep(
         bail!("parameter_sweep requires positive run_until_seconds when solve_kind includes run");
     }
 
-    let stage_multiplier =
-        usize::from(solve_pattern.run_each) + usize::from(solve_pattern.relax_each) + usize::from(save_point_state);
+    let stage_multiplier = usize::from(solve_pattern.run_each)
+        + usize::from(solve_pattern.relax_each)
+        + usize::from(save_point_state);
     let mut stages = Vec::with_capacity(values_si.len() * stage_multiplier.max(1));
     for (point_index, value_si) in values_si.iter().enumerate() {
         if is_field_parameter {

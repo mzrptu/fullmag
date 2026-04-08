@@ -20,6 +20,7 @@ import {
   type StudyNodeContext,
 } from "@/lib/study-builder/node-context";
 import type { StudyPrimitiveStageKind } from "@/lib/study-builder/types";
+import type { ScriptBuilderMagneticInteractionKind } from "@/lib/session/types";
 
 /* ── Types ──────────────────────────────────────── */
 
@@ -126,11 +127,21 @@ interface RibbonBarProps {
     placement: "append" | "before" | "after",
   ) => void;
   onStudyAddMacro?: (
-    kind: "hysteresis_loop" | "field_sweep_relax" | "relax_run" | "relax_eigenmodes",
+    kind:
+      | "hysteresis_loop"
+      | "field_sweep_relax"
+      | "field_sweep_relax_snapshot"
+      | "relax_run"
+      | "relax_eigenmodes"
+      | "parameter_sweep",
     placement: "append" | "before" | "after",
   ) => void;
   onStudyDuplicateSelected?: () => void;
   onStudyToggleSelectedEnabled?: () => void;
+  onObjectAddInteraction?: (
+    objectId: string,
+    kind: ScriptBuilderMagneticInteractionKind,
+  ) => void;
 }
 
 /* ── Tab inference from tree node ── */
@@ -345,6 +356,142 @@ function buildMeshGroups(p: RibbonBarProps): RibbonGroup[] {
   ];
 }
 
+function buildMaterialsGroups(p: RibbonBarProps): RibbonGroup[] {
+  const objectId = p.selectedObjectId;
+  const hasObject = Boolean(objectId);
+  return [
+    {
+      id: "material-object",
+      title: "Object",
+      actions: [
+        {
+          id: "open-magnetic-params",
+          icon: <Magnet size={20} />,
+          label: "Magnetic Params",
+          tooltip: hasObject ? "Open magnetic interaction stack for selected object" : "Select object in tree first",
+          disabled: !hasObject,
+          action: () => {
+            if (!objectId) return;
+            p.onSelectModelNode?.(`physobj-${objectId}`);
+          },
+          iconColor: "text-violet-400",
+        },
+        {
+          id: "open-material-panel",
+          icon: <FlaskConical size={20} />,
+          label: "Material",
+          tooltip: hasObject ? "Open material constants for selected object" : "Select object in tree first",
+          disabled: !hasObject,
+          action: () => {
+            if (!objectId) return;
+            p.onSelectModelNode?.(`mat-${objectId}`);
+          },
+          iconColor: "text-amber-400",
+        },
+      ],
+    },
+    {
+      id: "material-add",
+      title: "Add Interaction",
+      actions: [
+        {
+          id: "add-dmi",
+          icon: <Sparkles size={20} />,
+          label: "Add DMI",
+          tooltip: hasObject ? "Add interfacial DMI interaction" : "Select object in tree first",
+          disabled: !hasObject || !p.onObjectAddInteraction,
+          action: () => {
+            if (!objectId) return;
+            p.onObjectAddInteraction?.(objectId, "interfacial_dmi");
+            p.onSelectModelNode?.(`physobj-${objectId}`);
+          },
+          iconColor: "text-cyan-400",
+        },
+        {
+          id: "add-ku",
+          icon: <Binary size={20} />,
+          label: "Add Ku",
+          tooltip: hasObject ? "Add uniaxial anisotropy interaction" : "Select object in tree first",
+          disabled: !hasObject || !p.onObjectAddInteraction,
+          action: () => {
+            if (!objectId) return;
+            p.onObjectAddInteraction?.(objectId, "uniaxial_anisotropy");
+            p.onSelectModelNode?.(`physobj-${objectId}`);
+          },
+          iconColor: "text-rose-400",
+        },
+      ],
+    },
+    buildViewGroup(p),
+  ];
+}
+
+function buildPhysicsGroups(p: RibbonBarProps): RibbonGroup[] {
+  const objectId = p.selectedObjectId;
+  const hasObject = Boolean(objectId);
+  return [
+    {
+      id: "physics-core",
+      title: "Core Terms",
+      actions: [
+        {
+          id: "open-obj-physics",
+          icon: <Magnet size={20} />,
+          label: "Object Physics",
+          tooltip: hasObject ? "Open per-object magnetic interaction stack" : "Select object in tree first",
+          disabled: !hasObject,
+          action: () => {
+            if (!objectId) return;
+            p.onSelectModelNode?.(`physobj-${objectId}`);
+          },
+          iconColor: "text-violet-400",
+        },
+        {
+          id: "open-global-physics",
+          icon: <Cog size={20} />,
+          label: "Global Physics",
+          tooltip: "Open global physics status panel",
+          action: () => p.onSelectModelNode?.("physics"),
+          iconColor: "text-slate-400",
+        },
+      ],
+    },
+    {
+      id: "physics-add",
+      title: "Optional Terms",
+      actions: [
+        {
+          id: "physics-add-dmi",
+          icon: <Sparkles size={20} />,
+          label: "DMI",
+          tooltip: hasObject ? "Add interfacial DMI to selected object" : "Select object in tree first",
+          disabled: !hasObject || !p.onObjectAddInteraction,
+          action: () => {
+            if (!objectId) return;
+            p.onObjectAddInteraction?.(objectId, "interfacial_dmi");
+            p.onSelectModelNode?.(`physobj-${objectId}`);
+          },
+          iconColor: "text-cyan-400",
+        },
+        {
+          id: "physics-add-uni",
+          icon: <Binary size={20} />,
+          label: "Uniaxial Ku",
+          tooltip: hasObject ? "Add uniaxial anisotropy to selected object" : "Select object in tree first",
+          disabled: !hasObject || !p.onObjectAddInteraction,
+          action: () => {
+            if (!objectId) return;
+            p.onObjectAddInteraction?.(objectId, "uniaxial_anisotropy");
+            p.onSelectModelNode?.(`physobj-${objectId}`);
+          },
+          iconColor: "text-rose-400",
+        },
+      ],
+    },
+    buildViewGroup(p),
+  ];
+}
+
 function buildStudyGroups(p: RibbonBarProps): RibbonGroup[] {
   return [
     {
@@ -389,6 +536,7 @@ function buildStudyBuilderGroups(
             studyNode?.kind === "study-defaults"
             || studyNode?.kind === "study-runtime-defaults"
             || studyNode?.kind === "study-solver-defaults"
+            || studyNode?.kind === "study-physics-defaults"
             || studyNode?.kind === "study-outputs-defaults",
           iconColor: "text-cyan-400",
           action: () => p.onSelectModelNode?.("study-defaults"),
@@ -408,6 +556,14 @@ function buildStudyBuilderGroups(
               description: "Integrator, relaxation and convergence defaults",
               active: studyNode?.kind === "study-solver-defaults",
               action: () => p.onSelectModelNode?.("study-defaults-solver"),
+            },
+            {
+              id: "study-defaults-physics",
+              label: "Physics Defaults",
+              icon: <Magnet size={14} />,
+              description: "Global Zeeman field and baseline magnetic forcing",
+              active: studyNode?.kind === "study-physics-defaults",
+              action: () => p.onSelectModelNode?.("study-defaults-physics"),
             },
             {
               id: "study-defaults-outputs",
@@ -487,6 +643,14 @@ function buildStudyBuilderGroups(
           action: () => p.onStudyAddMacro?.("field_sweep_relax", placement),
         },
         {
+          id: "study-add-field-sweep-snapshot",
+          icon: <FunctionSquare size={20} />,
+          label: "Sweep+Snap",
+          tooltip: hasStageSelection ? "Insert Field Sweep + Relax + Snapshot after the selected stage" : "Append Field Sweep + Relax + Snapshot at the end of the stage sequence",
+          iconColor: "text-violet-400",
+          action: () => p.onStudyAddMacro?.("field_sweep_relax_snapshot", placement),
+        },
+        {
           id: "study-add-relax-run",
           icon: <Layers3 size={20} />,
           label: "Relax->Run",
@@ -501,6 +665,14 @@ function buildStudyBuilderGroups(
           tooltip: hasStageSelection ? "Insert Relax -> Eigensolve after the selected stage" : "Append Relax -> Eigensolve at the end of the stage sequence",
           iconColor: "text-violet-400",
           action: () => p.onStudyAddMacro?.("relax_eigenmodes", placement),
+        },
+        {
+          id: "study-add-parameter-sweep",
+          icon: <FunctionSquare size={20} />,
+          label: "Param Sweep",
+          tooltip: hasStageSelection ? "Insert Parameter Sweep after the selected stage" : "Append Parameter Sweep at the end of the stage sequence",
+          iconColor: "text-violet-400",
+          action: () => p.onStudyAddMacro?.("parameter_sweep", placement),
         },
       ],
     },
@@ -739,8 +911,11 @@ export default function RibbonBar(props: RibbonBarProps) {
       case "Export":
         return buildResultsGroups(props);
       case "Geometry":
+        return buildHomeGroups(props);
       case "Materials":
+        return buildMaterialsGroups(props);
       case "Physics":
+        return buildPhysicsGroups(props);
       default:
         return buildHomeGroups(props);
     }
@@ -763,10 +938,12 @@ export default function RibbonBar(props: RibbonBarProps) {
     props.selectedAntennaName,
     props.canSyncScriptBuilder,
     props.scriptSyncBusy,
+    props.selectedObjectId,
     props.onStudyAddPrimitive,
     props.onStudyAddMacro,
     props.onStudyDuplicateSelected,
     props.onStudyToggleSelectedEnabled,
+    props.onObjectAddInteraction,
     studyNode,
   ]);
 

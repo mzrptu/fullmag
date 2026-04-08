@@ -26,6 +26,7 @@ import {
   buildSceneDocumentFromScriptBuilder,
   buildScriptBuilderFromSceneDocument,
 } from "./sceneDocument";
+import { ensureObjectPhysicsStack } from "./magneticPhysics";
 
 function normalizeSessionManifest(raw: any) {
   if (!raw || typeof raw !== "object") {
@@ -579,6 +580,7 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
       typeof raw.demag_realization === "string" && raw.demag_realization.trim().length > 0
         ? raw.demag_realization
         : null,
+    external_field: normalizeVec3(raw.external_field),
     solver: {
       integrator: String(raw.solver?.integrator ?? ""),
       fixed_timestep: String(raw.solver?.fixed_timestep ?? ""),
@@ -697,6 +699,10 @@ function normalizeScriptBuilder(raw: any): ScriptBuilderState | null {
             alpha: Number(geo?.material?.alpha ?? 0.01),
             Dind: geo?.material?.Dind != null ? Number(geo.material.Dind) : null,
           },
+          physics_stack: ensureObjectPhysicsStack(
+            geo?.physics_stack,
+            geo?.material?.Dind != null ? Number(geo.material.Dind) : null,
+          ),
           magnetization: {
             kind: String(geo?.magnetization?.kind ?? "uniform"),
             value: Array.isArray(geo?.magnetization?.value) ? geo.magnetization.value.map(Number) : null,
@@ -804,6 +810,7 @@ function normalizeModelBuilderGraph(raw: any): ModelBuilderGraphV2 | null {
     revision: raw.revision,
     backend: raw.study?.backend,
     demag_realization: raw.study?.demag_realization,
+    external_field: raw.study?.external_field ?? null,
     solver: raw.study?.solver,
     mesh: raw.study?.shared_domain_mesh ?? raw.study?.mesh_defaults,
     universe: raw.universe?.value,
@@ -840,6 +847,14 @@ function normalizeModelBuilderGraph(raw: any): ModelBuilderGraphV2 | null {
       : "double";
   graph.study.requested_mode =
     typeof raw.study?.requested_mode === "string" ? raw.study.requested_mode : "strict";
+  graph.study.external_field =
+    Array.isArray(raw.study?.external_field) && raw.study.external_field.length === 3
+      ? ([
+          Number(raw.study.external_field[0] ?? 0),
+          Number(raw.study.external_field[1] ?? 0),
+          Number(raw.study.external_field[2] ?? 0),
+        ] as [number, number, number])
+      : null;
   return graph;
 }
 
@@ -848,6 +863,7 @@ function emptyScriptBuilderState(): ScriptBuilderState {
     revision: 0,
     backend: null,
     demag_realization: null,
+    external_field: null,
     solver: {},
     mesh: {},
     universe: null,
@@ -923,6 +939,7 @@ function normalizeSceneStudy(raw: any) {
     revision: 0,
     backend: raw?.backend ?? null,
     demag_realization: raw?.demag_realization ?? null,
+    external_field: raw?.external_field ?? null,
     solver: raw?.solver ?? {},
     mesh: raw?.shared_domain_mesh ?? raw?.mesh_defaults ?? {},
     universe: null,
@@ -944,6 +961,7 @@ function normalizeSceneStudy(raw: any) {
     requested_mode:
       typeof raw?.requested_mode === "string" ? raw.requested_mode : "strict",
     demag_realization: normalized?.demag_realization ?? null,
+    external_field: normalized?.external_field ?? null,
     solver: normalized?.solver ?? defaults.solver,
     universe_mesh:
       raw?.universe_mesh && typeof raw.universe_mesh === "object"
@@ -1043,6 +1061,7 @@ function normalizeSceneDocument(raw: any): SceneDocument | null {
             typeof object?.magnetization_ref === "string"
               ? object.magnetization_ref
               : null,
+          physics_stack: ensureObjectPhysicsStack(object?.physics_stack),
           object_mesh: normalizeSceneMeshOverride(
             object?.object_mesh ?? object?.mesh_override ?? null,
           ),

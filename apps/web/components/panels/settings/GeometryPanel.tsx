@@ -13,6 +13,7 @@ import type {
   SceneObject,
   ScriptBuilderGeometryEntry,
 } from "../../../lib/session/types";
+import { ensureObjectPhysicsStack } from "../../../lib/session/magneticPhysics";
 import {
   defaultSceneMagnetizationId,
   defaultSceneMaterialId,
@@ -115,6 +116,10 @@ function buildProjectedGeometryEntry(
       alpha: 0.01,
       Dind: null,
     },
+    physics_stack: ensureObjectPhysicsStack(
+      object.physics_stack,
+      material?.properties?.Dind ?? null,
+    ),
     magnetization: {
       kind: magnetization?.kind ?? "uniform",
       value: magnetization?.value ?? [0, 0, 1],

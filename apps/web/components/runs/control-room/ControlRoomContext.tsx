@@ -1135,6 +1135,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
             material_ref: object.material_ref,
             region_name: object.region_name,
             magnetization_ref: object.magnetization_ref,
+            physics_stack: object.physics_stack,
             mesh_override: object.mesh_override,
           };
         }),

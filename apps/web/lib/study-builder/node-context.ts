@@ -18,6 +18,7 @@ export type StudyNodeContext =
   | { kind: "study-defaults" }
   | { kind: "study-runtime-defaults" }
   | { kind: "study-solver-defaults" }
+  | { kind: "study-physics-defaults" }
   | { kind: "study-outputs-defaults" }
   | { kind: "study-stages" }
   | { kind: "study-stage-empty" }
@@ -64,6 +65,7 @@ export function parseStudyNodeContext(
   ) {
     return { kind: "study-solver-defaults" };
   }
+  if (nodeId === "study-defaults-physics") return { kind: "study-physics-defaults" };
   if (nodeId === "study-defaults-outputs") return { kind: "study-outputs-defaults" };
   if (
     nodeId === "study-stages" ||

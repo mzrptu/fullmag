@@ -510,6 +510,18 @@ export interface ScriptBuilderMaterialEntry {
   Dind: number | null;
 }
 
+export type ScriptBuilderMagneticInteractionKind =
+  | "exchange"
+  | "demag"
+  | "interfacial_dmi"
+  | "uniaxial_anisotropy";
+
+export interface ScriptBuilderMagneticInteractionEntry {
+  kind: ScriptBuilderMagneticInteractionKind;
+  enabled: boolean;
+  params: Record<string, unknown> | null;
+}
+
 export interface ScriptBuilderMagnetizationEntry {
   kind: string;                   // "uniform" | "random" | "file"
   value: number[] | null;         // [mx, my, mz] for uniform
@@ -571,6 +583,7 @@ export interface ScriptBuilderGeometryEntry {
   bounds_min?: [number, number, number] | null;
   bounds_max?: [number, number, number] | null;
   material: ScriptBuilderMaterialEntry;
+  physics_stack?: ScriptBuilderMagneticInteractionEntry[];
   magnetization: ScriptBuilderMagnetizationEntry;
   mesh: ScriptBuilderPerGeometryMeshEntry | null;
 }
@@ -604,6 +617,7 @@ export interface ScriptBuilderState {
   revision: number;
   backend: string | null;
   demag_realization: string | null;
+  external_field: [number, number, number] | null;
   solver: ScriptBuilderSolverState;
   mesh: ScriptBuilderMeshState;
   universe: ScriptBuilderUniverseState | null;
@@ -643,6 +657,7 @@ export interface ModelBuilderGraphStudyNode {
   requested_precision: string;
   requested_mode: string;
   demag_realization: string | null;
+  external_field: [number, number, number] | null;
   solver: ScriptBuilderSolverState;
   universe_mesh: ScriptBuilderUniverseState | null;
   shared_domain_mesh: ScriptBuilderMeshState;
@@ -730,6 +745,7 @@ export interface SceneObject {
   material_ref: string;
   region_name: string | null;
   magnetization_ref: string | null;
+  physics_stack?: ScriptBuilderMagneticInteractionEntry[];
   object_mesh: ScriptBuilderPerGeometryMeshEntry | null;
   mesh_override: ScriptBuilderPerGeometryMeshEntry | null;
   visible: boolean;
@@ -786,6 +802,7 @@ export interface SceneStudyState {
   requested_precision: string;
   requested_mode: string;
   demag_realization: string | null;
+  external_field: [number, number, number] | null;
   solver: ScriptBuilderSolverState;
   universe_mesh: ScriptBuilderUniverseState | null;
   shared_domain_mesh: ScriptBuilderMeshState;

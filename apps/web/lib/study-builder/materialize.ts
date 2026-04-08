@@ -128,6 +128,59 @@ function expandMacro(node: MacroStageNode): ScriptBuilderStageState[] {
     }
     return expanded;
   }
+  if (node.macro_kind === "field_sweep_relax_snapshot") {
+    const steps = Math.max(1, Number(node.config.steps ?? 11));
+    const relaxEach = node.config.relax_each !== false;
+    const expanded: ScriptBuilderStageState[] = [];
+    for (let i = 0; i < steps; i += 1) {
+      expanded.push(
+        stage("run", {
+          until_seconds: "1e-12",
+          kind: "run",
+          entrypoint_kind: "run",
+        }),
+      );
+      if (relaxEach) {
+        expanded.push(stage("relax"));
+      }
+      expanded.push(
+        stage("save_state", {
+          entrypoint_kind: "save_state",
+        }),
+      );
+    }
+    return expanded;
+  }
+  if (node.macro_kind === "parameter_sweep") {
+    const steps = Math.max(1, Number(node.config.steps ?? 11));
+    const solveKind = String(node.config.solve_kind ?? "run_relax");
+    const runEach = solveKind === "run" || solveKind === "run_relax" || solveKind === "relax_run";
+    const relaxEach = solveKind === "relax" || solveKind === "run_relax" || solveKind === "relax_run";
+    const savePointState = Boolean(node.config.save_point_state);
+    const expanded: ScriptBuilderStageState[] = [];
+    for (let i = 0; i < steps; i += 1) {
+      if (runEach) {
+        expanded.push(
+          stage("run", {
+            until_seconds: toStringOr(node.config.run_until_seconds, "1e-12"),
+            kind: "run",
+            entrypoint_kind: "run",
+          }),
+        );
+      }
+      if (relaxEach) {
+        expanded.push(stage("relax"));
+      }
+      if (savePointState) {
+        expanded.push(
+          stage("save_state", {
+            entrypoint_kind: "save_state",
+          }),
+        );
+      }
+    }
+    return expanded;
+  }
   return [stage("run", { until_seconds: "1e-12" })];
 }
 

@@ -213,15 +213,24 @@ export function createPrimitiveNode(kind: StudyPrimitiveStageKind): StudyPipelin
   };
 }
 
-export function createMacroNode(kind: Extract<StudyMacroStageKind, "hysteresis_loop" | "field_sweep_relax" | "relax_run" | "relax_eigenmodes">): StudyPipelineNode {
+export function createMacroNode(
+  kind: Extract<
+    StudyMacroStageKind,
+    "hysteresis_loop" | "field_sweep_relax" | "field_sweep_relax_snapshot" | "relax_run" | "relax_eigenmodes" | "parameter_sweep"
+  >,
+): StudyPipelineNode {
   const label =
     kind === "hysteresis_loop"
       ? "Hysteresis Loop"
       : kind === "field_sweep_relax"
         ? "Field Sweep + Relax"
+        : kind === "field_sweep_relax_snapshot"
+          ? "Field Sweep + Relax + Snapshot"
+        : kind === "parameter_sweep"
+          ? "Parameter Sweep"
         : kind === "relax_run"
-        ? "Relax -> Run"
-        : "Relax -> Eigenmodes";
+          ? "Relax -> Run"
+          : "Relax -> Eigenmodes";
   return {
     id: nextNodeId(kind),
     label,
@@ -240,11 +249,31 @@ export function createMacroNode(kind: Extract<StudyMacroStageKind, "hysteresis_l
             relax_each: true,
             save_point_state: false,
           }
+        : kind === "field_sweep_relax_snapshot"
+          ? {
+              start_mT: -100,
+              stop_mT: 100,
+              steps: 11,
+              axis: "z",
+              relax_each: true,
+              save_point_state: true,
+            }
+          : kind === "parameter_sweep"
+            ? {
+                parameter: "b_ext",
+                axis: "z",
+                start_mT: -100,
+                stop_mT: 100,
+                steps: 11,
+                solve_kind: "run_relax",
+                run_until_seconds: "1e-12",
+                save_point_state: false,
+              }
         : kind === "field_sweep_relax"
-        ? { start_mT: -100, stop_mT: 100, steps: 11, axis: "z", relax_each: true }
-        : kind === "relax_run"
-          ? { run_until_seconds: "1e-9" }
-          : { eigen_count: "10", eigen_include_demag: true },
+          ? { start_mT: -100, stop_mT: 100, steps: 11, axis: "z", relax_each: true }
+          : kind === "relax_run"
+            ? { run_until_seconds: "1e-9" }
+            : { eigen_count: "10", eigen_include_demag: true },
   };
 }
 

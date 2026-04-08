@@ -15,7 +15,7 @@ export function resolveObjectNameFromNodeId(
   if (!nodeId) {
     return null;
   }
-  const candidate = nodeId.replace(/^(geo|mat|obj|reg)-/, "");
+  const candidate = nodeId.replace(/^(geo|mat|obj|reg|physobj)-/, "");
   const names = source
     .map((entry) => ("geometry_kind" in entry ? entry.name : entry.name || entry.id))
     .sort((left, right) => right.length - left.length);

@@ -14,6 +14,10 @@ import type {
 } from "@/lib/session/types";
 import { buildScriptBuilderFromSceneDocument } from "@/lib/session/sceneDocument";
 import {
+  ensureObjectPhysicsStack,
+  magneticInteractionLabel,
+} from "@/lib/session/magneticPhysics";
+import {
   buildFlatStudyStageNodeId,
   buildPipelineStudyStageNodeId,
 } from "@/lib/study-builder/node-context";
@@ -46,7 +50,10 @@ function humanizeStageKind(kind: string | null | undefined): string {
 function studyStageDisplayName(kind: string | null | undefined): string {
   if (!kind) return "Stage";
   if (kind === "eigenmodes") return "Eigensolve";
-  if (kind === "hysteresis_loop" || kind === "field_sweep_relax") return "Hysteresis Loop";
+  if (kind === "hysteresis_loop") return "Hysteresis Loop";
+  if (kind === "field_sweep_relax") return "Field Sweep + Relax";
+  if (kind === "field_sweep_relax_snapshot") return "Field Sweep + Snapshot";
+  if (kind === "parameter_sweep") return "Parameter Sweep";
   return humanizeStageKind(kind);
 }
 
@@ -57,8 +64,10 @@ function humanizeStudyPipelineNodeStateKind(node: StudyPipelineNodeState): strin
   if (node.node_kind === "macro") {
     if (node.macro_kind === "hysteresis_loop") return "Hysteresis Loop";
     if (node.macro_kind === "field_sweep_relax") return "Field Sweep + Relax";
+    if (node.macro_kind === "field_sweep_relax_snapshot") return "Field Sweep + Relax + Snapshot";
     if (node.macro_kind === "relax_run") return "Relax -> Run";
     if (node.macro_kind === "relax_eigenmodes") return "Relax -> Eigensolve";
+    if (node.macro_kind === "parameter_sweep") return "Parameter Sweep";
     return humanizeStageKind(node.macro_kind);
   }
   return "Stage Group";
@@ -86,6 +95,17 @@ function summarizeStudyPipelineNodeState(node: StudyPipelineNodeState): string {
       const stop = Number(node.config.stop_mT ?? 100);
       const steps = Math.max(1, Number(node.config.steps ?? 11));
       return `field sweep ${start} -> ${stop} mT (${steps} steps)`;
+    }
+    if (node.macro_kind === "field_sweep_relax_snapshot") {
+      const start = Number(node.config.start_mT ?? -100);
+      const stop = Number(node.config.stop_mT ?? 100);
+      const steps = Math.max(1, Number(node.config.steps ?? 11));
+      return `field sweep ${start} -> ${stop} mT (${steps} steps) + snapshots`;
+    }
+    if (node.macro_kind === "parameter_sweep") {
+      const parameter = String(node.config.parameter ?? "b_ext");
+      const steps = Math.max(1, Number(node.config.steps ?? 11));
+      return `parameter sweep ${parameter} (${steps} points)`;
     }
     if (node.macro_kind === "relax_run") return "relax then run";
     if (node.macro_kind === "relax_eigenmodes") return "relax then eigensolve";
@@ -145,7 +165,10 @@ function buildStudyPipelineTreeNodes(
     if (node.node_kind === "macro") {
       const baseId = buildPipelineStudyStageNodeId(node.id);
       const macroChildren =
-        node.macro_kind === "hysteresis_loop" || node.macro_kind === "field_sweep_relax"
+        node.macro_kind === "hysteresis_loop"
+        || node.macro_kind === "field_sweep_relax"
+        || node.macro_kind === "field_sweep_relax_snapshot"
+        || node.macro_kind === "parameter_sweep"
           ? buildStageDetailChildren(baseId, [
               { id: "overview", label: "Overview", icon: "🧾" },
               { id: "sweep", label: "Sweep Definition", icon: "↕" },
@@ -621,6 +644,7 @@ export function buildFullmagModelTree(opts: {
                 alpha: 0.01,
                 Dind: null,
               },
+              physics_stack: ensureObjectPhysicsStack(null),
               magnetization: {
                 kind: "uniform",
                 value: [0, 0, 1],
@@ -859,6 +883,15 @@ export function buildFullmagModelTree(opts: {
               label: "Solver Defaults",
               icon: "🔧",
               badge: opts.solverIntegrator ? opts.solverIntegrator.toUpperCase() : "auto",
+              status: "ready",
+            },
+            {
+              id: "study-defaults-physics",
+              label: "Physics Defaults",
+              icon: "🧲",
+              badge: opts.zeemanField
+                ? `${opts.zeemanField.map((component) => Number(component).toExponential(2)).join(", ")} T`
+                : "no field",
               status: "ready",
             },
             {
@@ -1170,6 +1203,7 @@ function _buildObjectNode(objectNode: {
       },
       _buildRegionNode(geo, regionId),
       _buildMaterialNode(geo, materialId),
+      _buildObjectPhysicsNode(geo, objectNode.name),
       {
         id: `mag-${objectNode.name}`,
         label: "Magnetization",
@@ -1197,6 +1231,59 @@ function _buildObjectNode(objectNode: {
       },
       meshNode,
     ],
+  };
+}
+
+function _buildObjectPhysicsNode(
+  geo: ScriptBuilderGeometryEntry,
+  objectName: string,
+): TreeNodeData {
+  const stack = ensureObjectPhysicsStack(geo.physics_stack, geo.material.Dind);
+  const interactionChildren: TreeNodeData[] = stack.map((entry) => {
+    if (entry.kind === "interfacial_dmi") {
+      const dind = Number(entry.params?.dind ?? geo.material.Dind ?? 0);
+      return {
+        id: `physobj-${objectName}-interfacial_dmi`,
+        label:
+          dind !== 0
+            ? `Interfacial DMI · D = ${dind.toExponential(2)} J/m²`
+            : "Interfacial DMI",
+        icon: "𝐷",
+        status: entry.enabled ? "ready" : "pending",
+        badge: entry.enabled ? undefined : "disabled",
+      };
+    }
+    if (entry.kind === "uniaxial_anisotropy") {
+      const ku1 = Number(entry.params?.ku1 ?? 0);
+      return {
+        id: `physobj-${objectName}-uniaxial_anisotropy`,
+        label:
+          ku1 !== 0
+            ? `Uniaxial Ku · ${ku1.toExponential(2)} J/m³`
+            : "Uniaxial Ku",
+        icon: "K",
+        status: entry.enabled ? "ready" : "pending",
+        badge: entry.enabled ? undefined : "disabled",
+      };
+    }
+    return {
+      id: `physobj-${objectName}-${entry.kind}`,
+      label: magneticInteractionLabel(entry.kind),
+      icon: entry.kind === "exchange" ? "↔" : "🧲",
+      status: entry.enabled ? "ready" : "pending",
+      badge: entry.enabled ? undefined : "disabled",
+    };
+  });
+  const optionalCount = stack.filter(
+    (entry) => entry.kind !== "exchange" && entry.kind !== "demag",
+  ).length;
+  return {
+    id: `physobj-${objectName}`,
+    label: "Magnetic Parameters",
+    icon: "🧲",
+    status: "ready",
+    badge: optionalCount > 0 ? `+${optionalCount}` : "core",
+    children: interactionChildren,
   };
 }
 

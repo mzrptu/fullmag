@@ -40,6 +40,84 @@ def _default_texture_transform() -> dict[str, object]:
     }
 
 
+_INTERACTION_ORDER = (
+    "exchange",
+    "demag",
+    "interfacial_dmi",
+    "uniaxial_anisotropy",
+)
+
+
+def _normalize_axis3(value: object) -> list[float]:
+    if isinstance(value, list) and len(value) == 3:
+        try:
+            return [float(value[0]), float(value[1]), float(value[2])]
+        except (TypeError, ValueError):
+            return [0.0, 0.0, 1.0]
+    return [0.0, 0.0, 1.0]
+
+
+def _default_interaction_params(kind: str, *, material_dind: object) -> dict[str, object] | None:
+    if kind == "interfacial_dmi":
+        dind = _number_or_none(material_dind)
+        return {"dind": dind if dind is not None else 1e-3}
+    if kind == "uniaxial_anisotropy":
+        return {"ku1": 0.0, "axis": [0.0, 0.0, 1.0]}
+    return None
+
+
+def _normalize_interaction_entry(
+    raw: object,
+    *,
+    material_dind: object,
+) -> dict[str, object] | None:
+    if not isinstance(raw, dict):
+        return None
+    kind = str(raw.get("kind") or "").strip()
+    if kind not in _INTERACTION_ORDER:
+        return None
+    if kind in {"exchange", "demag"}:
+        return {"kind": kind, "enabled": True, "params": None}
+    params = raw.get("params")
+    params_map = dict(params) if isinstance(params, dict) else (_default_interaction_params(kind, material_dind=material_dind) or {})
+    if kind == "interfacial_dmi":
+        dind = _number_or_none(params_map.get("dind"))
+        if dind is None:
+            dind = _number_or_none(material_dind)
+        params_map["dind"] = dind if dind is not None else 1e-3
+    elif kind == "uniaxial_anisotropy":
+        ku1 = _number_or_none(params_map.get("ku1"))
+        params_map["ku1"] = ku1 if ku1 is not None else 0.0
+        params_map["axis"] = _normalize_axis3(params_map.get("axis"))
+    return {
+        "kind": kind,
+        "enabled": bool(raw.get("enabled", True)),
+        "params": params_map,
+    }
+
+
+def _ensure_physics_stack(raw: object, *, material_dind: object = None) -> list[dict[str, object]]:
+    by_kind: dict[str, dict[str, object]] = {}
+    if isinstance(raw, list):
+        for entry in raw:
+            normalized = _normalize_interaction_entry(entry, material_dind=material_dind)
+            if normalized is not None:
+                by_kind[str(normalized["kind"])] = normalized
+    for required in ("exchange", "demag"):
+        by_kind[required] = {"kind": required, "enabled": True, "params": None}
+    if material_dind is not None and "interfacial_dmi" not in by_kind:
+        by_kind["interfacial_dmi"] = _normalize_interaction_entry(
+            {"kind": "interfacial_dmi", "enabled": True, "params": None},
+            material_dind=material_dind,
+        ) or {"kind": "interfacial_dmi", "enabled": True, "params": {"dind": 1e-3}}
+    ordered: list[dict[str, object]] = []
+    for kind in _INTERACTION_ORDER:
+        entry = by_kind.get(kind)
+        if entry is not None:
+            ordered.append(entry)
+    return ordered
+
+
 def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]:
     geometries = builder.get("geometries") or []
     objects: list[dict[str, Any]] = []
@@ -56,6 +134,12 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
             magnetization.get("dataset") is not None or magnetization.get("sample_index") is not None
         ):
             mag_kind = "sampled"
+
+        material_properties = dict(geometry.get("material") or {})
+        physics_stack = _ensure_physics_stack(
+            geometry.get("physics_stack"),
+            material_dind=material_properties.get("Dind"),
+        )
 
         objects.append(
             {
@@ -76,6 +160,7 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
                 "material_ref": _material_id(name),
                 "region_name": geometry.get("region_name"),
                 "magnetization_ref": _magnetization_id(name),
+                "physics_stack": physics_stack,
                 "object_mesh": geometry.get("mesh"),
                 "mesh_override": geometry.get("mesh"),
                 "visible": True,
@@ -87,7 +172,7 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
             {
                 "id": _material_id(name),
                 "name": f"{name} material",
-                "properties": geometry.get("material") or {},
+                "properties": material_properties,
             }
         )
         magnetization_assets.append(
@@ -132,6 +217,7 @@ def build_scene_document_from_builder(builder: dict[str, Any]) -> dict[str, Any]
         "study": {
             "backend": builder.get("backend"),
             "demag_realization": builder.get("demag_realization"),
+            "external_field": builder.get("external_field"),
             "solver": builder.get("solver") or {},
             "universe_mesh": builder.get("universe"),
             "shared_domain_mesh": builder.get("mesh") or {},
@@ -204,6 +290,11 @@ def build_builder_from_scene_document(scene: dict[str, Any]) -> dict[str, Any]:
             "preset_version": magnetization_asset.get("preset_version"),
             "ui_label": magnetization_asset.get("ui_label"),
         }
+        material_properties = materials[material_ref]
+        physics_stack = _ensure_physics_stack(
+            obj.get("physics_stack"),
+            material_dind=material_properties.get("Dind"),
+        )
 
         geometries.append(
             {
@@ -213,8 +304,9 @@ def build_builder_from_scene_document(scene: dict[str, Any]) -> dict[str, Any]:
                 "geometry_params": geometry_params,
                 "bounds_min": geometry.get("bounds_min"),
                 "bounds_max": geometry.get("bounds_max"),
-                "material": materials[material_ref],
+                "material": material_properties,
                 "magnetization": magnetization,
+                "physics_stack": physics_stack,
                 "mesh": obj.get("object_mesh", obj.get("mesh_override")),
             }
         )
@@ -225,6 +317,7 @@ def build_builder_from_scene_document(scene: dict[str, Any]) -> dict[str, Any]:
         "revision": int(scene.get("revision", 0)),
         "backend": study.get("backend"),
         "demag_realization": study.get("demag_realization"),
+        "external_field": study.get("external_field"),
         "solver": study.get("solver") or {},
         "mesh": study.get("shared_domain_mesh") or study.get("mesh_defaults") or {},
         "universe": study.get("universe_mesh") or scene.get("universe"),
@@ -243,6 +336,12 @@ def builder_overrides_from_scene_document(scene: dict[str, Any]) -> dict[str, An
     mesh = dict(builder.get("mesh") or {})
     return {
         "demag_realization": builder.get("demag_realization"),
+        "external_field": (
+            [float(value) for value in builder.get("external_field")]
+            if isinstance(builder.get("external_field"), list)
+            and len(builder.get("external_field")) == 3
+            else None
+        ),
         "solver": {
             "integrator": solver.get("integrator") or None,
             "fixed_timestep": _number_or_none(solver.get("fixed_timestep")),

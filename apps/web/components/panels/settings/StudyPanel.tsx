@@ -56,7 +56,10 @@ const STUDY_ROOT_NODE: StudyNodeContext = { kind: "study-root" };
 
 function stageDisplayName(kind: string): string {
   if (kind === "eigenmodes") return "Eigensolve";
-  if (kind === "field_sweep_relax" || kind === "hysteresis_loop") return "Hysteresis Loop";
+  if (kind === "hysteresis_loop") return "Hysteresis Loop";
+  if (kind === "field_sweep_relax") return "Field Sweep + Relax";
+  if (kind === "field_sweep_relax_snapshot") return "Field Sweep + Relax + Snapshot";
+  if (kind === "parameter_sweep") return "Parameter Sweep";
   return humanizeToken(kind);
 }
 
@@ -102,6 +105,18 @@ function builtAuthoringDocument(
   stages: ScriptBuilderStageState[],
 ): StudyPipelineDocument {
   return pipeline ?? migrateFlatStagesToStudyPipeline(stages);
+}
+
+function parseOptionalNumber(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : null;
+}
+
+function formatExternalField(field: [number, number, number] | null): string {
+  if (!field) return "disabled";
+  return `${fmtExp(field[0])}, ${fmtExp(field[1])}, ${fmtExp(field[2])} T`;
 }
 
 function syncCompatibilityState(
@@ -179,6 +194,10 @@ export default function StudyPanel({ nodeId }: StudyPanelProps) {
     () => parseStudyNodeContext(nodeId) ?? STUDY_ROOT_NODE,
     [nodeId],
   );
+  const externalField =
+    ctx.sceneDocument?.study.external_field ??
+    ctx.modelBuilderGraph?.study.external_field ??
+    null;
   const solverPlan = ctx.solverPlan;
   const backendProfile = solverPlan?.backendKind ? BACKEND_PROFILES[solverPlan.backendKind] : null;
   const integratorProfile = solverPlan?.integrator ? INTEGRATOR_PROFILES[solverPlan.integrator] : null;
@@ -247,6 +266,37 @@ export default function StudyPanel({ nodeId }: StudyPanelProps) {
     commitDocument(patchNodeConfig(authoringDocument, selectedAuthoringNode.id, patch));
   };
 
+  const setExternalFieldComponent = (axis: 0 | 1 | 2, rawValue: string) => {
+    const parsed = parseOptionalNumber(rawValue);
+    ctx.setSceneDocument((previous) => {
+      if (!previous) return previous;
+      const baseline = previous.study.external_field ?? [0, 0, 0];
+      const nextField: [number, number, number] = [...baseline] as [number, number, number];
+      nextField[axis] = parsed ?? 0;
+      return {
+        ...previous,
+        study: {
+          ...previous.study,
+          external_field: nextField,
+        },
+      };
+    });
+  };
+
+  const clearExternalField = () => {
+    ctx.setSceneDocument((previous) =>
+      previous
+        ? {
+            ...previous,
+            study: {
+              ...previous.study,
+              external_field: null,
+            },
+          }
+        : previous,
+    );
+  };
+
   const renderStudyRoot = () => (
     <>
       <SidebarSection
@@ -299,6 +349,9 @@ export default function StudyPanel({ nodeId }: StudyPanelProps) {
           <Button size="sm" variant="outline" type="button" onClick={() => ctx.setSelectedSidebarNodeId("study-defaults-solver")}>
             Solver Defaults
           </Button>
+          <Button size="sm" variant="outline" type="button" onClick={() => ctx.setSelectedSidebarNodeId("study-defaults-physics")}>
+            Physics Defaults
+          </Button>
           <Button size="sm" variant="outline" type="button" onClick={() => ctx.setSelectedSidebarNodeId("study-defaults-outputs")}>
             Outputs Defaults
           </Button>
@@ -312,6 +365,7 @@ export default function StudyPanel({ nodeId }: StudyPanelProps) {
           <InfoRow label="Integrator" value={ctx.solverSettings.integrator || "—"} />
           <InfoRow label="Fixed dt" value={ctx.solverSettings.fixedTimestep || "adaptive / default"} />
           <InfoRow label="Relax algorithm" value={humanizeToken(ctx.solverSettings.relaxAlgorithm)} />
+          <InfoRow label="External field B [T]" value={formatExternalField(externalField)} />
         </div>
       </SidebarSection>
     </>
@@ -368,6 +422,63 @@ export default function StudyPanel({ nodeId }: StudyPanelProps) {
           onChange={ctx.setSolverSettings}
           solverRunning={ctx.workspaceStatus === "running"}
         />
+      </SidebarSection>
+    </>
+  );
+
+  const renderPhysicsDefaults = () => (
+    <>
+      <SidebarSection title="Physics Defaults" icon="🧲" defaultOpen={true}>
+        <div className="rounded-lg border border-border/35 bg-background/35 p-3 text-[0.74rem] leading-relaxed text-muted-foreground">
+          Configure the global Zeeman field inherited by authored stages and macros. Stage-level sweeps can override this baseline during execution.
+        </div>
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <TextField
+            label="Bx [T]"
+            value={externalField ? String(externalField[0]) : ""}
+            onchange={(event) => setExternalFieldComponent(0, event.target.value)}
+            placeholder="0"
+            mono
+          />
+          <TextField
+            label="By [T]"
+            value={externalField ? String(externalField[1]) : ""}
+            onchange={(event) => setExternalFieldComponent(1, event.target.value)}
+            placeholder="0"
+            mono
+          />
+          <TextField
+            label="Bz [T]"
+            value={externalField ? String(externalField[2]) : ""}
+            onchange={(event) => setExternalFieldComponent(2, event.target.value)}
+            placeholder="0"
+            mono
+          />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" type="button" onClick={clearExternalField}>
+            Disable External Field
+          </Button>
+        </div>
+      </SidebarSection>
+      <SidebarSection title="Current Zeeman Baseline" icon="🧭" defaultOpen={true}>
+        <div className="grid gap-1">
+          <InfoRow label="External B [T]" value={formatExternalField(externalField)} />
+          <InfoRow
+            label="Magnitude |B| [T]"
+            value={
+              externalField
+                ? fmtExp(
+                    Math.sqrt(
+                      externalField[0] ** 2 +
+                        externalField[1] ** 2 +
+                        externalField[2] ** 2,
+                    ),
+                  )
+                : "—"
+            }
+          />
+        </div>
       </SidebarSection>
     </>
   );
@@ -755,6 +866,9 @@ export default function StudyPanel({ nodeId }: StudyPanelProps) {
   }
   if (studyNode.kind === "study-solver-defaults") {
     return renderSolverDefaults();
+  }
+  if (studyNode.kind === "study-physics-defaults") {
+    return renderPhysicsDefaults();
   }
   if (studyNode.kind === "study-outputs-defaults") {
     return renderOutputsDefaults();

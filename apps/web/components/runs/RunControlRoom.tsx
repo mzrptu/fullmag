@@ -11,7 +11,14 @@ import StageBar from "../workspace/shell/StageBar";
 import RunSidebar from "./control-room/RunSidebar";
 import { ViewportBar, ViewportCanvasArea } from "./control-room/ViewportPanels";
 import FullmagLogo from "../brand/FullmagLogo";
-import type { ScriptBuilderCurrentModuleEntry } from "../../lib/session/types";
+import type {
+  ScriptBuilderCurrentModuleEntry,
+  ScriptBuilderMagneticInteractionKind,
+} from "../../lib/session/types";
+import {
+  ensureObjectPhysicsStack,
+  upsertObjectInteraction,
+} from "../../lib/session/magneticPhysics";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../panels/SolverSettingsPanel";
 import {
   ControlRoomProvider,
@@ -266,6 +273,57 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
     maybePreviewAntennaField();
   }, [ctx, maybePreviewAntennaField]);
 
+  const handleObjectAddInteraction = useCallback(
+    (objectId: string, kind: ScriptBuilderMagneticInteractionKind) => {
+      if (!objectId) return;
+      ctx.setSceneDocument((prev) => {
+        if (!prev) return prev;
+        const target = prev.objects.find(
+          (object) => object.id === objectId || object.name === objectId,
+        );
+        if (!target) return prev;
+        const material = prev.materials.find((entry) => entry.id === target.material_ref);
+        const currentStack = ensureObjectPhysicsStack(
+          target.physics_stack,
+          material?.properties.Dind ?? null,
+        );
+        const nextStack = upsertObjectInteraction(currentStack, kind, { enabled: true });
+        const nextObjectName = target.name || target.id;
+        return {
+          ...prev,
+          objects: prev.objects.map((object) =>
+            object.id === target.id || object.name === nextObjectName
+              ? { ...object, physics_stack: nextStack }
+              : object,
+          ),
+          materials:
+            kind === "interfacial_dmi"
+              ? prev.materials.map((entry) =>
+                  entry.id === target.material_ref
+                    ? {
+                        ...entry,
+                        properties: {
+                          ...entry.properties,
+                          Dind:
+                            entry.properties.Dind != null
+                              ? entry.properties.Dind
+                              : Number(nextStack.find((item) => item.kind === "interfacial_dmi")?.params?.dind ?? 1e-3),
+                        },
+                      }
+                    : entry,
+                )
+              : prev.materials,
+        };
+      });
+      if (ctx.sidebarCollapsed) {
+        ctx.setSidebarCollapsed(false);
+      }
+      ctx.setSelectedObjectId(objectId);
+      ctx.setSelectedSidebarNodeId(`physobj-${objectId}`);
+    },
+    [ctx],
+  );
+
   const commitStudyDocument = useCallback((next: StudyPipelineDocument, nextSelectedNodeId?: string | null) => {
     const compiled = materializeStudyPipeline(next);
     ctx.setStudyPipeline(next);
@@ -290,7 +348,13 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
   }, [authoringStudyDocument, commitStudyDocument, ctx.selectedSidebarNodeId]);
 
   const handleStudyAddMacro = useCallback((
-    kind: "hysteresis_loop" | "field_sweep_relax" | "relax_run" | "relax_eigenmodes",
+    kind:
+      | "hysteresis_loop"
+      | "field_sweep_relax"
+      | "field_sweep_relax_snapshot"
+      | "relax_run"
+      | "relax_eigenmodes"
+      | "parameter_sweep",
     placement: "append" | "before" | "after",
   ) => {
     const nextNode = createMacroNode(kind);
@@ -707,6 +771,7 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         onStudyAddMacro={handleStudyAddMacro}
         onStudyDuplicateSelected={handleStudyDuplicateSelected}
         onStudyToggleSelectedEnabled={handleStudyToggleSelectedEnabled}
+        onObjectAddInteraction={handleObjectAddInteraction}
       />
       {activeBackendError ? (
         <div className="border-b border-rose-500/20 bg-rose-950/10 px-3 py-3">

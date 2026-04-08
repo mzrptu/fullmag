@@ -85,6 +85,8 @@ export function validateStudyPipeline(
           entry.kind === "relax_run" ||
           entry.kind === "relax_eigenmodes" ||
           entry.kind === "field_sweep_relax" ||
+          entry.kind === "field_sweep_relax_snapshot" ||
+          entry.kind === "parameter_sweep" ||
           entry.kind === "hysteresis_loop",
         );
 
@@ -99,12 +101,16 @@ export function validateStudyPipeline(
   }
 
   for (const entry of enabled) {
-    if (entry.kind !== "hysteresis_loop") continue;
+    if (
+      entry.kind !== "hysteresis_loop"
+      && entry.kind !== "field_sweep_relax_snapshot"
+      && entry.kind !== "parameter_sweep"
+    ) continue;
     diagnostics.push({
-      id: `hysteresis-preview-${entry.nodeId}`,
+      id: `macro-preview-${entry.nodeId}`,
       severity: "info",
       nodeId: entry.nodeId,
-      message: "Hysteresis loop will materialize into repeated run/relax/save execution steps.",
+      message: "Composite macro will materialize into repeated run/relax/save execution steps.",
       suggestion: "Open Materialized Preview to inspect the generated backend stage sequence.",
     });
   }

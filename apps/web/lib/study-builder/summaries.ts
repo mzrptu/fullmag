@@ -9,8 +9,10 @@ export function humanizeStudyPipelineNodeKind(node: StudyPipelineNode): string {
   if (node.node_kind === "macro") {
     if (node.macro_kind === "hysteresis_loop") return "Hysteresis Loop";
     if (node.macro_kind === "field_sweep_relax") return "Field Sweep + Relax";
+    if (node.macro_kind === "field_sweep_relax_snapshot") return "Field Sweep + Relax + Snapshot";
     if (node.macro_kind === "relax_run") return "Relax -> Run";
     if (node.macro_kind === "relax_eigenmodes") return "Relax -> Eigenmodes";
+    if (node.macro_kind === "parameter_sweep") return "Parameter Sweep";
     return humanizeToken(node.macro_kind);
   }
   return "Stage Group";
@@ -40,8 +42,27 @@ export function summarizeStudyPipelineNode(node: StudyPipelineNode): string {
       const steps = Math.max(1, Number(node.config.steps ?? 11));
       return `field sweep ${start} -> ${stop} mT (${steps} steps) + relax`;
     }
+    if (node.macro_kind === "field_sweep_relax_snapshot") {
+      const start = Number(node.config.start_mT ?? -100);
+      const stop = Number(node.config.stop_mT ?? 100);
+      const steps = Math.max(1, Number(node.config.steps ?? 11));
+      return `field sweep ${start} -> ${stop} mT (${steps} steps) + relax + snapshot`;
+    }
     if (node.macro_kind === "relax_run") return "relax then run";
     if (node.macro_kind === "relax_eigenmodes") return "relax then eigenmodes";
+    if (node.macro_kind === "parameter_sweep") {
+      const parameter = String(node.config.parameter ?? "b_ext");
+      const start =
+        typeof node.config.start_value === "number"
+          ? Number(node.config.start_value)
+          : Number(node.config.start_mT ?? -100);
+      const stop =
+        typeof node.config.stop_value === "number"
+          ? Number(node.config.stop_value)
+          : Number(node.config.stop_mT ?? 100);
+      const steps = Math.max(1, Number(node.config.steps ?? 11));
+      return `parameter sweep ${parameter}: ${start} -> ${stop} (${steps} steps)`;
+    }
     return node.macro_kind;
   }
   return `group · ${node.children.length} nodes`;

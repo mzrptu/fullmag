@@ -120,6 +120,8 @@ class MagnetHandle:
         self.Aex: float | None = None
         self.alpha: float = 0.01
         self.Dind: float | None = None
+        self.Ku1: float | None = None
+        self.anisU: tuple[float, float, float] | None = None
         self._m_value: Any = None
         self._m_proxy = MagnetizationHandle(self)
         self._mesh_spec = _MeshSpecState()
@@ -158,6 +160,8 @@ class MagnetHandle:
             Ms=self.Ms,
             A=self.Aex,
             alpha=self.alpha,
+            Ku1=self.Ku1,
+            anisU=as_vector3(self.anisU, "anisU") if self.anisU is not None else None,
         )
 
         if self._m_value is None:

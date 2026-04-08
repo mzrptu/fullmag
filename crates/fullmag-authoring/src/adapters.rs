@@ -2,8 +2,9 @@ use crate::{
     validate_scene_document, MagnetizationAsset, MagnetizationMapping, SceneCurrentModulesState,
     SceneDocument, SceneDocumentValidationError, SceneEditorState, SceneGeometry,
     SceneMaterialAsset, SceneMetadata, SceneObject, SceneOutputsState, SceneStudyState,
-    ScriptBuilderGeometryEntry, ScriptBuilderMagnetizationState, ScriptBuilderState,
-    TextureTransform3D, Transform3D,
+    ScriptBuilderGeometryEntry, ScriptBuilderMagneticInteractionEntry,
+    ScriptBuilderMagneticInteractionKind, ScriptBuilderMagnetizationState,
+    ScriptBuilderPerGeometryMeshState, ScriptBuilderState, TextureTransform3D, Transform3D,
 };
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -62,6 +63,7 @@ pub fn scene_document_from_script_builder(builder: &ScriptBuilderState) -> Scene
             requested_precision: "double".to_string(),
             requested_mode: "strict".to_string(),
             demag_realization: builder.demag_realization.clone(),
+            external_field: builder.external_field,
             solver: builder.solver.clone(),
             universe_mesh: builder.universe.clone(),
             shared_domain_mesh: builder.mesh.clone(),
@@ -122,6 +124,7 @@ pub fn scene_document_to_script_builder(
                         magnetization_ref, object.id
                     ))
                 })?;
+            let material_dind = material.dind;
 
             let mut geometry_params = object.geometry.geometry_params.clone();
             strip_translation_fields(&mut geometry_params);
@@ -138,6 +141,7 @@ pub fn scene_document_to_script_builder(
                 bounds_max: object.geometry.bounds_max,
                 material,
                 magnetization,
+                physics_stack: ensure_object_physics_stack(&object.physics_stack, material_dind),
                 mesh: object
                     .object_mesh
                     .clone()
@@ -150,6 +154,7 @@ pub fn scene_document_to_script_builder(
         revision: scene.revision,
         backend: scene.study.backend.clone(),
         demag_realization: scene.study.demag_realization.clone(),
+        external_field: scene.study.external_field,
         solver: scene.study.solver.clone(),
         mesh: scene.study.shared_domain_mesh.clone(),
         universe: scene
@@ -183,6 +188,9 @@ pub fn scene_document_to_script_builder_overrides(
                 || scene.study.requested_mode != "strict",
         },
         "demag_realization": builder.demag_realization,
+        "external_field": builder.external_field
+            .map(|value| serde_json::json!([value[0], value[1], value[2]]))
+            .unwrap_or(Value::Null),
         "solver": {
             "integrator": string_or_null(&builder.solver.integrator),
             "fixed_timestep": parse_optional_text_f64(&builder.solver.fixed_timestep),
@@ -254,56 +262,11 @@ pub fn scene_document_to_script_builder_overrides(
             "dataset": initial_state.dataset,
             "sample_index": initial_state.sample_index,
         })).unwrap_or(Value::Null),
-        "geometries": builder.geometries.iter().map(|geo| serde_json::json!({
-            "name": geo.name,
-            "region_name": geo.region_name,
-            "geometry_kind": geo.geometry_kind,
-            "geometry_params": geo.geometry_params,
-            "bounds_min": geo.bounds_min,
-            "bounds_max": geo.bounds_max,
-            "material": {
-                "Ms": geo.material.ms,
-                "Aex": geo.material.aex,
-                "alpha": geo.material.alpha,
-                "Dind": geo.material.dind,
-            },
-            "magnetization": {
-                "kind": geo.magnetization.kind,
-                "value": geo.magnetization.value,
-                "seed": geo.magnetization.seed,
-                "source_path": geo.magnetization.source_path,
-                "source_format": geo.magnetization.source_format,
-                "dataset": geo.magnetization.dataset,
-                "sample_index": geo.magnetization.sample_index,
-            },
-            "mesh": geo.mesh.as_ref().map(|mesh| serde_json::json!({
-                "mode": mesh.mode,
-                "hmax": parse_optional_text_f64_or_auto(&mesh.hmax),
-                "hmin": parse_optional_text_f64(&mesh.hmin),
-                "order": mesh.order,
-                "source": mesh.source,
-                "algorithm_2d": mesh.algorithm_2d,
-                "algorithm_3d": mesh.algorithm_3d,
-                "size_factor": mesh.size_factor,
-                "size_from_curvature": mesh.size_from_curvature,
-                "growth_rate": parse_optional_text_f64(&mesh.growth_rate),
-                "narrow_regions": mesh.narrow_regions,
-                "smoothing_steps": mesh.smoothing_steps,
-                "optimize": mesh.optimize,
-                "optimize_iterations": mesh.optimize_iterations,
-                "compute_quality": mesh.compute_quality,
-                "per_element_quality": mesh.per_element_quality,
-                "size_fields": mesh.size_fields.iter().map(|field| serde_json::json!({
-                    "kind": field.kind,
-                    "params": field.params,
-                })).collect::<Vec<_>>(),
-                "operations": mesh.operations.iter().map(|operation| serde_json::json!({
-                    "kind": operation.kind,
-                    "params": operation.params,
-                })).collect::<Vec<_>>(),
-                "build_requested": mesh.build_requested,
-            })),
-        })).collect::<Vec<_>>(),
+        "geometries": builder
+            .geometries
+            .iter()
+            .map(geometry_override_value)
+            .collect::<Vec<_>>(),
         "current_modules": builder.current_modules.iter().map(|module| serde_json::json!({
             "kind": module.kind,
             "name": module.name,
@@ -339,6 +302,176 @@ pub fn scene_document_problem_projection(
     })
 }
 
+fn geometry_override_value(geo: &ScriptBuilderGeometryEntry) -> Value {
+    let mut map = Map::new();
+    map.insert("name".to_string(), Value::String(geo.name.clone()));
+    map.insert(
+        "region_name".to_string(),
+        geo.region_name
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    map.insert(
+        "geometry_kind".to_string(),
+        Value::String(geo.geometry_kind.clone()),
+    );
+    map.insert("geometry_params".to_string(), geo.geometry_params.clone());
+    map.insert(
+        "bounds_min".to_string(),
+        serde_json::to_value(geo.bounds_min).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "bounds_max".to_string(),
+        serde_json::to_value(geo.bounds_max).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "material".to_string(),
+        serde_json::json!({
+            "Ms": geo.material.ms,
+            "Aex": geo.material.aex,
+            "alpha": geo.material.alpha,
+            "Dind": geo.material.dind,
+        }),
+    );
+    map.insert(
+        "magnetization".to_string(),
+        serde_json::json!({
+            "kind": geo.magnetization.kind,
+            "value": geo.magnetization.value,
+            "seed": geo.magnetization.seed,
+            "source_path": geo.magnetization.source_path,
+            "source_format": geo.magnetization.source_format,
+            "dataset": geo.magnetization.dataset,
+            "sample_index": geo.magnetization.sample_index,
+        }),
+    );
+    map.insert(
+        "physics_stack".to_string(),
+        Value::Array(
+            geo.physics_stack
+                .iter()
+                .map(|interaction| {
+                    serde_json::json!({
+                        "kind": interaction.kind,
+                        "enabled": interaction.enabled,
+                        "params": interaction.params,
+                    })
+                })
+                .collect(),
+        ),
+    );
+    map.insert(
+        "mesh".to_string(),
+        geo.mesh
+            .as_ref()
+            .map(geometry_mesh_override_value)
+            .unwrap_or(Value::Null),
+    );
+    Value::Object(map)
+}
+
+fn geometry_mesh_override_value(mesh: &ScriptBuilderPerGeometryMeshState) -> Value {
+    let mut map = Map::new();
+    map.insert("mode".to_string(), Value::String(mesh.mode.clone()));
+    map.insert(
+        "hmax".to_string(),
+        parse_optional_text_f64_or_auto(&mesh.hmax),
+    );
+    map.insert("hmin".to_string(), parse_optional_text_f64(&mesh.hmin));
+    map.insert(
+        "order".to_string(),
+        serde_json::to_value(mesh.order).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "source".to_string(),
+        mesh.source
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    map.insert(
+        "algorithm_2d".to_string(),
+        serde_json::to_value(mesh.algorithm_2d).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "algorithm_3d".to_string(),
+        serde_json::to_value(mesh.algorithm_3d).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "size_factor".to_string(),
+        serde_json::to_value(mesh.size_factor).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "size_from_curvature".to_string(),
+        serde_json::to_value(mesh.size_from_curvature).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "growth_rate".to_string(),
+        parse_optional_text_f64(&mesh.growth_rate),
+    );
+    map.insert(
+        "narrow_regions".to_string(),
+        serde_json::to_value(mesh.narrow_regions).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "smoothing_steps".to_string(),
+        serde_json::to_value(mesh.smoothing_steps).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "optimize".to_string(),
+        mesh.optimize
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    map.insert(
+        "optimize_iterations".to_string(),
+        serde_json::to_value(mesh.optimize_iterations).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "compute_quality".to_string(),
+        serde_json::to_value(mesh.compute_quality).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "per_element_quality".to_string(),
+        serde_json::to_value(mesh.per_element_quality).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "size_fields".to_string(),
+        Value::Array(
+            mesh.size_fields
+                .iter()
+                .map(|field| {
+                    serde_json::json!({
+                        "kind": field.kind,
+                        "params": field.params,
+                    })
+                })
+                .collect(),
+        ),
+    );
+    map.insert(
+        "operations".to_string(),
+        Value::Array(
+            mesh.operations
+                .iter()
+                .map(|operation| {
+                    serde_json::json!({
+                        "kind": operation.kind,
+                        "params": operation.params,
+                    })
+                })
+                .collect(),
+        ),
+    );
+    map.insert(
+        "build_requested".to_string(),
+        Value::Bool(mesh.build_requested),
+    );
+    Value::Object(map)
+}
+
 fn scene_object_from_geometry(geometry: &ScriptBuilderGeometryEntry) -> SceneObject {
     let (geometry_params, translation) = split_top_level_translation(&geometry.geometry_params);
     SceneObject {
@@ -357,11 +490,145 @@ fn scene_object_from_geometry(geometry: &ScriptBuilderGeometryEntry) -> SceneObj
         material_ref: material_id_for_geometry(&geometry.name),
         region_name: geometry.region_name.clone(),
         magnetization_ref: Some(magnetization_id_for_geometry(&geometry.name)),
+        physics_stack: ensure_object_physics_stack(&geometry.physics_stack, geometry.material.dind),
         object_mesh: geometry.mesh.clone(),
         mesh_override: geometry.mesh.clone(),
         visible: true,
         locked: false,
         tags: Vec::new(),
+    }
+}
+
+const INTERACTION_ORDER: [ScriptBuilderMagneticInteractionKind; 4] = [
+    ScriptBuilderMagneticInteractionKind::Exchange,
+    ScriptBuilderMagneticInteractionKind::Demag,
+    ScriptBuilderMagneticInteractionKind::InterfacialDmi,
+    ScriptBuilderMagneticInteractionKind::UniaxialAnisotropy,
+];
+
+fn ensure_object_physics_stack(
+    raw: &[ScriptBuilderMagneticInteractionEntry],
+    material_dind: Option<f64>,
+) -> Vec<ScriptBuilderMagneticInteractionEntry> {
+    let mut normalized: Vec<ScriptBuilderMagneticInteractionEntry> = Vec::new();
+    for entry in raw {
+        upsert_interaction(
+            &mut normalized,
+            normalize_interaction_entry(entry, material_dind),
+        );
+    }
+    upsert_interaction(
+        &mut normalized,
+        ScriptBuilderMagneticInteractionEntry {
+            kind: ScriptBuilderMagneticInteractionKind::Exchange,
+            enabled: true,
+            params: None,
+        },
+    );
+    upsert_interaction(
+        &mut normalized,
+        ScriptBuilderMagneticInteractionEntry {
+            kind: ScriptBuilderMagneticInteractionKind::Demag,
+            enabled: true,
+            params: None,
+        },
+    );
+    if material_dind.is_some()
+        && !normalized
+            .iter()
+            .any(|entry| entry.kind == ScriptBuilderMagneticInteractionKind::InterfacialDmi)
+    {
+        upsert_interaction(
+            &mut normalized,
+            normalize_interaction_entry(
+                &ScriptBuilderMagneticInteractionEntry {
+                    kind: ScriptBuilderMagneticInteractionKind::InterfacialDmi,
+                    enabled: true,
+                    params: None,
+                },
+                material_dind,
+            ),
+        );
+    }
+    INTERACTION_ORDER
+        .iter()
+        .filter_map(|kind| normalized.iter().find(|entry| entry.kind == *kind).cloned())
+        .collect()
+}
+
+fn normalize_interaction_entry(
+    entry: &ScriptBuilderMagneticInteractionEntry,
+    material_dind: Option<f64>,
+) -> ScriptBuilderMagneticInteractionEntry {
+    match entry.kind {
+        ScriptBuilderMagneticInteractionKind::Exchange => ScriptBuilderMagneticInteractionEntry {
+            kind: ScriptBuilderMagneticInteractionKind::Exchange,
+            enabled: true,
+            params: None,
+        },
+        ScriptBuilderMagneticInteractionKind::Demag => ScriptBuilderMagneticInteractionEntry {
+            kind: ScriptBuilderMagneticInteractionKind::Demag,
+            enabled: true,
+            params: None,
+        },
+        ScriptBuilderMagneticInteractionKind::InterfacialDmi => {
+            let mut params = params_map(entry.params.as_ref());
+            let dind = params
+                .get("dind")
+                .and_then(Value::as_f64)
+                .or(material_dind)
+                .unwrap_or(1e-3);
+            params.insert("dind".to_string(), Value::from(dind));
+            ScriptBuilderMagneticInteractionEntry {
+                kind: ScriptBuilderMagneticInteractionKind::InterfacialDmi,
+                enabled: entry.enabled,
+                params: Some(Value::Object(params)),
+            }
+        }
+        ScriptBuilderMagneticInteractionKind::UniaxialAnisotropy => {
+            let mut params = params_map(entry.params.as_ref());
+            let ku1 = params.get("ku1").and_then(Value::as_f64).unwrap_or(0.0);
+            let axis = normalize_axis3(params.get("axis"));
+            params.insert("ku1".to_string(), Value::from(ku1));
+            params.insert(
+                "axis".to_string(),
+                Value::Array(axis.into_iter().map(Value::from).collect()),
+            );
+            ScriptBuilderMagneticInteractionEntry {
+                kind: ScriptBuilderMagneticInteractionKind::UniaxialAnisotropy,
+                enabled: entry.enabled,
+                params: Some(Value::Object(params)),
+            }
+        }
+    }
+}
+
+fn params_map(value: Option<&Value>) -> Map<String, Value> {
+    match value {
+        Some(Value::Object(map)) => map.clone(),
+        _ => Map::new(),
+    }
+}
+
+fn normalize_axis3(value: Option<&Value>) -> [f64; 3] {
+    match value {
+        Some(Value::Array(values)) if values.len() == 3 => [
+            values[0].as_f64().unwrap_or(0.0),
+            values[1].as_f64().unwrap_or(0.0),
+            values[2].as_f64().unwrap_or(1.0),
+        ],
+        _ => [0.0, 0.0, 1.0],
+    }
+}
+
+fn upsert_interaction(
+    entries: &mut Vec<ScriptBuilderMagneticInteractionEntry>,
+    next: ScriptBuilderMagneticInteractionEntry,
+) {
+    if let Some(index) = entries.iter().position(|entry| entry.kind == next.kind) {
+        entries[index] = next;
+    } else {
+        entries.push(next);
     }
 }
 
@@ -547,7 +814,8 @@ mod tests {
     use super::*;
     use crate::{
         MacroStageNode, PrimitiveStageNode, ScriptBuilderCurrentModuleState,
-        ScriptBuilderDriveState, ScriptBuilderInitialState, ScriptBuilderMaterialState,
+        ScriptBuilderDriveState, ScriptBuilderInitialState, ScriptBuilderMagneticInteractionEntry,
+        ScriptBuilderMagneticInteractionKind, ScriptBuilderMaterialState,
         ScriptBuilderMeshOperationState, ScriptBuilderMeshSizeFieldState, ScriptBuilderMeshState,
         ScriptBuilderPerGeometryMeshState, ScriptBuilderSolverState, ScriptBuilderStageState,
         ScriptBuilderUniverseState, StudyMacroStageKind, StudyPipelineDocument, StudyPipelineNode,
@@ -559,6 +827,7 @@ mod tests {
             revision: 7,
             backend: Some("fem".to_string()),
             demag_realization: Some("airbox_robin".to_string()),
+            external_field: Some([0.0, 0.0, 0.015]),
             solver: ScriptBuilderSolverState {
                 integrator: "rk45".to_string(),
                 fixed_timestep: "1e-15".to_string(),
@@ -685,6 +954,31 @@ mod tests {
                     dataset: Some("values".to_string()),
                     sample_index: Some(3),
                 },
+                physics_stack: vec![
+                    ScriptBuilderMagneticInteractionEntry {
+                        kind: ScriptBuilderMagneticInteractionKind::Exchange,
+                        enabled: true,
+                        params: None,
+                    },
+                    ScriptBuilderMagneticInteractionEntry {
+                        kind: ScriptBuilderMagneticInteractionKind::Demag,
+                        enabled: true,
+                        params: None,
+                    },
+                    ScriptBuilderMagneticInteractionEntry {
+                        kind: ScriptBuilderMagneticInteractionKind::InterfacialDmi,
+                        enabled: true,
+                        params: Some(serde_json::json!({ "dind": 2.5e-3 })),
+                    },
+                    ScriptBuilderMagneticInteractionEntry {
+                        kind: ScriptBuilderMagneticInteractionKind::UniaxialAnisotropy,
+                        enabled: true,
+                        params: Some(serde_json::json!({
+                            "ku1": 4.2e4,
+                            "axis": [0.0, 0.0, 1.0],
+                        })),
+                    },
+                ],
                 mesh: Some(ScriptBuilderPerGeometryMeshState {
                     mode: "custom".to_string(),
                     hmax: "10e-9".to_string(),
@@ -751,6 +1045,7 @@ mod tests {
 
         assert_eq!(round_trip.revision, builder.revision);
         assert_eq!(round_trip.backend, builder.backend);
+        assert_eq!(round_trip.external_field, builder.external_field);
         assert_eq!(round_trip.solver, builder.solver);
         assert_eq!(round_trip.mesh, builder.mesh);
         assert_eq!(round_trip.universe, builder.universe);
@@ -758,6 +1053,10 @@ mod tests {
         assert_eq!(round_trip.initial_state, builder.initial_state);
         assert_eq!(round_trip.current_modules, builder.current_modules);
         assert_eq!(round_trip.excitation_analysis, builder.excitation_analysis);
+        assert_eq!(
+            round_trip.geometries[0].physics_stack,
+            builder.geometries[0].physics_stack
+        );
         assert_eq!(
             round_trip.geometries[0].geometry_params.get("translation"),
             Some(&serde_json::json!([1.0, 2.0, 3.0]))
@@ -815,6 +1114,15 @@ mod tests {
                 .and_then(|value| value.get("version"))
                 .and_then(Value::as_str),
             Some("study_pipeline.v1")
+        );
+        assert_eq!(
+            projection
+                .rewrite_overrides
+                .get("external_field")
+                .and_then(Value::as_array)
+                .and_then(|values| values.get(2))
+                .and_then(Value::as_f64),
+            Some(0.015)
         );
         assert_eq!(
             projection

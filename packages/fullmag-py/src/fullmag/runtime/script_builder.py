@@ -60,6 +60,7 @@ def export_builder_draft(loaded: LoadedProblem) -> dict[str, object]:
         "revision": 1,
         "backend": base_problem.runtime.backend_target.value,
         "demag_realization": _export_demag_realization(base_problem),
+        "external_field": _problem_external_field(base_problem),
         "solver": {
             "integrator": base_problem.study.dynamics.integrator,
             "fixed_timestep": _text_number(base_problem.study.dynamics.fixed_timestep),
@@ -160,7 +161,11 @@ def render_loaded_problem_as_script(
         )
     )
 
-    external_field_lines = _render_external_field(base_problem, surface=surface)
+    external_field_lines = _render_external_field(
+        base_problem,
+        overrides=overrides,
+        surface=surface,
+    )
     if external_field_lines:
         lines.append("")
         lines.extend(external_field_lines)
@@ -550,8 +555,20 @@ def _render_geometries_from_override(
         lines.append(f"{var_name}.Ms = {_py_number(float(str(mat.get('Ms', 800000))))}")
         lines.append(f"{var_name}.Aex = {_py_number(float(str(mat.get('Aex', 1.3e-11))))}")
         lines.append(f"{var_name}.alpha = {_py_number(float(str(mat.get('alpha', 0.02))))}")
-        if mat.get("Dind") is not None:
-            lines.append(f"{var_name}.Dind = {_py_number(float(str(mat.get('Dind'))))}")
+        physics_stack = _ensure_geometry_physics_stack(
+            g.get("physics_stack"),
+            material_dind=mat.get("Dind"),
+        )
+        dmi = _physics_stack_dmi_value(physics_stack)
+        if dmi is not None:
+            lines.append(f"{var_name}.Dind = {_py_number(dmi)}")
+        uniaxial = _physics_stack_uniaxial_params(physics_stack)
+        if uniaxial is not None:
+            lines.append(f"{var_name}.Ku1 = {_py_number(uniaxial['ku1'])}")
+            axis = uniaxial["axis"]
+            lines.append(
+                f"{var_name}.anisU = ({_py_number(axis[0])}, {_py_number(axis[1])}, {_py_number(axis[2])})"
+            )
 
         rendered_initial_override = _render_initial_state_override(
             initial_state_override,
@@ -590,14 +607,115 @@ def _render_geometries_from_override(
     return lines
 
 
-def _render_external_field(problem: Problem, *, surface: str) -> list[str]:
-    for term in problem.energy:
-        if isinstance(term, Zeeman):
-            return [
-                "# External field",
-                f"{_surface_call(surface, 'b_ext')}({_py_number(term.B[0])}, {_py_number(term.B[1])}, {_py_number(term.B[2])})",
-            ]
-    return []
+_GEOMETRY_INTERACTION_ORDER = (
+    "exchange",
+    "demag",
+    "interfacial_dmi",
+    "uniaxial_anisotropy",
+)
+
+
+def _normalize_geometry_interaction_entry(
+    raw: object,
+    *,
+    material_dind: object,
+) -> dict[str, object] | None:
+    if not isinstance(raw, dict):
+        return None
+    kind = str(raw.get("kind") or "").strip()
+    if kind not in _GEOMETRY_INTERACTION_ORDER:
+        return None
+    if kind in {"exchange", "demag"}:
+        return {"kind": kind, "enabled": True, "params": None}
+    params = dict(raw.get("params")) if isinstance(raw.get("params"), dict) else {}
+    if kind == "interfacial_dmi":
+        dind = _number_or_none(params.get("dind"))
+        if dind is None:
+            dind = _number_or_none(material_dind)
+        params["dind"] = dind if dind is not None else 1e-3
+    elif kind == "uniaxial_anisotropy":
+        ku1 = _number_or_none(params.get("ku1"))
+        params["ku1"] = ku1 if ku1 is not None else 0.0
+        params["axis"] = _normalize_vec3(params.get("axis"), fallback=(0.0, 0.0, 1.0))
+    return {
+        "kind": kind,
+        "enabled": bool(raw.get("enabled", True)),
+        "params": params,
+    }
+
+
+def _ensure_geometry_physics_stack(raw: object, *, material_dind: object) -> list[dict[str, object]]:
+    by_kind: dict[str, dict[str, object]] = {}
+    if isinstance(raw, list):
+        for entry in raw:
+            normalized = _normalize_geometry_interaction_entry(
+                entry,
+                material_dind=material_dind,
+            )
+            if normalized is not None:
+                by_kind[str(normalized["kind"])] = normalized
+    for required in ("exchange", "demag"):
+        by_kind[required] = {"kind": required, "enabled": True, "params": None}
+    if material_dind is not None and "interfacial_dmi" not in by_kind:
+        by_kind["interfacial_dmi"] = _normalize_geometry_interaction_entry(
+            {"kind": "interfacial_dmi", "enabled": True, "params": None},
+            material_dind=material_dind,
+        ) or {"kind": "interfacial_dmi", "enabled": True, "params": {"dind": 1e-3}}
+    ordered: list[dict[str, object]] = []
+    for kind in _GEOMETRY_INTERACTION_ORDER:
+        entry = by_kind.get(kind)
+        if entry is not None:
+            ordered.append(entry)
+    return ordered
+
+
+def _physics_stack_dmi_value(stack: list[dict[str, object]]) -> float | None:
+    for entry in stack:
+        if entry.get("kind") != "interfacial_dmi":
+            continue
+        if not bool(entry.get("enabled", True)):
+            return None
+        params = dict(entry.get("params")) if isinstance(entry.get("params"), dict) else {}
+        return _number_or_none(params.get("dind"))
+    return None
+
+
+def _physics_stack_uniaxial_params(
+    stack: list[dict[str, object]],
+) -> dict[str, object] | None:
+    for entry in stack:
+        if entry.get("kind") != "uniaxial_anisotropy":
+            continue
+        if not bool(entry.get("enabled", True)):
+            return None
+        params = dict(entry.get("params")) if isinstance(entry.get("params"), dict) else {}
+        ku1 = _number_or_none(params.get("ku1"))
+        axis = _normalize_vec3(params.get("axis"), fallback=(0.0, 0.0, 1.0))
+        return {"ku1": ku1 if ku1 is not None else 0.0, "axis": axis}
+    return None
+
+
+def _render_external_field(
+    problem: Problem,
+    *,
+    overrides: dict[str, object],
+    surface: str,
+) -> list[str]:
+    explicit_override = _override_external_field(overrides.get("external_field"))
+    if explicit_override is not None:
+        return [
+            "# External field",
+            f"{_surface_call(surface, 'b_ext')}({_py_number(explicit_override[0])}, {_py_number(explicit_override[1])}, {_py_number(explicit_override[2])})",
+        ]
+    if "external_field" in overrides and overrides.get("external_field") is None:
+        return []
+    field = _problem_external_field(problem)
+    if field is None:
+        return []
+    return [
+        "# External field",
+        f"{_surface_call(surface, 'b_ext')}({_py_number(field[0])}, {_py_number(field[1])}, {_py_number(field[2])})",
+    ]
 
 
 def _render_current_modules(
@@ -1820,6 +1938,33 @@ def _export_geometry_entry(
     dmi_val = _magnet_dmi(problem, magnet.name)
     if dmi_val is not None:
         material["Dind"] = dmi_val
+    physics_stack: list[dict[str, object]] = [
+        {"kind": "exchange", "enabled": True, "params": None},
+        {"kind": "demag", "enabled": True, "params": None},
+    ]
+    if dmi_val is not None:
+        physics_stack.append(
+            {
+                "kind": "interfacial_dmi",
+                "enabled": True,
+                "params": {"dind": dmi_val},
+            }
+        )
+    if mat.Ku1 is not None or mat.anisU is not None:
+        physics_stack.append(
+            {
+                "kind": "uniaxial_anisotropy",
+                "enabled": True,
+                "params": {
+                    "ku1": mat.Ku1 if mat.Ku1 is not None else 0.0,
+                    "axis": (
+                        [float(mat.anisU[0]), float(mat.anisU[1]), float(mat.anisU[2])]
+                        if mat.anisU is not None
+                        else [0.0, 0.0, 1.0]
+                    ),
+                },
+            }
+        )
 
     # --- Magnetization ---
     magnetization: dict[str, object] = {
@@ -1875,6 +2020,7 @@ def _export_geometry_entry(
         "bounds_max": list(bounds_max) if bounds_max is not None else None,
         "material": material,
         "magnetization": magnetization,
+        "physics_stack": physics_stack,
         "mesh": per_mesh,
     }
 
@@ -2132,6 +2278,22 @@ def _problem_demag_realization(problem: Problem) -> str | None:
     return None
 
 
+def _problem_external_field(problem: Problem) -> list[float] | None:
+    for term in problem.energy:
+        if isinstance(term, Zeeman):
+            return [float(term.B[0]), float(term.B[1]), float(term.B[2])]
+    return None
+
+
+def _override_external_field(value: object) -> tuple[float, float, float] | None:
+    if isinstance(value, (list, tuple)) and len(value) == 3:
+        try:
+            return (float(value[0]), float(value[1]), float(value[2]))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _export_demag_realization(problem: Problem) -> str | None:
     realization = _problem_demag_realization(problem)
     return str(realization) if isinstance(realization, str) and realization.strip() else None
@@ -2214,6 +2376,15 @@ def _optional_vec3(value: object) -> tuple[float, float, float] | None:
         except (TypeError, ValueError):
             return None
     return None
+
+
+def _normalize_vec3(
+    value: object,
+    *,
+    fallback: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    parsed = _optional_vec3(value)
+    return parsed if parsed is not None else fallback
 
 
 def _py_tuple3(value: tuple[float, float, float]) -> str:

@@ -7,6 +7,7 @@ import type {
   ScriptBuilderState,
   Transform3D,
 } from "./types";
+import { ensureObjectPhysicsStack } from "./magneticPhysics";
 
 function zeroVec3(): [number, number, number] {
   return [0, 0, 0];
@@ -118,6 +119,10 @@ export function buildSceneDocumentFromScriptBuilder(
       material_ref: materialIdForGeometry(geometry.name),
       region_name: geometry.region_name ?? null,
       magnetization_ref: magnetizationIdForGeometry(geometry.name),
+      physics_stack: ensureObjectPhysicsStack(
+        geometry.physics_stack,
+        geometry.material.Dind,
+      ),
       object_mesh: geometry.mesh ?? null,
       mesh_override: geometry.mesh ?? null,
       visible: true,
@@ -156,6 +161,7 @@ export function buildSceneDocumentFromScriptBuilder(
       requested_precision: "double",
       requested_mode: "strict",
       demag_realization: builder.demag_realization,
+      external_field: builder.external_field,
       solver: builder.solver,
       universe_mesh: builder.universe,
       shared_domain_mesh: builder.mesh,
@@ -222,6 +228,7 @@ export function buildScriptBuilderFromSceneDocument(
     revision: scene.revision,
     backend: scene.study.backend,
     demag_realization: scene.study.demag_realization,
+    external_field: scene.study.external_field,
     solver: scene.study.solver,
     mesh: scene.study.shared_domain_mesh ?? scene.study.mesh_defaults,
     universe: scene.study.universe_mesh ?? scene.universe,
@@ -252,6 +259,10 @@ export function buildScriptBuilderFromSceneDocument(
         bounds_min: object.geometry.bounds_min ?? null,
         bounds_max: object.geometry.bounds_max ?? null,
         material,
+        physics_stack: ensureObjectPhysicsStack(
+          object.physics_stack,
+          material.Dind,
+        ),
         magnetization: magnetizationForObject(scene, object),
         mesh: object.object_mesh ?? object.mesh_override ?? null,
       };
