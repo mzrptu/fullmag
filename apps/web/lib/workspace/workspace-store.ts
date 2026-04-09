@@ -55,7 +55,7 @@ function updateStageLayout(
   };
 }
 
-export const useWorkspaceStore = create<WorkspaceStoreState>((set, get) => ({
+export const useWorkspaceStore = create<WorkspaceStoreState>((set) => ({
   currentPerspective: "analyze",
   currentStage: "analyze",
   activeCoreTab: "Home",

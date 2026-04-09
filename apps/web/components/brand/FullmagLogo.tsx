@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { createPortal } from "react-dom";
 import { FullmagLogoVector } from "./FullmagLogoVector";
 
@@ -21,16 +21,13 @@ interface FullmagLogoProps {
 
 export default function FullmagLogo({
   size = 64,
-  animate = false,
+  animate: _animate = false,
   spin = false,
   className,
 }: FullmagLogoProps) {
+  void _animate;
   const [zoomed, setZoomed] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = typeof document !== "undefined";
 
   return (
     <>

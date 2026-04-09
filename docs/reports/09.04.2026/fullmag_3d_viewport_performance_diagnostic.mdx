@@ -1,0 +1,1160 @@
+---
+title: Fullmag 3D Viewport — raport diagnostyczny wydajności (FDM + FEM)
+description: Audyt wydajności frontendowego viewportu 3D Fullmaga pod kątem dużych scen, niskiego FPS, bottlenecków CPU/GPU/React/R3F oraz ryzyk fizycznych.
+---
+
+# Fullmag 3D Viewport — raport diagnostyczny wydajności
+
+## 1. Cel raportu
+
+Celem tego dokumentu jest **dokładna diagnoza wydajności viewportu 3D** w Fullmagu dla obu ścieżek:
+
+- **FDM** — instancyjne renderowanie komórek/glyphów magnetyzacji,
+- **FEM** — renderowanie geometrii siatki, warstw, clippingu, punktów, krawędzi i glyphów strzałek.
+
+Zakres raportu obejmuje:
+
+1. analizę aktualnej architektury renderingu,
+2. identyfikację miejsc powodujących spadek FPS,
+3. rozdzielenie bottlenecków na:
+   - CPU / preprocessing,
+   - transfer CPU → GPU,
+   - draw calls / overdraw,
+   - raycasting / interakcję,
+   - React / R3F / state churn,
+4. wskazanie problemów charakterystycznych dla dużych modeli,
+5. ocenę ryzyka naruszenia poprawności naukowej przy optymalizacji,
+6. przygotowanie podstaw pod plan wdrożeniowy z osobnego dokumentu.
+
+---
+
+## 2. Zakres przeanalizowanego kodu
+
+Przejrzałem aktualną publiczną implementację viewportu 3D Fullmaga, w szczególności następujące pliki:
+
+### Warstwa wspólna / shell
+
+- `apps/web/components/runs/control-room/ViewportPanels.tsx`
+- `apps/web/components/preview/r3f/ScientificViewportShell.tsx`
+- `apps/web/components/preview/r3f/viewportQualityProfiles.ts`
+- `apps/web/components/preview/r3f/SceneAxes3D.tsx`
+
+### Ścieżka FDM
+
+- `apps/web/components/preview/MagnetizationView3D.tsx`
+- `apps/web/components/preview/r3f/FdmInstances.tsx`
+- `apps/web/components/preview/r3f/FdmLighting.tsx`
+- `apps/web/components/preview/magnetizationColor.ts`
+
+### Ścieżka FEM
+
+- `apps/web/components/preview/FemMeshView3D.tsx`
+- `apps/web/components/preview/r3f/FemViewportScene.tsx`
+- `apps/web/components/preview/r3f/FemGeometry.tsx`
+- `apps/web/components/preview/r3f/FemArrows.tsx`
+- `apps/web/components/preview/r3f/FemHighlightView.tsx`
+- `apps/web/components/preview/r3f/colorUtils.ts`
+- `apps/web/components/preview/r3f/clipTetraByPlane.ts`
+
+---
+
+## 3. Executive summary
+
+### 3.1. Najważniejszy wniosek
+
+Problem wydajności Fullmaga **nie wynika z tego, że three.js jest „za wolny”**. Three.js i R3F już korzystają z GPU, ale obecny kod frontendu zużywa zbyt dużo czasu na:
+
+- generowanie geometrii i kolorów po stronie JavaScript,
+- wielokrotne przebudowywanie dużych buforów,
+- przesyłanie ogromnych tablic do GPU przy każdej zmianie widoku,
+- nadmierną fragmentację sceny w FEM,
+- kosztowny raycasting i selection na ciężkiej geometrii,
+- częste invalidation/re-render cyklu w komponentach kontrolowanych przez duży kontekst stanu.
+
+Innymi słowy:
+
+> **silnik 3D jest przyspieszony, ale pipeline przygotowania danych do renderingu nie jest wystarczająco „streamingowy”, cache’owany i warstwowy.**
+
+### 3.2. Główne źródła problemu
+
+#### FDM
+
+1. Każda zmiana widoku powoduje **pełny przebieg po całej siatce** i przebudowę wszystkich macierzy instancji oraz wszystkich kolorów.
+2. `isolate` i sampling nie redukują rzeczywistego kosztu do liczby widocznych komórek — koszt pozostaje zbliżony do `O(N_total)`, a nie `O(N_visible)`.
+3. Render żyje na stale utrzymanym canvasie, ale nadal wykonuje kosztowny pipeline nawet wtedy, gdy użytkownik nie potrzebuje pełnego redraw.
+4. `preserveDrawingBuffer` w aktywnym canvasie FDM i brak trybu `frameloop="demand"` utrzymują niepotrzebny koszt render loop.
+
+#### FEM
+
+1. Render FEM jest przeciążony przede wszystkim przez **przebudowę topologii i kolorów w JS**, a nie przez sam shader.
+2. `FemGeometry` robi zbyt wiele naraz: buduje topologię, wireframe, tetra edges, points geometry, centroid clipping, shrink, normals i kolorowanie.
+3. `FemArrows` ma kosztowny sampling kandydatów, `Set/Map`, `number[][]` oraz pełny upload instancji przy każdej zmianie.
+4. Cały widok jest architektonicznie rozbity na wiele warstw/meshów, co zwiększa draw calls, raycasting i koszty utrzymania stanu.
+
+### 3.3. Priorytety optymalizacji
+
+Największy zwrot z inwestycji dadzą:
+
+1. **on-demand rendering + profile interakcji**,
+2. **kompaktowanie widocznych instancji w FDM**,
+3. **rozdzielenie topologii od kolorowania w FEM oraz twardy cache geometrii**,
+4. **akceleracja raycastingu i odseparowanie geometrii do pickingu**,
+5. **worker/off-main-thread dla ciężkiego preprocessing’u**,
+6. **adaptive quality podczas ruchu kamery**,
+7. **przeniesienie części przygotowania danych do backendu / precomputed preview assets**.
+
+---
+
+## 4. Kontekst techniczny: co three.js/R3F już robi dobrze, a czego nie zrobi za nas
+
+R3F w oficjalnych materiałach wyraźnie podkreśla, że kosztowne jest montowanie/odmontowywanie obiektów, tworzenie geometrii i materiałów, oraz nadmierna reaktywność w szybkich ścieżkach. Zaleca też instancing, reużywanie zasobów i on-demand rendering, gdy scena może być bezczynna (por. dokumentacja R3F: *Performance pitfalls* oraz *Scaling performance*).
+
+To bardzo dobrze pasuje do Fullmaga:
+
+- **FDM** już używa instancingu — to jest dobra baza.
+- **FEM** ma profile jakości i częściową separację shella — też dobra baza.
+- Natomiast obecny kod nadal zbyt często robi ciężkie rzeczy w JS i React, których ani three.js, ani GPU nie „magicznie” nie usuną.
+
+W praktyce viewporty naukowe/CAE/CAD muszą optymalizować nie tylko shader i rasteryzację, ale też:
+
+- batching,
+- liczbę draw calls,
+- strukturę sceny,
+- picking,
+- pamięć i GC,
+- częstotliwość przebudowy buforów.
+
+Forum three.js wielokrotnie wskazuje, że dla dużych scen kluczowe są: redukcja draw calls, batching/instancing, ograniczenie raycastingu do obiektów interaktywnych, BVH dla selekcji oraz obniżanie jakości podczas ruchu kamery (por. dyskusje o large-scene traversal i raycast optimization).
+
+---
+
+## 5. Aktualna architektura viewportu
+
+## 5.1. FDM — model mentalny obecnej implementacji
+
+Aktualny FDM viewport działa mniej więcej tak:
+
+1. `MagnetizationView3D.tsx` buduje canvas, controls, overlaye i narzędzia.
+2. Przekazuje do `FdmInstances.tsx` siatkę, wektory pola, ustawienia renderingu i aktywne maski.
+3. `FdmInstances.tsx`:
+   - skanuje wszystkie komórki,
+   - oblicza kolor i transform dla każdej instancji,
+   - zapisuje wynik do `instanceMatrix` i `instanceColor`,
+   - wysyła pełen bufor do GPU.
+4. Renderer rysuje jedną instanced mesh plus dodatki (światła, osie, overlaye, gizmo).
+
+To oznacza, że FDM ma dziś **dobry GPU draw model** (jedna główna instanced mesh), ale **zbyt ciężki CPU prepare/upload model**.
+
+## 5.2. FEM — model mentalny obecnej implementacji
+
+Aktualny FEM viewport działa inaczej:
+
+1. `FemMeshView3D.tsx` buduje znaczną część stanu analizy, visible layers, maski nodów, zestawy indeksów, dynamiczne bounding boxy, overlaye i ustawienia.
+2. `FemViewportScene.tsx` buduje scenę z wielu warstw.
+3. Każda warstwa jest renderowana osobnym `FemGeometry`.
+4. Dodatkowo renderowane są `FemArrows`, highlight, osie, clip plane’y, boxy pomocnicze i inne elementy.
+
+To oznacza, że FEM ma nie tylko koszt preprocessing’u, ale też:
+
+- więcej draw calls,
+- więcej obiektów do raycastingu,
+- więcej dróg przebudowy przy zmianach selection/clip/render mode.
+
+---
+
+## 6. Diagnoza wspólnych problemów architektonicznych
+
+## 6.1. Brak prawdziwego trybu on-demand dla live viewportu
+
+Oficjalne rekomendacje R3F mówią wprost, że jeśli scena może pozostawać w spoczynku, warto używać `frameloop="demand"`, aby renderować tylko wtedy, kiedy rzeczywiście nastąpiła zmiana. Controls Drei potrafią same invalidować klatki przy zmianie kamery.
+
+W aktualnym Fullmagu live viewporty nie są jeszcze konsekwentnie ustawione pod taki model. Skutek:
+
+- GPU renderuje częściej niż trzeba,
+- energia CPU/GPU jest zużywana nawet przy statycznym obrazie,
+- drobne zmiany stanu UI łatwiej „budzą” pełny pipeline.
+
+### Wniosek
+
+To jest **P0 shared optimization**. Bez tego każda kolejna optymalizacja będzie mniej skuteczna.
+
+---
+
+## 6.2. Widok ukryty ≠ widok bez kosztu
+
+W `ViewportPanels.tsx` FDM canvas jest utrzymywany stale w DOM i przełączany CSS-em, aby nie niszczyć WebGL contextu. Sam kierunek jest zgodny z zaleceniami R3F, które ostrzegają przed częstym mount/unmount kosztownych zasobów.
+
+To jest dobra decyzja architektoniczna **pod warunkiem**, że ukryty viewport:
+
+- nie bierze udziału w kosztownych aktualizacjach,
+- nie renderuje bez potrzeby,
+- nie aktualizuje dużych buforów.
+
+Jeżeli ukryty canvas nadal żyje „tak jak aktywny”, to zamieniamy problem kosztu remountu na problem kosztu rezydualnego działania.
+
+### Wniosek
+
+Keep-alive jest dobre, ale tylko w połączeniu z:
+
+- `frameloop="demand"`,
+- wstrzymaniem heavy effects przy `visible=false`,
+- wyłączeniem expensive overlays, raycast i invalidation dla ukrytych viewportów.
+
+---
+
+## 6.3. Zbyt dużo odpowiedzialności w pojedynczych komponentach
+
+W obu ścieżkach główne komponenty robią zbyt dużo naraz:
+
+- `MagnetizationView3D` miesza shell, settings, camera bridging, isolate transform, overlay logic i render config.
+- `FemMeshView3D` pełni równocześnie rolę:
+  - kontrolera sceny,
+  - selektora warstw,
+  - generatora masek,
+  - koordynatora legendy,
+  - generatora dynamic bounds,
+  - hosta overlayów.
+- `FemGeometry` miesza topologię i kolor,
+- `FemArrows` miesza sampling i upload render instancji.
+
+### Skutek
+
+- małe zmiany stanu mogą poruszyć zbyt duże poddrzewo,
+- trudniej wprowadzić cache z właściwym kluczem,
+- trudniej wydzielić worker/offscreen preprocessing,
+- trudniej zrobić adaptacyjny pipeline „preview exact”.
+
+---
+
+## 6.4. Brak sztywnego podziału: exact scientific state vs preview render state
+
+W Fullmagu mieszają się dziś dwie warstwy:
+
+1. **stan naukowy**: siatka, pole, selekcja fizyczna, zakres legendy,
+2. **stan prezentacyjny**: poziom jakości, gęstość glyphów, clipping preview, widoczność krawędzi, tryb interakcji.
+
+Dla produkcyjnego viewportu naukowego trzeba to rozdzielić twardo.
+
+### Dlaczego to ważne
+
+Dopiero wtedy można bezpiecznie wdrożyć:
+
+- adaptacyjne obniżanie jakości w ruchu kamery,
+- decymację preview,
+- lazy recompute,
+- background worker,
+- picking proxy,
+- uproszczone krawędzie / overlaye w trybie interakcji.
+
+Bez tego każda optymalizacja ryzykuje wejście w semantykę naukową i psucie zaufania do wyniku.
+
+---
+
+# 7. Ścieżka FDM — diagnoza szczegółowa
+
+## 7.1. Co działa dobrze już dziś
+
+FDM ma kilka mocnych stron:
+
+1. **InstancedMesh** zamiast miliona osobnych meshów.
+2. Reużywanie części obiektów pomocniczych (`_tempVec`, `_tempQuat`, `_tempMatrix`) zamiast alokacji per komórka.
+3. `useDeferredValue(vectors/settings)` w `MagnetizationView3D` — to pomaga z priorytetyzacją Reacta.
+4. Zasadniczo jeden główny draw call dla pola.
+
+To oznacza, że FDM nie wymaga przepisywania od zera. Wymaga przede wszystkim **zmiany modelu aktualizacji instancji**.
+
+---
+
+## 7.2. Bottleneck FDM nr 1 — pełna przebudowa całej siatki przy każdej zmianie
+
+W `FdmInstances.tsx` główny `useEffect` skanuje całe `nx * ny * nz` i dla każdej komórki:
+
+- sprawdza maskę aktywności,
+- sprawdza sampling,
+- sprawdza isolate bounds,
+- liczy magnitudę,
+- liczy kolor,
+- zapisuje macierz instancji,
+- zapisuje kolor instancji.
+
+Reprezentatywny fragment obecnej logiki:
+
+```tsx
+mesh.count = count;
+
+for (let iz = 0; iz < nz; iz++) {
+  for (let iy = 0; iy < ny; iy++) {
+    for (let ix = 0; ix < nx; ix++) {
+      const base = idx * 3;
+      const mx = vectors![base];
+      const my = vectors![base + 1];
+      const mz = vectors![base + 2];
+      const mag = Math.sqrt(mx * mx + my * my + mz * mz);
+      ...
+      if (!isVisible) {
+        writeHiddenMatrix(matrices, idx * 16);
+      } else {
+        writeScaleTranslateMatrix(...);
+      }
+      colors[idx * 3 + 0] = _color.r;
+      colors[idx * 3 + 1] = _color.g;
+      colors[idx * 3 + 2] = _color.b;
+      idx++;
+    }
+  }
+}
+mesh.instanceMatrix.needsUpdate = true;
+instanceColor.needsUpdate = true;
+```
+
+### Dlaczego to boli
+
+To jest koszt `O(N_total)` nawet wtedy, gdy:
+
+- isolate pokazuje tylko mały fragment,
+- sampling ukrywa większość komórek,
+- użytkownik zmienił tylko kolorystykę,
+- użytkownik zmienił tylko opacity,
+- viewport jest ukryty.
+
+### Efekt praktyczny
+
+Dla dużych siatek głównym bottleneckiem przestaje być shader, a staje się:
+
+- JS loop,
+- `Math.sqrt`,
+- generacja macierzy,
+- zapis do wielkich `Float32Array`,
+- transfer pełnego `instanceMatrix` i `instanceColor` do GPU.
+
+### Diagnoza
+
+To jest **największy bottleneck FDM**.
+
+---
+
+## 7.3. Bottleneck FDM nr 2 — ukrywanie instancji przez zerową macierz zamiast kompaktowania widocznych elementów
+
+Obecnie niewidoczne komórki są ukrywane przez `writeHiddenMatrix(...)`, ale `mesh.count` nadal jest ustawiane na pełne `count`.
+
+### Co to oznacza
+
+Renderer wciąż widzi pełną pojemność instancji.
+
+To ma dwa skutki:
+
+1. CPU nadal przygotowuje tablice długości `N_total`.
+2. GPU nadal ma do obsługi cały `instanceMatrix`, nawet jeśli 90% instancji jest efektywnie ukryte.
+
+### Dlaczego to jest zły model
+
+Dla `isolate`, samplingu i thresholdingu właściwy model powinien być:
+
+- najpierw policz `visibleIndices`,
+- ustaw `mesh.count = visibleCount`,
+- zapisuj tylko `visibleCount` instancji w gęstym buforze,
+- utrzymuj mapowanie `displayIndex -> sourceIndex` osobno.
+
+### Ilościowo
+
+Sama macierz instancji to `16 * 4 = 64 B` na instancję.
+Kolor to `3 * 4 = 12 B` na instancję.
+
+Czyli dla 1 000 000 instancji:
+
+- `instanceMatrix` ≈ **64 MB**,
+- `instanceColor` ≈ **12 MB**,
+- razem ≈ **76 MB uploadu** na przebudowę.
+
+To jest ogromny koszt, jeśli aktualizacja dzieje się wielokrotnie przy interakcji.
+
+---
+
+## 7.4. Bottleneck FDM nr 3 — podwójne skanowanie pola dla normy i potem renderingu
+
+W `FdmInstances.tsx` najpierw skanowane jest całe `vectors` dla `maxMagnitude`, a dopiero potem drugi raz wykonywana jest właściwa pętla renderująca.
+
+### Problem
+
+To jest drugi pełny przebieg po pamięci:
+
+```tsx
+let maxMagnitude = 0;
+for (let i = 0; i < vectors!.length; i += 3) {
+  ...
+  maxMagnitude = Math.max(maxMagnitude, Math.sqrt(mx * mx + my * my + mz * mz));
+}
+```
+
+### Uwagi
+
+To jest jeszcze do obrony, jeśli potrzebna jest globalna normalizacja koloru/glyph scale. Ale nie powinno się odbywać na każdej zmianie, jeśli:
+
+- zmienia się tylko isolate,
+- zmienia się tylko opacity,
+- zmienia się tylko kamera,
+- zmienia się tylko sampling bez zmiany wektorów.
+
+### Wniosek
+
+Potrzebny jest rozdział cache’y:
+
+- cache statystyk pola,
+- cache widoczności,
+- cache macierzy pozycji bazowej,
+- cache kolorów zależnych tylko od mode.
+
+---
+
+## 7.5. Bottleneck FDM nr 4 — `preserveDrawingBuffer` w żywym canvasie
+
+W `MagnetizationView3D` canvas jest skonfigurowany pod zrzut PNG z aktywnego canvasu. To zwykle prowadzi do włączenia `preserveDrawingBuffer`, co zwiększa koszt renderingu i pamięci bufora.
+
+### Dlaczego to jest istotne
+
+`preserveDrawingBuffer` ma sens dla **capture path**, ale nie dla codziennego live viewportu.
+
+### Wniosek
+
+Dla FDM trzeba zrobić to tak samo profesjonalnie jak dla FEM capture:
+
+- live viewport: `preserveDrawingBuffer = false`,
+- screenshot/export: osobny capture flow lub chwilowy capture profile.
+
+To jest szybki, niski koszt wdrożenia i wysoki zysk.
+
+---
+
+## 7.6. Bottleneck FDM nr 5 — brak chunkingu / przestrzennego podziału instancji
+
+Obecnie FDM ma jedną wielką instanced mesh.
+
+### Zaleta
+
+- jeden draw call.
+
+### Wada
+
+- brak sensownego cullingu po brickach,
+- brak możliwości szybkiego wyłączenia dużych regionów,
+- isolate i frustum nie mogą obniżyć kosztu do poziomu regionu,
+- każdy update operuje na jednym wielkim buforze.
+
+### Docelowy model
+
+Najlepszy produkcyjny model dla dużych siatek to:
+
+- podział na **bricks / chunks** (np. 16³, 32³ lub adaptacyjnie),
+- jedna instanced mesh na brick,
+- per-brick bounds,
+- per-brick visible count,
+- culling i isolate na poziomie bricka,
+- możliwość różnego LOD dla różnych bricków.
+
+### Dlaczego to jest ważne
+
+To jest warunek sensownej skalowalności FDM dla dużych obiektów.
+
+---
+
+## 7.7. Bottleneck FDM nr 6 — brak rozdziału na statyczną pozycję i dynamiczny atrybut pola
+
+Dziś dla każdej instancji budowana jest kompletna macierz 4×4.
+
+### A przecież część informacji jest stała
+
+- pozycja komórki w siatce jest deterministyczna,
+- bazowy grid layout nie zmienia się przy zmianie koloru,
+- nawet przy zmianie pola nie wszystkie składowe muszą być przebudowywane.
+
+### Docelowo
+
+Należy rozdzielić:
+
+1. **layout geometry** — pozycja/brick layout,
+2. **dynamic field attributes** — np. `mx,my,mz`, siła, visibility,
+3. **shader transform/color evaluation**.
+
+### Co to daje
+
+Można przenieść część roboty z CPU do GPU i zmniejszyć liczbę uploadów.
+
+### Uwaga
+
+To nie jest P0. To jest **P1/P2 architectural optimization** po kompaktowaniu i on-demand renderingu.
+
+---
+
+## 7.8. Bottleneck FDM nr 7 — zbyt kosztowna ścieżka overlayów i dodatków przy dużych scenach
+
+W FDM oprócz pola renderowane są:
+
+- światła,
+- osie,
+- view cube powiązany z kamerą,
+- overlaye obiektów,
+- gizmo transformacji tekstury.
+
+Każdy z tych elementów sam w sobie nie jest problemem. Problemem jest brak **trybu interakcyjnego odchudzonego**.
+
+### Produkcyjny standard
+
+Podczas ruchu kamery lub aktywnego drag:
+
+- można obniżyć DPR,
+- wyłączyć osie o wysokiej szczegółowości,
+- uprościć overlaye,
+- wyłączyć kosztowne transparentności,
+- chwilowo ukryć wybrane warstwy pomocnicze.
+
+To nie zmienia fizyki — zmienia tylko tryb prezentacyjny.
+
+---
+
+## 7.9. Bottleneck FDM nr 8 — `useDeferredValue` pomaga tylko częściowo
+
+`useDeferredValue` w `MagnetizationView3D` jest sensownym ruchem, ale nie rozwiązuje głównego problemu, bo:
+
+- nie usuwa kosztu obliczeń,
+- nie redukuje transferu do GPU,
+- nie rozdziela cache’y,
+- nie eliminuje przebudowy całego bufora.
+
+### Wniosek
+
+To jest dobra mikrooptymalizacja, ale nie substytut prawdziwej refaktoryzacji pipeline’u instancji.
+
+---
+
+# 8. Ścieżka FEM — diagnoza szczegółowa
+
+## 8.1. Co działa dobrze już dziś
+
+FEM ma kilka wartościowych fundamentów:
+
+1. osobny `ScientificViewportShell`,
+2. profile jakości,
+3. render mode’y (`surface`, `surface+edges`, `wireframe`, `points`),
+4. wyraźne komponenty `FemGeometry`, `FemArrows`, `FemHighlightView`,
+5. sensowny kierunek w stronę layer-aware viewportu.
+
+To jest dobry start. Problem nie polega na złym kierunku, tylko na tym, że aktualny kod jest nadal zbyt ciężki na dużych siatkach.
+
+---
+
+## 8.2. Bottleneck FEM nr 1 — `FemGeometry` robi za dużo w jednej ścieżce
+
+`FemGeometry.tsx` obecnie:
+
+- buduje `BufferGeometry`,
+- generuje `WireframeGeometry`,
+- generuje tetra wire edges,
+- generuje points geometry,
+- liczy i mapuje indeksy twarzy,
+- wykonuje shrink,
+- wykonuje clipping,
+- liczy normalsy,
+- przygotowuje color attributes,
+- invaliduje render.
+
+Reprezentatywny fragment:
+
+```tsx
+const geom = new THREE.BufferGeometry();
+geom.setAttribute("position", new THREE.BufferAttribute(finalPositions, 3));
+if (finalIndices) {
+  geom.setIndex(new THREE.BufferAttribute(finalIndices, 1));
+}
+geom.computeVertexNormals();
+geom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(finalPositions.length), 3));
+const edgesGeom = new THREE.WireframeGeometry(geom);
+const seenEdges = new Set<string>();
+```
+
+### Dlaczego to boli
+
+To jest mieszanka:
+
+- ciężkiej topologii,
+- ciężkich struktur tymczasowych,
+- kosztownych operacji geometrycznych,
+- kosztownych alokacji,
+- kosztownego przetwarzania CPU dla każdej większej zmiany.
+
+### Wniosek
+
+`FemGeometry` musi zostać rozbite na minimum trzy warstwy:
+
+1. **topology cache**,
+2. **color/update cache**,
+3. **render shell**.
+
+---
+
+## 8.3. Bottleneck FEM nr 2 — nadmiar `Array.from`, `Set`, `Map`, `flat()` i string keys
+
+W `FemGeometry` oraz `FemArrows` wielokrotnie pojawiają się kosztowne dla dużych danych wzorce:
+
+- `Array.from(...)`,
+- `new Set<number>()`,
+- `new Set<string>()`,
+- `new Map(...)`,
+- `customBoundaryFaces.flat()`,
+- generowanie kluczy stringowych typu `` `${lo}:${hi}` ``.
+
+### Dlaczego to jest problem
+
+Dla małych modeli to jest akceptowalne. Dla dużych siatek FEM powoduje:
+
+- presję na GC,
+- wysoką latencję jednorazowych akcji,
+- spadki FPS przy interakcji,
+- niepotrzebne przebiegi po pamięci.
+
+### Docelowy standard
+
+Dla dużych siatek należy używać:
+
+- `Uint32Array`, `Int32Array`, `Uint8Array`, `Float32Array`,
+- bitsetów zamiast `boolean[]`,
+- precomputed adjacency / node lists,
+- hashów liczbowych zamiast stringów,
+- cache’y materializowanych subsetów.
+
+---
+
+## 8.4. Bottleneck FEM nr 3 — kosztowny split topology vs color jest dziś niewystarczający
+
+`FemGeometry` co prawda ma osobny `useEffect` dla kolorów, ale ścieżka kolorowania nadal bywa ciężka, bo:
+
+- tworzy `baseColors` dla całej domeny,
+- potrafi odpalać `computeVertexColors(...)`,
+- korzysta z `customBoundaryFaces.flat()` lub `Array.from(meshData.boundaryFaces)`,
+- kopiuje kolory do atrybutu pozycji / mapuje przez `vertexMap`.
+
+Reprezentatywny fragment:
+
+```tsx
+const baseColors =
+  field === "none" && uniformColor
+    ? ...
+    : computeVertexColors(
+        meshData.nNodes,
+        field,
+        meshData.fieldData,
+        meshData.nodes,
+        customBoundaryFaces ? customBoundaryFaces.flat() : Array.from(meshData.boundaryFaces),
+        qualityPerFace,
+      );
+```
+
+### Problem
+
+Zmiana trybu koloru wciąż może być bliska „dużej operacji geometrycznej”, zamiast być lekką podmianą atrybutu.
+
+### Wniosek
+
+Potrzebny jest **twardy color pipeline**:
+
+- topology stable,
+- field-derived attribute stable,
+- legend/norm stable,
+- recolor tylko dla aktualnie widocznej geometrii,
+- bez pełnych konwersji i flatteningów.
+
+---
+
+## 8.5. Bottleneck FEM nr 4 — `computeVertexNormals()` i `WireframeGeometry` przy przebudowie topologii
+
+`computeVertexNormals()` jest kosztowne dla dużych powierzchni. `WireframeGeometry` też jest kosztowne, szczególnie gdy budowane jest wiele warstw.
+
+### Problem praktyczny
+
+W trybach takich jak:
+
+- clipping,
+- shrink,
+- zmiana subsetu warstw,
+- isolate/context + layer visibility,
+
+łatwo dochodzi do przebudowy wielu geometrii naraz.
+
+### Wniosek
+
+To nie znaczy, że trzeba usunąć normalsy czy wireframe. Trzeba je:
+
+- cache’ować po kluczu topologii,
+- wykonywać lazy,
+- wykonywać w workerze,
+- odraczać do końca interakcji.
+
+---
+
+## 8.6. Bottleneck FEM nr 5 — draw call fragmentation i overdraw
+
+W `FemViewportScene` dla każdej warstwy powstaje osobne `FemGeometry`, a wewnątrz `FemGeometry` możliwe są dodatkowe draw calle dla:
+
+- surface mesh,
+- hidden edges,
+- visible edges,
+- tetra edges,
+- points.
+
+### Co to oznacza
+
+Dla wielu warstw i wielu aktywnych efektów liczba draw calli rośnie szybko.
+
+Dodatkowo:
+
+- edge overlays zwiększają overdraw,
+- transparentne elementy utrudniają depth pipeline,
+- nakładanie wielu lineSegments i meshów pogarsza wydajność.
+
+### Wniosek
+
+W FEM trzeba mieć **jawny budżet draw calli** i **tryby degradacji**:
+
+- interakcja: surface only,
+- post-interaction: surface+edges,
+- figure/capture: full quality,
+- heavy meshes: domyślnie bez points i bez podwójnych edges.
+
+---
+
+## 8.7. Bottleneck FEM nr 6 — `FemArrows` jest CPU-heavy mimo małych budżetów glyphów
+
+`FemArrows` nie cierpi głównie od liczby rysowanych instancji, tylko od sposobu ich przygotowania.
+
+Kluczowe problemy:
+
+1. `boundaryCandidateNodes` budowane przez `Set` i iterację po twarzach.
+2. sampling przestrzenny z `Map` i dodatkowymi strukturami pośrednimi.
+3. `instancePositions: number[][]` zamiast płaskiego `Float32Array`.
+4. druga pętla z `dummy.updateMatrix()` i `mesh.setColorAt(i, color)` dla każdej instancji.
+5. `frustumCulled={false}`.
+
+Reprezentatywny fragment:
+
+```tsx
+const emptyRet = {
+  count: 0,
+  instancePositions: [] as number[][],
+  quaternions: new Float32Array(),
+  scales: new Float32Array(),
+  colors: new Float32Array(),
+};
+...
+for (let i = 0; i < count; i += 1) {
+  dummy.position.set(
+    instancePositions[i][0],
+    instancePositions[i][1],
+    instancePositions[i][2],
+  );
+  ...
+  dummy.matrix.toArray(matrixArray, matrixOffset);
+  color.fromArray(colors, i * 3);
+  mesh.setColorAt(i, color);
+}
+```
+
+### Wniosek
+
+`FemArrows` wymaga pilnej refaktoryzacji w kierunku:
+
+- typed arrays everywhere,
+- precomputed candidate caches,
+- bez `number[][]`,
+- bez `setColorAt` w pętli jeśli można użyć bezpośrednio `instanceColor.array.set(...)`,
+- z osobnym pipeline dla samplingu.
+
+---
+
+## 8.8. Bottleneck FEM nr 7 — maski `boolean[]` i pełne skany w `FemMeshView3D`
+
+`FemMeshView3D` buduje maski nodów i warstw m.in. tak:
+
+- `new Array<boolean>(nNodes).fill(false)`,
+- łączenie masek przez pętle po całej długości,
+- ponowne skanowanie twarzy i nodów dla visible layers,
+- dynamiczny bounding box liczony przez iterację po widocznych twarzach.
+
+### Problem
+
+To nie jest koszt jednego komponentu, lecz koszt koordynacyjny całego FEM viewportu.
+
+Przy każdej zmianie selection / isolate / visibility / layer state można wejść w ciąg:
+
+- przebuduj layers,
+- przebuduj masks,
+- przelicz visible bounds,
+- przekaż nowe propsy w głąb,
+- zainicjuj downstream rebuild.
+
+### Wniosek
+
+Na poziomie `FemMeshView3D` potrzebne są:
+
+- typed-array masks / bitsets,
+- precomputed part-local metadata,
+- stabilne klucze cache,
+- ścisłe rozdzielenie state sterującego od danych ciężkich.
+
+---
+
+## 8.9. Bottleneck FEM nr 8 — kosztowne raycast i hover na ciężkiej geometrii
+
+`FemGeometry` podczepia eventy pointerowe bezpośrednio do renderowanej geometrii powierzchniowej.
+
+### Problem
+
+Dla dużych modeli oznacza to raycasting po ciężkiej geometrii przy interakcji pointerem.
+
+To szczególnie boli przy:
+
+- `onPointerMove` / hover,
+- selection wielowarstwowej sceny,
+- aktywnym clippingu,
+- wielu osobnych meshach.
+
+### Co mówi praktyka three.js
+
+Dla ciężkich scen zalecane są:
+
+- BVH / spatial acceleration,
+- oddzielna uproszczona geometria do pickingu,
+- raycasting tylko po obiektach interaktywnych,
+- bounds-first / coarse-first picking.
+
+### Wniosek
+
+To jest **P0/P1 dla FEM**.
+
+---
+
+## 8.10. Bottleneck FEM nr 9 — clipping exact jest zbyt kosztowny, by traktować go jak zwykłą interakcję 60 FPS
+
+W FEM clipping nie jest tylko shaderowym odcięciem. Część ścieżek buduje realnie przyciętą geometrię.
+
+### Problem
+
+To daje naukowo lepszy obraz, ale nie powinno być wykonywane w pełnej jakości na każdej klatce suwaka clip plane.
+
+### Docelowy model
+
+Dwa poziomy clip:
+
+1. **interactive clip preview** — GPU plane clipping / uproszczona warstwa,
+2. **exact clip commit** — pełna przebudowa geometrii po puszczeniu suwaka.
+
+### Wniosek
+
+To jest bardzo ważne, bo bez tego duże modele zawsze będą „szarpać” przy aktywnym clip.
+
+---
+
+## 8.11. Bottleneck FEM nr 10 — `magnitudeColor()` alokuje kolory przy każdym wywołaniu
+
+W `colorUtils.ts` funkcja `magnitudeColor()` tworzy nowe `THREE.Color` w każdym wywołaniu:
+
+```ts
+const stops = [
+  new THREE.Color(0x440154),
+  new THREE.Color(0x31688e),
+  new THREE.Color(0x35b779),
+  new THREE.Color(0xfde725),
+];
+```
+
+### Problem
+
+To generuje niepotrzebne alokacje w ścieżce, która może być wykonywana bardzo wiele razy.
+
+### Wniosek
+
+To jest mały, ale czysty bug wydajnościowy. Kolory stopów muszą być stałymi modułowymi.
+
+---
+
+# 9. Tabela głównych problemów
+
+| ID | Obszar | Problem | Skala | Typ bottlenecku | Priorytet |
+|---|---|---|---|---|---|
+| S1 | Shared | brak konsekwentnego `frameloop="demand"` | obie ścieżki | render loop | P0 |
+| S2 | Shared | hidden viewport nadal może generować koszt | obie ścieżki | CPU/GPU | P0 |
+| FDM1 | FDM | pełna przebudowa instancji dla całej siatki | bardzo duża | CPU + upload | P0 |
+| FDM2 | FDM | ukrywanie przez hidden matrix zamiast compaction | bardzo duża | CPU + GPU bandwidth | P0 |
+| FDM3 | FDM | brak spatial chunkingu | duża | scalability | P1 |
+| FDM4 | FDM | live `preserveDrawingBuffer` | średnia | GPU/memory | P0 |
+| FDM5 | FDM | brak rozdziału statycznej pozycji od dynamic field attrs | duża | architecture | P1 |
+| FEM1 | FEM | `FemGeometry` robi zbyt dużo naraz | bardzo duża | CPU architecture | P0 |
+| FEM2 | FEM | ciężkie `Set/Map/Array.from/flat` | duża | CPU/GC | P0 |
+| FEM3 | FEM | topologia i kolor nie są dość mocno rozdzielone | bardzo duża | CPU | P0 |
+| FEM4 | FEM | kosztowne `WireframeGeometry`/normals przy rebuildzie | duża | CPU | P1 |
+| FEM5 | FEM | draw call fragmentation warstw | duża | GPU + traversal | P1 |
+| FEM6 | FEM | `FemArrows` CPU-heavy | duża | CPU/upload | P0 |
+| FEM7 | FEM | raycasting po ciężkiej geometrii | bardzo duża | interaction | P0 |
+| FEM8 | FEM | clipping exact w ścieżce interakcyjnej | duża | CPU latency | P1 |
+| FEM9 | FEM | alokacje w `magnitudeColor()` | mała | GC | P2 |
+
+---
+
+# 10. Co trzeba chronić: poprawność naukowa i fizyczna
+
+Każda optymalizacja viewportu w Fullmagu musi respektować następujące zasady.
+
+## 10.1. Zasady nienaruszalne
+
+1. **Optymalizacja widoku nie może zmieniać solver state.**
+2. **Isolate / hide / clip / LOD są operacjami prezentacyjnymi, nie fizycznymi.**
+3. **Decymacja preview musi być jawnie oznaczona jako preview.**
+4. **Legenda i zakres koloru nie mogą „kłamać” przez lokalną normalizację bez oznaczenia.**
+5. **Tryb capture / export musi mieć ścieżkę exact.**
+6. **Selection identity musi być stabilne** — po batching/compaction nadal trzeba wiedzieć, który obiekt / komórka / twarz została wybrana.
+
+## 10.2. Co wolno upraszczać
+
+Można upraszczać w trybie interakcji:
+
+- DPR,
+- antyaliasing,
+- gęstość strzałek,
+- widoczność edges,
+- widoczność points,
+- szczegółowość osi i overlayów,
+- clip preview,
+- decymację geometrii pomocniczej,
+- proxy picking.
+
+## 10.3. Czego nie wolno upraszczać bez jawnej etykiety
+
+Nie wolno po cichu upraszczać:
+
+- wartości pola używanego do koloru,
+- statystyk legendy,
+- indeksów identyfikacji obiektów,
+- topologii exact używanej do analizy twarzy/warstw, jeśli UI sugeruje exact mode.
+
+---
+
+# 11. Produkcyjny wzorzec docelowy
+
+Docelowy viewport Fullmaga powinien działać w czterech warstwach:
+
+## 11.1. Warstwa A — scientific data state
+
+- siatka,
+- field data,
+- topologia,
+- identyfikatory obiektów,
+- statystyki legendy,
+- exact selection model.
+
+## 11.2. Warstwa B — render data cache
+
+- cache topologii,
+- cache clipped shell,
+- cache wireframe,
+- cache visible chunks,
+- cache arrow candidates,
+- cache color buffers,
+- cache BVH / picking proxy.
+
+## 11.3. Warstwa C — interactive preview state
+
+- quality profile,
+- current interaction mode,
+- temporary LOD,
+- visibility simplification,
+- clip preview vs commit,
+- redraw scheduling.
+
+## 11.4. Warstwa D — presentation shell
+
+- Canvas,
+- controls,
+- toolbar,
+- overlays,
+- legend,
+- screenshot/export.
+
+Dziś Fullmag miesza te warstwy. Refaktoryzacja ma je wyraźnie rozdzielić.
+
+---
+
+# 12. Rekomendacje diagnostyczne i benchmarki
+
+Przed wdrożeniem zmian należy dodać twarde pomiary.
+
+## 12.1. Co mierzyć
+
+### Shared
+
+- average FPS,
+- frame time p50 / p95,
+- czas bezczynności render loop,
+- liczba `invalidate()` na sekundę,
+- draw calls,
+- triangles,
+- GPU memory,
+- JS heap / GC pauses.
+
+### FDM
+
+- czas przebudowy widoczności,
+- czas przebudowy macierzy,
+- czas przebudowy kolorów,
+- czas uploadu do GPU,
+- visible instance count,
+- total instance capacity,
+- czas reakcji isolate toggle,
+- czas reakcji color mode switch.
+
+### FEM
+
+- czas budowy `visibleLayers`,
+- czas maskowania nodów,
+- czas budowy topologii,
+- czas budowy wireframe,
+- czas kolorowania,
+- czas budowy arrow candidates,
+- czas raycast p95,
+- czas clip drag preview,
+- czas clip release exact rebuild.
+
+## 12.2. Narzędzia
+
+- Chrome Performance,
+- React Profiler,
+- R3F perf instrumentation,
+- `WebGLRenderer.info`,
+- Spector.js dla GPU frame analysis,
+- własne znaczniki `performance.mark()` / `performance.measure()` w krytycznych sekcjach.
+
+## 12.3. Scenariusze benchmarkowe
+
+### FDM
+
+1. 128³ full field, voxels.
+2. 128³ full field, glyphs.
+3. 256×256×1 thin-film.
+4. duża scena z `isolate` pokazującym 5–10% domeny.
+5. color-mode switching bez zmiany pola.
+
+### FEM
+
+1. 200k surface faces, surface only.
+2. 200k surface faces, surface+edges.
+3. 1M surface faces, clip preview.
+4. 1M surface faces, isolate jednej części.
+5. arrows on/off dla różnych budgetów.
+6. hover/raycast po złożonej geometrii.
+
+---
+
+# 13. Ocena gotowości produkcyjnej
+
+## 13.1. FDM
+
+**Stan obecny:** działający, ale nieprodukcyjny dla dużych siatek.
+
+### Główna przyczyna
+
+Koszt CPU i transferu rośnie wraz z pełną pojemnością siatki, a nie z realnie widocznym zakresem.
+
+### Oznacza to
+
+FDM ma dziś dobrą koncepcję renderingu, ale zły model aktualizacji danych.
+
+## 13.2. FEM
+
+**Stan obecny:** bogatszy funkcjonalnie, ale bardziej podatny na zacięcia i skoki latencji.
+
+### Główna przyczyna
+
+Zbyt duży preprocessing w JS + zbyt mało cache + zbyt ciężki picking + zbyt rozdrobniona scena.
+
+### Oznacza to
+
+FEM wymaga głębszej refaktoryzacji niż FDM.
+
+---
+
+# 14. Końcowy werdykt
+
+## 14.1. FDM
+
+Największy problem FDM to nie draw call, tylko **pełna przebudowa i pełny upload bufora instancji**. Samo three.js tego nie naprawi. Potrzebne są:
+
+- on-demand render,
+- compact visible instances,
+- brick/chunk partition,
+- cache statystyk i widoczności,
+- lepszy capture path.
+
+## 14.2. FEM
+
+Największy problem FEM to **koszt topologii, kolorowania i interakcji na ciężkiej geometrii**. Potrzebne są:
+
+- topology cache,
+- color pipeline,
+- workerization,
+- BVH/proxy picking,
+- adaptive quality,
+- uproszczony interaction mode.
+
+## 14.3. Najważniejsza korekta mentalna
+
+Nie należy myśleć o tym problemie jako o „braku mocy three.js”.
+
+Należy go traktować jako problem **architektury pipeline’u danych do renderingu**.
+
+Dopiero po uporządkowaniu:
+
+- state,
+- cache,
+- redraw scheduling,
+- worker boundaries,
+- exact vs preview,
+
+Three.js i R3F pokażą swój realny potencjał.
+
+---
+
+# 15. Najkrótsza lista działań P0
+
+Jeśli trzeba wskazać absolutne minimum do natychmiastowego zrobienia, to kolejność jest taka:
+
+1. **Włączyć prawdziwy on-demand rendering** dla obu viewportów.
+2. **Wyłączyć live `preserveDrawingBuffer`** i zrobić osobny capture path.
+3. **Zatrzymać ciężkie update’y dla ukrytego viewportu.**
+4. **FDM:** przejść z hidden-matrix na compact visible instances.
+5. **FEM:** oddzielić topology cache od color update.
+6. **FEM:** przepisać `FemArrows` na typed arrays i cache kandydatów.
+7. **FEM:** wprowadzić BVH / picking proxy.
+8. **Obie ścieżki:** dodać interaction quality downgrade.
+
+To da największy efekt w najkrótszym czasie.
+
+---
+
+# 16. Referencje
+
+## Repo Fullmag — pliki analizowane
+
+- `apps/web/components/preview/MagnetizationView3D.tsx`
+- `apps/web/components/preview/r3f/FdmInstances.tsx`
+- `apps/web/components/preview/FemMeshView3D.tsx`
+- `apps/web/components/preview/r3f/FemViewportScene.tsx`
+- `apps/web/components/preview/r3f/FemGeometry.tsx`
+- `apps/web/components/preview/r3f/FemArrows.tsx`
+- `apps/web/components/preview/r3f/ScientificViewportShell.tsx`
+- `apps/web/components/runs/control-room/ViewportPanels.tsx`
+- `apps/web/components/preview/r3f/viewportQualityProfiles.ts`
+- `apps/web/components/preview/r3f/colorUtils.ts`
+
+## Materiały zewnętrzne
+
+- React Three Fiber — *Performance pitfalls*.
+- React Three Fiber — *Scaling performance*.
+- three.js forum — wątki o draw calls, batching i raycast optimization dla dużych scen.
+

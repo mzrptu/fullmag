@@ -271,7 +271,7 @@ export default function GeometryPanel({ nodeId }: { nodeId?: string }) {
   const isGeometryPreset = sceneObject?.geometry.preset_kind != null;
   const geometryPresetDescriptor = useMemo(
     () => isGeometryPreset ? GEOMETRY_PRESET_CATALOG.find((d) => d.kind === sceneObject?.geometry.preset_kind) : null,
-    [isGeometryPreset, sceneObject?.geometry.preset_kind]
+    [isGeometryPreset, sceneObject?.geometry]
   );
   const [geometryPresetLibraryOpen, setGeometryPresetLibraryOpen] = useState(false);
 

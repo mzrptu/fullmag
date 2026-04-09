@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Input } from "../ui/input";
@@ -8,7 +8,7 @@ import { Switch } from "../ui/switch";
 import { Button } from "../ui/button";
 import { Loader2, ArrowRightLeft } from "lucide-react";
 import { metersTextToNanometersInput, nanometersInputToMetersText } from "@/lib/units";
-import { InspectorSection, InspectorField, InspectorDataGrid, InspectorStatTile } from "./settings/primitives";
+import { InspectorSection, InspectorField, InspectorStatTile } from "./settings/primitives";
 
 /* ── Size field spec for lasso refinement zones ────────────────────── */
 
@@ -268,7 +268,6 @@ export default function MeshSettingsPanel({
   generateLabel = "Build Mesh",
   generatingLabel = "Building Mesh...",
   nodeCount,
-  waitMode,
   showAdaptiveSection = true,
 }: MeshSettingsPanelProps) {
   const sicnCanvasRef = useRef<HTMLCanvasElement>(null);

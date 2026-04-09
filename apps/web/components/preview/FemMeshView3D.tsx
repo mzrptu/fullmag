@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
 import * as THREE from "three";
 import { useThree } from "@react-three/fiber";
-import { cn } from "@/lib/utils";
 import { rotateCameraAroundTarget, setCameraPresetAroundTarget, focusCameraOnBounds, fitCameraToBounds } from "./camera/cameraHelpers";
 import { computeFaceAspectRatios } from "./r3f/colorUtils";
 import type {
@@ -55,7 +54,7 @@ export interface FemMeshData {
   boundaryFaces: number[];
   nNodes: number;
   nElements: number;
-  fieldData?: { x: number[]; y: number[]; z: number[]; };
+  fieldData?: { x: ArrayLike<number>; y: ArrayLike<number>; z: ArrayLike<number> };
   activeMask?: boolean[] | null;
   quantityDomain?: "magnetic_only" | "full_domain" | "surface_only" | null;
 }
@@ -419,39 +418,6 @@ function collectPartNodeMask(
   return nodeMask;
 }
 
-function expandedOverlayBounds(
-  overlay: BuilderObjectOverlay,
-): { min: [number, number, number]; max: [number, number, number] } | null {
-  const extent = [
-    overlay.boundsMax[0] - overlay.boundsMin[0],
-    overlay.boundsMax[1] - overlay.boundsMin[1],
-    overlay.boundsMax[2] - overlay.boundsMin[2],
-  ] as const;
-  if (extent.some((value) => !Number.isFinite(value) || value <= 0)) {
-    return null;
-  }
-  const tolerance = Math.max(Math.max(...extent) * 0.02, 1e-12);
-  return {
-    min: [
-      overlay.boundsMin[0] - tolerance,
-      overlay.boundsMin[1] - tolerance,
-      overlay.boundsMin[2] - tolerance,
-    ],
-    max: [
-      overlay.boundsMax[0] + tolerance,
-      overlay.boundsMax[1] + tolerance,
-      overlay.boundsMax[2] + tolerance,
-    ],
-  };
-}
-
-const RENDER_OPTIONS: { value: RenderMode; label: string; labeledLabel: string }[] = [
-  { value: "surface", label: "Surface", labeledLabel: "Surface" },
-  { value: "surface+edges", label: "S+E", labeledLabel: "Surface + Edges" },
-  { value: "wireframe", label: "Wire", labeledLabel: "Wireframe" },
-  { value: "points", label: "Pts", labeledLabel: "Points" },
-];
-
 const SUPPORTED_ARROW_COLOR_FIELDS: ReadonlySet<FemArrowColorMode> = new Set([
   "orientation",
   "x",
@@ -460,32 +426,29 @@ const SUPPORTED_ARROW_COLOR_FIELDS: ReadonlySet<FemArrowColorMode> = new Set([
   "magnitude",
 ]);
 
-const COLOR_OPTIONS: { value: FemColorField; label: string; labeledLabel: string }[] = [
-  { value: "orientation", label: "Ori", labeledLabel: "Orientation" },
-  { value: "z", label: "m_z", labeledLabel: "Field Z" },
-  { value: "x", label: "m_x", labeledLabel: "Field X" },
-  { value: "y", label: "m_y", labeledLabel: "Field Y" },
-  { value: "magnitude", label: "|m|", labeledLabel: "|Field|" },
-  { value: "quality", label: "Qual", labeledLabel: "Quality AR" },
-  { value: "sicn", label: "SICN", labeledLabel: "SICN" },
-  { value: "none", label: "—", labeledLabel: "None" },
-];
-
 /* ── Global R3F Logic Components ───────────────────────────────────── */
 
 function FemClipPlanes({ enabled, axis, posPercentage, geomSize }: { enabled: boolean; axis: ClipAxis; posPercentage: number; geomSize: [number, number, number] }) {
   const { gl } = useThree();
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   useEffect(() => {
-    gl.localClippingEnabled = enabled;
+    rendererRef.current = gl;
+  }, [gl]);
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer) {
+      return;
+    }
+    renderer.localClippingEnabled = enabled;
     if (!enabled) {
-      gl.clippingPlanes = [];
+      renderer.clippingPlanes = [];
       return;
     }
     const axisSize = axis === "x" ? geomSize[0] : axis === "y" ? geomSize[1] : geomSize[2];
     const pos = ((posPercentage / 100) - 0.5) * axisSize;
     const normal = new THREE.Vector3(axis === "x" ? -1 : 0, axis === "y" ? -1 : 0, axis === "z" ? -1 : 0);
-    gl.clippingPlanes = [new THREE.Plane(normal, pos)];
-  }, [gl, enabled, axis, posPercentage, geomSize]);
+    renderer.clippingPlanes = [new THREE.Plane(normal, pos)];
+  }, [enabled, axis, posPercentage, geomSize]);
   return null;
 }
 
@@ -557,8 +520,6 @@ function FemMeshView3DInner({
   airSegmentVisible = true,
   airSegmentOpacity = 28,
   focusObjectRequest = null,
-  worldExtent = null,
-  worldCenter = null,
   onAntennaTranslate,
   onEntitySelect,
   onEntityFocus,
@@ -579,7 +540,6 @@ function FemMeshView3DInner({
   const [internalClipEnabled, setInternalClipEnabled] = useState(false);
   const [internalClipAxis, setInternalClipAxis] = useState<ClipAxis>("x");
   const [internalClipPos, setInternalClipPos] = useState(50);
-  const [showClipDrop, setShowClipDrop] = useState(false);
   const [internalShowArrows, setInternalShowArrows] = useState(false);
   const [internalPreviewMaxPoints, setInternalPreviewMaxPoints] = useState(PREVIEW_MAX_POINTS_DEFAULT);
   const [internalShrinkFactor, setInternalShrinkFactor] = useState(1);
@@ -590,6 +550,8 @@ function FemMeshView3DInner({
   const [labeledMode, setLabeledMode] = useState(false);
   const [openPopover, setOpenPopover] = useState<"quantity" | "color" | "clip" | "display" | "vectors" | "camera" | "panels" | null>(null);
   const [qualityProfile, setQualityProfile] = useState<ViewportQualityProfileId>("interactive");
+  const [interactionActive, setInteractionActive] = useState(false);
+  const [captureActive, setCaptureActive] = useState(false);
   const [captureOverlayHidden, setCaptureOverlayHidden] = useState(false);
   
   const [hoveredFace, setHoveredFace] = useState<{ idx: number; x: number; y: number } | null>(null);
@@ -602,7 +564,6 @@ function FemMeshView3DInner({
   const controlsRef = useRef<any>(null);
   const viewCubeSceneRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const faceARsRef = useRef<Float32Array | null>(null);
   const qualityProfileRef = useRef<ViewportQualityProfileId>("interactive");
   const renderMode = controlledRenderMode ?? internalRenderMode;
   const opacity = controlledOpacity ?? internalOpacity;
@@ -642,6 +603,27 @@ function FemMeshView3DInner({
         : new Set<string>(),
     [airSegmentVisible],
   );
+  const partRenderDataById = useMemo(() => {
+    const cache = new Map<
+      string,
+      {
+        boundaryFaceIndices: number[] | null;
+        elementIndices: number[] | null;
+        nodeMask: boolean[] | null;
+        surfaceFaces: [number, number, number][] | null;
+      }
+    >();
+    const maxBoundaryFaceCount = Math.floor(meshData.boundaryFaces.length / 3);
+    for (const part of meshParts) {
+      cache.set(part.id, {
+        boundaryFaceIndices: collectPartBoundaryFaceIndices(part, maxBoundaryFaceCount),
+        elementIndices: collectPartElementIndices(part, meshData.nElements),
+        nodeMask: collectPartNodeMask(part, meshData.nNodes),
+        surfaceFaces: part.surface_faces.length > 0 ? part.surface_faces : null,
+      });
+    }
+    return cache;
+  }, [meshData.boundaryFaces.length, meshData.nElements, meshData.nNodes, meshParts]);
   const visibleLayers = useMemo<RenderLayer[]>(() => {
     if (!hasMeshParts) {
       return [];
@@ -703,16 +685,14 @@ function FemMeshView3DInner({
       if (!visibleForMode) {
         continue;
       }
+      const partRenderData = partRenderDataById.get(part.id);
       layers.push({
         part,
         viewState,
-        boundaryFaceIndices: collectPartBoundaryFaceIndices(
-          part,
-          Math.floor(meshData.boundaryFaces.length / 3),
-        ),
-        elementIndices: collectPartElementIndices(part, meshData.nElements),
-        nodeMask: collectPartNodeMask(part, meshData.nNodes),
-        surfaceFaces: part.surface_faces.length > 0 ? part.surface_faces : null,
+        boundaryFaceIndices: partRenderData?.boundaryFaceIndices ?? null,
+        elementIndices: partRenderData?.elementIndices ?? null,
+        nodeMask: partRenderData?.nodeMask ?? null,
+        surfaceFaces: partRenderData?.surfaceFaces ?? null,
         isPrimaryForCamera: preferredCameraPartId
           ? part.id === preferredCameraPartId
           : false,
@@ -731,12 +711,10 @@ function FemMeshView3DInner({
     airSegmentVisible,
     focusedEntityId,
     hasMeshParts,
-    meshData.boundaryFaces.length,
-    meshData.nElements,
-    meshData.nNodes,
     meshEntityViewState,
     meshParts,
     objectViewMode,
+    partRenderDataById,
     selectedEntityId,
     selectedObjectId,
   ]);
@@ -1004,6 +982,27 @@ function FemMeshView3DInner({
     const minBudget = Math.min(GLYPH_BUDGET_MIN, baseArrowDensity);
     return Math.max(minBudget, Math.min(baseArrowDensity, scaled));
   }, [baseArrowDensity, baselineArrowNodeCount, visibleArrowNodeCount]);
+  const runtimeQualityProfile = useMemo<ViewportQualityProfileId>(() => {
+    if (captureActive) {
+      return "capture";
+    }
+    return interactionActive ? "interactive-lite" : qualityProfile;
+  }, [captureActive, interactionActive, qualityProfile]);
+  const runtimeRenderMode = useMemo<RenderMode>(() => {
+    if (!interactionActive) {
+      return renderMode;
+    }
+    if (renderMode === "surface+edges" || renderMode === "points") {
+      return "surface";
+    }
+    return renderMode;
+  }, [interactionActive, renderMode]);
+  const runtimeArrowDensity = useMemo(() => {
+    if (!interactionActive || effectiveArrowDensity <= 0) {
+      return effectiveArrowDensity;
+    }
+    return Math.max(GLYPH_BUDGET_MIN, Math.round(effectiveArrowDensity * 0.45));
+  }, [effectiveArrowDensity, interactionActive]);
   const hasMagneticDisplayContent = useMemo(() => {
     if (missingExactScopeSegment) {
       return false;
@@ -1174,7 +1173,6 @@ function FemMeshView3DInner({
   }, [colorField, controlledArrowColorMode]);
   useEffect(() => {
     setSelectedFaces([]); setHoveredFace(null); setCtxMenu(null);
-    faceARsRef.current = null;
     // Note: Camera auto-fit is now handled in handleGeometryCenter based on physical bounds, 
     // not purely on node counts, to prevent camera resets during remeshing operations.
   }, [topologySignature]);
@@ -1207,8 +1205,6 @@ function FemMeshView3DInner({
     e?.nativeEvent?.preventDefault?.();
     if (e.faceIndex != null) setCtxMenu({ x: e.clientX, y: e.clientY, faceIdx: e.faceIndex });
   }, []);
-  const dismissCtxMenu = useCallback(() => setCtxMenu(null), []);
-
   useEffect(() => {
     if (!ctxMenu) return;
     const dismiss = () => setCtxMenu(null);
@@ -1327,28 +1323,29 @@ function FemMeshView3DInner({
     if (!canvas) return;
     const previousProfile = qualityProfileRef.current;
     setCaptureOverlayHidden(true);
-    setQualityProfile("capture");
+    setCaptureActive(true);
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     exportCanvasAsImage(canvas, `fem-mesh-${Date.now()}`, {
       pixelRatio: 4,
       backgroundColor: "#171726",
       format: "png",
     });
+    setCaptureActive(false);
     setQualityProfile(previousProfile);
     setCaptureOverlayHidden(false);
   }, []);
 
-  // Pre-compute face aspect ratios when topology changes (fix #7: no first-hover jank)
-  useEffect(() => {
-    faceARsRef.current = computeFaceAspectRatios(meshData.nodes, meshData.boundaryFaces);
-  }, [topologySignature, meshData.nodes, meshData.boundaryFaces]);
+  const faceAspectRatios = useMemo(
+    () => computeFaceAspectRatios(meshData.nodes, meshData.boundaryFaces),
+    [meshData.nodes, meshData.boundaryFaces],
+  );
 
   const hoveredFaceInfo = useMemo(() => {
     if (!hoveredFace) return null;
     const idx = hoveredFace.idx;
-    const ar = faceARsRef.current ? faceARsRef.current[idx] : 0;
+    const ar = faceAspectRatios[idx] ?? 0;
     return { faceIdx: idx, ar, sicn: qualityPerFace?.[idx] };
-  }, [hoveredFace, qualityPerFace]);
+  }, [faceAspectRatios, hoveredFace, qualityPerFace]);
   const applyToolbarRenderMode = useCallback((next: RenderMode) => {
     if (hasMeshParts && toolbarStylePartIds.length > 0 && onMeshPartViewStatePatch) {
       onMeshPartViewStatePatch(toolbarStylePartIds, { renderMode: next });
@@ -1356,14 +1353,22 @@ function FemMeshView3DInner({
       onRenderModeChange?.(next);
       return;
     }
-    onRenderModeChange ? onRenderModeChange(next) : setInternalRenderMode(next);
+    if (onRenderModeChange) {
+      onRenderModeChange(next);
+    } else {
+      setInternalRenderMode(next);
+    }
   }, [hasMeshParts, onMeshPartViewStatePatch, onRenderModeChange, toolbarStylePartIds]);
   const applyToolbarOpacity = useCallback((next: number) => {
     if (hasMeshParts && toolbarStylePartIds.length > 0 && onMeshPartViewStatePatch) {
       onMeshPartViewStatePatch(toolbarStylePartIds, { opacity: next });
       return;
     }
-    onOpacityChange ? onOpacityChange(next) : setInternalOpacity(next);
+    if (onOpacityChange) {
+      onOpacityChange(next);
+    } else {
+      setInternalOpacity(next);
+    }
   }, [hasMeshParts, onMeshPartViewStatePatch, onOpacityChange, toolbarStylePartIds]);
   const applyToolbarColorField = useCallback((next: FemColorField) => {
     setField(next);
@@ -1393,6 +1398,11 @@ function FemMeshView3DInner({
   useEffect(() => {
     qualityProfileRef.current = qualityProfile;
   }, [qualityProfile]);
+  useEffect(() => {
+    if (interactionActive) {
+      setHoveredFace(null);
+    }
+  }, [interactionActive]);
   const overlayItems = useMemo<ViewportOverlayDescriptor[]>(() => {
     if (captureOverlayHidden) {
       return [];
@@ -1405,7 +1415,7 @@ function FemMeshView3DInner({
         priority: 1,
         minWidth: 1080,
         collapseTarget: "icon",
-        render: ({ mode, variant }) => (
+        render: ({ variant }) => (
           <FemViewportToolbar
             compact={variant !== "full"}
             renderMode={toolbarRenderMode}
@@ -1439,51 +1449,81 @@ function FemMeshView3DInner({
             onRenderModeChange={applyToolbarRenderMode}
             onSurfaceColorFieldChange={applyToolbarColorField}
             onArrowColorModeChange={(next) => {
-              onArrowColorModeChange
-                ? onArrowColorModeChange(next)
-                : setInternalArrowColorMode(next);
+              if (onArrowColorModeChange) {
+                onArrowColorModeChange(next);
+              } else {
+                setInternalArrowColorMode(next);
+              }
             }}
             onArrowMonoColorChange={(next) => {
-              onArrowMonoColorChange
-                ? onArrowMonoColorChange(next)
-                : setInternalArrowMonoColor(next);
+              if (onArrowMonoColorChange) {
+                onArrowMonoColorChange(next);
+              } else {
+                setInternalArrowMonoColor(next);
+              }
             }}
             onArrowAlphaChange={(next) => {
-              onArrowAlphaChange
-                ? onArrowAlphaChange(next)
-                : setInternalArrowAlpha(next);
+              if (onArrowAlphaChange) {
+                onArrowAlphaChange(next);
+              } else {
+                setInternalArrowAlpha(next);
+              }
             }}
             onArrowLengthScaleChange={(next) => {
-              onArrowLengthScaleChange
-                ? onArrowLengthScaleChange(next)
-                : setInternalArrowLengthScale(next);
+              if (onArrowLengthScaleChange) {
+                onArrowLengthScaleChange(next);
+              } else {
+                setInternalArrowLengthScale(next);
+              }
             }}
             onArrowThicknessChange={(next) => {
-              onArrowThicknessChange
-                ? onArrowThicknessChange(next)
-                : setInternalArrowThickness(next);
+              if (onArrowThicknessChange) {
+                onArrowThicknessChange(next);
+              } else {
+                setInternalArrowThickness(next);
+              }
             }}
             onProjectionChange={setCameraProjection}
             onNavigationChange={setNavigationMode}
             onQualityProfileChange={setQualityProfile}
             onClipEnabledChange={(v) => {
-              onClipEnabledChange ? onClipEnabledChange(v) : setInternalClipEnabled(v);
+              if (onClipEnabledChange) {
+                onClipEnabledChange(v);
+              } else {
+                setInternalClipEnabled(v);
+              }
             }}
             onClipAxisChange={(a) => {
-              onClipAxisChange ? onClipAxisChange(a) : setInternalClipAxis(a);
+              if (onClipAxisChange) {
+                onClipAxisChange(a);
+              } else {
+                setInternalClipAxis(a);
+              }
             }}
             onClipPosChange={(v) => {
-              onClipPosChange ? onClipPosChange(v) : setInternalClipPos(v);
+              if (onClipPosChange) {
+                onClipPosChange(v);
+              } else {
+                setInternalClipPos(v);
+              }
             }}
             onArrowsVisibleChange={(v) => {
-              onShowArrowsChange ? onShowArrowsChange(v) : setInternalShowArrows(v);
+              if (onShowArrowsChange) {
+                onShowArrowsChange(v);
+              } else {
+                setInternalShowArrows(v);
+              }
             }}
             onArrowDensityChange={(nextBudget) => {
               updateSharedPreviewMaxPoints(glyphBudgetToMaxPoints(nextBudget));
             }}
             onOpacityChange={applyToolbarOpacity}
             onShrinkFactorChange={(v) => {
-              onShrinkFactorChange ? onShrinkFactorChange(v) : setInternalShrinkFactor(v);
+              if (onShrinkFactorChange) {
+                onShrinkFactorChange(v);
+              } else {
+                setInternalShrinkFactor(v);
+              }
             }}
             onLabeledModeChange={setLabeledMode}
             onToggleLegend={() => setLegendOpen((prev) => !prev)}
@@ -1670,7 +1710,6 @@ function FemMeshView3DInner({
     });
     return items;
   }, [
-    airSegmentOpacity,
     applyToolbarColorField,
     applyToolbarOpacity,
     applyToolbarRenderMode,
@@ -1687,6 +1726,7 @@ function FemMeshView3DInner({
     clipEnabled,
     clipPos,
     effectiveShowArrows,
+    effectiveArrowDensity,
     effectiveShowOrientationLegend,
     fieldLabel,
     fieldMagnitudeStats?.max,
@@ -1695,6 +1735,7 @@ function FemMeshView3DInner({
     focusedEntityId,
     handlePartSelect,
     handleRoleVisibility,
+    handleViewCubeRotate,
     hasMeshParts,
     inspectedMeshPart,
     inspectedPartQuality,
@@ -1719,11 +1760,8 @@ function FemMeshView3DInner({
     onArrowMonoColorChange,
     onArrowThicknessChange,
     onEntityFocus,
-    onMeshPartViewStatePatch,
-    onOpacityChange,
     onQuantityChange,
     onRefine,
-    onRenderModeChange,
     onShowArrowsChange,
     onShrinkFactorChange,
     openPopover,
@@ -1759,7 +1797,13 @@ function FemMeshView3DInner({
         hud={null}
         projection={cameraProjection}
         navigation={navigationMode}
-        qualityProfile={qualityProfile}
+        qualityProfile={runtimeQualityProfile}
+        renderPolicy={{
+          mode: "demand",
+          hidden: false,
+          interactionActive,
+        }}
+        onInteractionChange={setInteractionActive}
         target={[0, 0, 0]}
         bridgeRef={viewCubeSceneRef}
         controlsRef={controlsRef}
@@ -1783,7 +1827,7 @@ function FemMeshView3DInner({
             airSegmentOpacity={airSegmentOpacity}
             shouldRenderMagneticGeometry={shouldRenderMagneticGeometry}
             field={field}
-            renderMode={renderMode}
+            renderMode={runtimeRenderMode}
             effectiveOpacity={effectiveOpacity}
             magneticBoundaryFaceIndices={magneticBoundaryFaceIndices}
             magneticElementIndices={magneticElementIndices}
@@ -1797,7 +1841,7 @@ function FemMeshView3DInner({
             dynamicMaxDim={dynamicMaxDim}
             effectiveShowArrows={effectiveShowArrows}
             arrowField={arrowField}
-            arrowDensity={effectiveArrowDensity}
+            arrowDensity={runtimeArrowDensity}
             arrowColorMode={arrowColorMode}
             arrowMonoColor={arrowMonoColor}
             arrowAlpha={arrowAlpha}
@@ -1813,7 +1857,7 @@ function FemMeshView3DInner({
             axesWorldExtent={axesWorldExtent}
             axesCenter={axesCenter}
             onFaceClick={handleFaceClick}
-            onFaceHover={handleFaceHover}
+            onFaceHover={interactionActive ? undefined : handleFaceHover}
             onFaceUnhover={handleFaceUnhover}
             onFaceContextMenu={handleFaceContextMenu}
             cameraFitGeneration={cameraFitGeneration}
@@ -1843,7 +1887,11 @@ function FemMeshView3DInner({
           }}
           onToggleClip={() => {
             const next = !clipEnabled;
-            onClipEnabledChange ? onClipEnabledChange(next) : setInternalClipEnabled(next);
+            if (onClipEnabledChange) {
+              onClipEnabledChange(next);
+            } else {
+              setInternalClipEnabled(next);
+            }
             setCtxMenu(null);
           }}
           onClearSelection={() => {

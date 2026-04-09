@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import EmptyState from "@/components/ui/EmptyState";
-import SegmentedControl from "@/components/ui/SegmentedControl";
-import SelectField from "@/components/ui/SelectField";
 import FemMeshSlice2D from "@/components/preview/FemMeshSlice2D";
 import FemMeshView3D from "@/components/preview/FemMeshView3D";
 import { ViewportOverlayLayout } from "@/components/preview/ViewportOverlayLayout";

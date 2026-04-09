@@ -36,7 +36,7 @@ export default function SolverSelector() {
   const ctx = useControlRoom();
   const { capabilities, loading, error } = useRuntimeCapabilities();
   const requested = ctx.requestedRuntimeSelection;
-  const entries = capabilities?.engines ?? [];
+  const entries = useMemo(() => capabilities?.engines ?? [], [capabilities?.engines]);
 
   const backendOptions = useMemo<OptionState[]>(() => {
     const values = ["auto", ...new Set(entries.map((entry) => entry.backend))];

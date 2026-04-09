@@ -75,7 +75,6 @@ export default function DimensionOverlay({
 
   const xTicks = niceTickValues(axes.x.extent);
   const yTicks = niceTickValues(axes.y.extent);
-  const zTicks = niceTickValues(axes.z.extent);
 
   return (
     <div className="absolute inset-0 pointer-events-none z-[8] overflow-hidden">

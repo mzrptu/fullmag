@@ -66,14 +66,6 @@ function lerpPoint(a: Point3, b: Point3, t: number): Point3 {
   return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 }
 
-function toPoints(nodes: number[]): Point3[] {
-  const points: Point3[] = [];
-  for (let index = 0; index < nodes.length; index += 3) {
-    points.push([nodes[index], nodes[index + 1], nodes[index + 2]]);
-  }
-  return points;
-}
-
 function nodeScalar(meshData: FemMeshData, nodeIndex: number, component: VectorComponent): number {
   const fld = meshData.fieldData;
   if (!fld) {

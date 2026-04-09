@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import Sparkline from "../../ui/Sparkline";
 import type { ScalarRow } from "../../../lib/useSessionStream";
@@ -87,10 +87,7 @@ export function SidebarSection({
   children,
 }: SidebarSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
-
-  useEffect(() => {
-    if (autoOpenKey) setOpen(true);
-  }, [autoOpenKey]);
+  const resolvedOpen = Boolean(autoOpenKey) || open;
 
   return (
     <section className="flex flex-col mb-3 overflow-hidden rounded-xl border border-border/40 bg-gradient-to-b from-card/50 to-card/20 shadow-[0_2px_12px_rgba(0,0,0,0.15)] backdrop-blur-xl">
@@ -98,11 +95,11 @@ export function SidebarSection({
         type="button"
         className="flex items-center w-full px-4 py-3 text-left transition-all hover:bg-muted/15 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring group"
         onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
+        aria-expanded={resolvedOpen}
       >
         <span className={cn(
           "text-primary/70 transition-transform duration-200 mr-2.5 flex items-center justify-center w-4 h-4 text-[11px]",
-          open && "rotate-90"
+          resolvedOpen && "rotate-90"
         )}>▸</span>
         {icon && (
           <span className="mr-2 text-sm opacity-70">{icon}</span>
@@ -116,7 +113,7 @@ export function SidebarSection({
           </span>
         ) : null}
       </button>
-      {open ? (
+      {resolvedOpen ? (
         <div className="px-4 pb-4 pt-2 flex flex-col gap-4 border-t border-border/20">
           {children}
         </div>
@@ -323,7 +320,7 @@ export function InspectorSection({
   title,
   eyebrow,
   meta,
-  defaultOpen: _defaultOpen,
+  defaultOpen,
   children,
 }: {
   title: string;
@@ -332,6 +329,7 @@ export function InspectorSection({
   defaultOpen?: boolean;
   children: ReactNode;
 }) {
+  void defaultOpen;
   return (
     <section className="rounded-2xl border border-border/30 bg-background/35 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
       <div className="mb-3 flex items-start justify-between gap-3 border-b border-border/20 pb-2.5">

@@ -1,9 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { FileCode2, FlaskConical, History, Layout, MonitorCheck } from "lucide-react";
 import type { RecentSimulationEntry } from "@/lib/workspace/recent-simulations";
 import { fmtDuration } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 interface RecentSimulationsSectionProps {
   entries: RecentSimulationEntry[];
@@ -14,7 +14,7 @@ export default function RecentSimulationsSection({
   entries,
   onOpenRecent,
 }: RecentSimulationsSectionProps) {
-  const now = Date.now();
+  const [now] = useState(() => Date.now());
 
   return (
     <div className="flex flex-col gap-3">
@@ -93,4 +93,3 @@ export default function RecentSimulationsSection({
     </div>
   );
 }
-

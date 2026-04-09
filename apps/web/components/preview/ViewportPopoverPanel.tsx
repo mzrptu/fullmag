@@ -2,11 +2,10 @@
 
 import {
   ReactNode,
-  RefObject,
+  type RefObject,
   useLayoutEffect,
   useRef,
   useState,
-  useEffect,
   cloneElement,
   isValidElement,
   Children,
@@ -21,7 +20,8 @@ export interface ViewportPopoverPanelProps {
    * Ref to the trigger element (button/icon) used to calculate anchor position.
    * Either pass anchorRef OR wrap trigger + panel together in ViewportPopoverTrigger.
    */
-  anchorRef: RefObject<HTMLElement | null>;
+  anchorRef?: RefObject<HTMLElement | null>;
+  anchorElement?: HTMLElement | null;
   children: ReactNode;
   title?: ReactNode;
   className?: string;
@@ -35,6 +35,7 @@ export interface ViewportPopoverPanelProps {
 
 export function ViewportPopoverPanel({
   anchorRef,
+  anchorElement,
   children,
   title,
   className,
@@ -48,15 +49,13 @@ export function ViewportPopoverPanel({
     top: 0,
     left: 0,
   });
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
+  const mounted = typeof document !== "undefined";
 
   useLayoutEffect(() => {
     if (!mounted) return;
 
     function reposition() {
-      const anchor = anchorRef.current;
+      const anchor = anchorElement ?? anchorRef?.current ?? null;
       const panel = panelRef.current;
       if (!anchor || !panel || typeof window === "undefined") return;
 
@@ -99,7 +98,7 @@ export function ViewportPopoverPanel({
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
     };
-  }, [mounted, anchorRef, children, preferredHorizontal, preferredVertical, title]);
+  }, [mounted, anchorElement, anchorRef, children, preferredHorizontal, preferredVertical, title]);
 
   if (!mounted) return null;
 
@@ -152,16 +151,23 @@ export function ViewportPopoverTrigger({
   preferredVertical = "bottom",
 }: ViewportPopoverTriggerProps) {
   const triggerRef = useRef<HTMLDivElement | null>(null);
+  const [anchorElement, setAnchorElement] = useState<HTMLElement | null>(null);
   const array = Children.toArray(children);
   const trigger = array[0];
   const panel = array[1];
 
   return (
-    <div ref={triggerRef} className={cn("relative inline-flex", className)}>
+    <div
+      ref={(node) => {
+        triggerRef.current = node;
+        setAnchorElement(node);
+      }}
+      className={cn("relative inline-flex", className)}
+    >
       {trigger}
       {panel && isValidElement<ViewportPopoverPanelProps>(panel)
         ? cloneElement(panel, {
-            anchorRef: triggerRef as RefObject<HTMLElement | null>,
+            anchorElement,
             preferredHorizontal: panel.props.preferredHorizontal ?? preferredHorizontal,
             preferredVertical: panel.props.preferredVertical ?? preferredVertical,
           })

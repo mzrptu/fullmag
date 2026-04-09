@@ -118,7 +118,7 @@ export function ViewportOverlayManager({
       return "compact";
     }
     return "full";
-  }, [size.width, size.height]);
+  }, [size]);
 
   const renderedItems = useMemo(() => {
     if (!items) {

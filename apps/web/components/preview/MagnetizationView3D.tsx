@@ -8,7 +8,6 @@ import { cn } from "@/lib/utils";
 import ViewCube from "./ViewCube";
 import HslSphere from "./HslSphere";
 import FdmInstances from "./r3f/FdmInstances";
-import type { IsolateGridBounds } from "./r3f/FdmInstances";
 import { rotateCameraAroundTarget, focusCameraOnBounds } from "./camera/cameraHelpers";
 import FdmLighting from "./r3f/FdmLighting";
 import SceneAxes3D from "./r3f/SceneAxes3D";
@@ -73,6 +72,7 @@ interface Props {
   onTransformScopeChange?: (scope: "object" | "texture" | null) => void;
   settings?: VisualizationPresetFdmState;
   onSettingsChange?: Dispatch<SetStateAction<VisualizationPresetFdmState>>;
+  viewportVisible?: boolean;
 }
 
 export type QualityLevel = "low" | "high" | "ultra";
@@ -218,12 +218,23 @@ const BG_COLOR = 0x1e1e2e; // Catppuccin Mocha Base
 
 function SceneConfig({ toneMapping }: { toneMapping: boolean }) {
   const { gl } = useThree();
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   useEffect(() => {
-    if (toneMapping) {
-      gl.toneMapping = THREE.ACESFilmicToneMapping;
-      gl.toneMappingExposure = 1.05;
+    rendererRef.current = gl;
+  }, [gl]);
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer) {
+      return;
     }
-  }, [gl, toneMapping]);
+    if (toneMapping) {
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.05;
+      return;
+    }
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.toneMappingExposure = 1;
+  }, [toneMapping]);
   return null;
 }
 
@@ -562,6 +573,7 @@ function MagnetizationView3DInner({
   onTransformScopeChange,
   settings: externalSettings,
   onSettingsChange,
+  viewportVisible = true,
 }: Props) {
   const [internalSettings, setInternalSettings] = useState<Settings>(loadSettings);
   const settings = useMemo(
@@ -577,6 +589,7 @@ function MagnetizationView3DInner({
 
   // Switch back to camera when activeTextureTransform disappears
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!activeTextureTransform) setInteractionMode("camera");
   }, [activeTextureTransform]);
 
@@ -584,6 +597,7 @@ function MagnetizationView3DInner({
     if (!activeTextureTransform) {
       return;
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setInteractionMode(
       textureGizmoMode === "rotate"
         ? "rotate"
@@ -707,13 +721,6 @@ function MagnetizationView3DInner({
     }
     focusObject(focusObjectRequest.objectId);
   }, [focusObject, focusObjectRequest]);
-
-  const cameraPresets = useMemo(() => [
-    { label: "Top",   fn: () => snapCamera([0, 1, 0], [0, 0, -1]) },
-    { label: "Front", fn: () => snapCamera([0, 0, 1]) },
-    { label: "Right", fn: () => snapCamera([1, 0, 0]) },
-    { label: "Iso",   fn: () => snapCamera([1, 1, 1]) },
-  ], [snapCamera]);
 
   // Capture viewport as PNG
   const captureSnapshot = useCallback(() => {
@@ -926,9 +933,10 @@ function MagnetizationView3DInner({
                 {openPopover === "camera" && (
                   <ViewportPopoverPanel anchorRef={{ current: null }} title="Camera Presets">
                     <div className="grid grid-cols-2 gap-1 px-1">
-                      {cameraPresets.map(p => (
-                        <button key={p.label} className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { p.fn(); setOpenPopover(null); }}>{p.label}</button>
-                      ))}
+                      <button className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { snapCamera([0, 1, 0], [0, 0, -1]); setOpenPopover(null); }}>Top</button>
+                      <button className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { snapCamera([0, 0, 1]); setOpenPopover(null); }}>Front</button>
+                      <button className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { snapCamera([1, 0, 0]); setOpenPopover(null); }}>Right</button>
+                      <button className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { snapCamera([1, 1, 1]); setOpenPopover(null); }}>Iso</button>
                       <button className="text-[0.65rem] font-semibold uppercase tracking-widest px-2 py-1.5 hover:bg-muted/50 rounded transition-colors text-muted-foreground hover:text-foreground text-left" onClick={() => { resetCamera(); setOpenPopover(null); }}>Reset</button>
                     </div>
                   </ViewportPopoverPanel>
@@ -1055,6 +1063,7 @@ function MagnetizationView3DInner({
       {/* ── R3F Canvas ────────────────────────────────────── */}
       <div className="absolute inset-0 pointer-events-none z-0">
         <Canvas
+          frameloop={viewportVisible ? "demand" : "never"}
           className="w-full h-full pointer-events-auto"
           camera={{
             fov: 50,
@@ -1130,7 +1139,7 @@ function MagnetizationView3DInner({
             controlsRefObject={controlsRef}
             viewCubeBridgeRef={viewCubeSceneRef}
             grid={grid}
-            cameraEnabled={cameraActive}
+            cameraEnabled={cameraActive && viewportVisible}
           />
 
           {activeTextureTransform && !cameraActive && (

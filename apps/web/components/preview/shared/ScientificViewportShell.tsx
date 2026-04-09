@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import {
@@ -14,6 +14,13 @@ import ViewportGizmoStack from "./ViewportGizmoStack";
 
 export type ShellProjection = "perspective" | "orthographic";
 export type ShellNavigation = "trackball" | "cad";
+export type ViewportFrameloopMode = "always" | "demand" | "never";
+
+export interface ViewportRenderPolicy {
+  mode: "always" | "demand" | "paused";
+  hidden: boolean;
+  interactionActive: boolean;
+}
 
 interface ScientificViewportShellProps {
   children: ReactNode;
@@ -36,6 +43,8 @@ interface ScientificViewportShellProps {
   onPointerMissed?: () => void;
   onCanvasContextMenu?: React.MouseEventHandler<Element>;
   renderDefaultGizmos?: boolean;
+  renderPolicy?: Partial<ViewportRenderPolicy>;
+  onInteractionChange?: (active: boolean) => void;
 }
 
 function ShellCamera({ projection }: { projection: ShellProjection }) {
@@ -65,11 +74,20 @@ function ShellControls({
   navigation,
   target,
   controlsRef,
+  onInteractionChange,
 }: {
   navigation: ShellNavigation;
   target: [number, number, number];
   controlsRef: React.MutableRefObject<any>;
+  onInteractionChange?: (active: boolean) => void;
 }) {
+  const handleStart = useCallback(() => {
+    onInteractionChange?.(true);
+  }, [onInteractionChange]);
+  const handleEnd = useCallback(() => {
+    onInteractionChange?.(false);
+  }, [onInteractionChange]);
+
   if (navigation === "cad") {
     return (
       <OrbitControls
@@ -81,6 +99,8 @@ function ShellControls({
         panSpeed={0.9}
         screenSpacePanning
         target={target}
+        onStart={handleStart}
+        onEnd={handleEnd}
       />
     );
   }
@@ -92,6 +112,8 @@ function ShellControls({
       zoomSpeed={1.2}
       panSpeed={0.85}
       target={target}
+      onStart={handleStart}
+      onEnd={handleEnd}
     />
   );
 }
@@ -133,12 +155,30 @@ export default function ScientificViewportShell({
   onPointerMissed,
   onCanvasContextMenu,
   renderDefaultGizmos = true,
+  renderPolicy,
+  onInteractionChange,
 }: ScientificViewportShellProps) {
   const internalBridgeRef = useRef<any>(null);
   const internalControlsRef = useRef<any>(null);
   const effectiveBridgeRef = bridgeRef ?? internalBridgeRef;
   const effectiveControlsRef = externalControlsRef ?? internalControlsRef;
   const profile = getViewportQualityProfile(qualityProfile);
+  const interactionActiveRef = useRef(false);
+  const resolvedRenderMode = renderPolicy?.mode ?? "demand";
+  const resolvedHidden = renderPolicy?.hidden ?? false;
+  const frameloop: ViewportFrameloopMode =
+    resolvedHidden || resolvedRenderMode === "paused"
+      ? "never"
+      : resolvedRenderMode === "always"
+        ? "always"
+        : "demand";
+  const handleInteractionChange = useCallback((next: boolean) => {
+    if (interactionActiveRef.current === next) {
+      return;
+    }
+    interactionActiveRef.current = next;
+    onInteractionChange?.(next);
+  }, [onInteractionChange]);
 
   const glOptions = useMemo(
     () => ({
@@ -152,6 +192,7 @@ export default function ScientificViewportShell({
   return (
     <div className="relative flex h-full w-full min-h-0 min-w-0 overflow-hidden rounded-md bg-background">
       <Canvas
+        frameloop={frameloop}
         gl={glOptions}
         dpr={Math.min(
           typeof window !== "undefined" ? window.devicePixelRatio : 1,
@@ -179,7 +220,12 @@ export default function ScientificViewportShell({
         <directionalLight position={[-1.2, -1.4, -2.5]} intensity={0.28} />
         <hemisphereLight intensity={0.24} />
         {children}
-        <ShellControls navigation={navigation} target={target} controlsRef={effectiveControlsRef} />
+        <ShellControls
+          navigation={navigation}
+          target={target}
+          controlsRef={effectiveControlsRef}
+          onInteractionChange={handleInteractionChange}
+        />
         <ShellBridgeSync bridgeRef={effectiveBridgeRef} controlsRef={effectiveControlsRef} />
       </Canvas>
 

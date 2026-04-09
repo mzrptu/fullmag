@@ -28,8 +28,6 @@ import {
 import { useControlRoom } from "./ControlRoomContext";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
 import type {
-  FemMeshPart,
-  MeshEntityViewState,
   TextureTransform3D as SceneTextureTransform3D,
 } from "../../../lib/session/types";
 import { defaultMeshEntityViewState } from "../../../lib/session/types";
@@ -429,51 +427,46 @@ export function ViewportCanvasArea() {
     selectedMagnetizationAsset?.kind === "preset_texture" && ctx.activeTransformScope === "texture"
       ? toPreviewTextureTransform(selectedMagnetizationAsset.texture_transform)
       : null;
-  const activeTexturePreviewProxy = useMemo(() => {
-    if (!selectedMagnetizationAsset?.preset_kind) {
-      return "box" as const;
+  const activeTexturePreviewProxy =
+    selectedMagnetizationAsset?.preset_kind
+      ? (
+          MAGNETIC_PRESET_CATALOG.find(
+            (descriptor) => descriptor.kind === selectedMagnetizationAsset.preset_kind,
+          )?.previewProxy ?? "box"
+        )
+      : "box";
+  const applyTextureTransform = (next: PreviewTextureTransform3D) => {
+    if (!ctx.selectedObjectId) {
+      return;
     }
-    return (
-      MAGNETIC_PRESET_CATALOG.find(
-        (descriptor) => descriptor.kind === selectedMagnetizationAsset.preset_kind,
-      )?.previewProxy ?? "box"
-    );
-  }, [selectedMagnetizationAsset?.preset_kind]);
-  const applyTextureTransform = useCallback(
-    (next: PreviewTextureTransform3D) => {
-      if (!ctx.selectedObjectId) {
-        return;
+    ctx.setSceneDocument((previousScene) => {
+      if (!previousScene) {
+        return previousScene;
       }
-      ctx.setSceneDocument((previousScene) => {
-        if (!previousScene) {
-          return previousScene;
-        }
-        const selectedObject = previousScene.objects.find(
-          (object) =>
-            object.id === ctx.selectedObjectId || object.name === ctx.selectedObjectId,
-        );
-        if (!selectedObject) {
-          return previousScene;
-        }
-        return {
-          ...previousScene,
-          magnetization_assets: previousScene.magnetization_assets.map((asset) =>
-            asset.id === selectedObject.magnetization_ref
-              ? {
-                  ...asset,
-                  texture_transform: toSceneTextureTransform(next),
-                }
-              : asset,
-          ),
-          editor: {
-            ...previousScene.editor,
-            active_transform_scope: "texture",
-          },
-        };
-      });
-    },
-    [ctx.selectedObjectId, ctx.setSceneDocument],
-  );
+      const selectedObject = previousScene.objects.find(
+        (object) =>
+          object.id === ctx.selectedObjectId || object.name === ctx.selectedObjectId,
+      );
+      if (!selectedObject) {
+        return previousScene;
+      }
+      return {
+        ...previousScene,
+        magnetization_assets: previousScene.magnetization_assets.map((asset) =>
+          asset.id === selectedObject.magnetization_ref
+            ? {
+                ...asset,
+                texture_transform: toSceneTextureTransform(next),
+              }
+            : asset,
+        ),
+        editor: {
+          ...previousScene.editor,
+          active_transform_scope: "texture",
+        },
+      };
+    });
+  };
 
   const handleRequestObjectSelect = useCallback(
     (objectId: string) => {
@@ -980,6 +973,7 @@ export function ViewportCanvasArea() {
           onTextureTransformCommit={applyTextureTransform}
           activeTransformScope={ctx.activeTransformScope}
           onTransformScopeChange={(scope) => ctx.setActiveTransformScope(scope)}
+          viewportVisible={showFdm3D}
         />
         </ViewportErrorBoundary>
       </div>

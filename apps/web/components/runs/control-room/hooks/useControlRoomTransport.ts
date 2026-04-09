@@ -11,8 +11,6 @@ export function useControlRoomTransport(state: SessionState | null): TransportCo
   const liveState = state?.live_state ?? null;
   const scalarRows = state?.scalar_rows ?? EMPTY_SCALAR_ROWS;
   const preview = state?.preview ?? null;
-  const latestFields = state?.latest_fields ?? null;
-
   const hasSolverTelemetry = useMemo(() => 
     (liveState?.step ?? 0) > 0 ||
     (run?.total_steps ?? 0) > 0 ||

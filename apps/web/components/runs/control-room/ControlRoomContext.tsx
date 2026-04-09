@@ -18,10 +18,8 @@ import { useCurrentLiveStream } from "../../../lib/useSessionStream";
 import { useWorkspaceStore } from "../../../lib/workspace/workspace-store";
 import type {
   ArtifactEntry,
-  CommandStatus,
   DisplaySelection,
   EngineLogEntry,
-  LiveState,
   MeshWorkspaceState,
   QuantityDescriptor,
   ScalarRow,
@@ -31,7 +29,6 @@ import type {
   DomainFrameState,
   FemMeshPart,
   MeshCommandTarget,
-  MeshEntityViewState,
   MeshEntityViewStateMap,
   ModelBuilderGraphV2,
   SceneDocument,
@@ -131,7 +128,6 @@ import {
 import {
   LOCAL_ACTIVE_VISUALIZATION_PRESET_STORAGE_KEY,
   LOCAL_VISUALIZATION_PRESETS_STORAGE_KEY,
-  buildVisualizationPresetNodeId,
   cloneVisualizationPreset,
   createDefaultVisualizationPreset,
   nextVisualizationPresetName,
@@ -148,12 +144,7 @@ import type {
   FieldStats,
   MaterialSummary,
   MeshQualitySummary,
-  PreviewOption,
-  QuickPreviewTarget,
   SessionFooterData,
-  SolverAdaptiveSummary,
-  SolverPlanSummary,
-  SolverRelaxationSummary,
 } from "./types";
 
 /* ── Stable empty arrays ── */
@@ -447,12 +438,18 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [optimisticDisplaySelection, setOptimisticDisplaySelection] =
     useState<DisplaySelection | null>(null);
   const [meshOptionsState, setMeshOptionsState] = useState<MeshOptionsState>(DEFAULT_MESH_OPTIONS);
-  const [meshQualityData, setMeshQualityData] = useState<MeshQualityData | null>(null);
+  const [meshQualityData] = useState<MeshQualityData | null>(null);
   const [meshGenerating, setMeshGenerating] = useState(false);
   const [lastBuiltMeshConfigSignature, setLastBuiltMeshConfigSignature] = useState<string | null>(null);
   const [frontendTraceLog, setFrontendTraceLog] = useState<EngineLogEntry[]>([]);
   const femTopologyKeyRef = useRef<string | null>(null);
   const femMeshDataRef = useRef<FemMeshData | null>(null);
+  const femFieldBuffersRef = useRef<{
+    nNodes: number;
+    x: Float64Array;
+    y: Float64Array;
+    z: Float64Array;
+  } | null>(null);
   const meshConfigSignatureRef = useRef<string | null>(null);
   const pendingMeshConfigSignatureRef = useRef<string | null>(null);
   const lastLoggedCommandStatusRef = useRef<string | null>(null);
@@ -1168,7 +1165,6 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     });
     setSolverSettingsHydrated(true);
   }, [
-    buildScriptBuilderSignature,
     meshOptions,
     remoteSceneDocument,
     remoteModelBuilderGraph,
@@ -2165,7 +2161,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       meshGenGenerationRef.current = null;
       pendingMeshConfigSignatureRef.current = null;
     }
-  }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshHmax, meshOptions]);
+  }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshHmax, meshOptions, setMeshOptions]);
 
   const buildVisualizationPresetFromCurrent = useCallback(
     (name: string, id?: string): VisualizationPreset => {
@@ -2541,7 +2537,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         };
       })
     );
-  }, []);
+  }, [setScriptBuilderCurrentModules]);
 
   const applyGeometryTranslation = useCallback((geometryName: string, dx: number, dy: number, dz: number) => {
     setSceneDocument((previousScene) => {
@@ -3117,8 +3113,22 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const femFieldData = useMemo<FemMeshData["fieldData"] | undefined>(() => {
     if (!femMeshBase || !selectedVectors || selectedVectors.length < femMeshBase.nNodes * 3) return undefined;
     const nNodes = femMeshBase.nNodes;
-    const x = new Array<number>(nNodes), y = new Array<number>(nNodes), z = new Array<number>(nNodes);
-    for (let i = 0; i < nNodes; i++) { x[i] = selectedVectors[i * 3] ?? 0; y[i] = selectedVectors[i * 3 + 1] ?? 0; z[i] = selectedVectors[i * 3 + 2] ?? 0; }
+    let buffers = femFieldBuffersRef.current;
+    if (!buffers || buffers.nNodes !== nNodes) {
+      buffers = {
+        nNodes,
+        x: new Float64Array(nNodes),
+        y: new Float64Array(nNodes),
+        z: new Float64Array(nNodes),
+      };
+      femFieldBuffersRef.current = buffers;
+    }
+    const { x, y, z } = buffers;
+    for (let i = 0; i < nNodes; i++) {
+      x[i] = selectedVectors[i * 3] ?? 0;
+      y[i] = selectedVectors[i * 3 + 1] ?? 0;
+      z[i] = selectedVectors[i * 3 + 2] ?? 0;
+    }
     return { x, y, z };
   }, [femMeshBase, selectedVectors]);
 
@@ -3466,6 +3476,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setConsoleCollapsed, setSidebarCollapsed,
     updatePreview, handleViewModeChange, handleCapture, handleExport, requestPreviewQuantity,
   }), [
+    setWorkspaceMode,
     workspaceMode,
     viewMode, effectiveViewMode, component, plane, sliceIndex, selectedQuantity,
     consoleCollapsed, sidebarCollapsed,
@@ -3595,7 +3606,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart, magneticParts, airPart, interfaceParts, analyzeSelection, requestFocusObject,
     setSceneDocument, setRequestedRuntimeSelection, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset, createVisualizationPreset, setActiveVisualizationPresetRef, applyVisualizationPreset, renameVisualizationPreset, duplicateVisualizationPreset, deleteVisualizationPreset, copyVisualizationPresetToSource, updateVisualizationPreset, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze,
-    requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, setMeshOptions, setSolverSettings, activeTransformScope,
+    applyAntennaTranslation, applyGeometryTranslation, setMeshOptions, setSolverSettings, activeTransformScope,
   ]);
 
   if (!state) {

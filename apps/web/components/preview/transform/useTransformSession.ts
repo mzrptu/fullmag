@@ -1,7 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { ObjectTransform, TransformSession, TransformTool, SnapConfig } from "./types";
-import { IDENTITY_TRANSFORM } from "./types";
-import { applyTransform, snappedTranslation } from "./transformMath";
+import { snappedTranslation } from "./transformMath";
 import type { TransformSpace } from "./types";
 
 interface UseTransformSessionOptions {
@@ -28,6 +27,7 @@ export function useTransformSession({
   space,
   snap,
 }: UseTransformSessionOptions): TransformSessionAPI {
+  void space;
   const [session, setSession] = useState<TransformSession | null>(null);
   const sessionRef = useRef<TransformSession | null>(null);
 

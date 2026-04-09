@@ -30,7 +30,19 @@ interface FemGeometryProps {
   onFaceContextMenu?: (e: any) => void;
 }
 
-function collectFaceNodeIndices(boundaryFaces: number[], faceIndices: readonly number[]): number[] {
+function flattenBoundaryFaces(customBoundaryFaces: readonly [number, number, number][]): Uint32Array {
+  const flat = new Uint32Array(customBoundaryFaces.length * 3);
+  let offset = 0;
+  for (const [a, b, c] of customBoundaryFaces) {
+    flat[offset] = a;
+    flat[offset + 1] = b;
+    flat[offset + 2] = c;
+    offset += 3;
+  }
+  return flat;
+}
+
+function collectFaceNodeIndices(boundaryFaces: ArrayLike<number>, faceIndices: readonly number[]): number[] {
   const maxFaces = Math.floor(boundaryFaces.length / 3);
   const unique = new Set<number>();
   for (const faceIndex of faceIndices) {
@@ -46,7 +58,7 @@ function collectFaceNodeIndices(boundaryFaces: number[], faceIndices: readonly n
 }
 
 function collectElementNodeIndices(
-  elements: number[],
+  elements: ArrayLike<number>,
   nElements: number,
   elementOffsets: readonly number[],
 ): number[] {
@@ -73,8 +85,8 @@ function computeVertexColors(
   nNodes: number,
   field: FemColorField,
   fieldData: FemMeshData["fieldData"] | undefined,
-  nodes: number[],
-  boundaryFaces: number[],
+  nodes: ArrayLike<number>,
+  boundaryFaces: ArrayLike<number>,
   qualityPerFace?: number[] | null,
 ): Float32Array {
   const colors = new Float32Array(nNodes * 3);
@@ -136,7 +148,7 @@ function computeVertexColors(
     let scaleX = 1, scaleY = 1, scaleZ = 1, scaleMagnitude = 1;
     if (fld) {
       let maxAbsX = 0, maxAbsY = 0, maxAbsZ = 0, maxMag = 0;
-      for (let i = 0; i < nNodes; i++) {
+      for (let i = 0; i < nNodes; i += 1) {
         const fx = fld.x[i] ?? 0, fy = fld.y[i] ?? 0, fz = fld.z[i] ?? 0;
         maxAbsX = Math.max(maxAbsX, Math.abs(fx));
         maxAbsY = Math.max(maxAbsY, Math.abs(fy));
@@ -191,29 +203,6 @@ export function FemGeometry({
   onFaceContextMenu,
 }: FemGeometryProps) {
   const { invalidate } = useThree();
-  const displayBoundaryFaceSignature = useMemo(() => {
-    if (customBoundaryFaces && customBoundaryFaces.length > 0) {
-      return `custom:${customBoundaryFaces.length}`;
-    }
-    if (!displayBoundaryFaceIndices || displayBoundaryFaceIndices.length === 0) {
-      return "all";
-    }
-    return [
-      displayBoundaryFaceIndices.length,
-      displayBoundaryFaceIndices[0] ?? 0,
-      displayBoundaryFaceIndices[displayBoundaryFaceIndices.length - 1] ?? 0,
-    ].join(":");
-  }, [customBoundaryFaces, displayBoundaryFaceIndices]);
-  const displayElementSignature = useMemo(() => {
-    if (!displayElementIndices || displayElementIndices.length === 0) {
-      return "all";
-    }
-    return [
-      displayElementIndices.length,
-      displayElementIndices[0] ?? 0,
-      displayElementIndices[displayElementIndices.length - 1] ?? 0,
-    ].join(":");
-  }, [displayElementIndices]);
   const hasFieldColormap = field !== "none";
   const resolvedEdgeColor = useMemo(
     () => (hasFieldColormap ? "#d1d5db" : edgeColor ?? uniformColor ?? "#dbeafe"),
@@ -230,8 +219,6 @@ export function FemGeometry({
   }, [uniformColor, usesNeutralSelectionHighlight]);
 
   // ── Topology memo: only rebuilds when mesh structure changes ─────
-  const topologySignature = `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}:${displayBoundaryFaceSignature}:${displayElementSignature}:${shrinkFactor ?? 1}:${clipEnabled ? `${clipAxis}${clipPos}` : "noclip"}`;
-
   const {
     geometry,
     edgesGeometry,
@@ -246,9 +233,8 @@ export function FemGeometry({
   } = useMemo(() => {
     const { nodes, elements, nNodes } = meshData;
     const boundaryFaces = customBoundaryFaces
-      ? new Uint32Array(customBoundaryFaces.flat())
+      ? flattenBoundaryFaces(customBoundaryFaces)
       : meshData.boundaryFaces;
-    const boundaryFacesArray = Array.from(boundaryFaces);
     const positions = new Float32Array(nNodes * 3);
     for (let i = 0; i < nNodes * 3; i++) positions[i] = nodes[i];
 
@@ -280,14 +266,22 @@ export function FemGeometry({
           return unique.size > 0 ? Array.from(unique) : null;
         })()
       : null;
-    const bboxOffsets = bboxNodeIndices
-      ? bboxNodeIndices.map((nodeIndex) => nodeIndex * 3)
-      : Array.from({ length: nNodes }, (_, index) => index * 3);
-    for (const offset of bboxOffsets) {
-      const x = positions[offset], y = positions[offset + 1], z = positions[offset + 2];
-      if (x < minX) minX = x; if (x > maxX) maxX = x;
-      if (y < minY) minY = y; if (y > maxY) maxY = y;
-      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    if (bboxNodeIndices) {
+      for (const nodeIndex of bboxNodeIndices) {
+        const offset = nodeIndex * 3;
+        const x = positions[offset], y = positions[offset + 1], z = positions[offset + 2];
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+      }
+    } else {
+      for (let nodeIndex = 0; nodeIndex < nNodes; nodeIndex += 1) {
+        const offset = nodeIndex * 3;
+        const x = positions[offset], y = positions[offset + 1], z = positions[offset + 2];
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+      }
     }
     const cX = (minX + maxX) / 2, cY = (minY + maxY) / 2, cZ = (minZ + maxZ) / 2;
     const size = new THREE.Vector3(maxX - minX, maxY - minY, maxZ - minZ);
@@ -305,10 +299,23 @@ export function FemGeometry({
     const doVolumeClip = isVolumetric && clipEnabled;
     const doShrink = isVolumetric && shrinkFactor && shrinkFactor < 0.999;
     const baseElementOffsets = preferredElementIndices
-      ? preferredElementIndices
-          .filter((elementIndex) => Number.isInteger(elementIndex) && elementIndex >= 0 && elementIndex < meshData.nElements)
-          .map((elementIndex) => elementIndex * 4)
-      : Array.from({ length: meshData.nElements }, (_, elementIndex) => elementIndex * 4);
+      ? (() => {
+          const offsets: number[] = [];
+          for (const elementIndex of preferredElementIndices) {
+            if (!Number.isInteger(elementIndex) || elementIndex < 0 || elementIndex >= meshData.nElements) {
+              continue;
+            }
+            offsets.push(elementIndex * 4);
+          }
+          return offsets;
+        })()
+      : (() => {
+          const offsets = new Array<number>(meshData.nElements);
+          for (let elementIndex = 0; elementIndex < meshData.nElements; elementIndex += 1) {
+            offsets[elementIndex] = elementIndex * 4;
+          }
+          return offsets;
+        })();
 
     let finalIndices: Uint32Array | null = null;
     let finalPositions: Float32Array = positions;
@@ -432,11 +439,11 @@ export function FemGeometry({
     const edgesGeom = new THREE.WireframeGeometry(geom);
 
     if (elements.length >= 4) {
-      const seenEdges = new Set<string>();
+      const seenEdges = new Set<number>();
       const registerEdge = (a: number, b: number) => {
         const lo = Math.min(a, b);
         const hi = Math.max(a, b);
-        const key = `${lo}:${hi}`;
+        const key = lo * nNodes + hi;
         if (seenEdges.has(key)) return;
         seenEdges.add(key);
         tetraEdgePairs.push(lo, hi);
@@ -465,13 +472,20 @@ export function FemGeometry({
     const pointNodeIndices =
       customBoundaryFaces && customBoundaryFaces.length > 0
         ? collectFaceNodeIndices(
-            boundaryFacesArray,
-            Array.from({ length: boundaryFaces.length / 3 }, (_, index) => index),
+            boundaryFaces,
+            (() => {
+              const faceCount = Math.floor(boundaryFaces.length / 3);
+              const allFaceIndices = new Array<number>(faceCount);
+              for (let index = 0; index < faceCount; index += 1) {
+                allFaceIndices[index] = index;
+              }
+              return allFaceIndices;
+            })(),
           )
         : activeElementOffsets.length > 0
         ? collectElementNodeIndices(elements, meshData.nElements, activeElementOffsets)
         : preferredFaceIndices
-          ? collectFaceNodeIndices(boundaryFacesArray, preferredFaceIndices)
+          ? collectFaceNodeIndices(boundaryFaces, preferredFaceIndices)
           : Array.from({ length: nNodes }, (_, index) => index);
     const pointPositions = new Float32Array(pointNodeIndices.length * 3);
     pointVMap = new Int32Array(pointNodeIndices.length);
@@ -502,7 +516,6 @@ export function FemGeometry({
     };
   }, [
     customBoundaryFaces,
-    topologySignature,
     clipAxis,
     clipEnabled,
     clipPos,
@@ -533,8 +546,8 @@ export function FemGeometry({
             meshData.nNodes, field, meshData.fieldData,
             meshData.nodes,
             customBoundaryFaces
-              ? customBoundaryFaces.flat()
-              : Array.from(meshData.boundaryFaces),
+              ? flattenBoundaryFaces(customBoundaryFaces)
+              : meshData.boundaryFaces,
             qualityPerFace,
           );
     

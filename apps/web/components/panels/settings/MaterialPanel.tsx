@@ -286,6 +286,11 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
     }));
   };
 
+  const selectedPresetDescriptor: MagneticPresetDescriptor | null =
+    magnetizationAsset?.preset_kind
+      ? MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === magnetizationAsset.preset_kind) ?? null
+      : null;
+
   if (!sceneObject || !materialAsset || !magnetizationAsset) {
     if (!model.material) {
       return <div className="font-mono text-xs text-foreground">Material metadata not available yet.</div>;
@@ -309,13 +314,6 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
   const mat = materialAsset.properties;
   const mag = magnetizationAsset;
   const value = Array.isArray(mag.value) ? mag.value : [0, 0, 1];
-  const selectedPresetDescriptor = useMemo<MagneticPresetDescriptor | null>(
-    () =>
-      mag.preset_kind
-        ? MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === mag.preset_kind) ?? null
-        : null,
-    [mag.preset_kind],
-  );
   const presetParams = mag.preset_params ?? selectedPresetDescriptor?.defaultParams ?? {};
   const hasDmi = hasObjectInteraction(physicsStack, "interfacial_dmi");
   const hasUniaxial = hasObjectInteraction(physicsStack, "uniaxial_anisotropy");

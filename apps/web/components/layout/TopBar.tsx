@@ -3,7 +3,6 @@
 import { type ReactNode } from 'react';
 import { ThemeToggle } from '../theme';
 import { Menu } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import Link from 'next/link';
 
 interface TopBarProps {

@@ -1431,7 +1431,7 @@ export default function RibbonBar(props: RibbonBarProps) {
   const studyNode = useMemo(() => parseStudyNodeContext(props.selectedNodeId), [props.selectedNodeId]);
   const contextualTabs = useMemo(
     () => contextualTabsForSelection(props),
-    [props.quickPreviewTargets, props.selectedNodeId, props.selectedObjectId, props.viewMode],
+    [props],
   );
   const activeTab = (activeCoreTab && visibleTabs.includes(activeCoreTab as RibbonTab)
     ? (activeCoreTab as RibbonTab)

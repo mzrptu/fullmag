@@ -1,4 +1,9 @@
-export type ViewportQualityProfileId = "interactive" | "balanced" | "figure" | "capture";
+export type ViewportQualityProfileId =
+  | "interactive-lite"
+  | "interactive"
+  | "balanced"
+  | "figure"
+  | "capture";
 
 export interface ViewportQualityProfile {
   id: ViewportQualityProfileId;
@@ -15,6 +20,19 @@ export interface ViewportQualityProfile {
 }
 
 export const VIEWPORT_QUALITY_PROFILES: Record<ViewportQualityProfileId, ViewportQualityProfile> = {
+  "interactive-lite": {
+    id: "interactive-lite",
+    label: "Interactive Lite",
+    dprCap: 1,
+    antialias: false,
+    preserveDrawingBuffer: false,
+    toneMapping: "none",
+    edgeOpacity: 0.3,
+    edgeBoost: 0.85,
+    glyphBudget: 700,
+    allowHeavyTransparency: false,
+    captureScale: 1,
+  },
   interactive: {
     id: "interactive",
     label: "Interactive",

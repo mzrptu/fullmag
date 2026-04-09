@@ -3,8 +3,6 @@
 import { useRef, useCallback } from "react";
 import * as THREE from "three";
 import { PivotControls } from "@react-three/drei";
-import type { ObjectTransform } from "./types";
-import { IDENTITY_TRANSFORM } from "./types";
 
 interface TransformGizmoLayerProps {
   /** Whether gizmo is active (object selected + tool is move/rotate/scale) */

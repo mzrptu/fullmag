@@ -14,7 +14,6 @@ export default function OpenActionsSection({
   onResumeCurrentSession,
   onOpenSimulation,
   onOpenScript,
-  onOpenExample,
 }: OpenActionsSectionProps) {
   const actions = [
     {

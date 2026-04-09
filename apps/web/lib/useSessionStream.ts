@@ -5,7 +5,7 @@
  * and provides the useCurrentLiveStream React hook. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiHttpError, currentLiveApiClient } from "./liveApiClient";
+import { currentLiveApiClient } from "./liveApiClient";
 
 /* ── Re-export all types ── */
 export type {
@@ -51,7 +51,6 @@ export type {
 
 import type {
   SessionState,
-  SessionStateCurrentLiveEvent,
   RuntimeCurrentLiveEvent,
   ConnectionStatus,
   UseSessionStreamResult,
@@ -180,18 +179,25 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
       executeConnectRef.current?.();
     }, 0);
     return () => {
-      (unmountedRef as any).current = true;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       const ws = wsRef.current;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const intentionallyClosedSet = intentionallyClosedRef.current;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const disconnectTimer = disconnectTimerRef.current;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const reconnectTimer = reconnectTimerRef.current;
+      (unmountedRef as any).current = true;
       if (ws) {
-        intentionallyClosedRef.current.add(ws);
+        intentionallyClosedSet.add(ws);
         ws.close();
         (wsRef as any).current = null;
       }
-      if (disconnectTimerRef.current !== null) {
-        clearTimeout(disconnectTimerRef.current);
+      if (disconnectTimer !== null) {
+        clearTimeout(disconnectTimer);
       }
-      if (reconnectTimerRef.current !== null) {
-        clearTimeout(reconnectTimerRef.current);
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
       }
     };
   }, [connect]);

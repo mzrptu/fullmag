@@ -86,9 +86,8 @@ export default function SceneAxes3D({
   visible = true,
   profile = "full",
 }: SceneAxes3DProps) {
-  if (profile === "hidden" || !visible) return null;
-
   const axesData = useMemo(() => {
+    if (profile === "hidden" || !visible) return null;
     const [wx, wy, wz] = worldExtent;
     const maxExtent = Math.max(wx, wy, wz);
     if (maxExtent <= 0) return null;
@@ -120,7 +119,7 @@ export default function SceneAxes3D({
       },
       sceneScale: sceneScale,
     };
-  }, [worldExtent, sceneScale]);
+  }, [profile, sceneScale, visible, worldExtent]);
 
   if (!axesData) return null;
 
@@ -134,35 +133,29 @@ export default function SceneAxes3D({
   const labelOffset = maxScene * 0.06;
 
   /* ── Tick marks and labels for each axis ──────────────────────── */
-  const xTickElements = useMemo(() => {
-    return ticks.x.map((val) => {
-      const frac = scaled[0] > 0 ? val / scaled[0] : 0;
-      const sceneX = cx + min[0] + frac * (max[0] - min[0]);
-      const sceneY = cy + min[1];
-      const sceneZ = cz + min[2];
-      return { val, pos: [sceneX, sceneY, sceneZ] as [number, number, number] };
-    });
-  }, [ticks.x, scaled, cx, cy, cz, min, max]);
+  const xTickElements = ticks.x.map((val) => {
+    const frac = scaled[0] > 0 ? val / scaled[0] : 0;
+    const sceneX = cx + min[0] + frac * (max[0] - min[0]);
+    const sceneY = cy + min[1];
+    const sceneZ = cz + min[2];
+    return { val, pos: [sceneX, sceneY, sceneZ] as [number, number, number] };
+  });
 
-  const yTickElements = useMemo(() => {
-    return ticks.y.map((val) => {
-      const frac = scaled[1] > 0 ? val / scaled[1] : 0;
-      const sceneX = cx + min[0];
-      const sceneY = cy + min[1] + frac * (max[1] - min[1]);
-      const sceneZ = cz + min[2];
-      return { val, pos: [sceneX, sceneY, sceneZ] as [number, number, number] };
-    });
-  }, [ticks.y, scaled, cx, cy, cz, min, max]);
+  const yTickElements = ticks.y.map((val) => {
+    const frac = scaled[1] > 0 ? val / scaled[1] : 0;
+    const sceneX = cx + min[0];
+    const sceneY = cy + min[1] + frac * (max[1] - min[1]);
+    const sceneZ = cz + min[2];
+    return { val, pos: [sceneX, sceneY, sceneZ] as [number, number, number] };
+  });
 
-  const zTickElements = useMemo(() => {
-    return ticks.z.map((val) => {
-      const frac = scaled[2] > 0 ? val / scaled[2] : 0;
-      const sceneX = cx + min[0];
-      const sceneY = cy + min[1];
-      const sceneZ = cz + min[2] + frac * (max[2] - min[2]);
-      return { val, pos: [sceneX, sceneY, sceneZ] as [number, number, number] };
-    });
-  }, [ticks.z, scaled, cx, cy, cz, min, max]);
+  const zTickElements = ticks.z.map((val) => {
+    const frac = scaled[2] > 0 ? val / scaled[2] : 0;
+    const sceneX = cx + min[0];
+    const sceneY = cy + min[1];
+    const sceneZ = cz + min[2] + frac * (max[2] - min[2]);
+    return { val, pos: [sceneX, sceneY, sceneZ] as [number, number, number] };
+  });
 
   const showTicks = profile === "full";
   const showLabels = profile === "full" || profile === "compact";

@@ -336,7 +336,7 @@ export default function MagnetizationSlice2D({
     );
 
     return () => {};
-  }, [data, xLen, yLen, dMin, dMax, quantityLabel, component, plane]);
+  }, [data, xLen, yLen, dMin, dMax, quantityId, quantityLabel, component, plane]);
 
   // ─── Resize observer ──────────────────────────────────────────────
   useEffect(() => {

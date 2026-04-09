@@ -80,9 +80,10 @@ function sampleCandidateNodes(
   nodes: number[], 
   candidateNodes: readonly number[],
   targetDensity: number,
-  fld?: { x: number[], y: number[], z: number[] }
 ): number[] {
-  const allBoundaryNodes = Array.from(new Set(candidateNodes));
+  if (candidateNodes.length === 0 || targetDensity <= 0) return [];
+  // Input candidate list is already de-duplicated in the caller.
+  const allBoundaryNodes = candidateNodes as number[];
 
   if (allBoundaryNodes.length <= targetDensity) return allBoundaryNodes;
 
@@ -102,10 +103,12 @@ function sampleCandidateNodes(
   const nBinsX = Math.max(1, Math.ceil((bMaxX - bMinX) * invCell));
   const nBinsY = Math.max(1, Math.ceil((bMaxY - bMinY) * invCell));
 
-  const cellMap = new Map<number, { 
-    cx: number, cy: number, cz: number, 
-    bestDistSq: number, bestNi: number, 
-    sumX: number, sumY: number, sumZ: number, count: number 
+  const cellMap = new Map<number, {
+    cx: number;
+    cy: number;
+    cz: number;
+    bestDistSq: number;
+    bestNi: number;
   }>();
 
   for (const ni of allBoundaryNodes) {
@@ -118,8 +121,11 @@ function sampleCandidateNodes(
     let cell = cellMap.get(key);
     if (!cell) {
       cell = {
-        cx: bMinX + (ix + 0.5) * cellSize, cy: bMinY + (iy + 0.5) * cellSize, cz: bMinZ + (iz + 0.5) * cellSize,
-        bestDistSq: Infinity, bestNi: -1, sumX: 0, sumY: 0, sumZ: 0, count: 0
+        cx: bMinX + (ix + 0.5) * cellSize,
+        cy: bMinY + (iy + 0.5) * cellSize,
+        cz: bMinZ + (iz + 0.5) * cellSize,
+        bestDistSq: Infinity,
+        bestNi: -1,
       };
       cellMap.set(key, cell);
     }
@@ -130,17 +136,9 @@ function sampleCandidateNodes(
       cell.bestDistSq = distSq;
       cell.bestNi = ni;
     }
-
-    if (fld) {
-      let vx = fld.x[ni] ?? 0, vy = fld.y[ni] ?? 0, vz = fld.z[ni] ?? 0;
-      const len = Math.sqrt(vx*vx + vy*vy + vz*vz);
-      if (len > 1e-12) { vx /= len; vy /= len; vz /= len; }
-      cell.sumX += vx; cell.sumY += vy; cell.sumZ += vz;
-    }
-    cell.count++;
   }
 
-  interface Candidate { ni: number; score: number; hash: number; }
+  interface Candidate { ni: number; hash: number; }
   const candidates: Candidate[] = [];
   
   const hashFn = (k: number) => {
@@ -149,35 +147,38 @@ function sampleCandidateNodes(
   };
 
   for (const [key, cell] of cellMap.entries()) {
-    let score = 0;
-    if (cell.count > 0 && fld) {
-      const avgLen = Math.sqrt(cell.sumX * cell.sumX + cell.sumY * cell.sumY + cell.sumZ * cell.sumZ);
-      score = 1.0 - (avgLen / cell.count); 
-    }
-    candidates.push({ ni: cell.bestNi, score, hash: hashFn(key) });
+    candidates.push({ ni: cell.bestNi, hash: hashFn(key) });
   }
 
   if (candidates.length <= targetDensity) return candidates.map((c) => c.ni);
 
   candidates.sort((a, b) => a.hash - b.hash);
-  const result: number[] = [];
-  const baseQuota = Math.floor(targetDensity * 0.2);
-  for (let i = 0; i < baseQuota; i++) {
-    if (i < candidates.length) {
-      result.push(candidates[i].ni);
-      candidates[i].score = -1;
-    }
+  const result: number[] = new Array(Math.min(targetDensity, candidates.length));
+  const step = candidates.length / result.length;
+  for (let i = 0; i < result.length; i += 1) {
+    result[i] = candidates[Math.floor(i * step)].ni;
   }
-  
-  candidates.sort((a, b) => b.score - a.score);
-  let added = 0;
-  for (let i = 0; i < candidates.length && added < (targetDensity - baseQuota); i++) {
-    if (candidates[i].score !== -1) {
-      result.push(candidates[i].ni);
-      added++;
+
+  // De-duplicate occasional collisions due to index quantization.
+  if (result.length > 1) {
+    const unique: number[] = [];
+    const seen = new Set<number>();
+    for (const nodeIndex of result) {
+      if (!seen.has(nodeIndex)) {
+        seen.add(nodeIndex);
+        unique.push(nodeIndex);
+      }
     }
+    if (unique.length === result.length) return result;
+    for (const candidate of candidates) {
+      if (unique.length >= targetDensity) break;
+      if (seen.has(candidate.ni)) continue;
+      seen.add(candidate.ni);
+      unique.push(candidate.ni);
+    }
+    return unique;
   }
-  
+
   return result;
 }
 
@@ -232,53 +233,81 @@ export function FemArrows({
     };
   }, [material]);
 
-  const { count, instancePositions, quaternions, scales, colors } = useMemo(() => {
-    const emptyRet = { count: 0, instancePositions: [] as number[][], quaternions: new Float32Array(), scales: new Float32Array(), colors: new Float32Array() };
+  const effectiveNodeMask = useMemo(() => {
+    if (activeNodeMask && activeNodeMask.length === meshData.nNodes) {
+      return activeNodeMask;
+    }
+    if (
+      meshData.quantityDomain === "magnetic_only" &&
+      meshData.activeMask &&
+      meshData.activeMask.length === meshData.nNodes
+    ) {
+      return meshData.activeMask;
+    }
+    return null;
+  }, [activeNodeMask, meshData.activeMask, meshData.nNodes, meshData.quantityDomain]);
+
+  const boundaryCandidateNodes = useMemo(() => {
+    const unique = new Set<number>();
+    if (boundaryFaceIndices && boundaryFaceIndices.length > 0) {
+      for (const faceIndex of boundaryFaceIndices) {
+        const base = faceIndex * 3;
+        if (base + 2 >= meshData.boundaryFaces.length) {
+          continue;
+        }
+        unique.add(meshData.boundaryFaces[base]);
+        unique.add(meshData.boundaryFaces[base + 1]);
+        unique.add(meshData.boundaryFaces[base + 2]);
+      }
+    } else {
+      for (let i = 0; i < meshData.boundaryFaces.length; i += 1) {
+        unique.add(meshData.boundaryFaces[i]);
+      }
+    }
+    return Array.from(unique);
+  }, [boundaryFaceIndices, meshData.boundaryFaces]);
+
+  const filteredBoundaryCandidateNodes = useMemo(() => {
+    if (!effectiveNodeMask) {
+      return boundaryCandidateNodes;
+    }
+    return boundaryCandidateNodes.filter((nodeIndex) => effectiveNodeMask[nodeIndex] === true);
+  }, [boundaryCandidateNodes, effectiveNodeMask]);
+
+  const sampledNodes = useMemo(() => {
+    if (!visible) return [] as number[];
+    if (meshData.quantityDomain === "magnetic_only" && !effectiveNodeMask) {
+      return [] as number[];
+    }
+    const candidates =
+      filteredBoundaryCandidateNodes.length > 0
+        ? filteredBoundaryCandidateNodes
+        : boundaryCandidateNodes;
+    return sampleCandidateNodes(meshData.nodes, candidates, arrowDensity);
+  }, [
+    arrowDensity,
+    boundaryCandidateNodes,
+    effectiveNodeMask,
+    filteredBoundaryCandidateNodes,
+    meshData.nodes,
+    meshData.quantityDomain,
+    visible,
+  ]);
+
+  const { count, positions, quaternions, scales, colors } = useMemo(() => {
+    const emptyRet = {
+      count: 0,
+      positions: new Float32Array(0),
+      quaternions: new Float32Array(0),
+      scales: new Float32Array(0),
+      colors: new Float32Array(0),
+    };
     if (!visible) return emptyRet;
     const fld = meshData.fieldData;
     if (!fld) return emptyRet;
-    const effectiveNodeMask =
-      activeNodeMask && activeNodeMask.length === meshData.nNodes
-        ? activeNodeMask
-        : meshData.quantityDomain === "magnetic_only" &&
-            meshData.activeMask &&
-            meshData.activeMask.length === meshData.nNodes
-          ? meshData.activeMask
-          : null;
-    if (meshData.quantityDomain === "magnetic_only" && !effectiveNodeMask) {
+    if (sampledNodes.length === 0) {
       return emptyRet;
     }
-
-    const boundaryCandidateNodes = (() => {
-      const unique = new Set<number>();
-      if (boundaryFaceIndices && boundaryFaceIndices.length > 0) {
-        for (const faceIndex of boundaryFaceIndices) {
-          const base = faceIndex * 3;
-          if (base + 2 >= meshData.boundaryFaces.length) {
-            continue;
-          }
-          unique.add(meshData.boundaryFaces[base]);
-          unique.add(meshData.boundaryFaces[base + 1]);
-          unique.add(meshData.boundaryFaces[base + 2]);
-        }
-      } else {
-        for (let i = 0; i < meshData.boundaryFaces.length; i += 1) {
-          unique.add(meshData.boundaryFaces[i]);
-        }
-      }
-      return Array.from(unique);
-    })();
-    const maskedBoundaryCandidateNodes = effectiveNodeMask
-      ? boundaryCandidateNodes.filter((nodeIndex) => effectiveNodeMask[nodeIndex] === true)
-      : null;
-    const sampledNodes = sampleCandidateNodes(
-      meshData.nodes,
-      maskedBoundaryCandidateNodes && maskedBoundaryCandidateNodes.length > 0
-        ? maskedBoundaryCandidateNodes
-        : boundaryCandidateNodes,
-      arrowDensity,
-      fld,
-    );
     const resultCount = sampledNodes.length;
 
     let maxAbsX = 0, maxAbsY = 0, maxAbsZ = 0, maxMag = 0;
@@ -299,7 +328,7 @@ export function FemArrows({
     const quaternionsList = new Float32Array(resultCount * 4);
     const scalesList = new Float32Array(resultCount * 3);
     const colorsList = new Float32Array(resultCount * 3);
-    const positions: number[][] = [];
+    const positionsList = new Float32Array(resultCount * 3);
 
     const _dir = new THREE.Vector3();
     const _defaultUp = new THREE.Vector3(0, 0, 1);
@@ -308,11 +337,9 @@ export function FemArrows({
 
     for (let i = 0; i < resultCount; i++) {
       const ni = sampledNodes[i];
-      positions.push([
-        meshData.nodes[ni * 3] - center.x,
-        meshData.nodes[ni * 3 + 1] - center.y,
-        meshData.nodes[ni * 3 + 2] - center.z,
-      ]);
+      positionsList[i * 3] = meshData.nodes[ni * 3] - center.x;
+      positionsList[i * 3 + 1] = meshData.nodes[ni * 3 + 1] - center.y;
+      positionsList[i * 3 + 2] = meshData.nodes[ni * 3 + 2] - center.z;
       const vx = fld.x[ni] ?? 0, vy = fld.y[ni] ?? 0, vz = fld.z[ni] ?? 0;
       const len = Math.sqrt(vx * vx + vy * vy + vz * vz);
 
@@ -386,11 +413,16 @@ export function FemArrows({
       colorsList[i * 3 + 2] = _color.b;
     }
 
-    return { count: resultCount, instancePositions: positions, quaternions: quaternionsList, scales: scalesList, colors: colorsList };
+    return {
+      count: resultCount,
+      positions: positionsList,
+      quaternions: quaternionsList,
+      scales: scalesList,
+      colors: colorsList,
+    };
   }, [
     meshData,
     field,
-    arrowDensity,
     colorMode,
     monoColor,
     center,
@@ -398,8 +430,7 @@ export function FemArrows({
     lengthMode,
     lengthScale,
     thickness,
-    activeNodeMask,
-    boundaryFaceIndices,
+    sampledNodes,
   ]);
   const capacity = Math.max(count, 1);
   const instanceColorAttribute = useMemo(() => {
@@ -417,9 +448,10 @@ export function FemArrows({
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.count = count;
     (mesh.instanceColor as any).needsUpdate = true;
+    // eslint-disable-next-line react-hooks/immutability
     (material as any).needsUpdate = true;
     invalidate();
-  }, [count, glyphPolicy.renderOrder, instanceColorAttribute, invalidate]);
+  }, [count, glyphPolicy.renderOrder, instanceColorAttribute, invalidate, material]);
 
   // Apply instance matrices and per-instance colors using the same low-level
   // buffer path that already works reliably in FDM preview rendering.
@@ -430,16 +462,16 @@ export function FemArrows({
     const instanceColor = mesh.instanceColor ?? instanceColorAttribute;
     if (!instanceColor) return;
     const matrixArray = mesh.instanceMatrix.array as Float32Array;
-
+    const colorArray = instanceColor.array as Float32Array;
+    colorArray.set(colors.subarray(0, count * 3), 0);
     const dummy = new THREE.Object3D();
-    const color = new THREE.Color();
     let matrixOffset = 0;
 
     for (let i = 0; i < count; i += 1) {
       dummy.position.set(
-        instancePositions[i][0],
-        instancePositions[i][1],
-        instancePositions[i][2],
+        positions[i * 3],
+        positions[i * 3 + 1],
+        positions[i * 3 + 2],
       );
       dummy.quaternion.set(
         quaternions[i * 4],
@@ -451,21 +483,22 @@ export function FemArrows({
       dummy.updateMatrix();
       dummy.matrix.toArray(matrixArray, matrixOffset);
       matrixOffset += 16;
-      color.fromArray(colors, i * 3);
-      mesh.setColorAt(i, color);
     }
 
     mesh.count = count;
     (mesh.instanceMatrix as any).needsUpdate = true;
+    // eslint-disable-next-line react-hooks/immutability
     (instanceColor as any).needsUpdate = true;
+    // eslint-disable-next-line react-hooks/immutability
     (material as any).needsUpdate = true;
     invalidate();
   }, [
     colors,
     count,
     instanceColorAttribute,
-    instancePositions,
+    positions,
     invalidate,
+    material,
     quaternions,
     scales,
   ]);

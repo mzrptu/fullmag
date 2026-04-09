@@ -3,7 +3,6 @@
 import { useCallback, useState, type ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
-import { Footer } from './Footer';
 import { navigationItems } from './navigation';
 
 interface AppLayoutProps {

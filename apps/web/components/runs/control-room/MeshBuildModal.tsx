@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { CheckCircle2, Loader2, AlertTriangle, X, Minimize2, GitCommitHorizontal, Layers, Triangle } from "lucide-react";
 
 import type { EngineLogEntry, MeshWorkspaceState } from "../../../lib/useSessionStream";
@@ -102,9 +101,7 @@ export default function MeshBuildModal({
     })
     .slice(-16)
     .reverse();
-
-  // Stable fallback timestamp for errors detected during this modal session
-  const [fallbackTimestamp] = useState(() => Date.now());
+  const fallbackTimestamp = engineLog.at(-1)?.timestampUnixMs ?? 0;
 
   return (
     <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/60 px-6 py-8 backdrop-blur-sm">
@@ -156,8 +153,8 @@ export default function MeshBuildModal({
             </div>
             {hasError ? (
               <BackendErrorNotice
-                error={
-                  errorDetails ?? {
+                  error={
+                    errorDetails ?? {
                     timestampUnixMs: fallbackTimestamp,
                     level: "error",
                     title: "Operation interrupted by backend error",

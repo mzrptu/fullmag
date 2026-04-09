@@ -1,4 +1,4 @@
-import type { SceneDocument, MagnetizationAsset, TextureTransform3D } from "./types";
+import type { SceneDocument, MagnetizationAsset } from "./types";
 import { MAGNETIC_PRESET_CATALOG, type MagneticPresetDescriptor } from "../magnetizationPresetCatalog";
 
 function cloneSceneDocument(scene: SceneDocument): SceneDocument {

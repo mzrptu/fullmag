@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { applyMagnetizationHsl } from "../magnetizationColor";
 
 export const COMP_NEGATIVE = new THREE.Color("#2f6caa");
 export const COMP_NEUTRAL  = new THREE.Color("#f4f1ed");
@@ -8,6 +7,12 @@ export const COMP_POSITIVE = new THREE.Color("#cf6256");
 export const QUALITY_GOOD   = new THREE.Color("#35b779");
 export const QUALITY_MID    = new THREE.Color("#fde725");
 export const QUALITY_BAD    = new THREE.Color("#cf6256");
+const MAG_STOPS = [
+  new THREE.Color(0x440154),
+  new THREE.Color(0x31688e),
+  new THREE.Color(0x35b779),
+  new THREE.Color(0xfde725),
+] as const;
 
 export function divergingColor(value: number, color: THREE.Color): void {
   const v = THREE.MathUtils.clamp(value, -1, 1);
@@ -17,15 +22,9 @@ export function divergingColor(value: number, color: THREE.Color): void {
 
 export function magnitudeColor(mag: number, color: THREE.Color): void {
   const t = THREE.MathUtils.clamp(mag, 0, 1);
-  const stops = [
-    new THREE.Color(0x440154),
-    new THREE.Color(0x31688e),
-    new THREE.Color(0x35b779),
-    new THREE.Color(0xfde725),
-  ];
   const idx = Math.min(Math.floor(t * 3), 2);
   const frac = t * 3 - idx;
-  color.copy(stops[idx]).lerp(stops[idx + 1], frac);
+  color.copy(MAG_STOPS[idx]).lerp(MAG_STOPS[idx + 1], frac);
 }
 
 export function qualityColor(ar: number, color: THREE.Color): void {
@@ -47,7 +46,7 @@ export function sicnQualityColor(sicn: number, color: THREE.Color): void {
   }
 }
 
-export function computeFaceAspectRatios(nodes: number[], faces: number[]): Float32Array {
+export function computeFaceAspectRatios(nodes: ArrayLike<number>, faces: ArrayLike<number>): Float32Array {
   const nFaces = faces.length / 3;
   const ars = new Float32Array(nFaces);
   for (let f = 0; f < nFaces; f++) {

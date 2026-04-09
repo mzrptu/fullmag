@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useEffect } from "react";
 import { useTransformMode } from "./TransformModeStore";
 import type { TransformTool } from "./types";
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
 import { Button } from "../../ui/button";
 import { SidebarSection } from "./primitives";

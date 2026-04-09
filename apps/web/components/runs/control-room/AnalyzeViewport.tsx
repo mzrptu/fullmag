@@ -55,11 +55,11 @@ export default function AnalyzeViewport() {
   const setSelectedModeIndex = useCallback(
     (index: number | null) =>
       model.setAnalyzeSelection((prev) => ({ ...prev, selectedModeIndex: index })),
-    [model.setAnalyzeSelection],
+    [model],
   );
   const setAnalyzeTab = useCallback(
     (tab: Parameters<typeof model.selectAnalyzeTab>[0]) => model.selectAnalyzeTab(tab),
-    [model.selectAnalyzeTab],
+    [model],
   );
 
   const {

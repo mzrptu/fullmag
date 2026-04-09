@@ -8,7 +8,7 @@ import type {
   MeshEntityViewStateMap,
   MeshQualityStats,
 } from "../../../lib/session/types";
-import { partMeshTint, partRoleTint } from "./femColorUtils";
+import { partMeshTint } from "./femColorUtils";
 import { qualityToneClass, qualityLabel } from "./femQualityUtils";
 
 /* ── Types ── */

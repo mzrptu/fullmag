@@ -15,6 +15,11 @@ export function DraggableViewportBlock({
   defaultOffset = { x: 0, y: 0 },
 }: DraggableViewportBlockProps) {
   const [offset, setOffset] = useState(defaultOffset);
+  const dragHandleProps: React.HTMLAttributes<HTMLElement> = {
+    className:
+      "cursor-grab active:cursor-grabbing touch-none select-none rounded-md border border-border/20 bg-background/35 px-2 py-1 text-[0.6rem] font-semibold text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground",
+    title: "Move panel",
+  };
   const dragRef = useRef<{
     dragging: boolean;
     pointerId: number | null;
@@ -35,7 +40,7 @@ export function DraggableViewportBlock({
     setOffset(defaultOffset);
     dragRef.current.baseX = defaultOffset.x;
     dragRef.current.baseY = defaultOffset.y;
-  }, [defaultOffset.x, defaultOffset.y]);
+  }, [defaultOffset]);
 
   useEffect(() => {
     function onPointerMove(event: PointerEvent) {
@@ -81,19 +86,15 @@ export function DraggableViewportBlock({
     event.stopPropagation();
   }, [offset.x, offset.y]);
 
+  dragHandleProps.onPointerDown = handlePointerDown;
+
   return (
     <div
       className={cn("pointer-events-auto will-change-transform", className)}
       style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0)` }}
     >
-      {children({
-        dragHandleProps: {
-          onPointerDown: handlePointerDown,
-          className:
-            "cursor-grab active:cursor-grabbing touch-none select-none rounded-md border border-border/20 bg-background/35 px-2 py-1 text-[0.6rem] font-semibold text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground",
-          title: "Move panel",
-        },
-      })}
+      {/* eslint-disable-next-line react-hooks/refs */}
+      {children({ dragHandleProps })}
     </div>
   );
 }

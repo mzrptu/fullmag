@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   CircleDashed,
-  Cpu,
   Eye,
   EyeOff,
   GitCommitHorizontal,
@@ -14,7 +13,6 @@ import {
   Loader2,
   MemoryStick,
   Ruler,
-  Scissors,
   SplitSquareHorizontal,
   Triangle,
 } from "lucide-react";
@@ -93,21 +91,18 @@ export default function MeshPanel() {
     engineLog,
   } = ctx;
 
-  const pipelinePhases = useMemo(
-    () =>
-      meshWorkspace?.mesh_pipeline_status?.length
-        ? meshWorkspace.mesh_pipeline_status
-        : buildMeshPipelinePhases({
-            engineLog,
-            meshSource,
-            nodeCount: effectiveFemMesh?.nodes.length ?? 0,
-            elementCount: effectiveFemMesh?.elements.length ?? 0,
-            meshOptions: ctx.meshOptions,
-            meshQualityData,
-            workspaceStatus,
-          }),
-    [ctx.meshOptions, effectiveFemMesh?.elements.length, effectiveFemMesh?.nodes.length, engineLog, meshQualityData, meshSource, meshWorkspace?.mesh_pipeline_status, workspaceStatus],
-  );
+  const pipelinePhases =
+    meshWorkspace?.mesh_pipeline_status?.length
+      ? meshWorkspace.mesh_pipeline_status
+      : buildMeshPipelinePhases({
+          engineLog,
+          meshSource,
+          nodeCount: effectiveFemMesh?.nodes.length ?? 0,
+          elementCount: effectiveFemMesh?.elements.length ?? 0,
+          meshOptions: ctx.meshOptions,
+          meshQualityData,
+          workspaceStatus,
+        });
 
   const meshHighlights = useMemo(() => extractMeshLogHighlights(engineLog), [engineLog]);
   const presetLabel =

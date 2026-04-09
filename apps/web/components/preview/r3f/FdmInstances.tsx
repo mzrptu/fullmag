@@ -2,6 +2,7 @@
 
 import { memo, useRef, useEffect, useMemo } from "react";
 import * as THREE from "three";
+import { useThree } from "@react-three/fiber";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { applyMagnetizationHsl } from "../magnetizationColor";
 import { COMP_NEGATIVE, COMP_NEUTRAL, COMP_POSITIVE } from "./colorUtils";
@@ -55,7 +56,6 @@ const QUALITY_CONFIGS: Record<QualityLevel, QualityConfig> = {
 
 /* ── Constants ─────────────────────────────────────────────────────── */
 
-const _dummy = new THREE.Object3D();
 const _defaultUp = new THREE.Vector3(0, 1, 0);
 const _tempVec = new THREE.Vector3();
 const _tempPos = new THREE.Vector3();
@@ -169,10 +169,6 @@ function writeScaleTranslateMatrix(
   matrices[offset + 15] = 1;
 }
 
-function writeHiddenMatrix(matrices: Float32Array, offset: number) {
-  writeScaleTranslateMatrix(matrices, offset, 0, 0, 0, 0, 0, 0);
-}
-
 /* ── Component ─────────────────────────────────────────────────────── */
 
 function FdmInstances({
@@ -186,6 +182,8 @@ function FdmInstances({
   onVisibleCount,
 }: FdmInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const displayToCellRef = useRef<Uint32Array | null>(null);
+  const { invalidate } = useThree();
   const [nx, ny, nz] = grid;
   const count = nx * ny * nz;
   const mode = settings.renderMode;
@@ -257,70 +255,89 @@ function FdmInstances({
     const colors = instanceColor.array as Float32Array;
     const matrices = mesh.instanceMatrix.array as Float32Array;
 
+    if (!displayToCellRef.current || displayToCellRef.current.length < count) {
+      displayToCellRef.current = new Uint32Array(count);
+    }
+    const displayToCell = displayToCellRef.current;
+
     const expectedVectorCount = nx * ny * nz * 3;
     const hasVectors = vectors && vectors.length >= expectedVectorCount;
+
+    const minIx = Math.max(0, Math.floor(isolateGridBounds?.minIx ?? 0));
+    const maxIx = Math.min(nx - 1, Math.ceil(isolateGridBounds?.maxIx ?? nx - 1));
+    const minIy = Math.max(0, Math.floor(isolateGridBounds?.minIy ?? 0));
+    const maxIy = Math.min(ny - 1, Math.ceil(isolateGridBounds?.maxIy ?? ny - 1));
+    const minIz = Math.max(0, Math.floor(isolateGridBounds?.minIz ?? 0));
+    const maxIz = Math.min(nz - 1, Math.ceil(isolateGridBounds?.maxIz ?? nz - 1));
+
+    if (minIx > maxIx || minIy > maxIy || minIz > maxIz) {
+      mesh.count = 0;
+      mesh.instanceMatrix.needsUpdate = true;
+      instanceColor.needsUpdate = true;
+      onVisibleCount?.(0);
+      invalidate();
+      return;
+    }
 
     if (!hasVectors && !geometryMode) {
       mesh.count = 0;
       mesh.instanceMatrix.needsUpdate = true;
       instanceColor.needsUpdate = true;
       onVisibleCount?.(0);
+      invalidate();
       return;
     }
 
-    mesh.count = count;
-
     if (!hasVectors && geometryMode) {
-      // Geometry-only mode: steel-gray voxels
       const gapScale = Math.max(0.12, 1 - settings.voxelGap);
+      const depthS = nz > 1 ? gapScale : Math.max(0.22, gapScale * 0.42);
+      _color.setHSL(210 / 360, 0.08, 0.55);
       let visible = 0;
-      let idx = 0;
-      for (let iz = 0; iz < nz; iz++) {
-        for (let iy = 0; iy < ny; iy++) {
-          for (let ix = 0; ix < nx; ix++) {
-            const isActive = !activeMask || activeMask[idx];
-            const inIsolateBounds = !isolateGridBounds || (
-              ix >= isolateGridBounds.minIx && ix <= isolateGridBounds.maxIx &&
-              iy >= isolateGridBounds.minIy && iy <= isolateGridBounds.maxIy &&
-              iz >= isolateGridBounds.minIz && iz <= isolateGridBounds.maxIz
-            );
-            if (!isActive || !inIsolateBounds) {
-              writeHiddenMatrix(matrices, idx * 16);
-            } else {
-              visible++;
-              const depthS = nz > 1 ? gapScale : Math.max(0.22, gapScale * 0.42);
-              writeScaleTranslateMatrix(
-                matrices,
-                idx * 16,
-                ix,
-                iz,
-                iy,
-                gapScale,
-                depthS,
-                gapScale,
-              );
+      for (let iz = minIz; iz <= maxIz; iz += 1) {
+        const zStride = iz * nx * ny;
+        for (let iy = minIy; iy <= maxIy; iy += 1) {
+          const yStride = iy * nx;
+          for (let ix = minIx; ix <= maxIx; ix += 1) {
+            const cellIndex = zStride + yStride + ix;
+            if (activeMask && !activeMask[cellIndex]) {
+              continue;
             }
-            _color.setHSL(210 / 360, 0.08, 0.55);
-            colors[idx * 3 + 0] = _color.r;
-            colors[idx * 3 + 1] = _color.g;
-            colors[idx * 3 + 2] = _color.b;
-            idx++;
+            const outBaseMatrix = visible * 16;
+            const outBaseColor = visible * 3;
+            writeScaleTranslateMatrix(
+              matrices,
+              outBaseMatrix,
+              ix,
+              iz,
+              iy,
+              gapScale,
+              depthS,
+              gapScale,
+            );
+            colors[outBaseColor] = _color.r;
+            colors[outBaseColor + 1] = _color.g;
+            colors[outBaseColor + 2] = _color.b;
+            displayToCell[visible] = cellIndex;
+            visible += 1;
           }
         }
       }
+      mesh.count = visible;
       onVisibleCount?.(visible);
       mesh.instanceMatrix.needsUpdate = true;
       instanceColor.needsUpdate = true;
       if (!Array.isArray(mesh.material)) {
-        (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity = 0.85 * sceneOpacityMultiplier;
-        (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).transparent = (0.85 * sceneOpacityMultiplier) < 0.999;
-        (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite = true;
-        mesh.material.needsUpdate = true;
+        const materialRef = mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial;
+        const effectiveOpacity = 0.85 * sceneOpacityMultiplier;
+        materialRef.opacity = effectiveOpacity;
+        materialRef.transparent = effectiveOpacity < 0.999;
+        materialRef.depthWrite = true;
+        materialRef.needsUpdate = true;
       }
+      invalidate();
       return;
     }
 
-    // Full field rendering (glyph or voxel)
     const {
       sampling,
       voxelColorMode,
@@ -344,123 +361,104 @@ function FdmInstances({
     }
     const normMag = Math.max(maxMagnitude, ZERO_VEC_EPSILON);
 
-    let visible = 0;
-    let idx = 0;
+    const startIx = step === 1 ? minIx : minIx + ((step - (minIx % step)) % step);
+    const startIy = step === 1 ? minIy : minIy + ((step - (minIy % step)) % step);
+    const startIz = step === 1 || nz <= 1 ? minIz : minIz + ((step - (minIz % step)) % step);
 
-    for (let iz = 0; iz < nz; iz++) {
-      for (let iy = 0; iy < ny; iy++) {
-        for (let ix = 0; ix < nx; ix++) {
-          const base = idx * 3;
+    let visible = 0;
+    for (let iz = startIz; iz <= maxIz; iz += nz <= 1 ? 1 : step) {
+      const zStride = iz * nx * ny;
+      for (let iy = startIy; iy <= maxIy; iy += step) {
+        const yStride = iy * nx;
+        for (let ix = startIx; ix <= maxIx; ix += step) {
+          const cellIndex = zStride + yStride + ix;
+          if (activeMask && !activeMask[cellIndex]) {
+            continue;
+          }
+          const base = cellIndex * 3;
           const mx = vectors![base];
           const my = vectors![base + 1];
           const mz = vectors![base + 2];
-
-          const sampled =
-            step === 1 ||
-            (ix % step === 0 && iy % step === 0 && (nz <= 1 || iz % step === 0));
-
           const mag = Math.sqrt(mx * mx + my * my + mz * mz);
+          if (isVoxel && mag < voxelThreshold) {
+            continue;
+          }
+          if (!isVoxel && mx === 0 && my === 0 && mz === 0) {
+            continue;
+          }
+
+          const outBaseMatrix = visible * 16;
+          const outBaseColor = visible * 3;
           const normalizedStrength = Math.min(1, mag / normMag);
           const strengthScale = STRENGTH_SCALE_MIN + STRENGTH_SCALE_RANGE * Math.sqrt(normalizedStrength);
 
           if (isVoxel) {
-            const cellActive = !activeMask || activeMask[idx];
-            // Always use magnitude for visibility — decoupled from color mode (P0 fix).
-            // Also apply isolate bounds if present (P0 FDM isolate fix).
-            const inIsolateBounds = !isolateGridBounds || (
-              ix >= isolateGridBounds.minIx && ix <= isolateGridBounds.maxIx &&
-              iy >= isolateGridBounds.minIy && iy <= isolateGridBounds.maxIy &&
-              iz >= isolateGridBounds.minIz && iz <= isolateGridBounds.maxIz
-            );
-            const isVisible = cellActive && sampled && mag >= voxelThreshold && inIsolateBounds;
-
             let worldY = iz;
             let vH = depthScale * strengthScale;
             const voxelScale = baseScale * strengthScale;
-
-            if (topoEnabled && isVisible) {
+            if (topoEnabled) {
               const compVal = componentValue(mx, my, mz, topoComponent);
               const displacement = compVal * topoMultiplier;
               const topo = resolveVoxelTopography(iz, vH, displacement);
               worldY = topo.centerZ;
               vH = topo.depthScale;
             }
-
-            if (!isVisible) {
-              writeHiddenMatrix(matrices, idx * 16);
-            } else {
-              visible++;
-              writeScaleTranslateMatrix(
-                matrices,
-                idx * 16,
-                ix,
-                worldY,
-                iy,
-                voxelScale,
-                vH,
-                voxelScale,
-              );
-            }
-
+            writeScaleTranslateMatrix(
+              matrices,
+              outBaseMatrix,
+              ix,
+              worldY,
+              iy,
+              voxelScale,
+              vH,
+              voxelScale,
+            );
             applyVoxelColor(mx, my, mz, voxelColorMode, _color);
           } else {
-            const cellActive = !activeMask || activeMask[idx];
-            const inIsolateBounds = !isolateGridBounds || (
-              ix >= isolateGridBounds.minIx && ix <= isolateGridBounds.maxIx &&
-              iy >= isolateGridBounds.minIy && iy <= isolateGridBounds.maxIy &&
-              iz >= isolateGridBounds.minIz && iz <= isolateGridBounds.maxIz
-            );
-            const isVisible = cellActive && (mx !== 0 || my !== 0 || mz !== 0) && sampled && inIsolateBounds;
-
-            if (!isVisible) {
-              writeHiddenMatrix(matrices, idx * 16);
+            _tempPos.set(ix, iz, iy);
+            const glyphScale = GLYPH_SCALE_MIN + GLYPH_SCALE_RANGE * Math.sqrt(Math.min(1, mag / normMag));
+            _tempScale.set(glyphScale, glyphScale, glyphScale);
+            _tempVec.set(mx, mz, my);
+            if (_tempVec.lengthSq() > ZERO_VEC_EPSILON) {
+              _tempVec.normalize();
             } else {
-              visible++;
-              _tempPos.set(ix, iz, iy);
-              const mag = Math.sqrt(mx * mx + my * my + mz * mz);
-              const s = GLYPH_SCALE_MIN + GLYPH_SCALE_RANGE * Math.sqrt(Math.min(1, mag / normMag));
-              _tempScale.set(s, s, s);
-              _tempVec.set(mx, mz, my);
-              if (_tempVec.lengthSq() > ZERO_VEC_EPSILON) {
-                _tempVec.normalize();
-              } else {
-                _tempVec.set(0, 1, 0);
-              }
-              _tempQuat.setFromUnitVectors(_defaultUp, _tempVec);
-              _tempMatrix.compose(_tempPos, _tempQuat, _tempScale);
-              _tempMatrix.toArray(matrices, idx * 16);
+              _tempVec.set(0, 1, 0);
             }
-
+            _tempQuat.setFromUnitVectors(_defaultUp, _tempVec);
+            _tempMatrix.compose(_tempPos, _tempQuat, _tempScale);
+            _tempMatrix.toArray(matrices, outBaseMatrix);
             applyMagnetizationHsl(mx, my, mz, _color);
           }
 
-          colors[idx * 3 + 0] = _color.r;
-          colors[idx * 3 + 1] = _color.g;
-          colors[idx * 3 + 2] = _color.b;
-          idx++;
+          colors[outBaseColor] = _color.r;
+          colors[outBaseColor + 1] = _color.g;
+          colors[outBaseColor + 2] = _color.b;
+          displayToCell[visible] = cellIndex;
+          visible += 1;
         }
       }
     }
 
+    mesh.count = visible;
     onVisibleCount?.(visible);
     mesh.instanceMatrix.needsUpdate = true;
     instanceColor.needsUpdate = true;
 
-    if (isVoxel && !Array.isArray(mesh.material)) {
-      const effectiveOpacity = settings.voxelOpacity * sceneOpacityMultiplier;
-      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity = effectiveOpacity;
-      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).transparent = effectiveOpacity < 0.999;
-      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite = true;
-      mesh.material.needsUpdate = true;
-    } else if (!isVoxel && !Array.isArray(mesh.material)) {
-      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).opacity =
-        sceneOpacityMultiplier;
-      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).transparent =
-        sceneOpacityMultiplier < 0.999;
-      (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite = true;
-      mesh.material.needsUpdate = true;
+    if (!Array.isArray(mesh.material)) {
+      const materialRef = mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial;
+      if (isVoxel) {
+        const effectiveOpacity = settings.voxelOpacity * sceneOpacityMultiplier;
+        materialRef.opacity = effectiveOpacity;
+        materialRef.transparent = effectiveOpacity < 0.999;
+      } else {
+        materialRef.opacity = sceneOpacityMultiplier;
+        materialRef.transparent = sceneOpacityMultiplier < 0.999;
+      }
+      materialRef.depthWrite = true;
+      materialRef.needsUpdate = true;
     }
-  }, [vectors, grid, settings, geometryMode, activeMask, mode, count, nx, ny, nz, onVisibleCount, sceneOpacityMultiplier, isolateGridBounds]);
+    invalidate();
+  }, [vectors, grid, settings, geometryMode, activeMask, mode, count, nx, ny, nz, onVisibleCount, sceneOpacityMultiplier, isolateGridBounds, invalidate]);
 
   if (count === 0) {
     if (process.env.NODE_ENV === "development") {

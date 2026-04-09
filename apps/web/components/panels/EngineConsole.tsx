@@ -172,7 +172,6 @@ export default function EngineConsole({
 
   // Convergence metric: normalize max_dm_dt to a 0-100 progress bar
   // max_dm_dt < convergenceThreshold is "converged", > 1e2 is "diverged"
-  const LOG_FLOOR = -12;          // log10(1e-12) — fully converged end
   const LOG_DECADES = 7;          // display spans 7 decades (from LOG_FLOOR to LOG_FLOOR + 7)
   const dmDtLog = liveState?.max_dm_dt
     ? Math.log10(Math.max(liveState.max_dm_dt, 1e-12))

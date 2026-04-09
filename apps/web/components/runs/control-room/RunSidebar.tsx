@@ -204,9 +204,10 @@ export default function RunSidebar() {
       model.modelBuilderGraph, model.sceneDocument, model.effectiveFemMesh, tp.hasSolverTelemetry, cmd.isFemBackend, model.material,
       model.mesherSourceKind, model.meshFeOrder, model.meshName,
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
-      model.solverSettings.integrator, model.solverSettings.relaxAlgorithm,
+      model.solverSettings.integrator, model.solverSettings.relaxAlgorithm, model.solverSettings.torqueTolerance,
       tp.effectiveDmDt, tp.scalarRows.length, model.worldCenter, model.worldExtent, runtimeDeclaredUniverse?.mode, runtimeDeclaredUniverse?.padding, runtimeDeclaredUniverse?.size,
-      universeRole, eigenModeCount, eigenModeSummaries, analyzeArtifacts.dispersionRows.length, cmd.artifacts,
+      universeRole, eigenModeCount, eigenModeSummaries, analyzeArtifacts.dispersionRows.length,
+      launchIntent?.displayName, model.airPart?.element_count, model.airPart?.node_count,
       model.visualizationProjectPresets, model.visualizationLocalPresets, model.activeVisualizationPresetRef,
     ],
   );

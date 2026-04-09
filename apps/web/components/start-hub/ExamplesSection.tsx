@@ -1,4 +1,4 @@
-import { Binary, Box, Boxes, Cpu, Microscope, Zap } from "lucide-react";
+import { Binary, Box, Boxes, Microscope, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ExamplesSectionProps {
@@ -89,4 +89,3 @@ export default function ExamplesSection({ onOpenExample }: ExamplesSectionProps)
     </div>
   );
 }
-

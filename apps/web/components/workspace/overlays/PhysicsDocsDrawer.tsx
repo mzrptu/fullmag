@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, ChevronRight, BookOpen, Atom, Zap, Waves, Grid3X3, Magnet } from "lucide-react";
+import { X, ChevronRight, BookOpen, Atom, Grid3X3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/lib/workspace/workspace-store";
 
@@ -91,29 +91,6 @@ function StatusBadge({ status }: { status: DocEntry["status"] }) {
     >
       {status}
     </span>
-  );
-}
-
-function DocCard({ entry, selected, onSelect }: { entry: DocEntry; selected: boolean; onSelect: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        "w-full text-left rounded-lg border px-3 py-2.5 transition-colors",
-        selected
-          ? "border-primary/40 bg-primary/10"
-          : "border-border/40 bg-card/30 hover:border-border/60 hover:bg-card/50",
-      )}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <span className={cn("text-[0.82rem] font-medium", selected ? "text-primary" : "text-foreground")}>
-          {entry.title}
-        </span>
-        <StatusBadge status={entry.status} />
-      </div>
-      <p className="mt-1 text-[0.72rem] text-muted-foreground leading-snug line-clamp-2">{entry.description}</p>
-    </button>
   );
 }
 
