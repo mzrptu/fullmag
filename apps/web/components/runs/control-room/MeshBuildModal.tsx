@@ -101,7 +101,7 @@ export default function MeshBuildModal({
     })
     .slice(-16)
     .reverse();
-  const fallbackTimestamp = engineLog.at(-1)?.timestampUnixMs ?? 0;
+  const fallbackTimestamp = engineLog.at(-1)?.timestamp_unix_ms ?? 0;
 
   return (
     <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/60 px-6 py-8 backdrop-blur-sm">
