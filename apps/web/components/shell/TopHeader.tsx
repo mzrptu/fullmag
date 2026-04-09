@@ -161,7 +161,7 @@ export default function TopHeader(props: TopHeaderProps) {
       <div className="flex min-w-0 items-center gap-3">
         <span className="flex items-center gap-2 whitespace-nowrap pr-1">
           <FullmagLogo size={22} className="opacity-90 drop-shadow-sm" />
-          <span className="text-[0.8rem] font-semibold tracking-tight text-foreground/90">{props.problemName}</span>
+          <span className="text-[0.8rem] font-semibold tracking-tight text-foreground/90 truncate max-w-[16rem]">{props.problemName}</span>
         </span>
 
         <div className="hidden items-center gap-0.5 border-l border-white/5 pl-3 lg:flex">

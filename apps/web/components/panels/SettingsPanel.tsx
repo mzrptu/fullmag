@@ -19,9 +19,11 @@ import ResultsPanel from "./settings/ResultsPanel";
 import SolverTelemetryPanel from "./settings/SolverTelemetryPanel";
 import EnergyPanel from "./settings/EnergyPanel";
 import StateIoPanel from "./settings/StateIoPanel";
+import VisualizationPresetPanel from "./settings/VisualizationPresetPanel";
 import { CORE_UI_CAPABILITIES } from "@/lib/workspace/capability-contract";
 import { summarizeCapabilityCoverage } from "@/lib/workspace/capability-audit";
 import { parseStudyNodeContext } from "@/lib/study-builder/node-context";
+import { isVisualizationTreeNode } from "../runs/control-room/visualizationPresets";
 
 /* ── Main SettingsPanel ── */
 interface SettingsPanelProps {
@@ -194,6 +196,7 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
   const renderNodeContent = () => {
     if (nodeId === "session") return <SessionInfoPanel />;
     if (nodeId === "script-builder") return <ScriptBuilderInfoPanel />;
+    if (isVisualizationTreeNode(nodeId)) return <VisualizationPresetPanel nodeId={nodeId} />;
     if (studyNodeContext) return <StudyPanel nodeId={nodeId} />;
     if (
       nodeId === "universe-mesh" ||

@@ -162,6 +162,23 @@ export interface MeshEntityViewState {
 
 export type MeshEntityViewStateMap = Record<string, MeshEntityViewState>;
 
+/** Single source of truth for default per-part view state. */
+export function defaultMeshEntityViewState(part: Pick<FemMeshPart, "role">): MeshEntityViewState {
+  return {
+    visible: part.role !== "air" && part.role !== "outer_boundary",
+    renderMode: part.role === "air" ? "wireframe" : "surface+edges",
+    opacity:
+      part.role === "air"
+        ? 28
+        : part.role === "outer_boundary"
+          ? 46
+          : part.role === "interface"
+            ? 88
+            : 100,
+    colorField: part.role === "magnetic_object" ? "orientation" : "none",
+  };
+}
+
 export interface ScalarRow {
   step: number;
   time: number;
@@ -831,6 +848,81 @@ export interface SceneEditorMeshEntityViewState {
     | "none";
 }
 
+export type VisualizationPresetMode = "3D" | "2D";
+export type VisualizationPresetDomain = "fem" | "fdm";
+export type VisualizationPresetSource = "project" | "local";
+export type VisualizationArrowColorMode =
+  | "orientation"
+  | "x"
+  | "y"
+  | "z"
+  | "magnitude"
+  | "monochrome";
+
+export interface VisualizationCameraState {
+  projection: "perspective" | "orthographic" | null;
+  navigation: "trackball" | "cad" | null;
+  preset: "reset" | "front" | "top" | "right" | "iso" | null;
+}
+
+export interface VisualizationPresetFemState {
+  render_mode: "surface" | "surface+edges" | "wireframe" | "points";
+  opacity: number;
+  clip_enabled: boolean;
+  clip_axis: "x" | "y" | "z";
+  clip_pos: number;
+  show_arrows: boolean;
+  max_points: number;
+  arrow_color_mode: VisualizationArrowColorMode;
+  arrow_mono_color: string;
+  arrow_alpha: number;
+  arrow_length_scale: number;
+  arrow_thickness: number;
+  object_view_mode: "context" | "isolate";
+  air_mesh_visible: boolean;
+  air_mesh_opacity: number;
+  mesh_entity_view_state: Record<string, SceneEditorMeshEntityViewState>;
+}
+
+export interface VisualizationPresetFdmState {
+  quality: "low" | "high" | "ultra";
+  render_mode: "glyph" | "voxel";
+  voxel_color_mode: "orientation" | "x" | "y" | "z";
+  sampling: 1 | 2 | 4;
+  brightness: number;
+  voxel_opacity: number;
+  voxel_gap: number;
+  voxel_threshold: number;
+  topo_enabled: boolean;
+  topo_component: "x" | "y" | "z";
+  topo_multiplier: number;
+}
+
+export interface VisualizationPreset2DState {
+  component: "x" | "y" | "z" | "magnitude";
+  plane: "xy" | "xz" | "yz";
+  slice_index: number;
+}
+
+export interface VisualizationPreset {
+  id: string;
+  name: string;
+  mode: VisualizationPresetMode;
+  domain: VisualizationPresetDomain;
+  quantity: string;
+  fem: VisualizationPresetFemState;
+  fdm: VisualizationPresetFdmState;
+  two_d: VisualizationPreset2DState;
+  camera: VisualizationCameraState;
+  created_at_unix_ms: number;
+  updated_at_unix_ms: number;
+}
+
+export interface VisualizationPresetRef {
+  source: VisualizationPresetSource;
+  preset_id: string;
+}
+
 export interface SceneEditorState {
   selected_object_id: string | null;
   gizmo_mode: string | null;
@@ -841,6 +933,8 @@ export interface SceneEditorState {
   air_mesh_visible: boolean | null;
   air_mesh_opacity: number | null;
   mesh_entity_view_state: Record<string, SceneEditorMeshEntityViewState>;
+  visualization_presets: VisualizationPreset[];
+  active_visualization_preset_ref: VisualizationPresetRef | null;
   /** "object" | "texture" | null — which gizmo scope is active for the selected object */
   active_transform_scope: "object" | "texture" | null;
 }

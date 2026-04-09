@@ -246,10 +246,10 @@ interface ToggleRowProps {
 export function ToggleRow({ label, checked, onChange, disabled }: ToggleRowProps) {
   return (
     <label className={cn(
-      "flex items-center justify-between gap-3 py-1 cursor-pointer select-none group",
+      "flex flex-wrap items-center justify-between gap-3 py-1.5 cursor-pointer select-none group",
       disabled && "opacity-50 cursor-not-allowed"
     )}>
-      <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80 group-hover:text-muted-foreground transition-colors">
+      <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80 group-hover:text-foreground transition-colors flex-1 min-w-[120px]">
         {label}
       </span>
       <button
@@ -290,11 +290,11 @@ interface CompactInputGridProps {
 
 export function CompactInputGrid({ label, fields }: CompactInputGridProps) {
   return (
-    <div className="flex items-start gap-3 py-1">
-      <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80 shrink-0 min-w-[4.5rem] pt-2">
+    <div className="flex flex-col @[260px]:flex-row @[260px]:items-start gap-1.5 @[260px]:gap-3 py-1 w-full">
+      <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/80 shrink-0 min-w-0 @[260px]:min-w-[4.5rem] @[260px]:pt-2 flex-1">
         {label}
       </span>
-      <div className="flex-1 grid gap-1.5" style={{ gridTemplateColumns: `repeat(${fields.length}, 1fr)` }}>
+      <div className="flex-1 w-full grid gap-1.5 min-w-0" style={{ gridTemplateColumns: `repeat(${fields.length}, 1fr)` }}>
         {fields.map((field) => (
           <div key={field.label} className="flex flex-col gap-0.5">
             <span className="text-[0.5rem] font-semibold uppercase tracking-widest text-muted-foreground/60 pl-0.5">
@@ -313,6 +313,91 @@ export function CompactInputGrid({ label, fields }: CompactInputGridProps) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ── Inspector Layout Primitives (Comsol-inspired) ── */
+
+export function InspectorSection({
+  title,
+  eyebrow,
+  meta,
+  defaultOpen: _defaultOpen,
+  children,
+}: {
+  title: string;
+  eyebrow?: string;
+  meta?: ReactNode;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-border/30 bg-background/35 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+      <div className="mb-3 flex items-start justify-between gap-3 border-b border-border/20 pb-2.5">
+        <div className="min-w-0">
+          {eyebrow ? (
+            <p className="text-[0.62rem] font-semibold tracking-[0.12em] text-muted-foreground">
+              {eyebrow}
+            </p>
+          ) : null}
+          <h3 className="text-[0.86rem] font-semibold text-foreground">{title}</h3>
+        </div>
+        {meta ? <div className="shrink-0">{meta}</div> : null}
+      </div>
+      <div className="@container flex flex-col gap-3">{children}</div>
+    </section>
+  );
+}
+
+export function InspectorField({
+  label,
+  hint,
+  control,
+  layout = "default",
+}: {
+  label: string;
+  hint?: ReactNode;
+  control: ReactNode;
+  layout?: "default" | "stack";
+}) {
+  return (
+    <div className={cn(
+      "flex gap-3",
+      layout === "default" ? "flex-col @[280px]:flex-row @[280px]:items-center" : "flex-col"
+    )}>
+      <div className={cn("min-w-0 flex-1", layout === "default" ? "@[280px]:mb-0" : "")}>
+        <div className="text-[0.73rem] font-medium text-foreground">{label}</div>
+        {hint ? <div className="mt-0.5 text-[0.64rem] text-muted-foreground leading-relaxed">{hint}</div> : null}
+      </div>
+      <div className={cn("min-w-0 shrink-0", layout === "default" ? "w-full @[280px]:w-[140px]" : "w-full")}>
+        {control}
+      </div>
+    </div>
+  );
+}
+
+export function InspectorDataGrid({ children }: { children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {children}
+    </div>
+  );
+}
+
+export function InspectorStatTile({
+  label,
+  value,
+}: {
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-border/18 bg-background/25 px-3 py-2">
+      <div className="text-[0.62rem] font-semibold tracking-[0.08em] uppercase text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 font-mono text-[0.76rem] text-foreground">{value}</div>
     </div>
   );
 }

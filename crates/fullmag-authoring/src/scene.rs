@@ -268,6 +268,179 @@ impl Default for SceneMeshEntityViewState {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct VisualizationPresetRef {
+    pub source: String,
+    pub preset_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct VisualizationCameraState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub navigation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+}
+
+impl Default for VisualizationCameraState {
+    fn default() -> Self {
+        Self {
+            projection: None,
+            navigation: None,
+            preset: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct VisualizationPresetFemState {
+    #[serde(default = "default_scene_mesh_render_mode")]
+    pub render_mode: String,
+    #[serde(default = "default_scene_mesh_opacity")]
+    pub opacity: f64,
+    #[serde(default)]
+    pub clip_enabled: bool,
+    #[serde(default = "default_clip_axis")]
+    pub clip_axis: String,
+    #[serde(default = "default_clip_pos")]
+    pub clip_pos: f64,
+    #[serde(default = "default_true")]
+    pub show_arrows: bool,
+    #[serde(default = "default_preview_max_points")]
+    pub max_points: i64,
+    #[serde(default = "default_arrow_color_mode")]
+    pub arrow_color_mode: String,
+    #[serde(default = "default_arrow_mono_color")]
+    pub arrow_mono_color: String,
+    #[serde(default = "default_arrow_alpha")]
+    pub arrow_alpha: f64,
+    #[serde(default = "default_arrow_length_scale")]
+    pub arrow_length_scale: f64,
+    #[serde(default = "default_arrow_thickness")]
+    pub arrow_thickness: f64,
+    #[serde(default = "default_context")]
+    pub object_view_mode: String,
+    #[serde(default)]
+    pub air_mesh_visible: bool,
+    #[serde(default = "default_air_mesh_opacity")]
+    pub air_mesh_opacity: f64,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mesh_entity_view_state: BTreeMap<String, SceneMeshEntityViewState>,
+}
+
+impl Default for VisualizationPresetFemState {
+    fn default() -> Self {
+        Self {
+            render_mode: default_scene_mesh_render_mode(),
+            opacity: default_scene_mesh_opacity(),
+            clip_enabled: false,
+            clip_axis: default_clip_axis(),
+            clip_pos: default_clip_pos(),
+            show_arrows: true,
+            max_points: default_preview_max_points(),
+            arrow_color_mode: default_arrow_color_mode(),
+            arrow_mono_color: default_arrow_mono_color(),
+            arrow_alpha: default_arrow_alpha(),
+            arrow_length_scale: default_arrow_length_scale(),
+            arrow_thickness: default_arrow_thickness(),
+            object_view_mode: default_context(),
+            air_mesh_visible: false,
+            air_mesh_opacity: default_air_mesh_opacity(),
+            mesh_entity_view_state: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct VisualizationPresetFdmState {
+    #[serde(default = "default_quality_high")]
+    pub quality: String,
+    #[serde(default = "default_render_mode_glyph")]
+    pub render_mode: String,
+    #[serde(default = "default_orientation")]
+    pub voxel_color_mode: String,
+    #[serde(default = "default_sampling")]
+    pub sampling: u32,
+    #[serde(default = "default_fdm_brightness")]
+    pub brightness: f64,
+    #[serde(default = "default_fdm_voxel_opacity")]
+    pub voxel_opacity: f64,
+    #[serde(default = "default_fdm_voxel_gap")]
+    pub voxel_gap: f64,
+    #[serde(default = "default_fdm_voxel_threshold")]
+    pub voxel_threshold: f64,
+    #[serde(default)]
+    pub topo_enabled: bool,
+    #[serde(default = "default_topo_component")]
+    pub topo_component: String,
+    #[serde(default = "default_topo_multiplier")]
+    pub topo_multiplier: f64,
+}
+
+impl Default for VisualizationPresetFdmState {
+    fn default() -> Self {
+        Self {
+            quality: default_quality_high(),
+            render_mode: default_render_mode_glyph(),
+            voxel_color_mode: default_orientation(),
+            sampling: default_sampling(),
+            brightness: default_fdm_brightness(),
+            voxel_opacity: default_fdm_voxel_opacity(),
+            voxel_gap: default_fdm_voxel_gap(),
+            voxel_threshold: default_fdm_voxel_threshold(),
+            topo_enabled: false,
+            topo_component: default_topo_component(),
+            topo_multiplier: default_topo_multiplier(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct VisualizationPreset2DState {
+    #[serde(default = "default_magnitude")]
+    pub component: String,
+    #[serde(default = "default_xy")]
+    pub plane: String,
+    #[serde(default)]
+    pub slice_index: i64,
+}
+
+impl Default for VisualizationPreset2DState {
+    fn default() -> Self {
+        Self {
+            component: default_magnitude(),
+            plane: default_xy(),
+            slice_index: 0,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct VisualizationPreset {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "default_view_mode_3d")]
+    pub mode: String,
+    #[serde(default = "default_domain_fem")]
+    pub domain: String,
+    #[serde(default = "default_quantity_m")]
+    pub quantity: String,
+    #[serde(default)]
+    pub fem: VisualizationPresetFemState,
+    #[serde(default)]
+    pub fdm: VisualizationPresetFdmState,
+    #[serde(default)]
+    pub two_d: VisualizationPreset2DState,
+    #[serde(default)]
+    pub camera: VisualizationCameraState,
+    #[serde(default)]
+    pub created_at_unix_ms: i64,
+    #[serde(default)]
+    pub updated_at_unix_ms: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct SceneEditorState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -288,6 +461,10 @@ pub struct SceneEditorState {
     pub air_mesh_opacity: Option<f64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub mesh_entity_view_state: BTreeMap<String, SceneMeshEntityViewState>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub visualization_presets: Vec<VisualizationPreset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_visualization_preset_ref: Option<VisualizationPresetRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_transform_scope: Option<String>,
 }
@@ -304,6 +481,8 @@ impl Default for SceneEditorState {
             air_mesh_visible: Some(true),
             air_mesh_opacity: Some(28.0),
             mesh_entity_view_state: BTreeMap::new(),
+            visualization_presets: Vec::new(),
+            active_visualization_preset_ref: None,
             active_transform_scope: None,
         }
     }
@@ -363,6 +542,106 @@ const fn default_scene_mesh_opacity() -> f64 {
 
 fn default_scene_mesh_color_field() -> String {
     "orientation".to_string()
+}
+
+fn default_clip_axis() -> String {
+    "x".to_string()
+}
+
+const fn default_clip_pos() -> f64 {
+    50.0
+}
+
+const fn default_preview_max_points() -> i64 {
+    16_384
+}
+
+fn default_arrow_color_mode() -> String {
+    "orientation".to_string()
+}
+
+fn default_arrow_mono_color() -> String {
+    "#00c2ff".to_string()
+}
+
+const fn default_arrow_alpha() -> f64 {
+    1.0
+}
+
+const fn default_arrow_length_scale() -> f64 {
+    1.0
+}
+
+const fn default_arrow_thickness() -> f64 {
+    1.0
+}
+
+fn default_context() -> String {
+    "context".to_string()
+}
+
+const fn default_air_mesh_opacity() -> f64 {
+    28.0
+}
+
+fn default_quality_high() -> String {
+    "high".to_string()
+}
+
+fn default_render_mode_glyph() -> String {
+    "glyph".to_string()
+}
+
+fn default_orientation() -> String {
+    "orientation".to_string()
+}
+
+const fn default_sampling() -> u32 {
+    1
+}
+
+const fn default_fdm_brightness() -> f64 {
+    1.5
+}
+
+const fn default_fdm_voxel_opacity() -> f64 {
+    0.5
+}
+
+const fn default_fdm_voxel_gap() -> f64 {
+    0.14
+}
+
+const fn default_fdm_voxel_threshold() -> f64 {
+    0.08
+}
+
+fn default_topo_component() -> String {
+    "z".to_string()
+}
+
+const fn default_topo_multiplier() -> f64 {
+    5.0
+}
+
+fn default_magnitude() -> String {
+    "magnitude".to_string()
+}
+
+fn default_xy() -> String {
+    "xy".to_string()
+}
+
+fn default_view_mode_3d() -> String {
+    "3D".to_string()
+}
+
+fn default_domain_fem() -> String {
+    "fem".to_string()
+}
+
+fn default_quantity_m() -> String {
+    "m".to_string()
 }
 
 fn default_auto() -> String {

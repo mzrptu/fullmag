@@ -13,6 +13,7 @@ import type {
   MeshEntityViewState,
   MeshEntityViewStateMap,
 } from "../../lib/session/types";
+import { defaultMeshEntityViewState } from "../../lib/session/types";
 import type {
   AntennaOverlay,
   BuilderObjectOverlay,
@@ -65,8 +66,15 @@ export interface MeshSelectionSnapshot {
 }
 
 export type FemColorField = "orientation" | "x" | "y" | "z" | "magnitude" | "quality" | "sicn" | "none";
+export type FemArrowColorMode = "orientation" | "x" | "y" | "z" | "magnitude" | "monochrome";
 export type RenderMode = "surface" | "surface+edges" | "wireframe" | "points";
 export type ClipAxis = "x" | "y" | "z";
+
+/* ── Opacity constants (extracted from hardcoded values) ── */
+const DIMMED_MIN_MAGNETIC = 14;
+const DIMMED_MIN_AIR = 8;
+const SELECTED_LIFT_MAGNETIC = 96;
+const SELECTED_LIFT_AIR = 52;
 
 interface Props {
   meshData: FemMeshData;
@@ -88,6 +96,11 @@ interface Props {
   clipAxis?: ClipAxis;
   clipPos?: number;
   showArrows?: boolean;
+  arrowColorMode?: FemArrowColorMode;
+  arrowMonoColor?: string;
+  arrowAlpha?: number;
+  arrowLengthScale?: number;
+  arrowThickness?: number;
   previewMaxPoints?: number;
   showOrientationLegend?: boolean;
   qualityPerFace?: number[] | null;
@@ -98,6 +111,11 @@ interface Props {
   onClipAxisChange?: (value: ClipAxis) => void;
   onClipPosChange?: (value: number) => void;
   onShowArrowsChange?: (value: boolean) => void;
+  onArrowColorModeChange?: (value: FemArrowColorMode) => void;
+  onArrowMonoColorChange?: (value: string) => void;
+  onArrowAlphaChange?: (value: number) => void;
+  onArrowLengthScaleChange?: (value: number) => void;
+  onArrowThicknessChange?: (value: number) => void;
   onPreviewMaxPointsChange?: (maxPoints: number) => void;
   onShrinkFactorChange?: (value: number) => void;
   onSelectionChange?: (selection: MeshSelectionSnapshot) => void;
@@ -152,16 +170,6 @@ interface PartQualitySummary {
   markers: number[];
   domainCount: number;
   stats: MeshQualityStats | null;
-}
-
-function defaultMeshEntityViewState(part: FemMeshPart): MeshEntityViewState {
-  return {
-    visible: part.role !== "air" && part.role !== "outer_boundary",
-    renderMode: part.role === "air" ? "wireframe" : "surface+edges",
-    opacity:
-      part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
-    colorField: part.role === "magnetic_object" ? "orientation" : "none",
-  };
 }
 
 function uniqueSortedMarkers(markers: readonly number[]): number[] {
@@ -444,7 +452,7 @@ const RENDER_OPTIONS: { value: RenderMode; label: string; labeledLabel: string }
   { value: "points", label: "Pts", labeledLabel: "Points" },
 ];
 
-const SUPPORTED_ARROW_COLOR_FIELDS: ReadonlySet<FemColorField> = new Set([
+const SUPPORTED_ARROW_COLOR_FIELDS: ReadonlySet<FemArrowColorMode> = new Set([
   "orientation",
   "x",
   "y",
@@ -507,6 +515,11 @@ function FemMeshView3DInner({
   clipAxis: controlledClipAxis,
   clipPos: controlledClipPos,
   showArrows: controlledShowArrows,
+  arrowColorMode: controlledArrowColorMode,
+  arrowMonoColor: controlledArrowMonoColor,
+  arrowAlpha: controlledArrowAlpha,
+  arrowLengthScale: controlledArrowLengthScale,
+  arrowThickness: controlledArrowThickness,
   previewMaxPoints,
   showOrientationLegend = false,
   qualityPerFace,
@@ -518,6 +531,11 @@ function FemMeshView3DInner({
   onClipAxisChange,
   onClipPosChange,
   onShowArrowsChange,
+  onArrowColorModeChange,
+  onArrowMonoColorChange,
+  onArrowAlphaChange,
+  onArrowLengthScaleChange,
+  onArrowThicknessChange,
   onPreviewMaxPointsChange,
   onShrinkFactorChange,
   onSelectionChange,
@@ -548,7 +566,15 @@ function FemMeshView3DInner({
 }: Props) {
   const [internalRenderMode, setInternalRenderMode] = useState<RenderMode>("surface");
   const [field, setField] = useState<FemColorField>(colorField);
-  const [arrowColorField, setArrowColorField] = useState<FemColorField>(colorField);
+  const [internalArrowColorMode, setInternalArrowColorMode] = useState<FemArrowColorMode>(
+    SUPPORTED_ARROW_COLOR_FIELDS.has(colorField as FemArrowColorMode)
+      ? (colorField as FemArrowColorMode)
+      : "orientation",
+  );
+  const [internalArrowMonoColor, setInternalArrowMonoColor] = useState("#00c2ff");
+  const [internalArrowAlpha, setInternalArrowAlpha] = useState(1);
+  const [internalArrowLengthScale, setInternalArrowLengthScale] = useState(1);
+  const [internalArrowThickness, setInternalArrowThickness] = useState(1);
   const [internalOpacity, setInternalOpacity] = useState(100);
   const [internalClipEnabled, setInternalClipEnabled] = useState(false);
   const [internalClipAxis, setInternalClipAxis] = useState<ClipAxis>("x");
@@ -584,6 +610,11 @@ function FemMeshView3DInner({
   const clipAxis = controlledClipAxis ?? internalClipAxis;
   const clipPos = controlledClipPos ?? internalClipPos;
   const showArrows = controlledShowArrows ?? internalShowArrows;
+  const arrowColorMode = controlledArrowColorMode ?? internalArrowColorMode;
+  const arrowMonoColor = controlledArrowMonoColor ?? internalArrowMonoColor;
+  const arrowAlpha = controlledArrowAlpha ?? internalArrowAlpha;
+  const arrowLengthScale = controlledArrowLengthScale ?? internalArrowLengthScale;
+  const arrowThickness = controlledArrowThickness ?? internalArrowThickness;
   const resolvedPreviewMaxPoints = previewMaxPoints ?? internalPreviewMaxPoints;
   const shrinkFactor = controlledShrinkFactor ?? internalShrinkFactor;
   const updateSharedPreviewMaxPoints = useCallback((nextMaxPoints: number) => {
@@ -650,14 +681,21 @@ function FemMeshView3DInner({
         // auto-promote `surface` to `surface+edges`.
         renderMode: baseViewState.renderMode,
         opacity: isDimmed
-          ? Math.min(baseViewState.opacity, part.role === "air" ? 8 : 14)
+          ? Math.min(baseViewState.opacity, part.role === "air" ? DIMMED_MIN_AIR : DIMMED_MIN_MAGNETIC)
           : isSelected
-            ? Math.max(baseViewState.opacity, part.role === "air" ? 52 : 96)
+            ? Math.max(baseViewState.opacity, part.role === "air" ? SELECTED_LIFT_AIR : SELECTED_LIFT_MAGNETIC)
             : baseViewState.opacity,
       };
-      // Selection should not force-show the airbox when the dedicated
-      // "Show Airbox Mesh" toggle is disabled.
-      const selectionKeepsVisible = isSelected && part.role !== "air";
+      // Selection should force-show the part when explicitly selected,
+      // including air/boundary — but the "Show Airbox Mesh" toggle is respected
+      // when the selection comes indirectly from selecting a magnetic object.
+      const explicitlySelected =
+        (selectedAirPartId != null && part.id === selectedAirPartId) ||
+        (preferredCameraPartId != null && part.id === preferredCameraPartId);
+      // Respect explicit "Show Airbox Mesh" toggle even when the air part is selected.
+      const selectionKeepsVisible =
+        isSelected &&
+        (part.role !== "air" || (explicitlySelected && airSegmentVisible));
       const visibleForMode =
         objectViewMode === "isolate" && hasSelection
           ? isSelected && (viewState.visible || selectionKeepsVisible)
@@ -690,6 +728,7 @@ function FemMeshView3DInner({
     }
     return layers;
   }, [
+    airSegmentVisible,
     focusedEntityId,
     hasMeshParts,
     meshData.boundaryFaces.length,
@@ -1065,9 +1104,12 @@ function FemMeshView3DInner({
     [quantityOptions],
   );
   const effectiveOpacity = opacity;
-  const arrowField = SUPPORTED_ARROW_COLOR_FIELDS.has(arrowColorField)
-    ? arrowColorField
-    : "orientation";
+  const arrowField: FemColorField =
+    arrowColorMode === "monochrome"
+      ? "orientation"
+      : SUPPORTED_ARROW_COLOR_FIELDS.has(arrowColorMode)
+        ? (arrowColorMode as FemColorField)
+        : "orientation";
   const legendField = hasMeshParts
     ? (visibleLayers.find((layer) => layer.isSelected)?.viewState.colorField
       ?? visibleLayers.find((layer) => layer.isMagnetic)?.viewState.colorField
@@ -1120,7 +1162,16 @@ function FemMeshView3DInner({
   }, [legendField, meshData.fieldData, meshData.nNodes, qualityPerFace]);
 
   useEffect(() => { setField(colorField); }, [colorField]);
-  useEffect(() => { setArrowColorField(colorField); }, [colorField]);
+  useEffect(() => {
+    if (controlledArrowColorMode != null) {
+      return;
+    }
+    setInternalArrowColorMode(
+      SUPPORTED_ARROW_COLOR_FIELDS.has(colorField as FemArrowColorMode)
+        ? (colorField as FemArrowColorMode)
+        : "orientation",
+    );
+  }, [colorField, controlledArrowColorMode]);
   useEffect(() => {
     setSelectedFaces([]); setHoveredFace(null); setCtxMenu(null);
     faceARsRef.current = null;
@@ -1301,6 +1352,8 @@ function FemMeshView3DInner({
   const applyToolbarRenderMode = useCallback((next: RenderMode) => {
     if (hasMeshParts && toolbarStylePartIds.length > 0 && onMeshPartViewStatePatch) {
       onMeshPartViewStatePatch(toolbarStylePartIds, { renderMode: next });
+      // Sync global meshRenderMode so chip display & serialization stay accurate.
+      onRenderModeChange?.(next);
       return;
     }
     onRenderModeChange ? onRenderModeChange(next) : setInternalRenderMode(next);
@@ -1336,7 +1389,7 @@ function FemMeshView3DInner({
   const effectiveShowOrientationLegend =
     showOrientationLegend ||
     legendField === "orientation" ||
-    arrowField === "orientation";
+    arrowColorMode === "orientation";
   useEffect(() => {
     qualityProfileRef.current = qualityProfile;
   }, [qualityProfile]);
@@ -1357,7 +1410,11 @@ function FemMeshView3DInner({
             compact={variant !== "full"}
             renderMode={toolbarRenderMode}
             surfaceColorField={toolbarColorField}
-            arrowColorField={arrowField}
+            arrowColorMode={arrowColorMode}
+            arrowMonoColor={arrowMonoColor}
+            arrowAlpha={arrowAlpha}
+            arrowLengthScale={arrowLengthScale}
+            arrowThickness={arrowThickness}
             projection={cameraProjection}
             navigation={navigationMode}
             qualityProfile={qualityProfile}
@@ -1381,7 +1438,31 @@ function FemMeshView3DInner({
             onOpenPopoverChange={(id) => setOpenPopover(id as typeof openPopover)}
             onRenderModeChange={applyToolbarRenderMode}
             onSurfaceColorFieldChange={applyToolbarColorField}
-            onArrowColorFieldChange={setArrowColorField}
+            onArrowColorModeChange={(next) => {
+              onArrowColorModeChange
+                ? onArrowColorModeChange(next)
+                : setInternalArrowColorMode(next);
+            }}
+            onArrowMonoColorChange={(next) => {
+              onArrowMonoColorChange
+                ? onArrowMonoColorChange(next)
+                : setInternalArrowMonoColor(next);
+            }}
+            onArrowAlphaChange={(next) => {
+              onArrowAlphaChange
+                ? onArrowAlphaChange(next)
+                : setInternalArrowAlpha(next);
+            }}
+            onArrowLengthScaleChange={(next) => {
+              onArrowLengthScaleChange
+                ? onArrowLengthScaleChange(next)
+                : setInternalArrowLengthScale(next);
+            }}
+            onArrowThicknessChange={(next) => {
+              onArrowThicknessChange
+                ? onArrowThicknessChange(next)
+                : setInternalArrowThickness(next);
+            }}
             onProjectionChange={setCameraProjection}
             onNavigationChange={setNavigationMode}
             onQualityProfileChange={setQualityProfile}
@@ -1523,9 +1604,11 @@ function FemMeshView3DInner({
             colorLabel={colorLegendLabel(legendField, fieldLabel)}
             lengthLabel={
               effectiveShowArrows
-                ? arrowField === "orientation"
+                ? arrowColorMode === "orientation"
                   ? "vector magnitude, arrow color = orientation"
-                  : `vector magnitude, arrow color = ${colorLegendLabel(arrowField, fieldLabel)}`
+                  : arrowColorMode === "monochrome"
+                    ? "vector magnitude, arrow color = monochrome"
+                    : `vector magnitude, arrow color = ${colorLegendLabel(arrowField, fieldLabel)}`
                 : undefined
             }
             min={legendField === "none" ? undefined : fieldMagnitudeStats?.min}
@@ -1592,6 +1675,11 @@ function FemMeshView3DInner({
     applyToolbarOpacity,
     applyToolbarRenderMode,
     arrowField,
+    arrowColorMode,
+    arrowMonoColor,
+    arrowAlpha,
+    arrowLengthScale,
+    arrowThickness,
     baseArrowDensity,
     cameraProjection,
     captureOverlayHidden,
@@ -1625,6 +1713,11 @@ function FemMeshView3DInner({
     onClipAxisChange,
     onClipEnabledChange,
     onClipPosChange,
+    onArrowAlphaChange,
+    onArrowColorModeChange,
+    onArrowLengthScaleChange,
+    onArrowMonoColorChange,
+    onArrowThicknessChange,
     onEntityFocus,
     onMeshPartViewStatePatch,
     onOpacityChange,
@@ -1705,6 +1798,11 @@ function FemMeshView3DInner({
             effectiveShowArrows={effectiveShowArrows}
             arrowField={arrowField}
             arrowDensity={effectiveArrowDensity}
+            arrowColorMode={arrowColorMode}
+            arrowMonoColor={arrowMonoColor}
+            arrowAlpha={arrowAlpha}
+            arrowLengthScale={arrowLengthScale}
+            arrowThickness={arrowThickness}
             arrowActiveNodeMask={arrowActiveNodeMask}
             arrowBoundaryFaceIndices={arrowBoundaryFaceIndices}
             selectedFaces={selectedFaces}

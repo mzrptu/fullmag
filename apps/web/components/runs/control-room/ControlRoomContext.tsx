@@ -21,16 +21,11 @@ import type {
   CommandStatus,
   DisplaySelection,
   EngineLogEntry,
-  FemLiveMesh,
   LiveState,
   MeshWorkspaceState,
-  PreviewState,
   QuantityDescriptor,
-  RunManifest,
-  RuntimeStatusState,
   ScalarRow,
   ScriptBuilderStageState,
-  SessionManifest,
 } from "../../../lib/useSessionStream";
 import type {
   DomainFrameState,
@@ -40,12 +35,17 @@ import type {
   MeshEntityViewStateMap,
   ModelBuilderGraphV2,
   SceneDocument,
+  VisualizationPreset,
+  VisualizationPresetFdmState,
+  VisualizationPresetRef,
+  VisualizationPresetSource,
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
   ScriptBuilderUniverseState,
   StudyPipelineDocumentState,
 } from "../../../lib/session/types";
+import { defaultMeshEntityViewState } from "../../../lib/session/types";
 import {
   buildModelBuilderGraphV2,
   selectModelBuilderCurrentModules,
@@ -128,6 +128,14 @@ import {
   deriveMeshWorkspacePreset,
   type MeshWorkspacePresetId,
 } from "./meshWorkspace";
+import {
+  LOCAL_ACTIVE_VISUALIZATION_PRESET_STORAGE_KEY,
+  LOCAL_VISUALIZATION_PRESETS_STORAGE_KEY,
+  buildVisualizationPresetNodeId,
+  cloneVisualizationPreset,
+  createDefaultVisualizationPreset,
+  nextVisualizationPresetName,
+} from "./visualizationPresets";
 import {
   DEFAULT_ANALYZE_SELECTION,
   nextAnalyzeRefresh,
@@ -212,15 +220,6 @@ function serializeMeshEntityViewStateForScene(
   return next;
 }
 
-function defaultMeshPartViewState(part: FemMeshPart): MeshEntityViewState {
-  return {
-    visible: part.role !== "air" && part.role !== "outer_boundary",
-    renderMode: part.role === "air" ? "wireframe" : "surface+edges",
-    opacity: part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
-    colorField: part.role === "magnetic_object" ? "orientation" : "none",
-  };
-}
-
 function samePersistedMeshEntityViewState(
   left: SceneDocument["editor"]["mesh_entity_view_state"],
   right: SceneDocument["editor"]["mesh_entity_view_state"],
@@ -246,6 +245,111 @@ function samePersistedMeshEntityViewState(
     }
   }
   return true;
+}
+
+const DEFAULT_FDM_VISUALIZATION_SETTINGS: VisualizationPresetFdmState = {
+  quality: "high",
+  render_mode: "glyph",
+  voxel_color_mode: "orientation",
+  sampling: 1,
+  brightness: 1.5,
+  voxel_opacity: 0.5,
+  voxel_gap: 0.14,
+  voxel_threshold: 0.08,
+  topo_enabled: false,
+  topo_component: "z",
+  topo_multiplier: 5,
+};
+
+function normalizeVisualizationPresetRef(
+  value: VisualizationPresetRef | null | undefined,
+): VisualizationPresetRef | null {
+  if (!value || !value.preset_id || (value.source !== "project" && value.source !== "local")) {
+    return null;
+  }
+  return {
+    source: value.source,
+    preset_id: value.preset_id,
+  };
+}
+
+function sameVisualizationPresetRef(
+  left: VisualizationPresetRef | null | undefined,
+  right: VisualizationPresetRef | null | undefined,
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+  return left.source === right.source && left.preset_id === right.preset_id;
+}
+
+function sameVisualizationPresets(
+  left: VisualizationPreset[],
+  right: VisualizationPreset[],
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (JSON.stringify(left[index]) !== JSON.stringify(right[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function loadLocalVisualizationPresets(): VisualizationPreset[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(LOCAL_VISUALIZATION_PRESETS_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const normalized: VisualizationPreset[] = [];
+    for (const entry of parsed) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        continue;
+      }
+      const value = entry as VisualizationPreset;
+      normalized.push(
+        createDefaultVisualizationPreset({
+          id: value.id,
+          name: value.name || "Visualization",
+          quantity: value.quantity || "m",
+          domain: value.domain === "fdm" ? "fdm" : "fem",
+          mode: value.mode === "2D" ? "2D" : "3D",
+          nowUnixMs: Number(value.updated_at_unix_ms ?? Date.now()),
+        }),
+      );
+      const last = normalized[normalized.length - 1];
+      normalized[normalized.length - 1] = cloneVisualizationPreset(last, value);
+    }
+    return normalized;
+  } catch {
+    return [];
+  }
+}
+
+function loadLocalActiveVisualizationRef(): VisualizationPresetRef | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(LOCAL_ACTIVE_VISUALIZATION_PRESET_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as VisualizationPresetRef;
+    return normalizeVisualizationPresetRef(parsed);
+  } catch {
+    return null;
+  }
 }
 
 /* Context interfaces, hooks, and React context objects are in context-hooks.tsx */
@@ -309,6 +413,15 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [meshClipAxis, setMeshClipAxis] = useState<ClipAxis>("x");
   const [meshClipPos, setMeshClipPos] = useState(50);
   const [meshShowArrows, setMeshShowArrows] = useState(true);
+  const [femArrowColorMode, setFemArrowColorMode] = useState<
+    "orientation" | "x" | "y" | "z" | "magnitude" | "monochrome"
+  >("orientation");
+  const [femArrowMonoColor, setFemArrowMonoColor] = useState("#00c2ff");
+  const [femArrowAlpha, setFemArrowAlpha] = useState(1);
+  const [femArrowLengthScale, setFemArrowLengthScale] = useState(1);
+  const [femArrowThickness, setFemArrowThickness] = useState(1);
+  const [fdmVisualizationSettings, setFdmVisualizationSettings] =
+    useState<VisualizationPresetFdmState>(DEFAULT_FDM_VISUALIZATION_SETTINGS);
   const [runUntilInput, setRunUntilInput] = useState("1e-12");
   const [selectedSidebarNodeId, setSelectedSidebarNodeId] = useState<string | null>(null);
   const [analyzeSelection, setAnalyzeSelection] =
@@ -343,10 +456,16 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const meshConfigSignatureRef = useRef<string | null>(null);
   const pendingMeshConfigSignatureRef = useRef<string | null>(null);
   const lastLoggedCommandStatusRef = useRef<string | null>(null);
+  const lastAppliedVisualizationPresetRef = useRef<string | null>(null);
   const [solverSettingsState, setSolverSettingsState] =
     useState<SolverSettingsState>(DEFAULT_SOLVER_SETTINGS);
   const [modelBuilderGraph, setModelBuilderGraph] = useState<ModelBuilderGraphV2 | null>(null);
   const [sceneDocumentDraft, setSceneDocumentDraft] = useState<SceneDocument | null>(null);
+  const [localVisualizationPresets, setLocalVisualizationPresets] = useState<VisualizationPreset[]>(
+    () => loadLocalVisualizationPresets(),
+  );
+  const [activeVisualizationPresetRef, setActiveVisualizationPresetRef] =
+    useState<VisualizationPresetRef | null>(() => loadLocalActiveVisualizationRef());
   const builderHydratedSessionRef = useRef<string | null>(null);
   const builderPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastBuilderPushSignatureRef = useRef<string | null>(null);
@@ -523,6 +642,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setMeshEntityViewState({});
     setSelectedEntityId(null);
     setFocusedEntityId(null);
+    setFemArrowColorMode("orientation");
+    setFemArrowMonoColor("#00c2ff");
+    setFemArrowAlpha(1);
+    setFemArrowLengthScale(1);
+    setFemArrowThickness(1);
+    setFdmVisualizationSettings(DEFAULT_FDM_VISUALIZATION_SETTINGS);
+    setActiveVisualizationPresetRef(null);
+    lastAppliedVisualizationPresetRef.current = null;
   }, [workspaceHydrationKey]);
 
   useEffect(() => {
@@ -798,6 +925,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     () => localBuilderDraft?.objects ?? remoteSceneDocument?.objects ?? [],
     [localBuilderDraft, remoteSceneDocument],
   );
+  const projectVisualizationPresets = useMemo(
+    () => localBuilderDraft?.editor.visualization_presets ?? [],
+    [localBuilderDraft?.editor.visualization_presets],
+  );
   const meshPerGeometryPayload = useMemo(
     () =>
       sceneObjects.map((object) => ({
@@ -1015,6 +1146,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     );
     setSelectedEntityId(hydratedScene.editor.selected_entity_id);
     setFocusedEntityId(hydratedScene.editor.focused_entity_id);
+    setActiveVisualizationPresetRef(
+      normalizeVisualizationPresetRef(hydratedScene.editor.active_visualization_preset_ref),
+    );
     const firstRunStage = incomingGraph.study.stages.find(
       (stage) => stage.kind === "run" && stage.until_seconds.trim().length > 0,
     );
@@ -1045,6 +1179,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const persistedMeshEntityViewState = serializeMeshEntityViewStateForScene(meshEntityViewState);
+    const normalizedActivePresetRef = normalizeVisualizationPresetRef(
+      activeVisualizationPresetRef,
+    );
     setSceneDocumentDraft((previousScene) => {
       if (!previousScene) {
         return previousScene;
@@ -1061,6 +1198,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         previousEditor.active_transform_scope === activeTransformScope &&
         previousEditor.air_mesh_visible === airMeshVisible &&
         previousEditor.air_mesh_opacity === nextAirMeshOpacity &&
+        sameVisualizationPresets(
+          previousEditor.visualization_presets,
+          projectVisualizationPresets,
+        ) &&
+        sameVisualizationPresetRef(
+          previousEditor.active_visualization_preset_ref,
+          normalizedActivePresetRef,
+        ) &&
         samePersistedMeshEntityViewState(
           previousEditor.mesh_entity_view_state,
           persistedMeshEntityViewState,
@@ -1080,15 +1225,19 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
           air_mesh_visible: airMeshVisible,
           air_mesh_opacity: nextAirMeshOpacity,
           mesh_entity_view_state: persistedMeshEntityViewState,
+          visualization_presets: projectVisualizationPresets,
+          active_visualization_preset_ref: normalizedActivePresetRef,
         },
       };
     });
   }, [
     airMeshOpacity,
     airMeshVisible,
+    activeVisualizationPresetRef,
     focusedEntityId,
     meshEntityViewState,
     objectViewMode,
+    projectVisualizationPresets,
     activeTransformScope,
     selectedEntityId,
     selectedObjectId,
@@ -1223,6 +1372,38 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        LOCAL_VISUALIZATION_PRESETS_STORAGE_KEY,
+        JSON.stringify(localVisualizationPresets),
+      );
+    } catch {
+      // Ignore storage failures (private mode / quota).
+    }
+  }, [localVisualizationPresets]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      if (activeVisualizationPresetRef) {
+        window.localStorage.setItem(
+          LOCAL_ACTIVE_VISUALIZATION_PRESET_STORAGE_KEY,
+          JSON.stringify(activeVisualizationPresetRef),
+        );
+      } else {
+        window.localStorage.removeItem(LOCAL_ACTIVE_VISUALIZATION_PRESET_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore storage failures (private mode / quota).
+    }
+  }, [activeVisualizationPresetRef]);
 
   const currentStage = useMemo(() => parseStageExecutionMessage(latestEngineMessage), [latestEngineMessage]);
 
@@ -1986,6 +2167,342 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     }
   }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshHmax, meshOptions]);
 
+  const buildVisualizationPresetFromCurrent = useCallback(
+    (name: string, id?: string): VisualizationPreset => {
+      const mode: VisualizationPreset["mode"] = effectiveViewMode === "2D" ? "2D" : "3D";
+      const domain: VisualizationPreset["domain"] = isFemBackend ? "fem" : "fdm";
+      const now = Date.now();
+      const basePreset = createDefaultVisualizationPreset({
+        id,
+        name,
+        quantity: requestedPreviewQuantity,
+        domain,
+        mode,
+        nowUnixMs: now,
+      });
+      return cloneVisualizationPreset(basePreset, {
+        quantity: requestedPreviewQuantity,
+        mode,
+        domain,
+        fem: {
+          render_mode: meshRenderMode,
+          opacity: meshOpacity,
+          clip_enabled: meshClipEnabled,
+          clip_axis: meshClipAxis,
+          clip_pos: meshClipPos,
+          show_arrows: meshShowArrows,
+          max_points: requestedPreviewMaxPoints,
+          arrow_color_mode: femArrowColorMode,
+          arrow_mono_color: femArrowMonoColor,
+          arrow_alpha: femArrowAlpha,
+          arrow_length_scale: femArrowLengthScale,
+          arrow_thickness: femArrowThickness,
+          object_view_mode: objectViewMode,
+          air_mesh_visible: airMeshVisible,
+          air_mesh_opacity: airMeshOpacity,
+          mesh_entity_view_state: serializeMeshEntityViewStateForScene(meshEntityViewState),
+        },
+        fdm: {
+          ...fdmVisualizationSettings,
+        },
+        two_d: {
+          component,
+          plane,
+          slice_index: sliceIndex,
+        },
+        camera: {
+          projection: null,
+          navigation: null,
+          preset: null,
+        },
+        created_at_unix_ms: now,
+        updated_at_unix_ms: now,
+      });
+    },
+    [
+      airMeshOpacity,
+      airMeshVisible,
+      component,
+      effectiveViewMode,
+      femArrowAlpha,
+      femArrowColorMode,
+      femArrowLengthScale,
+      femArrowMonoColor,
+      femArrowThickness,
+      fdmVisualizationSettings,
+      isFemBackend,
+      meshClipAxis,
+      meshClipEnabled,
+      meshClipPos,
+      meshEntityViewState,
+      meshOpacity,
+      meshRenderMode,
+      meshShowArrows,
+      objectViewMode,
+      plane,
+      requestedPreviewMaxPoints,
+      requestedPreviewQuantity,
+      sliceIndex,
+    ],
+  );
+
+  const createVisualizationPreset = useCallback(
+    (source: VisualizationPresetSource = "project"): VisualizationPresetRef => {
+      const existing =
+        source === "project" ? projectVisualizationPresets : localVisualizationPresets;
+      const preset = buildVisualizationPresetFromCurrent(nextVisualizationPresetName(existing));
+      const ref: VisualizationPresetRef = { source, preset_id: preset.id };
+      if (source === "project") {
+        setSceneDocumentDraft((previousScene) => {
+          if (!previousScene) {
+            return previousScene;
+          }
+          return {
+            ...previousScene,
+            editor: {
+              ...previousScene.editor,
+              visualization_presets: [...previousScene.editor.visualization_presets, preset],
+            },
+          };
+        });
+      } else {
+        setLocalVisualizationPresets((previous) => [...previous, preset]);
+      }
+      setActiveVisualizationPresetRef(ref);
+      return ref;
+    },
+    [
+      buildVisualizationPresetFromCurrent,
+      localVisualizationPresets,
+      projectVisualizationPresets,
+    ],
+  );
+
+  const updateVisualizationPreset = useCallback(
+    (
+      ref: VisualizationPresetRef,
+      update: (preset: VisualizationPreset) => VisualizationPreset,
+    ) => {
+      const applyUpdate = (preset: VisualizationPreset): VisualizationPreset =>
+        cloneVisualizationPreset(update(preset), {
+          updated_at_unix_ms: Date.now(),
+        });
+      if (ref.source === "project") {
+        setSceneDocumentDraft((previousScene) => {
+          if (!previousScene) {
+            return previousScene;
+          }
+          const nextPresets = previousScene.editor.visualization_presets.map((preset) =>
+            preset.id === ref.preset_id ? applyUpdate(preset) : preset,
+          );
+          if (
+            sameVisualizationPresets(
+              previousScene.editor.visualization_presets,
+              nextPresets,
+            )
+          ) {
+            return previousScene;
+          }
+          return {
+            ...previousScene,
+            editor: {
+              ...previousScene.editor,
+              visualization_presets: nextPresets,
+            },
+          };
+        });
+      } else {
+        setLocalVisualizationPresets((previous) =>
+          previous.map((preset) =>
+            preset.id === ref.preset_id ? applyUpdate(preset) : preset,
+          ),
+        );
+      }
+    },
+    [],
+  );
+
+  const renameVisualizationPreset = useCallback(
+    (ref: VisualizationPresetRef, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) {
+        return;
+      }
+      updateVisualizationPreset(ref, (preset) => ({
+        ...preset,
+        name: trimmed,
+      }));
+    },
+    [updateVisualizationPreset],
+  );
+
+  const duplicateVisualizationPreset = useCallback(
+    (
+      ref: VisualizationPresetRef,
+      targetSource: VisualizationPresetSource = ref.source,
+    ): VisualizationPresetRef | null => {
+      const sourceList =
+        ref.source === "project" ? projectVisualizationPresets : localVisualizationPresets;
+      const sourcePreset = sourceList.find((preset) => preset.id === ref.preset_id);
+      if (!sourcePreset) {
+        return null;
+      }
+      const targetList =
+        targetSource === "project" ? projectVisualizationPresets : localVisualizationPresets;
+      const duplicatedName = `${sourcePreset.name} Copy`;
+      let duplicatedId = createDefaultVisualizationPreset({
+        name: duplicatedName,
+        quantity: sourcePreset.quantity,
+        domain: sourcePreset.domain,
+        mode: sourcePreset.mode,
+      }).id;
+      while (targetList.some((preset) => preset.id === duplicatedId)) {
+        duplicatedId = createDefaultVisualizationPreset({
+          name: duplicatedName,
+          quantity: sourcePreset.quantity,
+          domain: sourcePreset.domain,
+          mode: sourcePreset.mode,
+        }).id;
+      }
+      const duplicated = cloneVisualizationPreset(sourcePreset, {
+        id: duplicatedId,
+        name: duplicatedName,
+      });
+      if (targetSource === "project") {
+        setSceneDocumentDraft((previousScene) => {
+          if (!previousScene) {
+            return previousScene;
+          }
+          return {
+            ...previousScene,
+            editor: {
+              ...previousScene.editor,
+              visualization_presets: [
+                ...previousScene.editor.visualization_presets,
+                duplicated,
+              ],
+            },
+          };
+        });
+      } else {
+        setLocalVisualizationPresets((previous) => [...previous, duplicated]);
+      }
+      const nextRef = { source: targetSource, preset_id: duplicated.id } as const;
+      setActiveVisualizationPresetRef(nextRef);
+      return nextRef;
+    },
+    [localVisualizationPresets, projectVisualizationPresets],
+  );
+
+  const copyVisualizationPresetToSource = useCallback(
+    (
+      ref: VisualizationPresetRef,
+      targetSource: VisualizationPresetSource,
+    ): VisualizationPresetRef | null => duplicateVisualizationPreset(ref, targetSource),
+    [duplicateVisualizationPreset],
+  );
+
+  const deleteVisualizationPreset = useCallback((ref: VisualizationPresetRef) => {
+    if (ref.source === "project") {
+      setSceneDocumentDraft((previousScene) => {
+        if (!previousScene) {
+          return previousScene;
+        }
+        return {
+          ...previousScene,
+          editor: {
+            ...previousScene.editor,
+            visualization_presets: previousScene.editor.visualization_presets.filter(
+              (preset) => preset.id !== ref.preset_id,
+            ),
+          },
+        };
+      });
+    } else {
+      setLocalVisualizationPresets((previous) =>
+        previous.filter((preset) => preset.id !== ref.preset_id),
+      );
+    }
+    setActiveVisualizationPresetRef((previous) =>
+      sameVisualizationPresetRef(previous, ref) ? null : previous,
+    );
+  }, []);
+
+  const applyVisualizationPreset = useCallback(
+    (ref: VisualizationPresetRef) => {
+      const sourceList =
+        ref.source === "project" ? projectVisualizationPresets : localVisualizationPresets;
+      const preset = sourceList.find((entry) => entry.id === ref.preset_id);
+      if (!preset) {
+        return;
+      }
+      setActiveVisualizationPresetRef(ref);
+      if (preset.quantity && preset.quantity !== selectedQuantity) {
+        startTransition(() => {
+          setSelectedQuantity(preset.quantity);
+        });
+        if (previewControlsActive) {
+          void updatePreview("/quantity", { quantity: preset.quantity });
+        }
+      }
+      if (preset.mode === "2D") {
+        setViewMode("2D");
+        setComponent(preset.two_d.component);
+        setPlane(preset.two_d.plane);
+        setSliceIndex(Math.max(0, Math.trunc(preset.two_d.slice_index)));
+      } else {
+        setViewMode("3D");
+      }
+
+      if (isFemBackend && preset.domain === "fem") {
+        setMeshRenderMode(preset.fem.render_mode);
+        setMeshOpacity(preset.fem.opacity);
+        setMeshClipEnabled(preset.fem.clip_enabled);
+        setMeshClipAxis(preset.fem.clip_axis);
+        setMeshClipPos(preset.fem.clip_pos);
+        setMeshShowArrows(preset.fem.show_arrows);
+        setFemArrowColorMode(preset.fem.arrow_color_mode);
+        setFemArrowMonoColor(preset.fem.arrow_mono_color);
+        setFemArrowAlpha(preset.fem.arrow_alpha);
+        setFemArrowLengthScale(preset.fem.arrow_length_scale);
+        setFemArrowThickness(preset.fem.arrow_thickness);
+        setObjectViewMode(preset.fem.object_view_mode);
+        setAirMeshVisible(preset.fem.air_mesh_visible);
+        setAirMeshOpacity(preset.fem.air_mesh_opacity);
+        setMeshEntityViewState(
+          normalizePersistedMeshEntityViewState(preset.fem.mesh_entity_view_state),
+        );
+        if (requestedPreviewMaxPoints !== preset.fem.max_points) {
+          void updatePreview("/maxPoints", { maxPoints: preset.fem.max_points });
+        }
+      } else if (!isFemBackend && preset.domain === "fdm") {
+        setFdmVisualizationSettings({ ...preset.fdm });
+      }
+    },
+    [
+      isFemBackend,
+      localVisualizationPresets,
+      previewControlsActive,
+      projectVisualizationPresets,
+      requestedPreviewMaxPoints,
+      selectedQuantity,
+      updatePreview,
+    ],
+  );
+
+  useEffect(() => {
+    if (!activeVisualizationPresetRef) {
+      lastAppliedVisualizationPresetRef.current = null;
+      return;
+    }
+    const key = `${activeVisualizationPresetRef.source}:${activeVisualizationPresetRef.preset_id}`;
+    if (lastAppliedVisualizationPresetRef.current === key) {
+      return;
+    }
+    lastAppliedVisualizationPresetRef.current = key;
+    applyVisualizationPreset(activeVisualizationPresetRef);
+  }, [activeVisualizationPresetRef, applyVisualizationPreset]);
+
   const handleCompute = useCallback(() => {
     void enqueueCommand({ kind: "solve" });
   }, [enqueueCommand]);
@@ -2651,7 +3168,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setMeshEntityViewState((prev) => {
       const next: MeshEntityViewStateMap = {};
       for (const part of meshParts) {
-        next[part.id] = prev[part.id] ?? defaultMeshPartViewState(part);
+        next[part.id] = prev[part.id] ?? defaultMeshEntityViewState(part);
       }
       return next;
     });
@@ -2706,7 +3223,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       let changed = false;
       const next: MeshEntityViewStateMap = { ...prev };
       for (const part of airRelatedParts) {
-        const current = next[part.id] ?? defaultMeshPartViewState(part);
+        const current = next[part.id] ?? defaultMeshEntityViewState(part);
         const nextVisible = airMeshVisible;
         const nextOpacity = part.role === "air" ? airMeshOpacity : current.opacity;
         if (current.visible === nextVisible && current.opacity === nextOpacity) {
@@ -3015,6 +3532,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     },
     material, solverPlan, solverSettings, studyStages, studyPipeline, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
+    femArrowColorMode, femArrowMonoColor, femArrowAlpha, femArrowLengthScale, femArrowThickness,
+    fdmVisualizationSettings,
+    visualizationProjectPresets: projectVisualizationPresets,
+    visualizationLocalPresets: localVisualizationPresets,
+    activeVisualizationPresetRef,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
     femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
@@ -3054,11 +3576,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     interfaceParts,
     analyzeSelection,
     setSolverSettings, setSceneDocument, setRequestedRuntimeSelection, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
-    setMeshClipPos, setMeshShowArrows, setMeshSelection, setMeshOptions, setFemDockTab,
+    setMeshClipPos, setMeshShowArrows, setFemArrowColorMode, setFemArrowMonoColor, setFemArrowAlpha, setFemArrowLengthScale, setFemArrowThickness, setFdmVisualizationSettings, setMeshSelection, setMeshOptions, setFemDockTab,
     setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setActiveTransformScope, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, setAnalyzeSelection, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    createVisualizationPreset, setActiveVisualizationPresetRef, applyVisualizationPreset, renameVisualizationPreset, duplicateVisualizationPreset, deleteVisualizationPreset, copyVisualizationPresetToSource, updateVisualizationPreset,
   }), [
     localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, studyPipeline, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
+    femArrowColorMode, femArrowMonoColor, femArrowAlpha, femArrowLengthScale, femArrowThickness,
+    fdmVisualizationSettings, projectVisualizationPresets, localVisualizationPresets, activeVisualizationPresetRef,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
     femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
@@ -3069,7 +3594,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshWorkspacePreset,
     selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart, magneticParts, airPart, interfaceParts, analyzeSelection, requestFocusObject,
     setSceneDocument, setRequestedRuntimeSelection, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
-    handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze,
+    handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset, createVisualizationPreset, setActiveVisualizationPresetRef, applyVisualizationPreset, renameVisualizationPreset, duplicateVisualizationPreset, deleteVisualizationPreset, copyVisualizationPresetToSource, updateVisualizationPreset, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze,
     requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, setMeshOptions, setSolverSettings, activeTransformScope,
   ]);
 

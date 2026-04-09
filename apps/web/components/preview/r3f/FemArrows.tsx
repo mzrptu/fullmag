@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useEffect, useLayoutEffect } from "react";
 import * as THREE from "three";
 import { useThree } from "@react-three/fiber";
-import { FemMeshData, FemColorField } from "../FemMeshView3D";
+import { FemMeshData, FemColorField, FemArrowColorMode } from "../FemMeshView3D";
 import { divergingColor, magnitudeColor } from "./colorUtils";
 import { applyMagnetizationHsl } from "../magnetizationColor";
 import { RENDER_POLICIES_V2 } from "../shared/renderPolicyV2";
@@ -12,6 +12,11 @@ interface FemArrowsProps {
   meshData: FemMeshData;
   field: FemColorField;
   arrowDensity: number;
+  colorMode?: FemArrowColorMode;
+  monoColor?: string;
+  alpha?: number;
+  lengthScale?: number;
+  thickness?: number;
   center: THREE.Vector3;
   maxDim: number;
   visible: boolean;
@@ -180,6 +185,11 @@ export function FemArrows({
   meshData,
   field,
   arrowDensity,
+  colorMode = "orientation",
+  monoColor = "#00c2ff",
+  alpha = 1,
+  lengthScale = 1,
+  thickness = 1,
   center,
   maxDim,
   visible,
@@ -190,18 +200,28 @@ export function FemArrows({
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const { invalidate } = useThree();
   const glyphPolicy = RENDER_POLICIES_V2.glyphs;
+  const clampedAlpha = Math.max(0.05, Math.min(1, alpha));
   const material = useMemo(
     () =>
       new THREE.MeshBasicMaterial({
-        color: "#ffffff",
-        vertexColors: true,
-        transparent: glyphPolicy.transparent,
+        color: monoColor,
+        vertexColors: colorMode !== "monochrome",
+        transparent: glyphPolicy.transparent || clampedAlpha < 0.999,
+        opacity: clampedAlpha,
         depthWrite: glyphPolicy.depthWrite,
         depthTest: glyphPolicy.depthTest,
         side: glyphPolicy.side,
         toneMapped: false,
       }),
-    [glyphPolicy.depthTest, glyphPolicy.depthWrite, glyphPolicy.side, glyphPolicy.transparent],
+    [
+      clampedAlpha,
+      colorMode,
+      glyphPolicy.depthTest,
+      glyphPolicy.depthWrite,
+      glyphPolicy.side,
+      glyphPolicy.transparent,
+      monoColor,
+    ],
   );
 
   const templateGeometry = useArrowTemplate(maxDim);
@@ -273,6 +293,8 @@ export function FemArrows({
     const scaleY = Math.max(maxAbsY, 1e-12);
     const scaleZ = Math.max(maxAbsZ, 1e-12);
     const scaleMag = Math.max(maxMag, 1e-12);
+    const clampedLengthScale = Math.max(0.2, Math.min(4, lengthScale));
+    const clampedThickness = Math.max(0.2, Math.min(4, thickness));
 
     const quaternionsList = new Float32Array(resultCount * 4);
     const scalesList = new Float32Array(resultCount * 3);
@@ -306,7 +328,9 @@ export function FemArrows({
         } else if (lengthMode === "log") {
           s = 0.2 + 0.8 * Math.log1p(len / scaleMag * 9) / Math.log(10);
         }
-        scalesList[i * 3] = s; scalesList[i * 3 + 1] = s; scalesList[i * 3 + 2] = s;
+        scalesList[i * 3] = s * clampedThickness;
+        scalesList[i * 3 + 1] = s * clampedThickness;
+        scalesList[i * 3 + 2] = s * clampedLengthScale;
         _dir.set(vx, vy, vz).normalize();
         _dummyQ.setFromUnitVectors(_defaultUp, _dir);
       }
@@ -316,13 +340,45 @@ export function FemArrows({
       quaternionsList[i * 4 + 2] = _dummyQ.z;
       quaternionsList[i * 4 + 3] = _dummyQ.w;
 
-      switch (field) {
-        case "orientation": applyMagnetizationHsl(vx, vy, vz, _color); break;
-        case "x": divergingColor(vx / scaleX, _color); break;
-        case "y": divergingColor(vy / scaleY, _color); break;
-        case "z": divergingColor(vz / scaleZ, _color); break;
-        case "magnitude": magnitudeColor(len / scaleMag, _color); break;
-        default: applyMagnetizationHsl(vx, vy, vz, _color); break;
+      switch (colorMode) {
+        case "orientation":
+          applyMagnetizationHsl(vx, vy, vz, _color);
+          break;
+        case "x":
+          divergingColor(vx / scaleX, _color);
+          break;
+        case "y":
+          divergingColor(vy / scaleY, _color);
+          break;
+        case "z":
+          divergingColor(vz / scaleZ, _color);
+          break;
+        case "magnitude":
+          magnitudeColor(len / scaleMag, _color);
+          break;
+        case "monochrome":
+          _color.set(monoColor);
+          break;
+        default:
+          // Backward compatibility: if caller still drives by `field`.
+          switch (field) {
+            case "x":
+              divergingColor(vx / scaleX, _color);
+              break;
+            case "y":
+              divergingColor(vy / scaleY, _color);
+              break;
+            case "z":
+              divergingColor(vz / scaleZ, _color);
+              break;
+            case "magnitude":
+              magnitudeColor(len / scaleMag, _color);
+              break;
+            default:
+              applyMagnetizationHsl(vx, vy, vz, _color);
+              break;
+          }
+          break;
       }
 
       colorsList[i * 3] = _color.r;
@@ -331,7 +387,20 @@ export function FemArrows({
     }
 
     return { count: resultCount, instancePositions: positions, quaternions: quaternionsList, scales: scalesList, colors: colorsList };
-  }, [meshData, field, arrowDensity, center, visible, lengthMode, activeNodeMask, boundaryFaceIndices]);
+  }, [
+    meshData,
+    field,
+    arrowDensity,
+    colorMode,
+    monoColor,
+    center,
+    visible,
+    lengthMode,
+    lengthScale,
+    thickness,
+    activeNodeMask,
+    boundaryFaceIndices,
+  ]);
   const capacity = Math.max(count, 1);
   const instanceColorAttribute = useMemo(() => {
     const attribute = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);

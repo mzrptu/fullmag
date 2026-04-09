@@ -9,10 +9,12 @@ export interface ViewportIconActionProps extends ButtonHTMLAttributes<HTMLButton
 }
 
 export const ViewportIconAction = forwardRef<HTMLButtonElement, ViewportIconActionProps>(
-  ({ active, icon, label, showCaret, className, children, ...props }, ref) => {
+  ({ active, icon, label, showCaret, className, children, title, ...props }, ref) => {
     return (
       <button
         ref={ref}
+        aria-label={props["aria-label"] ?? title}
+        title={title}
         className={cn(
           "relative flex items-center justify-center gap-1.5 appearance-none border h-7 px-2 rounded-sm cursor-pointer transition-colors outline-none focus-visible:ring-1 focus-visible:ring-primary/50",
           "border-transparent bg-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",

@@ -36,6 +36,7 @@ interface RibbonAction {
   tooltip?: string;
   shortcut?: string;
   disabled?: boolean;
+  hidden?: boolean;
   active?: boolean;
   accent?: boolean;
   iconColor?: string;
@@ -49,6 +50,7 @@ interface RibbonMenuItem {
   icon?: React.ReactNode;
   description?: string;
   disabled?: boolean;
+  hidden?: boolean;
   active?: boolean;
   separator?: boolean;
   action?: () => void;
@@ -85,6 +87,7 @@ interface RibbonBarProps {
   runLabel?: string;
   onViewChange?: (mode: string) => void;
   onSidebarToggle?: () => void;
+  onCreateVisualizationPreset?: () => void;
   onSimAction?: (action: string) => void;
   quickPreviewTargets?: Array<{
     id: string;
@@ -265,10 +268,10 @@ function buildHomeGroups(p: RibbonBarProps): RibbonGroup[] {
         { 
           id: "geometry", icon: <Shapes size={20} />, label: "Objects", tooltip: "Add new geometric objects", iconColor: "text-emerald-400",
           menuItems: [
-            { id: "add-box", label: "Add Box", icon: <Box size={14} />, description: "Rectangular cuboid (coming next)", disabled: true },
-            { id: "add-cylinder", label: "Add Cylinder", icon: <Box size={14} />, description: "Standard cylinder (coming next)", disabled: true },
+            { id: "add-box", label: "Add Box", icon: <Box size={14} />, description: "Rectangular cuboid (coming next)", disabled: true, hidden: true },
+            { id: "add-cylinder", label: "Add Cylinder", icon: <Box size={14} />, description: "Standard cylinder (coming next)", disabled: true, hidden: true },
             { separator: true, id: "sep-geo", label: "" },
-            { id: "import-stl", label: "Import STL...", icon: <FileText size={14} />, description: "Load external mesh (coming next)", disabled: true },
+            { id: "import-stl", label: "Import STL...", icon: <FileText size={14} />, description: "Load external mesh (coming next)", disabled: true, hidden: true },
           ]
         },
         { id: "material", icon: <FlaskConical size={20} />, label: "Material", tooltip: "Material properties", disabled: true, iconColor: "text-amber-400" },
@@ -349,6 +352,7 @@ function buildDefinitionsGroups(p: RibbonBarProps): RibbonGroup[] {
           label: "Parameters",
           tooltip: "Open model parameters and global variables (coming next)",
           disabled: true,
+          hidden: true,
           iconColor: "text-slate-400",
         },
         {
@@ -357,6 +361,7 @@ function buildDefinitionsGroups(p: RibbonBarProps): RibbonGroup[] {
           label: "Functions",
           tooltip: "Open global functions and dependencies (coming next)",
           disabled: true,
+          hidden: true,
           iconColor: "text-slate-400",
         },
         {
@@ -365,6 +370,7 @@ function buildDefinitionsGroups(p: RibbonBarProps): RibbonGroup[] {
           label: "Coordinates",
           tooltip: "Coordinate systems and frames (coming next)",
           disabled: true,
+          hidden: true,
           iconColor: "text-slate-400",
         },
       ],
@@ -407,6 +413,7 @@ function buildGeometryGroups(p: RibbonBarProps): RibbonGroup[] {
           label: "Import STL",
           tooltip: "Import geometry asset (coming next)",
           disabled: true,
+          hidden: true,
           iconColor: "text-slate-400",
         },
       ],
@@ -1302,6 +1309,15 @@ function buildViewGroup(p: RibbonBarProps): RibbonGroup {
         iconColor: "text-fuchsia-400",
       },
       {
+        id: "visualization-preset",
+        icon: <Sparkles size={20} />,
+        label: "3D Visual",
+        tooltip: "Create new visualization preset",
+        disabled: !canCommand(p, { id: "visualization.create-preset" }),
+        action: () => runCommand(p, { id: "visualization.create-preset" }),
+        iconColor: "text-amber-300",
+      },
+      {
         id: "sidebar",
         icon: <PanelRight size={20} />,
         label: "Panel",
@@ -1582,12 +1598,12 @@ export default function RibbonBar(props: RibbonBarProps) {
 
         {/* ── Actions row ── */}
         <div className="flex items-stretch overflow-x-auto scrollbar-none py-2 px-2 gap-1 min-h-[88px]">
-          {groups.map((group, gi) => (
+          {groups.filter((g) => g.actions.some((a) => !a.hidden)).map((group, gi) => (
             <div key={group.id} className="flex items-stretch shrink-0">
               {gi > 0 && <div className="w-px bg-border/40 mx-2 self-stretch my-3 shadow-[1px_0_0_hsla(0,0%,100%,0.02)]" />}
               <div className="flex flex-col justify-between items-center px-1 shrink-0">
                 <div className="flex items-center gap-1">
-                  {group.actions.map((action) =>
+                  {group.actions.filter((a) => !a.hidden).map((action) =>
                     action.menuItems && action.menuItems.length > 0 ? (
                       <DropdownMenu.Root key={action.id}>
                         <DropdownMenu.Trigger asChild>
@@ -1599,7 +1615,7 @@ export default function RibbonBar(props: RibbonBarProps) {
                             sideOffset={8}
                             align="start"
                           >
-                            {action.menuItems.map((item) =>
+                            {action.menuItems.filter((it) => !it.hidden).map((item) =>
                               item.separator ? (
                                 <DropdownMenu.Separator
                                   key={item.id}

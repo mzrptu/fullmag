@@ -42,6 +42,7 @@ import {
   meshBuildIntentForNode,
   meshWorkspaceNodeToDockTab,
 } from "./control-room/meshWorkspace";
+import { buildVisualizationPresetNodeId } from "./control-room/visualizationPresets";
 import {
   BuildRightInspector,
   StudyRightInspector,
@@ -273,6 +274,13 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
     ctx.setSelectedObjectId(null);
     maybePreviewAntennaField();
   }, [ctx, maybePreviewAntennaField]);
+
+  const handleCreateVisualizationPreset = useCallback(() => {
+    const ref = ctx.createVisualizationPreset("project");
+    const nodeId = buildVisualizationPresetNodeId(ref.source, ref.preset_id);
+    handleSelectModelNode(nodeId);
+    ctx.applyVisualizationPreset(ref);
+  }, [ctx, handleSelectModelNode]);
 
   const handleObjectAddInteraction = useCallback(
     (objectId: string, kind: ScriptBuilderMagneticInteractionKind) => {
@@ -741,6 +749,7 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         runLabel={ctx.primaryRunLabel}
         onViewChange={ctx.handleViewModeChange}
         onSidebarToggle={() => ctx.setSidebarCollapsed((v) => !v)}
+        onCreateVisualizationPreset={handleCreateVisualizationPreset}
         onSimAction={ctx.handleSimulationAction}
         quickPreviewTargets={ctx.quickPreviewTargets}
         selectedQuantity={ctx.requestedPreviewQuantity}

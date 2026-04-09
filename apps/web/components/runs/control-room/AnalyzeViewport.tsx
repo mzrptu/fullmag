@@ -303,7 +303,7 @@ export default function AnalyzeViewport() {
           )}
         </div>
 
-        <aside className="hidden w-[360px] shrink-0 border-l border-border/25 bg-card/20 p-3 xl:block">
+        <aside className="hidden w-full max-w-[360px] shrink-0 border-l border-border/25 bg-card/20 p-3 xl:block">
           <AnalyzeDiagnosticsPanel diagnostics={diagnostics} />
         </aside>
       </div>

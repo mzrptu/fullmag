@@ -16,16 +16,21 @@ import { useCommand, useViewport, useModel } from "../components/runs/control-ro
  * - 2                → 2D view
  * - 3                → Mesh view
  * - Ctrl+Shift+P     → Toggle solver setup
+ * - I                → Toggle isolate/context mode
+ * - H                → Show all (exit isolate + reset visibility)
+ * - Z                → Cycle render mode (surface → surface+edges → wireframe → points)
  */
 export interface KeyboardShortcutCallbacks {
   onSaveSession?: () => void;
   onOpenSession?: () => void;
+  onResetView?: () => void;
+  onFrameSelection?: () => void;
 }
 
 export function useKeyboardShortcuts(callbacks?: KeyboardShortcutCallbacks) {
   const { handleSimulationAction } = useCommand();
   const { handleViewModeChange, setSidebarCollapsed } = useViewport();
-  const { setSelectedSidebarNodeId } = useModel();
+  const { setSelectedSidebarNodeId, setObjectViewMode, setMeshRenderMode } = useModel();
 
   useEffect(() => {
     function handler(e: KeyboardEvent) {
@@ -89,9 +94,50 @@ export function useKeyboardShortcuts(callbacks?: KeyboardShortcutCallbacks) {
         setSelectedSidebarNodeId("study-integrator");
         return;
       }
+
+      /* I → Toggle isolate/context */
+      if (e.key === "i" && !ctrl && !shift) {
+        e.preventDefault();
+        setObjectViewMode((mode) => (mode === "isolate" ? "context" : "isolate"));
+        return;
+      }
+
+      /* H → Show all (exit isolate) */
+      if (e.key === "h" && !ctrl && !shift) {
+        e.preventDefault();
+        setObjectViewMode("context");
+        return;
+      }
+
+      /* Z → Cycle render mode (FEM) */
+      if (e.key === "z" && !ctrl && !shift) {
+        e.preventDefault();
+        setMeshRenderMode((current) => {
+          const cycle: Array<"surface" | "surface+edges" | "wireframe" | "points"> = [
+            "surface", "surface+edges", "wireframe", "points",
+          ];
+          const idx = cycle.indexOf(current);
+          return cycle[(idx + 1) % cycle.length];
+        });
+        return;
+      }
+
+      /* Home → Reset view */
+      if (e.key === "Home" && !ctrl && !shift) {
+        e.preventDefault();
+        callbacks?.onResetView?.();
+        return;
+      }
+
+      /* F → Frame selection */
+      if (e.key === "f" && !ctrl && !shift) {
+        e.preventDefault();
+        callbacks?.onFrameSelection?.();
+        return;
+      }
     }
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleSimulationAction, handleViewModeChange, setSidebarCollapsed, setSelectedSidebarNodeId, callbacks]);
+  }, [handleSimulationAction, handleViewModeChange, setSidebarCollapsed, setSelectedSidebarNodeId, setObjectViewMode, setMeshRenderMode, callbacks]);
 }

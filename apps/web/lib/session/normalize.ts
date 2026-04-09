@@ -393,6 +393,155 @@ function normalizeSceneEditorMeshEntityViewState(
   return normalized;
 }
 
+function normalizeVisualizationArrowColorMode(
+  raw: unknown,
+): SceneDocument["editor"]["visualization_presets"][number]["fem"]["arrow_color_mode"] {
+  switch (raw) {
+    case "orientation":
+    case "x":
+    case "y":
+    case "z":
+    case "magnitude":
+    case "monochrome":
+      return raw;
+    default:
+      return "orientation";
+  }
+}
+
+function normalizeVisualizationPresetMode(
+  raw: unknown,
+): SceneDocument["editor"]["visualization_presets"][number]["mode"] {
+  return raw === "2D" ? "2D" : "3D";
+}
+
+function normalizeVisualizationPresetDomain(
+  raw: unknown,
+): SceneDocument["editor"]["visualization_presets"][number]["domain"] {
+  return raw === "fdm" ? "fdm" : "fem";
+}
+
+function normalizeVisualizationPresets(
+  raw: unknown,
+): SceneDocument["editor"]["visualization_presets"] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const normalized: SceneDocument["editor"]["visualization_presets"] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const value = entry as Record<string, unknown>;
+    const fem = value.fem as Record<string, unknown> | undefined;
+    const fdm = value.fdm as Record<string, unknown> | undefined;
+    const twoD = value.two_d as Record<string, unknown> | undefined;
+    const camera = value.camera as Record<string, unknown> | undefined;
+    normalized.push({
+      id: String(value.id ?? ""),
+      name: String(value.name ?? "Visualization"),
+      mode: normalizeVisualizationPresetMode(value.mode),
+      domain: normalizeVisualizationPresetDomain(value.domain),
+      quantity: String(value.quantity ?? "m"),
+      fem: {
+        render_mode: normalizeSceneEditorMeshRenderMode(fem?.render_mode),
+        opacity: Number(fem?.opacity ?? 100),
+        clip_enabled: Boolean(fem?.clip_enabled ?? false),
+        clip_axis:
+          fem?.clip_axis === "y" || fem?.clip_axis === "z" ? fem.clip_axis : "x",
+        clip_pos: Number(fem?.clip_pos ?? 50),
+        show_arrows: Boolean(fem?.show_arrows ?? true),
+        max_points: Number(fem?.max_points ?? 16384),
+        arrow_color_mode: normalizeVisualizationArrowColorMode(fem?.arrow_color_mode),
+        arrow_mono_color:
+          typeof fem?.arrow_mono_color === "string" ? fem.arrow_mono_color : "#00c2ff",
+        arrow_alpha: Number(fem?.arrow_alpha ?? 1),
+        arrow_length_scale: Number(fem?.arrow_length_scale ?? 1),
+        arrow_thickness: Number(fem?.arrow_thickness ?? 1),
+        object_view_mode: fem?.object_view_mode === "isolate" ? "isolate" : "context",
+        air_mesh_visible: Boolean(fem?.air_mesh_visible ?? false),
+        air_mesh_opacity: Number(fem?.air_mesh_opacity ?? 28),
+        mesh_entity_view_state: normalizeSceneEditorMeshEntityViewState(
+          fem?.mesh_entity_view_state,
+        ),
+      },
+      fdm: {
+        quality:
+          fdm?.quality === "low" || fdm?.quality === "ultra" ? fdm.quality : "high",
+        render_mode: fdm?.render_mode === "voxel" ? "voxel" : "glyph",
+        voxel_color_mode:
+          fdm?.voxel_color_mode === "x" ||
+          fdm?.voxel_color_mode === "y" ||
+          fdm?.voxel_color_mode === "z"
+            ? fdm.voxel_color_mode
+            : "orientation",
+        sampling:
+          fdm?.sampling === 2 || fdm?.sampling === 4 ? fdm.sampling : 1,
+        brightness: Number(fdm?.brightness ?? 1.5),
+        voxel_opacity: Number(fdm?.voxel_opacity ?? 0.5),
+        voxel_gap: Number(fdm?.voxel_gap ?? 0.14),
+        voxel_threshold: Number(fdm?.voxel_threshold ?? 0.08),
+        topo_enabled: Boolean(fdm?.topo_enabled ?? false),
+        topo_component:
+          fdm?.topo_component === "x" || fdm?.topo_component === "y"
+            ? fdm.topo_component
+            : "z",
+        topo_multiplier: Number(fdm?.topo_multiplier ?? 5),
+      },
+      two_d: {
+        component:
+          twoD?.component === "x" ||
+          twoD?.component === "y" ||
+          twoD?.component === "z"
+            ? twoD.component
+            : "magnitude",
+        plane:
+          twoD?.plane === "xz" || twoD?.plane === "yz" ? twoD.plane : "xy",
+        slice_index: Number(twoD?.slice_index ?? 0),
+      },
+      camera: {
+        projection:
+          camera?.projection === "perspective" || camera?.projection === "orthographic"
+            ? camera.projection
+            : null,
+        navigation:
+          camera?.navigation === "trackball" || camera?.navigation === "cad"
+            ? camera.navigation
+            : null,
+        preset:
+          camera?.preset === "reset" ||
+          camera?.preset === "front" ||
+          camera?.preset === "top" ||
+          camera?.preset === "right" ||
+          camera?.preset === "iso"
+            ? camera.preset
+            : null,
+      },
+      created_at_unix_ms: Number(value.created_at_unix_ms ?? Date.now()),
+      updated_at_unix_ms: Number(value.updated_at_unix_ms ?? Date.now()),
+    });
+  }
+  return normalized;
+}
+
+function normalizeVisualizationPresetRef(
+  raw: unknown,
+): SceneDocument["editor"]["active_visualization_preset_ref"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const value = raw as Record<string, unknown>;
+  const source = value.source === "local" ? "local" : value.source === "project" ? "project" : null;
+  const presetId = typeof value.preset_id === "string" ? value.preset_id : null;
+  if (!source || !presetId || presetId.trim().length === 0) {
+    return null;
+  }
+  return {
+    source,
+    preset_id: presetId,
+  };
+}
+
 /* ── Sub-object normalizers ── */
 
 export function normalizeDisplaySelection(raw: any): CurrentDisplaySelection | null {
@@ -1168,6 +1317,12 @@ function normalizeSceneDocument(raw: any): SceneDocument | null {
           : null,
       mesh_entity_view_state: normalizeSceneEditorMeshEntityViewState(
         raw.editor?.mesh_entity_view_state,
+      ),
+      visualization_presets: normalizeVisualizationPresets(
+        raw.editor?.visualization_presets,
+      ),
+      active_visualization_preset_ref: normalizeVisualizationPresetRef(
+        raw.editor?.active_visualization_preset_ref,
       ),
       active_transform_scope:
         raw.editor?.active_transform_scope === "object" ||

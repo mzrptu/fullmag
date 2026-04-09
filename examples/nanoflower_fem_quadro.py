@@ -61,7 +61,7 @@ for idx, (dx, dy) in enumerate(positions_2x2):
     body.m = fm.random(seed=10 + idx)
 
     # Mesh — wymagany explicit hmax dla każdego obiektu magnetycznego
-    body.mesh(hmax=20e-09, order=1, algorithm_2d=1, algorithm_3d=1, size_factor=1,
+    body.mesh(hmax=19e-09, order=1, algorithm_2d=1, algorithm_3d=1, size_factor=1,
               size_from_curvature=1, smoothing_steps=1, optimize_iterations=1,
               narrow_regions=1, compute_quality=True, per_element_quality=True)
 

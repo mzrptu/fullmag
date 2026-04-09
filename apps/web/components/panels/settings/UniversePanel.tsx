@@ -4,14 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { GitCommitHorizontal, Layers, MemoryStick, Triangle } from "lucide-react";
 
 import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
-import type { ScriptBuilderUniverseState } from "../../../lib/session/types";
+import { defaultMeshEntityViewState, type ScriptBuilderUniverseState } from "../../../lib/session/types";
 import { fmtSI } from "@/lib/format";
 import SelectField from "../../ui/SelectField";
 import { TextField } from "../../ui/TextField";
 import { Button } from "../../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
 import MeshSettingsPanel from "../MeshSettingsPanel";
-import { MetricField, SidebarSection, StatusBadge, ToggleRow, CompactInputGrid } from "./primitives";
+import { MetricField, InspectorSection, StatusBadge, ToggleRow, CompactInputGrid } from "./primitives";
 import {
   humanizeToken,
   readBuilderContract,
@@ -236,7 +236,8 @@ export default function UniversePanel() {
     ctx.setSelectedObjectId(null);
     ctx.setViewportScope("universe");
     ctx.setObjectViewMode("context");
-    ctx.setAirMeshVisible(true);
+    // Full-domain baseline should keep airbox hidden by default.
+    ctx.setAirMeshVisible(false);
     ctx.setMeshEntityViewState((prev) => {
       const next = { ...prev };
       for (const part of ctx.meshParts) {
@@ -244,7 +245,7 @@ export default function UniversePanel() {
         if (!current) continue;
         next[part.id] = {
           ...current,
-          visible: true,
+          visible: defaultMeshEntityViewState(part).visible,
         };
       }
       return next;
@@ -256,7 +257,9 @@ export default function UniversePanel() {
         ctx.airPart &&
           ctx.meshParts.length > 0 &&
           ctx.meshParts.every((part) => {
-            const visible = ctx.meshEntityViewState[part.id]?.visible ?? true;
+            const visible =
+              ctx.meshEntityViewState[part.id]?.visible ??
+              defaultMeshEntityViewState(part).visible;
             return part.role === "air" ? visible : !visible;
           }),
       ),
@@ -304,7 +307,7 @@ export default function UniversePanel() {
         if (!current) continue;
         next[part.id] = {
           ...current,
-          visible: true,
+          visible: defaultMeshEntityViewState(part).visible,
         };
       }
       return next;
@@ -322,7 +325,7 @@ export default function UniversePanel() {
       </TabsList>
 
       <TabsContent value="general" className="mt-0">
-        <SidebarSection title="General Properties" defaultOpen={true}>
+        <InspectorSection title="General Properties" defaultOpen={true}>
           <div className="flex flex-col gap-2">
             {editable && builderUniverse ? (
               <SelectField
@@ -347,9 +350,9 @@ export default function UniversePanel() {
               <StatusBadge label={ctx.isFemBackend ? "FEM" : "FDM"} tone="accent" />
             </div>
           </div>
-        </SidebarSection>
+        </InspectorSection>
 
-        <SidebarSection title="Domain Extent" defaultOpen={true}>
+        <InspectorSection title="Domain Extent" defaultOpen={true}>
           {editable && builderUniverse ? (
             <div className="flex flex-col gap-3">
               <CompactInputGrid
@@ -382,19 +385,19 @@ export default function UniversePanel() {
               Universe extent is read-only in this context.
             </div>
           )}
-        </SidebarSection>
+        </InspectorSection>
 
         {ctx.isFemBackend ? (
-          <SidebarSection title="Domain Mesh" defaultOpen={true}>
+          <InspectorSection title="Domain Mesh" defaultOpen={true}>
             <div className="rounded-lg border border-border/30 bg-card/30 p-3 text-[0.72rem] leading-relaxed text-muted-foreground">
               The shared-domain FEM path now treats Universe mesh controls as domain-level diagnostics.
               Tune air-region density in the <span className="font-medium text-foreground">Airbox</span> tab
               and per-object sizing in each object&apos;s <span className="font-medium text-foreground">Mesh</span> panel.
             </div>
-          </SidebarSection>
+          </InspectorSection>
         ) : null}
 
-        <SidebarSection title="Universe Summary" defaultOpen={true}>
+        <InspectorSection title="Universe Summary" defaultOpen={true}>
           <div className="grid grid-cols-2 gap-3">
             <MetricField label="Mode" value={mode ? humanizeToken(mode) : "—"} tooltip="Current universe derivation mode." />
             <MetricField label="Role" value={role} tooltip="How this box should be interpreted in the active backend." />
@@ -408,12 +411,12 @@ export default function UniversePanel() {
               tooltip="Calculated padding added around physical objects."
             />
           </div>
-        </SidebarSection>
+        </InspectorSection>
       </TabsContent>
 
       <TabsContent value="airbox" className="mt-0">
         {ctx.isFemBackend ? (
-          <SidebarSection title="Airbox" defaultOpen={true}>
+          <InspectorSection title="Airbox" defaultOpen={true}>
             <div className="flex flex-col gap-3">
               <div className="rounded-lg border border-info/20 bg-info/10 p-2.5 text-[0.68rem] leading-relaxed text-info/90">
                 Shared-domain FEM builds one conformal solver mesh for the airbox and magnetic bodies.
@@ -503,14 +506,14 @@ export default function UniversePanel() {
                 />
               </div>
             </div>
-          </SidebarSection>
+          </InspectorSection>
         ) : null}
       </TabsContent>
 
       <TabsContent value="view" className="mt-0">
         {ctx.isFemBackend ? (
           <>
-            <SidebarSection title="View" defaultOpen={true}>
+            <InspectorSection title="View" defaultOpen={true}>
               <div className="rounded-lg border border-border/35 bg-background/35 p-3">
                 <div className="mb-2 text-[0.62rem] font-semibold uppercase tracking-widest text-muted-foreground">
                   Viewport
@@ -537,10 +540,10 @@ export default function UniversePanel() {
                   `Isolate Airbox` hides magnetic-body mesh parts only in the 3D viewport, so you can inspect the air region by itself without changing the solver mesh.
                 </div>
               </div>
-            </SidebarSection>
+            </InspectorSection>
 
             {showMeshPartsPanel ? (
-              <SidebarSection title="Mesh Parts" defaultOpen={true}>
+              <InspectorSection title="Mesh Parts" defaultOpen={true}>
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between rounded-lg border border-border/30 bg-card/20 p-2.5">
                     <div className="text-[0.68rem] leading-relaxed text-muted-foreground">
@@ -557,7 +560,7 @@ export default function UniversePanel() {
                   </div>
                   {ctx.meshParts.map((part) => {
                     const viewState = ctx.meshEntityViewState[part.id];
-                    const visible = viewState?.visible ?? true;
+                    const visible = viewState?.visible ?? defaultMeshEntityViewState(part).visible;
                     const opacity = viewState?.opacity ?? (part.role === "air" ? 28 : 100);
                     const renderMode = viewState?.renderMode ?? (part.role === "air" ? "wireframe" : "surface+edges");
                     return (
@@ -636,7 +639,7 @@ export default function UniversePanel() {
                     );
                   })}
                 </div>
-              </SidebarSection>
+              </InspectorSection>
             ) : null}
           </>
         ) : null}
@@ -644,7 +647,7 @@ export default function UniversePanel() {
 
       <TabsContent value="boundary" className="mt-0">
         {ctx.isFemBackend ? (
-          <SidebarSection title="Outer Boundary" defaultOpen={true}>
+          <InspectorSection title="Outer Boundary" defaultOpen={true}>
             <div className="flex flex-col gap-3">
               <SelectField
                 label="BC Kind"
@@ -672,13 +675,13 @@ export default function UniversePanel() {
                 `Transfer Grid` skips the outer airbox boundary solve and uses the FFT transfer-grid demag path instead.
               </div>
             </div>
-          </SidebarSection>
+          </InspectorSection>
         ) : null}
       </TabsContent>
 
       <TabsContent value="build" className="mt-0">
         {ctx.isFemBackend ? (
-          <SidebarSection title="Build & Log" defaultOpen={true}>
+          <InspectorSection title="Build & Log" defaultOpen={true}>
             <div className="flex flex-col gap-3">
               <div className="grid grid-cols-2 gap-2">
                 <div className="grid gap-1 rounded-xl border border-border/35 bg-background/40 px-2.5 py-2 transition-colors hover:bg-background/60">
@@ -752,7 +755,7 @@ export default function UniversePanel() {
                   ?? "Change airbox sizing here, then use `Build Selected` or `Build All` in the Mesh ribbon to sync the script, queue a study-domain remesh and follow the shared-domain status in the build modal."}
               </div>
             </div>
-          </SidebarSection>
+          </InspectorSection>
         ) : null}
       </TabsContent>
     </Tabs>

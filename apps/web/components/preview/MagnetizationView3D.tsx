@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
+import { useDeferredValue, useEffect, useRef, useState, useCallback, useMemo, memo, type Dispatch, type SetStateAction } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { TrackballControls, PivotControls } from "@react-three/drei";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import ViewCube from "./ViewCube";
 import HslSphere from "./HslSphere";
 import FdmInstances from "./r3f/FdmInstances";
+import type { IsolateGridBounds } from "./r3f/FdmInstances";
 import { rotateCameraAroundTarget, focusCameraOnBounds } from "./camera/cameraHelpers";
 import FdmLighting from "./r3f/FdmLighting";
 import SceneAxes3D from "./r3f/SceneAxes3D";
@@ -16,6 +17,7 @@ import TextureTransformGizmo, {
   type TexturePreviewProxy,
 } from "./TextureTransformGizmo";
 import type { TextureTransform3D } from "@/lib/textureTransform";
+import type { VisualizationPresetFdmState } from "@/lib/session/types";
 import type {
   AntennaOverlay,
   BuilderObjectOverlay,
@@ -69,6 +71,8 @@ interface Props {
   onTextureTransformCommit?: (next: TextureTransform3D) => void;
   activeTransformScope?: "object" | "texture" | null;
   onTransformScopeChange?: (scope: "object" | "texture" | null) => void;
+  settings?: VisualizationPresetFdmState;
+  onSettingsChange?: Dispatch<SetStateAction<VisualizationPresetFdmState>>;
 }
 
 export type QualityLevel = "low" | "high" | "ultra";
@@ -124,6 +128,38 @@ interface Settings {
   topoEnabled: boolean;
   topoComponent: TopoComponent;
   topoMultiplier: number;
+}
+
+function settingsFromPreset(state: VisualizationPresetFdmState): Settings {
+  return {
+    quality: state.quality,
+    renderMode: state.render_mode,
+    voxelColorMode: state.voxel_color_mode,
+    sampling: state.sampling,
+    brightness: state.brightness,
+    voxelOpacity: state.voxel_opacity,
+    voxelGap: state.voxel_gap,
+    voxelThreshold: state.voxel_threshold,
+    topoEnabled: state.topo_enabled,
+    topoComponent: state.topo_component,
+    topoMultiplier: state.topo_multiplier,
+  };
+}
+
+function settingsToPreset(state: Settings): VisualizationPresetFdmState {
+  return {
+    quality: state.quality,
+    render_mode: state.renderMode,
+    voxel_color_mode: state.voxelColorMode,
+    sampling: state.sampling,
+    brightness: state.brightness,
+    voxel_opacity: state.voxelOpacity,
+    voxel_gap: state.voxelGap,
+    voxel_threshold: state.voxelThreshold,
+    topo_enabled: state.topoEnabled,
+    topo_component: state.topoComponent,
+    topo_multiplier: state.topoMultiplier,
+  };
 }
 
 function loadSettings(): Settings {
@@ -524,8 +560,14 @@ function MagnetizationView3DInner({
   onTextureTransformCommit,
   activeTransformScope,
   onTransformScopeChange,
+  settings: externalSettings,
+  onSettingsChange,
 }: Props) {
-  const [settings, setSettings] = useState<Settings>(loadSettings);
+  const [internalSettings, setInternalSettings] = useState<Settings>(loadSettings);
+  const settings = useMemo(
+    () => (externalSettings ? settingsFromPreset(externalSettings) : internalSettings),
+    [externalSettings, internalSettings],
+  );
   const [openPopover, setOpenPopover] = useState<"color" | "display" | "topo" | "camera" | null>(null);
 
   // ── 3dsmax-style interaction mode (camera / move / rotate / scale) ──
@@ -584,9 +626,9 @@ function MagnetizationView3DInner({
   }), [nx, ny, nz]);
 
   // Persist settings changes
-  const update = (patch: Partial<Settings>) => {
-    setSettings((prev) => {
-      const next = { ...prev, ...patch };
+  const update = useCallback((patch: Partial<Settings>) => {
+    const writeSettings = (previous: Settings) => {
+      const next = { ...previous, ...patch };
       if (patch.quality !== undefined) persist(STORAGE_KEYS.quality, next.quality);
       if (patch.renderMode !== undefined) persist(STORAGE_KEYS.renderMode, next.renderMode);
       if (patch.voxelColorMode !== undefined) persist(STORAGE_KEYS.voxelColorMode, next.voxelColorMode);
@@ -599,8 +641,15 @@ function MagnetizationView3DInner({
       if (patch.topoComponent !== undefined) persist(STORAGE_KEYS.topoComponent, next.topoComponent);
       if (patch.topoMultiplier !== undefined) persist(STORAGE_KEYS.topoMultiplier, next.topoMultiplier);
       return next;
-    });
-  };
+    };
+
+    if (externalSettings && onSettingsChange) {
+      onSettingsChange((prev) => settingsToPreset(writeSettings(settingsFromPreset(prev))));
+      return;
+    }
+
+    setInternalSettings((prev) => writeSettings(prev));
+  }, [externalSettings, onSettingsChange]);
 
   // Snap camera to a direction
   const snapCamera = useCallback((dir: [number, number, number], up: [number, number, number] = [0, 1, 0]) => {
@@ -691,6 +740,35 @@ function MagnetizationView3DInner({
   // In isolate mode, keep voxels at full opacity to avoid transparent instanced mesh
   // sorting artifacts. The overlay boxes already hide non-selected objects visually.
   const sceneOpacityMultiplier = 1;
+
+  // P0 FDM isolate: compute grid-space bounds so FdmInstances hides voxels outside
+  // the selected object when in isolate mode.
+  const isolateGridBounds = useMemo(() => {
+    if (objectViewMode !== "isolate" || !selectedObjectId || !worldExtent) return null;
+    const overlay = objectOverlays.find((o) => o.id === selectedObjectId);
+    if (!overlay) return null;
+    const domainCenter = universeCenter ?? [0, 0, 0];
+    const domainMin = [
+      domainCenter[0] - worldExtent[0] * 0.5,
+      domainCenter[1] - worldExtent[1] * 0.5,
+      domainCenter[2] - worldExtent[2] * 0.5,
+    ] as const;
+    const cellX = worldExtent[0] / Math.max(nx, 1);
+    const cellY = worldExtent[1] / Math.max(ny, 1);
+    const cellZ = worldExtent[2] / Math.max(nz, 1);
+    const toIx = (wx: number) => (wx - domainMin[0]) / cellX - 0.5;
+    const toIy = (wy: number) => (wy - domainMin[1]) / cellY - 0.5;
+    const toIz = (wz: number) => (wz - domainMin[2]) / cellZ - 0.5;
+    return {
+      minIx: Math.floor(toIx(overlay.boundsMin[0])),
+      maxIx: Math.ceil(toIx(overlay.boundsMax[0])),
+      minIy: Math.floor(toIy(overlay.boundsMin[1])),
+      maxIy: Math.ceil(toIy(overlay.boundsMax[1])),
+      minIz: Math.floor(toIz(overlay.boundsMin[2])),
+      maxIz: Math.ceil(toIz(overlay.boundsMax[2])),
+    };
+  }, [objectViewMode, selectedObjectId, objectOverlays, worldExtent, universeCenter, nx, ny, nz]);
+
   const toolbarOptionClassName =
     "appearance-none border border-transparent bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors hover:bg-muted/40 hover:text-foreground data-[active=true]:border-primary/45 data-[active=true]:bg-primary/18 data-[active=true]:text-primary";
 
@@ -773,19 +851,19 @@ function MagnetizationView3DInner({
                         ))}
                     </ViewportPopoverRow>
                     <ViewportPopoverRow label="Brightness">
-                       <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.3} max={3.0} step={0.1} value={settings.brightness} onChange={(e) => update({ brightness: parseFloat(e.target.value) })} />
+                       <input type="range" className="flex-1 h-[3px] accent-primary max-w-[120px]" min={0.3} max={3.0} step={0.1} value={settings.brightness} onChange={(e) => update({ brightness: parseFloat(e.target.value) })} />
                     </ViewportPopoverRow>
                     {settings.renderMode === "voxel" && (
                       <>
                         <div className="h-px bg-border/20 my-1"/>
                         <ViewportPopoverRow label="Opacity">
-                           <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.15} max={0.95} step={0.01} value={settings.voxelOpacity} onChange={(e) => update({ voxelOpacity: parseFloat(e.target.value) })} />
+                           <input type="range" className="flex-1 h-[3px] accent-primary max-w-[120px]" min={0.15} max={0.95} step={0.01} value={settings.voxelOpacity} onChange={(e) => update({ voxelOpacity: parseFloat(e.target.value) })} />
                         </ViewportPopoverRow>
                         <ViewportPopoverRow label="Spacing">
-                           <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.02} max={0.42} step={0.01} value={settings.voxelGap} onChange={(e) => update({ voxelGap: parseFloat(e.target.value) })} />
+                           <input type="range" className="flex-1 h-[3px] accent-primary max-w-[120px]" min={0.02} max={0.42} step={0.01} value={settings.voxelGap} onChange={(e) => update({ voxelGap: parseFloat(e.target.value) })} />
                         </ViewportPopoverRow>
                         <ViewportPopoverRow label="Min Str">
-                           <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0} max={0.95} step={0.01} value={settings.voxelThreshold} onChange={(e) => update({ voxelThreshold: parseFloat(e.target.value) })} />
+                           <input type="range" className="flex-1 h-[3px] accent-primary max-w-[120px]" min={0} max={0.95} step={0.01} value={settings.voxelThreshold} onChange={(e) => update({ voxelThreshold: parseFloat(e.target.value) })} />
                         </ViewportPopoverRow>
                         <ViewportPopoverRow label="Sampling">
                            {(["1", "2", "4"]).map(v => (
@@ -827,7 +905,7 @@ function MagnetizationView3DInner({
                               ))}
                             </ViewportPopoverRow>
                             <ViewportPopoverRow label="Amplitude">
-                               <input type="range" className="flex-1 h-[3px] accent-primary w-[120px]" min={0.5} max={50} step={0.5} value={settings.topoMultiplier} onChange={(e) => update({ topoMultiplier: parseFloat(e.target.value) })} />
+                               <input type="range" className="flex-1 h-[3px] accent-primary max-w-[120px]" min={0.5} max={50} step={0.5} value={settings.topoMultiplier} onChange={(e) => update({ topoMultiplier: parseFloat(e.target.value) })} />
                             </ViewportPopoverRow>
                          </>
                        )}
@@ -1012,6 +1090,7 @@ function MagnetizationView3DInner({
             activeMask={activeMask}
             settings={deferredSettings}
             sceneOpacityMultiplier={sceneOpacityMultiplier}
+            isolateGridBounds={isolateGridBounds}
           />
 
           {worldExtent && objectOverlays.length > 0 ? (

@@ -10,6 +10,7 @@ import type { TextureTransform3D as PreviewTextureTransform3D } from "@/lib/text
 import MagnetizationSlice2D from "../../preview/MagnetizationSlice2D";
 import MagnetizationView3D from "../../preview/MagnetizationView3D";
 import FemMeshView3D from "../../preview/FemMeshView3D";
+import { ViewportErrorBoundary } from "../../preview/ViewportErrorBoundary";
 import FemMeshSlice2D from "../../preview/FemMeshSlice2D";
 import PreviewScalarField2D from "../../preview/PreviewScalarField2D";
 import BoundsPreview3D from "../../preview/BoundsPreview3D";
@@ -31,6 +32,7 @@ import type {
   MeshEntityViewState,
   TextureTransform3D as SceneTextureTransform3D,
 } from "../../../lib/session/types";
+import { defaultMeshEntityViewState } from "../../../lib/session/types";
 
 function domainFrameSourceLabel(source: string | null): string {
   switch (source) {
@@ -60,15 +62,6 @@ function visibleVolumeLabel(
     return "Full Effective Domain";
   }
   return `Clipped ${clipAxis.toUpperCase()} @${Math.round(clipPos)}%`;
-}
-
-function defaultMeshPartViewState(part: FemMeshPart): MeshEntityViewState {
-  return {
-    visible: part.role !== "air",
-    renderMode: part.role === "air" ? "wireframe" : "surface+edges",
-    opacity: part.role === "air" ? 28 : part.role === "outer_boundary" ? 46 : part.role === "interface" ? 88 : 100,
-    colorField: part.role === "magnetic_object" ? "orientation" : "none",
-  };
 }
 
 function toPreviewTextureTransform(value: SceneTextureTransform3D): PreviewTextureTransform3D {
@@ -198,7 +191,7 @@ export function ViewportBar() {
                   onValueChange={(val) => void ctx.updatePreview("/component", { component: val })}
                   disabled={ctx.previewBusy}
                 >
-                  <SelectTrigger className="h-8 w-[88px] border-border/35 bg-background/45 text-[0.72rem] justify-between">
+                  <SelectTrigger className="h-8 min-w-[88px] border-border/35 bg-background/45 text-[0.72rem] justify-between">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -213,7 +206,7 @@ export function ViewportBar() {
                   value={ctx.component}
                   onValueChange={(val) => ctx.setComponent(val as any)}
                 >
-                  <SelectTrigger className="h-8 w-[88px] border-border/35 bg-background/45 text-[0.72rem] justify-between">
+                  <SelectTrigger className="h-8 min-w-[88px] border-border/35 bg-background/45 text-[0.72rem] justify-between">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -235,7 +228,7 @@ export function ViewportBar() {
                 onValueChange={(val) => void ctx.updatePreview("/everyN", { everyN: Number(val) })}
                 disabled={ctx.previewBusy}
               >
-                <SelectTrigger className="h-8 w-[84px] border-border/35 bg-background/45 text-[0.72rem]">
+                <SelectTrigger className="h-8 min-w-[84px] border-border/35 bg-background/45 text-[0.72rem]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -250,7 +243,7 @@ export function ViewportBar() {
                 onValueChange={(val) => void ctx.updatePreview("/maxPoints", { maxPoints: Number(val) })}
                 disabled={ctx.previewBusy}
               >
-                <SelectTrigger className="h-8 w-[94px] border-border/35 bg-background/45 text-[0.72rem]">
+                <SelectTrigger className="h-8 min-w-[94px] border-border/35 bg-background/45 text-[0.72rem]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -284,7 +277,7 @@ export function ViewportBar() {
                     onValueChange={(val) => void ctx.updatePreview("/XChosenSize", { xChosenSize: Number(val) })}
                     disabled={ctx.previewBusy}
                   >
-                    <SelectTrigger className="h-8 w-[72px] border-border/35 bg-background/45 text-[0.72rem]">
+                    <SelectTrigger className="h-8 min-w-[72px] border-border/35 bg-background/45 text-[0.72rem]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -299,7 +292,7 @@ export function ViewportBar() {
                     onValueChange={(val) => void ctx.updatePreview("/YChosenSize", { yChosenSize: Number(val) })}
                     disabled={ctx.previewBusy}
                   >
-                    <SelectTrigger className="h-8 w-[72px] border-border/35 bg-background/45 text-[0.72rem]">
+                    <SelectTrigger className="h-8 min-w-[72px] border-border/35 bg-background/45 text-[0.72rem]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -355,7 +348,7 @@ export function ViewportBar() {
                 <>
                   <span className="text-[0.68rem] text-muted-foreground">Plane</span>
                   <Select value={ctx.plane} onValueChange={(val) => ctx.setPlane(val as any)}>
-                    <SelectTrigger className="h-8 w-[78px] bg-background/45 border-border/35 text-[0.72rem]">
+                    <SelectTrigger className="h-8 min-w-[78px] bg-background/45 border-border/35 text-[0.72rem]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -382,7 +375,7 @@ export function ViewportBar() {
             <>
               <span className="text-[0.68rem] text-muted-foreground">Plane</span>
               <Select value={ctx.plane} onValueChange={(val) => ctx.setPlane(val as any)}>
-                <SelectTrigger className="h-8 w-[78px] bg-background/45 border-border/35 text-[0.72rem]">
+                <SelectTrigger className="h-8 min-w-[78px] bg-background/45 border-border/35 text-[0.72rem]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -534,7 +527,7 @@ export function ViewportCanvasArea() {
         const next = { ...prev };
         for (const partId of partIds) {
           const part = ctx.meshParts.find((candidate) => candidate.id === partId);
-          const current = next[partId] ?? (part ? defaultMeshPartViewState(part) : null);
+          const current = next[partId] ?? (part ? defaultMeshEntityViewState(part) : null);
           if (!current) continue;
           const updated = { ...current, ...patch };
           if (
@@ -653,6 +646,7 @@ export function ViewportCanvasArea() {
     );
   } else if (ctx.effectiveViewMode === "Mesh" && ctx.femMeshData) {
     conditionalContent = (
+      <ViewportErrorBoundary label="FEM Mesh Viewport">
       <FemMeshView3D
         topologyKey={ctx.femTopologyKey ?? undefined}
         meshData={ctx.femMeshData}
@@ -705,9 +699,11 @@ export function ViewportCanvasArea() {
         onEntityFocus={ctx.setFocusedEntityId}
         onQuantityChange={ctx.requestPreviewQuantity}
       />
+      </ViewportErrorBoundary>
     );
   } else if (ctx.effectiveViewMode === "3D" && ctx.femMeshData) {
     conditionalContent = (
+      <ViewportErrorBoundary label="FEM 3D Viewport">
       <FemMeshView3D
         topologyKey={ctx.femTopologyKey ?? undefined}
         meshData={ctx.femMeshData}
@@ -727,6 +723,11 @@ export function ViewportCanvasArea() {
         clipAxis={ctx.meshClipAxis}
         clipPos={ctx.meshClipPos}
         showArrows={ctx.femShouldShowArrows}
+        arrowColorMode={ctx.femArrowColorMode}
+        arrowMonoColor={ctx.femArrowMonoColor}
+        arrowAlpha={ctx.femArrowAlpha}
+        arrowLengthScale={ctx.femArrowLengthScale}
+        arrowThickness={ctx.femArrowThickness}
         previewMaxPoints={ctx.requestedPreviewMaxPoints}
         onRenderModeChange={ctx.setMeshRenderMode}
         onOpacityChange={ctx.setMeshOpacity}
@@ -734,6 +735,11 @@ export function ViewportCanvasArea() {
         onClipAxisChange={ctx.setMeshClipAxis}
         onClipPosChange={ctx.setMeshClipPos}
         onShowArrowsChange={ctx.setMeshShowArrows}
+        onArrowColorModeChange={ctx.setFemArrowColorMode}
+        onArrowMonoColorChange={ctx.setFemArrowMonoColor}
+        onArrowAlphaChange={ctx.setFemArrowAlpha}
+        onArrowLengthScaleChange={ctx.setFemArrowLengthScale}
+        onArrowThicknessChange={ctx.setFemArrowThickness}
         onPreviewMaxPointsChange={(nextMaxPoints) =>
           void ctx.updatePreview("/maxPoints", { maxPoints: nextMaxPoints })
         }
@@ -760,6 +766,7 @@ export function ViewportCanvasArea() {
         worldCenter={ctx.worldCenter}
         onQuantityChange={ctx.requestPreviewQuantity}
       />
+      </ViewportErrorBoundary>
     );
   } else if (ctx.effectiveViewMode === "2D" && ctx.femMeshData) {
     conditionalContent = (
@@ -945,6 +952,7 @@ export function ViewportCanvasArea() {
        * expensive to recreate. We keep MagnetizationView3D always in the DOM and
        * toggle visibility via CSS, preventing GL context destruction on data swaps. */}
       <div className={cn("absolute inset-0", showFdm3D ? "block" : "hidden")}>
+        <ViewportErrorBoundary label="FDM 3D Viewport">
         <MagnetizationView3D
           grid={ctx.previewGrid}
           vectors={isFdm3DActive ? ctx.selectedVectors : null}
@@ -961,6 +969,8 @@ export function ViewportCanvasArea() {
           universeCenter={ctx.worldCenter}
           focusObjectRequest={ctx.focusObjectRequest}
           objectViewMode={ctx.objectViewMode}
+          settings={ctx.fdmVisualizationSettings}
+          onSettingsChange={ctx.setFdmVisualizationSettings}
           onAntennaTranslate={ctx.applyAntennaTranslation}
           onGeometryTranslate={ctx.applyGeometryTranslation}
           onRequestObjectSelect={handleRequestObjectSelect}
@@ -971,6 +981,7 @@ export function ViewportCanvasArea() {
           activeTransformScope={ctx.activeTransformScope}
           onTransformScopeChange={(scope) => ctx.setActiveTransformScope(scope)}
         />
+        </ViewportErrorBoundary>
       </div>
 
       {/* ── Conditionally-rendered non-GL viewports ── */}

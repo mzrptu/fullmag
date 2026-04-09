@@ -39,13 +39,21 @@ export default function SelectField({
   disabled,
 }: SelectFieldProps) {
   return (
-    <div className={cn("flex flex-col gap-1.5 min-w-0", className)}>
-      <label className="flex items-center gap-2 text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-[0.06em]">
-        <span className="flex-1">{label}</span>
-        {tooltip && <HelpTip>{tooltip}</HelpTip>}
-      </label>
-      <Select value={String(value)} onValueChange={onchange} disabled={disabled}>
-        <SelectTrigger>
+    <div className={cn("flex flex-col @[260px]:flex-row @[260px]:items-center gap-1.5 @[260px]:gap-3 min-w-0 w-full", className)}>
+      {label && (
+        <div className="flex-1 min-w-0">
+          <label className="flex items-center gap-2 text-[0.68rem] font-semibold text-muted-foreground uppercase tracking-widest">
+            <span className="flex-1 truncate">{label}</span>
+            {tooltip && <HelpTip>{tooltip}</HelpTip>}
+          </label>
+        </div>
+      )}
+      <div className={cn(
+        "relative flex items-center shrink-0 w-full",
+        label && "@[260px]:w-[130px] @[320px]:w-[160px]"
+      )}>
+        <Select value={String(value)} onValueChange={onchange} disabled={disabled}>
+          <SelectTrigger className="h-8 text-xs bg-background/60 border-border/35 transition-colors focus:border-primary/40">
           <SelectValue placeholder="Select an option" />
         </SelectTrigger>
         <SelectContent>
@@ -54,8 +62,9 @@ export default function SelectField({
               {opt.label}
             </SelectItem>
           ))}
-        </SelectContent>
-      </Select>
+          </SelectContent>
+        </Select>
+      </div>
     </div>
   )
 }

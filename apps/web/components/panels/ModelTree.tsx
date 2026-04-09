@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import type {
   ModelBuilderGraphV2,
@@ -10,6 +10,8 @@ import type {
   ScriptBuilderGeometryEntry,
   ScriptBuilderMagnetizationEntry,
   ScriptBuilderStageState,
+  VisualizationPreset,
+  VisualizationPresetRef,
   StudyPipelineNodeState,
 } from "@/lib/session/types";
 import { buildScriptBuilderFromSceneDocument } from "@/lib/session/sceneDocument";
@@ -21,6 +23,7 @@ import {
   buildFlatStudyStageNodeId,
   buildPipelineStudyStageNodeId,
 } from "@/lib/study-builder/node-context";
+import { parseVisualizationPresetNodeId } from "../runs/control-room/visualizationPresets";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -516,6 +519,10 @@ export default function ModelTree({
     }
     setCtxMenu(null);
   }, [ctxMenu, onContextAction, onNodeClick]);
+  const contextVisualizationPreset = useMemo(
+    () => parseVisualizationPresetNodeId(ctxMenu?.nodeId),
+    [ctxMenu?.nodeId],
+  );
 
   return (
     <div className={cn("flex flex-col gap-[1px] py-1 select-none", className)} role="tree">
@@ -544,7 +551,19 @@ export default function ModelTree({
             {ctxMenu.label}
           </div>
           <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("select")}>Select</button>
-          <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("focus")}>Focus in 3D</button>
+          {contextVisualizationPreset ? (
+            <>
+              <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("apply")}>Apply</button>
+              <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("rename")}>Rename</button>
+              <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("duplicate")}>Duplicate</button>
+              <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction(contextVisualizationPreset.source === "project" ? "save-local" : "save-project")}>
+                {contextVisualizationPreset.source === "project" ? "Save To Local" : "Save To Project"}
+              </button>
+              <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("delete")}>Delete</button>
+            </>
+          ) : (
+            <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("focus")}>Focus in 3D</button>
+          )}
           <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("copy-name")}>Copy Name</button>
           <div className="h-px bg-border/50 my-1 mx-1" />
           <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("expand-all")}>Expand All</button>
@@ -607,6 +626,9 @@ export function buildFullmagModelTree(opts: {
   /** Short summary labels for each computed eigenmode (e.g. "0 · 12.3 GHz · ip"). */
   eigenModeSummaries?: { index: number; label: string }[];
   eigenHasDispersion?: boolean;
+  visualizationProjectPresets?: VisualizationPreset[];
+  visualizationLocalPresets?: VisualizationPreset[];
+  activeVisualizationPresetRef?: VisualizationPresetRef | null;
 }): TreeNodeData[] {
   const graph = opts.graph ?? null;
   const sceneDocument = opts.sceneDocument ?? null;
@@ -688,6 +710,9 @@ export function buildFullmagModelTree(opts: {
   const modules = graph?.current_modules.modules ?? opts.currentModules ?? [];
   const excitationAnalysis =
     graph?.current_modules.excitation_analysis ?? opts.excitationAnalysis ?? null;
+  const visualizationProjectPresets = opts.visualizationProjectPresets ?? [];
+  const visualizationLocalPresets = opts.visualizationLocalPresets ?? [];
+  const activeVisualizationPresetRef = opts.activeVisualizationPresetRef ?? null;
   const studyStages = graph?.study.stages ?? [];
   const studyPipeline = graph?.study.study_pipeline ?? null;
   const showUniverse = Boolean(
@@ -975,6 +1000,67 @@ export function buildFullmagModelTree(opts: {
     },
   );
 
+  const visualizationChildren: TreeNodeData[] = [
+    {
+      id: "visualization-section-project",
+      label: "Project",
+      icon: "🗂",
+      badge: `${visualizationProjectPresets.length}`,
+      status: "ready",
+      defaultOpen: true,
+      children:
+        visualizationProjectPresets.length > 0
+          ? visualizationProjectPresets.map((preset) => ({
+              id: `vis-project-${preset.id}`,
+              label: preset.name,
+              icon: "🎛",
+              badge:
+                activeVisualizationPresetRef?.source === "project" &&
+                activeVisualizationPresetRef?.preset_id === preset.id
+                  ? "active"
+                  : `${preset.domain.toUpperCase()} · ${preset.mode}`,
+              status: "ready" as const,
+            }))
+          : [
+              {
+                id: "visualization-project-empty",
+                label: "No project presets",
+                icon: "◌",
+                status: "pending" as const,
+              },
+            ],
+    },
+    {
+      id: "visualization-section-local",
+      label: "Local",
+      icon: "💾",
+      badge: `${visualizationLocalPresets.length}`,
+      status: "ready",
+      defaultOpen: true,
+      children:
+        visualizationLocalPresets.length > 0
+          ? visualizationLocalPresets.map((preset) => ({
+              id: `vis-local-${preset.id}`,
+              label: preset.name,
+              icon: "🎛",
+              badge:
+                activeVisualizationPresetRef?.source === "local" &&
+                activeVisualizationPresetRef?.preset_id === preset.id
+                  ? "active"
+                  : `${preset.domain.toUpperCase()} · ${preset.mode}`,
+              status: "ready" as const,
+            }))
+          : [
+              {
+                id: "visualization-local-empty",
+                label: "No local presets",
+                icon: "◌",
+                status: "pending" as const,
+              },
+            ],
+    },
+  ];
+
   return [
     {
       id: "study-root",
@@ -984,6 +1070,15 @@ export function buildFullmagModelTree(opts: {
       status: "ready",
       defaultOpen: true,
       children: studyChildren,
+    },
+    {
+      id: "visualization-root",
+      label: "Visualization",
+      icon: "👁",
+      badge: `${visualizationProjectPresets.length + visualizationLocalPresets.length}`,
+      status: "ready",
+      defaultOpen: false,
+      children: visualizationChildren,
     },
   ];
 }

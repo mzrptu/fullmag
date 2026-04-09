@@ -9,6 +9,13 @@ import type { QualityLevel, RenderMode, VoxelColorMode, VoxelSampling, TopoCompo
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
+/** Grid-index bounding box for isolate masking (inclusive float bounds). */
+export interface IsolateGridBounds {
+  minIx: number; maxIx: number;
+  minIy: number; maxIy: number;
+  minIz: number; maxIz: number;
+}
+
 interface FdmInstancesProps {
   grid: [number, number, number];
   vectors: Float64Array | null;
@@ -27,6 +34,8 @@ interface FdmInstancesProps {
     topoMultiplier: number;
   };
   sceneOpacityMultiplier?: number;
+  /** When set, only voxels within these grid-index bounds are rendered. */
+  isolateGridBounds?: IsolateGridBounds | null;
   onVisibleCount?: (count: number) => void;
 }
 
@@ -98,12 +107,28 @@ function resolveVoxelTopography(baseZ: number, baseDepth: number, signedDisplace
 
 /* ── Geometry builders ─────────────────────────────────────────────── */
 
+const ARROW_SHAFT_RADIUS = 0.05;
+const ARROW_SHAFT_LENGTH = 0.55;
+const ARROW_HEAD_RADIUS = 0.2;
+const ARROW_HEAD_LENGTH = 0.4;
+
+/** Magnitude values below this are treated as zero vectors. */
+const ZERO_VEC_EPSILON = 1e-30;
+
+/** Strength-to-scale mapping: ensures even weak cells are visible. */
+const STRENGTH_SCALE_MIN = 0.18;
+const STRENGTH_SCALE_RANGE = 0.82;
+
+/** Glyph strength-to-scale mapping (slightly different visual curve). */
+const GLYPH_SCALE_MIN = 0.2;
+const GLYPH_SCALE_RANGE = 0.8;
+
 function createArrowGeometry(segments: number): THREE.BufferGeometry {
-  const totalLength = 0.55 + 0.4;
-  const shaft = new THREE.CylinderGeometry(0.05, 0.05, 0.55, segments);
-  shaft.translate(0, 0.275, 0);
-  const head = new THREE.ConeGeometry(0.2, 0.4, segments);
-  head.translate(0, 0.55 + 0.2, 0);
+  const totalLength = ARROW_SHAFT_LENGTH + ARROW_HEAD_LENGTH;
+  const shaft = new THREE.CylinderGeometry(ARROW_SHAFT_RADIUS, ARROW_SHAFT_RADIUS, ARROW_SHAFT_LENGTH, segments);
+  shaft.translate(0, ARROW_SHAFT_LENGTH / 2, 0);
+  const head = new THREE.ConeGeometry(ARROW_HEAD_RADIUS, ARROW_HEAD_LENGTH, segments);
+  head.translate(0, ARROW_SHAFT_LENGTH + ARROW_HEAD_LENGTH / 2, 0);
   const merged = mergeGeometries([shaft, head]);
   if (!merged) throw new Error("failed to merge arrow geometry");
   // Center the glyph on the sampled cell instead of anchoring the tail there.
@@ -157,6 +182,7 @@ function FdmInstances({
   activeMask,
   settings,
   sceneOpacityMultiplier = 1,
+  isolateGridBounds,
   onVisibleCount,
 }: FdmInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
@@ -253,7 +279,12 @@ function FdmInstances({
         for (let iy = 0; iy < ny; iy++) {
           for (let ix = 0; ix < nx; ix++) {
             const isActive = !activeMask || activeMask[idx];
-            if (!isActive) {
+            const inIsolateBounds = !isolateGridBounds || (
+              ix >= isolateGridBounds.minIx && ix <= isolateGridBounds.maxIx &&
+              iy >= isolateGridBounds.minIy && iy <= isolateGridBounds.maxIy &&
+              iz >= isolateGridBounds.minIz && iz <= isolateGridBounds.maxIz
+            );
+            if (!isActive || !inIsolateBounds) {
               writeHiddenMatrix(matrices, idx * 16);
             } else {
               visible++;
@@ -311,7 +342,7 @@ function FdmInstances({
       const mz = vectors![i + 2];
       maxMagnitude = Math.max(maxMagnitude, Math.sqrt(mx * mx + my * my + mz * mz));
     }
-    const normMag = Math.max(maxMagnitude, 1e-30);
+    const normMag = Math.max(maxMagnitude, ZERO_VEC_EPSILON);
 
     let visible = 0;
     let idx = 0;
@@ -330,15 +361,18 @@ function FdmInstances({
 
           const mag = Math.sqrt(mx * mx + my * my + mz * mz);
           const normalizedStrength = Math.min(1, mag / normMag);
-          const strengthScale = 0.18 + 0.82 * Math.sqrt(normalizedStrength);
+          const strengthScale = STRENGTH_SCALE_MIN + STRENGTH_SCALE_RANGE * Math.sqrt(normalizedStrength);
 
           if (isVoxel) {
             const cellActive = !activeMask || activeMask[idx];
-            const metric =
-              voxelColorMode === "orientation"
-                ? mag
-                : Math.abs(componentValue(mx, my, mz, voxelColorMode as "x" | "y" | "z"));
-            const isVisible = cellActive && sampled && metric >= voxelThreshold;
+            // Always use magnitude for visibility — decoupled from color mode (P0 fix).
+            // Also apply isolate bounds if present (P0 FDM isolate fix).
+            const inIsolateBounds = !isolateGridBounds || (
+              ix >= isolateGridBounds.minIx && ix <= isolateGridBounds.maxIx &&
+              iy >= isolateGridBounds.minIy && iy <= isolateGridBounds.maxIy &&
+              iz >= isolateGridBounds.minIz && iz <= isolateGridBounds.maxIz
+            );
+            const isVisible = cellActive && sampled && mag >= voxelThreshold && inIsolateBounds;
 
             let worldY = iz;
             let vH = depthScale * strengthScale;
@@ -371,7 +405,12 @@ function FdmInstances({
             applyVoxelColor(mx, my, mz, voxelColorMode, _color);
           } else {
             const cellActive = !activeMask || activeMask[idx];
-            const isVisible = cellActive && (mx !== 0 || my !== 0 || mz !== 0) && sampled;
+            const inIsolateBounds = !isolateGridBounds || (
+              ix >= isolateGridBounds.minIx && ix <= isolateGridBounds.maxIx &&
+              iy >= isolateGridBounds.minIy && iy <= isolateGridBounds.maxIy &&
+              iz >= isolateGridBounds.minIz && iz <= isolateGridBounds.maxIz
+            );
+            const isVisible = cellActive && (mx !== 0 || my !== 0 || mz !== 0) && sampled && inIsolateBounds;
 
             if (!isVisible) {
               writeHiddenMatrix(matrices, idx * 16);
@@ -379,10 +418,10 @@ function FdmInstances({
               visible++;
               _tempPos.set(ix, iz, iy);
               const mag = Math.sqrt(mx * mx + my * my + mz * mz);
-              const s = 0.2 + 0.8 * Math.sqrt(Math.min(1, mag / normMag));
+              const s = GLYPH_SCALE_MIN + GLYPH_SCALE_RANGE * Math.sqrt(Math.min(1, mag / normMag));
               _tempScale.set(s, s, s);
               _tempVec.set(mx, mz, my);
-              if (_tempVec.lengthSq() > 1e-30) {
+              if (_tempVec.lengthSq() > ZERO_VEC_EPSILON) {
                 _tempVec.normalize();
               } else {
                 _tempVec.set(0, 1, 0);
@@ -421,10 +460,10 @@ function FdmInstances({
       (mesh.material as THREE.MeshPhongMaterial | THREE.MeshBasicMaterial).depthWrite = true;
       mesh.material.needsUpdate = true;
     }
-  }, [vectors, grid, settings, geometryMode, activeMask, mode, count, nx, ny, nz, onVisibleCount, sceneOpacityMultiplier]);
+  }, [vectors, grid, settings, geometryMode, activeMask, mode, count, nx, ny, nz, onVisibleCount, sceneOpacityMultiplier, isolateGridBounds]);
 
   if (count === 0) {
-    if (typeof window !== "undefined") {
+    if (process.env.NODE_ENV === "development") {
       console.warn("[FdmInstances] count=0 — grid is", grid, "— no instances will render");
     }
     return null;

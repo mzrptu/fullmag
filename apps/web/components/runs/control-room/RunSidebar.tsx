@@ -18,6 +18,14 @@ import {
   resolveAntennaNodeName,
   resolveSelectedObjectId,
 } from "./shared";
+import {
+  isVisualizationTreeNode,
+  parseVisualizationPresetNodeId,
+  VISUALIZATION_LOCAL_SECTION_NODE_ID,
+  VISUALIZATION_PROJECT_SECTION_NODE_ID,
+  VISUALIZATION_ROOT_NODE_ID,
+  buildVisualizationPresetNodeId,
+} from "./visualizationPresets";
 import { meshWorkspaceNodeToDockTab, meshWorkspaceNodeToPreset } from "./meshWorkspace";
 import { useCurrentAnalyzeArtifacts } from "./useCurrentAnalyzeArtifacts";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
@@ -188,6 +196,9 @@ export default function RunSidebar() {
         eigenModeCount,
         eigenModeSummaries,
         eigenHasDispersion: analyzeArtifacts.dispersionRows.length > 0,
+        visualizationProjectPresets: model.visualizationProjectPresets,
+        visualizationLocalPresets: model.visualizationLocalPresets,
+        activeVisualizationPresetRef: model.activeVisualizationPresetRef,
       }),
     [
       model.modelBuilderGraph, model.sceneDocument, model.effectiveFemMesh, tp.hasSolverTelemetry, cmd.isFemBackend, model.material,
@@ -196,6 +207,7 @@ export default function RunSidebar() {
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm,
       tp.effectiveDmDt, tp.scalarRows.length, model.worldCenter, model.worldExtent, runtimeDeclaredUniverse?.mode, runtimeDeclaredUniverse?.padding, runtimeDeclaredUniverse?.size,
       universeRole, eigenModeCount, eigenModeSummaries, analyzeArtifacts.dispersionRows.length, cmd.artifacts,
+      model.visualizationProjectPresets, model.visualizationLocalPresets, model.activeVisualizationPresetRef,
     ],
   );
 
@@ -265,6 +277,25 @@ export default function RunSidebar() {
       : activeAntennaName ?? "Workspace"));
 
   const selectModelNode = useCallback((id: string) => {
+    const visualizationPresetNode = parseVisualizationPresetNodeId(id);
+    if (visualizationPresetNode) {
+      model.setSelectedSidebarNodeId(id);
+      model.setSelectedObjectId(null);
+      model.setSelectedEntityId(null);
+      model.setFocusedEntityId(null);
+      model.setActiveVisualizationPresetRef({
+        source: visualizationPresetNode.source,
+        preset_id: visualizationPresetNode.presetId,
+      });
+      return;
+    }
+    if (isVisualizationTreeNode(id)) {
+      model.setSelectedSidebarNodeId(id);
+      model.setSelectedObjectId(null);
+      model.setSelectedEntityId(null);
+      model.setFocusedEntityId(null);
+      return;
+    }
     const analyzeTarget = parseAnalyzeTreeNode(id);
     if (analyzeTarget) {
       model.setSelectedSidebarNodeId(id);
@@ -274,7 +305,12 @@ export default function RunSidebar() {
     const objectId = resolveSelectedObjectId(id, model.sceneDocument ?? model.modelBuilderGraph);
     model.setSelectedSidebarNodeId(id);
     model.setSelectedObjectId(objectId);
-    model.setObjectViewMode("context");
+    // P0 fix: selection must NOT reset isolate.
+    // Only update objectViewMode if we're NOT currently in isolate mode,
+    // or if the user explicitly requests it via the isolate pill.
+    if (model.objectViewMode !== "isolate") {
+      model.setObjectViewMode("context");
+    }
     if (id === "universe-airbox" || id === "universe-airbox-mesh") {
       const airPartId = model.airPart?.id ?? null;
       model.setSelectedEntityId(airPartId);
@@ -298,6 +334,21 @@ export default function RunSidebar() {
   const handleTreeClick = useCallback((id: string) => {
     selectModelNode(id);
     if (parseAnalyzeTreeNode(id)) {
+      return;
+    }
+    const visualizationPresetNode = parseVisualizationPresetNodeId(id);
+    if (visualizationPresetNode) {
+      model.applyVisualizationPreset({
+        source: visualizationPresetNode.source,
+        preset_id: visualizationPresetNode.presetId,
+      });
+      return;
+    }
+    if (
+      id === VISUALIZATION_ROOT_NODE_ID ||
+      id === VISUALIZATION_PROJECT_SECTION_NODE_ID ||
+      id === VISUALIZATION_LOCAL_SECTION_NODE_ID
+    ) {
       return;
     }
     // Ensure inspector is visible when a node is clicked
@@ -391,6 +442,64 @@ export default function RunSidebar() {
   }, [cmd.isFemBackend, model, vp, inspectorPanelRef, selectModelNode]);
 
   const handleTreeContextAction = useCallback((nodeId: string, action: string) => {
+    const visualizationPresetNode = parseVisualizationPresetNodeId(nodeId);
+    if (visualizationPresetNode) {
+      const ref = {
+        source: visualizationPresetNode.source,
+        preset_id: visualizationPresetNode.presetId,
+      } as const;
+      if (action === "apply") {
+        model.applyVisualizationPreset(ref);
+        model.setSelectedSidebarNodeId(nodeId);
+        return;
+      }
+      if (action === "rename") {
+        const existing =
+          (visualizationPresetNode.source === "project"
+            ? model.visualizationProjectPresets
+            : model.visualizationLocalPresets
+          ).find((preset) => preset.id === visualizationPresetNode.presetId);
+        const nextName = window.prompt("Preset name", existing?.name ?? "Visualization");
+        if (nextName && nextName.trim().length > 0) {
+          model.renameVisualizationPreset(ref, nextName.trim());
+        }
+        return;
+      }
+      if (action === "duplicate") {
+        const created = model.duplicateVisualizationPreset(ref);
+        if (created) {
+          model.setSelectedSidebarNodeId(
+            buildVisualizationPresetNodeId(created.source, created.preset_id),
+          );
+        }
+        return;
+      }
+      if (action === "delete") {
+        const accepted = window.confirm("Delete this visualization preset?");
+        if (accepted) {
+          model.deleteVisualizationPreset(ref);
+        }
+        return;
+      }
+      if (action === "save-project") {
+        const created = model.copyVisualizationPresetToSource(ref, "project");
+        if (created) {
+          model.setSelectedSidebarNodeId(
+            buildVisualizationPresetNodeId(created.source, created.preset_id),
+          );
+        }
+        return;
+      }
+      if (action === "save-local") {
+        const created = model.copyVisualizationPresetToSource(ref, "local");
+        if (created) {
+          model.setSelectedSidebarNodeId(
+            buildVisualizationPresetNodeId(created.source, created.preset_id),
+          );
+        }
+        return;
+      }
+    }
     if (action === "focus") {
       const objectId = resolveSelectedObjectId(
         nodeId,
@@ -555,7 +664,7 @@ export default function RunSidebar() {
           panelRef={inspectorPanelRef}
           onResize={handleInspectorResize}
         >
-          <section className="flex flex-col h-full bg-background/35">
+          <section className="flex flex-col h-full bg-background/35 @container">
             <button
               type="button"
               className="flex items-center w-full px-3 py-2 text-left transition-all hover:bg-muted/20 border-b border-border/10 z-10 shrink-0 relative group"

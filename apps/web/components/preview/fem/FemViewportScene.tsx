@@ -9,6 +9,7 @@ import { FemHighlightView } from "../r3f/FemHighlightView";
 import SceneAxes3D from "../r3f/SceneAxes3D";
 import type { AntennaOverlay } from "../../runs/control-room/shared";
 import type {
+  FemArrowColorMode,
   ClipAxis,
   FemColorField,
   FemMeshData,
@@ -152,6 +153,11 @@ export function FemViewportScene({
   effectiveShowArrows,
   arrowField,
   arrowDensity,
+  arrowColorMode,
+  arrowMonoColor,
+  arrowAlpha,
+  arrowLengthScale,
+  arrowThickness,
   arrowActiveNodeMask,
   arrowBoundaryFaceIndices,
   selectedFaces,
@@ -193,6 +199,11 @@ export function FemViewportScene({
   effectiveShowArrows: boolean;
   arrowField: FemColorField;
   arrowDensity: number;
+  arrowColorMode: FemArrowColorMode;
+  arrowMonoColor: string;
+  arrowAlpha: number;
+  arrowLengthScale: number;
+  arrowThickness: number;
   arrowActiveNodeMask: boolean[] | null;
   arrowBoundaryFaceIndices: number[] | null;
   selectedFaces: number[];
@@ -299,6 +310,11 @@ export function FemViewportScene({
         meshData={meshData}
         field={arrowField}
         arrowDensity={arrowDensity}
+        colorMode={arrowColorMode}
+        monoColor={arrowMonoColor}
+        alpha={arrowAlpha}
+        lengthScale={arrowLengthScale}
+        thickness={arrowThickness}
         center={dynamicGeomCenter}
         maxDim={dynamicMaxDim}
         visible={effectiveShowArrows}

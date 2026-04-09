@@ -39,6 +39,10 @@ import type {
   MeshEntityViewStateMap,
   ModelBuilderGraphV2,
   SceneDocument,
+  VisualizationPreset,
+  VisualizationPresetFdmState,
+  VisualizationPresetRef,
+  VisualizationPresetSource,
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
@@ -260,6 +264,15 @@ export interface ModelContextValue {
   meshClipAxis: ClipAxis;
   meshClipPos: number;
   meshShowArrows: boolean;
+  femArrowColorMode: "orientation" | "x" | "y" | "z" | "magnitude" | "monochrome";
+  femArrowMonoColor: string;
+  femArrowAlpha: number;
+  femArrowLengthScale: number;
+  femArrowThickness: number;
+  fdmVisualizationSettings: VisualizationPresetFdmState;
+  visualizationProjectPresets: VisualizationPreset[];
+  visualizationLocalPresets: VisualizationPreset[];
+  activeVisualizationPresetRef: VisualizationPresetRef | null;
   meshSelection: MeshSelectionSnapshot;
   meshOptions: MeshOptionsState;
   meshQualityData: MeshQualityData | null;
@@ -341,6 +354,16 @@ export interface ModelContextValue {
   setMeshClipAxis: React.Dispatch<React.SetStateAction<ClipAxis>>;
   setMeshClipPos: React.Dispatch<React.SetStateAction<number>>;
   setMeshShowArrows: React.Dispatch<React.SetStateAction<boolean>>;
+  setFemArrowColorMode: React.Dispatch<
+    React.SetStateAction<"orientation" | "x" | "y" | "z" | "magnitude" | "monochrome">
+  >;
+  setFemArrowMonoColor: React.Dispatch<React.SetStateAction<string>>;
+  setFemArrowAlpha: React.Dispatch<React.SetStateAction<number>>;
+  setFemArrowLengthScale: React.Dispatch<React.SetStateAction<number>>;
+  setFemArrowThickness: React.Dispatch<React.SetStateAction<number>>;
+  setFdmVisualizationSettings: React.Dispatch<
+    React.SetStateAction<VisualizationPresetFdmState>
+  >;
   setMeshSelection: React.Dispatch<React.SetStateAction<MeshSelectionSnapshot>>;
   setMeshOptions: React.Dispatch<React.SetStateAction<MeshOptionsState>>;
   setFemDockTab: React.Dispatch<React.SetStateAction<FemDockTab>>;
@@ -366,6 +389,25 @@ export interface ModelContextValue {
   handleLassoRefine: (faceIndices: number[], factor: number) => Promise<void>;
   openFemMeshWorkspace: (tab?: FemDockTab) => void;
   applyMeshWorkspacePreset: (presetId: MeshWorkspacePresetId) => void;
+  createVisualizationPreset: (source?: VisualizationPresetSource) => VisualizationPresetRef;
+  setActiveVisualizationPresetRef: React.Dispatch<
+    React.SetStateAction<VisualizationPresetRef | null>
+  >;
+  applyVisualizationPreset: (ref: VisualizationPresetRef) => void;
+  renameVisualizationPreset: (ref: VisualizationPresetRef, name: string) => void;
+  duplicateVisualizationPreset: (
+    ref: VisualizationPresetRef,
+    targetSource?: VisualizationPresetSource,
+  ) => VisualizationPresetRef | null;
+  deleteVisualizationPreset: (ref: VisualizationPresetRef) => void;
+  copyVisualizationPresetToSource: (
+    ref: VisualizationPresetRef,
+    targetSource: VisualizationPresetSource,
+  ) => VisualizationPresetRef | null;
+  updateVisualizationPreset: (
+    ref: VisualizationPresetRef,
+    update: (preset: VisualizationPreset) => VisualizationPreset,
+  ) => void;
   applyAntennaTranslation: (moduleName: string, dx: number, dy: number, dz: number) => void;
   applyGeometryTranslation: (geometryName: string, dx: number, dy: number, dz: number) => void;
 }

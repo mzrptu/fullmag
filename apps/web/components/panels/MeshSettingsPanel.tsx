@@ -8,6 +8,7 @@ import { Switch } from "../ui/switch";
 import { Button } from "../ui/button";
 import { Loader2, ArrowRightLeft } from "lucide-react";
 import { metersTextToNanometersInput, nanometersInputToMetersText } from "@/lib/units";
+import { InspectorSection, InspectorField, InspectorDataGrid, InspectorStatTile } from "./settings/primitives";
 
 /* ── Size field spec for lasso refinement zones ────────────────────── */
 
@@ -254,72 +255,6 @@ function drawHistogram(
   ctx.fillText(xLabel, pad.left + plotW / 2, h - 2);
 }
 
-function Section({
-  title,
-  eyebrow,
-  meta,
-  children,
-}: {
-  title: string;
-  eyebrow?: string;
-  meta?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className="rounded-2xl border border-border/30 bg-background/35 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-      <div className="mb-3 flex items-start justify-between gap-3 border-b border-border/20 pb-2.5">
-        <div className="min-w-0">
-          {eyebrow ? (
-            <p className="text-[0.62rem] font-semibold tracking-[0.12em] text-muted-foreground">
-              {eyebrow}
-            </p>
-          ) : null}
-          <h3 className="text-[0.86rem] font-semibold text-foreground">{title}</h3>
-        </div>
-        {meta ? <div className="shrink-0">{meta}</div> : null}
-      </div>
-      <div className="flex flex-col gap-2.5">{children}</div>
-    </section>
-  );
-}
-
-function FieldRow({
-  label,
-  hint,
-  control,
-}: {
-  label: string;
-  hint?: string;
-  control: ReactNode;
-}) {
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)_140px] items-center gap-3 rounded-xl border border-border/18 bg-background/25 px-3 py-2">
-      <div className="min-w-0">
-        <div className="text-[0.73rem] font-medium text-foreground">{label}</div>
-        {hint ? <div className="mt-0.5 text-[0.64rem] text-muted-foreground">{hint}</div> : null}
-      </div>
-      <div className="min-w-0">{control}</div>
-    </div>
-  );
-}
-
-function StatTile({
-  label,
-  value,
-}: {
-  label: string;
-  value: ReactNode;
-}) {
-  return (
-    <div className="rounded-xl border border-border/18 bg-background/25 px-3 py-2">
-      <div className="text-[0.62rem] font-semibold tracking-[0.08em] text-muted-foreground">
-        {label}
-      </div>
-      <div className="mt-1 font-mono text-[0.76rem] text-foreground">{value}</div>
-    </div>
-  );
-}
-
 /* ── Component ─────────────────────────────────────────────────────── */
 
 export default function MeshSettingsPanel({
@@ -401,12 +336,12 @@ export default function MeshSettingsPanel({
 
       {/* ── Algorithm Selection ── */}
       {showAdvanced && (
-        <Section
+        <InspectorSection
           title="Mesher"
           eyebrow="Advanced"
           meta={<span className="rounded-md bg-muted/40 px-2 py-1 text-[0.62rem] font-mono text-muted-foreground">Gmsh</span>}
         >
-          <FieldRow
+          <InspectorField
             label="Surface algorithm"
             hint="Controls STL/classified surface triangulation."
             control={(
@@ -426,7 +361,7 @@ export default function MeshSettingsPanel({
               </Select>
             )}
           />
-          <FieldRow
+          <InspectorField
             label="Volume algorithm"
             hint="Controls tetrahedral filling of the final shared domain."
             control={(
@@ -446,11 +381,11 @@ export default function MeshSettingsPanel({
               </Select>
             )}
           />
-        </Section>
+        </InspectorSection>
       )}
 
       {/* ── Size Control ── */}
-      <Section
+      <InspectorSection
         title="Element size"
         eyebrow="Basic"
         meta={<span className="text-[0.62rem] font-mono text-muted-foreground">UI in nm</span>}
@@ -458,7 +393,7 @@ export default function MeshSettingsPanel({
         <div className="rounded-xl border border-sky-500/20 bg-sky-500/8 px-3 py-2 text-[0.68rem] leading-5 text-sky-100/90">
           These values are entered in nanometres. Fullmag converts them to SI metres for the backend, so typing `1` means `1 nm`, not `1 m`.
         </div>
-        <FieldRow
+        <InspectorField
           label="Maximum element size (nm)"
           hint="Upper bound for the local target size."
           control={(
@@ -472,7 +407,7 @@ export default function MeshSettingsPanel({
             />
           )}
         />
-        <FieldRow
+        <InspectorField
           label="Minimum element size (nm)"
           hint="Lower bound used when local refinement gets very fine."
           control={(
@@ -486,7 +421,7 @@ export default function MeshSettingsPanel({
             />
           )}
         />
-        <FieldRow
+        <InspectorField
           label="Curvature factor"
           hint="Refines curved regions when geometry detail requires it."
           control={(
@@ -502,7 +437,7 @@ export default function MeshSettingsPanel({
             />
           )}
         />
-        <FieldRow
+        <InspectorField
           label="Maximum growth rate"
           hint="Limits how quickly elements can grow away from refined zones."
           control={(
@@ -516,7 +451,7 @@ export default function MeshSettingsPanel({
             />
           )}
         />
-        <FieldRow
+        <InspectorField
           label="Narrow region resolution"
           hint="Minimum target density in tight gaps and channels."
           control={(
@@ -533,7 +468,7 @@ export default function MeshSettingsPanel({
           )}
         />
         {showAdvanced ? (
-          <FieldRow
+          <InspectorField
             label="Global size factor"
             hint="Applies a global multiplier on top of local sizing rules."
             control={(
@@ -550,15 +485,15 @@ export default function MeshSettingsPanel({
             )}
           />
         ) : null}
-      </Section>
+      </InspectorSection>
 
       {/* ── Interface & Transition (COMSOL-like region controls) ── */}
-      <Section
+      <InspectorSection
         title="Interface & Transition"
         eyebrow="Region sizing"
         meta={<span className="text-[0.62rem] font-mono text-muted-foreground">UI in nm</span>}
       >
-        <FieldRow
+        <InspectorField
           label="Interface max element size (nm)"
           hint="Target element size near the magnetic–air interface shell."
           control={(
@@ -572,7 +507,7 @@ export default function MeshSettingsPanel({
             />
           )}
         />
-        <FieldRow
+        <InspectorField
           label="Interface thickness (nm)"
           hint="Width of the refinement shell around the interface."
           control={(
@@ -586,7 +521,7 @@ export default function MeshSettingsPanel({
             />
           )}
         />
-        <FieldRow
+        <InspectorField
           label="Transition distance (nm)"
           hint="Distance over which element size grades from object bulk to airbox."
           control={(
@@ -600,7 +535,7 @@ export default function MeshSettingsPanel({
             />
           )}
         />
-        <FieldRow
+        <InspectorField
           label="Transition growth rate"
           hint="Growth rate within the transition zone (1.0–3.0)."
           control={(
@@ -614,12 +549,12 @@ export default function MeshSettingsPanel({
             />
           )}
         />
-      </Section>
+      </InspectorSection>
 
       {/* ── Optimization ── */}
       {showAdvanced && (
-        <Section title="Optimization" eyebrow="Advanced">
-          <FieldRow
+        <InspectorSection title="Optimization" eyebrow="Advanced">
+          <InspectorField
             label="Method"
             hint="Optional quality pass after tetrahedral generation."
             control={(
@@ -640,7 +575,7 @@ export default function MeshSettingsPanel({
             )}
           />
           {options.optimize !== "" ? (
-            <FieldRow
+            <InspectorField
               label="Iterations"
               hint="Number of passes for the selected optimizer."
               control={(
@@ -657,7 +592,7 @@ export default function MeshSettingsPanel({
               )}
             />
           ) : null}
-          <FieldRow
+          <InspectorField
             label="Smoothing steps"
             hint="Post-process smoothing for noisy tetrahedra."
             control={(
@@ -673,11 +608,11 @@ export default function MeshSettingsPanel({
               />
             )}
           />
-        </Section>
+        </InspectorSection>
       )}
 
       {/* ── Quality ── */}
-      <Section
+      <InspectorSection
         title="Quality analysis"
         eyebrow="Diagnostics"
         meta={qualityRating ? (
@@ -711,14 +646,14 @@ export default function MeshSettingsPanel({
           {quality && (
             <>
               <div className="grid grid-cols-2 gap-2">
-                <StatTile label="Elements" value={quality.nElements.toLocaleString()} />
-                <StatTile label="SICN min" value={quality.sicnMin.toFixed(3)} />
-                <StatTile label="SICN mean" value={quality.sicnMean.toFixed(3)} />
-                <StatTile label="SICN p5" value={quality.sicnP5.toFixed(3)} />
-                <StatTile label="γ min" value={quality.gammaMin.toFixed(3)} />
-                <StatTile label="γ mean" value={quality.gammaMean.toFixed(3)} />
-                <StatTile label="Average ICN" value={quality.avgQuality.toFixed(3)} />
-                <StatTile
+                <InspectorStatTile label="Elements" value={quality.nElements.toLocaleString()} />
+                <InspectorStatTile label="SICN min" value={quality.sicnMin.toFixed(3)} />
+                <InspectorStatTile label="SICN mean" value={quality.sicnMean.toFixed(3)} />
+                <InspectorStatTile label="SICN p5" value={quality.sicnP5.toFixed(3)} />
+                <InspectorStatTile label="γ min" value={quality.gammaMin.toFixed(3)} />
+                <InspectorStatTile label="γ mean" value={quality.gammaMean.toFixed(3)} />
+                <InspectorStatTile label="Average ICN" value={quality.avgQuality.toFixed(3)} />
+                <InspectorStatTile
                   label="Volume σ/μ"
                   value={quality.volumeMean > 0 ? (quality.volumeStd / quality.volumeMean).toFixed(2) : "—"}
                 />
@@ -742,13 +677,13 @@ export default function MeshSettingsPanel({
             </>
           )}
         </div>
-      </Section>
+      </InspectorSection>
       {/* ── Solver Compatibility ── */}
       {nodeCount != null && nodeCount > 0 && (
-        <Section title="Solver compatibility" eyebrow="Diagnostics">
+        <InspectorSection title="Solver compatibility" eyebrow="Diagnostics">
           <div className="grid grid-cols-2 gap-2">
-            <StatTile label="Nodes" value={nodeCount.toLocaleString()} />
-            <StatTile
+            <InspectorStatTile label="Nodes" value={nodeCount.toLocaleString()} />
+            <InspectorStatTile
               label="Estimated RAM"
               value={(
                 <span
@@ -772,11 +707,11 @@ export default function MeshSettingsPanel({
                 : "Large mesh — may be slow. Target <10,000 nodes for CPU reference solver."}
             </div>
           )}
-        </Section>
+        </InspectorSection>
       )}
       {/* ── Adaptive Mesh (AFEM) ── */}
       {showAdvanced && showAdaptiveSection && (
-      <Section
+      <InspectorSection
         title="Adaptive mesh"
         eyebrow="Advanced"
         meta={(
@@ -790,7 +725,7 @@ export default function MeshSettingsPanel({
       >
         {options.adaptiveEnabled && (
           <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
-            <FieldRow
+            <InspectorField
               label="Policy"
               hint="Use manual remeshes or let adaptive refinement run in the solve loop."
               control={(
@@ -866,12 +801,12 @@ export default function MeshSettingsPanel({
             </div>
           </div>
         )}
-      </Section>
+      </InspectorSection>
       )}
 
       {/* ── Refinement Zones (lasso) ── */}
       {showAdvanced && options.refinementZones.length > 0 && (
-        <Section
+        <InspectorSection
           title="Refinement zones"
           eyebrow="Advanced"
           meta={(
@@ -906,12 +841,12 @@ export default function MeshSettingsPanel({
               </div>
             ))}
           </div>
-        </Section>
+        </InspectorSection>
       )}
 
       {/* ── Generate button (secondary — primary build is from ribbon) ── */}
       {onGenerate && (
-        <Section title="Quick build" eyebrow="Action">
+        <InspectorSection title="Quick build" eyebrow="Action">
           <div className="text-[0.62rem] leading-4 text-muted-foreground/60 mb-1">
             Use the ribbon &quot;Build Selected&quot; / &quot;Build All&quot; for targeted builds. This button always rebuilds the full study domain.
           </div>
@@ -963,7 +898,7 @@ export default function MeshSettingsPanel({
               </div>
             </div>
           )}
-        </Section>
+        </InspectorSection>
       )}
     </div>
   );

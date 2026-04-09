@@ -18,7 +18,7 @@ import { ViewportToolGroup, ViewportToolSeparator } from "../ViewportToolGroup";
 import { ViewportIconAction } from "../ViewportIconAction";
 import { ViewportPopoverPanel, ViewportPopoverRow, ViewportPopoverTrigger } from "../ViewportPopoverPanel";
 import { ViewportStatusChip } from "../ViewportStatusChips";
-import type { FemColorField, RenderMode, ClipAxis } from "../FemMeshView3D";
+import type { FemArrowColorMode, FemColorField, RenderMode, ClipAxis } from "../FemMeshView3D";
 import type { FemViewportNavigation, FemViewportProjection } from "./FemViewportTypes";
 import type { ViewportQualityProfileId } from "../shared/viewportQualityProfiles";
 import {
@@ -30,7 +30,11 @@ import {
 export interface FemViewportToolbarProps {
   renderMode: RenderMode;
   surfaceColorField: FemColorField;
-  arrowColorField: FemColorField;
+  arrowColorMode: FemArrowColorMode;
+  arrowMonoColor: string;
+  arrowAlpha: number;
+  arrowLengthScale: number;
+  arrowThickness: number;
   projection: FemViewportProjection;
   navigation: FemViewportNavigation;
   qualityProfile: ViewportQualityProfileId;
@@ -54,7 +58,11 @@ export interface FemViewportToolbarProps {
   onOpenPopoverChange: (id: string | null) => void;
   onRenderModeChange: (value: RenderMode) => void;
   onSurfaceColorFieldChange: (value: FemColorField) => void;
-  onArrowColorFieldChange: (value: FemColorField) => void;
+  onArrowColorModeChange: (value: FemArrowColorMode) => void;
+  onArrowMonoColorChange: (value: string) => void;
+  onArrowAlphaChange: (value: number) => void;
+  onArrowLengthScaleChange: (value: number) => void;
+  onArrowThicknessChange: (value: number) => void;
   onProjectionChange: (value: FemViewportProjection) => void;
   onNavigationChange: (value: FemViewportNavigation) => void;
   onQualityProfileChange: (value: ViewportQualityProfileId) => void;
@@ -95,12 +103,13 @@ const COLOR_OPTIONS: { value: FemColorField; label: string; fullLabel: string }[
   { value: "none", label: "—", fullLabel: "None" },
 ];
 
-const ARROW_COLOR_OPTIONS: { value: FemColorField; label: string; fullLabel: string }[] = [
+const ARROW_COLOR_OPTIONS: { value: FemArrowColorMode; label: string; fullLabel: string }[] = [
   { value: "orientation", label: "Ori", fullLabel: "Orientation" },
   { value: "z", label: "m_z", fullLabel: "Field Z" },
   { value: "x", label: "m_x", fullLabel: "Field X" },
   { value: "y", label: "m_y", fullLabel: "Field Y" },
   { value: "magnitude", label: "|m|", fullLabel: "|Field|" },
+  { value: "monochrome", label: "Mono", fullLabel: "Monochrome" },
 ];
 
 const QUALITY_PROFILES: { value: ViewportQualityProfileId; label: string }[] = [
@@ -116,7 +125,11 @@ const POPOVER_OPTION_CLASSNAME =
 export function FemViewportToolbar({
   renderMode,
   surfaceColorField,
-  arrowColorField,
+  arrowColorMode,
+  arrowMonoColor,
+  arrowAlpha,
+  arrowLengthScale,
+  arrowThickness,
   projection,
   navigation,
   qualityProfile,
@@ -140,7 +153,11 @@ export function FemViewportToolbar({
   onOpenPopoverChange,
   onRenderModeChange,
   onSurfaceColorFieldChange,
-  onArrowColorFieldChange,
+  onArrowColorModeChange,
+  onArrowMonoColorChange,
+  onArrowAlphaChange,
+  onArrowLengthScaleChange,
+  onArrowThicknessChange,
   onProjectionChange,
   onNavigationChange,
   onQualityProfileChange,
@@ -163,7 +180,7 @@ export function FemViewportToolbar({
 }: FemViewportToolbarProps) {
   const activeSurfaceColorOpt = COLOR_OPTIONS.find((o) => o.value === surfaceColorField);
   const activeArrowColorOpt =
-    ARROW_COLOR_OPTIONS.find((o) => o.value === arrowColorField)
+    ARROW_COLOR_OPTIONS.find((o) => o.value === arrowColorMode)
     ?? ARROW_COLOR_OPTIONS[0];
   const effectiveDensity = effectiveArrowDensity ?? arrowDensity;
   const availableQuantities = quantityOptions.filter((o) => o.available);
@@ -197,7 +214,7 @@ export function FemViewportToolbar({
               />
               {openPopover === "quantity" && (
                 <ViewportPopoverPanel anchorRef={{ current: null }} title="Quantity">
-                  <div className="grid grid-cols-2 gap-1 w-[220px]">
+                  <div className="grid grid-cols-2 gap-1 min-w-[220px]">
                     {availableQuantities.map((opt) => (
                       <ViewportIconAction
                         key={opt.id}
@@ -253,7 +270,7 @@ export function FemViewportToolbar({
           />
           {openPopover === "color" && (
             <ViewportPopoverPanel anchorRef={{ current: null }} title="Color Modes">
-              <div className="flex w-[260px] flex-col gap-3">
+              <div className="flex min-w-[260px] flex-col gap-3">
                 <ViewportPopoverRow label="Surface">
                   <div className="grid grid-cols-2 gap-1">
                     {COLOR_OPTIONS.map((opt) => (
@@ -274,9 +291,9 @@ export function FemViewportToolbar({
                     {ARROW_COLOR_OPTIONS.map((opt) => (
                       <ViewportIconAction
                         key={`arrows-${opt.value}`}
-                        active={arrowColorField === opt.value}
+                        active={arrowColorMode === opt.value}
                         onClick={() => {
-                          onArrowColorFieldChange(opt.value);
+                          onArrowColorModeChange(opt.value);
                         }}
                         label={opt.fullLabel}
                         className="justify-start px-2 py-1.5"
@@ -350,7 +367,7 @@ export function FemViewportToolbar({
                   max={100}
                   value={clipPos}
                   onChange={(event) => onClipPosChange(Number(event.target.value))}
-                  className="w-[180px]"
+                  className="flex-1 max-w-[180px]"
                 />
               </ViewportPopoverRow>
             </ViewportPopoverPanel>
@@ -370,7 +387,7 @@ export function FemViewportToolbar({
               <ViewportPopoverRow label="Opacity">
                 <input
                   type="range"
-                  className="flex-1 h-[3px] accent-primary w-[120px]"
+                  className="flex-1 h-[3px] accent-primary max-w-[120px]"
                   min={10}
                   max={100}
                   value={opacity}
@@ -381,7 +398,7 @@ export function FemViewportToolbar({
                 <ViewportPopoverRow label="Shrink">
                   <input
                     type="range"
-                    className="flex-1 h-[3px] accent-primary w-[120px]"
+                  className="flex-1 h-[3px] accent-primary max-w-[120px]"
                     min={10}
                     max={100}
                     value={Math.round(shrinkFactor * 100)}
@@ -433,12 +450,59 @@ export function FemViewportToolbar({
               <ViewportPopoverRow label="Density">
                 <input
                   type="range"
-                  className="flex-1 h-[3px] accent-primary w-[120px]"
+                  className="flex-1 h-[3px] accent-primary max-w-[120px]"
                   min={GLYPH_BUDGET_MIN}
                   max={GLYPH_BUDGET_MAX}
                   step={GLYPH_BUDGET_STEP}
                   value={arrowDensity}
                   onChange={(e) => onArrowDensityChange(Number(e.target.value))}
+                />
+              </ViewportPopoverRow>
+              {arrowColorMode === "monochrome" ? (
+                <ViewportPopoverRow label="Color">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={arrowMonoColor}
+                      onChange={(event) => onArrowMonoColorChange(event.target.value)}
+                      className="h-6 w-8 cursor-pointer rounded border border-border/40 bg-transparent p-0"
+                      aria-label="Arrow monochrome color"
+                    />
+                    <span className="font-mono text-[0.62rem] text-muted-foreground">{arrowMonoColor}</span>
+                  </div>
+                </ViewportPopoverRow>
+              ) : null}
+              <ViewportPopoverRow label="Alpha">
+                <input
+                  type="range"
+                  className="flex-1 h-[3px] accent-primary max-w-[120px]"
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  value={arrowAlpha}
+                  onChange={(e) => onArrowAlphaChange(Number(e.target.value))}
+                />
+              </ViewportPopoverRow>
+              <ViewportPopoverRow label="Length">
+                <input
+                  type="range"
+                  className="flex-1 h-[3px] accent-primary max-w-[120px]"
+                  min={0.35}
+                  max={2.8}
+                  step={0.05}
+                  value={arrowLengthScale}
+                  onChange={(e) => onArrowLengthScaleChange(Number(e.target.value))}
+                />
+              </ViewportPopoverRow>
+              <ViewportPopoverRow label="Width">
+                <input
+                  type="range"
+                  className="flex-1 h-[3px] accent-primary max-w-[120px]"
+                  min={0.35}
+                  max={2.8}
+                  step={0.05}
+                  value={arrowThickness}
+                  onChange={(e) => onArrowThicknessChange(Number(e.target.value))}
                 />
               </ViewportPopoverRow>
             </ViewportPopoverPanel>

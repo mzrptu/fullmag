@@ -181,6 +181,8 @@ export function buildSceneDocumentFromScriptBuilder(
       air_mesh_visible: false,
       air_mesh_opacity: 28,
       mesh_entity_view_state: {},
+      visualization_presets: [],
+      active_visualization_preset_ref: null,
       active_transform_scope: null,
     },
   };

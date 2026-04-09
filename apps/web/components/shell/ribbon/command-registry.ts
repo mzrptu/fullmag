@@ -15,6 +15,7 @@ export interface RibbonCommandContext {
   selectedObjectId?: string | null;
   onViewChange?: (mode: string) => void;
   onSidebarToggle?: () => void;
+  onCreateVisualizationPreset?: () => void;
   onSimAction?: (action: string) => void;
   onQuickPreviewSelect?: (quantityId: string) => void;
   onExport?: () => void;
@@ -56,6 +57,7 @@ export interface RibbonCommandContext {
 export type RibbonCommand =
   | { id: "navigation.select-node"; nodeId: string }
   | { id: "viewport.set-mode"; mode: string }
+  | { id: "visualization.create-preset" }
   | { id: "viewport.toggle-sidebar" }
   | { id: "viewport.focus-selected-object" }
   | { id: "solver.control"; action: "relax" | "run" | "pause" | "stop" }
@@ -105,6 +107,8 @@ export function canExecuteRibbonCommand(
       return typeof ctx.onSelectModelNode === "function";
     case "viewport.set-mode":
       return typeof ctx.onViewChange === "function";
+    case "visualization.create-preset":
+      return typeof ctx.onCreateVisualizationPreset === "function";
     case "viewport.toggle-sidebar":
       return typeof ctx.onSidebarToggle === "function";
     case "viewport.focus-selected-object":
@@ -167,6 +171,9 @@ export function executeRibbonCommand(
       return;
     case "viewport.set-mode":
       ctx.onViewChange?.(command.mode);
+      return;
+    case "visualization.create-preset":
+      ctx.onCreateVisualizationPreset?.();
       return;
     case "viewport.toggle-sidebar":
       ctx.onSidebarToggle?.();
