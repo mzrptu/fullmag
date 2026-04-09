@@ -10,12 +10,19 @@ import { useCommand, useViewport, useModel } from "../components/runs/control-ro
  * - F5 / Ctrl+Enter  → Run simulation
  * - Shift+F5         → Stop simulation
  * - Ctrl+B           → Toggle sidebar
+ * - Ctrl+S           → Save session
+ * - Ctrl+O           → Open session
  * - 1                → 3D view
  * - 2                → 2D view
  * - 3                → Mesh view
  * - Ctrl+Shift+P     → Toggle solver setup
  */
-export function useKeyboardShortcuts() {
+export interface KeyboardShortcutCallbacks {
+  onSaveSession?: () => void;
+  onOpenSession?: () => void;
+}
+
+export function useKeyboardShortcuts(callbacks?: KeyboardShortcutCallbacks) {
   const { handleSimulationAction } = useCommand();
   const { handleViewModeChange, setSidebarCollapsed } = useViewport();
   const { setSelectedSidebarNodeId } = useModel();
@@ -50,6 +57,20 @@ export function useKeyboardShortcuts() {
         return;
       }
 
+      /* Ctrl+S → Save session */
+      if (e.key === "s" && ctrl && !shift) {
+        e.preventDefault();
+        callbacks?.onSaveSession?.();
+        return;
+      }
+
+      /* Ctrl+O → Open session */
+      if (e.key === "o" && ctrl && !shift) {
+        e.preventDefault();
+        callbacks?.onOpenSession?.();
+        return;
+      }
+
       /* Ctrl+B → Toggle sidebar */
       if (e.key === "b" && ctrl) {
         e.preventDefault();
@@ -72,5 +93,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleSimulationAction, handleViewModeChange, setSidebarCollapsed, setSelectedSidebarNodeId]);
+  }, [handleSimulationAction, handleViewModeChange, setSidebarCollapsed, setSelectedSidebarNodeId, callbacks]);
 }

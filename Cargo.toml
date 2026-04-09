@@ -12,6 +12,7 @@ members = [
   "crates/fullmag-plan",
   "crates/fullmag-py-core",
   "crates/fullmag-runner",
+  "crates/fullmag-session",
 ]
 resolver = "2"
 

@@ -20,7 +20,9 @@ fullmag-engine = { path = "../fullmag-engine" }
 fullmag-ir = { path = "../fullmag-ir" }
 fullmag-plan = { path = "../fullmag-plan" }
 fullmag-runner = { path = "../fullmag-runner" }
+fullmag-session = { path = "../fullmag-session" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
+uuid = { version = "1", features = ["v4"] }
 libc = "0.2"

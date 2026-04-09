@@ -50,12 +50,16 @@ export interface TopHeaderProps {
   onViewChange?: (mode: string) => void;
   onSidebarToggle?: () => void;
   onSimAction?: (action: string) => void;
+  onSaveSession?: () => void;
+  onOpenSession?: () => void;
 }
 
 interface MenuCallbacks {
   onOpenSettings: () => void;
   onOpenDocs: () => void;
   onOpenAbout: () => void;
+  onSaveSession: () => void;
+  onOpenSession: () => void;
 }
 
 function buildMenus(props: TopHeaderProps, cb: MenuCallbacks): MenuDef[] {
@@ -64,8 +68,8 @@ function buildMenus(props: TopHeaderProps, cb: MenuCallbacks): MenuDef[] {
       label: "File",
       items: [
         { label: "New Script", icon: <FileText size={14} />, shortcut: "Ctrl+N" },
-        { label: "Open…", icon: <FolderOpen size={14} />, shortcut: "Ctrl+O" },
-        { label: "Save", icon: <Save size={14} />, shortcut: "Ctrl+S" },
+        { label: "Open…", icon: <FolderOpen size={14} />, shortcut: "Ctrl+O", action: cb.onOpenSession },
+        { label: "Save Session", icon: <Save size={14} />, shortcut: "Ctrl+S", action: cb.onSaveSession },
         { separator: true, label: "" },
         { label: "Export VTK", icon: <Download size={14} /> },
         { separator: true, label: "" },
@@ -135,6 +139,8 @@ export default function TopHeader(props: TopHeaderProps) {
     onOpenSettings: () => setSettingsOpen(true),
     onOpenDocs: () => setPhysicsDocsOpen(true),
     onOpenAbout: () => setSettingsOpen(true),
+    onSaveSession: () => props.onSaveSession?.(),
+    onOpenSession: () => props.onOpenSession?.(),
   };
 
   const menus = buildMenus(props, menuCallbacks);

@@ -38,6 +38,7 @@ mod preview;
 mod quantities;
 mod script;
 mod session;
+mod session_persistence;
 mod types;
 use artifacts::*;
 use assets::*;
@@ -196,6 +197,32 @@ async fn main() {
         )
         .route("/v1/docs/physics", get(list_physics_docs))
         .route("/v1/run", post(start_run))
+        // ── Session persistence ────────────────────────────────────────
+        .route(
+            "/v1/live/current/session/export",
+            post(session_persistence::export_session),
+        )
+        .route(
+            "/v1/live/current/session/import/inspect",
+            post(session_persistence::import_session_inspect),
+        )
+        .route(
+            "/v1/live/current/session/import/commit",
+            post(session_persistence::import_session_commit),
+        )
+        .route(
+            "/v1/live/current/checkpoints",
+            get(session_persistence::list_checkpoints),
+        )
+        .route(
+            "/v1/live/current/recovery",
+            get(session_persistence::list_recovery),
+        )
+        .route(
+            "/v1/live/current/recovery/clear",
+            post(session_persistence::clear_recovery),
+        )
+        // ── WebSocket ──────────────────────────────────────────────────
         .route("/ws/live/current", get(ws_current_live))
         .route("/ws/live/:run_id", get(ws_live))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))

@@ -13,6 +13,7 @@ fem-gpu = ["fullmag-runner/fem-gpu"]
 async-stream = "0.3"
 axum.workspace = true
 base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
 futures-core = "0.3"
 serde.workspace = true
 serde_json.workspace = true
@@ -24,3 +25,4 @@ fullmag-authoring = { path = "../fullmag-authoring" }
 fullmag-ir = { path = "../fullmag-ir" }
 fullmag-plan = { path = "../fullmag-plan" }
 fullmag-runner = { path = "../fullmag-runner" }
+fullmag-session = { path = "../fullmag-session" }

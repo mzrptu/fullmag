@@ -207,6 +207,115 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string(&resolution)?);
             }
         }
+        Command::Session(cmd) => handle_session(cmd)?,
+    }
+
+    Ok(())
+}
+
+// ── Session persistence CLI ────────────────────────────────────────────
+
+fn handle_session(cmd: args::SessionSubcommand) -> Result<()> {
+    use args::SessionSubcommand;
+    use fullmag_session::{
+        inspect_fms, pack_fms, unpack_fms,
+        FmsExportProfile, FmsSessionManifest, FmsWorkspaceManifest,
+        PackOptions, SessionStore,
+    };
+    use std::collections::HashMap;
+
+    let default_store_root = std::path::PathBuf::from(".fullmag/local-live/session-store");
+
+    match cmd {
+        SessionSubcommand::Save { path, profile, name } => {
+            let store = SessionStore::open(&default_store_root)?;
+            let profile = fullmag_session::SaveProfile::from(profile);
+            let session_name = name.unwrap_or_else(|| "CLI Session".into());
+            let session_id = uuid::Uuid::new_v4().to_string();
+
+            let session = FmsSessionManifest::new(&session_id, &session_name, profile);
+            let workspace = FmsWorkspaceManifest {
+                workspace_id: "local-live".into(),
+                problem_name: session_name.clone(),
+                project_ref: "project/".into(),
+                ui_state_ref: "project/ui_state.json".into(),
+                scene_document_ref: "project/scene_document.json".into(),
+                script_builder_ref: None,
+                model_builder_graph_ref: None,
+                asset_index_ref: None,
+            };
+            let export_profile = FmsExportProfile::for_profile(profile);
+            let docs: HashMap<String, Vec<u8>> = HashMap::new();
+            let opts = PackOptions::default();
+
+            store.commit_session(&session)?;
+
+            let file = std::fs::File::create(&path)?;
+            let writer = std::io::BufWriter::new(file);
+            pack_fms(writer, &store, &session, &workspace, &export_profile, &docs, &opts)?;
+
+            println!("Session saved to {}", path.display());
+            println!("  session_id: {session_id}");
+            println!("  profile:    {profile:?}");
+        }
+        SessionSubcommand::Open { path } => {
+            let store = SessionStore::open(&default_store_root)?;
+            let file = std::fs::File::open(&path)?;
+            let reader = std::io::BufReader::new(file);
+            let session = unpack_fms(reader, &store)?;
+
+            println!("Session imported: {}", session.name);
+            println!("  session_id: {}", session.session_id);
+            println!("  profile:    {:?}", session.profile);
+            println!("  runs:       {}", session.run_refs.len());
+        }
+        SessionSubcommand::Inspect { path } => {
+            let file = std::fs::File::open(&path)?;
+            let reader = std::io::BufReader::new(file);
+            let info = inspect_fms(reader)?;
+
+            println!("Session: {}", info.name);
+            println!("  format:          {}", info.format_version);
+            println!("  session_id:      {}", info.session_id);
+            println!("  profile:         {:?}", info.profile);
+            println!("  created_by:      {}", info.created_by_version);
+            println!("  saved_at:        {}", info.saved_at);
+            println!("  restore_class:   {:?}", info.restore_class);
+            println!("  runs:            {}", info.run_count);
+            if let Some(s) = info.latest_checkpoint {
+                println!("  latest_ckpt:     step={} t={:.6e}", s.step, s.time_s);
+            }
+            if !info.warnings.is_empty() {
+                println!("  warnings:");
+                for w in &info.warnings {
+                    println!("    - {w}");
+                }
+            }
+        }
+        SessionSubcommand::Recover { clear } => {
+            let store = SessionStore::open(&default_store_root)?;
+            if clear {
+                store.clear_recovery()?;
+                println!("Recovery snapshots cleared.");
+            } else {
+                let snapshots = store.list_recovery()?;
+                if snapshots.is_empty() {
+                    println!("No recovery snapshots found.");
+                } else {
+                    println!("Recovery snapshots ({}):", snapshots.len());
+                    for s in &snapshots {
+                        println!("  {} — {} ({:?}, saved {})",
+                            s.session_id, s.name, s.profile, s.saved_at);
+                    }
+                }
+            }
+        }
+        SessionSubcommand::Gc { store } => {
+            let root = store.unwrap_or_else(|| default_store_root.clone());
+            let ss = SessionStore::open(&root)?;
+            ss.gc()?;
+            println!("Garbage collection complete on {}", root.display());
+        }
     }
 
     Ok(())

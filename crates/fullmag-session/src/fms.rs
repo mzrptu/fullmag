@@ -224,7 +224,7 @@ fn write_json<W: Write + Seek, T: serde::Serialize>(
 /// Inspect a `.fms` file without fully extracting it.
 pub fn inspect_fms<R: Read + Seek>(reader: R) -> Result<SessionInspection> {
     let mut archive = zip::ZipArchive::new(reader)?;
-    let total_size = archive
+    let _total_size = archive
         .by_name("manifest/session.json")
         .map(|f| f.size())
         .unwrap_or(0);
@@ -245,7 +245,7 @@ pub fn inspect_fms<R: Read + Seek>(reader: R) -> Result<SessionInspection> {
                 let name = entry.name().to_string();
                 if name.starts_with(&prefix) && name.ends_with("/checkpoint.json") {
                     drop(entry);
-                    if let Ok(cp) = read_json_entry::<FmsCheckpoint>(&mut archive, &name) {
+                    if let Ok(cp) = read_json_entry::<FmsCheckpoint, _>(&mut archive, &name) {
                         let summary = CheckpointSummary {
                             checkpoint_id: cp.checkpoint_id,
                             step: cp.step,

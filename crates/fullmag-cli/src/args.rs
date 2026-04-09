@@ -84,6 +84,65 @@ pub(crate) enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         raw_args: Vec<OsString>,
     },
+    /// Session persistence commands (save, open, inspect, recover, gc)
+    #[command(subcommand)]
+    Session(SessionSubcommand),
+}
+
+#[derive(Subcommand)]
+pub(crate) enum SessionSubcommand {
+    /// Export the current session store as a portable .fms file
+    Save {
+        /// Output path for the .fms file
+        path: PathBuf,
+        /// Save profile: compact, solved, resume, archive
+        #[arg(long, value_enum, default_value = "resume")]
+        profile: SaveProfileArg,
+        /// Session name override
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Import and restore a .fms file into the session store
+    Open {
+        /// Path to the .fms file
+        path: PathBuf,
+    },
+    /// Inspect a .fms file without importing
+    Inspect {
+        /// Path to the .fms file
+        path: PathBuf,
+    },
+    /// List and manage crash-recovery snapshots
+    Recover {
+        /// Clear all recovery snapshots instead of listing them
+        #[arg(long, default_value_t = false)]
+        clear: bool,
+    },
+    /// Run garbage collection on the session store
+    Gc {
+        /// Session store root (defaults to .fullmag/local-live/session-store)
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum SaveProfileArg {
+    Compact,
+    Solved,
+    Resume,
+    Archive,
+}
+
+impl From<SaveProfileArg> for fullmag_session::SaveProfile {
+    fn from(a: SaveProfileArg) -> Self {
+        match a {
+            SaveProfileArg::Compact => fullmag_session::SaveProfile::Compact,
+            SaveProfileArg::Solved => fullmag_session::SaveProfile::Solved,
+            SaveProfileArg::Resume => fullmag_session::SaveProfile::Resume,
+            SaveProfileArg::Archive => fullmag_session::SaveProfile::Archive,
+        }
+    }
 }
 
 #[derive(Parser, Debug)]
