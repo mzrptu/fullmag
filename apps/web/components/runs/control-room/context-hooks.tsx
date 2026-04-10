@@ -129,6 +129,7 @@ export interface ResultWorkspaceEntry {
   quantityId: string | null;
   icon: string;
   badge: string | null;
+  pinned: boolean;
   createdAtUnixMs: number;
 }
 
@@ -418,9 +419,14 @@ export interface ModelContextValue {
     quantityId?: string | null;
     icon?: string;
     badge?: string | null;
+    pinned?: boolean;
     openAfterCreate?: boolean;
   }) => string;
   openResultWorkspaceEntry: (id: string) => void;
+  renameResultWorkspaceEntry: (id: string, label: string) => void;
+  removeResultWorkspaceEntry: (id: string) => void;
+  duplicateResultWorkspaceEntry: (id: string) => string | null;
+  setResultWorkspacePinned: (id: string, pinned: boolean) => void;
   requestFocusObject: (objectId: string) => void;
   handleStudyDomainMeshGenerate: (meshReason?: string) => Promise<void>;
   handleAirboxMeshGenerate: () => Promise<void>;

@@ -6,11 +6,13 @@ interface ViewportStatusChipProps {
   active?: boolean;
   color?: "default" | "primary" | "success" | "warning" | "error" | "info";
   className?: string;
+  title?: string;
 }
 
-export function ViewportStatusChip({ children, active, color = "default", className }: ViewportStatusChipProps) {
+export function ViewportStatusChip({ children, active, color = "default", className, title }: ViewportStatusChipProps) {
   return (
     <div
+      title={title}
       className={cn(
         "flex items-center h-6 px-2 rounded-full border text-[0.6rem] font-semibold uppercase tracking-widest transition-colors backdrop-blur-md pointer-events-auto shadow-sm",
         color === "default" && "border-border/30 bg-background/50 text-muted-foreground",

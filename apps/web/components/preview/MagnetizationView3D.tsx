@@ -632,6 +632,9 @@ function MagnetizationView3DInner({
   const controlsRef = useRef<any>(null);
   const viewCubeSceneRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const glRef = useRef<THREE.WebGLRenderer | null>(null);
+  const r3fSceneRef = useRef<THREE.Scene | null>(null);
+  const r3fCameraRef = useRef<THREE.Camera | null>(null);
 
   const [nx, ny, nz] = grid;
   const { cx, cy, cz, orbitDist } = useMemo(() => ({
@@ -722,14 +725,17 @@ function MagnetizationView3DInner({
     focusObject(focusObjectRequest.objectId);
   }, [focusObject, focusObjectRequest]);
 
-  // Capture viewport as PNG
+  // Capture viewport as PNG — render a fresh frame and read immediately so
+  // that preserveDrawingBuffer can stay disabled during normal interaction.
   const captureSnapshot = useCallback(() => {
-    const bridge = viewCubeSceneRef.current;
-    const canvas = canvasRef.current;
-    if (!bridge || !canvas) return;
+    const gl = glRef.current;
+    const scene = r3fSceneRef.current;
+    const camera = r3fCameraRef.current;
+    if (!gl || !scene || !camera) return;
+    gl.render(scene, camera);
     const link = document.createElement("a");
     link.download = `fullmag_3d_${Date.now()}.png`;
-    link.href = canvas.toDataURL("image/png");
+    link.href = gl.domElement.toDataURL("image/png");
     link.click();
   }, []);
 
@@ -956,15 +962,17 @@ function MagnetizationView3DInner({
         </ViewportOverlayLayout.TopLeft>
 
         <ViewportOverlayLayout.TopRight>
-          <ViewCube
-            sceneRef={viewCubeSceneRef}
-            onRotate={handleViewCubeRotate}
-            onReset={resetCamera}
-          />
+          {viewportVisible && (
+            <ViewCube
+              sceneRef={viewCubeSceneRef}
+              onRotate={handleViewCubeRotate}
+              onReset={resetCamera}
+            />
+          )}
         </ViewportOverlayLayout.TopRight>
 
         <ViewportOverlayLayout.BottomLeft>
-          {!geometryMode ? <HslSphere sceneRef={viewCubeSceneRef} axisConvention="identity" /> : null}
+          {viewportVisible && !geometryMode ? <HslSphere sceneRef={viewCubeSceneRef} axisConvention="identity" /> : null}
         </ViewportOverlayLayout.BottomLeft>
 
         {/* ── 3dsmax-style interaction mode toolbar (only when texture gizmo available) ── */}
@@ -1078,9 +1086,13 @@ function MagnetizationView3DInner({
           }}
           gl={{
             antialias: settings.quality !== "low",
-            preserveDrawingBuffer: true,
           }}
-          onCreated={({ gl }) => { canvasRef.current = gl.domElement; }}
+          onCreated={({ gl, scene, camera }) => {
+            canvasRef.current = gl.domElement;
+            glRef.current = gl;
+            r3fSceneRef.current = scene;
+            r3fCameraRef.current = camera;
+          }}
           dpr={settings.quality === "ultra"
             ? Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)
             : 1

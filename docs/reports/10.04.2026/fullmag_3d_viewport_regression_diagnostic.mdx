@@ -1,0 +1,750 @@
+
+# Fullmag — diagnostyczny raport regresji wydajności viewportu 3D po ostatnich zmianach
+
+**Data:** 2026-04-10  
+**Zakres:** frontend `apps/web/components/preview/**`, `apps/web/components/runs/control-room/**`  
+**Cel:** znaleźć błędy, które mogły **drastycznie zabić wydajność renderu nawet dla małych scen** po ostatnich zmianach viewportu i wizualizacji 3D.
+
+---
+
+## 1. Werdykt
+
+Regresja wygląda na **kombinację kilku zmian**, a nie jeden pojedynczy bug. Najmocniejsze źródła problemu są dziś cztery:
+
+1. **FDM główny `Canvas` ma stale włączone `preserveDrawingBuffer: true`** — to bardzo ciężka opcja i nie powinna działać permanentnie w trybie interaktywnym.
+2. **Ukryty viewport FDM jest nadal utrzymywany w DOM**, a razem z nim żyją nakładki 3D (`ViewCube`, `HslSphere`), z których przynajmniej jedna renderuje się ciągle.
+3. **Rozdzielenie kontekstów zostało częściowo unieważnione**, bo `ViewportPanels` używa złożonego `useControlRoom()` zamiast węższych hooków domenowych.
+4. **FEM nadal pełnie przebudowuje topologię geometrii**, mimo że `ControlRoomContext` już rozdziela topologię i field-data. Błąd jest w zależnościach `useMemo` w `FemGeometry`.
+
+To jest wystarczające, żeby zabić FPS **nawet przy małych scenach**, a przy scenach żywych lub częściej odświeżanych dać efekt „refresh rate co kilka sekund”.
+
+---
+
+## 2. Co najbardziej pasuje do objawu użytkownika
+
+Objaw:  
+- „kiedyś było kilkadziesiąt FPS”
+- „teraz nawet pojedyncze okno tnie się”
+- „refresh rate co kilka sekund”
+
+Najlepiej pasują do tego trzy klasy problemów:
+
+### A. Stały koszt GPU, nawet gdy scena jest mała
+- `preserveDrawingBuffer: true`
+- dodatkowe canvasy / overlaye renderujące poza głównym viewportem
+- wymuszane `material.needsUpdate`
+
+### B. Niepotrzebne przebudowy CPU przy każdej zmianie stanu
+- pełne przebudowy `BufferGeometry`
+- ponowne liczenie wireframe / points / normals
+- ponowne przejścia po całym polu wektorowym
+
+### C. Zbyt szeroka reaktywność Reacta
+- główny host viewportu renderuje się od zmian transportu/modelu/komend
+- ukryty viewport nadal żyje
+- memoizacja topologii FEM jest złamana przez zależność od całego `meshData`
+
+---
+
+## 3. Ranking przyczyn — od najbardziej prawdopodobnych
+
+| Priorytet | Problem | Prawdopodobny wpływ | Backend |
+|---|---|---:|---|
+| P0 | `preserveDrawingBuffer: true` stale w głównym FDM `Canvas` | bardzo wysoki | FDM |
+| P0 | `FemGeometry` zależy od całego `meshData` zamiast samej topologii | bardzo wysoki | FEM |
+| P0 | `HslSphere` ma osobny `Canvas` i `useFrame()` bez `frameloop="demand"` | bardzo wysoki | FDM / shell |
+| P1 | `ViewportPanels` używa `useControlRoom()` i reimportuje pełny stan 4 kontekstów | wysoki | FDM + FEM |
+| P1 | FDM viewport jest zawsze mounted, nawet gdy ukryty | wysoki | FDM |
+| P1 | `FemGeometry` zawsze buduje normals / wireframe / points | wysoki | FEM |
+| P2 | `ViewCube` ma własną pętlę RAF/timeout | średni | FDM / shell |
+| P2 | `FdmInstances` i `FemArrows` ustawiają `material.needsUpdate = true` w hot path | średni | FDM + FEM |
+| P2 | Brak wyraźnego dispose po stronie FDM | średni / narastający | FDM |
+
+---
+
+## 4. Dowody plik-po-pliku
+
+---
+
+## 4.1 `MagnetizationView3D.tsx` — stale włączone `preserveDrawingBuffer`
+
+### Kluczowy fragment
+
+```tsx
+<Canvas
+  frameloop={viewportVisible ? "demand" : "never"}
+  ...
+  gl={{
+    antialias: settings.quality !== "low",
+    preserveDrawingBuffer: true,
+  }}
+  ...
+  dpr={settings.quality === "ultra"
+    ? Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)
+    : 1
+  }
+>
+```
+
+**Lokalizacja:** `MagnetizationView3D.tsx`, okolice linii `1065–1088`
+
+### Diagnoza
+
+To jest **bardzo mocny kandydat na bezpośredni regres wydajności**.  
+`preserveDrawingBuffer`:
+- zwiększa koszt renderu,
+- potrafi blokować optymalizacje sterownika/GPU,
+- jest sensowne dla snapshotów / capture,
+- **nie powinno być stale aktywne w zwykłym interaktywnym viewportcie**.
+
+Sytuacja jest tym bardziej podejrzana, że nowa infrastruktura `ScientificViewportShell` i profile jakości są zbudowane tak, jakby `preserveDrawingBuffer` miało być polityką jakości, a nie zawsze-on.
+
+### Wniosek
+
+To wygląda jak klasyczny regres po refaktorze: „dodaliśmy snapshot / capture i zostawiliśmy kosztowną flagę w stałym hot path”.
+
+### Poziom ryzyka
+
+**Krytyczny (P0)**
+
+---
+
+## 4.2 `ViewportPanels.tsx` — FDM viewport jest utrzymywany stale w DOM
+
+### Kluczowy fragment
+
+```tsx
+{/* ── Always-mounted FDM 3D Canvas ──
+ * The R3F <Canvas> holds a WebGL context and camera state that is extremely
+ * expensive to recreate. We keep MagnetizationView3D always in the DOM and
+ * toggle visibility via CSS, preventing GL context destruction on data swaps. */}
+<div className={cn("absolute inset-0", showFdm3D ? "block" : "hidden")}>
+  <ViewportErrorBoundary label="FDM 3D Viewport">
+    <MagnetizationView3D
+      ...
+      viewportVisible={showFdm3D}
+    />
+  </ViewportErrorBoundary>
+</div>
+```
+
+**Lokalizacja:** `ViewportPanels.tsx`, okolice linii `966–1001`
+
+### Diagnoza
+
+Intencja jest zrozumiała: nie niszczyć kontekstu WebGL przy przełączaniu widoków.
+
+Problem polega na tym, że:
+- komponent **pozostaje mounted**,
+- jego poddrzewa i efekty nadal istnieją,
+- część nakładek 3D jest renderowana osobnymi `Canvas`,
+- samo „schowanie CSS-em” nie oznacza braku kosztu runtime.
+
+### Dlaczego to jest groźne
+
+Jeśli ukryty viewport:
+- nadal ma aktywne overlaye,
+- nadal ma pętle synchronizacji,
+- nadal ma stan i efekty Reactowe,
+
+to zachowujesz prawie cały koszt systemu, mimo że nic nie widać.
+
+### Wniosek
+
+Ten wzorzec był bezpieczny tylko wtedy, gdy cały podsystem viewportu był naprawdę „uśpiony”.  
+Po ostatnich zmianach już taki nie jest.
+
+### Poziom ryzyka
+
+**Wysoki (P1)**
+
+---
+
+## 4.3 `HslSphere.tsx` — osobny `Canvas` renderujący stale
+
+### Kluczowe fragmenty
+
+```tsx
+useFrame(() => {
+  const main = mainCameraRef.current;
+  if (!main) return;
+  camera.quaternion.copy(main.camera.quaternion);
+  camera.position.set(0, 0, 3).applyQuaternion(camera.quaternion);
+  camera.lookAt(0, 0, 0);
+});
+```
+
+```tsx
+<Canvas
+  orthographic
+  ...
+  gl={{ alpha: true, antialias: true }}
+  dpr={Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)}
+>
+```
+
+**Lokalizacja:** `HslSphere.tsx`, okolice linii `80–88` oraz `115–127`
+
+### Diagnoza
+
+To jest **osobny R3F `Canvas`**, który:
+- używa `useFrame()`,
+- nie ma `frameloop="demand"`,
+- synchronizuje kamerę z głównym widokiem.
+
+W praktyce oznacza to, że ta mała legenda:
+- ma własną pętlę renderu,
+- pracuje ciągle,
+- może odświeżać się nawet wtedy, gdy główny viewport jest schowany albo „demand-only”.
+
+### Dlaczego to jest bardzo podejrzane
+
+To jest dokładnie ten typ niepozornego elementu, który po refaktorze potrafi zabić płynność całej strony:
+- niby „tylko legendka”,
+- ale de facto drugi canvas z ciągłą animacją.
+
+### Wniosek
+
+Jeżeli po refaktorze pojawił się efekt „mała scena, a wszystko się dławi”, to `HslSphere` jest jednym z pierwszych podejrzanych.
+
+### Poziom ryzyka
+
+**Krytyczny (P0)**
+
+---
+
+## 4.4 `ViewCube.tsx` — własna pętla synchronizacji RAF + timeout
+
+### Kluczowy fragment
+
+```tsx
+useEffect(() => {
+  let active = true;
+  function loop() {
+    ...
+    if (idleCounterRef.current < 120) {
+      rafRef.current = requestAnimationFrame(loop);
+    } else {
+      rafRef.current = window.setTimeout(loop, 250) as unknown as number;
+    }
+  }
+  rafRef.current = requestAnimationFrame(loop);
+  return () => {
+    active = false;
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      clearTimeout(rafRef.current);
+    }
+  };
+}, [getCameraMatrix]);
+```
+
+**Lokalizacja:** `ViewCube.tsx`, okolice linii `95–115`
+
+### Diagnoza
+
+To nie jest największy pojedynczy winowajca, ale:
+- dokłada własny harmonogram JS,
+- stale odpytuje stan kamery,
+- robi pracę nawet wtedy, gdy nic ważnego się nie dzieje.
+
+W połączeniu z:
+- osobnym `Canvas`,
+- zawsze-mounted FDM viewportem,
+- szerszym rerender-churnem,
+
+może dokładać istotny szum i blokować uspokojenie interfejsu.
+
+### Wniosek
+
+Sam `ViewCube` raczej nie zabił wydajności „sam z siebie”, ale stał się **jednym z multiplikatorów kosztu**.
+
+### Poziom ryzyka
+
+**Średni (P2)**
+
+---
+
+## 4.5 `context-hooks.tsx` + `ViewportPanels.tsx` — split kontekstów został praktycznie obejściem unieważniony
+
+### Kluczowy komentarz
+
+```tsx
+/* SPLIT CONTEXT ARCHITECTURE
+ * The monolithic context is split into 4 focused domains to prevent
+ * unnecessary re-renders.
+ * ...
+ * The legacy useControlRoom() is preserved as a facade composing all 4.
+ */
+```
+
+### Kluczowy fragment
+
+```tsx
+export function useControlRoom(): ControlRoomContextValue {
+  const transport = useTransport();
+  const viewport = useViewport();
+  const command = useCommand();
+  const model = useModel();
+  return useMemo(
+    () => ({ ...transport, ...viewport, ...command, ...model }),
+    [transport, viewport, command, model],
+  );
+}
+```
+
+**Lokalizacja:** `context-hooks.tsx`, okolice linii `3–16` i `456–463`
+
+### Problem
+
+`ViewportPanels.tsx` używa właśnie tego fasadowego hooka:
+- czyli w praktyce ponownie skleja transport + viewport + command + model,
+- czyli render hosta viewportu może się odpalać od zmian z wielu niepowiązanych domen.
+
+### Diagnoza
+
+To jest bardzo mocny **architektoniczny regres reaktywności**.
+
+Cały split był po to, by:
+- ticki telemetryczne,
+- zmiany runtime,
+- zmiany modelu,
+- zmiany UI viewportu
+
+nie mieszały się ze sobą.
+
+Jeżeli główny komponent renderujący viewport nadal siedzi na fasadzie zbierającej wszystko, to duża część zysku znika.
+
+### Wniosek
+
+To nie jest drobny detal — to może tłumaczyć, czemu po refaktorze teoretycznie „ładniejsza architektura” daje gorszą płynność.
+
+### Poziom ryzyka
+
+**Wysoki (P1)**
+
+---
+
+## 4.6 `ControlRoomContext.tsx` vs `FemGeometry.tsx` — złamana optymalizacja topologia vs field-data
+
+### Co jest zrobione dobrze po stronie provider-a
+
+```tsx
+// Topology base: stable reference that only changes when mesh structure changes.
+// This prevents full geometry rebuild (and camera reset) on every field data update.
+const femMeshBase = useMemo(...)
+
+// Field data: updated on every solver tick when selectedVectors changes.
+const femFieldData = useMemo(...)
+
+// Combined: new object only when topology OR field data changes
+const femMeshData = useMemo(...)
+```
+
+**Lokalizacja:** `ControlRoomContext.tsx`, okolice linii `3131–3175`
+
+### Problem po stronie konsumenta
+
+W `FemGeometry.tsx` kosztowny `useMemo` od topologii ma w dependencies:
+
+```tsx
+[
+  customBoundaryFaces,
+  clipAxis,
+  clipEnabled,
+  clipPos,
+  displayBoundaryFaceIndices,
+  displayElementIndices,
+  globalCenter,
+  invalidate,
+  meshData,
+  shrinkFactor,
+]
+```
+
+**Lokalizacja:** `FemGeometry.tsx`, okolice linii `517–527`
+
+### Diagnoza
+
+To praktycznie niszczy całą wcześniejszą optymalizację.
+
+Jeżeli `meshData` jest nowym obiektem po każdej zmianie field-data, to kosztowny memo topologii:
+- przelicza się od nowa,
+- buduje geometrię od nowa,
+- może resetować ścieżki wewnętrzne związane z kamerą / pickingiem / GPU uploadem.
+
+### Wniosek
+
+To jest **jeden z najpoważniejszych bugów regresyjnych po stronie FEM**.  
+Optymalizacja została zaprojektowana poprawnie na poziomie provider-a, ale zepsuta przez zbyt szeroką zależność po stronie renderera.
+
+### Poziom ryzyka
+
+**Krytyczny (P0)**
+
+---
+
+## 4.7 `FemGeometry.tsx` — zbyt ciężka przebudowa geometrii nawet wtedy, gdy tryb nie potrzebuje wszystkiego
+
+### Kluczowe fragmenty
+
+```tsx
+const geom = new THREE.BufferGeometry();
+geom.setAttribute("position", new THREE.BufferAttribute(finalPositions, 3));
+...
+geom.computeVertexNormals();
+geom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(finalPositions.length), 3));
+
+// For wireframe, compute it from the `geom`
+const edgesGeom = new THREE.WireframeGeometry(geom);
+```
+
+```tsx
+let tetraWireGeom: THREE.BufferGeometry | null = null;
+if (tetraEdgePairs.length > 0 && !doShrink) {
+  tetraWireGeom = new THREE.BufferGeometry();
+  ...
+}
+```
+
+```tsx
+const ptsGeom = new THREE.BufferGeometry();
+ptsGeom.setAttribute("position", new THREE.BufferAttribute(pointPositions, 3));
+ptsGeom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(pointPositions.length), 3));
+```
+
+**Lokalizacja:** `FemGeometry.tsx`, okolice linii `430–503`
+
+### Diagnoza
+
+W jednym memo budowane są:
+- główna surface geometry,
+- normals,
+- wireframe,
+- tetra edges,
+- points geometry.
+
+To się dzieje niezależnie od tego, czy aktualny tryb renderowania w ogóle tego potrzebuje.
+
+Przykładowo:
+- tryb `surface` nie potrzebuje `WireframeGeometry`,
+- tryb `points` nie potrzebuje normals dla powierzchni,
+- tryb `wireframe` nie potrzebuje pełnej ścieżki shadingu surface.
+
+### Wniosek
+
+To jest klasyczny przypadek „render path robi zbyt dużo roboty upfront”.  
+Nie trzeba dużej sceny, żeby taki kod zaczął ciąć.
+
+### Poziom ryzyka
+
+**Wysoki (P1)**
+
+---
+
+## 4.8 `FemGeometry.tsx` — efekt uboczny `invalidate()` wewnątrz `useMemo`
+
+### Kluczowy fragment
+
+```tsx
+invalidate();
+return {
+  geometry: geom,
+  ...
+};
+```
+
+**Lokalizacja:** `FemGeometry.tsx`, okolice linii `504–516`
+
+### Diagnoza
+
+`useMemo` powinno być obliczeniem czystym.  
+Tutaj mamy side-effect w środku memoizacji.
+
+To może:
+- mieszać logikę invalidation,
+- utrudniać przewidywanie repaintów,
+- wzmacniać churn renderu przy częstych przebudowach.
+
+### Wniosek
+
+To raczej nie jest główny zabójca FPS, ale jest czytelnym sygnałem, że ścieżka jest niestabilna architektonicznie.
+
+### Poziom ryzyka
+
+**Średni (P2)**
+
+---
+
+## 4.9 `FdmInstances.tsx` — ciężka pełna przebudowa instancji na CPU
+
+### Kluczowe fragmenty
+
+#### Pass 1: skan całego pola po max magnitude
+
+```tsx
+let maxMagnitude = 0;
+for (let i = 0; i < vectors!.length; i += 3) {
+  const mx = vectors![i];
+  const my = vectors![i + 1];
+  const mz = vectors![i + 2];
+  maxMagnitude = Math.max(maxMagnitude, Math.sqrt(mx * mx + my * my + mz * mz));
+}
+```
+
+#### Pass 2: pełny przebieg po widocznych komórkach
+
+```tsx
+for (let iz = startIz; iz <= maxIz; iz += nz <= 1 ? 1 : step) {
+  ...
+  for (let iy = startIy; iy <= maxIy; iy += step) {
+    ...
+    for (let ix = startIx; ix <= maxIx; ix += step) {
+      ...
+      colors[outBaseColor] = _color.r;
+      colors[outBaseColor + 1] = _color.g;
+      colors[outBaseColor + 2] = _color.b;
+      displayToCell[visible] = cellIndex;
+      visible += 1;
+    }
+  }
+}
+```
+
+#### Hot-path flags
+
+```tsx
+materialRef.needsUpdate = true;
+invalidate();
+```
+
+**Lokalizacja:** `FdmInstances.tsx`, okolice linii `355–460`
+
+### Diagnoza
+
+To nie musi być nowy błąd, ale jest kosztowne:
+- osobny pass na maksymalny moduł,
+- osobny pass na instancje,
+- aktualizacja kolorów i macierzy na CPU,
+- `material.needsUpdate` w ścieżce aktualizacji.
+
+Dla małych scen samo to raczej nie daje „refresh co kilka sekund”, ale gdy doda się:
+- always-mounted viewport,
+- overlaye renderujące stale,
+- szerszy rerender Reactowy,
+
+to koszt zaczyna się sumować.
+
+### Wniosek
+
+FDM dalej nie jest „lekki”; po refaktorze wpadł po prostu do cięższego otoczenia.
+
+### Poziom ryzyka
+
+**Średni (P2)**
+
+---
+
+## 4.10 `FemArrows.tsx` — `material.needsUpdate = true` w gorącej ścieżce
+
+### Kluczowe fragmenty
+
+```tsx
+(mesh.instanceColor as any).needsUpdate = true;
+// eslint-disable-next-line react-hooks/immutability
+(material as any).needsUpdate = true;
+invalidate();
+```
+
+oraz później ponownie:
+
+```tsx
+(mesh.instanceMatrix as any).needsUpdate = true;
+// eslint-disable-next-line react-hooks/immutability
+(instanceColor as any).needsUpdate = true;
+// eslint-disable-next-line react-hooks/immutability
+(material as any).needsUpdate = true;
+invalidate();
+```
+
+**Lokalizacja:** `FemArrows.tsx`, okolice linii `443–495`
+
+### Diagnoza
+
+`material.needsUpdate = true` powinno się ustawiać wtedy, gdy naprawdę zmienia się definicja materiału / shader path.  
+W hot path:
+- instancje,
+- kolory,
+- macierze
+
+to zazwyczaj zły pomysł.
+
+### Wniosek
+
+Nie jest to główny powód całkowitego załamania FPS, ale jest to **łatwy mnożnik kosztu**.
+
+### Poziom ryzyka
+
+**Średni (P2)**
+
+---
+
+## 5. Dlaczego teraz boli bardziej niż kiedyś
+
+Najprawdopodobniej doszło do efektu kumulacji:
+
+1. **Dołożono nowe warstwy viewportu**  
+   - shell,
+   - overlaye,
+   - gizma,
+   - legendy.
+
+2. **Zwiększono liczbę źródeł invalidation**  
+   - `invalidate()` w wielu miejscach,
+   - osobne canvasy,
+   - pętle synchronizacji.
+
+3. **Architektura React miała być lepsza, ale została częściowo obejściem rozbrojona**  
+   - split context istnieje,
+   - ale widok główny nadal jest pod fasadą `useControlRoom()`.
+
+4. **Część optymalizacji wykonano po stronie provider-a, ale nie dowieziono po stronie renderera**  
+   - dokładnie przypadek `femMeshBase / femFieldData` kontra `meshData` w dependency array.
+
+To bardzo typowy scenariusz regresji po „ładnym refaktorze”:
+- każdy pojedynczy element wygląda sensownie,
+- ale system jako całość zaczyna stale coś przeliczać lub renderować.
+
+---
+
+## 6. Najbardziej prawdopodobne bezpośrednie zabójcy FPS
+
+Jeśli miałbym wskazać **tylko 5 rzeczy**, które trzeba sprawdzić / naprawić w pierwszej kolejności, to są to:
+
+### 6.1 FDM `preserveDrawingBuffer: true`
+To powinno zostać natychmiast wyłączone w trybie interaktywnym.
+
+### 6.2 `HslSphere` jako osobny ciągle renderujący `Canvas`
+Ta nakładka powinna przejść na:
+- `frameloop="demand"`,
+- explicit invalidate przy zmianie orientacji,
+- albo render w tym samym canvasie / gizmo stacku.
+
+### 6.3 `ViewportPanels` nie może używać szerokiego `useControlRoom()`
+Host viewportu powinien subskrybować minimalny zestaw stanu.
+
+### 6.4 `FemGeometry` nie może zależeć od całego `meshData`
+Topologia ma zależeć od:
+- `nodes`,
+- `elements`,
+- `boundaryFaces`,
+- `nNodes`,
+- `nElements`,
+- parametrów klipu / selekcji topologicznej,
+
+ale **nie od całego wrappera z field-data**.
+
+### 6.5 Ukryty FDM viewport nie może utrzymywać aktywnego overlay subsystem
+Samo `frameloop="never"` na głównym canvasie nie wystarczy, jeśli overlaye i pętle żyją obok.
+
+---
+
+## 7. Objaw → najbardziej pasująca przyczyna
+
+| Objaw | Najbardziej pasująca przyczyna |
+|---|---|
+| Niskie FPS nawet dla bardzo małej sceny | `preserveDrawingBuffer`, `HslSphere` continuous canvas, overlay churn |
+| „Refresh” co kilka sekund | broad rerender / expensive rebuild + demand invalidation |
+| FEM tnie nawet przy prostym polu | `FemGeometry` topology rebuild na zmianach field-data |
+| FDM tnie nawet po schowaniu innego trybu | hidden always-mounted viewport + overlaye |
+| Interfejs niby idle, ale CPU/GPU nadal pracuje | `ViewCube` polling + oddzielny `HslSphere` canvas + szeroka reaktywność |
+
+---
+
+## 8. Co jest prawdopodobnie prawdziwą przyczyną regresji po ostatnim pushu
+
+Nie wygląda to na „three.js jest wolny”.
+
+Wygląda to raczej na taki zestaw błędów:
+- **za dużo rzeczy renderuje się stale poza główną sceną**,
+- **za dużo komponentów reaguje na zbyt szeroki stan**,
+- **część ścieżek FEM przelicza geometrię mimo że miała już tego nie robić**,
+- **w FDM włączono kosztowną opcję WebGL w trybie permanentnym**.
+
+Czyli problem nie siedzi w silniku 3D jako takim, tylko w:
+- polityce renderu,
+- granicach stanu,
+- przepływie danych,
+- oraz kilku bardzo kosztownych flagach.
+
+---
+
+## 9. Minimalny plan potwierdzenia diagnozy
+
+To nie jest jeszcze pełny plan refaktoryzacji — tylko szybki test diagnostyczny, który potwierdzi lub obali hipotezę.
+
+### Test A — wyłącz `preserveDrawingBuffer`
+Jeśli FPS wraca zauważalnie od razu, masz pierwszy winowajcę.
+
+### Test B — zakomentuj `HslSphere`
+Jeśli idle CPU/GPU spada i wraca płynność, masz drugi winowajcę.
+
+### Test C — zamień `useControlRoom()` w `ViewportPanels` na minimalne hooki
+Jeśli znikają niepotrzebne rerendery hosta viewportu, potwierdzasz problem reaktywności.
+
+### Test D — w `FemGeometry` zastąp dependency `meshData` zestawem pól topologicznych
+Jeśli FEM przestaje przycinać przy aktualizacji pola, diagnoza jest trafna.
+
+### Test E — wymuś realne unmountowanie FDM overlay subsystem przy ukryciu
+Jeśli schowany widok przestaje ciągnąć wydajność, problem był architektoniczny, nie tylko GPU-owy.
+
+---
+
+## 10. Wnioski końcowe
+
+**Najmocniejszy wniosek:** regres nie wygląda na jeden bug, tylko na **nakładające się problemy architektoniczne i renderingowe**.
+
+Najbardziej krytyczne z nich to:
+
+- stale aktywne `preserveDrawingBuffer`,
+- osobny ciągły `Canvas` dla `HslSphere`,
+- zawsze-mounted viewport FDM,
+- złamana granica topologia-vs-field-data w FEM,
+- szeroka subskrypcja stanu przez `useControlRoom()`.
+
+To jest zestaw, który spokojnie może zabić płynność nawet dla małych wizualizacji.
+
+---
+
+## 11. Priorytet napraw
+
+### P0 — natychmiast
+- usunąć `preserveDrawingBuffer: true` z interaktywnego FDM canvas,
+- zatrzymać ciągłe renderowanie `HslSphere`,
+- naprawić dependencies topologii w `FemGeometry`.
+
+### P1 — bardzo szybko
+- odpiąć `ViewportPanels` od szerokiego `useControlRoom()`,
+- nie utrzymywać aktywnego overlay subsystem dla ukrytego FDM viewportu,
+- rozdzielić budowę surface / wireframe / points w FEM.
+
+### P2 — porządkowanie
+- usunąć `material.needsUpdate = true` z hot path tam, gdzie nie jest konieczne,
+- uprościć synchronizację `ViewCube`,
+- dodać pełne dispose / cleanup dla FDM.
+
+---
+
+## 12. Końcowy werdykt
+
+**Tak — w kodzie są bardzo konkretne błędy, które realnie mogły zabić wydajność renderu nawet dla małych scen.**  
+Nie są to subtelne mikrooptymalizacje, tylko twarde problemy w:
+
+- polityce WebGL,
+- strukturze mounted/unmounted,
+- ciągłych overlay-canvasach,
+- zależnościach memoizacji,
+- oraz granicach subskrypcji stanu.
+
+To jest wystarczająco mocny materiał, żeby przejść od razu do krótkiej rundy poprawek P0 i bardzo szybko zawęzić faktycznego głównego winowajcę.
+

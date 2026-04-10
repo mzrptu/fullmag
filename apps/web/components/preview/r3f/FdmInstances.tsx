@@ -455,7 +455,6 @@ function FdmInstances({
         materialRef.transparent = sceneOpacityMultiplier < 0.999;
       }
       materialRef.depthWrite = true;
-      materialRef.needsUpdate = true;
     }
     invalidate();
   }, [vectors, grid, settings, geometryMode, activeMask, mode, count, nx, ny, nz, onVisibleCount, sceneOpacityMultiplier, isolateGridBounds, invalidate]);

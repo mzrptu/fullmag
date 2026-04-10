@@ -188,6 +188,30 @@ export default function RunSidebar() {
     resultQuantityTree.scalar.length,
     tp.scalarRows.length,
   ]);
+  const resultWorkspaceEntriesForTree = useMemo(
+    () =>
+      [...model.resultWorkspaceEntries]
+        .sort((a, b) => {
+          const aIsAuto = !a.pinned;
+          const bIsAuto = !b.pinned;
+          if (aIsAuto !== bIsAuto) {
+            return aIsAuto ? 1 : -1;
+          }
+          return aIsAuto
+            ? a.createdAtUnixMs - b.createdAtUnixMs
+            : b.createdAtUnixMs - a.createdAtUnixMs;
+        })
+        .map((entry) => ({
+          id: entry.id,
+          label: entry.label,
+          icon: entry.icon,
+          badge: entry.badge,
+          status: model.activeResultWorkspaceId === entry.id ? ("active" as const) : ("ready" as const),
+          group: entry.pinned ? ("pinned" as const) : ("auto" as const),
+          createdAtUnixMs: entry.createdAtUnixMs,
+        })),
+    [model.activeResultWorkspaceId, model.resultWorkspaceEntries],
+  );
 
   /* ── Build model tree nodes ── */
   const modelTreeNodes = useMemo(
@@ -235,13 +259,7 @@ export default function RunSidebar() {
         showResultsSection: hasResultsSection,
         resultsFieldQuantities: resultQuantityTree.field,
         resultsScalarQuantities: resultQuantityTree.scalar,
-        resultWorkspaceEntries: model.resultWorkspaceEntries.map((entry) => ({
-          id: entry.id,
-          label: entry.label,
-          icon: entry.icon,
-          badge: entry.badge,
-          status: model.activeResultWorkspaceId === entry.id ? "active" : "ready",
-        })),
+        resultWorkspaceEntries: resultWorkspaceEntriesForTree,
         eigenModeCount,
         eigenModeSummaries,
         eigenHasDispersion: analyzeArtifacts.dispersionRows.length > 0,
@@ -256,7 +274,7 @@ export default function RunSidebar() {
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm, model.solverSettings.torqueTolerance,
       tp.effectiveDmDt, tp.scalarRows.length, model.worldCenter, model.worldExtent, runtimeDeclaredUniverse?.mode, runtimeDeclaredUniverse?.padding, runtimeDeclaredUniverse?.size,
-      universeRole, hasResultsSection, resultQuantityTree.field, resultQuantityTree.scalar, model.resultWorkspaceEntries, model.activeResultWorkspaceId, eigenModeCount, eigenModeSummaries, analyzeArtifacts.dispersionRows.length,
+      universeRole, hasResultsSection, resultQuantityTree.field, resultQuantityTree.scalar, resultWorkspaceEntriesForTree, eigenModeCount, eigenModeSummaries, analyzeArtifacts.dispersionRows.length,
       launchIntent?.displayName, model.airPart?.element_count, model.airPart?.node_count,
       model.visualizationProjectPresets, model.visualizationLocalPresets, model.activeVisualizationPresetRef,
     ],
@@ -527,6 +545,39 @@ export default function RunSidebar() {
   }, [cmd.isFemBackend, model, vp, inspectorPanelRef, selectModelNode]);
 
   const handleTreeContextAction = useCallback((nodeId: string, action: string) => {
+    if (nodeId.startsWith("res-analysis-")) {
+      const id = nodeId.replace("res-analysis-", "");
+      const existing = model.resultWorkspaceEntries.find((entry) => entry.id === id);
+      if (!existing) {
+        return;
+      }
+      if (action === "rename") {
+        const nextLabel = window.prompt("Analysis name", existing?.label ?? "Analysis");
+        if (nextLabel && nextLabel.trim().length > 0) {
+          model.renameResultWorkspaceEntry(id, nextLabel.trim());
+        }
+        return;
+      }
+      if (action === "duplicate") {
+        const duplicateId = model.duplicateResultWorkspaceEntry(id);
+        if (duplicateId) {
+          model.setSelectedSidebarNodeId(`res-analysis-${duplicateId}`);
+          model.openResultWorkspaceEntry(duplicateId);
+        }
+        return;
+      }
+      if (action === "toggle-pin") {
+        model.setResultWorkspacePinned(id, !existing.pinned);
+        return;
+      }
+      if (action === "delete") {
+        const accepted = window.confirm("Delete this analysis entry from Results tree?");
+        if (accepted) {
+          model.removeResultWorkspaceEntry(id);
+        }
+        return;
+      }
+    }
     const visualizationPresetNode = parseVisualizationPresetNodeId(nodeId);
     if (visualizationPresetNode) {
       const ref = {

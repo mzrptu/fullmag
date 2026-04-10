@@ -90,6 +90,17 @@ export interface FemViewportToolbarProps {
   quantityOptions?: Array<{ id: string; shortLabel: string; available: boolean }>;
   onQuantityChange?: (id: string) => void;
   compact?: boolean;
+  // mixed-state indicators (P3)
+  renderModeMixed?: boolean;
+  opacityMixed?: boolean;
+  colorFieldMixed?: boolean;
+  // arrows diagnostic (P4)
+  arrowsRequested?: boolean;
+  arrowsBlockReason?: string | null;
+  // toolbar scope label (P2)
+  toolbarScopeLabel?: string | null;
+  // runtime degradation active (P5)
+  interactionSimplified?: boolean;
 }
 
 const RENDER_OPTIONS: { value: RenderMode; icon: React.ReactNode; label: string; title: string }[] = [
@@ -189,6 +200,13 @@ export function FemViewportToolbar({
   quantityOptions = [],
   onQuantityChange,
   compact = false,
+  renderModeMixed = false,
+  opacityMixed = false,
+  colorFieldMixed = false,
+  arrowsRequested = false,
+  arrowsBlockReason = null,
+  toolbarScopeLabel = null,
+  interactionSimplified = false,
 }: FemViewportToolbarProps) {
   const activeSurfaceColorOpt = COLOR_OPTIONS.find((o) => o.value === surfaceColorField);
   const activeArrowColorOpt =
@@ -332,6 +350,36 @@ export function FemViewportToolbar({
           Vec {arrowDensity}
           {effectiveDensity !== arrowDensity ? `->${effectiveDensity}` : ""}
         </ViewportStatusChip>
+        {renderModeMixed && (
+          <ViewportStatusChip color="warning" active>
+            <span title="Visible parts have different render modes">Mixed mode</span>
+          </ViewportStatusChip>
+        )}
+        {opacityMixed && (
+          <ViewportStatusChip color="warning" active>
+            <span title="Visible parts have different opacity values">Mixed opacity</span>
+          </ViewportStatusChip>
+        )}
+        {colorFieldMixed && (
+          <ViewportStatusChip color="warning" active>
+            <span title="Visible parts have different color fields">Mixed color</span>
+          </ViewportStatusChip>
+        )}
+        {toolbarScopeLabel && (
+          <ViewportStatusChip color="info" active>
+            <span title="Toolbar controls apply to this scope">{toolbarScopeLabel}</span>
+          </ViewportStatusChip>
+        )}
+        {arrowsRequested && !arrowsVisible && arrowsBlockReason && (
+          <ViewportStatusChip color="warning" active>
+            <span title={arrowsBlockReason}>Vectors blocked</span>
+          </ViewportStatusChip>
+        )}
+        {interactionSimplified && (
+          <ViewportStatusChip color="default" active>
+            <span title="Render quality reduced during camera interaction">Simplified</span>
+          </ViewportStatusChip>
+        )}
       </ViewportToolGroup>
 
       {!compact ? <ViewportToolSeparator /> : null}

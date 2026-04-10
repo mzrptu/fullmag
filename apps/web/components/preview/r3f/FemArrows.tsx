@@ -451,8 +451,6 @@ export function FemArrows({
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.count = count;
     (mesh.instanceColor as any).needsUpdate = true;
-    // eslint-disable-next-line react-hooks/immutability
-    (material as any).needsUpdate = true;
     invalidate();
   }, [count, glyphPolicy.renderOrder, instanceColorAttribute, invalidate, material]);
 
@@ -492,8 +490,6 @@ export function FemArrows({
     (mesh.instanceMatrix as any).needsUpdate = true;
     // eslint-disable-next-line react-hooks/immutability
     (instanceColor as any).needsUpdate = true;
-    // eslint-disable-next-line react-hooks/immutability
-    (material as any).needsUpdate = true;
     invalidate();
   }, [
     colors,

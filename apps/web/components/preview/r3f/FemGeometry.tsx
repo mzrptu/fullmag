@@ -458,10 +458,11 @@ export function FemGeometry({
     geom.computeVertexNormals();
     geom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(finalPositions.length), 3));
 
-    // For wireframe, compute it from the `geom` (which represents the exact visible cut shell or shrunken elements)
-    const edgesGeom = new THREE.WireframeGeometry(geom);
+    // Only build wireframe edges when the render mode needs them
+    const needsEdges = renderMode === "surface+edges" || renderMode === "wireframe";
+    const edgesGeom = needsEdges ? new THREE.WireframeGeometry(geom) : null;
 
-    if (elements.length >= 4) {
+    if (renderMode === "wireframe" && elements.length >= 4) {
       const seenEdges = new Set<number>();
       const registerEdge = (a: number, b: number) => {
         const lo = Math.min(a, b);
@@ -492,39 +493,41 @@ export function FemGeometry({
       tetraWireGeom.setIndex(new THREE.BufferAttribute(new Uint32Array(tetraEdgePairs), 1));
     }
 
-    const pointNodeIndices =
-      customBoundaryFaces && customBoundaryFaces.length > 0
-        ? collectFaceNodeIndices(
-            boundaryFaces,
-            (() => {
-              const faceCount = Math.floor(boundaryFaces.length / 3);
-              const allFaceIndices = new Array<number>(faceCount);
-              for (let index = 0; index < faceCount; index += 1) {
-                allFaceIndices[index] = index;
-              }
-              return allFaceIndices;
-            })(),
-          )
-        : activeElementOffsets.length > 0
-        ? collectElementNodeIndices(elements, nElements, activeElementOffsets)
-        : preferredFaceIndices
-          ? collectFaceNodeIndices(boundaryFaces, preferredFaceIndices)
-          : Array.from({ length: nNodes }, (_, index) => index);
-    const pointPositions = new Float32Array(pointNodeIndices.length * 3);
-    pointVMap = new Int32Array(pointNodeIndices.length);
-    for (let i = 0; i < pointNodeIndices.length; i += 1) {
-      const nodeIndex = pointNodeIndices[i];
-      pointVMap[i] = nodeIndex;
-      const base = nodeIndex * 3;
-      pointPositions[i * 3] = positions[base];
-      pointPositions[i * 3 + 1] = positions[base + 1];
-      pointPositions[i * 3 + 2] = positions[base + 2];
+    let ptsGeom: THREE.BufferGeometry | null = null;
+    if (renderMode === "points") {
+      const pointNodeIndices =
+        customBoundaryFaces && customBoundaryFaces.length > 0
+          ? collectFaceNodeIndices(
+              boundaryFaces,
+              (() => {
+                const faceCount = Math.floor(boundaryFaces.length / 3);
+                const allFaceIndices = new Array<number>(faceCount);
+                for (let index = 0; index < faceCount; index += 1) {
+                  allFaceIndices[index] = index;
+                }
+                return allFaceIndices;
+              })(),
+            )
+          : activeElementOffsets.length > 0
+          ? collectElementNodeIndices(elements, nElements, activeElementOffsets)
+          : preferredFaceIndices
+            ? collectFaceNodeIndices(boundaryFaces, preferredFaceIndices)
+            : Array.from({ length: nNodes }, (_, index) => index);
+      const pointPositions = new Float32Array(pointNodeIndices.length * 3);
+      pointVMap = new Int32Array(pointNodeIndices.length);
+      for (let i = 0; i < pointNodeIndices.length; i += 1) {
+        const nodeIndex = pointNodeIndices[i];
+        pointVMap[i] = nodeIndex;
+        const base = nodeIndex * 3;
+        pointPositions[i * 3] = positions[base];
+        pointPositions[i * 3 + 1] = positions[base + 1];
+        pointPositions[i * 3 + 2] = positions[base + 2];
+      }
+      ptsGeom = new THREE.BufferGeometry();
+      ptsGeom.setAttribute("position", new THREE.BufferAttribute(pointPositions, 3));
+      ptsGeom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(pointPositions.length), 3));
     }
-    const ptsGeom = new THREE.BufferGeometry();
-    ptsGeom.setAttribute("position", new THREE.BufferAttribute(pointPositions, 3));
-    ptsGeom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(pointPositions.length), 3));
 
-    invalidate();
     return {
       geometry: geom,
       edgesGeometry: edgesGeom,
@@ -548,15 +551,21 @@ export function FemGeometry({
     elements,
     nElements,
     nNodes,
+    nodes,
     customBoundaryFaces,
     clipAxis,
     clipEnabled,
     clipPos,
     displayBoundaryFaceIndices,
     displayElementIndices,
-    invalidate,
+    renderMode,
     shrinkFactor,
   ]);
+
+  // Invalidate the R3F frame when topology geometry rebuilds
+  useEffect(() => {
+    if (geometry) invalidate();
+  }, [geometry, invalidate]);
 
   // ── Color update ──────────────────────────────────────────────────
   useEffect(() => {
@@ -783,12 +792,12 @@ export function FemGeometry({
         </mesh>
       )}
       
-      {showWire && (
+      {showWire && edgesGeometry && (
         <>
           <lineSegments geometry={edgesGeometry} renderOrder={hiddenEdgePolicy.renderOrder}>
             <lineBasicMaterial
               color={resolvedEdgeColor}
-              opacity={highlight ? 0.22 : 0.12}
+              opacity={(highlight ? 0.22 : 0.12) * opacityVal}
               transparent={hiddenEdgePolicy.transparent}
               depthWrite={hiddenEdgePolicy.depthWrite}
               depthTest={hiddenEdgePolicy.depthTest}
@@ -797,7 +806,7 @@ export function FemGeometry({
           <lineSegments geometry={edgesGeometry} renderOrder={edgePolicy.renderOrder}>
             <lineBasicMaterial
               color={resolvedEdgeColor}
-              opacity={highlight ? 0.95 : 0.58}
+              opacity={(highlight ? 0.95 : 0.58) * opacityVal}
               transparent={edgePolicy.transparent}
               depthWrite={edgePolicy.depthWrite}
               depthTest={edgePolicy.depthTest}
@@ -806,27 +815,27 @@ export function FemGeometry({
         </>
       )}
 
-      {showVolumeWire && (tetraEdgesGeometry ?? edgesGeometry) && (
+      {showVolumeWire && (tetraEdgesGeometry ?? edgesGeometry) != null && (
         <>
           <lineSegments
-            geometry={tetraEdgesGeometry ?? edgesGeometry}
+            geometry={(tetraEdgesGeometry ?? edgesGeometry)!}
             renderOrder={hiddenEdgePolicy.renderOrder}
           >
             <lineBasicMaterial
               color={resolvedEdgeColor}
-              opacity={highlight ? 0.16 : 0.09}
+              opacity={(highlight ? 0.16 : 0.09) * opacityVal}
               transparent={hiddenEdgePolicy.transparent}
               depthWrite={hiddenEdgePolicy.depthWrite}
               depthTest={hiddenEdgePolicy.depthTest}
             />
           </lineSegments>
           <lineSegments
-            geometry={tetraEdgesGeometry ?? edgesGeometry}
+            geometry={(tetraEdgesGeometry ?? edgesGeometry)!}
             renderOrder={edgePolicy.renderOrder}
           >
             <lineBasicMaterial
               color={resolvedEdgeColor}
-              opacity={highlight ? 0.72 : 0.32}
+              opacity={(highlight ? 0.72 : 0.32) * opacityVal}
               transparent={edgePolicy.transparent}
               depthWrite={edgePolicy.depthWrite}
               depthTest={edgePolicy.depthTest}
@@ -835,7 +844,7 @@ export function FemGeometry({
         </>
       )}
 
-      {showPoints && (
+      {showPoints && pointsGeometry && (
         <points geometry={pointsGeometry} renderOrder={pointPolicy.renderOrder}>
           <pointsMaterial 
             vertexColors 

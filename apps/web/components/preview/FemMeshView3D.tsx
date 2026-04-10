@@ -1177,9 +1177,12 @@ function FemMeshView3DInner({
     if (!hasMeshParts) {
       return [] as string[];
     }
-    // Keep toolbar controls stable across selection changes.
-    // Selection should highlight geometry, not silently change the target set
-    // for render/color controls in context mode.
+    // When a specific part is selected, scope toolbar to that part only.
+    // Otherwise, target all visible parts (global mode).
+    const selectedLayer = visibleLayers.find((layer) => layer.isSelected);
+    if (selectedLayer) {
+      return [selectedLayer.part.id];
+    }
     return visibleLayers.map((layer) => layer.part.id);
   }, [hasMeshParts, visibleLayers]);
   const toolbarStylePartIdSet = useMemo(
@@ -1220,6 +1223,15 @@ function FemMeshView3DInner({
     }
     return renderMode;
   }, [baseViewStateByPartId, hasMeshParts, renderMode, toolbarStylePartIds]);
+  const toolbarRenderModeMixed = useMemo(() => {
+    if (!hasMeshParts || toolbarStylePartIds.length <= 1) return false;
+    const modes = new Set(
+      toolbarStylePartIds
+        .map((id) => baseViewStateByPartId.get(id)?.renderMode)
+        .filter(Boolean),
+    );
+    return modes.size > 1;
+  }, [baseViewStateByPartId, hasMeshParts, toolbarStylePartIds]);
   const toolbarRepresentativePartId = useMemo(() => {
     if (!hasMeshParts || toolbarStylePartIds.length === 0) {
       return null;
@@ -1238,6 +1250,24 @@ function FemMeshView3DInner({
     }
     return baseViewStateByPartId.get(toolbarRepresentativePartId)?.opacity ?? opacity;
   }, [baseViewStateByPartId, hasMeshParts, opacity, toolbarRepresentativePartId]);
+  const toolbarOpacityMixed = useMemo(() => {
+    if (!hasMeshParts || toolbarStylePartIds.length <= 1) return false;
+    const values = new Set(
+      toolbarStylePartIds
+        .map((id) => baseViewStateByPartId.get(id)?.opacity)
+        .filter((v): v is number => v != null),
+    );
+    return values.size > 1;
+  }, [baseViewStateByPartId, hasMeshParts, toolbarStylePartIds]);
+  const toolbarColorFieldMixed = useMemo(() => {
+    if (!hasMeshParts || toolbarColorPartIds.length <= 1) return false;
+    const values = new Set(
+      toolbarColorPartIds
+        .map((id) => baseViewStateByPartId.get(id)?.colorField)
+        .filter(Boolean),
+    );
+    return values.size > 1;
+  }, [baseViewStateByPartId, hasMeshParts, toolbarColorPartIds]);
   const toolbarColorField = useMemo(() => {
     if (!hasMeshParts || toolbarColorPartIds.length === 0) {
       return field;
@@ -1288,6 +1318,20 @@ function FemMeshView3DInner({
     showArrows &&
     !missingMagneticMask &&
     visibleArrowNodeCount > 0;
+  const arrowsBlockReason = useMemo<string | null>(() => {
+    if (!showArrows) return null;
+    if (missingMagneticMask) return "No magnetic field data available for vector display";
+    if (visibleArrowNodeCount <= 0) return "No visible nodes match current vector domain filter";
+    return null;
+  }, [missingMagneticMask, showArrows, visibleArrowNodeCount]);
+  const toolbarScopeLabel = useMemo<string | null>(() => {
+    if (!hasMeshParts || toolbarStylePartIds.length === 0) return null;
+    if (toolbarStylePartIds.length === 1) {
+      const part = meshParts.find((p) => p.id === toolbarStylePartIds[0]);
+      return part ? `Selected: ${part.label ?? part.id}` : "Selected: 1 part";
+    }
+    return `All visible (${toolbarStylePartIds.length})`;
+  }, [hasMeshParts, meshParts, toolbarStylePartIds]);
   const fieldMagnitudeStats = useMemo(() => {
     if ((legendField === "quality" || legendField === "sicn") && qualityPerFace && qualityPerFace.length > 0) {
       const values = qualityPerFace.filter((value) => Number.isFinite(value));
@@ -1826,6 +1870,13 @@ function FemMeshView3DInner({
             quantityId={quantityId}
             quantityOptions={prominentQuantityOptions}
             onQuantityChange={onQuantityChange}
+            renderModeMixed={toolbarRenderModeMixed}
+            opacityMixed={toolbarOpacityMixed}
+            colorFieldMixed={toolbarColorFieldMixed}
+            arrowsRequested={showArrows}
+            arrowsBlockReason={arrowsBlockReason}
+            toolbarScopeLabel={toolbarScopeLabel}
+            interactionSimplified={interactionActive}
           />
         ),
       });

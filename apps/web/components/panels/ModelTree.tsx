@@ -523,6 +523,10 @@ export default function ModelTree({
     () => parseVisualizationPresetNodeId(ctxMenu?.nodeId),
     [ctxMenu?.nodeId],
   );
+  const contextResultAnalysis = useMemo(
+    () => Boolean(ctxMenu?.nodeId?.startsWith("res-analysis-")),
+    [ctxMenu?.nodeId],
+  );
 
   return (
     <div className={cn("flex flex-col gap-[1px] py-1 select-none", className)} role="tree">
@@ -559,6 +563,13 @@ export default function ModelTree({
               <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction(contextVisualizationPreset.source === "project" ? "save-local" : "save-project")}>
                 {contextVisualizationPreset.source === "project" ? "Save To Local" : "Save To Project"}
               </button>
+              <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("delete")}>Delete</button>
+            </>
+          ) : contextResultAnalysis ? (
+            <>
+              <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("rename")}>Rename</button>
+              <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("duplicate")}>Duplicate</button>
+              <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("toggle-pin")}>Pin / Unpin</button>
               <button className="w-full text-left px-2 py-1.5 text-xs font-medium rounded-sm hover:bg-muted text-popover-foreground transition-colors" onClick={() => handleAction("delete")}>Delete</button>
             </>
           ) : (
@@ -639,6 +650,8 @@ export function buildFullmagModelTree(opts: {
     icon?: string;
     badge?: string | null;
     status?: NodeStatus;
+    group?: "auto" | "pinned";
+    createdAtUnixMs?: number;
   }>;
   initialStatePath?: string | null;
   initialStateFormat?: string | null;
@@ -745,6 +758,12 @@ export function buildFullmagModelTree(opts: {
   const resultFieldQuantities = opts.resultsFieldQuantities ?? [];
   const resultScalarQuantities = opts.resultsScalarQuantities ?? [];
   const resultWorkspaceEntries = opts.resultWorkspaceEntries ?? [];
+  const pinnedResultWorkspaces = resultWorkspaceEntries
+    .filter((entry) => entry.group !== "auto")
+    .sort((a, b) => (b.createdAtUnixMs ?? 0) - (a.createdAtUnixMs ?? 0));
+  const autoResultWorkspaces = resultWorkspaceEntries
+    .filter((entry) => entry.group === "auto")
+    .sort((a, b) => (a.createdAtUnixMs ?? 0) - (b.createdAtUnixMs ?? 0));
   const showUniverse = Boolean(
     graphUniverse ||
       opts.showUniverse ||
@@ -1060,13 +1079,44 @@ export function buildFullmagModelTree(opts: {
       badge: resultWorkspaceEntries.length > 0 ? `${resultWorkspaceEntries.length}` : undefined,
       children:
         resultWorkspaceEntries.length > 0
-          ? resultWorkspaceEntries.map((entry) => ({
-              id: `res-analysis-${entry.id}`,
-              label: entry.label,
-              icon: entry.icon ?? "🧩",
-              badge: entry.badge ?? undefined,
-              status: entry.status ?? "ready",
-            }))
+          ? [
+              ...(pinnedResultWorkspaces.length > 0
+                ? [
+                    {
+                      id: "res-analyses-pinned",
+                      label: "Pinned",
+                      icon: "📌",
+                      badge: `${pinnedResultWorkspaces.length}`,
+                      status: "ready" as const,
+                      children: pinnedResultWorkspaces.map((entry) => ({
+                        id: `res-analysis-${entry.id}`,
+                        label: entry.label,
+                        icon: entry.icon ?? "🧩",
+                        badge: entry.badge ?? undefined,
+                        status: entry.status ?? "ready",
+                      })),
+                    },
+                  ]
+                : []),
+              ...(autoResultWorkspaces.length > 0
+                ? [
+                    {
+                      id: "res-analyses-auto",
+                      label: "Auto",
+                      icon: "⚙",
+                      badge: `${autoResultWorkspaces.length}`,
+                      status: "ready" as const,
+                      children: autoResultWorkspaces.map((entry) => ({
+                        id: `res-analysis-${entry.id}`,
+                        label: entry.label,
+                        icon: entry.icon ?? "🧩",
+                        badge: entry.badge ?? undefined,
+                        status: entry.status ?? "ready",
+                      })),
+                    },
+                  ]
+                : []),
+            ]
           : [
               {
                 id: "res-analyses-empty",
