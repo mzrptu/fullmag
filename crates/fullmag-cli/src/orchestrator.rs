@@ -4667,6 +4667,7 @@ mod tests {
             air_box_config: None,
             interfacial_dmi: None,
             bulk_dmi: None,
+            dmi_interface_normal: None,
             dind_field: None,
             dbulk_field: None,
             temperature: None,
@@ -4694,6 +4695,7 @@ mod tests {
             gpu_device_index: None,
             mfem_device_string: None,
             demag_transfer_cell_size: None,
+            use_consistent_mass: None,
         })
     }
 
@@ -4787,6 +4789,7 @@ mod tests {
             air_box_config: None,
             interfacial_dmi: None,
             bulk_dmi: None,
+            dmi_interface_normal: None,
             dind_field: None,
             dbulk_field: None,
             temperature: None,
@@ -4814,6 +4817,7 @@ mod tests {
             gpu_device_index: None,
             mfem_device_string: None,
             demag_transfer_cell_size: None,
+            use_consistent_mass: None,
         })
     }
 

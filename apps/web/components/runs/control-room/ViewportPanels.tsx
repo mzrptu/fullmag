@@ -698,6 +698,12 @@ export function ViewportCanvasArea() {
         onEntitySelect={ctx.setSelectedEntityId}
         onEntityFocus={ctx.setFocusedEntityId}
         onQuantityChange={ctx.requestPreviewQuantity}
+        activeTextureTransform={activeTextureTransform}
+        textureGizmoMode={activeTextureGizmoMode}
+        activeTexturePreviewProxy={activeTexturePreviewProxy}
+        activeTransformScope={ctx.activeTransformScope}
+        onTextureTransformChange={applyTextureTransform}
+        onTextureTransformCommit={applyTextureTransform}
       />
       </ViewportErrorBoundary>
     );
@@ -765,6 +771,12 @@ export function ViewportCanvasArea() {
         worldExtent={ctx.worldExtent}
         worldCenter={ctx.worldCenter}
         onQuantityChange={ctx.requestPreviewQuantity}
+        activeTextureTransform={activeTextureTransform}
+        textureGizmoMode={activeTextureGizmoMode}
+        activeTexturePreviewProxy={activeTexturePreviewProxy}
+        activeTransformScope={ctx.activeTransformScope}
+        onTextureTransformChange={applyTextureTransform}
+        onTextureTransformCommit={applyTextureTransform}
       />
       </ViewportErrorBoundary>
     );

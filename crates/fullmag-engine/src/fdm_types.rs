@@ -324,3 +324,21 @@ impl Default for EffectiveFieldTerms {
         }
     }
 }
+
+// ── EvaluationRequest (B3: Physics/Observables separation) ─────────────
+
+/// Policy controlling which quantities are computed at step end.
+///
+/// Integrators need `h_eff` and `rhs`, but energy decomposition and per-term
+/// field amplitudes are only required for artefacts / preview / diagnostics.
+/// Using `Minimal` skips the costly scratch-buffer passes that separate
+/// exchange / demag / external energies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvaluationRequest {
+    /// Compute only h_eff, rhs, and max amplitudes.
+    /// Energies are returned as 0.0 (not computed).
+    Minimal,
+    /// Compute h_eff, rhs, amplitudes, and per-term energies.
+    /// This is the current default behaviour.
+    Full,
+}

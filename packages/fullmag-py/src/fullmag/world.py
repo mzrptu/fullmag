@@ -1463,6 +1463,30 @@ def _collect_flat_geometries() -> list[object]:
 def _resolve_flat_fem_hint() -> FEM | None:
     s = _state
 
+    def _mesh_api_explicitly_declared() -> bool:
+        if s._domain_mesh_source is not None:
+            return True
+        if s._default_mesh_spec.is_configured() or s._default_mesh_spec.build_requested:
+            return True
+        if s._default_mesh_spec.operations or s._default_mesh_spec.size_fields:
+            return True
+        for handle in s._magnets:
+            if (
+                handle._mesh_spec.is_configured()
+                or handle._mesh_spec.build_requested
+                or handle._mesh_spec.operations
+                or handle._mesh_spec.size_fields
+            ):
+                return True
+        return False
+
+    fem_backend_requested = s._backend in {"fem", "hybrid"}
+    explicit_mesh_api = _mesh_api_explicitly_declared()
+    if not fem_backend_requested and not explicit_mesh_api:
+        # Pure FDM/auto paths with no FEM mesh declarations should not be
+        # forced through FEM hmax validation.
+        return None
+
     def _explicit_object_hmaxs() -> list[float | str]:
         values: list[float | str] = []
         for handle in s._magnets:
@@ -1474,6 +1498,7 @@ def _resolve_flat_fem_hint() -> FEM | None:
     build_requested = any(handle._mesh_spec.build_requested for handle in s._magnets)
     operation_specs = [handle._mesh_spec for handle in s._magnets if handle._mesh_spec.operations]
     default_spec = s._default_mesh_spec
+    build_requested = build_requested or default_spec.build_requested
     study_surface = s._api_surface == "study"
     explicit_domain_mesh = s._domain_mesh_source is not None
     default_mesh_declared = (
@@ -1531,27 +1556,52 @@ def _resolve_flat_fem_hint() -> FEM | None:
 
     resolved_hmax = shared_hmax
     if generated_shared_domain:
+        strict_domain_requirements = build_requested
         airbox_hmax = s._study_universe.airbox_hmax
         if airbox_hmax is None:
-            raise ValueError(
-                "Generated shared-domain FEM mesh requires an explicit airbox mesh size. "
-                "Set study.airbox(hmax=...) or study.universe(..., airbox_hmax=...)."
+            has_shared_base_hmax = isinstance(shared_hmax, (int, float)) or shared_hmax == "auto"
+            if strict_domain_requirements and not has_shared_base_hmax:
+                raise ValueError(
+                    "Generated shared-domain FEM mesh requires an explicit airbox mesh size. "
+                    "Set study.airbox(hmax=...) or study.universe(..., airbox_hmax=...)."
+                )
+            explicit_hmaxs = _explicit_object_hmaxs()
+            if isinstance(shared_hmax, (int, float)):
+                resolved_hmax = float(shared_hmax)
+            elif shared_hmax == "auto":
+                resolved_hmax = "auto"
+            elif explicit_hmaxs and all(isinstance(value, (int, float)) for value in explicit_hmaxs):
+                resolved_hmax = max(float(value) for value in explicit_hmaxs)
+            elif explicit_hmaxs and len(set(explicit_hmaxs)) == 1 and explicit_hmaxs[0] == "auto":
+                resolved_hmax = "auto"
+            else:
+                resolved_hmax = "auto"
+            emit_progress(
+                "No explicit airbox_hmax provided for generated shared-domain FEM mesh; "
+                "falling back to implicit base mesh size"
             )
+        else:
+            resolved_hmax = float(airbox_hmax)
         missing_object_hmax = [
             handle._name for handle in s._magnets if handle._mesh_spec.hmax is None
         ] if default_spec.hmax is None else []
         if missing_object_hmax:
-            missing_names = ", ".join(repr(name) for name in missing_object_hmax)
-            raise ValueError(
-                "Generated shared-domain FEM mesh requires an explicit object mesh hmax for every "
-                "magnetic geometry unless study.object_mesh_defaults(hmax=...) is set. "
-                f"Missing hmax for: {missing_names}."
+            if strict_domain_requirements:
+                missing_names = ", ".join(repr(name) for name in missing_object_hmax)
+                raise ValueError(
+                    "Generated shared-domain FEM mesh requires an explicit object mesh hmax for every "
+                    "magnetic geometry unless study.object_mesh_defaults(hmax=...) is set. "
+                    f"Missing hmax for: {missing_names}."
+                )
+            emit_progress(
+                "No explicit per-object hmax for all magnetic geometries; "
+                "using shared-domain base mesh size as compatibility fallback"
             )
-        resolved_hmax = float(airbox_hmax)
-        emit_progress(
-            "Using explicit airbox_hmax as the shared-domain base mesh size "
-            f"({resolved_hmax * 1e9:.2f} nm)"
-        )
+        if isinstance(resolved_hmax, (int, float)):
+            emit_progress(
+                "Using shared-domain base mesh size "
+                f"({resolved_hmax * 1e9:.2f} nm)"
+            )
     elif resolved_hmax is None and study_surface:
         explicit_hmaxs = _explicit_object_hmaxs()
         if explicit_hmaxs:
@@ -1570,10 +1620,11 @@ def _resolve_flat_fem_hint() -> FEM | None:
         resolved_hmax = 5e-9
 
     if resolved_hmax is None and shared_source is None:
-        raise ValueError(
-            "No explicit FEM mesh hmax configured. Fullmag no longer applies implicit mesh-size "
-            "defaults. Set study.airbox(hmax=...) for shared-domain FEM and either "
-            "study.object_mesh_defaults(hmax=...) or <body>.mesh(hmax=...)."
+        # Keep legacy scripts runnable: when no explicit FEM mesh size is
+        # provided, derive it from material exchange length heuristics.
+        resolved_hmax = "auto"
+        emit_progress(
+            "No explicit FEM mesh hmax configured; falling back to implicit auto mesh-size heuristic"
         )
 
     # Resolve "auto" sentinel → exchange-length-based float

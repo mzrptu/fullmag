@@ -23,6 +23,44 @@ For HPC, the primary assumption is **external dispatch**:
 The public authoring surface is an embedded, declarative Python DSL in `packages/fullmag-py`.
 Users write ordinary Python scripts and notebooks, but those objects serialize into a canonical `ProblemIR` that Rust validates, normalizes, and lowers into backend-specific plans.
 
+## Backend Authority Policy
+
+Each solver method has one **authoritative production backend** and one **reference/validation backend**.
+
+### FDM (Finite-Difference Method)
+| Role | Backend | Location |
+|---|---|---|
+| **Production CPU/HPC** | Rust engine (SoA, threaded FFT, NUMA-aware) | `crates/fullmag-engine` |
+| **Production GPU** | Native CUDA FDM | `native/backends/fdm` |
+| **Reference/validation** | Rust CPU reference (sequential) | `crates/fullmag-engine` |
+
+### FEM (Finite-Element Method)
+| Role | Backend | Location |
+|---|---|---|
+| **Production CPU/GPU** | MFEM-native (hypre, libCEED) | `native/backends/fem` |
+| **Reference/validation** | Rust CPU FEM reference | `crates/fullmag-engine/src/fem.rs` |
+
+The Rust FEM reference is **not** the production CPU path. It serves as:
+- golden baseline for regression tests,
+- validation oracle for FDM↔FEM parity checks,
+- lightweight development/debugging tool.
+
+All production FEM workloads dispatch to MFEM-native.
+
+### FEM Demag Policy
+| Realization | Role | Notes |
+|---|---|---|
+| **Poisson (Robin/Dirichlet)** | Production demag | Authoritative open-boundary solve |
+| **Transfer-grid** | Bootstrap / preview / parity | Not production for HPC |
+
+### Dispatch Names
+Runtime dispatch uses explicit backend identifiers:
+- `fdm_cpu_reference` — Rust FDM sequential reference
+- `fdm_cpu_hpc` — Rust FDM production (SoA + threaded FFT + NUMA)
+- `fem_cpu_reference` — Rust FEM reference
+- `fem_cpu_native` — MFEM-native CPU production
+- `fem_gpu_native` — MFEM-native GPU production
+
 ## Architecture
 
 - `packages/fullmag-py` — embedded Python DSL and runtime scaffolding
@@ -262,3 +300,87 @@ PY
 4. Add planning-depth smoke coverage before solver-depth implementation.
 5. Maintain the physics-first publication workflow as a hard gate.
 6. Auto-render `docs/physics/` notes into frontend documentation pages.
+
+## HPC Build Profiles (E1)
+
+| Profile | Contents |
+|---|---|
+| `fullmag-cpu-reference` | Rust engine only, sequential, no MPI |
+| `fullmag-fdm-cpu-hpc` | Rust FDM + Rayon + threaded FFT + NUMA |
+| `fullmag-fem-cpu-native` | MFEM-native CPU (hypre, libCEED) |
+| `fullmag-fem-gpu-native` | MFEM-native GPU (CUDA, libCEED-CUDA) |
+| `fullmag-mpi` | Distributed: MPI + distributed FFT |
+
+### Build matrix dependencies
+
+- Rust toolchain (see `rust-toolchain.toml`)
+- CMake ≥ 3.20
+- MFEM + hypre + libCEED (FEM profiles)
+- MPI implementation (OpenMPI or MPICH)
+- FFT backend: rustfft (default), FFTW, MKL (optional)
+- Optional: BLAS/LAPACK for dense kernels
+
+### Reproducible builds
+
+- Container runtimes: Docker / Apptainer (Singularity)
+- Module files for cluster environments
+- Locked Rust toolchain via `rust-toolchain.toml`
+
+## Scheduler Integration (E2)
+
+### SLURM launch templates
+
+```bash
+# Single-node multi-threaded FDM
+srun --ntasks=1 --cpus-per-task=$NTHREADS fullmag task.py
+
+# Multi-node MPI FDM
+srun --ntasks=$NRANKS --cpus-per-task=$THREADS_PER_RANK fullmag-mpi task.py
+```
+
+### Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `FULLMAG_NUM_THREADS` | Worker thread count (0 = auto) |
+| `FULLMAG_NUMA_NODE` | NUMA node affinity hint |
+| `FULLMAG_FFT_BACKEND` | FFT backend selection (rustfft, fftw, mkl) |
+| `OMP_NUM_THREADS` | OpenMP threads (for MFEM/hypre) |
+| `OMP_PLACES` | Thread placement (cores, threads) |
+| `OMP_PROC_BIND` | Thread binding (close, spread) |
+
+### CPU binding policy
+
+- Rayon workers: one per physical core, bound to core
+- MFEM/hypre threads: inherit from `OMP_PLACES=cores` + `OMP_PROC_BIND=close`
+- MPI ranks: one per NUMA domain, `--bind-to socket`
+
+## Production Acceptance Matrix (E3)
+
+### FDM CPU/HPC
+- [x] Zero hot-loop allocations (B1)
+- [x] SoA internal state type (B2)
+- [x] Threaded FFT backend abstraction (B4)
+- [x] Multi-socket scaling infrastructure (B8)
+- [x] Domain decomposition + halo exchange (B9)
+- [x] Distributed FFT backend abstraction (B10)
+- [x] Benchmark suite (A0)
+- [x] Physics guardrails (A2)
+
+### FEM CPU/HPC
+- [x] Authoritative backend decision documented (C1)
+- [x] Reference semantics validated (C2)
+- [x] No-alloc integrator workspace (C3)
+- [x] Assembly improvement (C4)
+- [x] CG workspace (C5)
+- [x] Demag realization policy (C6)
+- [x] Transfer-grid cache (C7)
+- [x] Operator mode dispatch (C8)
+- [x] Data-flow audit (C9)
+- [x] Production backend IDs (C10)
+
+### Distributed HPC
+- [x] Common runtime layer (D1)
+- [x] FDM distributed path types (D2)
+- [x] FEM distributed path types (D3)
+- [x] Distributed I/O / checkpointing (D4)

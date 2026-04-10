@@ -180,6 +180,114 @@ class ProblemApiTests(unittest.TestCase):
         self.assertGreater(len(initial["values"]), 0)
         self.assertNotIn("preset_kind", initial)
 
+    def test_problem_to_ir_materializes_preset_texture_in_object_space_for_translated_geometry(self) -> None:
+        geometry = fm.Box(size=(40e-9, 20e-9, 10e-9), name="film").translate((10e-9, 0.0, 0.0))
+        material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
+        magnet = fm.Ferromagnet(
+            name="film",
+            geometry=geometry,
+            material=material,
+            m0=fm.texture.two_domain(
+                left=(1.0, 0.0, 0.0),
+                right=(-1.0, 0.0, 0.0),
+                wall=(0.0, 1.0, 0.0),
+                normal_axis="x",
+            ),
+        )
+        problem = fm.Problem(
+            name="preset_fem_object_space",
+            magnets=[magnet],
+            energy=[fm.Exchange()],
+            study=fm.TimeEvolution(dynamics=fm.LLG(), outputs=[fm.SaveScalar("E_total", every=1e-12)]),
+            discretization=fm.DiscretizationHints(fem=fm.FEM(order=1, hmax=10e-9)),
+        )
+
+        with patch(
+            "fullmag.model.problem.build_geometry_assets_for_request",
+            return_value={
+                "fdm_grid_assets": [],
+                "fem_mesh_assets": [
+                    {
+                        "geometry_name": geometry.geometry_name,
+                        "mesh_source": None,
+                        "mesh": {
+                            "mesh_name": geometry.geometry_name,
+                            "nodes": [
+                                [9e-9, 0.0, 0.0],   # x_local < 0 -> left
+                                [11e-9, 0.0, 0.0],  # x_local > 0 -> right
+                                [10e-9, 0.0, 0.0],  # x_local = 0 -> wall
+                                [10e-9, 0.0, 1e-9],
+                            ],
+                            "elements": [[0, 1, 2, 3]],
+                            "element_markers": [1],
+                            "boundary_faces": [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]],
+                            "boundary_markers": [1, 1, 1, 1],
+                        },
+                    }
+                ],
+            },
+        ):
+            ir = problem.to_ir(requested_backend=fm.BackendTarget.FEM)
+
+        values = ir["magnets"][0]["initial_magnetization"]["values"]
+        self.assertGreater(values[0][0], 0.9)
+        self.assertLess(values[1][0], -0.9)
+        self.assertGreater(values[2][1], 0.9)
+
+    def test_problem_to_ir_materializes_preset_texture_in_world_space_for_translated_geometry(self) -> None:
+        geometry = fm.Box(size=(40e-9, 20e-9, 10e-9), name="film").translate((10e-9, 0.0, 0.0))
+        material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)
+        magnet = fm.Ferromagnet(
+            name="film",
+            geometry=geometry,
+            material=material,
+            m0=fm.texture.two_domain(
+                left=(1.0, 0.0, 0.0),
+                right=(-1.0, 0.0, 0.0),
+                wall=(0.0, 1.0, 0.0),
+                normal_axis="x",
+            ).with_mapping(space="world"),
+        )
+        problem = fm.Problem(
+            name="preset_fem_world_space",
+            magnets=[magnet],
+            energy=[fm.Exchange()],
+            study=fm.TimeEvolution(dynamics=fm.LLG(), outputs=[fm.SaveScalar("E_total", every=1e-12)]),
+            discretization=fm.DiscretizationHints(fem=fm.FEM(order=1, hmax=10e-9)),
+        )
+
+        with patch(
+            "fullmag.model.problem.build_geometry_assets_for_request",
+            return_value={
+                "fdm_grid_assets": [],
+                "fem_mesh_assets": [
+                    {
+                        "geometry_name": geometry.geometry_name,
+                        "mesh_source": None,
+                        "mesh": {
+                            "mesh_name": geometry.geometry_name,
+                            "nodes": [
+                                [9e-9, 0.0, 0.0],
+                                [11e-9, 0.0, 0.0],
+                                [10e-9, 0.0, 0.0],
+                                [10e-9, 0.0, 1e-9],
+                            ],
+                            "elements": [[0, 1, 2, 3]],
+                            "element_markers": [1],
+                            "boundary_faces": [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]],
+                            "boundary_markers": [1, 1, 1, 1],
+                        },
+                    }
+                ],
+            },
+        ):
+            ir = problem.to_ir(requested_backend=fm.BackendTarget.FEM)
+
+        values = ir["magnets"][0]["initial_magnetization"]["values"]
+        self.assertLess(values[0][0], -0.9)
+        self.assertLess(values[1][0], -0.9)
+        self.assertLess(values[2][0], -0.9)
+
     def test_problem_to_ir_materializes_preset_texture_for_fdm_grid(self) -> None:
         geometry = fm.Cylinder(radius=20e-9, height=10e-9, name="dot")
         material = fm.Material(name="Py", Ms=800e3, A=13e-12, alpha=0.01)

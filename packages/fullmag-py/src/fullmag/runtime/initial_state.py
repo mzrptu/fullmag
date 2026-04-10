@@ -11,7 +11,6 @@ before handing off to the native backend.
 
 from __future__ import annotations
 
-import math
 from typing import Sequence
 
 import numpy as np
@@ -67,6 +66,66 @@ def _rotate_points_by_quat(points: np.ndarray, q: np.ndarray) -> np.ndarray:
     return points + qw * t + np.cross(qvec, t)
 
 
+def _mapping_space(mapping_ir: dict[str, object]) -> str:
+    raw = mapping_ir.get("space")
+    return str(raw).strip().lower() if isinstance(raw, str) and raw.strip() else "object"
+
+
+def _mapping_projection(mapping_ir: dict[str, object]) -> str:
+    raw = mapping_ir.get("projection")
+    return str(raw).strip().lower() if isinstance(raw, str) and raw.strip() else "object_local"
+
+
+def _mapping_clamp_mode(mapping_ir: dict[str, object]) -> str:
+    raw = mapping_ir.get("clamp_mode")
+    return str(raw).strip().lower() if isinstance(raw, str) and raw.strip() else "clamp"
+
+
+def _map_points_into_mapping_space(
+    points: np.ndarray,
+    *,
+    space: str,
+    object_transform: dict[str, object] | None,
+) -> np.ndarray:
+    if space == "object":
+        return _apply_inverse_transform(points, object_transform if isinstance(object_transform, dict) else {})
+    # "world" and unknown spaces are interpreted as world-space coordinates.
+    return points
+
+
+def _project_mapping_coordinates(points: np.ndarray, *, projection: str) -> np.ndarray:
+    if points.size == 0:
+        return points
+    if projection == "planar_xy":
+        return np.column_stack((points[:, 0], points[:, 1], np.zeros(points.shape[0], dtype=np.float64)))
+    if projection == "planar_xz":
+        return np.column_stack((points[:, 0], points[:, 2], np.zeros(points.shape[0], dtype=np.float64)))
+    if projection == "planar_yz":
+        return np.column_stack((points[:, 1], points[:, 2], np.zeros(points.shape[0], dtype=np.float64)))
+    # "object_local", "box", "triplanar", "cylindrical", "spherical" and unknown
+    # projections currently keep Cartesian coordinates unchanged.
+    return points
+
+
+def _repeat_wrap(points: np.ndarray) -> np.ndarray:
+    return np.mod(points + 0.5, 1.0) - 0.5
+
+
+def _mirror_wrap(points: np.ndarray) -> np.ndarray:
+    wrapped = np.mod(points + 0.5, 2.0)
+    mirrored = np.where(wrapped <= 1.0, wrapped, 2.0 - wrapped)
+    return mirrored - 0.5
+
+
+def _apply_clamp_mode(points: np.ndarray, *, clamp_mode: str) -> np.ndarray:
+    if clamp_mode in {"repeat", "wrap"}:
+        return _repeat_wrap(points)
+    if clamp_mode == "mirror":
+        return _mirror_wrap(points)
+    # "clamp" and unknown values fallback to hard clamp in local texture space.
+    return np.clip(points, -0.5, 0.5)
+
+
 def prepare_initial_magnetization(
     spec: dict[str, object],
     sample_points: Sequence[Sequence[float]] | np.ndarray,
@@ -86,8 +145,8 @@ def prepare_initial_magnetization(
         spec: IR dict with at minimum ``"kind"`` key.
         sample_points: (N, 3) array of sample coordinates. For FDM: cell
             centers. For FEM: node coords restricted to magnetic parts only.
-        object_transform: Optional (unused presently) geometry transform of the
-            owning object, kept for future object-space mapping support.
+        object_transform: Optional geometry transform of the owning object.
+            Used when ``mapping.space == "object"``.
 
     Returns:
         (N, 3) float64 array of normalized magnetization vectors.
@@ -131,12 +190,28 @@ def prepare_initial_magnetization(
     elif kind == "preset_texture":
         transform_ir = spec.get("texture_transform", {})
         mapping_ir = spec.get("mapping", {})
+        if not isinstance(mapping_ir, dict):
+            mapping_ir = {}
+
+        mapped_pts = _map_points_into_mapping_space(
+            pts,
+            space=_mapping_space(mapping_ir),
+            object_transform=object_transform,
+        )
+        mapped_pts = _project_mapping_coordinates(
+            mapped_pts,
+            projection=_mapping_projection(mapping_ir),
+        )
 
         # Apply inverse texture transform to get texture-local coordinates
         if isinstance(transform_ir, dict) and any(transform_ir.values()):
-            local_pts = _apply_inverse_transform(pts, transform_ir)
+            local_pts = _apply_inverse_transform(mapped_pts, transform_ir)
         else:
-            local_pts = pts
+            local_pts = mapped_pts
+        local_pts = _apply_clamp_mode(
+            local_pts,
+            clamp_mode=_mapping_clamp_mode(mapping_ir),
+        )
 
         preset_kind = str(spec["preset_kind"])
         params = dict(spec.get("params", {}))

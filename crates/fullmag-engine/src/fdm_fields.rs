@@ -175,7 +175,7 @@ impl ExchangeLlgProblem {
         let pz = ws.pz;
         let padded_len = px * py * pz;
 
-        ws.clear_bufs();
+        ws.clear_m_bufs();
 
         for z in 0..self.grid.nz {
             for y in 0..self.grid.ny {
@@ -524,7 +524,7 @@ impl ExchangeLlgProblem {
         let pz = ws.pz;
         let padded_len = px * py * pz;
 
-        ws.clear_bufs();
+        ws.clear_m_bufs();
 
         for z in 0..self.grid.nz {
             for y in 0..self.grid.ny {
@@ -799,6 +799,11 @@ impl ExchangeLlgProblem {
     }
 
     pub(crate) fn thermal_field_add_into(&self, h_eff: &mut [Vector3]) {
+        self.thermal_field_add_into_step(h_eff, self.thermal_step());
+    }
+
+    /// Counter-based thermal field with an explicit step index for reproducibility.
+    pub(crate) fn thermal_field_add_into_step(&self, h_eff: &mut [Vector3], step: u64) {
         if self.temperature <= 0.0
             || self.material.saturation_magnetisation <= 0.0
             || self.thermal_dt <= 0.0
@@ -819,68 +824,195 @@ impl ExchangeLlgProblem {
             / (gamma0 * MU0_LOCAL * ms * v_cell * self.thermal_dt))
             .sqrt();
 
-        let xorshift_next = |s: &mut u64| -> f64 {
-            *s ^= *s >> 12;
-            *s ^= *s << 25;
-            *s ^= *s >> 27;
-            ((*s).wrapping_mul(0x2545F4914F6CDD1D) >> 11) as f64 / (1u64 << 53) as f64
+        // ── Counter-based RNG (B7 reproducibility) ─────────────────────
+        // Deterministic seed per cell: hash(global_seed, step_counter, cell_index).
+        // Result is identical regardless of thread count or decomposition.
+        let global_seed = self.thermal_seed;
+        // `step` is passed as a parameter for reproducibility
+
+        /// SplitMix64 finaliser — bijective u64→u64, good avalanche.
+        #[inline]
+        fn splitmix64(mut z: u64) -> u64 {
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+            z ^ (z >> 31)
+        }
+
+        /// Generate a uniform f64 in (0,1] from a counter key.
+        #[inline]
+        fn counter_uniform(seed: u64, step: u64, cell: u64, stream: u64) -> f64 {
+            let key = seed
+                .wrapping_add(step.wrapping_mul(0x9E3779B97F4A7C15))
+                .wrapping_add(cell.wrapping_mul(0x517CC1B727220A95))
+                .wrapping_add(stream.wrapping_mul(0x6C62272E07BB0142));
+            let bits = splitmix64(key);
+            // Convert top 53 bits to f64 in (0, 1]
+            ((bits >> 11) as f64 + 1.0) / ((1u64 << 53) as f64 + 1.0)
+        }
+
+        let compute_noise = |i: usize, h: &mut Vector3| {
+            let ci = i as u64;
+            let u1 = counter_uniform(global_seed, step, ci, 0).max(1e-300);
+            let u2 = counter_uniform(global_seed, step, ci, 1);
+            let u3 = counter_uniform(global_seed, step, ci, 2).max(1e-300);
+            let u4 = counter_uniform(global_seed, step, ci, 3);
+            let r1 = (-2.0 * u1.ln()).sqrt();
+            let r2 = (-2.0 * u3.ln()).sqrt();
+            let theta1 = 2.0 * std::f64::consts::PI * u2;
+            let theta2 = 2.0 * std::f64::consts::PI * u4;
+            h[0] += sigma * r1 * theta1.cos();
+            h[1] += sigma * r1 * theta1.sin();
+            h[2] += sigma * r2 * theta2.cos();
         };
 
         #[cfg(feature = "parallel")]
         {
-            use std::cell::RefCell;
-            thread_local! {
-                static RNG_SEED: RefCell<u64> = const { RefCell::new(42u64) };
-            }
             h_eff.par_iter_mut().enumerate().for_each(|(i, h)| {
-                RNG_SEED.with(|seed_cell| {
-                    let mut seed = *seed_cell.borrow();
-                    if seed == 0 { seed = 42; }
-                    let u1 = {
-                        let mut s = seed ^ (i as u64).wrapping_mul(0x9E3779B97F4A7C15);
-                        if s == 0 { s = 42; }
-                        xorshift_next(&mut s);
-                        let v = xorshift_next(&mut s);
-                        seed = s;
-                        v.max(1e-300)
-                    };
-                    let u2 = xorshift_next(&mut seed);
-                    let u3 = xorshift_next(&mut seed).max(1e-300);
-                    let u4 = xorshift_next(&mut seed);
-                    let r1 = (-2.0 * u1.ln()).sqrt();
-                    let r2 = (-2.0 * u3.ln()).sqrt();
-                    let theta1 = 2.0 * std::f64::consts::PI * u2;
-                    let theta2 = 2.0 * std::f64::consts::PI * u4;
-                    h[0] += sigma * r1 * theta1.cos();
-                    h[1] += sigma * r1 * theta1.sin();
-                    h[2] += sigma * r2 * theta2.cos();
-                    *seed_cell.borrow_mut() = seed;
-                });
+                compute_noise(i, h);
             });
         }
         #[cfg(not(feature = "parallel"))]
         {
-            use std::cell::RefCell;
-            thread_local! {
-                static RNG: RefCell<u64> = const { RefCell::new(42u64) };
+            for (i, h) in h_eff.iter_mut().enumerate() {
+                compute_noise(i, h);
             }
-            RNG.with(|seed_cell| {
-                let mut seed = *seed_cell.borrow();
-                for h in h_eff.iter_mut() {
-                    let u1 = xorshift_next(&mut seed).max(1e-300);
-                    let u2 = xorshift_next(&mut seed);
-                    let u3 = xorshift_next(&mut seed).max(1e-300);
-                    let u4 = xorshift_next(&mut seed);
-                    let r1 = (-2.0 * u1.ln()).sqrt();
-                    let r2 = (-2.0 * u3.ln()).sqrt();
-                    let theta1 = 2.0 * std::f64::consts::PI * u2;
-                    let theta2 = 2.0 * std::f64::consts::PI * u4;
-                    h[0] += sigma * r1 * theta1.cos();
-                    h[1] += sigma * r1 * theta1.sin();
-                    h[2] += sigma * r2 * theta2.cos();
-                }
-                *seed_cell.borrow_mut() = seed;
+        }
+    }
+
+    // ===================================================================
+    // B6: Fused local terms (external + anisotropy + thermal)
+    // ===================================================================
+
+    /// Fused accumulation of all per-cell local terms into h_eff in a
+    /// single parallel pass.  This reduces memory traffic compared to
+    /// calling `external_field_add_into`, `anisotropy_field_add_into`,
+    /// and `thermal_field_add_into` separately.
+    ///
+    /// DMI terms are NOT included here because they require neighbor stencils.
+    /// Magnetoelastic is NOT included because it has its own complex per-cell / per-strain logic.
+    pub(crate) fn fused_local_terms_add_into(
+        &self,
+        magnetization: &[Vector3],
+        h_eff: &mut [Vector3],
+    ) {
+        let n = magnetization.len();
+        let ext = self.terms.external_field;
+        let ms_safe = self.material.saturation_magnetisation.max(1e-30);
+
+        let uni_data = self.terms.uniaxial_anisotropy.as_ref().map(|uni| {
+            let n = norm(uni.axis).max(1e-30);
+            let u = scale(uni.axis, 1.0 / n);
+            (u, uni.ku1, uni.ku2)
+        });
+        let cub_data = self.terms.cubic_anisotropy.as_ref().map(|cub| {
+            let n1 = norm(cub.axis1).max(1e-30);
+            let n2 = norm(cub.axis2).max(1e-30);
+            let c1 = scale(cub.axis1, 1.0 / n1);
+            let c2 = scale(cub.axis2, 1.0 / n2);
+            let c3 = cross(c1, c2);
+            (c1, c2, c3, cub.kc1, cub.kc2)
+        });
+
+        // Thermal noise setup
+        let has_thermal = self.temperature > 0.0
+            && self.material.saturation_magnetisation > 0.0
+            && self.thermal_dt > 0.0;
+        let thermal_sigma = if has_thermal {
+            let alpha = self.material.damping;
+            let gamma_red = self.dynamics.gyromagnetic_ratio;
+            let gamma0 = gamma_red * (1.0 + alpha * alpha);
+            let v_cell = self.cell_size.dx * self.cell_size.dy * self.cell_size.dz;
+            const KB: f64 = 1.380649e-23;
+            const MU0_LOCAL: f64 = 1.2566370614359173e-6;
+            (2.0 * alpha * KB * self.temperature
+                / (gamma0 * MU0_LOCAL * self.material.saturation_magnetisation * v_cell * self.thermal_dt))
+                .sqrt()
+        } else {
+            0.0
+        };
+        let thermal_seed = self.thermal_seed;
+        let thermal_step = self.thermal_step();
+
+        #[inline]
+        fn splitmix64(mut z: u64) -> u64 {
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+            z ^ (z >> 31)
+        }
+
+        let fused_cell = |i: usize, h: &mut Vector3| {
+            if !self.is_active(i) {
+                return;
+            }
+            let m = &magnetization[i];
+
+            // External field
+            if let Some(ext) = ext {
+                h[0] += ext[0];
+                h[1] += ext[1];
+                h[2] += ext[2];
+            }
+
+            // Uniaxial anisotropy
+            if let Some((u, ku1, ku2)) = &uni_data {
+                let m_dot_u = dot(*m, *u);
+                let coeff = 2.0 * ku1 / (MU0 * ms_safe) * m_dot_u
+                    + 4.0 * ku2 / (MU0 * ms_safe) * m_dot_u * m_dot_u * m_dot_u;
+                h[0] += u[0] * coeff;
+                h[1] += u[1] * coeff;
+                h[2] += u[2] * coeff;
+            }
+
+            // Cubic anisotropy
+            if let Some((c1, c2, c3, kc1, kc2)) = &cub_data {
+                let m1 = dot(*m, *c1);
+                let m2 = dot(*m, *c2);
+                let m3 = dot(*m, *c3);
+                let pf = 2.0 / (MU0 * ms_safe);
+                let g1 = -pf * (kc1 * m1 * (m2 * m2 + m3 * m3) + kc2 * m1 * m2 * m2 * m3 * m3);
+                let g2 = -pf * (kc1 * m2 * (m1 * m1 + m3 * m3) + kc2 * m2 * m1 * m1 * m3 * m3);
+                let g3 = -pf * (kc1 * m3 * (m1 * m1 + m2 * m2) + kc2 * m3 * m1 * m1 * m2 * m2);
+                h[0] += c1[0] * g1 + c2[0] * g2 + c3[0] * g3;
+                h[1] += c1[1] * g1 + c2[1] * g2 + c3[1] * g3;
+                h[2] += c1[2] * g1 + c2[2] * g2 + c3[2] * g3;
+            }
+
+            // Thermal noise
+            if has_thermal {
+                let ci = i as u64;
+                let counter_uniform = |stream: u64| -> f64 {
+                    let key = thermal_seed
+                        .wrapping_add(thermal_step.wrapping_mul(0x9E3779B97F4A7C15))
+                        .wrapping_add(ci.wrapping_mul(0x517CC1B727220A95))
+                        .wrapping_add(stream.wrapping_mul(0x6C62272E07BB0142));
+                    let bits = splitmix64(key);
+                    ((bits >> 11) as f64 + 1.0) / ((1u64 << 53) as f64 + 1.0)
+                };
+                let u1 = counter_uniform(0).max(1e-300);
+                let u2 = counter_uniform(1);
+                let u3 = counter_uniform(2).max(1e-300);
+                let u4 = counter_uniform(3);
+                let r1 = (-2.0 * u1.ln()).sqrt();
+                let r2 = (-2.0 * u3.ln()).sqrt();
+                let theta1 = 2.0 * std::f64::consts::PI * u2;
+                let theta2 = 2.0 * std::f64::consts::PI * u4;
+                h[0] += thermal_sigma * r1 * theta1.cos();
+                h[1] += thermal_sigma * r1 * theta1.sin();
+                h[2] += thermal_sigma * r2 * theta2.cos();
+            }
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            h_eff[..n].par_iter_mut().enumerate().for_each(|(i, h)| {
+                fused_cell(i, h);
             });
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            for i in 0..n {
+                fused_cell(i, &mut h_eff[i]);
+            }
         }
     }
 
@@ -894,8 +1026,27 @@ impl ExchangeLlgProblem {
         ws: &mut FftWorkspace,
         h_eff: &mut [Vector3],
     ) {
-        let mut t = StepTelemetry::new();
-        self.effective_field_into_ws_telem(magnetization, ws, h_eff, &mut t);
+        for h in h_eff.iter_mut() {
+            *h = [0.0, 0.0, 0.0];
+        }
+
+        if self.terms.exchange {
+            self.exchange_field_add_into(magnetization, h_eff);
+        }
+        if self.terms.demag {
+            self.demag_field_add_into(magnetization, ws, h_eff);
+        }
+
+        // Magnetoelastic has its own complex per-cell / per-strain logic
+        self.magnetoelastic_field_add_into(magnetization, h_eff);
+
+        // B6: Fused single-pass for external + anisotropy + thermal
+        // (avoids 3 separate passes over h_eff)
+        self.fused_local_terms_add_into(magnetization, h_eff);
+
+        // DMI terms need neighbor stencils — separate passes
+        self.interfacial_dmi_field_add_into(magnetization, h_eff);
+        self.bulk_dmi_field_add_into(magnetization, h_eff);
     }
 
     /// Effective field accumulation with telemetry instrumentation.
@@ -1504,6 +1655,86 @@ impl ExchangeLlgProblem {
             max_effective_field_amplitude,
             max_demag_field_amplitude,
             max_rhs_amplitude,
+        }
+    }
+
+    /// Minimal observables: compute h_eff and rhs only, skip per-term energy
+    /// decomposition.  Returns `RhsEvaluation` with all energies set to 0.0.
+    ///
+    /// This avoids the extra scratch-buffer passes needed to separate
+    /// exchange / demag / external energy contributions.
+    pub(crate) fn compute_step_observables_minimal(
+        &self,
+        magnetization: &[Vector3],
+        ws: &mut FftWorkspace,
+        h_eff: &mut [Vector3],
+        rhs_out: &mut [Vector3],
+    ) -> RhsEvaluation {
+        // Compute h_eff in-place (zero + accumulate all terms)
+        self.effective_field_into_ws(magnetization, ws, h_eff);
+
+        let n = magnetization.len();
+        let max_effective_field_amplitude = max_norm(&h_eff[..n]);
+
+        // RHS
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            rhs_out[..n]
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(i, out)| {
+                    *out = self.llg_rhs_from_field(magnetization[i], h_eff[i]);
+                });
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            for i in 0..n {
+                rhs_out[i] = self.llg_rhs_from_field(magnetization[i], h_eff[i]);
+            }
+        }
+
+        // Torques
+        if let Some(ref zl) = self.terms.zhang_li_stt {
+            self.zhang_li_stt_torque_add_into(magnetization, zl, &mut rhs_out[..n]);
+        }
+        if let Some(ref slon) = self.terms.slonczewski_stt {
+            self.slonczewski_stt_torque_add_into(magnetization, slon, &mut rhs_out[..n]);
+        }
+        if let Some(ref sot) = self.terms.sot {
+            self.sot_torque_add_into(magnetization, sot, &mut rhs_out[..n]);
+        }
+
+        let max_rhs_amplitude = max_norm(&rhs_out[..n]);
+
+        RhsEvaluation {
+            exchange_energy_joules: 0.0,
+            demag_energy_joules: 0.0,
+            external_energy_joules: 0.0,
+            total_energy_joules: 0.0,
+            max_effective_field_amplitude,
+            max_demag_field_amplitude: 0.0,
+            max_rhs_amplitude,
+        }
+    }
+
+    /// Dispatch to full or minimal observables based on evaluation request.
+    pub(crate) fn compute_step_observables(
+        &self,
+        magnetization: &[Vector3],
+        ws: &mut FftWorkspace,
+        h_eff: &mut [Vector3],
+        h_scratch: &mut [Vector3],
+        rhs_out: &mut [Vector3],
+        request: crate::EvaluationRequest,
+    ) -> RhsEvaluation {
+        match request {
+            crate::EvaluationRequest::Minimal => {
+                self.compute_step_observables_minimal(magnetization, ws, h_eff, rhs_out)
+            }
+            crate::EvaluationRequest::Full => {
+                self.compute_step_observables_zero_alloc(magnetization, ws, h_eff, h_scratch, rhs_out)
+            }
         }
     }
 

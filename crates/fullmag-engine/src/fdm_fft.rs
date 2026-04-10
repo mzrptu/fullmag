@@ -128,8 +128,11 @@ impl FftWorkspace {
         }
     }
 
-    /// Zero out all six M/H frequency-domain buffers.
-    pub(crate) fn clear_bufs(&mut self) {
+    /// Zero out only the three M frequency-domain buffers.
+    ///
+    /// H buffers (buf_hx/hy/hz) are fully overwritten by the spectral
+    /// tensor multiply and therefore do not need pre-zeroing.
+    pub(crate) fn clear_m_bufs(&mut self) {
         let zero = Complex::new(0.0, 0.0);
         #[cfg(feature = "parallel")]
         {
@@ -137,9 +140,6 @@ impl FftWorkspace {
             self.buf_mx.par_iter_mut().for_each(|v| *v = zero);
             self.buf_my.par_iter_mut().for_each(|v| *v = zero);
             self.buf_mz.par_iter_mut().for_each(|v| *v = zero);
-            self.buf_hx.par_iter_mut().for_each(|v| *v = zero);
-            self.buf_hy.par_iter_mut().for_each(|v| *v = zero);
-            self.buf_hz.par_iter_mut().for_each(|v| *v = zero);
         }
         #[cfg(not(feature = "parallel"))]
         {
@@ -148,9 +148,6 @@ impl FftWorkspace {
                 .iter_mut()
                 .chain(self.buf_my.iter_mut())
                 .chain(self.buf_mz.iter_mut())
-                .chain(self.buf_hx.iter_mut())
-                .chain(self.buf_hy.iter_mut())
-                .chain(self.buf_hz.iter_mut())
             {
                 *v = zero;
             }

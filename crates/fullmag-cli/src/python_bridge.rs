@@ -8,8 +8,7 @@ use std::collections::HashMap;
 use crate::args::ScriptCli;
 use crate::control_room::repo_root;
 use crate::types::{
-    LoadedMagnetizationState, PythonProgressCallback, PythonProgressEnvelope, PythonProgressEvent,
-    ScriptExecutionConfig,
+    LoadedMagnetizationState, PythonProgressCallback, PythonProgressEvent, ScriptExecutionConfig,
 };
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -135,48 +134,132 @@ pub(crate) fn parse_python_progress_event(message: &str) -> PythonProgressEvent 
         return PythonProgressEvent::Message(trimmed.to_string());
     };
 
-    let Ok(envelope) = serde_json::from_str::<PythonProgressEnvelope>(payload) else {
+    let Ok(envelope) = serde_json::from_str::<serde_json::Value>(payload) else {
         return PythonProgressEvent::Message(trimmed.to_string());
     };
+    let Some(envelope_obj) = envelope.as_object() else {
+        return PythonProgressEvent::Message(trimmed.to_string());
+    };
+    let Some(kind) = envelope_obj.get("kind").and_then(serde_json::Value::as_str) else {
+        return PythonProgressEvent::Message(trimmed.to_string());
+    };
+    let geometry_name = envelope_obj
+        .get("geometry_name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let message = envelope_obj
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
 
-    match envelope.kind.as_str() {
-        "fem_surface_preview" => match (envelope.geometry_name, envelope.fem_mesh) {
+    match kind {
+        "fem_surface_preview" => {
+            let fem_mesh = envelope_obj
+                .get("fem_mesh")
+                .and_then(|value| parse_fem_surface_preview_mesh(value, geometry_name.as_deref()));
+            match (geometry_name, fem_mesh) {
             (Some(geometry_name), Some(fem_mesh)) => PythonProgressEvent::FemSurfacePreview {
                 geometry_name,
                 fem_mesh,
-                message: envelope.message,
+                message,
             },
             _ => PythonProgressEvent::Message(trimmed.to_string()),
-        },
+        }
+        }
         _ => {
             let mut payload = serde_json::Map::new();
             payload.insert(
                 "kind".to_string(),
-                serde_json::Value::String(envelope.kind.clone()),
+                serde_json::Value::String(kind.to_string()),
             );
-            if let Some(geometry_name) = envelope.geometry_name {
+            if let Some(geometry_name) = geometry_name {
                 payload.insert(
                     "geometry_name".to_string(),
                     serde_json::Value::String(geometry_name),
                 );
             }
-            if let Some(message) = envelope.message {
+            if let Some(message) = message {
                 payload.insert("message".to_string(), serde_json::Value::String(message));
             }
-            if let Some(fem_mesh) = envelope.fem_mesh {
-                if let Ok(value) = serde_json::to_value(fem_mesh) {
-                    payload.insert("fem_mesh".to_string(), value);
-                }
+            if let Some(fem_mesh) = envelope_obj.get("fem_mesh") {
+                payload.insert("fem_mesh".to_string(), fem_mesh.clone());
             }
-            for (key, value) in envelope.extra {
-                payload.insert(key, value);
+            for (key, value) in envelope_obj {
+                if key == "kind" || key == "geometry_name" || key == "message" || key == "fem_mesh"
+                {
+                    continue;
+                }
+                payload.insert(key.clone(), value.clone());
             }
             PythonProgressEvent::Structured {
-                kind: envelope.kind,
+                kind: kind.to_string(),
                 payload: serde_json::Value::Object(payload),
             }
         }
     }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct FemSurfacePreviewPayload {
+    nodes: Vec<[f64; 3]>,
+    #[serde(default)]
+    elements: Vec<[u32; 4]>,
+    #[serde(default)]
+    element_markers: Vec<u32>,
+    boundary_faces: Vec<[u32; 3]>,
+    #[serde(default)]
+    boundary_markers: Vec<u32>,
+    #[serde(default)]
+    mesh_name: Option<String>,
+    #[serde(default)]
+    mesh_id: Option<String>,
+}
+
+fn parse_fem_surface_preview_mesh(
+    value: &serde_json::Value,
+    geometry_name: Option<&str>,
+) -> Option<fullmag_runner::FemMeshPayload> {
+    if let Ok(mesh) = serde_json::from_value::<fullmag_runner::FemMeshPayload>(value.clone()) {
+        return Some(mesh);
+    }
+    let Ok(preview) = serde_json::from_value::<FemSurfacePreviewPayload>(value.clone()) else {
+        return None;
+    };
+    let mesh_name = preview.mesh_name.unwrap_or_else(|| {
+        geometry_name
+            .map(|name| format!("{name}_surface_preview"))
+            .unwrap_or_else(|| "surface_preview".to_string())
+    });
+    let mesh_id = preview
+        .mesh_id
+        .unwrap_or_else(|| format!("{mesh_name}:surface_preview"));
+    let boundary_markers = if preview.boundary_markers.is_empty() {
+        vec![1; preview.boundary_faces.len()]
+    } else {
+        preview.boundary_markers
+    };
+    let element_markers = if preview.elements.is_empty() {
+        Vec::new()
+    } else if preview.element_markers.is_empty() {
+        vec![1; preview.elements.len()]
+    } else {
+        preview.element_markers
+    };
+    Some(fullmag_runner::FemMeshPayload {
+        mesh_name,
+        mesh_id,
+        nodes: preview.nodes,
+        elements: preview.elements,
+        element_markers,
+        boundary_faces: preview.boundary_faces,
+        boundary_markers,
+        object_segments: Vec::new(),
+        mesh_parts: Vec::new(),
+        domain_mesh_mode: None,
+        domain_frame: None,
+        generation_id: None,
+        per_domain_quality: HashMap::new(),
+    })
 }
 
 pub(crate) fn map_remesh_progress_message(message: &str) -> Option<RemeshTerminalProgress> {

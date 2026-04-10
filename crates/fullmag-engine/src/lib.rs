@@ -1,4 +1,5 @@
 // ── Existing sub-crate modules ────────────────────────────────────────
+pub mod distributed;
 pub mod fem;
 pub mod fem_afem_loop;
 pub mod fem_edge_topology;
@@ -9,6 +10,7 @@ pub mod fem_hcurl_estimator;
 pub mod fem_size_field;
 pub mod fem_solution_transfer;
 pub mod fem_sparse;
+pub mod hpc_runtime;
 pub mod magnetoelastic;
 pub mod multilayer;
 pub mod newell;
@@ -19,6 +21,7 @@ pub mod vector;
 // ── FDM engine modules ────────────────────────────────────────────────
 mod fdm_demo;
 mod fdm_fft;
+pub mod fdm_fft_backend;
 mod fdm_fields;
 mod fdm_integrators;
 mod fdm_problem;
@@ -45,15 +48,15 @@ pub use fdm_fft::{
 };
 
 pub use fdm_state::{
-    AbmHistory, EffectiveFieldObservables, ExchangeLlgState, IntegratorBuffers, RhsEvaluation,
-    SolverSession, StepReport,
+    AbmHistory, AbmHistorySoA, EffectiveFieldObservables, ExchangeLlgState, ExchangeLlgStateSoA,
+    IntegratorBuffers, RhsEvaluation, SolverSession, StepReport,
 };
 
 pub use fdm_problem::ExchangeLlgProblem;
 
 pub use fdm_types::{
     AdaptiveStepConfig, CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, EngineError,
-    GridShape, LlgConfig, MagnetoelasticTermConfig, MaterialParameters, Result,
+    EvaluationRequest, GridShape, LlgConfig, MagnetoelasticTermConfig, MaterialParameters, Result,
     SlonczewskiSttConfig, SotConfig, TimeIntegrator, UniaxialAnisotropyConfig, ZhangLiSttConfig,
 };
 

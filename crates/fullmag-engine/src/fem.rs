@@ -24,6 +24,45 @@ const CELL_SIZE_EXTENT_FRACTION: f64 = 0.25;
 /// Tolerance for barycentric coordinate inclusion test.
 const BARYCENTRIC_INCLUSION_EPS: f64 = 1e-9;
 
+// ── C10: FEM CPU production backend dispatch ──
+
+/// Named FEM backend for provenance, benchmarking, and dispatch (C10).
+///
+/// Each variant corresponds to a distinct solver path with its own
+/// performance envelope and accuracy guarantees.  The name appears in
+/// artifacts, benchmark reports, and run metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FemBackendId {
+    /// Rust reference CPU solver (this crate).
+    CpuReference,
+    /// MFEM-native CPU production solver.
+    CpuNative,
+    /// MFEM-native GPU solver.
+    GpuNative,
+}
+
+impl FemBackendId {
+    /// Canonical snake_case string used in provenance records and artifacts.
+    pub fn provenance_name(self) -> &'static str {
+        match self {
+            Self::CpuReference => "fem_cpu_reference",
+            Self::CpuNative => "fem_cpu_native",
+            Self::GpuNative => "fem_gpu_native",
+        }
+    }
+
+    /// Whether this backend runs on the CPU.
+    pub fn is_cpu(self) -> bool {
+        matches!(self, Self::CpuReference | Self::CpuNative)
+    }
+}
+
+impl std::fmt::Display for FemBackendId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.provenance_name())
+    }
+}
+
 // ── Sparse CSR matrix for FEM operators ──
 
 /// Compressed Sparse Row matrix.
@@ -80,18 +119,51 @@ impl CsrMatrix {
         elements: &[[u32; 4]],
         element_stiffness: &[[[f64; 4]; 4]],
     ) -> Self {
-        // Collect non-zero entries using coordinate (COO) format, then convert to CSR
-        let mut entries: HashMap<(usize, usize), f64> = HashMap::new();
-        for (element, stiffness) in elements.iter().zip(element_stiffness.iter()) {
-            for i in 0..4 {
-                for j in 0..4 {
-                    let row = element[i] as usize;
-                    let col = element[j] as usize;
-                    *entries.entry((row, col)).or_insert(0.0) += stiffness[i][j];
+        // Phase 1: Build sparsity pattern — determine column set per row.
+        let mut row_cols: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n_nodes];
+        for element in elements {
+            for &ni in element {
+                for &nj in element {
+                    row_cols[ni as usize].insert(nj as usize);
                 }
             }
         }
-        Self::from_entries(n_nodes, &entries)
+
+        // Phase 2: Build CSR structure from sorted column sets.
+        let mut row_ptr = Vec::with_capacity(n_nodes + 1);
+        let mut col_idx = Vec::new();
+        row_ptr.push(0);
+        for cols in &row_cols {
+            col_idx.extend(cols.iter());
+            row_ptr.push(col_idx.len());
+        }
+        let nnz = col_idx.len();
+        let mut values = vec![0.0; nnz];
+
+        // Phase 3: Accumulate element contributions using binary search into
+        // sorted col_idx slices — no HashMap allocation.
+        for (element, stiffness) in elements.iter().zip(element_stiffness.iter()) {
+            for i in 0..4 {
+                let row = element[i] as usize;
+                let start = row_ptr[row];
+                let end = row_ptr[row + 1];
+                let row_cols_slice = &col_idx[start..end];
+                for j in 0..4 {
+                    let col = element[j] as usize;
+                    let local_idx = row_cols_slice
+                        .binary_search(&col)
+                        .expect("sparsity pattern must contain all element entries");
+                    values[start + local_idx] += stiffness[i][j];
+                }
+            }
+        }
+
+        Self {
+            row_ptr,
+            col_idx,
+            values,
+            n: n_nodes,
+        }
     }
 
     /// Build CSR from a map of (row, col) -> value entries.
@@ -129,7 +201,28 @@ impl CsrMatrix {
         boundary_faces: &[[u32; 3]],
         coords: &[[f64; 3]],
     ) -> Self {
-        let mut entries: HashMap<(usize, usize), f64> = HashMap::new();
+        // Phase 1: Sparsity pattern from boundary face connectivity.
+        let mut row_cols: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n_nodes];
+        for face in boundary_faces {
+            for &ni in face {
+                for &nj in face {
+                    row_cols[ni as usize].insert(nj as usize);
+                }
+            }
+        }
+
+        // Phase 2: Build CSR structure.
+        let mut row_ptr = Vec::with_capacity(n_nodes + 1);
+        let mut col_idx = Vec::new();
+        row_ptr.push(0);
+        for cols in &row_cols {
+            col_idx.extend(cols.iter());
+            row_ptr.push(col_idx.len());
+        }
+        let nnz = col_idx.len();
+        let mut values = vec![0.0; nnz];
+
+        // Phase 3: Accumulate face contributions via binary search.
         for face in boundary_faces {
             let p0 = coords[face[0] as usize];
             let p1 = coords[face[1] as usize];
@@ -141,14 +234,26 @@ impl CsrMatrix {
                 [area / 12.0, area / 12.0, 2.0 * area / 12.0],
             ];
             for i in 0..3 {
+                let row = face[i] as usize;
+                let start = row_ptr[row];
+                let end = row_ptr[row + 1];
+                let row_cols_slice = &col_idx[start..end];
                 for j in 0..3 {
-                    *entries
-                        .entry((face[i] as usize, face[j] as usize))
-                        .or_insert(0.0) += local[i][j];
+                    let col = face[j] as usize;
+                    let local_idx = row_cols_slice
+                        .binary_search(&col)
+                        .expect("sparsity pattern must contain all face entries");
+                    values[start + local_idx] += local[i][j];
                 }
             }
         }
-        Self::from_entries(n_nodes, &entries)
+
+        Self {
+            row_ptr,
+            col_idx,
+            values,
+            n: n_nodes,
+        }
     }
 
     /// Sparse matrix-vector multiply: y = A * x
@@ -184,23 +289,92 @@ impl CsrMatrix {
         y
     }
 
-    /// Add scaled boundary mass: self += beta * other.
-    /// Both matrices must have the same sparsity pattern or the result
-    /// will be a superset pattern (using COO merge).
-    pub fn add_scaled(&self, other: &CsrMatrix, beta: f64) -> Self {
-        let mut entries: HashMap<(usize, usize), f64> = HashMap::new();
+    /// In-place sparse matrix-vector multiply: y = A * x.
+    /// `y` must be pre-allocated with length >= self.n.
+    pub fn spmv_into(&self, x: &[f64], y: &mut [f64]) {
+        #[cfg(feature = "parallel")]
+        {
+            if self.n >= 20_000 {
+                y.par_iter_mut().enumerate().take(self.n).for_each(|(row, out)| {
+                    let start = self.row_ptr[row];
+                    let end = self.row_ptr[row + 1];
+                    let mut sum = 0.0;
+                    for idx in start..end {
+                        sum += self.values[idx] * x[self.col_idx[idx]];
+                    }
+                    *out = sum;
+                });
+                return;
+            }
+        }
         for row in 0..self.n {
-            for idx in self.row_ptr[row]..self.row_ptr[row + 1] {
-                *entries.entry((row, self.col_idx[idx])).or_insert(0.0) += self.values[idx];
+            let start = self.row_ptr[row];
+            let end = self.row_ptr[row + 1];
+            let mut sum = 0.0;
+            for idx in start..end {
+                sum += self.values[idx] * x[self.col_idx[idx]];
             }
+            y[row] = sum;
         }
-        for row in 0..other.n {
-            for idx in other.row_ptr[row]..other.row_ptr[row + 1] {
-                *entries.entry((row, other.col_idx[idx])).or_insert(0.0) +=
-                    beta * other.values[idx];
+    }
+
+    /// Add scaled boundary mass: self += beta * other.
+    /// Builds a superset sparsity pattern without HashMap.
+    pub fn add_scaled(&self, other: &CsrMatrix, beta: f64) -> Self {
+        let n = self.n;
+        // Phase 1: Merge sparsity patterns using sorted merge.
+        let mut row_ptr = Vec::with_capacity(n + 1);
+        let mut col_idx = Vec::new();
+        let mut values = Vec::new();
+        row_ptr.push(0);
+
+        for row in 0..n {
+            let a_start = self.row_ptr[row];
+            let a_end = self.row_ptr[row + 1];
+            let b_start = other.row_ptr[row];
+            let b_end = other.row_ptr[row + 1];
+
+            let mut ai = a_start;
+            let mut bi = b_start;
+
+            // Sorted merge of two sorted column index slices.
+            while ai < a_end && bi < b_end {
+                let ac = self.col_idx[ai];
+                let bc = other.col_idx[bi];
+                if ac < bc {
+                    col_idx.push(ac);
+                    values.push(self.values[ai]);
+                    ai += 1;
+                } else if bc < ac {
+                    col_idx.push(bc);
+                    values.push(beta * other.values[bi]);
+                    bi += 1;
+                } else {
+                    col_idx.push(ac);
+                    values.push(self.values[ai] + beta * other.values[bi]);
+                    ai += 1;
+                    bi += 1;
+                }
             }
+            while ai < a_end {
+                col_idx.push(self.col_idx[ai]);
+                values.push(self.values[ai]);
+                ai += 1;
+            }
+            while bi < b_end {
+                col_idx.push(other.col_idx[bi]);
+                values.push(beta * other.values[bi]);
+                bi += 1;
+            }
+            row_ptr.push(col_idx.len());
         }
-        Self::from_entries(self.n, &entries)
+
+        Self {
+            row_ptr,
+            col_idx,
+            values,
+            n,
+        }
     }
 
     /// Number of non-zero elements.
@@ -220,6 +394,117 @@ impl CsrMatrix {
         }
         diag
     }
+}
+
+/// Reusable workspace for CG solver to avoid per-call allocations.
+#[derive(Debug, Clone)]
+pub struct CgWorkspace {
+    pub x: Vec<f64>,
+    pub r: Vec<f64>,
+    pub z: Vec<f64>,
+    pub p: Vec<f64>,
+    pub ap: Vec<f64>,
+    pub inv_diag: Vec<f64>,
+}
+
+impl CgWorkspace {
+    pub fn new(n: usize) -> Self {
+        Self {
+            x: vec![0.0; n],
+            r: vec![0.0; n],
+            z: vec![0.0; n],
+            p: vec![0.0; n],
+            ap: vec![0.0; n],
+            inv_diag: vec![0.0; n],
+        }
+    }
+
+    /// Resize workspace if needed (no-op if already large enough).
+    pub fn ensure_size(&mut self, n: usize) {
+        let grow = |v: &mut Vec<f64>, n: usize| {
+            if v.len() < n {
+                v.resize(n, 0.0);
+            }
+        };
+        grow(&mut self.x, n);
+        grow(&mut self.r, n);
+        grow(&mut self.z, n);
+        grow(&mut self.p, n);
+        grow(&mut self.ap, n);
+        grow(&mut self.inv_diag, n);
+    }
+}
+
+/// Solve Ax = b using preconditioned CG (Jacobi) with a reusable workspace.
+/// Falls back to allocating a temporary workspace if `ws` is None.
+pub fn solve_sparse_cg_ws(
+    matrix: &CsrMatrix,
+    rhs: &[f64],
+    tol: f64,
+    max_iter: usize,
+    ws: &mut CgWorkspace,
+) -> Result<Vec<f64>> {
+    let n = matrix.n;
+    if rhs.len() != n {
+        return Err(EngineError::new("sparse CG: rhs length mismatch"));
+    }
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+
+    ws.ensure_size(n);
+
+    // Compute Jacobi preconditioner
+    let diag = matrix.diagonal();
+    for i in 0..n {
+        ws.inv_diag[i] = if diag[i].abs() > ZERO_THRESHOLD {
+            1.0 / diag[i]
+        } else {
+            1.0
+        };
+    }
+
+    // x = 0, r = b
+    for i in 0..n {
+        ws.x[i] = 0.0;
+        ws.r[i] = rhs[i];
+        ws.z[i] = ws.r[i] * ws.inv_diag[i];
+        ws.p[i] = ws.z[i];
+    }
+    let mut rz: f64 = (0..n).map(|i| ws.r[i] * ws.z[i]).sum();
+
+    let b_norm: f64 = rhs.iter().map(|&v| v * v).sum::<f64>().sqrt();
+    let tol_abs = tol * b_norm.max(ZERO_THRESHOLD);
+
+    for _iter in 0..max_iter {
+        // ap = A * p — zero-alloc via spmv_into
+        matrix.spmv_into(&ws.p[..n], &mut ws.ap[..n]);
+
+        let pap: f64 = (0..n).map(|i| ws.p[i] * ws.ap[i]).sum();
+        if pap.abs() <= ZERO_THRESHOLD {
+            break;
+        }
+        let alpha = rz / pap;
+        for i in 0..n {
+            ws.x[i] += alpha * ws.p[i];
+            ws.r[i] -= alpha * ws.ap[i];
+        }
+        let r_norm: f64 = (0..n).map(|i| ws.r[i] * ws.r[i]).sum::<f64>().sqrt();
+        if r_norm < tol_abs {
+            break;
+        }
+        for i in 0..n {
+            ws.z[i] = ws.r[i] * ws.inv_diag[i];
+        }
+        let rz_new: f64 = (0..n).map(|i| ws.r[i] * ws.z[i]).sum();
+        let beta = rz_new / rz.max(ZERO_THRESHOLD);
+        for i in 0..n {
+            ws.p[i] = ws.z[i] + beta * ws.p[i];
+        }
+        rz = rz_new;
+    }
+
+    Ok(ws.x[..n].to_vec())
 }
 
 /// Solve Ax = b using preconditioned Conjugate Gradient (Jacobi preconditioner).
@@ -467,6 +752,64 @@ pub struct FemLlgState {
     abm_history: AbmHistory,
 }
 
+// ── Pre-allocated workspace for FEM integrators (C3) ──
+
+/// Scratch buffers used internally by field computation.
+/// Separated from the stage buffers so the borrow checker can prove
+/// disjoint access (stage ≠ scratch ≠ output).
+#[derive(Debug, Clone)]
+pub struct FemFieldScratch {
+    /// Effective field accumulator.
+    pub h_eff: Vec<Vector3>,
+    // Component scratch for SpMV (exchange field).
+    pub mx: Vec<f64>,
+    pub my: Vec<f64>,
+    pub mz: Vec<f64>,
+    pub kx: Vec<f64>,
+    pub ky: Vec<f64>,
+    pub kz: Vec<f64>,
+}
+
+/// Reusable workspace that eliminates per-step heap allocations in the FEM
+/// integrator hot loop.  Create once via [`FemIntegratorWorkspace::new`] and
+/// pass to [`FemLlgProblem::step_with_workspace`].
+#[derive(Debug, Clone)]
+pub struct FemIntegratorWorkspace {
+    /// Snapshot of magnetization at the start of each step.
+    pub m0: Vec<Vector3>,
+    /// Predicted magnetization at each RK stage.
+    pub m_stage: Vec<Vector3>,
+    /// k-stage buffers (up to 7 for RK45 Dormand-Prince).
+    pub k: [Vec<Vector3>; 7],
+    /// Generic delta accumulator used by various integrators.
+    pub delta: Vec<Vector3>,
+    /// Field-computation scratch (disjoint from stage buffers).
+    pub scratch: FemFieldScratch,
+}
+
+impl FemIntegratorWorkspace {
+    /// Allocate a workspace for a mesh with `n` nodes.
+    pub fn new(n: usize) -> Self {
+        let v3 = || vec![[0.0, 0.0, 0.0]; n];
+        let s = || vec![0.0; n];
+        Self {
+            m0: v3(),
+            m_stage: v3(),
+            k: [v3(), v3(), v3(), v3(), v3(), v3(), v3()],
+            delta: v3(),
+            scratch: FemFieldScratch {
+                h_eff: v3(),
+                mx: s(),
+                my: s(),
+                mz: s(),
+                kx: s(),
+                ky: s(),
+                kz: s(),
+            },
+        }
+    }
+}
+
 impl FemLlgState {
     pub fn new(topology: &MeshTopology, magnetization: Vec<Vector3>) -> Result<Self> {
         if magnetization.len() != topology.n_nodes {
@@ -510,6 +853,119 @@ impl FemLlgState {
     }
 }
 
+/// FEM demagnetization realization policy.
+///
+/// # Production
+/// `Poisson` — Robin (or Dirichlet) open-boundary Poisson solve on the FEM
+/// mesh.  Authoritative for accuracy; CG solver is the hot path.
+///
+/// # Bootstrap / Preview
+/// `TransferGrid` — rasterize magnetization onto a regular FDM grid, compute
+/// demag via FFT, then interpolate back.  Faster for quick previews but
+/// introduces projection error.  Not recommended for production accuracy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FemDemagRealization {
+    /// Production path: Poisson solve on the FEM mesh (Robin / Dirichlet BC).
+    Poisson,
+    /// Bootstrap / preview: rasterize → FFT → interpolate back.
+    TransferGrid,
+}
+
+// ── C8: FEM operator assembly mode ─────────────────────────────────────
+
+/// How FEM bilinear forms are assembled and applied (C8).
+///
+/// The `Assembled` (legacy) path builds full CSR global matrices at startup
+/// and uses `CsrMatrix::spmv_into` for operator application.
+///
+/// The `PartialAssembly` path stores per-element dense matrices and applies
+/// them element-by-element (matrix-free at the global level).  This trades
+/// slightly more FLOPs per apply for much lower memory and better cache
+/// behaviour on large meshes.
+///
+/// The `Auto` mode selects based on problem size / operator type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FemOperatorMode {
+    /// Full CSR assembly (current default, stable).
+    Assembled,
+    /// Element-level partial assembly / matrix-free apply.
+    PartialAssembly,
+    /// Let the engine choose based on operator and problem size.
+    Auto,
+}
+
+impl Default for FemOperatorMode {
+    fn default() -> Self {
+        Self::Assembled
+    }
+}
+
+impl FemOperatorMode {
+    /// Resolve `Auto` to a concrete mode for a given problem size.
+    ///
+    /// Current heuristic: use PA for problems > 100k nodes; assembled otherwise.
+    pub fn resolve(self, n_nodes: usize) -> Self {
+        match self {
+            Self::Auto => {
+                if n_nodes > 100_000 {
+                    Self::PartialAssembly
+                } else {
+                    Self::Assembled
+                }
+            }
+            other => other,
+        }
+    }
+}
+
+// ── C9: Data-flow / copy-reduction audit ───────────────────────────────
+
+/// Where FEM field data lives during a solve step (C9).
+///
+/// This enum documents the data-flow boundaries in the FEM solver pipeline.
+/// In pure CPU mode every transition is a no-op (all pointers are host RAM).
+/// When a GPU or device backend is active, transitions map to explicit
+/// host↔device transfers.
+///
+/// # Hot-path data flow (workspace methods, C3)
+///
+/// ```text
+///   state.magnetization  ──copy_from_slice──►  ws.m0  (Owned, host)
+///   ws.m0                ──borrow──────────►  effective_field_into_scratch
+///   ws.scratch.h_eff     ──borrow──────────►  llg_rhs_into ──► ws.k[i]
+///   ws.k[i]              ──combine─────────►  ws.m_stage (Owned, host)
+///   ws.m_stage           ──copy_from_slice──►  state.magnetization
+/// ```
+///
+/// # Legacy allocating path (pre-C3)
+///
+/// ```text
+///   state.magnetization.clone()  ──alloc──►  m0         (Heap)
+///   m0                           ──pass───►  llg_rhs_from_vectors (allocs h_eff, rhs)
+///   rhs                          ──alloc──►  corrected  (Heap)
+///   corrected                    ──move───►  state.magnetization
+/// ```
+///
+/// # Transfer boundaries to minimise
+///
+/// 1. `ws.m0 ← state.magnetization`:  mandatory, one copy per step
+/// 2. `state.magnetization ← corrected`: one write-back per step
+/// 3. `k_fsal.to_vec()` in RK45: allocates once per accepted step (ABM3: once per step)
+/// 4. `observe()` observables: read-only, no copy needed when h_eff already computed
+///
+/// No HostRead/Write boundaries exist in pure-CPU mode, but the enum is
+/// provided for parity with the native GPU backend and to guide future
+/// device integration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FemDataLocation {
+    /// Data owned in host (CPU) memory.
+    Host,
+    /// Data owned on a compute device (GPU / accelerator).
+    Device,
+    /// Data has valid copies on both host and device.
+    Mirrored,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FemLlgProblem {
     pub topology: MeshTopology,
@@ -526,6 +982,8 @@ pub struct FemLlgProblem {
     pub sparse_cg_max_iter: Option<usize>,
     /// FND-012: Override cell-size extent fraction heuristic (default: 0.25).
     pub cell_size_extent_fraction: Option<f64>,
+    /// C8: Operator assembly/apply mode for this problem.
+    pub operator_mode: FemOperatorMode,
     demag_csr: CsrMatrix,
     demag_dirichlet_boundary: bool,
 }
@@ -548,6 +1006,7 @@ impl FemLlgProblem {
             sparse_cg_tol: None,
             sparse_cg_max_iter: None,
             cell_size_extent_fraction: None,
+            operator_mode: FemOperatorMode::default(),
             demag_csr,
             demag_dirichlet_boundary: false,
         }
@@ -571,6 +1030,7 @@ impl FemLlgProblem {
             sparse_cg_tol: None,
             sparse_cg_max_iter: None,
             cell_size_extent_fraction: None,
+            operator_mode: FemOperatorMode::default(),
             demag_csr,
             demag_dirichlet_boundary: false,
         }
@@ -602,6 +1062,7 @@ impl FemLlgProblem {
             sparse_cg_tol: None,
             sparse_cg_max_iter: None,
             cell_size_extent_fraction: None,
+            operator_mode: FemOperatorMode::default(),
             demag_csr,
             demag_dirichlet_boundary: dirichlet_boundary,
         }
@@ -613,6 +1074,15 @@ impl FemLlgProblem {
             self.dmi_interface_normal = scale(normal, 1.0 / n);
         } else {
             self.dmi_interface_normal = [0.0, 0.0, 1.0];
+        }
+    }
+
+    /// Which demag realization this problem will use at runtime.
+    pub fn demag_realization(&self) -> FemDemagRealization {
+        if self.demag_transfer_cell_size_hint.is_some() {
+            FemDemagRealization::TransferGrid
+        } else {
+            FemDemagRealization::Poisson
         }
     }
 
@@ -649,6 +1119,494 @@ impl FemLlgProblem {
         }
     }
 
+    // =======================================================================
+    // Workspace-aware stepping API (C3 — zero-alloc hot loop)
+    // =======================================================================
+
+    /// Like [`step`] but reuses pre-allocated buffers from `ws`, eliminating
+    /// per-step heap allocations in the integrator hot loop.
+    pub fn step_with_workspace(
+        &self,
+        state: &mut FemLlgState,
+        dt: f64,
+        ws: &mut FemIntegratorWorkspace,
+    ) -> Result<StepReport> {
+        self.ensure_state_matches_topology(state)?;
+        if dt <= 0.0 {
+            return Err(EngineError::new("dt must be positive"));
+        }
+
+        match self.dynamics.integrator {
+            TimeIntegrator::Heun => self.heun_step_ws(state, dt, ws),
+            TimeIntegrator::RK4 => self.rk4_step_ws(state, dt, ws),
+            TimeIntegrator::RK23 => self.rk23_step_ws(state, dt, ws),
+            TimeIntegrator::RK45 => self.rk45_step_ws(state, dt, ws),
+            TimeIntegrator::ABM3 => self.abm3_step_ws(state, dt, ws),
+        }
+    }
+
+    // -- In-place effective field: writes into scratch.h_eff --
+    fn effective_field_into_scratch(
+        &self,
+        magnetization: &[Vector3],
+        scratch: &mut FemFieldScratch,
+    ) -> Result<()> {
+        let n = self.topology.n_nodes;
+
+        // Exchange
+        if self.terms.exchange {
+            let coeff = 2.0 * self.material.exchange_stiffness
+                / (MU0 * self.material.saturation_magnetisation);
+            let csr = &self.topology.magnetic_stiffness_csr;
+            for (i, m) in magnetization.iter().enumerate() {
+                scratch.mx[i] = m[0];
+                scratch.my[i] = m[1];
+                scratch.mz[i] = m[2];
+            }
+            csr.spmv_into(&scratch.mx, &mut scratch.kx);
+            csr.spmv_into(&scratch.my, &mut scratch.ky);
+            csr.spmv_into(&scratch.mz, &mut scratch.kz);
+            for i in 0..n {
+                let lumped_mass = self.topology.magnetic_node_volumes[i];
+                if lumped_mass > 0.0 {
+                    let inv_mass = 1.0 / lumped_mass;
+                    scratch.h_eff[i] = [
+                        -coeff * scratch.kx[i] * inv_mass,
+                        -coeff * scratch.ky[i] * inv_mass,
+                        -coeff * scratch.kz[i] * inv_mass,
+                    ];
+                } else {
+                    scratch.h_eff[i] = [0.0, 0.0, 0.0];
+                }
+            }
+        } else {
+            for v in scratch.h_eff.iter_mut().take(n) {
+                *v = [0.0, 0.0, 0.0];
+            }
+        }
+
+        // Demag — CG solver still allocates internally (acceptable: cost-dominated)
+        if self.terms.demag {
+            let (demag_field, _) = self.demag_observables_from_vectors(magnetization)?;
+            for i in 0..n {
+                scratch.h_eff[i] = add(scratch.h_eff[i], demag_field[i]);
+            }
+        }
+
+        // External field (in-place)
+        {
+            let ext = self.terms.external_field.unwrap_or([0.0, 0.0, 0.0]);
+            let per_node = self.terms.per_node_field.as_deref();
+            for i in 0..n {
+                if self.topology.magnetic_node_volumes[i] > 0.0 {
+                    let h_ant = per_node
+                        .and_then(|f| f.get(i))
+                        .copied()
+                        .unwrap_or([0.0, 0.0, 0.0]);
+                    scratch.h_eff[i] = add(scratch.h_eff[i], add(ext, h_ant));
+                }
+            }
+        }
+
+        // Anisotropy
+        {
+            let ani = self.anisotropy_field_from_vectors(magnetization);
+            for i in 0..n {
+                scratch.h_eff[i] = add(scratch.h_eff[i], ani[i]);
+            }
+        }
+
+        // DMI
+        {
+            let (dmi_int, dmi_bulk) = self.dmi_fields_from_vectors(magnetization);
+            for i in 0..n {
+                scratch.h_eff[i] = add(scratch.h_eff[i], add(dmi_int[i], dmi_bulk[i]));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// In-place LLG RHS: writes result into `out`, uses `scratch` for fields.
+    fn llg_rhs_into(
+        &self,
+        magnetization: &[Vector3],
+        scratch: &mut FemFieldScratch,
+        out: &mut [Vector3],
+    ) -> Result<()> {
+        self.effective_field_into_scratch(magnetization, scratch)?;
+        let volumes = &self.topology.magnetic_node_volumes;
+        for (i, m) in magnetization.iter().enumerate() {
+            out[i] = if volumes[i] > 0.0 {
+                self.llg_rhs_from_field(*m, scratch.h_eff[i])
+            } else {
+                [0.0, 0.0, 0.0]
+            };
+        }
+        Ok(())
+    }
+
+    // -- Workspace-aware Heun --
+    fn heun_step_ws(
+        &self,
+        state: &mut FemLlgState,
+        dt: f64,
+        ws: &mut FemIntegratorWorkspace,
+    ) -> Result<StepReport> {
+        let n = state.magnetization.len();
+        ws.m0[..n].copy_from_slice(&state.magnetization);
+
+        self.llg_rhs_into(&ws.m0[..n], &mut ws.scratch, &mut ws.k[0])?;
+
+        for i in 0..n {
+            ws.m_stage[i] = normalized(add(ws.m0[i], scale(ws.k[0][i], dt)))?;
+        }
+
+        self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[1])?;
+
+        for i in 0..n {
+            state.magnetization[i] =
+                normalized(add(ws.m0[i], scale(add(ws.k[0][i], ws.k[1][i]), 0.5 * dt)))?;
+        }
+        state.time_seconds += dt;
+
+        self.step_report_from_vectors(state.magnetization(), state.time_seconds, dt, false, None)
+    }
+
+    // -- Workspace-aware RK4 --
+    fn rk4_step_ws(
+        &self,
+        state: &mut FemLlgState,
+        dt: f64,
+        ws: &mut FemIntegratorWorkspace,
+    ) -> Result<StepReport> {
+        let n = state.magnetization.len();
+        ws.m0[..n].copy_from_slice(&state.magnetization);
+
+        self.llg_rhs_into(&ws.m0[..n], &mut ws.scratch, &mut ws.k[0])?;
+        for i in 0..n {
+            ws.m_stage[i] = normalized(add(ws.m0[i], scale(ws.k[0][i], 0.5 * dt)))?;
+        }
+        self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[1])?;
+        for i in 0..n {
+            ws.m_stage[i] = normalized(add(ws.m0[i], scale(ws.k[1][i], 0.5 * dt)))?;
+        }
+        self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[2])?;
+        for i in 0..n {
+            ws.m_stage[i] = normalized(add(ws.m0[i], scale(ws.k[2][i], dt)))?;
+        }
+        self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[3])?;
+
+        for i in 0..n {
+            let d = scale(
+                add(
+                    add(ws.k[0][i], scale(ws.k[1][i], 2.0)),
+                    add(scale(ws.k[2][i], 2.0), ws.k[3][i]),
+                ),
+                dt / 6.0,
+            );
+            state.magnetization[i] = normalized(add(ws.m0[i], d))?;
+        }
+        state.time_seconds += dt;
+
+        self.step_report_from_vectors(state.magnetization(), state.time_seconds, dt, false, None)
+    }
+
+    // -- Workspace-aware RK23 (Bogacki-Shampine, adaptive) --
+    fn rk23_step_ws(
+        &self,
+        state: &mut FemLlgState,
+        dt: f64,
+        ws: &mut FemIntegratorWorkspace,
+    ) -> Result<StepReport> {
+        let cfg = self.dynamics.adaptive;
+        let mut dt = dt.min(cfg.dt_max).max(cfg.dt_min);
+        let n = state.magnetization.len();
+        ws.m0[..n].copy_from_slice(&state.magnetization);
+
+        loop {
+            self.llg_rhs_into(&ws.m0[..n], &mut ws.scratch, &mut ws.k[0])?;
+
+            for i in 0..n {
+                ws.m_stage[i] = normalized(add(ws.m0[i], scale(ws.k[0][i], 0.5 * dt)))?;
+            }
+            self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[1])?;
+
+            for i in 0..n {
+                ws.m_stage[i] = normalized(add(ws.m0[i], scale(ws.k[1][i], 0.75 * dt)))?;
+            }
+            self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[2])?;
+
+            for i in 0..n {
+                ws.delta[i] = scale(
+                    add(
+                        add(scale(ws.k[0][i], 2.0 / 9.0), scale(ws.k[1][i], 1.0 / 3.0)),
+                        scale(ws.k[2][i], 4.0 / 9.0),
+                    ),
+                    dt,
+                );
+                ws.m_stage[i] = normalized(add(ws.m0[i], ws.delta[i]))?;
+            }
+
+            self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[3])?;
+
+            let error = Self::max_error_norm_fem(
+                &[
+                    (&ws.k[0], -5.0 / 72.0),
+                    (&ws.k[1], 1.0 / 12.0),
+                    (&ws.k[2], 1.0 / 9.0),
+                    (&ws.k[3], -1.0 / 8.0),
+                ],
+                dt,
+                n,
+            );
+
+            if error <= cfg.max_error || dt <= cfg.dt_min {
+                state.magnetization[..n].copy_from_slice(&ws.m_stage[..n]);
+                state.time_seconds += dt;
+                let dt_next = (cfg.headroom
+                    * dt
+                    * (cfg.max_error / error.max(ZERO_THRESHOLD)).powf(1.0 / 3.0))
+                .max(cfg.dt_min)
+                .min(cfg.dt_max);
+                return self.step_report_from_vectors(
+                    state.magnetization(),
+                    state.time_seconds,
+                    dt,
+                    false,
+                    Some(dt_next),
+                );
+            }
+
+            let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(1.0 / 3.0);
+            dt = dt_new.max(cfg.dt_min).min(cfg.dt_max);
+        }
+    }
+
+    // -- Workspace-aware RK45 (Dormand-Prince, adaptive) --
+    fn rk45_step_ws(
+        &self,
+        state: &mut FemLlgState,
+        dt: f64,
+        ws: &mut FemIntegratorWorkspace,
+    ) -> Result<StepReport> {
+        let cfg = self.dynamics.adaptive;
+        let mut dt = dt.min(cfg.dt_max).max(cfg.dt_min);
+        let n = state.magnetization.len();
+        ws.m0[..n].copy_from_slice(&state.magnetization);
+
+        const A21: f64 = 1.0 / 5.0;
+        const A31: f64 = 3.0 / 40.0;
+        const A32: f64 = 9.0 / 40.0;
+        const A41: f64 = 44.0 / 45.0;
+        const A42: f64 = -56.0 / 15.0;
+        const A43: f64 = 32.0 / 9.0;
+        const A51: f64 = 19372.0 / 6561.0;
+        const A52: f64 = -25360.0 / 2187.0;
+        const A53: f64 = 64448.0 / 6561.0;
+        const A54: f64 = -212.0 / 729.0;
+        const A61: f64 = 9017.0 / 3168.0;
+        const A62: f64 = -355.0 / 33.0;
+        const A63: f64 = 46732.0 / 5247.0;
+        const A64: f64 = 49.0 / 176.0;
+        const A65: f64 = -5103.0 / 18656.0;
+        const B1: f64 = 35.0 / 384.0;
+        const B3: f64 = 500.0 / 1113.0;
+        const B4: f64 = 125.0 / 192.0;
+        const B5: f64 = -2187.0 / 6784.0;
+        const B6: f64 = 11.0 / 84.0;
+        const E1: f64 = 71.0 / 57600.0;
+        const E3: f64 = -71.0 / 16695.0;
+        const E4: f64 = 71.0 / 1920.0;
+        const E5: f64 = -17253.0 / 339200.0;
+        const E6: f64 = 22.0 / 525.0;
+        const E7: f64 = -1.0 / 40.0;
+
+        loop {
+            if let Some(ref fsal) = state.k_fsal {
+                ws.k[0][..n].copy_from_slice(&fsal[..n]);
+                state.k_fsal = None;
+            } else {
+                self.llg_rhs_into(&ws.m0[..n], &mut ws.scratch, &mut ws.k[0])?;
+            }
+
+            for i in 0..n {
+                ws.m_stage[i] = normalized(add(ws.m0[i], scale(ws.k[0][i], A21 * dt)))?;
+            }
+            self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[1])?;
+
+            for i in 0..n {
+                ws.m_stage[i] = normalized(add(
+                    ws.m0[i],
+                    scale(add(scale(ws.k[0][i], A31), scale(ws.k[1][i], A32)), dt),
+                ))?;
+            }
+            self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[2])?;
+
+            for i in 0..n {
+                ws.m_stage[i] = normalized(add(
+                    ws.m0[i],
+                    scale(
+                        add(
+                            add(scale(ws.k[0][i], A41), scale(ws.k[1][i], A42)),
+                            scale(ws.k[2][i], A43),
+                        ),
+                        dt,
+                    ),
+                ))?;
+            }
+            self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[3])?;
+
+            for i in 0..n {
+                ws.m_stage[i] = normalized(add(
+                    ws.m0[i],
+                    scale(
+                        add(
+                            add(scale(ws.k[0][i], A51), scale(ws.k[1][i], A52)),
+                            add(scale(ws.k[2][i], A53), scale(ws.k[3][i], A54)),
+                        ),
+                        dt,
+                    ),
+                ))?;
+            }
+            self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[4])?;
+
+            for i in 0..n {
+                ws.m_stage[i] = normalized(add(
+                    ws.m0[i],
+                    scale(
+                        add(
+                            add(
+                                add(scale(ws.k[0][i], A61), scale(ws.k[1][i], A62)),
+                                scale(ws.k[2][i], A63),
+                            ),
+                            add(scale(ws.k[3][i], A64), scale(ws.k[4][i], A65)),
+                        ),
+                        dt,
+                    ),
+                ))?;
+            }
+            self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[5])?;
+
+            for i in 0..n {
+                ws.m_stage[i] = normalized(add(
+                    ws.m0[i],
+                    scale(
+                        add(
+                            add(
+                                add(scale(ws.k[0][i], B1), scale(ws.k[2][i], B3)),
+                                scale(ws.k[3][i], B4),
+                            ),
+                            add(scale(ws.k[4][i], B5), scale(ws.k[5][i], B6)),
+                        ),
+                        dt,
+                    ),
+                ))?;
+            }
+
+            self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[6])?;
+
+            let error = Self::max_error_norm_fem(
+                &[
+                    (&ws.k[0], E1),
+                    (&ws.k[2], E3),
+                    (&ws.k[3], E4),
+                    (&ws.k[4], E5),
+                    (&ws.k[5], E6),
+                    (&ws.k[6], E7),
+                ],
+                dt,
+                n,
+            );
+
+            if error <= cfg.max_error || dt <= cfg.dt_min {
+                state.magnetization[..n].copy_from_slice(&ws.m_stage[..n]);
+                state.time_seconds += dt;
+                state.k_fsal = Some(ws.k[6][..n].to_vec());
+                let dt_next = (cfg.headroom
+                    * dt
+                    * (cfg.max_error / error.max(ZERO_THRESHOLD)).powf(0.2))
+                .max(cfg.dt_min)
+                .min(cfg.dt_max);
+                return self.step_report_from_vectors(
+                    state.magnetization(),
+                    state.time_seconds,
+                    dt,
+                    false,
+                    Some(dt_next),
+                );
+            }
+
+            let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(0.2);
+            dt = dt_new.max(cfg.dt_min).min(cfg.dt_max);
+        }
+    }
+
+    // -- Workspace-aware ABM3 --
+    fn abm3_step_ws(
+        &self,
+        state: &mut FemLlgState,
+        dt: f64,
+        ws: &mut FemIntegratorWorkspace,
+    ) -> Result<StepReport> {
+        let n = state.magnetization.len();
+
+        if !state.abm_history.is_ready() {
+            ws.m0[..n].copy_from_slice(&state.magnetization);
+            self.llg_rhs_into(&ws.m0[..n], &mut ws.scratch, &mut ws.k[0])?;
+
+            for i in 0..n {
+                ws.m_stage[i] = normalized(add(ws.m0[i], scale(ws.k[0][i], dt)))?;
+            }
+            self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[1])?;
+
+            for i in 0..n {
+                state.magnetization[i] = normalized(add(
+                    ws.m0[i],
+                    scale(add(ws.k[0][i], ws.k[1][i]), 0.5 * dt),
+                ))?;
+            }
+            state.time_seconds += dt;
+
+            self.llg_rhs_into(state.magnetization(), &mut ws.scratch, &mut ws.k[2])?;
+            state.abm_history.push(ws.k[2][..n].to_vec(), dt);
+
+            return self.step_report_from_vectors(
+                state.magnetization(),
+                state.time_seconds,
+                dt,
+                false,
+                None,
+            );
+        }
+
+        ws.m0[..n].copy_from_slice(&state.magnetization);
+        let f_n = state.abm_history.f_n().unwrap();
+        let f_n1 = state.abm_history.f_n_minus_1().unwrap();
+        let f_n2 = state.abm_history.f_n_minus_2().unwrap();
+
+        for i in 0..n {
+            let pred = add(
+                add(scale(f_n[i], 23.0 / 12.0), scale(f_n1[i], -16.0 / 12.0)),
+                scale(f_n2[i], 5.0 / 12.0),
+            );
+            ws.m_stage[i] = normalized(add(ws.m0[i], scale(pred, dt)))?;
+        }
+
+        self.llg_rhs_into(&ws.m_stage[..n], &mut ws.scratch, &mut ws.k[0])?;
+
+        for i in 0..n {
+            let corr = add(
+                add(scale(ws.k[0][i], 5.0 / 12.0), scale(f_n[i], 8.0 / 12.0)),
+                scale(f_n1[i], -1.0 / 12.0),
+            );
+            state.magnetization[i] = normalized(add(ws.m0[i], scale(corr, dt)))?;
+        }
+        state.time_seconds += dt;
+        state.abm_history.push(ws.k[0][..n].to_vec(), dt);
+
+        self.step_report_from_vectors(state.magnetization(), state.time_seconds, dt, false, None)
+    }
     fn heun_step(&self, state: &mut FemLlgState, dt: f64) -> Result<StepReport> {
         let initial = state.magnetization.clone();
         let k1 = self.llg_rhs_from_vectors(&initial)?;
@@ -1150,6 +2108,36 @@ impl FemLlgProblem {
             ));
         }
         Ok(())
+    }
+
+    /// Validate that the problem configuration is physically consistent.
+    /// Logs warnings for known semantic gaps in the reference solver.
+    pub fn validate_reference_semantics(&self) {
+        // C2: Periodic BC — stored but not enforced in exchange/demag.
+        if !self.topology.periodic_node_pairs.is_empty() {
+            eprintln!(
+                "[fullmag::fem::reference] WARNING: {} periodic node pairs present but NOT \
+                 enforced in exchange or demag. Results for periodic geometries are INVALID \
+                 in the Rust FEM reference solver.",
+                self.topology.periodic_node_pairs.len()
+            );
+        }
+
+        // C2: DMI requires a well-defined interface normal.
+        if self.terms.interfacial_dmi.is_some() && norm(self.dmi_interface_normal) < ZERO_THRESHOLD {
+            eprintln!(
+                "[fullmag::fem::reference] WARNING: interfacial DMI enabled but interface \
+                 normal is zero — DMI contribution will be zero."
+            );
+        }
+
+        // C2: Transfer-grid demag is a preview approximation.
+        if self.demag_realization() == FemDemagRealization::TransferGrid && self.terms.demag {
+            eprintln!(
+                "[fullmag::fem::reference] NOTE: using transfer-grid demag (bootstrap/preview). \
+                 For production accuracy, use Poisson demag."
+            );
+        }
     }
 
     fn observe_vectors(&self, magnetization: &[Vector3]) -> Result<EffectiveFieldObservables> {
@@ -2119,6 +3107,139 @@ impl TransferGridDesc {
 struct RasterizedTransferGrid {
     active_mask: Vec<bool>,
     magnetization: Vec<Vector3>,
+}
+
+// ── C7: Precomputed transfer-grid overlap map ──────────────────────────
+
+/// Record of which grid cells a single tetrahedron overlaps,
+/// together with the barycentric interpolation weights.
+#[derive(Debug, Clone)]
+struct TetGridOverlap {
+    /// Element (tet) index in `topology.elements`.
+    element_index: usize,
+    /// Pairs of (grid_cell_flat_index, barycentric_weights).
+    cells: Vec<(usize, [f64; 4])>,
+}
+
+/// Pre-computed mapping from every magnetic tet to the grid cells it
+/// overlaps.  This structure is built once per grid configuration and
+/// reused across all rasterization calls (C7).
+#[derive(Debug, Clone)]
+pub struct TransferGridCache {
+    desc: TransferGridDesc,
+    overlaps: Vec<TetGridOverlap>,
+    /// Number of grid cells.
+    n_cells: usize,
+}
+
+impl TransferGridCache {
+    /// Build the overlap map for a given mesh topology and grid descriptor.
+    pub fn build(topology: &MeshTopology, desc: &TransferGridDesc) -> Self {
+        let mut overlaps = Vec::new();
+
+        for (element_index, element) in topology.elements.iter().enumerate() {
+            if !topology.magnetic_element_mask[element_index] {
+                continue;
+            }
+
+            let vertices = [
+                topology.coords[element[0] as usize],
+                topology.coords[element[1] as usize],
+                topology.coords[element[2] as usize],
+                topology.coords[element[3] as usize],
+            ];
+
+            let (ix0, ix1) = cell_index_range_for_tet(
+                desc.bbox_min[0], desc.cell_size.dx, desc.grid.nx, vertices, 0,
+            );
+            let (iy0, iy1) = cell_index_range_for_tet(
+                desc.bbox_min[1], desc.cell_size.dy, desc.grid.ny, vertices, 1,
+            );
+            let (iz0, iz1) = cell_index_range_for_tet(
+                desc.bbox_min[2], desc.cell_size.dz, desc.grid.nz, vertices, 2,
+            );
+
+            let mut cells = Vec::new();
+            for iz in iz0..=iz1 {
+                for iy in iy0..=iy1 {
+                    for ix in ix0..=ix1 {
+                        let point = [
+                            desc.bbox_min[0] + (ix as f64 + 0.5) * desc.cell_size.dx,
+                            desc.bbox_min[1] + (iy as f64 + 0.5) * desc.cell_size.dy,
+                            desc.bbox_min[2] + (iz as f64 + 0.5) * desc.cell_size.dz,
+                        ];
+                        if let Some(bary) = barycentric_coordinates_tet(point, vertices) {
+                            let index = desc.grid.index(ix, iy, iz);
+                            cells.push((index, bary));
+                        }
+                    }
+                }
+            }
+
+            if !cells.is_empty() {
+                overlaps.push(TetGridOverlap { element_index, cells });
+            }
+        }
+
+        Self {
+            desc: desc.clone(),
+            overlaps,
+            n_cells: desc.grid.cell_count(),
+        }
+    }
+
+    /// Rasterize magnetization using the precomputed overlap map (zero per-step allocation).
+    ///
+    /// `out_mag` and `out_active` must be pre-allocated to `n_cells` length.
+    pub fn rasterize_into(
+        &self,
+        magnetization: &[Vector3],
+        topology: &MeshTopology,
+        out_mag: &mut [Vector3],
+        out_active: &mut [bool],
+    ) {
+        // Clear
+        for m in out_mag.iter_mut() { *m = [0.0, 0.0, 0.0]; }
+        for a in out_active.iter_mut() { *a = false; }
+        let mut hit_count = vec![0u32; self.n_cells];
+
+        for overlap in &self.overlaps {
+            let element = &topology.elements[overlap.element_index];
+            let local_m = [
+                magnetization[element[0] as usize],
+                magnetization[element[1] as usize],
+                magnetization[element[2] as usize],
+                magnetization[element[3] as usize],
+            ];
+
+            for &(cell_idx, bary) in &overlap.cells {
+                out_active[cell_idx] = true;
+                for c in 0..3 {
+                    out_mag[cell_idx][c] += bary[0] * local_m[0][c]
+                        + bary[1] * local_m[1][c]
+                        + bary[2] * local_m[2][c]
+                        + bary[3] * local_m[3][c];
+                }
+                hit_count[cell_idx] += 1;
+            }
+        }
+
+        // Normalize cells with multiple contributions
+        for cell in 0..self.n_cells {
+            if hit_count[cell] > 1 {
+                let inv = 1.0 / hit_count[cell] as f64;
+                for c in 0..3 {
+                    out_mag[cell][c] *= inv;
+                }
+            }
+        }
+    }
+
+    /// Grid descriptor (for accessing cell_size, grid shape, etc.).
+    pub fn desc(&self) -> &TransferGridDesc { &self.desc }
+
+    /// Number of grid cells.
+    pub fn n_cells(&self) -> usize { self.n_cells }
 }
 
 fn transfer_axis_cells(extent: f64, requested_cell: f64) -> Result<usize> {

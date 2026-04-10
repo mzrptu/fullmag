@@ -43,6 +43,11 @@ import {
   ViewportOverlayManager,
   type ViewportOverlayDescriptor,
 } from "./ViewportOverlayManager";
+import TextureTransformGizmo, {
+  type TextureGizmoMode,
+  type TexturePreviewProxy,
+} from "./TextureTransformGizmo";
+import type { TextureTransform3D } from "@/lib/textureTransform";
 
 const AIR_OBJECT_SEGMENT_ID = "__air__";
 
@@ -145,6 +150,12 @@ interface Props {
   onEntitySelect?: (id: string | null) => void;
   onEntityFocus?: (id: string | null) => void;
   onQuantityChange?: (quantityId: string) => void;
+  activeTextureTransform?: TextureTransform3D | null;
+  textureGizmoMode?: TextureGizmoMode;
+  activeTexturePreviewProxy?: TexturePreviewProxy;
+  activeTransformScope?: "object" | "texture" | null;
+  onTextureTransformChange?: (next: TextureTransform3D) => void;
+  onTextureTransformCommit?: (next: TextureTransform3D) => void;
 }
 
 interface RenderLayer {
@@ -524,6 +535,12 @@ function FemMeshView3DInner({
   onEntitySelect,
   onEntityFocus,
   onQuantityChange,
+  activeTextureTransform = null,
+  textureGizmoMode = "translate",
+  activeTexturePreviewProxy = "box",
+  activeTransformScope = null,
+  onTextureTransformChange,
+  onTextureTransformCommit,
 }: Props) {
   const [internalRenderMode, setInternalRenderMode] = useState<RenderMode>("surface");
   const [field, setField] = useState<FemColorField>(colorField);
@@ -565,6 +582,13 @@ function FemMeshView3DInner({
   const viewCubeSceneRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const qualityProfileRef = useRef<ViewportQualityProfileId>("interactive");
+  const selectedObjectOverlay = useMemo(
+    () =>
+      selectedObjectId
+        ? objectOverlays.find((overlay) => overlay.id === selectedObjectId) ?? null
+        : null,
+    [objectOverlays, selectedObjectId],
+  );
   const renderMode = controlledRenderMode ?? internalRenderMode;
   const opacity = controlledOpacity ?? internalOpacity;
   const clipEnabled = controlledClipEnabled ?? internalClipEnabled;
@@ -1265,6 +1289,105 @@ function FemMeshView3DInner({
     };
   }, [hasMeshParts, visibleLayers, shouldRenderAirGeometry, shouldRenderMagneticGeometry, airBoundaryFaceIndices, magneticBoundaryFaceIndices, meshData]);
 
+  const resolvedWorldTextureTransform = useMemo(() => {
+    if (!activeTextureTransform) {
+      return null;
+    }
+    const transform: TextureTransform3D = {
+      translation: [...activeTextureTransform.translation] as [number, number, number],
+      rotationQuat: [...activeTextureTransform.rotationQuat] as [number, number, number, number],
+      scale: [...activeTextureTransform.scale] as [number, number, number],
+      pivot: [...activeTextureTransform.pivot] as [number, number, number],
+    };
+    const isDefaultTranslation = transform.translation.every((value) => Math.abs(value) < 1e-18);
+    const isDefaultScale = transform.scale.every((value) => Math.abs(value - 1) < 1e-9);
+    if (!selectedObjectOverlay || (!isDefaultTranslation && !isDefaultScale)) {
+      return transform;
+    }
+    const boundsCenter: [number, number, number] = [
+      0.5 * (selectedObjectOverlay.boundsMin[0] + selectedObjectOverlay.boundsMax[0]),
+      0.5 * (selectedObjectOverlay.boundsMin[1] + selectedObjectOverlay.boundsMax[1]),
+      0.5 * (selectedObjectOverlay.boundsMin[2] + selectedObjectOverlay.boundsMax[2]),
+    ];
+    const boundsExtent: [number, number, number] = [
+      Math.max(1e-12, selectedObjectOverlay.boundsMax[0] - selectedObjectOverlay.boundsMin[0]),
+      Math.max(1e-12, selectedObjectOverlay.boundsMax[1] - selectedObjectOverlay.boundsMin[1]),
+      Math.max(1e-12, selectedObjectOverlay.boundsMax[2] - selectedObjectOverlay.boundsMin[2]),
+    ];
+    return {
+      ...transform,
+      translation: isDefaultTranslation ? boundsCenter : transform.translation,
+      scale: isDefaultScale ? boundsExtent : transform.scale,
+      pivot: isDefaultTranslation ? boundsCenter : transform.pivot,
+    };
+  }, [activeTextureTransform, selectedObjectOverlay]);
+
+  const sceneTextureTransform = useMemo(() => {
+    if (!resolvedWorldTextureTransform) {
+      return null;
+    }
+    return {
+      translation: [
+        resolvedWorldTextureTransform.translation[0] - dynamicGeomCenter.x,
+        resolvedWorldTextureTransform.translation[1] - dynamicGeomCenter.y,
+        resolvedWorldTextureTransform.translation[2] - dynamicGeomCenter.z,
+      ] as [number, number, number],
+      rotationQuat: [...resolvedWorldTextureTransform.rotationQuat] as [number, number, number, number],
+      scale: [...resolvedWorldTextureTransform.scale] as [number, number, number],
+      pivot: [
+        resolvedWorldTextureTransform.pivot[0] - dynamicGeomCenter.x,
+        resolvedWorldTextureTransform.pivot[1] - dynamicGeomCenter.y,
+        resolvedWorldTextureTransform.pivot[2] - dynamicGeomCenter.z,
+      ] as [number, number, number],
+    } as TextureTransform3D;
+  }, [dynamicGeomCenter.x, dynamicGeomCenter.y, dynamicGeomCenter.z, resolvedWorldTextureTransform]);
+
+  const handleTextureTransformLiveChange = useCallback(
+    (next: TextureTransform3D) => {
+      if (!onTextureTransformChange) {
+        return;
+      }
+      onTextureTransformChange({
+        translation: [
+          next.translation[0] + dynamicGeomCenter.x,
+          next.translation[1] + dynamicGeomCenter.y,
+          next.translation[2] + dynamicGeomCenter.z,
+        ] as [number, number, number],
+        rotationQuat: [...next.rotationQuat] as [number, number, number, number],
+        scale: [...next.scale] as [number, number, number],
+        pivot: [
+          next.pivot[0] + dynamicGeomCenter.x,
+          next.pivot[1] + dynamicGeomCenter.y,
+          next.pivot[2] + dynamicGeomCenter.z,
+        ] as [number, number, number],
+      });
+    },
+    [dynamicGeomCenter.x, dynamicGeomCenter.y, dynamicGeomCenter.z, onTextureTransformChange],
+  );
+
+  const handleTextureTransformCommit = useCallback(
+    (next: TextureTransform3D) => {
+      if (!onTextureTransformCommit) {
+        return;
+      }
+      onTextureTransformCommit({
+        translation: [
+          next.translation[0] + dynamicGeomCenter.x,
+          next.translation[1] + dynamicGeomCenter.y,
+          next.translation[2] + dynamicGeomCenter.z,
+        ] as [number, number, number],
+        rotationQuat: [...next.rotationQuat] as [number, number, number, number],
+        scale: [...next.scale] as [number, number, number],
+        pivot: [
+          next.pivot[0] + dynamicGeomCenter.x,
+          next.pivot[1] + dynamicGeomCenter.y,
+          next.pivot[2] + dynamicGeomCenter.z,
+        ] as [number, number, number],
+      });
+    },
+    [dynamicGeomCenter.x, dynamicGeomCenter.y, dynamicGeomCenter.z, onTextureTransformCommit],
+  );
+
   const lastFittedGeomRef = useRef<string | null>(null);
   
   useEffect(() => {
@@ -1863,6 +1986,17 @@ function FemMeshView3DInner({
             cameraFitGeneration={cameraFitGeneration}
             CameraAutoFit={CameraAutoFit}
             FemClipPlanes={FemClipPlanes}
+          />
+        ) : null}
+
+        {sceneTextureTransform && activeTransformScope === "texture" ? (
+          <TextureTransformGizmo
+            transform={sceneTextureTransform}
+            mode={textureGizmoMode}
+            previewProxy={activeTexturePreviewProxy}
+            onLiveChange={handleTextureTransformLiveChange}
+            onCommit={handleTextureTransformCommit}
+            visible
           />
         ) : null}
       </ScientificViewportShell>

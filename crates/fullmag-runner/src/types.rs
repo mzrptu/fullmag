@@ -387,8 +387,13 @@ fn normalized_payload_element_markers(
             .iter()
             .map(|marker| u32::from(*marker != 0))
             .collect()
-    } else {
+    } else if element_markers
+        .first()
+        .is_some_and(|first| element_markers.iter().all(|marker| marker == first))
+    {
         vec![1; element_markers.len()]
+    } else {
+        element_markers.to_vec()
     }
 }
 

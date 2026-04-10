@@ -6,8 +6,9 @@ use crate::{
     FftWorkspace, GridShape, IntegratorBuffers, LlgConfig, MaterialParameters, Result, StepReport,
     TimeIntegrator, Vector3, CellSize,
 };
+use std::sync::atomic::{AtomicU64, Ordering};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct ExchangeLlgProblem {
     pub grid: GridShape,
     pub cell_size: CellSize,
@@ -19,6 +20,14 @@ pub struct ExchangeLlgProblem {
     pub temperature: f64,
     /// Current timestep used for thermal σ computation (set by runner before stepping).
     pub thermal_dt: f64,
+    /// Global seed for counter-based thermal RNG (B7 reproducibility).
+    /// Set once at problem construction; the combination
+    /// `(thermal_seed, step_index, cell_index)` uniquely determines the
+    /// thermal noise, regardless of thread count or decomposition.
+    pub thermal_seed: u64,
+    /// Monotonically increasing step counter for the thermal RNG.
+    /// Incremented by each accepted step.
+    thermal_step_counter: AtomicU64,
 }
 
 impl ExchangeLlgProblem {
@@ -74,6 +83,8 @@ impl ExchangeLlgProblem {
             active_mask,
             temperature: 0.0,
             thermal_dt: 1e-13,
+            thermal_seed: 42,
+            thermal_step_counter: AtomicU64::new(0),
         })
     }
 
@@ -203,13 +214,16 @@ impl ExchangeLlgProblem {
             return Err(EngineError::new("dt must be positive"));
         }
 
-        match self.dynamics.integrator {
+        let result = match self.dynamics.integrator {
             TimeIntegrator::Heun => self.heun_step_buf(state, dt, ws, bufs),
             TimeIntegrator::RK4 => self.rk4_step_buf(state, dt, ws, bufs),
             TimeIntegrator::RK23 => self.rk23_step_buf(state, dt, ws, bufs),
             TimeIntegrator::RK45 => self.rk45_step_buf(state, dt, ws, bufs),
             TimeIntegrator::ABM3 => self.abm3_step_buf(state, dt, ws, bufs),
-        }
+        };
+        // Advance thermal RNG counter after each step attempt
+        self.advance_thermal_step();
+        result
     }
 
     pub(crate) fn ensure_state_matches_grid(&self, state: &ExchangeLlgState) -> Result<()> {
@@ -226,5 +240,46 @@ impl ExchangeLlgProblem {
             .as_ref()
             .map(|mask| mask[flat_index])
             .unwrap_or(true)
+    }
+
+    /// Read the current thermal step counter.
+    pub fn thermal_step(&self) -> u64 {
+        self.thermal_step_counter.load(Ordering::Relaxed)
+    }
+
+    /// Advance the thermal step counter by one (call after each accepted step).
+    pub fn advance_thermal_step(&self) {
+        self.thermal_step_counter.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl Clone for ExchangeLlgProblem {
+    fn clone(&self) -> Self {
+        Self {
+            grid: self.grid,
+            cell_size: self.cell_size,
+            material: self.material,
+            dynamics: self.dynamics.clone(),
+            terms: self.terms.clone(),
+            active_mask: self.active_mask.clone(),
+            temperature: self.temperature,
+            thermal_dt: self.thermal_dt,
+            thermal_seed: self.thermal_seed,
+            thermal_step_counter: AtomicU64::new(self.thermal_step_counter.load(Ordering::Relaxed)),
+        }
+    }
+}
+
+impl PartialEq for ExchangeLlgProblem {
+    fn eq(&self, other: &Self) -> bool {
+        self.grid == other.grid
+            && self.cell_size == other.cell_size
+            && self.material == other.material
+            && self.dynamics == other.dynamics
+            && self.terms == other.terms
+            && self.active_mask == other.active_mask
+            && self.temperature == other.temperature
+            && self.thermal_dt == other.thermal_dt
+            && self.thermal_seed == other.thermal_seed
     }
 }

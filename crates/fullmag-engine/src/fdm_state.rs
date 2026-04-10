@@ -1,7 +1,115 @@
 //! Simulation state, integrator buffers, and solver session types.
 
 use crate::vector::normalized;
-use crate::{EngineError, ExchangeLlgProblem, FftWorkspace, GridShape, Result, Vector3};
+use crate::{EngineError, ExchangeLlgProblem, FftWorkspace, GridShape, Result, Vector3, VectorFieldSoA};
+
+// ── ExchangeLlgStateSoA ───────────────────────────────────────────────
+
+/// Structure-of-Arrays state for FDM LLG solver.
+///
+/// Stores magnetization components as separate contiguous arrays
+/// (mx, my, mz) for optimal SIMD auto-vectorization, FFT pack/unpack,
+/// thermal noise generation, and cache locality.
+///
+/// B2: This is the internal SoA layout — `ExchangeLlgState` (AoS) remains
+/// as the public API type with cheap conversion adapters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExchangeLlgStateSoA {
+    pub(crate) grid: GridShape,
+    pub(crate) magnetization: VectorFieldSoA,
+    pub time_seconds: f64,
+    /// FSAL (First Same As Last) buffer for Dormand–Prince 5(4).
+    pub(crate) k_fsal: Option<VectorFieldSoA>,
+    /// ABM(3) history: stores the last 3 RHS evaluations (SoA layout).
+    pub(crate) abm_history: AbmHistorySoA,
+}
+
+impl ExchangeLlgStateSoA {
+    /// Create from an existing AoS state (cheap copy).
+    pub fn from_aos(state: &ExchangeLlgState) -> Self {
+        Self {
+            grid: state.grid,
+            magnetization: VectorFieldSoA::from_aos(&state.magnetization),
+            time_seconds: state.time_seconds,
+            k_fsal: state.k_fsal.as_ref().map(|k| VectorFieldSoA::from_aos(k)),
+            abm_history: AbmHistorySoA::from_aos(&state.abm_history),
+        }
+    }
+
+    /// Convert back to AoS state.
+    pub fn to_aos(&self) -> ExchangeLlgState {
+        ExchangeLlgState {
+            grid: self.grid,
+            magnetization: self.magnetization.gather_to_aos(),
+            time_seconds: self.time_seconds,
+            k_fsal: self.k_fsal.as_ref().map(|k| k.gather_to_aos()),
+            abm_history: self.abm_history.to_aos(),
+        }
+    }
+
+    /// Write SoA magnetization back into an existing AoS state (no allocation
+    /// if the AoS state already has the correct length).
+    pub fn write_back_to(&self, state: &mut ExchangeLlgState) {
+        self.magnetization.gather_into_aos(&mut state.magnetization);
+        state.time_seconds = self.time_seconds;
+    }
+
+    /// Number of cells.
+    pub fn cell_count(&self) -> usize {
+        self.magnetization.len()
+    }
+
+    /// Read-only access to the SoA magnetization.
+    pub fn magnetization(&self) -> &VectorFieldSoA {
+        &self.magnetization
+    }
+}
+
+/// SoA version of ABM history buffer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbmHistorySoA {
+    pub(crate) f_n: Option<VectorFieldSoA>,
+    pub(crate) f_n_minus_1: Option<VectorFieldSoA>,
+    pub(crate) f_n_minus_2: Option<VectorFieldSoA>,
+    pub(crate) startup_steps: u32,
+    pub(crate) last_dt: f64,
+}
+
+impl AbmHistorySoA {
+    pub(crate) fn new() -> Self {
+        Self {
+            f_n: None,
+            f_n_minus_1: None,
+            f_n_minus_2: None,
+            startup_steps: 0,
+            last_dt: 0.0,
+        }
+    }
+
+    pub(crate) fn from_aos(h: &AbmHistory) -> Self {
+        Self {
+            f_n: h.f_n.as_ref().map(|v| VectorFieldSoA::from_aos(v)),
+            f_n_minus_1: h.f_n_minus_1.as_ref().map(|v| VectorFieldSoA::from_aos(v)),
+            f_n_minus_2: h.f_n_minus_2.as_ref().map(|v| VectorFieldSoA::from_aos(v)),
+            startup_steps: h.startup_steps,
+            last_dt: h.last_dt,
+        }
+    }
+
+    pub(crate) fn to_aos(&self) -> AbmHistory {
+        AbmHistory {
+            f_n: self.f_n.as_ref().map(|v| v.gather_to_aos()),
+            f_n_minus_1: self.f_n_minus_1.as_ref().map(|v| v.gather_to_aos()),
+            f_n_minus_2: self.f_n_minus_2.as_ref().map(|v| v.gather_to_aos()),
+            startup_steps: self.startup_steps,
+            last_dt: self.last_dt,
+        }
+    }
+
+    pub(crate) fn restart(&mut self) {
+        *self = Self::new();
+    }
+}
 
 // ── ExchangeLlgState ───────────────────────────────────────────────────
 
@@ -79,6 +187,11 @@ impl ExchangeLlgState {
             .map(normalized)
             .collect::<Result<Vec<_>>>()?;
         Ok(())
+    }
+
+    /// Convert to SoA layout (allocating).
+    pub fn to_soa(&self) -> ExchangeLlgStateSoA {
+        ExchangeLlgStateSoA::from_aos(self)
     }
 }
 

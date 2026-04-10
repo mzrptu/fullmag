@@ -16,7 +16,7 @@ from fullmag.init.textures import PresetTexture
 from fullmag.model.antenna import AntennaFieldSource, SpinWaveExcitationAnalysis
 from fullmag.model.discretization import DiscretizationHints, FEM
 from fullmag.model.dynamics import LLG
-from fullmag.model.domain_frame import build_domain_frame
+from fullmag.model.domain_frame import build_domain_frame, geometry_bounds
 from fullmag.model.energy import BulkDMI, Demag, Exchange, InterfacialDMI, Magnetoelastic, Zeeman
 from fullmag.model.mechanics import (
     ElasticBody,
@@ -73,6 +73,31 @@ def _node_mask_for_region_marker(mesh_ir: dict[str, Any], marker: int) -> list[b
     return active
 
 
+def _object_transform_for_magnet_geometry(geometry: object) -> dict[str, object]:
+    from fullmag.model.geometry import Translate
+
+    translation = [0.0, 0.0, 0.0]
+    cursor = geometry
+    while isinstance(cursor, Translate):
+        offset = cursor.offset
+        translation[0] += float(offset[0])
+        translation[1] += float(offset[1])
+        translation[2] += float(offset[2])
+        cursor = cursor.geometry
+
+    bounds_min, bounds_max = geometry_bounds(geometry)
+    transform: dict[str, object] = {
+        "translation": translation,
+        "rotation_quat": [0.0, 0.0, 0.0, 1.0],
+        "scale": [1.0, 1.0, 1.0],
+        "pivot": [0.0, 0.0, 0.0],
+    }
+    if bounds_min is not None and bounds_max is not None:
+        transform["object_bounds_min"] = [float(value) for value in bounds_min]
+        transform["object_bounds_max"] = [float(value) for value in bounds_max]
+    return transform
+
+
 def _materialize_preset_texture_initial_conditions(
     magnets_ir: list[dict[str, Any]],
     magnets: Sequence["Ferromagnet"],
@@ -110,6 +135,7 @@ def _materialize_preset_texture_initial_conditions(
         initial = magnet_ir.get("initial_magnetization")
         if not isinstance(initial, dict) or initial.get("kind") != "preset_texture":
             continue
+        object_transform = _object_transform_for_magnet_geometry(magnet.geometry)
 
         geometry_name = magnet.geometry.geometry_name
         sampled_values: list[list[float]] | None = None
@@ -117,7 +143,11 @@ def _materialize_preset_texture_initial_conditions(
         if geometry_name in fdm_assets:
             asset = fdm_assets[geometry_name]
             sample_points = _fdm_cell_centers_from_asset(asset)
-            sampled = prepare_initial_magnetization(initial, sample_points)
+            sampled = prepare_initial_magnetization(
+                initial,
+                sample_points,
+                object_transform=object_transform,
+            )
             active_mask = asset.get("active_mask")
             if isinstance(active_mask, list) and len(active_mask) == len(sampled):
                 sampled_values = [
@@ -130,12 +160,20 @@ def _materialize_preset_texture_initial_conditions(
             mesh_wrapper = fem_assets[geometry_name]
             mesh_ir = mesh_wrapper.get("mesh") if isinstance(mesh_wrapper.get("mesh"), dict) else None
             if mesh_ir is not None:
-                sampled = prepare_initial_magnetization(initial, mesh_ir.get("nodes") or [])
+                sampled = prepare_initial_magnetization(
+                    initial,
+                    mesh_ir.get("nodes") or [],
+                    object_transform=object_transform,
+                )
                 sampled_values = sampled.tolist()
         elif domain_mesh_ir is not None and geometry_name in region_markers:
             marker = region_markers[geometry_name]
             sample_points = domain_mesh_ir.get("nodes") or []
-            sampled = prepare_initial_magnetization(initial, sample_points)
+            sampled = prepare_initial_magnetization(
+                initial,
+                sample_points,
+                object_transform=object_transform,
+            )
             mask = _node_mask_for_region_marker(domain_mesh_ir, marker)
             if len(mask) == len(sampled):
                 sampled_values = [
@@ -340,9 +378,7 @@ def build_geometry_assets_for_request(
         from fullmag._core import validate_mesh_ir
         from fullmag.model.geometry import ImportedGeometry
         from fullmag.meshing import realize_fem_domain_mesh_asset, realize_fem_mesh_asset
-        from fullmag.meshing.asset_pipeline import (
-            realize_fem_domain_mesh_asset_from_components_with_report,
-        )
+        from fullmag.meshing import realize_fem_domain_mesh_asset
         from fullmag.meshing.gmsh_bridge import MeshData
 
         fem_mesh_cache_dir = _fem_mesh_cache_dir()
@@ -431,8 +467,8 @@ def build_geometry_assets_for_request(
                 "region_markers": explicit_domain_region_markers,
             }
         elif study_universe is not None:
-            domain_mesh, region_markers, _build_report = (
-                realize_fem_domain_mesh_asset_from_components_with_report(
+            domain_mesh, region_markers = (
+                realize_fem_domain_mesh_asset(
                 list(geometries),
                 discretization.fem,
                 study_universe=study_universe,
